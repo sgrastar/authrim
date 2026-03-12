@@ -42,7 +42,7 @@ export interface WranglerConfig {
   };
   migrations?: Array<{ tag: string; new_sqlite_classes?: string[] }>;
   vars: Record<string, string>;
-  routes?: Array<{ pattern: string; zone_name: string }>;
+  routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
   queues?: {
     producers?: Array<{ queue: string; binding: string }>;
   };
@@ -261,7 +261,9 @@ export function generateWranglerConfig(
     main: COMPONENT_ENTRY_POINTS[component],
     compatibility_date: '2024-09-23',
     compatibility_flags: ['nodejs_compat'],
-    workers_dev: !config.urls?.api?.custom, // Enable workers_dev if no custom domain
+    // With Service Binding, Pages can reach ar-router internally without workers.dev.
+    // Disable workers.dev when a custom API domain is set to avoid dual public endpoints.
+    workers_dev: !config.urls?.api?.custom,
     vars: generateEnvVars(component, config, workersSubdomain),
   };
 
@@ -389,34 +391,30 @@ export function generateWranglerConfig(
 
     wranglerConfig.services = services;
 
-    // Routes for custom domain (ar-router only - catch-all)
+    // Routes / Custom Domain Binding for ar-router (catch-all)
     if (config.urls?.api?.custom) {
       try {
         const customUrl = new URL(config.urls.api.custom);
         const hostname = customUrl.hostname;
-        const zoneName = extractZoneName(hostname);
-        wranglerConfig.routes = [{ pattern: `${hostname}/*`, zone_name: zoneName }];
+        if (config.urls?.api?.customDomainBinding) {
+          // Custom Domain Binding: Cloudflare assigns the domain directly to the Worker.
+          // No zone_name required; pattern is just the hostname.
+          wranglerConfig.routes = [{ pattern: hostname, custom_domain: true }];
+        } else {
+          // Route: Pattern-based routing via DNS zone.
+          const zoneName = extractZoneName(hostname);
+          wranglerConfig.routes = [{ pattern: `${hostname}/*`, zone_name: zoneName }];
+        }
       } catch {
-        // Invalid URL, skip routes configuration
+        // Invalid URL, skip routing configuration
       }
     }
   }
 
-  // Routes for custom domain (individual components - when not using ar-router)
-  // This enables direct deployment without ar-router in custom domain environments
-  if (component !== 'ar-router' && config.urls?.api?.custom) {
-    try {
-      const customUrl = new URL(config.urls.api.custom);
-      const hostname = customUrl.hostname;
-      const zoneName = extractZoneName(hostname);
-      const componentRoutes = generateRoutes(component, hostname, zoneName);
-      if (componentRoutes.length > 0) {
-        wranglerConfig.routes = componentRoutes;
-      }
-    } catch {
-      // Invalid URL, skip routes configuration
-    }
-  }
+  // Custom-domain routing is terminated at ar-router.
+  // Non-router workers are reached through service bindings, otherwise ar-router's
+  // special-case routing (e.g. /api/auth/login-methods, /api/admin/setup-token/*)
+  // is bypassed by Cloudflare route precedence.
 
   return wranglerConfig;
 }
@@ -806,7 +804,12 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       for (const route of config.routes) {
         lines.push(`[[env.${envName}.routes]]`);
         lines.push(`pattern = "${route.pattern}"`);
-        lines.push(`zone_name = "${route.zone_name}"`);
+        if (route.zone_name) {
+          lines.push(`zone_name = "${route.zone_name}"`);
+        }
+        if (route.custom_domain) {
+          lines.push(`custom_domain = true`);
+        }
         lines.push('');
       }
     }
@@ -940,7 +943,12 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       for (const route of config.routes) {
         lines.push('[[routes]]');
         lines.push(`pattern = "${route.pattern}"`);
-        lines.push(`zone_name = "${route.zone_name}"`);
+        if (route.zone_name) {
+          lines.push(`zone_name = "${route.zone_name}"`);
+        }
+        if (route.custom_domain) {
+          lines.push(`custom_domain = true`);
+        }
         lines.push('');
       }
     }
@@ -976,7 +984,10 @@ export function generateRoutes(
         { pattern: `${domain}/_internal/*`, zone_name: zoneName },
         // Admin initial setup routes (one-time use for first admin account creation)
         { pattern: `${domain}/admin-init-setup*`, zone_name: zoneName },
-        { pattern: `${domain}/api/admin-init-setup/*`, zone_name: zoneName }
+        { pattern: `${domain}/api/admin-init-setup/*`, zone_name: zoneName },
+        // Admin passkey setup and login routes must go directly to ar-auth
+        { pattern: `${domain}/api/admin/setup-token/*`, zone_name: zoneName },
+        { pattern: `${domain}/api/admin/auth/*`, zone_name: zoneName }
       );
       break;
     case 'ar-token':
@@ -998,10 +1009,7 @@ export function generateRoutes(
       );
       break;
     case 'ar-management':
-      routes.push(
-        { pattern: `${domain}/api/admin/*`, zone_name: zoneName },
-        { pattern: `${domain}/register`, zone_name: zoneName }
-      );
+      routes.push({ pattern: `${domain}/register`, zone_name: zoneName });
       break;
   }
 
@@ -1123,4 +1131,44 @@ export async function validateWranglerConfigs(
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Pages wrangler.toml generation
+// ---------------------------------------------------------------------------
+
+export interface PagesWranglerOptions {
+  component: 'ar-login-ui' | 'ar-admin-ui';
+  env: string;
+  needsProxy: boolean;
+}
+
+/**
+ * Generate wrangler.toml content for a Cloudflare Pages component.
+ *
+ * When needsProxy=true, includes a [[services]] binding so the Pages Function
+ * can reach ar-router via Service Binding (no workers.dev needed, ITP-safe).
+ *
+ * Pages projects are separate per environment (e.g., test-ar-login-ui,
+ * prod-ar-login-ui), so no [env.*] sections are required — the file is flat.
+ */
+export function generatePagesWranglerConfig(options: PagesWranglerOptions): string {
+  const { component, env, needsProxy } = options;
+  const workerName = `${env}-ar-router`;
+
+  const lines = [
+    `# Auto-generated by @authrim/setup - do not edit manually`,
+    `name = "${env}-${component}"`,
+    `compatibility_date = "2024-01-01"`,
+    `compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]`,
+    `pages_build_output_dir = ".svelte-kit/cloudflare"`,
+  ];
+
+  if (needsProxy) {
+    lines.push(``, `[[services]]`);
+    lines.push(`binding = "AR_ROUTER"`);
+    lines.push(`service = "${workerName}"`);
+  }
+
+  return lines.join('\n') + '\n';
 }

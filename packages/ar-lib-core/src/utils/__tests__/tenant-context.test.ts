@@ -64,6 +64,77 @@ describe('getTenantIdFromHost', () => {
   });
 });
 
+describe('resolveTenantFromRequest', () => {
+  describe('multi-tenant mode', () => {
+    const multiTenantEnv: Partial<Env> = {
+      BASE_DOMAIN: 'test.authrim.com',
+      DEFAULT_TENANT_ID: 'default',
+    };
+
+    it('should resolve default tenant from X-Authrim-Forwarded-Host when Host is workers.dev', () => {
+      const request = new Request(
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        {
+          headers: {
+            Host: 'test-ar-router.sgrastar.workers.dev',
+            'X-Authrim-Forwarded-Host': 'test.authrim.com',
+          },
+        }
+      );
+
+      const result = resolveTenantFromRequest(request, multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('default');
+    });
+
+    it('should resolve tenant subdomain from X-Forwarded-Host when Host is workers.dev', () => {
+      const request = new Request(
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        {
+          headers: {
+            Host: 'test-ar-router.sgrastar.workers.dev',
+            'X-Forwarded-Host': 'acme.test.authrim.com',
+          },
+        }
+      );
+
+      const result = resolveTenantFromRequest(request, multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('acme');
+    });
+
+    it('should prefer X-Authrim-Forwarded-Host over X-Forwarded-Host', () => {
+      const request = new Request(
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        {
+          headers: {
+            Host: 'test-ar-router.sgrastar.workers.dev',
+            'X-Authrim-Forwarded-Host': 'test.authrim.com',
+            'X-Forwarded-Host': 'acme.test.authrim.com',
+          },
+        }
+      );
+
+      const result = resolveTenantFromRequest(request, multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('default');
+    });
+
+    it('should prefer Host when it already resolves to a tenant', () => {
+      const request = new Request('https://acme.test.authrim.com/api/auth/login-methods', {
+        headers: {
+          Host: 'acme.test.authrim.com',
+          'X-Forwarded-Host': 'test.authrim.com',
+        },
+      });
+
+      const result = resolveTenantFromRequest(request, multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('acme');
+    });
+  });
+});
+
 describe('remapShardIndex', () => {
   it('should keep shard index within range', () => {
     expect(remapShardIndex(15, 32)).toBe(15); // No remap

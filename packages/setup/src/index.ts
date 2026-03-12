@@ -92,8 +92,9 @@ program
     const { deployWorker, deployPagesComponent, buildApiPackages, PAGES_COMPONENTS } =
       await import('./core/deploy.js');
     const { loadLockFileAuto, saveLockFile } = await import('./core/lock.js');
-    const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths } =
+    const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
       await import('./core/paths.js');
+    const { resolveUiDeploymentSettings } = await import('./core/ui-deployment.js');
 
     console.log(chalk.bold('\n🔧 Authrim Component Upgrade\n'));
 
@@ -189,43 +190,56 @@ program
         const apiBaseUrl =
           cfgUrls?.api?.custom || cfgUrls?.api?.auto || `https://${env}-ar-router.workers.dev`;
 
-        // Get ui.env path for new structure
-        let uiEnvPath: string | undefined;
-        if (resolved.type === 'new') {
-          uiEnvPath = (resolved.paths as { uiEnv: string }).uiEnv;
+        let loginUiClientId: string | undefined;
+        if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
+          const loginUiUrl =
+            (cfg as { urls?: { loginUi?: { custom?: string; auto?: string } } })?.urls?.loginUi
+              ?.custom ||
+            (cfg as { urls?: { loginUi?: { custom?: string; auto?: string } } })?.urls?.loginUi
+              ?.auto ||
+            `https://${env}-ar-login-ui.pages.dev`;
+          const foundKeys = findKeysDirectory({
+            env,
+            sourceDir: baseDir,
+            keysBaseDir: process.cwd(),
+          });
+          const adminApiSecretPath = foundKeys
+            ? join(foundKeys.path, 'admin_api_secret.txt')
+            : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keyFiles
+                .adminApiSecret;
 
-          // Sync ui.env before build
-          const cfgUrlsTyped = cfg as {
-            urls?: {
-              api?: { custom?: string };
-              adminUi?: { custom?: string };
-            };
-          };
-          const apiHasCustomDomain = !!cfgUrlsTyped?.urls?.api?.custom;
-          const adminUiHasCustomDomain = !!cfgUrlsTyped?.urls?.adminUi?.custom;
-          const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+          const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
+          const clientResult = await ensureLoginUiClient({
+            apiBaseUrl,
+            loginUiUrl,
+            adminApiSecretPath,
+            onProgress: (msg) => {
+              buildSpinner.text = msg;
+            },
+          });
 
-          const { saveUiEnv } = await import('./core/ui-env.js');
-          try {
-            await saveUiEnv(uiEnvPath, {
-              PUBLIC_API_BASE_URL: apiBaseUrl,
-              API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
-            });
-          } catch {
-            console.log(chalk.yellow('  Warning: Could not sync ui.env'));
+          if (clientResult.success && clientResult.clientId) {
+            loginUiClientId = clientResult.clientId;
           }
         }
 
         buildSpinner.succeed(`${componentName} ready for deployment`);
 
         const deploySpinner = ora(`Deploying ${componentName}...`).start();
+        const uiSettings = resolveUiDeploymentSettings({
+          component: componentName as 'ar-admin-ui' | 'ar-login-ui',
+          config: cfg as any,
+          apiBaseUrl,
+          loginUiClientId,
+        });
 
         const result = await deployPagesComponent(componentName as 'ar-admin-ui' | 'ar-login-ui', {
           env,
           rootDir: resolve(baseDir),
           dryRun: dryRun || false,
-          apiBaseUrl,
-          uiEnvPath,
+          apiBaseUrl: uiSettings.apiBaseUrl,
+          runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
+          uiEnvConfig: uiSettings.uiEnv,
           onProgress: (msg) => {
             deploySpinner.text = msg;
           },

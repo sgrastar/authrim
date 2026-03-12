@@ -2,25 +2,138 @@
  * SvelteKit Server Hooks
  *
  * Provides server-side middleware for:
+ * - Same-origin proxying for Pages deployments
  * - Security headers (CSP, HSTS, COOP, CORP, etc.)
  * - CSRF protection via Origin/Referer header validation
  * - Accept-Language based locale detection
  */
 
-import { env } from '$env/dynamic/public';
-import type { Handle } from '@sveltejs/kit';
+import { env as dynamicEnv } from '$env/dynamic/public';
+import type { Handle, RequestEvent } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 
-/**
- * Build connect-src directive with API origin if cross-origin
- */
-function buildConnectSrc(): string {
-	const apiBaseUrl = env.PUBLIC_API_BASE_URL;
+interface ServiceBinding {
+	fetch(request: Request): Promise<Response>;
+}
 
+function isValidProxyUrl(url: string): boolean {
+	try {
+		const parsed = new URL(url);
+		return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+	} catch {
+		return false;
+	}
+}
+
+function getValidProxyUrl(candidate: unknown): string | undefined {
+	const value = String(candidate || '').trim();
+	if (!value || value === '__DISABLED__' || !isValidProxyUrl(value)) {
+		return undefined;
+	}
+
+	return value;
+}
+
+function getConfiguredApiBackendUrl(platformEnv?: Record<string, unknown>): string | undefined {
+	const candidates = [
+		platformEnv?.API_BACKEND_URL,
+		platformEnv?.PUBLIC_API_PROXY_BACKEND_URL,
+		dynamicEnv.PUBLIC_API_PROXY_BACKEND_URL,
+		import.meta.env.PUBLIC_API_PROXY_BACKEND_URL,
+		typeof process !== 'undefined' ? process.env?.API_BACKEND_URL : undefined,
+		typeof process !== 'undefined' ? process.env?.PUBLIC_API_PROXY_BACKEND_URL : undefined
+	];
+
+	for (const candidate of candidates) {
+		const url = getValidProxyUrl(candidate);
+		if (url) {
+			return url;
+		}
+	}
+
+	return undefined;
+}
+
+function getConfiguredForwardedHost(platformEnv?: Record<string, unknown>): string | undefined {
+	const candidates = [
+		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
+		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		import.meta.env.PUBLIC_AUTHRIM_ISSUER,
+		platformEnv?.PUBLIC_API_BASE_URL,
+		dynamicEnv.PUBLIC_API_BASE_URL,
+		import.meta.env.PUBLIC_API_BASE_URL,
+		platformEnv?.PUBLIC_API_PROXY_BACKEND_URL,
+		dynamicEnv.PUBLIC_API_PROXY_BACKEND_URL,
+		import.meta.env.PUBLIC_API_PROXY_BACKEND_URL,
+		platformEnv?.API_BACKEND_URL,
+		typeof process !== 'undefined' ? process.env?.PUBLIC_AUTHRIM_ISSUER : undefined,
+		typeof process !== 'undefined' ? process.env?.PUBLIC_API_BASE_URL : undefined,
+		typeof process !== 'undefined' ? process.env?.PUBLIC_API_PROXY_BACKEND_URL : undefined,
+		typeof process !== 'undefined' ? process.env?.API_BACKEND_URL : undefined
+	];
+
+	for (const candidate of candidates) {
+		const url = getValidProxyUrl(candidate);
+		if (!url) {
+			continue;
+		}
+
+		try {
+			return new URL(url).host;
+		} catch {
+			// Ignore invalid values and continue.
+		}
+	}
+
+	return undefined;
+}
+
+function getApiPublicUrl(platformEnv?: Record<string, unknown>): string | undefined {
+	const candidates = [
+		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
+		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		import.meta.env.PUBLIC_AUTHRIM_ISSUER
+	];
+	for (const candidate of candidates) {
+		const url = getValidProxyUrl(candidate);
+		if (url) return url;
+	}
+	return undefined;
+}
+
+function getApiBackendUrl(platformEnv?: Record<string, unknown>): string {
+	return getConfiguredApiBackendUrl(platformEnv) ?? 'http://localhost:8786';
+}
+
+function isDevelopmentRuntime(): boolean {
+	if (import.meta.env.DEV) {
+		return true;
+	}
+
+	if (typeof process !== 'undefined' && process.env?.NODE_ENV) {
+		return process.env.NODE_ENV !== 'production';
+	}
+
+	return false;
+}
+
+function isProxyEnabled(platformEnv?: Record<string, unknown>): boolean {
+	return getConfiguredApiBackendUrl(platformEnv) !== undefined || isDevelopmentRuntime();
+}
+
+function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
+	// When proxy is enabled, browser only requests to same-origin /api/* — 'self' is sufficient
+	if (isProxyEnabled(platformEnv)) {
+		return "connect-src 'self'";
+	}
+	// When proxy is disabled, add the API origin only if PUBLIC_API_BASE_URL is set to a full URL
+	const apiBaseUrl =
+		(platformEnv?.PUBLIC_API_BASE_URL as string | undefined)?.trim() ||
+		dynamicEnv.PUBLIC_API_BASE_URL?.trim() ||
+		import.meta.env.PUBLIC_API_BASE_URL?.trim();
 	if (apiBaseUrl) {
 		try {
-			const apiOrigin = new URL(apiBaseUrl).origin;
-			return `connect-src 'self' ${apiOrigin}`;
+			return `connect-src 'self' ${new URL(apiBaseUrl).origin}`;
 		} catch {
 			// Invalid URL, fall back to self only
 		}
@@ -28,12 +141,230 @@ function buildConnectSrc(): string {
 	return "connect-src 'self'";
 }
 
+function shouldProxyPath(pathname: string): boolean {
+	return (
+		(pathname.startsWith('/api/') && pathname !== '/api/set-language') || pathname === '/logout'
+	);
+}
+
+function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefined {
+	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
+}
+
+function buildProxyHeaders(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined,
+	forwardedHost: string
+): Headers {
+	const allowedHeaders = [
+		'accept',
+		'accept-language',
+		'content-type',
+		'content-length',
+		'authorization',
+		'cookie',
+		'origin',
+		'referer',
+		'user-agent',
+		'x-request-id',
+		'x-correlation-id',
+		'x-session-id',
+		'x-diagnostic-session-id'
+	];
+
+	const headers = new Headers();
+	for (const headerName of allowedHeaders) {
+		const value = event.request.headers.get(headerName);
+		if (value) {
+			headers.set(headerName, value);
+		}
+	}
+
+	const clientIP = event.getClientAddress();
+	if (clientIP) {
+		headers.set('X-Forwarded-For', clientIP);
+	}
+	headers.set('X-Authrim-Forwarded-Host', forwardedHost);
+	headers.set('X-Forwarded-Host', forwardedHost);
+	headers.set('X-Forwarded-Proto', 'https');
+
+	return headers;
+}
+
+async function readBody(event: RequestEvent): Promise<string | undefined> {
+	if (event.request.method === 'GET' || event.request.method === 'HEAD') {
+		return undefined;
+	}
+
+	const maxBodySize = 10 * 1024 * 1024;
+	const contentLength = event.request.headers.get('content-length');
+	if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
+		return '__TOO_LARGE__';
+	}
+
+	const body = await event.request.text();
+	if (body.length > maxBodySize) {
+		return '__TOO_LARGE__';
+	}
+	return body;
+}
+
+function buildProxyResponse(response: Response): Response {
+	const responseHeaders = new Headers();
+	const hopByHopHeaders = [
+		'connection',
+		'keep-alive',
+		'proxy-authenticate',
+		'proxy-authorization',
+		'te',
+		'trailers',
+		'transfer-encoding',
+		'upgrade'
+	];
+
+	response.headers.forEach((value, key) => {
+		const lowerKey = key.toLowerCase();
+		if (hopByHopHeaders.includes(lowerKey)) {
+			return;
+		}
+
+		if (lowerKey === 'set-cookie') {
+			const modifiedCookie = value
+				.split(';')
+				.filter((part) => !part.trim().toLowerCase().startsWith('domain='))
+				.join(';');
+			responseHeaders.append(key, modifiedCookie);
+		} else {
+			responseHeaders.append(key, value);
+		}
+	});
+
+	return new Response(response.body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: responseHeaders
+	});
+}
+
+function handleProxyError(error: unknown): Response {
+	const errorType = error instanceof Error ? error.name : 'Unknown';
+	console.error(`API proxy error: ${errorType}`);
+
+	if (error instanceof Error && error.name === 'AbortError') {
+		return new Response(
+			JSON.stringify({
+				error: 'gateway_timeout',
+				error_description: 'Backend server did not respond in time'
+			}),
+			{
+				status: 504,
+				headers: { 'Content-Type': 'application/json' }
+			}
+		);
+	}
+
+	return new Response(
+		JSON.stringify({
+			error: 'bad_gateway',
+			error_description: 'Failed to connect to API server'
+		}),
+		{
+			status: 502,
+			headers: { 'Content-Type': 'application/json' }
+		}
+	);
+}
+
+const apiProxy: Handle = async ({ event, resolve }) => {
+	const platformEnv = getPlatformEnv(event);
+
+	if (!shouldProxyPath(event.url.pathname)) {
+		return resolve(event);
+	}
+
+	const arRouter = platformEnv?.AR_ROUTER as ServiceBinding | undefined;
+	const proxyEnabled = arRouter !== undefined || isProxyEnabled(platformEnv);
+
+	if (!proxyEnabled) {
+		return resolve(event);
+	}
+
+	const body = await readBody(event);
+	if (body === '__TOO_LARGE__') {
+		return new Response(
+			JSON.stringify({
+				error: 'payload_too_large',
+				error_description: 'Request body exceeds maximum allowed size'
+			}),
+			{
+				status: 413,
+				headers: { 'Content-Type': 'application/json' }
+			}
+		);
+	}
+
+	if (arRouter) {
+		// === Service Binding path (Cloudflare Pages production) ===
+		// AR_ROUTER binding routes internally — no workers.dev needed.
+		const apiPublicUrl = getApiPublicUrl(platformEnv) ?? 'https://api-internal';
+		const forwardedHost = new URL(apiPublicUrl).host;
+		const targetUrl = `${apiPublicUrl}${event.url.pathname}${event.url.search}`;
+		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+
+		try {
+			const response = await Promise.race([
+				arRouter.fetch(
+					new Request(targetUrl, {
+						method: event.request.method,
+						headers,
+						body
+					})
+				),
+				new Promise<never>((_, reject) =>
+					setTimeout(
+						() => reject(Object.assign(new Error('Timeout'), { name: 'AbortError' })),
+						30000
+					)
+				)
+			]);
+			return buildProxyResponse(response);
+		} catch (error) {
+			return handleProxyError(error);
+		}
+	} else {
+		// === HTTP fetch path (local development / fallback) ===
+		const apiBackendUrl = getApiBackendUrl(platformEnv);
+		const targetUrl = `${apiBackendUrl}${event.url.pathname}${event.url.search}`;
+		const forwardedHost = getConfiguredForwardedHost(platformEnv) ?? event.url.host;
+		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+		try {
+			const response = await fetch(targetUrl, {
+				method: event.request.method,
+				headers,
+				body,
+				signal: controller.signal
+			});
+
+			clearTimeout(timeoutId);
+			return buildProxyResponse(response);
+		} catch (error) {
+			clearTimeout(timeoutId);
+			return handleProxyError(error);
+		}
+	}
+};
+
 /**
  * Security headers hook
  * Adds comprehensive security headers to all responses.
  */
 const securityHeaders: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event);
+	const platformEnv = getPlatformEnv(event);
 
 	// Content Security Policy
 	// - 'unsafe-inline' required for SvelteKit style injection and inline scripts
@@ -46,7 +377,7 @@ const securityHeaders: Handle = async ({ event, resolve }) => {
 			"script-src 'self' 'unsafe-inline'",
 			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
 			"img-src 'self' https: data:",
-			buildConnectSrc(),
+			buildConnectSrc(platformEnv),
 			"font-src 'self' https://fonts.gstatic.com",
 			"frame-ancestors 'self'",
 			"base-uri 'self'",
@@ -144,4 +475,4 @@ const localeDetection: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-export const handle = sequence(securityHeaders, csrfProtection, localeDetection);
+export const handle = sequence(apiProxy, securityHeaders, csrfProtection, localeDetection);

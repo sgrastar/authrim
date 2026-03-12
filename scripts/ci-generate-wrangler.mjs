@@ -20,11 +20,14 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const rootDir = resolve(__dirname, '..');
 
 // Import from built setup package
-const { generateWranglerConfig, toToml } = await import(
+const { generateWranglerConfig, toToml, generatePagesWranglerConfig } = await import(
   join(rootDir, 'packages/setup/dist/core/wrangler.js')
 );
 const { CORE_WORKER_COMPONENTS, OPTIONAL_WORKER_COMPONENTS } = await import(
   join(rootDir, 'packages/setup/dist/core/naming.js')
+);
+const { resolveUiDeploymentSettings } = await import(
+  join(rootDir, 'packages/setup/dist/core/ui-deployment.js')
 );
 
 const env = process.env.DEPLOY_ENV;
@@ -100,6 +103,28 @@ for (const component of components) {
 
   await writeFile(tomlPath, tomlContent, 'utf-8');
   console.log(`✅ ${component}/wrangler.toml`);
+  generated++;
+}
+
+// Generate Pages wrangler.toml files (ar-login-ui, ar-admin-ui)
+const pagesComponents = ['ar-login-ui', 'ar-admin-ui'];
+for (const component of pagesComponents) {
+  const componentDir = join(rootDir, 'packages', component);
+  if (!existsSync(componentDir)) {
+    skipped.push(component);
+    continue;
+  }
+
+  const settings = resolveUiDeploymentSettings({ component, config });
+  const tomlContent = generatePagesWranglerConfig({
+    component,
+    env,
+    needsProxy: settings.needsProxy,
+  });
+  const tomlPath = join(componentDir, 'wrangler.toml');
+  await writeFile(tomlPath, tomlContent, 'utf-8');
+  const sbNote = settings.needsProxy ? ' (with AR_ROUTER Service Binding)' : '';
+  console.log(`✅ ${component}/wrangler.toml${sbNote}`);
   generated++;
 }
 

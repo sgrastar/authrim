@@ -17,13 +17,10 @@ const config = {
 				exclude: [
 					'<all>',
 					// OAuth/OIDC endpoints handled by Workers
+					// Keep /api/* and /logout on the Pages worker so hooks.server.ts can proxy them.
 					'/authorize',
 					'/authorize/*',
 					'/as/*',
-					'/api/auth/*',
-					'/api/sessions/*',
-					'/logout',
-					'/logout/*',
 					'/token',
 					'/userinfo',
 					'/introspect',
@@ -33,8 +30,7 @@ const config = {
 					// Async flow endpoints
 					'/device_authorization',
 					'/bc-authorize',
-					'/api/device/*',
-					'/api/ciba/*'
+					'/api/device/*'
 				]
 			}
 		}),

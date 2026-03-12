@@ -95,10 +95,9 @@ interface APIError {
 }
 
 // Get API base URL from environment variable or use default
-// In production (Cloudflare Pages), set PUBLIC_API_BASE_URL in .env file
-// In development, it defaults to localhost:8786
-// If browser is available, use window.location.origin, otherwise use localhost
-function getApiBaseUrl(): string {
+// In production, separate Pages deployments either proxy same-origin requests
+// or inject a cross-origin PUBLIC_API_BASE_URL at build time.
+export function resolveApiBaseUrl(): string {
 	// Try to get from environment variable (if set during build)
 	try {
 		// Use dynamic import to avoid build-time errors
@@ -117,7 +116,7 @@ function getApiBaseUrl(): string {
 	return 'http://localhost:8786';
 }
 
-export const API_BASE_URL = getApiBaseUrl();
+export const API_BASE_URL = resolveApiBaseUrl();
 
 const DEFAULT_API_TIMEOUT = 30000; // 30 seconds
 const DIAGNOSTIC_SESSION_KEY = 'authrim_diagnostic_session_id';

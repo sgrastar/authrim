@@ -4613,21 +4613,12 @@ export function getHtmlTemplate(
       const now = new Date().toISOString();
       const env = config.env;
 
-      // Calculate auto-generated URLs
-      const workersDomain = env + '-ar-router.workers.dev';
+      // Calculate auto-generated URLs (use workersSubdomain if available for full-form URL)
+      const workersDomain = workersSubdomain
+        ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-router.workers.dev';
       const loginPagesDomain = env + '-ar-login-ui.pages.dev';
       const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
-
-      // Build issuer URL based on tenant settings
-      let issuerAutoUrl = 'https://' + workersDomain;
-      if (config.tenant && config.tenant.baseDomain) {
-        if (config.tenant.nakedDomain) {
-          issuerAutoUrl = 'https://' + config.tenant.baseDomain;
-        } else {
-          const tenantName = config.tenant.name || 'default';
-          issuerAutoUrl = 'https://' + tenantName + '.' + config.tenant.baseDomain;
-        }
-      }
 
       // Build config in AuthrimConfigSchema format
       const configToSave = {
@@ -4640,7 +4631,9 @@ export function getHtmlTemplate(
         urls: {
           api: {
             custom: config.apiDomain || null,
-            auto: config.apiDomain ? issuerAutoUrl : 'https://' + workersDomain,
+            // api.auto must always be the workers.dev URL (used for proxy backend and CORS).
+            // The custom domain (issuer URL) belongs in api.custom, not api.auto.
+            auto: 'https://' + workersDomain,
           },
           loginUi: {
             custom: config.loginUiDomain || null,

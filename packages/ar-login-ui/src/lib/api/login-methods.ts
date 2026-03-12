@@ -5,8 +5,7 @@
  * Used to dynamically render authentication options on the login page.
  */
 
-import { browser } from '$app/environment';
-import { buildDiagnosticHeaders } from '$lib/api/client';
+import { buildDiagnosticHeaders, API_BASE_URL } from '$lib/api/client';
 
 // =============================================================================
 // Types
@@ -75,28 +74,6 @@ export interface LoginMethodsError {
 // API Client
 // =============================================================================
 
-function getApiBaseUrl(): string {
-	try {
-		const envUrl = import.meta.env.PUBLIC_API_BASE_URL;
-		if (envUrl) return envUrl;
-	} catch {
-		// Not set
-	}
-
-	try {
-		const envIssuer = import.meta.env.PUBLIC_AUTHRIM_ISSUER;
-		if (envIssuer) return envIssuer;
-	} catch {
-		// Not set
-	}
-
-	if (browser && typeof window !== 'undefined') {
-		return window.location.origin;
-	}
-
-	return 'http://localhost:8786';
-}
-
 let cachedResponse: LoginMethodsResponse | null = null;
 let cacheExpiry = 0;
 
@@ -117,7 +94,7 @@ export async function fetchLoginMethods(): Promise<{
 	const timeoutId = setTimeout(() => controller.abort(), 15000);
 
 	try {
-		const url = `${getApiBaseUrl()}/api/auth/login-methods`;
+		const url = `${API_BASE_URL}/api/auth/login-methods`;
 		const response = await fetch(url, {
 			method: 'GET',
 			headers: buildDiagnosticHeaders({ Accept: 'application/json' }),

@@ -49,6 +49,7 @@ import {
 } from '../core/paths.js';
 import { generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { syncWranglerConfigs } from '../core/wrangler-sync.js';
+import { buildUrlsConfig } from '../core/url-config.js';
 import {
   deployAll,
   uploadSecrets,
@@ -67,6 +68,8 @@ import {
   getComponentsToUpdate,
 } from '../core/version.js';
 import { completeInitialSetup } from '../core/admin.js';
+import { resolveUiDeploymentSettings } from '../core/ui-deployment.js';
+import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
 import { writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -368,6 +371,10 @@ export function createApiRoutes(): Hono {
 
         // Save config
         await writeFile(envPaths.config, JSON.stringify(config, null, 2));
+        const initialUiEnv = buildInitialUiEnvConfig(config);
+        if (initialUiEnv) {
+          await saveUiEnv(envPaths.uiEnv, initialUiEnv);
+        }
         state.config = config;
 
         return c.json({ success: true, configPath: envPaths.config, structure: 'new' });
@@ -411,33 +418,15 @@ export function createApiRoutes(): Hono {
           };
         }
 
-        // Helper function to add https:// if not present
-        const ensureHttps = (domain: string | null): string | null => {
-          if (!domain) return null;
-          return domain.startsWith('http://') || domain.startsWith('https://')
-            ? domain
-            : `https://${domain}`;
-        };
-
         // Update URLs with domain configuration
-        config.urls = {
-          api: {
-            custom: ensureHttps(apiDomain),
-            auto: `https://${env}-ar-router.workers.dev`,
-            zoneId: zoneId || null,
-            customDomainBinding: customDomainBinding ?? false,
-          },
-          loginUi: {
-            custom: ensureHttps(loginUiDomain),
-            auto: `https://${env}-ar-login-ui.pages.dev`,
-            sameAsApi: false,
-          },
-          adminUi: {
-            custom: ensureHttps(adminUiDomain),
-            auto: `https://${env}-ar-admin-ui.pages.dev`,
-            sameAsApi: false,
-          },
-        };
+        config.urls = buildUrlsConfig({
+          env,
+          apiDomain,
+          loginUiDomain,
+          adminUiDomain,
+          zoneId: zoneId || null,
+          customDomainBinding: customDomainBinding ?? false,
+        });
 
         // Update components if provided
         if (components) {
@@ -678,29 +667,32 @@ export function createApiRoutes(): Hono {
         const apiUrl = workersSubdomain
           ? `https://${env}-ar-router.${workersSubdomain}.workers.dev`
           : `https://${env}-ar-router.workers.dev`;
-        const loginUiUrl = `https://${env}-ar-login-ui.pages.dev`;
-        const adminUiUrl = `https://${env}-ar-admin-ui.pages.dev`;
 
-        config.urls = {
-          api: {
-            ...config.urls?.api,
-            auto: apiUrl,
+        config.urls = buildUrlsConfig({
+          env,
+          apiDomain: config.urls?.api?.custom || null,
+          loginUiDomain: config.urls?.loginUi?.custom || null,
+          adminUiDomain: config.urls?.adminUi?.custom || null,
+          zoneId: config.urls?.api?.zoneId ?? null,
+          customDomainBinding: config.urls?.api?.customDomainBinding ?? false,
+          workersSubdomain,
+          existingUrls: {
+            api: {
+              ...config.urls?.api,
+              auto: apiUrl,
+            },
+            loginUi: config.urls?.loginUi,
+            adminUi: config.urls?.adminUi,
           },
-          loginUi: {
-            sameAsApi: false,
-            ...config.urls?.loginUi,
-            auto: loginUiUrl,
-          },
-          adminUi: {
-            sameAsApi: false,
-            ...config.urls?.adminUi,
-            auto: adminUiUrl,
-          },
-        };
+        });
         addProgress(`Configured URLs: API=${apiUrl}`);
 
         const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
         await writeFile(envPaths.config, JSON.stringify(config, null, 2), 'utf-8');
+        const initialUiEnv = buildInitialUiEnvConfig(config);
+        if (initialUiEnv) {
+          await saveUiEnv(envPaths.uiEnv, initialUiEnv);
+        }
         state.config = config;
 
         // Generate wrangler.toml files
@@ -1078,59 +1070,52 @@ export function createApiRoutes(): Hono {
             cfg?.urls?.api?.auto ||
             `https://${env}-ar-router.workers.dev`;
 
-          // Get ui.env path for Vite builds (new structure only)
-          // Always regenerate ui.env from config to ensure sync
-          let uiEnvPath: string | undefined;
-          if (resolved.type === 'new') {
-            uiEnvPath = (resolved.paths as EnvironmentPaths).uiEnv;
+          let loginUiClientId: string | undefined;
+          if (cfg?.components?.loginUi && !dryRun && resolved.type === 'new') {
+            const loginUiUrl =
+              cfg?.urls?.loginUi?.custom ||
+              cfg?.urls?.loginUi?.auto ||
+              `https://${env}-ar-login-ui.pages.dev`;
+            const foundKeys = findKeysDirectory({
+              env,
+              sourceDir: rootDir,
+              keysBaseDir: process.cwd(),
+            });
+            const adminApiSecretPath = foundKeys
+              ? join(foundKeys.path, 'admin_api_secret.txt')
+              : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
 
-            // Regenerate ui.env from config.json to ensure they are in sync
-            // Detect if custom domains are used (same registrable domain = no need for proxy)
-            const apiHasCustomDomain = !!cfg?.urls?.api?.custom;
-            const adminUiHasCustomDomain = !!cfg?.urls?.adminUi?.custom;
-            const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+            const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
+            const clientResult = await ensureLoginUiClient({
+              apiBaseUrl,
+              loginUiUrl,
+              adminApiSecretPath,
+              onProgress: addProgress,
+            });
 
-            // Auto-create Login UI OAuth client (idempotent)
-            let loginUiClientId: string | undefined;
-            if (cfg?.components?.loginUi && !dryRun) {
-              const loginUiUrl =
-                cfg?.urls?.loginUi?.custom ||
-                cfg?.urls?.loginUi?.auto ||
-                `https://${env}-ar-login-ui.pages.dev`;
-
-              const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
-              const clientResult = await ensureLoginUiClient({
-                apiBaseUrl,
-                loginUiUrl,
-                adminApiSecretPath: (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret,
-                onProgress: addProgress,
-              });
-
-              if (clientResult.success && clientResult.clientId) {
-                loginUiClientId = clientResult.clientId;
-                if (clientResult.alreadyExists) {
-                  addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
-                } else {
-                  addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
-                }
+            if (clientResult.success && clientResult.clientId) {
+              loginUiClientId = clientResult.clientId;
+              if (clientResult.alreadyExists) {
+                addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
               } else {
-                addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
+                addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
               }
-            }
-
-            const { saveUiEnv } = await import('../core/ui-env.js');
-            try {
-              await saveUiEnv(uiEnvPath, {
-                PUBLIC_API_BASE_URL: apiBaseUrl,
-                API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
-                PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-                PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-              });
-              addProgress(`ui.env synced (API: ${apiBaseUrl})`);
-            } catch (syncError) {
-              addProgress(`⚠️  Could not sync ui.env: ${syncError}`);
+            } else {
+              addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
             }
           }
+
+          const loginUiSettings = resolveUiDeploymentSettings({
+            component: 'ar-login-ui',
+            config: cfg as AuthrimConfig,
+            apiBaseUrl,
+            loginUiClientId,
+          });
+          const adminUiSettings = resolveUiDeploymentSettings({
+            component: 'ar-admin-ui',
+            config: cfg as AuthrimConfig,
+            apiBaseUrl,
+          });
 
           pagesSummary = await deployAllPages(
             {
@@ -1139,7 +1124,20 @@ export function createApiRoutes(): Hono {
               dryRun,
               onProgress: addProgress,
               apiBaseUrl,
-              uiEnvPath,
+              perComponent: {
+                'ar-login-ui': {
+                  apiBaseUrl: loginUiSettings.apiBaseUrl,
+                  runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
+                  uiEnvConfig: loginUiSettings.uiEnv,
+                  serviceBindingName: loginUiSettings.serviceBindingName,
+                },
+                'ar-admin-ui': {
+                  apiBaseUrl: adminUiSettings.apiBaseUrl,
+                  runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
+                  uiEnvConfig: adminUiSettings.uiEnv,
+                  serviceBindingName: adminUiSettings.serviceBindingName,
+                },
+              },
             },
             {
               loginUi: cfg?.components?.loginUi ?? true,
@@ -1899,64 +1897,55 @@ export function createApiRoutes(): Hono {
               cfg?.urls?.api?.auto ||
               `https://${env}-ar-router.workers.dev`;
 
-            // Get ui.env path for new structure
-            let uiEnvPath: string | undefined;
-            if (resolved.type === 'new') {
-              uiEnvPath = (resolved.paths as EnvironmentPaths).uiEnv;
+            let loginUiClientId: string | undefined;
+            if (componentName === 'ar-login-ui' && !dryRun && resolved.type === 'new') {
+              const loginUiUrl =
+                cfg?.urls?.loginUi?.custom ||
+                cfg?.urls?.loginUi?.auto ||
+                `https://${env}-ar-login-ui.pages.dev`;
+              const foundKeys = findKeysDirectory({
+                env,
+                sourceDir: rootDir,
+                keysBaseDir: process.cwd(),
+              });
+              const adminApiSecretPath = foundKeys
+                ? join(foundKeys.path, 'admin_api_secret.txt')
+                : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
 
-              // Sync ui.env before build
-              const apiHasCustomDomain = !!cfg?.urls?.api?.custom;
-              const adminUiHasCustomDomain = !!cfg?.urls?.adminUi?.custom;
-              const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+              const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
+              const clientResult = await ensureLoginUiClient({
+                apiBaseUrl,
+                loginUiUrl,
+                adminApiSecretPath,
+                onProgress: addProgress,
+              });
 
-              // Auto-create Login UI OAuth client if deploying ar-login-ui (idempotent)
-              let loginUiClientId: string | undefined;
-              if (componentName === 'ar-login-ui' && !dryRun) {
-                const loginUiUrl =
-                  cfg?.urls?.loginUi?.custom ||
-                  cfg?.urls?.loginUi?.auto ||
-                  `https://${env}-ar-login-ui.pages.dev`;
-
-                const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
-                const clientResult = await ensureLoginUiClient({
-                  apiBaseUrl,
-                  loginUiUrl,
-                  adminApiSecretPath: (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret,
-                  onProgress: addProgress,
-                });
-
-                if (clientResult.success && clientResult.clientId) {
-                  loginUiClientId = clientResult.clientId;
-                  if (clientResult.alreadyExists) {
-                    addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
-                  } else {
-                    addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
-                  }
+              if (clientResult.success && clientResult.clientId) {
+                loginUiClientId = clientResult.clientId;
+                if (clientResult.alreadyExists) {
+                  addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
                 } else {
-                  addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
+                  addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
                 }
-              }
-
-              const { saveUiEnv } = await import('../core/ui-env.js');
-              try {
-                await saveUiEnv(uiEnvPath, {
-                  PUBLIC_API_BASE_URL: apiBaseUrl,
-                  API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
-                  PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-                  PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-                });
-                addProgress(`ui.env synced for ${componentName}`);
-              } catch {
-                addProgress(`Warning: Could not sync ui.env`);
+              } else {
+                addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
               }
             }
+
+            const uiSettings = resolveUiDeploymentSettings({
+              component: componentName as PagesComponent,
+              config: cfg as AuthrimConfig,
+              apiBaseUrl,
+              loginUiClientId,
+            });
 
             const result = await deployPagesComponent(componentName as PagesComponent, {
               env,
               rootDir,
               dryRun,
-              apiBaseUrl,
-              uiEnvPath,
+              apiBaseUrl: uiSettings.apiBaseUrl,
+              runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
+              uiEnvConfig: uiSettings.uiEnv,
               onProgress: addProgress,
             });
 
