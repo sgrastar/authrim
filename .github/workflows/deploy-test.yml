@@ -1,13 +1,10 @@
 name: Deploy to Test Environment
 
-# Triggers: push or PR targeting the `deploy` branch.
-# Deployment is skipped when required secrets are not configured,
-# allowing forks and contributors to open PRs without needing Cloudflare access.
+# Triggers: push to develop only (i.e. after a PR is merged).
+# Running on PRs is intentionally disabled to avoid deploying unreviewed code
+# and to prevent failures caused by missing Cloudflare resource IDs in secrets.
 on:
   push:
-    branches:
-      - develop
-  pull_request:
     branches:
       - develop
 
