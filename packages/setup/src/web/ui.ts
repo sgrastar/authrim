@@ -5532,7 +5532,7 @@ export function getHtmlTemplate(
         // Try to load config to get custom API domain
         try {
           const configResponse = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
-          if (configResponse.success && configResponse.config) {
+          if (configResponse.exists && configResponse.config) {
             baseUrl = configResponse.config.urls?.api?.custom || configResponse.config.urls?.api?.auto || '';
           }
         } catch (e) {
