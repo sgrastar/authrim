@@ -4,6 +4,20 @@
                Dark (Brown, Navy, Slate)
    ============================================ */
 
+/* ============================================
+   NAV SECTION LEVEL COLORS
+   Applied against always-dark nav backgrounds.
+   Tuned per theme variant for harmony.
+   ============================================ */
+
+/* Default (Beige / warm dark nav) */
+:root {
+	--level-enduser-color: #7aadcc;   /* dusty blue */
+	--level-client-color: #68b89a;    /* sage teal */
+	--level-tenant-color: #c9a05a;    /* warm gold */
+	--level-platform-color: #9b84c4;  /* soft violet */
+}
+
 /* === Light Theme - Beige Variant (Default) === */
 :root,
 [data-theme='light'],
@@ -50,6 +64,12 @@
 
 /* === Light Theme - Blue-Gray Variant === */
 [data-theme='light'][data-variant='blue-gray'] {
+	/* Level colors (cooler tones to match blue-gray nav) */
+	--level-enduser-color: #82bfe0;
+	--level-client-color: #60c4a8;
+	--level-tenant-color: #d4ab60;
+	--level-platform-color: #a08fd4;
+
 	/* Navigation */
 	--bg-nav: rgba(51, 65, 85, 0.95);
 	--nav-active-bg: rgba(255, 255, 255, 0.15);
@@ -84,6 +104,12 @@
 
 /* === Light Theme - Green Variant === */
 [data-theme='light'][data-variant='green'] {
+	/* Level colors (shifted so client teal stands out from green nav) */
+	--level-enduser-color: #78b8d8;
+	--level-client-color: #7ac8a0;
+	--level-tenant-color: #c8a050;
+	--level-platform-color: #9880c0;
+
 	/* Navigation */
 	--bg-nav: rgba(34, 51, 34, 0.95);
 	--nav-active-bg: rgba(255, 255, 255, 0.15);
@@ -119,6 +145,12 @@
 /* === Dark Theme - Brown Variant (Default Dark) === */
 [data-theme='dark'],
 [data-theme='dark'][data-variant='brown'] {
+	/* Level colors (slightly brighter for dark mode legibility) */
+	--level-enduser-color: #88bedd;
+	--level-client-color: #72c4a6;
+	--level-tenant-color: #d4ae68;
+	--level-platform-color: #a890cc;
+
 	color-scheme: dark;
 
 	/* Navigation */
@@ -171,6 +203,12 @@
 
 /* === Dark Theme - Navy Variant === */
 [data-theme='dark'][data-variant='navy'] {
+	/* Level colors (cooler blue shifted to avoid clashing with navy nav) */
+	--level-enduser-color: #90ccee;
+	--level-client-color: #6ecaaa;
+	--level-tenant-color: #dab870;
+	--level-platform-color: #b09ad8;
+
 	/* Navigation */
 	--bg-nav: rgba(28, 37, 48, 0.98);
 	--nav-active-bg: rgba(100, 149, 237, 0.25);
@@ -207,6 +245,12 @@
 
 /* === Dark Theme - Slate Variant === */
 [data-theme='dark'][data-variant='slate'] {
+	/* Level colors (neutral slate palette) */
+	--level-enduser-color: #86bcd8;
+	--level-client-color: #6ec0a2;
+	--level-tenant-color: #d0ac62;
+	--level-platform-color: #a694cc;
+
 	/* Navigation */
 	--bg-nav: rgba(38, 42, 48, 0.98);
 	--nav-active-bg: rgba(148, 163, 184, 0.25);
@@ -384,13 +428,7 @@
 	color: var(--text-primary);
 }
 
-[data-theme='dark'] .nav-section-header {
-	color: rgba(245, 243, 240, 0.9);
-}
-
-[data-theme='dark'] .section-indicator {
-	opacity: 0.7;
-}
+/* nav-section-header color is controlled per level via CSS vars, not overridden here */
 
 [data-theme='dark'] .header-icon-btn {
 	color: var(--text-secondary);
@@ -423,9 +461,7 @@
 	border-color: var(--border);
 }
 
-[data-theme='dark'] .nav-section[data-level='system'] {
-	border-top-color: var(--nav-border);
-}
+/* nav-section[data-level='system'] border removed - sections now use left accent bars */
 
 /* Activity Icons */
 [data-theme='dark'] .activity-icon.stat-icon.green {
