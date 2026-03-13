@@ -102,7 +102,7 @@
 				set: { 'feature.enable_rebac': newValue }
 			});
 			rebacEnabled = newValue;
-			featureFlagsVersion = result.newVersion;
+			featureFlagsVersion = result.version;
 		} catch (err) {
 			console.error('Failed to update ReBAC status:', err);
 			rebacError = err instanceof Error ? err.message : 'Failed to update ReBAC status';

@@ -11,8 +11,12 @@
 	import NavGroupLabel from '$lib/components/admin/NavGroupLabel.svelte';
 	import AdminHeader from '$lib/components/admin/AdminHeader.svelte';
 	import type { Snippet } from 'svelte';
+	import { tenantStore } from '$lib/stores/tenants.svelte';
 
 	let { children }: { children: Snippet } = $props();
+
+	// Tenant selector state — derived from shared store
+	let selectedTenantId = $state('default');
 
 	// Check if current page is login page
 	const isLoginPage = $derived($page.url.pathname === '/admin/login');
@@ -195,8 +199,17 @@
 		// Redirect to login if not authenticated and still on the same page
 		if (!adminAuth.isAuthenticated && $page.url.pathname === currentPath) {
 			goto('/admin/login');
+			return;
 		}
+
+		// Load tenant list into the shared store for the header selector
+		await tenantStore.load();
+		selectedTenantId = tenantStore.defaultTenantId;
 	});
+
+	function handleTenantChange(tenantId: string) {
+		selectedTenantId = tenantId;
+	}
 
 	function toggleMobileMenu() {
 		mobileMenuOpen = !mobileMenuOpen;
@@ -368,6 +381,9 @@
 		<main class="main-content">
 			<AdminHeader
 				breadcrumbs={currentBreadcrumb()}
+				tenants={tenantStore.activeTenants}
+				{selectedTenantId}
+				onTenantChange={handleTenantChange}
 				onMobileMenuClick={toggleMobileMenu}
 				userEmail={adminAuth.user?.email}
 				userName={adminAuth.user?.name}

@@ -855,6 +855,7 @@ const ru: Translations = {
   'web.form.envName': 'Название окружения',
   'web.form.envNamePlaceholder': 'например, prod, staging, dev',
   'web.form.envNameHint': 'Только строчные буквы, цифры и дефисы',
+  'web.form.envNameError': 'Допустимы только строчные буквы, цифры и дефисы (должно начинаться с буквы)',
   'web.form.baseDomain': 'Базовый домен (домен API)',
   'web.form.baseDomainPlaceholder': 'oidc.example.com',
   'web.form.baseDomainHint': 'Собственный домен для Authrim. Оставьте пустым для workers.dev',

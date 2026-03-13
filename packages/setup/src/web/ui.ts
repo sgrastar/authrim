@@ -2049,6 +2049,7 @@ export function getHtmlTemplate(
         <label for="env"><span data-i18n="web.form.envName">Environment Name</span> <span style="color: var(--error);">*</span></label>
         <input type="text" id="env" placeholder="e.g., prod, staging, dev" data-i18n-placeholder="web.form.envNamePlaceholder" required>
         <small style="color: var(--text-muted)" data-i18n="web.form.envNameHint">Lowercase letters, numbers, and hyphens only</small>
+        <span id="env-error" style="display: none; color: var(--error); font-size: 0.85rem;" data-i18n="web.form.envNameError">Only lowercase letters, numbers, and hyphens are allowed (must start with a letter)</span>
       </div>
 
       <!-- 3. Domain Configuration -->
@@ -3567,6 +3568,32 @@ export function getHtmlTemplate(
       }
     });
 
+    // Validate environment name on blur
+    const envInput = document.getElementById('env');
+    const envError = document.getElementById('env-error');
+    function validateEnvName(value) {
+      return /^[a-z][a-z0-9-]*$/.test(value);
+    }
+    envInput.addEventListener('blur', () => {
+      const value = envInput.value.trim();
+      if (value && !validateEnvName(value)) {
+        envInput.style.borderColor = 'var(--error)';
+        if (envError) envError.style.display = 'block';
+      } else {
+        envInput.style.borderColor = '';
+        if (envError) envError.style.display = 'none';
+      }
+    });
+    envInput.addEventListener('input', () => {
+      if (envInput.style.borderColor) {
+        const value = envInput.value.trim();
+        if (!value || validateEnvName(value)) {
+          envInput.style.borderColor = '';
+          if (envError) envError.style.display = 'none';
+        }
+      }
+    });
+
     // Update UI based on base domain presence
     function updateBaseDomainUI() {
       const baseDomain = document.getElementById('base-domain').value.trim();
@@ -3722,11 +3749,15 @@ export function getHtmlTemplate(
 
     document.getElementById('btn-configure').addEventListener('click', async () => {
       // Get and validate environment name
-      let env = document.getElementById('env').value.toLowerCase().replace(/[^a-z0-9-]/g, '');
-      if (!env) {
-        alert('Please enter a valid environment name');
+      const envRaw = document.getElementById('env').value.trim();
+      if (!envRaw || !validateEnvName(envRaw)) {
+        document.getElementById('env').style.borderColor = 'var(--error)';
+        const errEl = document.getElementById('env-error');
+        if (errEl) errEl.style.display = 'block';
+        document.getElementById('env').focus();
         return;
       }
+      const env = envRaw;
 
       // Check if environment already exists
       const configureBtn = document.getElementById('btn-configure');
@@ -4085,7 +4116,7 @@ export function getHtmlTemplate(
 
         const result = await api('/provision', {
           method: 'POST',
-          body: { env: config.env, databaseConfig: config.database },
+          body: { env: config.env, databaseConfig: config.database, createR2: true },
         });
 
         // Stop polling

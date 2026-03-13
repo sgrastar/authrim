@@ -844,6 +844,7 @@ const ja: Translations = {
   'web.form.envName': '環境名',
   'web.form.envNamePlaceholder': '例: prod, staging, dev',
   'web.form.envNameHint': '小文字英数字とハイフンのみ使用可能',
+  'web.form.envNameError': '環境名は小文字英数字とハイフンのみ使用可能です（先頭は英字）',
   'web.form.baseDomain': 'ベースドメイン（APIドメイン）',
   'web.form.baseDomainPlaceholder': 'oidc.example.com',
   'web.form.baseDomainHint': 'Authrim用のカスタムドメイン。空欄でworkers.devを使用',

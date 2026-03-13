@@ -44,7 +44,11 @@
 		claim_namespace: '',
 		is_searchable: false,
 		is_exportable: false,
-		is_vc_claim: false
+		is_vc_claim: false,
+		show_on_registration: false,
+		registration_required: false,
+		registration_order: 0,
+		registration_placeholder: ''
 	});
 
 	// Delete dialog
@@ -99,7 +103,11 @@
 			claim_namespace: s.claim_namespace || '',
 			is_searchable: !!s.is_searchable,
 			is_exportable: !!s.is_exportable,
-			is_vc_claim: !!s.is_vc_claim
+			is_vc_claim: !!s.is_vc_claim,
+			show_on_registration: !!s.show_on_registration,
+			registration_required: !!s.registration_required,
+			registration_order: (s.registration_order as number) ?? 0,
+			registration_placeholder: (s.registration_placeholder as string) || ''
 		};
 	}
 
@@ -150,7 +158,11 @@
 				claim_namespace: editForm.claim_namespace || null,
 				is_searchable: editForm.is_searchable,
 				is_exportable: editForm.is_exportable,
-				is_vc_claim: editForm.is_vc_claim
+				is_vc_claim: editForm.is_vc_claim,
+				show_on_registration: editForm.show_on_registration,
+				registration_required: editForm.registration_required,
+				registration_order: editForm.registration_order,
+				registration_placeholder: editForm.registration_placeholder || null
 			});
 
 			schema = result.schema;
@@ -455,7 +467,7 @@
 										Introspection
 									</span>
 									<small style="color: var(--color-warning, #b08800); font-size: 0.75rem;"
-										>現在、Introspectionレスポンスへのカスタムクレーム埋め込みは無効です。</small
+										>Custom claim embedding in Introspection responses is currently disabled.</small
 									>
 								</label>
 							</div>
@@ -538,6 +550,55 @@
 							Verifiable Credential claim
 						</label>
 					</div>
+				</div>
+
+				<!-- Section: Registration Form -->
+				<div class="panel mb-4">
+					<h2 class="panel-title">Registration Form</h2>
+					<div class="flex gap-6 flex-wrap mb-4">
+						<label class="form-label">
+							<input
+								type="checkbox"
+								bind:checked={editForm.show_on_registration}
+								disabled={!isEditable}
+							/>
+							Show on signup form
+						</label>
+						<label class="form-label">
+							<input
+								type="checkbox"
+								bind:checked={editForm.registration_required}
+								disabled={!isEditable || !editForm.show_on_registration}
+							/>
+							Required on signup
+						</label>
+					</div>
+					{#if editForm.show_on_registration}
+						<div class="flex gap-4 flex-wrap">
+							<div style="min-width:120px;">
+								<label class="form-label" for="reg-order">Display order</label>
+								<input
+									id="reg-order"
+									type="number"
+									bind:value={editForm.registration_order}
+									disabled={!isEditable}
+									min="0"
+									class="form-input"
+								/>
+							</div>
+							<div style="flex:1; min-width:200px;">
+								<label class="form-label" for="reg-placeholder">Placeholder text</label>
+								<input
+									id="reg-placeholder"
+									type="text"
+									bind:value={editForm.registration_placeholder}
+									disabled={!isEditable}
+									placeholder="e.g. Enter your department"
+									class="form-input"
+								/>
+							</div>
+						</div>
+					{/if}
 				</div>
 
 				<!-- Save button -->

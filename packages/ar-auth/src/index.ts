@@ -74,6 +74,8 @@ import {
   directSessionHandler,
   directLogoutHandler,
 } from './direct-auth';
+import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
+import { registrationFieldsHandler } from './registration-fields';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -474,6 +476,16 @@ app.get('/api/v1/auth/direct/session', directSessionHandler);
 
 // Logout endpoint
 app.post('/api/v1/auth/direct/logout', directLogoutHandler);
+
+// Invitation API (public)
+// - GET  /api/v1/invitations/validate?token=xxx  - Validate token
+// - POST /api/v1/invitations/use                 - Mark token used
+app.get('/api/v1/invitations/validate', validateInvitationHandler);
+app.post('/api/v1/invitations/use', useInvitationHandler);
+
+// Registration fields (public)
+// - GET /api/v1/registration-fields  - Fields visible on signup form
+app.get('/api/v1/registration-fields', registrationFieldsHandler);
 
 // Flow Engine API
 // Track C: Flow-based authentication with UIContract

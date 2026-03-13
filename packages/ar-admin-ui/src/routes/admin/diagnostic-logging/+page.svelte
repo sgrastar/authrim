@@ -131,7 +131,7 @@
 		// Only check Storage tab for unsaved changes
 		if (hasUnsavedStorageChanges) {
 			const confirmChange = confirm(
-				'未保存の変更があります。タブを切り替えると変更が失われますが、よろしいですか?'
+				'You have unsaved changes. Switching tabs will discard them. Continue?'
 			);
 			if (!confirmChange) return;
 			// Reset to initial values
@@ -262,7 +262,7 @@
 
 			loggingSettings = {
 				...loggingSettings,
-				version: result.newVersion,
+				version: result.version,
 				values: {
 					...loggingSettings.values,
 					'diagnostic-logging.enabled': enabled
@@ -296,7 +296,7 @@
 
 			loggingSettings = {
 				...loggingSettings,
-				version: result.newVersion,
+				version: result.version,
 				values: {
 					...loggingSettings.values,
 					'diagnostic-logging.r2_output_enabled': enabled
@@ -330,7 +330,7 @@
 
 			loggingSettings = {
 				...loggingSettings,
-				version: result.newVersion,
+				version: result.version,
 				values: {
 					...loggingSettings.values,
 					'diagnostic-logging.sdk_ingest_enabled': enabled
@@ -364,7 +364,7 @@
 
 			loggingSettings = {
 				...loggingSettings,
-				version: result.newVersion,
+				version: result.version,
 				values: {
 					...loggingSettings.values,
 					'diagnostic-logging.merged_output_enabled': enabled
@@ -467,7 +467,7 @@
 
 			loggingSettings = {
 				...loggingSettings,
-				version: result.newVersion,
+				version: result.version,
 				values: {
 					...loggingSettings.values,
 					'diagnostic-logging.storage_mode.default': storageModeDefault,
@@ -885,7 +885,7 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">HTTP Request</span>
-								<span class="category-description">Authorization headerを含むリクエスト全体</span>
+								<span class="category-description">Full request including Authorization header</span>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['http-response']}>
@@ -896,7 +896,7 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">HTTP Response</span>
-								<span class="category-description">Status code、headers、response body</span>
+								<span class="category-description">Status code, headers, response body</span>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['token-validation']}>
@@ -907,7 +907,7 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">Token Validation</span>
-								<span class="category-description">JWT検証、署名確認、claims検証</span>
+								<span class="category-description">JWT validation, signature verification, claims validation</span>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['auth-decision']}>
@@ -918,7 +918,7 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">Auth Decision</span>
-								<span class="category-description">認可判定ロジック、ポリシー評価結果</span>
+								<span class="category-description">Authorization logic, policy evaluation results</span>
 							</div>
 						</label>
 					</div>

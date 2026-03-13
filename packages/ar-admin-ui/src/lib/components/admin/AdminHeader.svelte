@@ -104,7 +104,7 @@
 	</div>
 
 	<div class="header-right">
-		{#if tenants.length > 0}
+		{#if tenants.length > 1}
 			<div class="header-tenant-selector">
 				<span class="tenant-selector-label">Tenant:</span>
 				<select

@@ -545,8 +545,9 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
         validation_rules, include_in_id_token, include_in_userinfo, include_in_introspection,
         required_scopes, scope_mode, is_searchable, is_exportable, is_vc_claim,
         claim_namespace, description, display_order, schema_version,
-        operation_status, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?)`,
+        operation_status, created_by, created_at, updated_at,
+        show_on_registration, registration_required, registration_order, registration_placeholder
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         tenantId,
@@ -570,6 +571,10 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
         createdBy,
         now,
         now,
+        body.show_on_registration ? 1 : 0,
+        body.registration_required ? 1 : 0,
+        body.registration_order || 0,
+        body.registration_placeholder || null,
       ]
     );
 
@@ -970,6 +975,11 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       is_vc_claim: (v) => (v ? 1 : 0),
       description: (v) => v || null,
       display_order: (v) => v,
+      // Registration form fields (migration 060)
+      show_on_registration: (v) => (v ? 1 : 0),
+      registration_required: (v) => (v ? 1 : 0),
+      registration_order: (v) => v,
+      registration_placeholder: (v) => v || null,
     };
 
     for (const [key, transform] of Object.entries(updateableFields)) {

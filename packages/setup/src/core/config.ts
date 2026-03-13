@@ -11,11 +11,25 @@ import { z } from 'zod';
 // URL Configuration
 // =============================================================================
 
+/**
+ * Accepts a full URL or a bare hostname and normalizes to a full https:// URL.
+ * e.g. "example.com" → "https://example.com"
+ */
+const urlOrHostname = z
+  .string()
+  .transform((val) => {
+    if (!val.includes('://')) {
+      return `https://${val}`;
+    }
+    return val;
+  })
+  .pipe(z.string().url());
+
 export const UrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
-  custom: z.string().url().nullable().optional(),
+  custom: urlOrHostname.nullable().optional(),
   /** Auto-generated URL (workers.dev or pages.dev) */
-  auto: z.string().url().optional(),
+  auto: urlOrHostname.optional(),
   /** Cloudflare zone ID for custom domain (populated during setup) */
   zoneId: z.string().nullable().optional(),
   /** Whether to configure Workers custom domain binding */
@@ -24,9 +38,9 @@ export const UrlConfigSchema = z.object({
 
 export const UiUrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
-  custom: z.string().url().nullable().optional(),
+  custom: urlOrHostname.nullable().optional(),
   /** Auto-generated URL (workers.dev or pages.dev) */
-  auto: z.string().url().optional(),
+  auto: urlOrHostname.optional(),
   /**
    * Whether to serve this UI from the same domain as the API via proxy
    * - true: UI is proxied through ar-router (e.g., https://api.example.com/admin)
@@ -192,7 +206,7 @@ export const QueueFeatureSchema = z.object({
 });
 
 export const R2FeatureSchema = z.object({
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
 });
 
 export const EmailFeatureSchema = z.object({

@@ -263,6 +263,29 @@ import {
   adminSettingsValidateHandler,
   adminTenantCloneHandler,
 } from './admin-settings-meta';
+import {
+  adminTenantsListHandler,
+  adminTenantCreateHandler,
+  adminTenantGetHandler,
+  adminTenantUpdateHandler,
+  adminTenantDeleteHandler,
+  adminTenantSetDefaultHandler,
+  TENANT_TABLES_TO_DELETE,
+} from './admin-tenants';
+import {
+  listTenantDomainMappingsHandler,
+  createTenantDomainMappingHandler,
+  getTenantDomainMappingHandler,
+  updateTenantDomainMappingHandler,
+  deleteTenantDomainMappingHandler,
+  initiateTenantDomainVerificationHandler,
+  confirmTenantDomainVerificationHandler,
+} from './admin-tenant-domain-mappings';
+import {
+  createTenantInvitationHandler,
+  listTenantInvitationsHandler,
+  cancelTenantInvitationHandler,
+} from './admin-tenant-invitations';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getLoginMethodsHandler } from './login-methods';
 import {
@@ -958,30 +981,75 @@ app.get('/api/admin/settings/diff', adminSettingsDiffHandler);
 app.get('/api/admin/settings/schema', adminSettingsSchemaHandler);
 app.post('/api/admin/settings/validate', adminSettingsValidateHandler);
 
-// Tenant List API
-// - GET /api/admin/tenants - List available tenants
-// Currently Authrim is single-tenant, so this returns only the default tenant
-app.get('/api/admin/tenants', async (c) => {
-  // For now, return only the default tenant
-  // Multi-tenant support will be added in future versions
-  return c.json({
-    tenants: [
-      {
-        id: 'default',
-        name: 'Default Tenant',
-        createdAt: new Date().toISOString(),
-        status: 'active',
-      },
-    ],
-    _links: {
-      self: '/api/admin/tenants',
-    },
-  });
-});
-
-// Tenant Clone (Phase 3)
-// - POST /api/admin/tenants/:id/clone - Clone tenant settings to new tenant
+// Tenant Management API
+// - GET    /api/admin/tenants          - List all tenants
+// - POST   /api/admin/tenants          - Create tenant
+// - GET    /api/admin/tenants/:id      - Get tenant
+// - PATCH  /api/admin/tenants/:id      - Update tenant
+// - DELETE /api/admin/tenants/:id      - Delete tenant (default not allowed)
+// - POST   /api/admin/tenants/:id/set-default - Set as default tenant
+// - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
+// Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
+app.get('/api/admin/tenants', adminTenantsListHandler);
+app.post('/api/admin/tenants', adminTenantCreateHandler);
+app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
 app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
+app.get('/api/admin/tenants/:id', adminTenantGetHandler);
+app.patch('/api/admin/tenants/:id', adminTenantUpdateHandler);
+app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
+
+// Tenant Invitations API
+// - POST   /api/admin/tenants/:id/invitations          - Create invitation
+// - GET    /api/admin/tenants/:id/invitations          - List invitations
+// - DELETE /api/admin/tenants/:id/invitations/:inv_id  - Cancel invitation
+app.post('/api/admin/tenants/:id/invitations', createTenantInvitationHandler);
+app.get('/api/admin/tenants/:id/invitations', listTenantInvitationsHandler);
+app.delete('/api/admin/tenants/:id/invitations/:inv_id', cancelTenantInvitationHandler);
+
+// Platform Tenant Domain Mappings API (system_admin only)
+// - GET    /api/admin/platform/tenant-domain-mappings        - List mappings
+// - POST   /api/admin/platform/tenant-domain-mappings        - Create mapping
+// - POST   /api/admin/platform/tenant-domain-mappings/verify          - Initiate DNS verification
+// - POST   /api/admin/platform/tenant-domain-mappings/verify/confirm  - Confirm DNS verification
+// - GET    /api/admin/platform/tenant-domain-mappings/:id    - Get mapping
+// - PUT    /api/admin/platform/tenant-domain-mappings/:id    - Update mapping
+// - DELETE /api/admin/platform/tenant-domain-mappings/:id    - Delete mapping
+// Note: /verify and /verify/confirm must be before /:id to avoid route conflicts
+app.get(
+  '/api/admin/platform/tenant-domain-mappings',
+  requireSystemAdmin,
+  listTenantDomainMappingsHandler
+);
+app.post(
+  '/api/admin/platform/tenant-domain-mappings',
+  requireSystemAdmin,
+  createTenantDomainMappingHandler
+);
+app.post(
+  '/api/admin/platform/tenant-domain-mappings/verify',
+  requireSystemAdmin,
+  initiateTenantDomainVerificationHandler
+);
+app.post(
+  '/api/admin/platform/tenant-domain-mappings/verify/confirm',
+  requireSystemAdmin,
+  confirmTenantDomainVerificationHandler
+);
+app.get(
+  '/api/admin/platform/tenant-domain-mappings/:id',
+  requireSystemAdmin,
+  getTenantDomainMappingHandler
+);
+app.put(
+  '/api/admin/platform/tenant-domain-mappings/:id',
+  requireSystemAdmin,
+  updateTenantDomainMappingHandler
+);
+app.delete(
+  '/api/admin/platform/tenant-domain-mappings/:id',
+  requireSystemAdmin,
+  deleteTenantDomainMappingHandler
+);
 
 // =============================================================================
 // Settings API v2 (Unified Settings Management) - RECOMMENDED
@@ -2331,12 +2399,12 @@ app.onError((err, c) => {
 });
 
 /**
- * Scheduled handler for D1 database cleanup
- * Runs daily at 2:00 AM UTC to clean up expired data
+ * Scheduled handler for D1 database cleanup and async job processing.
+ * Runs hourly to clean up expired data and process pending jobs.
  *
  * Cron configuration in wrangler.toml:
  * [triggers]
- * crons = ["0 2 * * *"]  # Daily at 2:00 AM UTC
+ * crons = ["0 * * * *"]  # Hourly
  */
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
@@ -2446,6 +2514,67 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     log.error('D1 cleanup job failed', {}, error as Error);
     // Don't throw - we don't want to mark the cron job as failed
     // Errors are logged for monitoring
+  }
+
+  // Process pending tenant deletion jobs (up to 5 per Cron run to stay within CPU limits)
+  try {
+    const pendingJobsResult = await env.DB.prepare(
+      "SELECT id, config FROM admin_jobs WHERE job_type = 'tenants/delete' AND status = 'pending' LIMIT 5"
+    ).all<{ id: string; config: string }>();
+
+    const pendingJobs = pendingJobsResult.results ?? [];
+
+    for (const job of pendingJobs) {
+      const nowTs = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(
+        "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ?"
+      )
+        .bind(nowTs, nowTs, job.id)
+        .run();
+
+      try {
+        const config = JSON.parse(job.config) as { tenant_id: string };
+        const tenantId = config.tenant_id;
+
+        // Delete all tenant data in batches of 100 (D1 batch limit)
+        const deleteStatements = [
+          ...TENANT_TABLES_TO_DELETE.map((table) =>
+            env.DB.prepare(`DELETE FROM ${table} WHERE tenant_id = ?`).bind(tenantId)
+          ),
+          env.DB.prepare('DELETE FROM tenants WHERE id = ?').bind(tenantId),
+        ];
+
+        const BATCH_SIZE = 100;
+        for (let i = 0; i < deleteStatements.length; i += BATCH_SIZE) {
+          await env.DB.batch(deleteStatements.slice(i, i + BATCH_SIZE));
+        }
+
+        const completedTs = Math.floor(Date.now() / 1000);
+        await env.DB.prepare(
+          "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ?"
+        )
+          .bind(completedTs, completedTs, JSON.stringify({ stage: 'completed' }), job.id)
+          .run();
+
+        log.info('Tenant deletion job completed', { job_id: job.id, tenant_id: tenantId });
+      } catch (jobError) {
+        const failedTs = Math.floor(Date.now() / 1000);
+        await env.DB.prepare(
+          "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ?"
+        )
+          .bind(String(jobError), failedTs, failedTs, job.id)
+          .run();
+
+        log.error('Tenant deletion job failed', { job_id: job.id }, jobError as Error);
+      }
+    }
+
+    if (pendingJobs.length > 0) {
+      log.info('Tenant deletion jobs processed', { count: pendingJobs.length });
+    }
+  } catch (jobsError) {
+    log.error('Tenant deletion job processing failed', {}, jobsError as Error);
+    // Don't throw - other cleanup tasks already completed
   }
 }
 

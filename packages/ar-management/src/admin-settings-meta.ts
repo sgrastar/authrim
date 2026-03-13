@@ -1097,12 +1097,16 @@ export async function adminSettingsValidateHandler(c: Context<{ Bindings: Env }>
  * Schema for tenant clone request
  */
 const TenantCloneRequestSchema = z.object({
-  name: z.string().min(1).max(200),
-  subdomain: z
+  id: z
     .string()
-    .min(3)
+    .min(1)
     .max(63)
-    .regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, 'Invalid subdomain format'),
+    .regex(
+      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
+      'Invalid id format: must start and end with a lowercase letter or digit'
+    ),
+  name: z.string().min(1).max(200),
+  description: z.string().max(500).optional(),
   include_clients: z.boolean().default(false),
   include_roles: z.boolean().default(true),
   include_webhooks: z.boolean().default(false),
@@ -1113,8 +1117,9 @@ const TenantCloneRequestSchema = z.object({
  * Clone tenant settings to create a new tenant
  *
  * Request body:
- * - name: string - Name for the new tenant
- * - subdomain: string - Subdomain for the new tenant
+ * - id: string - Slug ID for the new tenant (^[a-z0-9]([a-z0-9-]*[a-z0-9])?$, max 63 chars)
+ * - name: string - Display name for the new tenant
+ * - description?: string - Optional description
  * - include_clients: boolean - Whether to clone client configurations
  * - include_roles: boolean - Whether to clone custom roles
  * - include_webhooks: boolean - Whether to clone webhook configurations
@@ -1146,7 +1151,14 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const { name, subdomain, include_clients, include_roles, include_webhooks } = parseResult.data;
+    const {
+      id: newTenantId,
+      name,
+      description,
+      include_clients,
+      include_roles,
+      include_webhooks,
+    } = parseResult.data;
     const adapter = createAdapter(c);
 
     // Verify source tenant exists and user has access
@@ -1154,8 +1166,7 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
     const sourceTenant = await adapter.queryOne<{
       id: string;
       name: string;
-      settings: string;
-    }>('SELECT id, name, settings FROM tenants WHERE id = ?', [sourceTenantId]);
+    }>('SELECT id, name FROM tenants WHERE id = ?', [sourceTenantId]);
 
     if (!sourceTenant) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
@@ -1163,27 +1174,25 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Check subdomain availability
-    const existingSubdomain = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM tenants WHERE subdomain = ?',
-      [subdomain]
+    // Check id (slug) availability
+    const existingTenant = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM tenants WHERE id = ?',
+      [newTenantId]
     );
 
-    if (existingSubdomain) {
+    if (existingTenant) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'subdomain', reason: 'Subdomain already in use' },
+        variables: { field: 'id', reason: 'Tenant ID already in use' },
       });
     }
 
-    // Generate new tenant ID
-    const newTenantId = crypto.randomUUID();
     const nowTs = Math.floor(Date.now() / 1000);
 
-    // Clone tenant with new name and subdomain
+    // Clone tenant with new id, name, and description
     await adapter.execute(
-      `INSERT INTO tenants (id, name, subdomain, settings, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [newTenantId, name, subdomain, sourceTenant.settings, nowTs, nowTs]
+      `INSERT INTO tenants (id, name, description, is_active, is_default, created_at, updated_at)
+       VALUES (?, ?, ?, 1, 0, ?, ?)`,
+      [newTenantId, name, description ?? null, nowTs, nowTs]
     );
 
     const clonedItems = {
@@ -1297,16 +1306,16 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
     await createAuditLogFromContext(c, 'tenant.cloned', 'tenant', newTenantId, {
       source_tenant_id: sourceTenantId,
       source_tenant_name: sourceTenant.name,
+      new_tenant_id: newTenantId,
       new_tenant_name: name,
-      subdomain,
       cloned_items: clonedItems,
     });
 
     return c.json(
       {
-        tenant_id: newTenantId,
+        id: newTenantId,
         name,
-        subdomain,
+        description: description ?? null,
         source_tenant_id: sourceTenantId,
         source_tenant_name: sourceTenant.name,
         cloned_items: clonedItems,

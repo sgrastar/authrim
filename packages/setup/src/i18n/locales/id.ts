@@ -852,6 +852,7 @@ const id: Translations = {
   'web.form.envName': 'Nama Environment',
   'web.form.envNamePlaceholder': 'contoh: prod, staging, dev',
   'web.form.envNameHint': 'Hanya huruf kecil, angka, dan tanda hubung',
+  'web.form.envNameError': 'Hanya huruf kecil, angka, dan tanda hubung yang diperbolehkan (harus dimulai dengan huruf)',
   'web.form.baseDomain': 'Domain Dasar (Domain API)',
   'web.form.baseDomainPlaceholder': 'oidc.example.com',
   'web.form.baseDomainHint': 'Domain kustom untuk Authrim. Kosongkan untuk menggunakan workers.dev',

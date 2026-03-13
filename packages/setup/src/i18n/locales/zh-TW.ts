@@ -837,6 +837,7 @@ const zhTW: Translations = {
   'web.form.envName': '環境名稱',
   'web.form.envNamePlaceholder': '例如：prod、staging、dev',
   'web.form.envNameHint': '僅限小寫字母、數字和連字符',
+  'web.form.envNameError': '只允許小寫字母、數字和連字符（必須以字母開頭）',
   'web.form.baseDomain': '基礎網域（API 網域）',
   'web.form.baseDomainPlaceholder': 'oidc.example.com',
   'web.form.baseDomainHint': 'Authrim 的自訂網域。留空以使用 workers.dev',

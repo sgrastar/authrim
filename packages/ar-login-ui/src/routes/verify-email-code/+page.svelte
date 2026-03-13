@@ -10,6 +10,7 @@
 	import { page } from '$app/stores';
 
 	let email = $state('');
+	let inviteToken = $state('');
 	let error = $state('');
 	let success = $state('');
 	let loading = $state(false);
@@ -37,8 +38,9 @@
 	});
 
 	onMount(() => {
-		// Get email from URL parameter
+		// Get email and invite_token from URL parameters
 		email = $page.url.searchParams.get('email') || '';
+		inviteToken = $page.url.searchParams.get('invite_token') || '';
 
 		// If no email, redirect to login
 		if (!email) {
@@ -117,6 +119,19 @@
 					email: data.user?.email || email,
 					name: data.user?.name || undefined
 				});
+			}
+
+			// Apply invitation if present
+			if (inviteToken && data?.userId) {
+				try {
+					await fetch('/api/v1/invitations/use', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ token: inviteToken, user_id: data.userId })
+					});
+				} catch {
+					// Non-fatal: proceed regardless
+				}
 			}
 
 			// Redirect to home after delay

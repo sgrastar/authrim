@@ -844,6 +844,7 @@ const ko: Translations = {
   'web.form.envName': '환경 이름',
   'web.form.envNamePlaceholder': '예: prod, staging, dev',
   'web.form.envNameHint': '소문자, 숫자 및 하이픈만 허용',
+  'web.form.envNameError': '소문자, 숫자 및 하이픈만 허용됩니다 (첫 글자는 영문자여야 합니다)',
   'web.form.baseDomain': '기본 도메인 (API 도메인)',
   'web.form.baseDomainPlaceholder': 'oidc.example.com',
   'web.form.baseDomainHint': 'Authrim용 사용자 정의 도메인. workers.dev를 사용하려면 비워두세요',

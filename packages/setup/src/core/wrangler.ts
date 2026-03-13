@@ -320,8 +320,8 @@ export function generateWranglerConfig(
     }
   }
 
-  // R2 Buckets (optional)
-  if (config.features.r2?.enabled && resourceIds.r2) {
+  // R2 Buckets — add bindings whenever provisioned resources are available
+  if (resourceIds.r2 && Object.keys(resourceIds.r2).length > 0) {
     const r2Buckets: Array<{ binding: string; bucket_name: string }> = [];
 
     if (component === 'ar-auth' || component === 'ar-management') {

@@ -850,6 +850,7 @@ const en: Translations = {
   'web.form.envName': 'Environment Name',
   'web.form.envNamePlaceholder': 'e.g., prod, staging, dev',
   'web.form.envNameHint': 'Lowercase letters, numbers, and hyphens only',
+  'web.form.envNameError': 'Only lowercase letters, numbers, and hyphens are allowed (must start with a letter)',
   'web.form.baseDomain': 'Base Domain (API Domain)',
   'web.form.baseDomainPlaceholder': 'oidc.example.com',
   'web.form.baseDomainHint': 'Custom domain for Authrim. Leave empty to use workers.dev',

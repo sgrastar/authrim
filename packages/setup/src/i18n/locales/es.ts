@@ -861,6 +861,7 @@ const es: Translations = {
   'web.form.envName': 'Nombre del Entorno',
   'web.form.envNamePlaceholder': 'ej., prod, staging, dev',
   'web.form.envNameHint': 'Solo letras minúsculas, números y guiones',
+  'web.form.envNameError': 'Solo se permiten letras minúsculas, números y guiones (debe comenzar con una letra)',
   'web.form.baseDomain': 'Dominio Base (Dominio API)',
   'web.form.baseDomainPlaceholder': 'oidc.ejemplo.com',
   'web.form.baseDomainHint':

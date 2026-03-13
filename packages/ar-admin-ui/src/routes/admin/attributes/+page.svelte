@@ -258,7 +258,7 @@
 				set: { 'feature.enable_abac': newValue }
 			});
 			abacEnabled = newValue;
-			featureFlagsVersion = result.newVersion;
+			featureFlagsVersion = result.version;
 		} catch (err) {
 			console.error('Failed to update ABAC status:', err);
 			abacError = err instanceof Error ? err.message : 'Failed to update ABAC status';
