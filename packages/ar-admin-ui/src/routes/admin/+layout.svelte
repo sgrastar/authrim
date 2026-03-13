@@ -12,6 +12,7 @@
 	import AdminHeader from '$lib/components/admin/AdminHeader.svelte';
 	import type { Snippet } from 'svelte';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -207,8 +208,9 @@
 		selectedTenantId = tenantStore.defaultTenantId;
 	});
 
-	function handleTenantChange(tenantId: string) {
+	async function handleTenantChange(tenantId: string) {
 		selectedTenantId = tenantId;
+		await settingsContext.setTenantId(tenantId);
 	}
 
 	function toggleMobileMenu() {

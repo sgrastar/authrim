@@ -157,6 +157,23 @@
 		await loadClientOptions();
 	});
 
+	// Reload when tenant changes via the header selector
+	let prevContextTenantId = $state<string | null>(null);
+	$effect(() => {
+		const ctxTenantId = settingsContext.tenantId;
+		if (prevContextTenantId === null) {
+			prevContextTenantId = ctxTenantId;
+			return;
+		}
+		if (ctxTenantId === prevContextTenantId) return;
+		prevContextTenantId = ctxTenantId;
+		tenantId = ctxTenantId;
+		testTenantId = ctxTenantId;
+		selectedClientIds = [];
+		loadLoggingSettings();
+		loadClientOptions();
+	});
+
 	async function loadLoggingSettings() {
 		settingsLoading = true;
 		settingsError = '';
