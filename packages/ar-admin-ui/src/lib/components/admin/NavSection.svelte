@@ -1,27 +1,21 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	type HierarchyLevel = 'tenant' | 'system' | 'client' | 'compliance';
+	type HierarchyLevel = 'enduser' | 'client' | 'tenant' | 'platform';
 
 	interface Props {
 		label?: string;
 		level?: HierarchyLevel;
-		tenantName?: string;
 		children: Snippet;
 	}
 
-	let { label, level = 'tenant', tenantName, children }: Props = $props();
+	let { label, level = 'enduser', children }: Props = $props();
 </script>
 
 <div class="nav-section" data-level={level}>
-	{#if label || tenantName}
+	{#if label}
 		<div class="nav-section-header">
-			<span class="section-indicator"></span>
-			{#if tenantName}
-				<span class="current-tenant-name">{tenantName}</span>
-			{:else}
-				{label}
-			{/if}
+			{label}
 		</div>
 	{/if}
 
@@ -30,63 +24,44 @@
 
 <style>
 	.nav-section {
-		margin-bottom: 16px;
+		margin-bottom: 4px;
 	}
 
-	.nav-section[data-level='system'] {
-		border-top: 1px solid var(--nav-border);
-		padding-top: 16px;
-		margin-top: 12px;
-	}
-
+	/* Section header with left accent bar */
 	.nav-section-header {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		padding: 8px;
+		margin-top: 12px;
+		padding: 5px 12px 5px 10px;
 		font-size: 0.625rem;
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.1em;
-		color: var(--text-muted);
-		min-height: 30px;
+		letter-spacing: 0.12em;
+		min-height: 26px;
+		margin-bottom: 4px;
+		border-left: 2px solid transparent;
+		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 	}
 
-	/* Section indicator dot */
-	.section-indicator {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		flex-shrink: 0;
+	/* Level-specific accent colors */
+	.nav-section[data-level='enduser'] .nav-section-header {
+		border-left-color: var(--level-enduser-color);
+		color: var(--level-enduser-color);
 	}
 
-	.nav-section[data-level='system'] .section-indicator {
-		background: var(--system-color);
+	.nav-section[data-level='client'] .nav-section-header {
+		border-left-color: var(--level-client-color);
+		color: var(--level-client-color);
 	}
 
-	.nav-section[data-level='tenant'] .section-indicator {
-		background: var(--tenant-color);
+	.nav-section[data-level='tenant'] .nav-section-header {
+		border-left-color: var(--level-tenant-color);
+		color: var(--level-tenant-color);
 	}
 
-	.nav-section[data-level='client'] .section-indicator {
-		background: var(--client-color);
-	}
-
-	.nav-section[data-level='compliance'] .section-indicator {
-		background: var(--compliance-color);
-	}
-
-	/* Tenant name styling */
-	.current-tenant-name {
-		font-size: 0.875rem;
-		font-weight: 700;
-		color: #ffffff;
-		text-transform: none;
-		letter-spacing: 0;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
+	.nav-section[data-level='platform'] .nav-section-header {
+		border-left-color: var(--level-platform-color);
+		color: var(--level-platform-color);
 	}
 
 	/* Global visibility control - handled by parent */

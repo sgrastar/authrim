@@ -80,6 +80,10 @@ export interface CustomClaimSchema {
 	created_by: string | null;
 	created_at: number;
 	updated_at: number;
+	show_on_registration?: number;
+	registration_required?: number;
+	registration_order?: number;
+	registration_placeholder?: string | null;
 }
 
 /** Pagination info */
@@ -143,6 +147,10 @@ export interface CustomClaimSchemaInput {
 	claim_namespace?: string | null;
 	description?: string | null;
 	display_order?: number;
+	show_on_registration?: boolean;
+	registration_required?: boolean;
+	registration_order?: number;
+	registration_placeholder?: string | null;
 }
 
 // =============================================================================

@@ -76,7 +76,7 @@
 				set: { 'feature.enable_flow_engine': newValue }
 			});
 			flowEngineEnabled = newValue;
-			featureFlagsVersion = result.newVersion;
+			featureFlagsVersion = result.version;
 		} catch (err) {
 			console.error('Failed to update Flow Engine status:', err);
 			flowEngineError = err instanceof Error ? err.message : 'Failed to update Flow Engine status';

@@ -416,7 +416,7 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
 
 /**
  * Resolve cache TTL from KV → env → default
- * Priority: KV (AUTHRIM_CONFIG) → env (LOGIN_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
+ * Priority: KV (SETTINGS) → env (LOGIN_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
  */
 async function resolveCacheTTL(env: Env): Promise<number> {
   // 1. Try KV (settings-v2)

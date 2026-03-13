@@ -837,6 +837,7 @@ const zhCN: Translations = {
   'web.form.envName': '环境名称',
   'web.form.envNamePlaceholder': '例如：prod、staging、dev',
   'web.form.envNameHint': '仅限小写字母、数字和连字符',
+  'web.form.envNameError': '只允许小写字母、数字和连字符（必须以字母开头）',
   'web.form.baseDomain': '基础域名（API 域名）',
   'web.form.baseDomainPlaceholder': 'oidc.example.com',
   'web.form.baseDomainHint': 'Authrim 的自定义域名。留空使用 workers.dev',
