@@ -1558,9 +1558,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       )
         .bind(tenantId)
         .all<{ field_key: string; field_type: string; validation_rules: string | null }>();
-      const schemaMap = new Map(
-        (schemaRows.results ?? []).map((r) => [r.field_key, r])
-      );
+      const schemaMap = new Map((schemaRows.results ?? []).map((r) => [r.field_key, r]));
       const fieldNow = Math.floor(now / 1000);
 
       for (const [key, value] of Object.entries(customFields)) {

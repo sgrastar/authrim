@@ -115,7 +115,8 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
     return c.json(
       {
         error: 'service_unavailable',
-        message: 'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+        message:
+          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
       },
       503
     );

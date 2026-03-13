@@ -872,7 +872,8 @@ const fr: Translations = {
   'web.form.envName': "Nom de l'Environnement",
   'web.form.envNamePlaceholder': 'ex : prod, staging, dev',
   'web.form.envNameHint': 'Lettres minuscules, chiffres et tirets uniquement',
-  'web.form.envNameError': 'Seuls les lettres minuscules, chiffres et tirets sont autorisés (doit commencer par une lettre)',
+  'web.form.envNameError':
+    'Seuls les lettres minuscules, chiffres et tirets sont autorisés (doit commencer par une lettre)',
   'web.form.baseDomain': 'Domaine de Base (Domaine API)',
   'web.form.baseDomainPlaceholder': 'oidc.exemple.com',
   'web.form.baseDomainHint':
