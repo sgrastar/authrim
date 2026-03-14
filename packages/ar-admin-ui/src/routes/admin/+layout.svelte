@@ -75,7 +75,7 @@
 			{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' }
 		],
 		identitySchema: [
-			{ path: '/admin/custom-claims', label: 'Custom Claims', icon: 'i-ph-tag' },
+			{ path: '/admin/custom-claims', label: 'スキーマ設定', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
 		branding: [{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' }],
@@ -294,7 +294,7 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label="Identity Schema" />
+				<NavGroupLabel label="スキーマ設定" />
 				{#each navTenant.identitySchema as item (item.path)}
 					<NavItem
 						href={item.path}

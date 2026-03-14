@@ -243,14 +243,14 @@
 
 <svelte:head>
 	<title
-		>{schema?.display_label ?? 'Custom Claim'} — Custom Claims — Admin Dashboard — Authrim</title
+		>{schema?.display_label ?? 'スキーマ設定'} — スキーマ設定 — Admin Dashboard — Authrim</title
 	>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Breadcrumb -->
 	<nav class="breadcrumb mb-4">
-		<a href="/admin/custom-claims" class="breadcrumb-link">Custom Claims</a>
+		<a href="/admin/custom-claims" class="breadcrumb-link">スキーマ設定</a>
 		<span class="breadcrumb-sep">/</span>
 		<span class="breadcrumb-current"
 			>{loading ? '...' : (schema?.display_label ?? schema?.field_key ?? schemaId)}</span
@@ -293,7 +293,7 @@
 			<div class="page-actions">
 				<a href="/admin/custom-claims" class="btn btn-secondary">
 					<i class="i-ph-arrow-left"></i>
-					Back to list
+					スキーマ一覧に戻る
 				</a>
 			</div>
 		</div>
@@ -367,7 +367,7 @@
 								id="field-type"
 								class="form-select"
 								bind:value={editForm.field_type}
-								disabled={!isEditable}
+								disabled={!isEditable || isSystem}
 							>
 								<option value="string">String</option>
 								<option value="number">Number</option>

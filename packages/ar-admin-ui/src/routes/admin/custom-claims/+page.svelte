@@ -30,6 +30,7 @@
 	let filterFieldType = $state<FieldType | ''>('');
 	let filterIsPii = $state<'' | '0' | '1'>('');
 	let filterIsActive = $state<'' | '0' | '1'>('');
+	let filterIsSystem = $state<'' | '0' | '1'>('');
 
 	// Create dialog
 	let showCreateDialog = $state(false);
@@ -83,7 +84,8 @@
 				search: filterSearch || undefined,
 				field_type: filterFieldType || undefined,
 				is_pii: filterIsPii || undefined,
-				is_active: filterIsActive || undefined
+				is_active: filterIsActive || undefined,
+				is_system: filterIsSystem || undefined
 			});
 
 			schemas = response.schemas;
@@ -114,6 +116,7 @@
 		filterFieldType = '';
 		filterIsPii = '';
 		filterIsActive = '';
+		filterIsSystem = '';
 		pagination.page = 1;
 		loadSchemas();
 	}
@@ -327,7 +330,7 @@
 </script>
 
 <svelte:head>
-	<title>Custom Claims Schema - Admin Dashboard - Authrim</title>
+	<title>スキーマ設定 - Admin Dashboard - Authrim</title>
 </svelte:head>
 
 <div class="admin-page">
@@ -350,16 +353,15 @@
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Custom Claims Schema</h1>
+			<h1 class="page-title">スキーマ設定</h1>
 			<p class="page-description">
-				Define and manage custom claim fields for users. Control field types, validation rules, and
-				how claims map to OIDC tokens.
+				ユーザーのクレームフィールドを定義・管理します。フィールドタイプ、バリデーションルール、OIDCトークンへのマッピングを制御します。
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Add Custom Claim
+				スキーマを追加
 			</button>
 		</div>
 	</div>
@@ -436,6 +438,13 @@
 				</select>
 			</div>
 			<div class="form-group">
+				<select class="form-select" bind:value={filterIsSystem} onchange={applyFilters}>
+					<option value="">すべて</option>
+					<option value="0">カスタム</option>
+					<option value="1">システム</option>
+				</select>
+			</div>
+			<div class="form-group">
 				<button class="btn btn-primary" onclick={applyFilters}>Apply</button>
 				<button class="btn btn-secondary" onclick={clearFilters}>Clear</button>
 			</div>
@@ -451,8 +460,8 @@
 	{:else if schemas.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No custom claim schemas found.</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Add Custom Claim</button>
+				<p class="empty-state-description">スキーマが見つかりません。</p>
+				<button class="btn btn-primary" onclick={openCreateDialog}>スキーマを追加</button>
 			</div>
 		</div>
 	{:else}
@@ -482,6 +491,9 @@
 							<td>
 								<div class="flex items-center gap-2">
 									<code class="text-sm font-mono">{schema.field_key}</code>
+									{#if schema.is_system}
+										<span class="badge badge-neutral text-xs">System</span>
+									{/if}
 									{#if schema.claim_namespace}
 										<span class="badge badge-neutral text-xs" title={schema.claim_namespace}
 											>NS</span
@@ -543,18 +555,19 @@
 								<div class="flex gap-1">
 									<button
 										class="btn btn-secondary btn-xs"
-										title="Rename"
+										title={schema.is_system ? 'System claims cannot be renamed' : 'Rename'}
 										onclick={(e) => openRenameDialog(schema, e)}
-										disabled={schema.operation_status !== 'active'}
+										disabled={schema.operation_status !== 'active' || !!schema.is_system}
 									>
 										<i class="i-ph-pencil-simple"></i>
 									</button>
 									<button
 										class="btn btn-danger btn-xs"
-										title="Delete"
+										title={schema.is_system ? 'System claims cannot be deleted' : 'Delete'}
 										onclick={(e) => openDeleteDialog(schema, e)}
-										disabled={schema.operation_status !== 'active' &&
-											schema.operation_status !== 'error'}
+										disabled={!!schema.is_system ||
+											(schema.operation_status !== 'active' &&
+												schema.operation_status !== 'error')}
 									>
 										<i class="i-ph-trash"></i>
 									</button>
@@ -598,7 +611,7 @@
 		showCreateDialog = false;
 		createError = '';
 	}}
-	title="Create Custom Claim Schema"
+	title="新しいスキーマを追加"
 	size="lg"
 >
 	{#if createError}
