@@ -211,7 +211,7 @@
 	// Delete
 	// =========================================================================
 
-	async function openDeleteDialog(schema: CustomClaimSchema, event: Event) {
+	async function _openDeleteDialog(schema: CustomClaimSchema, event: Event) {
 		event.stopPropagation();
 		schemaToDelete = schema;
 		deleteError = '';
@@ -255,7 +255,7 @@
 	// Rename
 	// =========================================================================
 
-	async function openRenameDialog(schema: CustomClaimSchema, event: Event) {
+	async function _openRenameDialog(schema: CustomClaimSchema, event: Event) {
 		event.stopPropagation();
 		schemaToRename = schema;
 		renameNewKey = '';

@@ -80,6 +80,7 @@
 		],
 		branding: [{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' }],
 		configuration: [
+			{ path: '/admin/info', label: 'Info', icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: 'Settings', icon: 'i-ph-gear' },
 			{ path: '/admin/plugins', label: 'Plugins', icon: 'i-ph-puzzle-piece' }
 		]

@@ -263,6 +263,7 @@ import {
   adminSettingsValidateHandler,
   adminTenantCloneHandler,
 } from './admin-settings-meta';
+import { adminTenantInfoHandler } from './admin-info';
 import {
   adminTenantsListHandler,
   adminTenantCreateHandler,
@@ -994,6 +995,7 @@ app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
 app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
+app.get('/api/admin/tenants/:id/info', adminTenantInfoHandler);
 app.get('/api/admin/tenants/:id', adminTenantGetHandler);
 app.patch('/api/admin/tenants/:id', adminTenantUpdateHandler);
 app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
