@@ -330,7 +330,7 @@
 </script>
 
 <svelte:head>
-	<title>スキーマ設定 - Admin Dashboard - Authrim</title>
+	<title>Schema Settings - Admin Dashboard - Authrim</title>
 </svelte:head>
 
 <div class="admin-page">
@@ -353,15 +353,16 @@
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">スキーマ設定</h1>
+			<h1 class="page-title">Schema Settings</h1>
 			<p class="page-description">
-				ユーザーのクレームフィールドを定義・管理します。フィールドタイプ、バリデーションルール、OIDCトークンへのマッピングを制御します。
+				Define and manage claim fields for users. Control field types, validation rules, and how
+				claims map to OIDC tokens.
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				スキーマを追加
+				Add Schema
 			</button>
 		</div>
 	</div>
@@ -439,9 +440,9 @@
 			</div>
 			<div class="form-group">
 				<select class="form-select" bind:value={filterIsSystem} onchange={applyFilters}>
-					<option value="">すべて</option>
-					<option value="0">カスタム</option>
-					<option value="1">システム</option>
+					<option value="">All</option>
+					<option value="0">Custom</option>
+					<option value="1">System</option>
 				</select>
 			</div>
 			<div class="form-group">
@@ -460,8 +461,8 @@
 	{:else if schemas.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">スキーマが見つかりません。</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>スキーマを追加</button>
+				<p class="empty-state-description">No schemas found.</p>
+				<button class="btn btn-primary" onclick={openCreateDialog}>Add Schema</button>
 			</div>
 		</div>
 	{:else}
@@ -611,7 +612,7 @@
 		showCreateDialog = false;
 		createError = '';
 	}}
-	title="新しいスキーマを追加"
+	title="Add Schema"
 	size="lg"
 >
 	{#if createError}
