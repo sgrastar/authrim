@@ -467,7 +467,7 @@
 		</div>
 	{:else}
 		<div class="data-table-container">
-			<table class="data-table">
+			<table class="data-table schema-table">
 				<thead>
 					<tr>
 						<th>Field Key</th>
@@ -477,7 +477,6 @@
 						<th>Token</th>
 						<th>Required</th>
 						<th>Status</th>
-						<th>Actions</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -551,28 +550,6 @@
 								{:else}
 									<span class="badge badge-success">Active</span>
 								{/if}
-							</td>
-							<td>
-								<div class="flex gap-1">
-									<button
-										class="btn btn-secondary btn-xs"
-										title={schema.is_system ? 'System claims cannot be renamed' : 'Rename'}
-										onclick={(e) => openRenameDialog(schema, e)}
-										disabled={schema.operation_status !== 'active' || !!schema.is_system}
-									>
-										<i class="i-ph-pencil-simple"></i>
-									</button>
-									<button
-										class="btn btn-danger btn-xs"
-										title={schema.is_system ? 'System claims cannot be deleted' : 'Delete'}
-										onclick={(e) => openDeleteDialog(schema, e)}
-										disabled={!!schema.is_system ||
-											(schema.operation_status !== 'active' &&
-												schema.operation_status !== 'error')}
-									>
-										<i class="i-ph-trash"></i>
-									</button>
-								</div>
 							</td>
 						</tr>
 					{/each}
@@ -905,5 +882,14 @@
 		font-size: 0.75rem;
 		color: #6b7280;
 		margin-top: 0.25rem;
+	}
+
+	/* Compact row spacing for schema list */
+	:global(.schema-table td) {
+		padding: 6px 16px;
+	}
+
+	:global(.schema-table th) {
+		padding: 8px 16px;
 	}
 </style>
