@@ -362,7 +362,7 @@ describe('Login Methods API', () => {
 
   describe('UI config from settings-v2', () => {
     it('should use settings-v2 KV values when available', async () => {
-      const configKV = createMockKV({
+      const settingsKV = createMockKV({
         'settings:tenant:default:login-ui': JSON.stringify({
           'login-ui.theme': 'dark',
           'login-ui.variant': 'navy',
@@ -382,7 +382,7 @@ describe('Login Methods API', () => {
           ]),
         }),
       });
-      const { app, mockEnv } = createTestApp({ configKV });
+      const { app, mockEnv } = createTestApp({ settingsKV });
 
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
@@ -439,15 +439,13 @@ describe('Login Methods API', () => {
           general: { siteName: 'Legacy App' },
           loginUI: { theme: 'light', variant: 'beige' },
         }),
-      });
-      const configKV = createMockKV({
         'settings:tenant:default:login-ui': JSON.stringify({
           'login-ui.theme': 'dark',
           'login-ui.variant': 'navy',
           'login-ui.brand_name': 'Settings V2 App',
         }),
       });
-      const { app, mockEnv } = createTestApp({ settingsKV, configKV });
+      const { app, mockEnv } = createTestApp({ settingsKV });
 
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
@@ -499,11 +497,11 @@ describe('Login Methods API', () => {
       expect(body.methods.emailCode.enabled).toBe(true);
     });
 
-    it('should handle invalid JSON in AUTHRIM_CONFIG gracefully', async () => {
-      const configKV = createMockKV({
+    it('should handle invalid JSON in settings-v2 gracefully', async () => {
+      const settingsKV = createMockKV({
         'settings:tenant:default:login-ui': '{bad json}',
       });
-      const { app, mockEnv } = createTestApp({ configKV });
+      const { app, mockEnv } = createTestApp({ settingsKV });
 
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
 
@@ -518,14 +516,14 @@ describe('Login Methods API', () => {
     });
 
     it('should handle invalid JSON in footer_links and custom_blocks gracefully', async () => {
-      const configKV = createMockKV({
+      const settingsKV = createMockKV({
         'settings:tenant:default:login-ui': JSON.stringify({
           'login-ui.theme': 'dark',
           'login-ui.footer_links': '{not an array}',
           'login-ui.custom_blocks': 'invalid',
         }),
       });
-      const { app, mockEnv } = createTestApp({ configKV });
+      const { app, mockEnv } = createTestApp({ settingsKV });
 
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
 

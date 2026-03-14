@@ -250,9 +250,9 @@ async function getLoginUISettings(
     customBlocks: [...DEFAULT_UI_CONFIG.appearance.customBlocks],
   };
 
-  // Try settings-v2 (AUTHRIM_CONFIG KV) first
+  // Try settings-v2 (SETTINGS KV) first
   try {
-    const kvJson = await env.AUTHRIM_CONFIG?.get('settings:tenant:default:login-ui');
+    const kvJson = await env.SETTINGS?.get('settings:tenant:default:login-ui');
     if (kvJson) {
       const kvSettings = JSON.parse(kvJson) as LoginUIKVSettings;
       return {
@@ -421,7 +421,7 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
 async function resolveCacheTTL(env: Env): Promise<number> {
   // 1. Try KV (settings-v2)
   try {
-    const kvJson = await env.AUTHRIM_CONFIG?.get('settings:tenant:default:login-methods');
+    const kvJson = await env.SETTINGS?.get('settings:tenant:default:login-methods');
     if (kvJson) {
       const kvSettings = JSON.parse(kvJson) as { 'login-methods.cache_ttl'?: number };
       const kvTTL = kvSettings['login-methods.cache_ttl'];
