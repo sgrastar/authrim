@@ -26,6 +26,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import { getRequestIssuer } from './issuer';
 
 // Import handlers
 import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from './authorize';
@@ -165,7 +166,7 @@ app.use('*', async (c, next) => {
     origin: (origin) => {
       // Allow requests without Origin header (same-origin or non-browser)
       if (!origin) {
-        return c.env.ISSUER_URL;
+        return getRequestIssuer(c);
       }
 
       // Validate against allowlist

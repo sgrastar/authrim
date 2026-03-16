@@ -26,6 +26,7 @@ const createMockFetcher = (name: string) => ({
 // Create mock environment with service bindings
 const createMockEnv = () => ({
   OP_DISCOVERY: createMockFetcher('OP_DISCOVERY'),
+  OP_VC: createMockFetcher('OP_VC'),
   OP_AUTH: createMockFetcher('OP_AUTH'),
   OP_TOKEN: createMockFetcher('OP_TOKEN'),
   OP_USERINFO: createMockFetcher('OP_USERINFO'),
@@ -68,6 +69,43 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_DISCOVERY.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /.well-known/webfinger to OP_DISCOVERY', async () => {
+        const req = new Request('https://example.com/.well-known/webfinger');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_DISCOVERY.fetch).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('OP_VC routes', () => {
+      it('should route /.well-known/openid-credential-issuer to OP_VC', async () => {
+        const req = new Request('https://example.com/.well-known/openid-credential-issuer');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_VC.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /vci/* to OP_VC', async () => {
+        const req = new Request('https://example.com/vci/credential', { method: 'POST' });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_VC.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /vp/* to OP_VC', async () => {
+        const req = new Request('https://example.com/vp/authorize', { method: 'POST' });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_VC.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /did/* to OP_VC', async () => {
+        const req = new Request('https://example.com/did/resolve/did:web:example.com');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_VC.fetch).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -203,6 +241,14 @@ describe('Router Worker', () => {
 
         expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
       });
+
+      it('should return 404 when OP_ASYNC is not bound', async () => {
+        const req = new Request('https://example.com/device_authorization', { method: 'POST' });
+        const env = { ...mockEnv, OP_ASYNC: undefined };
+        const res = await app.fetch(req, env);
+
+        expect(res.status).toBe(404);
+      });
     });
 
     describe('OP_MANAGEMENT routes', () => {
@@ -262,6 +308,14 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should return 404 when OP_SAML is not bound', async () => {
+        const req = new Request('https://example.com/saml/sp/metadata');
+        const env = { ...mockEnv, OP_SAML: undefined };
+        const res = await app.fetch(req, env);
+
+        expect(res.status).toBe(404);
       });
     });
   });

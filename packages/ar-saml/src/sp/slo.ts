@@ -53,12 +53,13 @@ export async function handleSPSLO(c: Context<{ Bindings: Env }>): Promise<Respon
   const env = c.env;
   const method = c.req.method;
   const log = getLogger(c).module('SAML-SP');
+  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
 
   try {
     if (method === 'GET') {
-      return handleRedirectBinding(c, env);
+      return handleRedirectBinding(c, env, issuerUrl);
     } else {
-      return handlePostBinding(c, env);
+      return handlePostBinding(c, env, issuerUrl);
     }
   } catch (error) {
     log.error('SP SLO Error', { method }, error as Error);
@@ -69,7 +70,11 @@ export async function handleSPSLO(c: Context<{ Bindings: Env }>): Promise<Respon
 /**
  * Handle HTTP-POST binding
  */
-async function handlePostBinding(c: Context<{ Bindings: Env }>, env: Env): Promise<Response> {
+async function handlePostBinding(
+  c: Context<{ Bindings: Env }>,
+  env: Env,
+  issuerUrl: string
+): Promise<Response> {
   const formData = await c.req.formData();
   const samlRequest = formData.get('SAMLRequest') as string | null;
   const samlResponse = formData.get('SAMLResponse') as string | null;
@@ -77,7 +82,7 @@ async function handlePostBinding(c: Context<{ Bindings: Env }>, env: Env): Promi
 
   if (samlRequest) {
     const logoutRequest = parseLogoutRequestPost(samlRequest);
-    return processLogoutRequest(c, env, logoutRequest, relayState, 'post', samlRequest);
+    return processLogoutRequest(c, env, issuerUrl, logoutRequest, relayState, 'post', samlRequest);
   } else if (samlResponse) {
     const logoutResponse = parseLogoutResponsePost(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState, samlResponse);
@@ -91,7 +96,11 @@ async function handlePostBinding(c: Context<{ Bindings: Env }>, env: Env): Promi
 /**
  * Handle HTTP-Redirect binding
  */
-async function handleRedirectBinding(c: Context<{ Bindings: Env }>, env: Env): Promise<Response> {
+async function handleRedirectBinding(
+  c: Context<{ Bindings: Env }>,
+  env: Env,
+  issuerUrl: string
+): Promise<Response> {
   const url = new URL(c.req.url);
   const samlRequest = url.searchParams.get('SAMLRequest');
   const samlResponse = url.searchParams.get('SAMLResponse');
@@ -99,7 +108,7 @@ async function handleRedirectBinding(c: Context<{ Bindings: Env }>, env: Env): P
 
   if (samlRequest) {
     const logoutRequest = parseLogoutRequestRedirect(samlRequest);
-    return processLogoutRequest(c, env, logoutRequest, relayState, 'redirect');
+    return processLogoutRequest(c, env, issuerUrl, logoutRequest, relayState, 'redirect');
   } else if (samlResponse) {
     const logoutResponse = parseLogoutResponseRedirect(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState);
@@ -116,6 +125,7 @@ async function handleRedirectBinding(c: Context<{ Bindings: Env }>, env: Env): P
 async function processLogoutRequest(
   c: Context<{ Bindings: Env }>,
   env: Env,
+  issuerUrl: string,
   logoutRequest: ParsedLogoutRequest,
   relayState: string | null,
   binding: 'post' | 'redirect',
@@ -150,7 +160,7 @@ async function processLogoutRequest(
   }
 
   // Validate LogoutRequest
-  validateLogoutRequest(logoutRequest, env);
+  validateLogoutRequest(logoutRequest, issuerUrl);
 
   // Terminate session by NameID
   await terminateSessionByNameId(c, env, logoutRequest.nameId, logoutRequest.sessionIndex);
@@ -162,6 +172,7 @@ async function processLogoutRequest(
   return sendLogoutResponse(
     c,
     env,
+    issuerUrl,
     idpConfig,
     {
       inResponseTo: logoutRequest.id,
@@ -236,7 +247,7 @@ async function processLogoutResponse(
 /**
  * Validate LogoutRequest from IdP
  */
-function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, env: Env): void {
+function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: string): void {
   // Check request is not expired
   const issueInstant = new Date(logoutRequest.issueInstant);
   const now = new Date();
@@ -253,7 +264,7 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, env: Env): vo
 
   // Validate Destination if present
   if (logoutRequest.destination) {
-    const expectedDestination = `${env.ISSUER_URL}/saml/sp/slo`;
+    const expectedDestination = `${issuerUrl}/saml/sp/slo`;
     if (logoutRequest.destination !== expectedDestination) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Destination in SAML LogoutRequest');
@@ -345,6 +356,7 @@ async function terminateSessionByNameId(
 async function sendLogoutResponse(
   c: Context<{ Bindings: Env }>,
   env: Env,
+  issuerUrl: string,
   idpConfig: SAMLIdPConfig,
   options: {
     inResponseTo: string;
@@ -359,7 +371,7 @@ async function sendLogoutResponse(
 
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const responseId = generateSAMLId();
-  const issuer = `${env.ISSUER_URL}/saml/sp`;
+  const issuer = `${issuerUrl}/saml/sp`;
 
   // Build LogoutResponse
   let responseXml = buildLogoutResponse({
@@ -443,7 +455,8 @@ export async function initiateSPLogout(
   userId: string,
   idpConfig: SAMLIdPConfig,
   sessionIndex?: string,
-  returnUrl?: string
+  returnUrl?: string,
+  tenantId = 'default'
 ): Promise<{ html: string }> {
   // Get user info for NameID (PII/Non-PII DB separation)
   let nameId: string | null = null;
@@ -459,7 +472,7 @@ export async function initiateSPLogout(
   if (!nameId) {
     throw new Error('Logout request could not be processed');
   }
-  const issuer = `${env.ISSUER_URL}/saml/sp`;
+  const issuer = `${buildIssuerUrl(env, tenantId)}/saml/sp`;
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const requestId = generateSAMLId();
 

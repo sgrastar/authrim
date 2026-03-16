@@ -9,6 +9,8 @@
 
 	// Use the shared store so AdminHeader selector stays in sync
 	let tenants = $derived(tenantStore.tenants);
+	let singleTenantMode = $derived(tenantStore.singleTenantMode);
+	let singleTenantReason = $derived(tenantStore.singleTenantReason);
 	let loading = $state(!tenantStore.loaded);
 	let error = $state('');
 	let infoMessage = $state('');
@@ -94,6 +96,7 @@
 	// ==========================================================================
 
 	function openCreateDialog() {
+		if (singleTenantMode) return;
 		newId = '';
 		newName = '';
 		newDescription = '';
@@ -152,8 +155,15 @@
 
 	async function handleEdit() {
 		if (!editingTenant) return;
+		const editActiveDisabled = singleTenantMode || editingTenant.is_default;
 		if (!editName.trim()) {
 			editError = 'Name is required';
+			return;
+		}
+		if (editActiveDisabled && editIsActive !== editingTenant.is_active) {
+			editError = singleTenantMode
+				? 'The default tenant must remain active in single-tenant mode.'
+				: 'The default tenant cannot be deactivated.';
 			return;
 		}
 
@@ -242,11 +252,34 @@
 			<h1 class="page-title">Tenants</h1>
 			<p class="page-description">Manage tenants for this Authrim instance.</p>
 		</div>
-		<button class="btn btn-primary" onclick={openCreateDialog}>
+		<button
+			class="btn btn-primary"
+			onclick={openCreateDialog}
+			disabled={singleTenantMode}
+			title={
+				singleTenantMode
+					? 'Unavailable in single-tenant mode. Configure an API custom domain to enable multiple tenants.'
+					: 'Add a tenant'
+			}
+		>
 			<i class="i-ph-plus"></i>
 			Add Tenant
 		</button>
 	</div>
+
+	{#if singleTenantMode}
+		<div class="alert alert-info">
+			<i class="i-ph-info"></i>
+			<div>
+				<strong>Single-tenant mode</strong>
+				<p>
+					{singleTenantReason ??
+						'API custom domain is not configured. This deployment runs in single-tenant mode.'}
+					Configure an API custom domain in setup to enable additional tenants.
+				</p>
+			</div>
+		</div>
+	{/if}
 
 	{#if error}
 		<div class="alert alert-error">
@@ -479,19 +512,35 @@
 				></textarea>
 			</div>
 			<div class="form-group">
-				<label class="form-label toggle-label">
+				<label
+					class="form-label toggle-label"
+					class:disabled={singleTenantMode || editingTenant.is_default}
+				>
 					<span>Active</span>
-					<div class="toggle-switch" class:checked={editIsActive}>
+					<div
+						class="toggle-switch"
+						class:checked={editIsActive}
+						class:disabled={singleTenantMode || editingTenant.is_default}
+					>
 						<input
 							type="checkbox"
 							bind:checked={editIsActive}
 							class="toggle-input"
 							id="edit-active"
+							disabled={singleTenantMode || editingTenant.is_default}
 						/>
 						<label for="edit-active" class="toggle-slider"></label>
 					</div>
 				</label>
-				<p class="field-hint">Inactive tenants are hidden from the tenant selector.</p>
+				<p class="field-hint">
+					{#if singleTenantMode}
+						The default tenant must remain active in single-tenant mode.
+					{:else if editingTenant.is_default}
+						The default tenant must remain active. Change the default tenant first to deactivate it.
+					{:else}
+						Inactive tenants are hidden from the tenant selector.
+					{/if}
+				</p>
 			</div>
 		</div>
 		<div class="modal-footer">
@@ -997,8 +1046,16 @@
 		cursor: pointer;
 	}
 
+	.toggle-label.disabled {
+		cursor: not-allowed;
+	}
+
 	.toggle-switch {
 		position: relative;
+	}
+
+	.toggle-switch.disabled {
+		opacity: 0.5;
 	}
 
 	.toggle-input {
@@ -1017,6 +1074,10 @@
 		position: relative;
 		cursor: pointer;
 		transition: background var(--transition-fast);
+	}
+
+	.toggle-switch.disabled .toggle-slider {
+		cursor: not-allowed;
 	}
 
 	.toggle-slider::after {

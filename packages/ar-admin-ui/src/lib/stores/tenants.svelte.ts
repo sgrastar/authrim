@@ -11,6 +11,8 @@ import { adminTenantsAPI, type Tenant } from '$lib/api/admin-tenants';
 function createTenantStore() {
 	let tenants = $state<Tenant[]>([]);
 	let loaded = $state(false);
+	let singleTenantMode = $state(false);
+	let singleTenantReason = $state<string | null>(null);
 
 	return {
 		get tenants() {
@@ -18,6 +20,12 @@ function createTenantStore() {
 		},
 		get loaded() {
 			return loaded;
+		},
+		get singleTenantMode() {
+			return singleTenantMode;
+		},
+		get singleTenantReason() {
+			return singleTenantReason;
 		},
 
 		/** Active tenants suitable for the header selector */
@@ -35,6 +43,8 @@ function createTenantStore() {
 			try {
 				const response = await adminTenantsAPI.list();
 				tenants = response.tenants;
+				singleTenantMode = response.single_tenant_mode ?? false;
+				singleTenantReason = response.single_tenant_reason ?? null;
 				loaded = true;
 			} catch {
 				// Non-critical: selector simply won't appear

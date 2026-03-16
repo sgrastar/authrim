@@ -123,6 +123,7 @@ describe('ui-env module', () => {
 
       expect(buildInitialUiEnvConfig(config)).toEqual({
         PUBLIC_API_BASE_URL: 'https://api.example.com',
+        PUBLIC_AUTHRIM_ISSUER: 'https://api.example.com',
       });
     });
 
@@ -136,6 +137,7 @@ describe('ui-env module', () => {
 
       expect(buildInitialUiEnvConfig(config)).toEqual({
         PUBLIC_API_BASE_URL: 'https://test.authrim.com',
+        PUBLIC_AUTHRIM_ISSUER: 'https://test.authrim.com',
       });
     });
 

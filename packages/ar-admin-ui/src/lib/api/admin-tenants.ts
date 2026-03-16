@@ -25,6 +25,8 @@ export interface Tenant {
 export interface TenantListResponse {
 	tenants: Tenant[];
 	total: number;
+	single_tenant_mode?: boolean;
+	single_tenant_reason?: string | null;
 }
 
 export interface TenantDeleteResponse {

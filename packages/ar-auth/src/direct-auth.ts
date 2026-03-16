@@ -61,6 +61,7 @@ import {
   // Tenant domain resolution
   resolveTenantFromEmailDomain,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 
 import {
   generateRegistrationOptions,
@@ -1889,7 +1890,7 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
         // Create refresh token JWT with rtv (Refresh Token Version) claim
         const refreshTokenResult = await createRefreshToken(
           {
-            iss: c.env.ISSUER_URL,
+            iss: getRequestIssuer(c),
             sub: userId,
             aud: client_id,
             client_id,

@@ -12,6 +12,8 @@ import {
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
+  buildIssuerUrl,
+  getTenantIdFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
 import {
@@ -110,7 +112,9 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
     }
 
     // Build URL to start linking flow
-    const startUrl = new URL(`${c.env.ISSUER_URL}/auth/external/${body.provider_id}/start`);
+    const startUrl = new URL(
+      `${buildIssuerUrl(c.env, getTenantIdFromContext(c))}/auth/external/${body.provider_id}/start`
+    );
     startUrl.searchParams.set('link', 'true');
     if (body.redirect_uri) {
       startUrl.searchParams.set('redirect_uri', body.redirect_uri);

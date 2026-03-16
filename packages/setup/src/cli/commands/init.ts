@@ -1556,13 +1556,11 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(chalk.blue('━━━ ' + t('tenant.title') + ' ━━━'));
   console.log('');
 
-  // Multi-tenant mode is always enabled - ask for base domain
-  const multiTenant = true; // Always enabled (kept as variable for backward compatibility)
-
   let tenantName = 'default';
   let tenantDisplayName = 'Default Tenant';
   let baseDomain: string | undefined;
   let primaryTenant: string | undefined;
+  let nakedDomain = false;
   let userIdFormat: 'nanoid' | 'uuid' = 'nanoid';
 
   // Step 6: URL configuration
@@ -1575,16 +1573,16 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log('');
   console.log(chalk.blue('━━━ ' + t('tenant.multiTenantTitle') + ' ━━━'));
   console.log('');
-  console.log(chalk.gray('  Domain pattern: {tenant}-{env}-{prefix}.{baseDomain}'));
-  console.log(chalk.gray('    • example.com (naked domain → primary tenant)'));
-  console.log(chalk.gray('    • acme.example.com (tenant subdomain)'));
-  console.log(chalk.gray('    • acme-test-auth.example.com (full pattern)'));
+  console.log(chalk.gray('  Leave empty to use workers.dev and single-tenant mode.'));
+  console.log(chalk.gray('  With a custom domain:'));
+  console.log(chalk.gray('    • https://example.com (naked domain issuer)'));
+  console.log(chalk.gray('    • https://acme.example.com (tenant subdomain issuer)'));
   console.log('');
 
   baseDomain = await input({
     message: t('tenant.baseDomainPrompt'),
     validate: (value) => {
-      if (!value) return t('tenant.baseDomainRequired');
+      if (!value) return true;
       if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
         return t('tenant.baseDomainValidation');
       }
@@ -1592,53 +1590,69 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     },
   });
 
+  baseDomain = baseDomain || undefined;
   console.log('');
-  console.log(chalk.green('  ✓ Base domain: ' + baseDomain));
+  if (baseDomain) {
+    console.log(chalk.green('  ✓ Base domain: ' + baseDomain));
+  } else {
+    console.log(chalk.green('  ✓ Using workers.dev (single-tenant mode)'));
+  }
 
   // Check Cloudflare zone for the base domain
-  try {
-    await checkAndPromptZone(baseDomain, fullDomainConfig);
-  } catch {
-    // User cancelled - this is non-fatal, continue with setup
+  if (baseDomain) {
+    try {
+      await checkAndPromptZone(baseDomain, fullDomainConfig);
+    } catch {
+      // User cancelled - this is non-fatal, continue with setup
+    }
   }
   console.log('');
 
   // API domain is the base domain
-  apiDomain = baseDomain;
+  apiDomain = baseDomain || null;
 
-  tenantName = await input({
-    message: t('tenant.defaultTenantPrompt'),
-    default: 'default',
-    validate: (value) => {
-      if (!/^[a-z][a-z0-9-]*$/.test(value)) {
-        return t('tenant.defaultTenantValidation');
-      }
-      return true;
-    },
-  });
+  if (baseDomain) {
+    tenantName = await input({
+      message: t('tenant.defaultTenantPrompt'),
+      default: 'default',
+      validate: (value) => {
+        if (!/^[a-z][a-z0-9-]*$/.test(value)) {
+          return t('tenant.defaultTenantValidation');
+        }
+        return true;
+      },
+    });
+  } else {
+    tenantName = 'default';
+  }
 
   tenantDisplayName = await input({
     message: t('tenant.displayNamePrompt'),
     default: 'Default Tenant',
   });
 
-  // Primary tenant for naked domain
-  const usePrimaryTenant = await confirm({
-    message: 'Use naked domain for a specific tenant?',
-    default: false,
-  });
-
-  if (usePrimaryTenant) {
-    primaryTenant = await input({
-      message: 'Primary tenant ID for naked domain',
-      default: tenantName,
-      validate: (value) => {
-        if (!/^[a-z][a-z0-9-]*$/.test(value)) {
-          return 'Tenant ID must start with a letter and contain only lowercase letters, numbers, and hyphens';
-        }
-        return true;
-      },
+  if (baseDomain) {
+    nakedDomain = await confirm({
+      message: 'Use naked domain as the issuer for the primary tenant?',
+      default: false,
     });
+
+    if (nakedDomain) {
+      primaryTenant = await input({
+        message: 'Primary tenant ID for naked domain (leave empty for default tenant)',
+        default: '',
+        validate: (value) => {
+          if (!value) {
+            return true;
+          }
+          if (!/^[a-z][a-z0-9-]*$/.test(value)) {
+            return 'Tenant ID must start with a letter and contain only lowercase letters, numbers, and hyphens';
+          }
+          return true;
+        },
+      });
+      primaryTenant = primaryTenant || undefined;
+    }
   }
 
   // User ID format selection
@@ -1982,10 +1996,11 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   config.tenant = {
     name: tenantName,
     displayName: tenantDisplayName,
-    multiTenant,
+    multiTenant: !!baseDomain,
     baseDomain,
     userIdFormat,
     primaryTenant,
+    nakedDomain,
   };
   config.components = {
     ...config.components,
@@ -2049,13 +2064,17 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   // Tenant mode and Issuer
   console.log(chalk.bold('Tenant & Issuer:'));
-  console.log(`  Mode:          ${chalk.cyan('Multi-tenant (always enabled)')}`);
+  console.log(`  Mode:          ${chalk.cyan(baseDomain ? 'Multi-tenant' : 'Single-tenant')}`);
   if (baseDomain) {
     console.log(`  Base Domain:   ${chalk.cyan(baseDomain)}`);
-    console.log(`  Domain Pattern: ${chalk.cyan('{tenant}-{env}-{prefix}.' + baseDomain)}`);
-    console.log(`  Example:       ${chalk.gray('https://acme-test-auth.' + baseDomain)}`);
-    if (primaryTenant) {
-      console.log(`  Primary Tenant: ${chalk.cyan(primaryTenant)} ${chalk.gray('(naked domain)')}`);
+    console.log(`  Domain Pattern: ${chalk.cyan('{tenant}.' + baseDomain)}`);
+    console.log(
+      `  Example:       ${chalk.gray(nakedDomain ? 'https://' + baseDomain : 'https://acme.' + baseDomain)}`
+    );
+    if (nakedDomain) {
+      console.log(
+        `  Naked Domain:  ${chalk.cyan(primaryTenant || tenantName)} ${chalk.gray('(primary tenant issuer)')}`
+      );
     }
   } else {
     const issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto;
@@ -2071,6 +2090,11 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     console.log(
       `  API Router:    ${chalk.cyan('*.' + baseDomain)} → ${chalk.gray(envPrefix + '-ar-router')}`
     );
+    if (nakedDomain) {
+      console.log(
+        `  API Router:    ${chalk.cyan(baseDomain + ' (naked)')} → ${chalk.gray(envPrefix + '-ar-router')}`
+      );
+    }
   } else {
     console.log(`  API Router:    ${chalk.cyan(config.urls.api.custom || config.urls.api.auto)}`);
   }

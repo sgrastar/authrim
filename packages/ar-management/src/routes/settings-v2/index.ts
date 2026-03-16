@@ -59,6 +59,7 @@ import {
   // Admin Auth
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
+import { ensureSupportedTenantId } from '../../single-tenant-guard';
 
 // Module-level logger for settings audit
 const log = createLogger().module('SETTINGS_AUDIT');
@@ -243,6 +244,11 @@ function errorResponse(
 
 // Tenant settings - lenient for GET, moderate for PATCH
 settingsV2.use('/tenants/:tenantId/settings/:category', async (c, next) => {
+  const blocked = await ensureSupportedTenantId(c, c.req.param('tenantId'), 'tenantId');
+  if (blocked) {
+    return blocked;
+  }
+
   const profile = await getRateLimitProfileAsync(
     c.env,
     c.req.method === 'PATCH' ? 'moderate' : 'lenient'

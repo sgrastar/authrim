@@ -211,7 +211,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
 
     // 6. Build callback URL (use slug if available for cleaner URLs)
     const providerIdentifier = provider.slug || provider.id;
-    const callbackUri = `${c.env.ISSUER_URL}/auth/external/${providerIdentifier}/callback`;
+    const callbackUri = `${buildIssuerUrl(c.env, tenantIdResolved)}/auth/external/${providerIdentifier}/callback`;
 
     // 7. Generate PKCE for Authrim ↔ External IdP flow
     // This is separate from the client ↔ Authrim PKCE flow

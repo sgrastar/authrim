@@ -46,6 +46,7 @@ import { getIdPConfigByEntityId } from '../admin/providers';
 export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
+  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
 
   try {
     // Parse POST data
@@ -63,7 +64,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const responseXml = base64Decode(samlResponse);
 
     // Parse and validate Response
-    const { issuer, assertion, inResponseTo } = parseAndValidateResponse(responseXml, env);
+    const { issuer, assertion, inResponseTo } = parseAndValidateResponse(responseXml, issuerUrl);
 
     // Get IdP configuration
     const idpConfig = await getIdPConfigByEntityId(env, issuer);
@@ -246,7 +247,7 @@ interface ParsedResponse {
 /**
  * Parse and validate SAML Response
  */
-function parseAndValidateResponse(xml: string, env: Env): ParsedResponse {
+function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedResponse {
   const doc = parseXml(xml);
 
   // Find Response element
@@ -258,7 +259,7 @@ function parseAndValidateResponse(xml: string, env: Env): ParsedResponse {
   // Check Destination
   const destination = getAttribute(responseElement, 'Destination');
   if (destination) {
-    const expectedDestination = `${env.ISSUER_URL}/saml/sp/acs`;
+    const expectedDestination = `${issuerUrl}/saml/sp/acs`;
     if (destination !== expectedDestination) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Destination in SAML Response');
@@ -300,7 +301,7 @@ function parseAndValidateResponse(xml: string, env: Env): ParsedResponse {
   }
 
   // Parse Assertion (pass inResponseTo for SubjectConfirmationData validation)
-  const assertion = parseAssertion(assertionElement, env, inResponseTo);
+  const assertion = parseAssertion(assertionElement, issuerUrl, inResponseTo);
 
   return { issuer, inResponseTo, assertion };
 }
@@ -312,7 +313,11 @@ function parseAndValidateResponse(xml: string, env: Env): ParsedResponse {
  * @param env - Environment bindings
  * @param inResponseTo - The InResponseTo attribute from the Response (for SubjectConfirmationData validation)
  */
-function parseAssertion(assertionElement: Element, env: Env, inResponseTo?: string): SAMLAssertion {
+function parseAssertion(
+  assertionElement: Element,
+  issuerUrl: string,
+  inResponseTo?: string
+): SAMLAssertion {
   const id = getAttribute(assertionElement, 'ID') || '';
   const issueInstant = getAttribute(assertionElement, 'IssueInstant') || '';
 
@@ -337,7 +342,7 @@ function parseAssertion(assertionElement: Element, env: Env, inResponseTo?: stri
     'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified';
 
   // Validate SubjectConfirmation (SAML 2.0 Profiles 4.1.4.2)
-  const expectedAcsUrl = `${env.ISSUER_URL}/saml/sp/acs`;
+  const expectedAcsUrl = `${issuerUrl}/saml/sp/acs`;
   validateSubjectConfirmation(subjectElement, expectedAcsUrl, inResponseTo);
 
   // Parse Conditions
@@ -371,7 +376,7 @@ function parseAssertion(assertionElement: Element, env: Env, inResponseTo?: stri
     const audiences = audienceElements.map((el) => getTextContent(el) || '').filter(Boolean);
 
     // Validate audience
-    const expectedAudience = `${env.ISSUER_URL}/saml/sp`;
+    const expectedAudience = `${issuerUrl}/saml/sp`;
     if (audiences.length > 0 && !audiences.includes(expectedAudience)) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Audience in SAML Assertion');

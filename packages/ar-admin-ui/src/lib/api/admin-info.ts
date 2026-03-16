@@ -67,6 +67,14 @@ export interface TenantInfo extends TenantEndpoints {
 	tenant_id: string;
 	tenant_name: string;
 	issuer: string;
+	components: {
+		login_ui: boolean;
+		admin_ui: boolean;
+		saml: boolean;
+		async: boolean;
+		vc: boolean;
+	};
+	login_ui_url: string | null;
 	admin_ui_url: string | null;
 	api_url: string;
 }

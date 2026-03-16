@@ -75,49 +75,10 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
 
   // Get tenant ID from request context (set by requestContextMiddleware)
   const tenantId = getTenantIdFromContext(c);
+  const asyncEnabled = (c.env as Env & { ASYNC_ENABLED?: string }).ASYNC_ENABLED !== 'false';
 
-  // =========================================================================
-  // Phase 2: KV Cache Check (reduces 5-6 KV reads to 1)
-  // =========================================================================
-  const kvCacheKey = buildVersionedKey('discovery', tenantId);
-  const discoveryTTL = await getCacheTTL(c.env, 'discovery');
-
-  // Try to get from KV cache first
-  if (c.env.AUTHRIM_CONFIG) {
-    try {
-      const cached = await c.env.AUTHRIM_CONFIG.get(kvCacheKey, {
-        type: 'json',
-        cacheTtl: discoveryTTL, // Edge memory cache
-      });
-      if (cached) {
-        // Cache hit - return cached metadata
-        c.header('Cache-Control', `public, max-age=${discoveryTTL}`);
-        c.header('Vary', 'Accept-Encoding, Host');
-        c.header('X-Discovery-Cache', 'HIT');
-        return c.json(cached as OIDCProviderMetadata);
-      }
-    } catch (error) {
-      // KV error - fall through to generate fresh metadata
-      log.warn('Failed to read discovery cache from KV', { tenantId }, error as Error);
-    }
-  }
-  // =========================================================================
-
-  // Build issuer URL for this tenant
-  // Special handling: if NAKED_DOMAIN_AS_ISSUER is enabled and accessing via naked domain,
-  // use naked domain as issuer (e.g., https://test.authrim.com instead of https://default.test.authrim.com)
-  let issuer: string;
-  const host = c.req.header('Host');
-  const hostname = host?.split(':')[0]; // Remove port
-  const useNakedDomainAsIssuer = c.env.NAKED_DOMAIN_AS_ISSUER === 'true';
-
-  if (useNakedDomainAsIssuer && c.env.BASE_DOMAIN && hostname === c.env.BASE_DOMAIN) {
-    // Naked domain access with NAKED_DOMAIN_AS_ISSUER enabled: use naked domain as issuer
-    issuer = `https://${c.env.BASE_DOMAIN}`;
-  } else {
-    // Subdomain access or single-tenant: build from tenant ID
-    issuer = buildIssuerUrl(c.env, tenantId);
-  }
+  // Build issuer URL for this tenant.
+  const issuer = buildIssuerUrl(c.env, tenantId);
 
   // Load dynamic configuration from SETTINGS KV
   let oidcConfig: OIDCConfig = {};
@@ -211,11 +172,15 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     tenantId
   );
 
-  // Check if cached metadata is still valid (include feature flags, profile, and tenant in cache key)
-  const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}`;
+  // Check if cached metadata is still valid. The cache key must include env-derived
+  // capabilities such as issuer/async mode, otherwise deployments can keep serving
+  // stale metadata for a different environment or component set.
+  const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}:sm_iframe=${logoutConfig.session_management.check_session_iframe_enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const settingsHash = `${currentSettingsJson}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}`;
+  const settingsHash = `${currentSettingsJson}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}`;
   const cacheKey = `${tenantId}:${settingsHash}`;
+  const discoveryTTL = await getCacheTTL(c.env, 'discovery');
+  const kvCacheKey = buildVersionedKey('discovery', cacheKey);
 
   const cachedMetadata = metadataCache.get(cacheKey);
   if (cachedMetadata) {
@@ -224,6 +189,27 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     c.header('Vary', 'Accept-Encoding, Host');
     return c.json(cachedMetadata);
   }
+
+  // =========================================================================
+  // Phase 2: KV Cache Check (safe after the cache key is fully derived)
+  // =========================================================================
+  if (c.env.AUTHRIM_CONFIG) {
+    try {
+      const cached = await c.env.AUTHRIM_CONFIG.get(kvCacheKey, {
+        type: 'json',
+        cacheTtl: discoveryTTL,
+      });
+      if (cached) {
+        c.header('Cache-Control', `public, max-age=${discoveryTTL}`);
+        c.header('Vary', 'Accept-Encoding, Host');
+        c.header('X-Discovery-Cache', 'HIT');
+        return c.json(cached as OIDCProviderMetadata);
+      }
+    } catch (error) {
+      log.warn('Failed to read discovery cache from KV', { tenantId }, error as Error);
+    }
+  }
+  // =========================================================================
 
   // Determine PAR requirement (FAPI 2.0 mode or OIDC config)
   const requirePar = fapiConfig.enabled ? true : oidcConfig.requirePar || false;
@@ -243,13 +229,17 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     pushed_authorization_request_endpoint: `${issuer}/par`,
     // RFC 9126: PAR requirement (dynamic based on FAPI/OIDC config)
     require_pushed_authorization_requests: requirePar,
-    // RFC 8628: Device Authorization endpoint
-    device_authorization_endpoint: `${issuer}/device_authorization`,
-    // OIDC CIBA: Backchannel Authentication endpoint
-    backchannel_authentication_endpoint: `${issuer}/bc-authorize`,
-    backchannel_token_delivery_modes_supported: ['poll', 'ping', 'push'],
-    backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
-    backchannel_user_code_parameter_supported: true,
+    ...(asyncEnabled
+      ? {
+          // RFC 8628: Device Authorization endpoint
+          device_authorization_endpoint: `${issuer}/device_authorization`,
+          // OIDC CIBA: Backchannel Authentication endpoint
+          backchannel_authentication_endpoint: `${issuer}/bc-authorize`,
+          backchannel_token_delivery_modes_supported: ['poll', 'ping', 'push'],
+          backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
+          backchannel_user_code_parameter_supported: true,
+        }
+      : {}),
     // Dynamic OP certification requires all hybrid and implicit response types
     // Note: These are mandatory for Dynamic OP certification, not configurable
     response_types_supported: [
@@ -269,8 +259,12 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
         'refresh_token',
         'implicit', // Required for Dynamic OP certification (id_token/token response types)
         'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
-        'urn:ietf:params:oauth:grant-type:device_code', // RFC 8628: Device Authorization Grant
-        'urn:openid:params:grant-type:ciba', // OIDC CIBA: Client Initiated Backchannel Authentication
+        ...(asyncEnabled
+          ? [
+              'urn:ietf:params:oauth:grant-type:device_code', // RFC 8628: Device Authorization Grant
+              'urn:openid:params:grant-type:ciba', // OIDC CIBA: Client Initiated Backchannel Authentication
+            ]
+          : []),
         'urn:ietf:params:oauth:grant-type:token-exchange', // RFC 8693: Token Exchange
         'client_credentials', // RFC 6749 Section 4.4: Client Credentials
       ],

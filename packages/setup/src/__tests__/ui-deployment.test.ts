@@ -153,6 +153,56 @@ describe('resolveUiDeploymentSettings', () => {
     expect(admin.runtimeApiBackendUrl).toBe('https://test.authrim.com');
   });
 
+  it('uses Service Binding proxy mode for workers.dev API and pages.dev Login UI', () => {
+    const config = createConfig({
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default',
+        multiTenant: false,
+        baseDomain: undefined,
+        userIdFormat: 'nanoid',
+      },
+    });
+
+    const login = resolveUiDeploymentSettings({
+      component: 'ar-login-ui',
+      config,
+      loginUiClientId: 'login-ui-client',
+    });
+
+    expect(login.apiBaseUrl).toBe('https://test-ar-router.example.workers.dev');
+    expect(login.uiUrl).toBe('https://test-ar-login-ui.pages.dev');
+    expect(login.useRelativeApi).toBe(true);
+    expect(login.needsProxy).toBe(true);
+    expect(login.serviceBindingName).toBe('AR_ROUTER');
+    expect(login.uiEnv.PUBLIC_API_BASE_URL).toBe('');
+    expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBe(
+      'https://test-ar-router.example.workers.dev'
+    );
+    expect(login.uiEnv.API_BACKEND_URL).toBe('https://test-ar-router.example.workers.dev');
+    expect(login.uiEnv.PUBLIC_AUTHRIM_ISSUER).toBe(
+      'https://test-ar-router.example.workers.dev'
+    );
+    expect(login.uiEnv.PUBLIC_LOGIN_UI_CLIENT_ID).toBe('login-ui-client');
+    expect(login.runtimeApiBackendUrl).toBe('https://test-ar-router.example.workers.dev');
+  });
+
   it('uses direct cross-origin API calls for same-site custom domains', () => {
     const config = createConfig({
       urls: {

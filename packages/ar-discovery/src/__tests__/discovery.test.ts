@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
+import { LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
 
 /**
  * Create a mock environment for testing
@@ -89,7 +90,15 @@ describe('Discovery Handler', () => {
       );
 
       const metadata = (await response.json()) as OIDCProviderMetadata;
-      expect(metadata.response_types_supported).toEqual(['code']);
+      expect(metadata.response_types_supported).toEqual([
+        'code',
+        'id_token',
+        'id_token token',
+        'code id_token',
+        'code token',
+        'code id_token token',
+        'none',
+      ]);
     });
 
     it('should return correct grant types', async () => {
@@ -329,7 +338,7 @@ describe('Discovery Handler', () => {
       // Mock SETTINGS KV with logout config
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === 'logout_settings') {
+          if (key === LOGOUT_SETTINGS_KEY) {
             return JSON.stringify({
               frontchannel: { enabled: false },
               backchannel: { enabled: true },
@@ -367,7 +376,7 @@ describe('Discovery Handler', () => {
       // Mock SETTINGS KV with session management disabled
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === 'logout_settings') {
+          if (key === LOGOUT_SETTINGS_KEY) {
             return JSON.stringify({
               frontchannel: { enabled: true },
               backchannel: { enabled: true },
@@ -390,6 +399,32 @@ describe('Discovery Handler', () => {
 
       // Session management disabled - no check_session_iframe
       expect(metadata.check_session_iframe).toBeUndefined();
+    });
+  });
+
+  describe('Optional component metadata', () => {
+    it('omits async endpoints and grant types when async is disabled', async () => {
+      const env = createMockEnv();
+      (env as typeof env & { ASYNC_ENABLED?: string }).ASYNC_ENABLED = 'false';
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.device_authorization_endpoint).toBeUndefined();
+      expect(metadata.backchannel_authentication_endpoint).toBeUndefined();
+      expect(metadata.backchannel_token_delivery_modes_supported).toBeUndefined();
+      expect(metadata.grant_types_supported).not.toContain(
+        'urn:ietf:params:oauth:grant-type:device_code'
+      );
+      expect(metadata.grant_types_supported).not.toContain(
+        'urn:openid:params:grant-type:ciba'
+      );
     });
   });
 });

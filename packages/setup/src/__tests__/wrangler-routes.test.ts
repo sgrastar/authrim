@@ -195,4 +195,87 @@ describe('generateRoutes', () => {
     // workers_dev should be false when custom domain is set
     expect(routerConfig.workers_dev).toBe(false);
   });
+
+  it('adds OP_VC service binding to ar-router when VC is enabled', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: true,
+        bridge: false,
+        policy: false,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const resourceIds = { d1: {}, kv: {} };
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    expect(routerConfig.services).toEqual(
+      expect.arrayContaining([{ binding: 'OP_VC', service: 'test-ar-vc' }])
+    );
+  });
 });

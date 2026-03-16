@@ -39,6 +39,7 @@ import {
   // Audit Log
   createAuditLog,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 
 /**
@@ -240,9 +241,8 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Verify JWT signature
-    // SECURITY: ISSUER_URL must be configured, never trust Host header for audience
-    const issuerUrl = c.env.ISSUER_URL;
+    // Verify JWT signature against the request-resolved issuer.
+    const issuerUrl = getRequestIssuer(c);
     if (!issuerUrl) {
       // Log internally but return generic error to avoid revealing server configuration
       log.error('ISSUER_URL is not configured', { action: 'verify' });

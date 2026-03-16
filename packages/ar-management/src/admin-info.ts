@@ -16,9 +16,25 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   buildIssuerUrl,
-  DEFAULT_TENANT_ID,
   getLogger,
 } from '@authrim/ar-lib-core';
+import { ensureSupportedTenantId } from './single-tenant-guard';
+
+type AdminInfoEnv = Env & {
+  LOGIN_UI_ENABLED?: string;
+  ADMIN_UI_ENABLED?: string;
+  SAML_ENABLED?: string;
+  ASYNC_ENABLED?: string;
+  VC_ENABLED?: string;
+};
+
+interface ComponentAvailability {
+  login_ui: boolean;
+  admin_ui: boolean;
+  saml: boolean;
+  async: boolean;
+  vc: boolean;
+}
 
 /**
  * GET /api/admin/tenants/:id/info
@@ -34,6 +50,11 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },
     });
+  }
+
+  const blocked = await ensureSupportedTenantId(c, tenantId);
+  if (blocked) {
+    return blocked;
   }
 
   try {
@@ -55,8 +76,8 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     // the primary/default tenant should surface the bare domain instead of the tenant subdomain.
     const issuer = buildTenantBaseUrl(c.env, tenantId);
 
-    // Admin UI URL (if configured) — same UI but may be on a different domain
-    const adminUiUrl = c.env.ADMIN_UI_URL || null;
+    const components = getComponentAvailability(c.env);
+    const { loginUiUrl, adminUiUrl } = getConfiguredUiUrls(c.env);
 
     // API base URL — same origin as the management API (relative construction)
     // We infer from the issuer since the API runs on the same Worker
@@ -69,6 +90,8 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
       tenant_id: tenantId,
       tenant_name: tenant.name,
       issuer,
+      components,
+      login_ui_url: loginUiUrl,
       admin_ui_url: adminUiUrl,
       api_url: apiBaseUrl,
       ...endpoints,
@@ -104,26 +127,26 @@ function buildEndpoints(issuer: string, apiBaseUrl: string) {
 
     /** OAuth 2.0 Extensions */
     oauth_extensions: {
-      device_authorization: `${issuer}/device`,
+      device_authorization: `${issuer}/device_authorization`,
       pushed_authorization_request: `${issuer}/par`,
       dynamic_client_registration: `${issuer}/register`,
     },
 
     /** SAML 2.0 Endpoints */
     saml: {
-      sso: `${issuer}/saml/sso`,
-      metadata: `${issuer}/saml/metadata`,
-      acs: `${issuer}/saml/acs`,
-      slo: `${issuer}/saml/slo`,
+      sso: `${issuer}/saml/idp/sso`,
+      metadata: `${issuer}/saml/sp/metadata`,
+      acs: `${issuer}/saml/sp/acs`,
+      slo: `${issuer}/saml/sp/slo`,
     },
 
     /** Verifiable Credentials (OID4VC) Endpoints */
     vc: {
       credential_issuer_metadata: `${issuer}/.well-known/openid-credential-issuer`,
-      credential: `${issuer}/vc/credential`,
-      batch_credential: `${issuer}/vc/batch_credential`,
-      deferred_credential: `${issuer}/vc/deferred_credential`,
-      vp_token_request: `${issuer}/vc/vp-token`,
+      credential: `${issuer}/vci/credential`,
+      batch_credential: `${issuer}/vci/batch_credential`,
+      deferred_credential: `${issuer}/vci/deferred`,
+      vp_token_request: `${issuer}/vp/authorize`,
     },
 
     /** CIBA (Client-Initiated Backchannel Authentication) */
@@ -176,6 +199,27 @@ export function usesNakedDomainIssuer(env: Env, tenantId: string): boolean {
     return false;
   }
 
-  const nakedDomainTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+  const nakedDomainTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || 'default';
   return tenantId === nakedDomainTenantId;
+}
+
+export function getConfiguredUiUrls(env: AdminInfoEnv): {
+  loginUiUrl: string | null;
+  adminUiUrl: string | null;
+} {
+  const components = getComponentAvailability(env);
+  return {
+    loginUiUrl: components.login_ui ? (env.UI_URL || null) : null,
+    adminUiUrl: components.admin_ui ? (env.ADMIN_UI_URL || null) : null,
+  };
+}
+
+export function getComponentAvailability(env: AdminInfoEnv): ComponentAvailability {
+  return {
+    login_ui: env.LOGIN_UI_ENABLED !== 'false',
+    admin_ui: env.ADMIN_UI_ENABLED !== 'false',
+    saml: env.SAML_ENABLED !== 'false',
+    async: env.ASYNC_ENABLED !== 'false',
+    vc: env.VC_ENABLED !== 'false',
+  };
 }

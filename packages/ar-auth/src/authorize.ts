@@ -92,6 +92,7 @@ import {
 import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 'jose';
 // NIST SP 800-63-4 Assurance Levels
 import { type FAL } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 
 // ===== Key Caching for Performance Optimization =====
 // Cache signing key to avoid expensive RSA key import (5-7ms) on every request
@@ -1044,7 +1045,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           // - iss = client_id (the client is the issuer)
           // - aud = OP's issuer URL (the OP is the audience)
           const verified = await verifyToken(jwtRequest, publicKey, client_id, {
-            audience: c.env.ISSUER_URL,
+            audience: getRequestIssuer(c),
           });
           requestObjectClaims = verified as Record<string, unknown>;
         }
@@ -2081,7 +2082,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (publicKey) {
-        const verified = await verifyToken(id_token_hint, publicKey, c.env.ISSUER_URL, {
+        const verified = await verifyToken(id_token_hint, publicKey, getRequestIssuer(c), {
           audience: client_id || '',
         });
         const idTokenPayload = verified.payload as Record<string, unknown>;
@@ -3028,7 +3029,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (includesToken) {
     try {
       // Get issuer from environment
-      const issuer = c.env.ISSUER_URL;
+      const issuer = getRequestIssuer(c);
 
       const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env);
 
@@ -3073,7 +3074,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (includesIdToken) {
     try {
       // Get issuer from environment
-      const issuer = c.env.ISSUER_URL;
+      const issuer = getRequestIssuer(c);
 
       const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env);
 
@@ -3304,7 +3305,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (idToken) responseParams.id_token = idToken;
   if (state) responseParams.state = state;
   // RFC 9207: Add iss parameter to prevent mix-up attacks
-  responseParams.iss = c.env.ISSUER_URL;
+  responseParams.iss = getRequestIssuer(c);
 
   // OIDC Session Management 1.0: Add session_state parameter
   // https://openid.net/specs/openid-connect-session-1_0.html#CreatingUpdatingSessions
@@ -3512,7 +3513,7 @@ async function redirectWithError(
     params.state = state;
   }
   // RFC 9207: Add iss parameter to prevent mix-up attacks (including error responses)
-  params.iss = c.env.ISSUER_URL;
+  params.iss = getRequestIssuer(c);
 
   const parsedResponseType = options?.responseType?.split(' ') ?? [];
   const isImplicitOrHybrid = parsedResponseType.some((t) => t === 'id_token' || t === 'token');
@@ -3709,7 +3710,7 @@ async function createJARMResponse(
     // Build JWT payload from response parameters
     const now = Math.floor(Date.now() / 1000);
     const payload: Record<string, unknown> = {
-      iss: c.env.ISSUER_URL, // Issuer
+      iss: getRequestIssuer(c), // Issuer
       aud: clientId, // Audience (client_id)
       exp: now + 600, // Expires in 10 minutes
       iat: now, // Issued at

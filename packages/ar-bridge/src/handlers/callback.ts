@@ -206,7 +206,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 4. Build callback URL (use slug if available, same as in start)
     const providerIdentifier = provider.slug || provider.id;
-    const callbackUri = `${c.env.ISSUER_URL}/auth/external/${providerIdentifier}/callback`;
+    const callbackTenantId = authState.tenantId || tenantId;
+    const callbackUri = `${buildIssuerUrl(c.env, callbackTenantId)}/auth/external/${providerIdentifier}/callback`;
 
     // 4b. Log authorization response (OIDF conformance)
     if (diagnosticLogger) {
@@ -529,7 +530,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       });
 
       // セッションCookie設定
-      const issuerUrl = buildIssuerUrl(c.env);
+      const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
       const isSecure = issuerUrl.startsWith('https://');
 
       setCookie(c, 'authrim_session', sessionId, {

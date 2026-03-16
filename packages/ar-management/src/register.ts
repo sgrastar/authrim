@@ -23,6 +23,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
+  buildIssuerUrl,
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -980,6 +981,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const clientId = generateClientId();
     const clientSecret = generateClientSecret();
     const issuedAt = Math.floor(Date.now() / 1000);
+    const issuerUrl = buildIssuerUrl(c.env, tenantId);
 
     // Set defaults for optional fields
     const tokenEndpointAuthMethod = request.token_endpoint_auth_method || 'client_secret_basic';
@@ -990,7 +992,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Determine if client is trusted based on redirect_uri domain
     // Trusted clients can skip consent screens (First-Party clients)
     const redirectDomain = new URL(request.redirect_uris[0]).hostname;
-    const issuerDomain = new URL(c.env.ISSUER_URL).hostname;
+    const issuerDomain = new URL(issuerUrl).hostname;
     const trustedDomains = c.env.TRUSTED_DOMAINS?.split(',').map((d) => d.trim()) || [];
 
     const isTrusted = redirectDomain === issuerDomain || trustedDomains.includes(redirectDomain);
@@ -1076,7 +1078,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const registrationAccessTokenHash = arrayBufferToBase64Url(tokenHashBuffer);
 
     // Build registration_client_uri
-    const registrationClientUri = `${c.env.ISSUER_URL}/clients/${clientId}`;
+    const registrationClientUri = `${issuerUrl}/clients/${clientId}`;
 
     // Add to response (token is returned only on initial registration)
     response.registration_access_token = registrationAccessToken;

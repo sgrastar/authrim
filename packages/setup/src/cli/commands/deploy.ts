@@ -88,6 +88,7 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
 
   const secretFiles = [
     { file: 'private.pem', name: 'PRIVATE_KEY_PEM' },
+    { file: 'public.jwk.json', name: 'PUBLIC_JWK_JSON' },
     { file: 'rp_token_encryption_key.txt', name: 'RP_TOKEN_ENCRYPTION_KEY' },
     { file: 'admin_api_secret.txt', name: 'ADMIN_API_SECRET' },
     { file: 'key_manager_secret.txt', name: 'KEY_MANAGER_SECRET' },
@@ -647,17 +648,24 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
 
     let loginUiClientId: string | undefined;
-    if (config.components.loginUi && !options.dryRun && structureType === 'new') {
-      const envPaths = getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() });
+    if (config.components.loginUi && !options.dryRun) {
       const loginUiUrl =
         config.urls?.loginUi?.custom ||
         config.urls?.loginUi?.auto ||
         `https://${env}-ar-login-ui.pages.dev`;
+      const foundKeys = findKeysDirectory({
+        env,
+        sourceDir: rootDir,
+        keysBaseDir: process.cwd(),
+      });
+      const adminApiSecretPath = foundKeys
+        ? join(foundKeys.path, 'admin_api_secret.txt')
+        : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keyFiles.adminApiSecret;
 
       const clientResult = await ensureLoginUiClient({
         apiBaseUrl,
         loginUiUrl,
-        adminApiSecretPath: envPaths.keyFiles.adminApiSecret,
+        adminApiSecretPath,
         onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
       });
 

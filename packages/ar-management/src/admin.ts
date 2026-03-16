@@ -16,6 +16,7 @@ import {
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
+  buildIssuerUrl,
   createPIIContextFromHono,
   createAuthContextFromHono,
   generateId,
@@ -2784,7 +2785,7 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
     });
 
     // Construct avatar URL (will use Cloudflare Image Resizing)
-    const avatarUrl = `${c.env.ISSUER_URL}/${filePath}`;
+    const avatarUrl = `${buildIssuerUrl(c.env, tenantId)}/${filePath}`;
 
     // Update user's picture field in PII DB via Repository
     if (c.env.DB_PII) {

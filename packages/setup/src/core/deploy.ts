@@ -100,6 +100,16 @@ const UI_BUILD_ENV_KEYS = [
   'API_BACKEND_URL',
 ] as const;
 
+export const DEFAULT_SECRET_TARGET_WORKERS: WorkerComponent[] = [
+  'ar-discovery',
+  'ar-auth',
+  'ar-token',
+  'ar-userinfo',
+  'ar-management',
+  'ar-lib-core',
+  'ar-saml',
+];
+
 /**
  * Prepare build-time env for Pages UIs.
  * When a package-local .env exists, strip conflicting PUBLIC_* variables from
@@ -464,13 +474,7 @@ export async function uploadSecrets(
   const errors: string[] = [];
 
   // Workers that need secrets
-  const targetWorkers = workers || [
-    'ar-auth',
-    'ar-token',
-    'ar-userinfo',
-    'ar-management',
-    'ar-lib-core',
-  ];
+  const targetWorkers = workers || DEFAULT_SECRET_TARGET_WORKERS;
 
   for (const component of targetWorkers) {
     const workerName = getWorkerName(env, component);

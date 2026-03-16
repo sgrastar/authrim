@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
-import { buildTenantBaseUrl, usesNakedDomainIssuer } from '../admin-info';
+import {
+  buildTenantBaseUrl,
+  getComponentAvailability,
+  getConfiguredUiUrls,
+  usesNakedDomainIssuer,
+} from '../admin-info';
 
 describe('admin-info tenant base URL resolution', () => {
   it('uses the naked domain for the default tenant when configured', () => {
@@ -9,7 +14,7 @@ describe('admin-info tenant base URL resolution', () => {
       DEFAULT_TENANT_ID: 'default',
       NAKED_DOMAIN_AS_ISSUER: 'true',
       ISSUER_URL: 'https://fallback.example.workers.dev',
-    } as Env;
+    } as unknown as Env;
 
     expect(usesNakedDomainIssuer(env, 'default')).toBe(true);
     expect(buildTenantBaseUrl(env, 'default')).toBe('https://auth.example.com');
@@ -22,7 +27,7 @@ describe('admin-info tenant base URL resolution', () => {
       PRIMARY_TENANT_ID: 'acme',
       NAKED_DOMAIN_AS_ISSUER: 'true',
       ISSUER_URL: 'https://fallback.example.workers.dev',
-    } as Env;
+    } as unknown as Env;
 
     expect(usesNakedDomainIssuer(env, 'acme')).toBe(true);
     expect(buildTenantBaseUrl(env, 'acme')).toBe('https://auth.example.com');
@@ -50,5 +55,48 @@ describe('admin-info tenant base URL resolution', () => {
 
     expect(usesNakedDomainIssuer(env, 'default')).toBe(false);
     expect(buildTenantBaseUrl(env, 'default')).toBe('https://default.auth.example.com');
+  });
+
+  it('returns configured Login/Admin UI URLs when present', () => {
+    const env = {
+      UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
+      ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+    } as Env;
+
+    expect(getConfiguredUiUrls(env)).toEqual({
+      loginUiUrl: 'https://nodomain-ar-login-ui.pages.dev',
+      adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
+    });
+  });
+
+  it('hides Login UI URL when Login UI is disabled', () => {
+    const env = {
+      UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
+      ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+      LOGIN_UI_ENABLED: 'false',
+    } as unknown as Env;
+
+    expect(getConfiguredUiUrls(env)).toEqual({
+      loginUiUrl: null,
+      adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
+    });
+  });
+
+  it('derives component availability from env flags', () => {
+    const env = {
+      LOGIN_UI_ENABLED: 'false',
+      ADMIN_UI_ENABLED: 'true',
+      SAML_ENABLED: 'false',
+      ASYNC_ENABLED: 'false',
+      VC_ENABLED: 'false',
+    } as unknown as Env;
+
+    expect(getComponentAvailability(env)).toEqual({
+      login_ui: false,
+      admin_ui: true,
+      saml: false,
+      async: false,
+      vc: false,
+    });
   });
 });

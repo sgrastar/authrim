@@ -443,8 +443,7 @@ export const SCENARIOS: Scenario[] = [
       hasAdminUi: false,
     },
     expected: {
-      // SPEC GAP: buildIssuerUrl ignores NAKED_DOMAIN_AS_ISSUER, still builds {sub}.{baseDomain}
-      issuerUrl: `https://${DEFAULT_TENANT}.${BASE_DOMAIN}`,
+      issuerUrl: `https://${BASE_DOMAIN}`,
       issuerUrlWithTenant: `https://acme.${BASE_DOMAIN}`,
       allowedOrigins: [API_CUSTOM],
       setupUrlBase: API_CUSTOM,
@@ -848,8 +847,7 @@ export const SCENARIOS: Scenario[] = [
       hasAdminUi: false,
     },
     expected: {
-      // SPEC GAP: buildIssuerUrl ignores NAKED_DOMAIN_AS_ISSUER
-      issuerUrl: `https://${DEFAULT_TENANT}.${BASE_DOMAIN}`,
+      issuerUrl: `https://${BASE_DOMAIN}`,
       issuerUrlWithTenant: `https://acme.${BASE_DOMAIN}`,
       allowedOrigins: [API_CUSTOM, LOGIN_UI_CUSTOM],
       setupUrlBase: API_CUSTOM,
@@ -1264,8 +1262,7 @@ export const SCENARIOS: Scenario[] = [
       hasAdminUi: true,
     },
     expected: {
-      // SPEC GAP: buildIssuerUrl ignores NAKED_DOMAIN_AS_ISSUER
-      issuerUrl: `https://${DEFAULT_TENANT}.${BASE_DOMAIN}`,
+      issuerUrl: `https://${BASE_DOMAIN}`,
       issuerUrlWithTenant: `https://acme.${BASE_DOMAIN}`,
       allowedOrigins: [API_CUSTOM, LOGIN_UI_CUSTOM, ADMIN_UI_CUSTOM],
       setupUrlBase: API_CUSTOM,

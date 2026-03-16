@@ -19,12 +19,13 @@ const log = createLogger().module('ROUTER');
 interface Env {
   // Service Bindings to specialized workers
   OP_DISCOVERY: Fetcher;
+  OP_VC?: Fetcher;
   OP_AUTH: Fetcher;
   OP_TOKEN: Fetcher;
   OP_USERINFO: Fetcher;
   OP_MANAGEMENT: Fetcher;
-  OP_ASYNC: Fetcher;
-  OP_SAML: Fetcher;
+  OP_ASYNC?: Fetcher;
+  OP_SAML?: Fetcher;
   EXTERNAL_IDP: Fetcher; // External IdP (social login, enterprise IdP)
   // KV Namespace for configuration (optional)
   // Used for dynamic configuration from Admin UI without redeployment
@@ -100,6 +101,16 @@ async function proxyToPages(request: Request, baseUrl: string, path: string): Pr
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
+
+function notFoundResponse(): Response {
+  return Response.json(
+    {
+      error: 'not_found',
+      message: 'The requested resource was not found',
+    },
+    { status: 404 }
+  );
+}
 
 // Middleware
 app.use('*', logger());
@@ -269,6 +280,9 @@ app.use(
       '/device_authorization', // Device flow (client auth)
       '/device', // Device verification page (form submission, CSRF handled by device code)
       '/bc-authorize', // CIBA (client auth)
+      '/vci', // OpenID4VCI endpoints (bearer/proof-based, not cookie CSRF)
+      '/vp', // OpenID4VP endpoints (protocol callbacks)
+      '/did', // DID resolution endpoints (read-only protocol API)
       '/scim/v2', // SCIM provisioning (Bearer token)
       '/api/internal', // Internal API (Bearer token)
       '/saml', // SAML endpoints (XML-based protocol, not browser fetch)
@@ -305,9 +319,38 @@ app.get('/health/ready', (c) => {
 });
 
 /**
+ * VC well-known endpoints - Route to OP_VC worker when enabled
+ */
+app.get('/.well-known/openid-credential-issuer', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_VC.fetch(request);
+});
+
+app.get('/.well-known/openid-credential-verifier', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_VC.fetch(request);
+});
+
+app.get('/.well-known/did.json', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_VC.fetch(request);
+});
+
+/**
  * Discovery endpoints - Route to OP_DISCOVERY worker
  * - /.well-known/openid-configuration
+ * - /.well-known/oauth-authorization-server
  * - /.well-known/jwks.json
+ * - /.well-known/webfinger
  */
 app.get('/.well-known/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
@@ -480,21 +523,33 @@ app.get('/logout-error', async (c) => {
  * - /api/device/* - Headless JSON APIs for SvelteKit UI and WebSDK
  */
 app.post('/device_authorization', async (c) => {
+  if (!c.env.OP_ASYNC) {
+    return notFoundResponse();
+  }
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
 app.get('/device', async (c) => {
+  if (!c.env.OP_ASYNC) {
+    return notFoundResponse();
+  }
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
 app.post('/device', async (c) => {
+  if (!c.env.OP_ASYNC) {
+    return notFoundResponse();
+  }
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
 app.all('/api/device/*', async (c) => {
+  if (!c.env.OP_ASYNC) {
+    return notFoundResponse();
+  }
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
@@ -505,11 +560,17 @@ app.all('/api/device/*', async (c) => {
  * - /api/ciba/* - Headless JSON APIs for CIBA approval UI
  */
 app.post('/bc-authorize', async (c) => {
+  if (!c.env.OP_ASYNC) {
+    return notFoundResponse();
+  }
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
 app.all('/api/ciba/*', async (c) => {
+  if (!c.env.OP_ASYNC) {
+    return notFoundResponse();
+  }
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
@@ -604,8 +665,38 @@ app.all('/api/internal/*', async (c) => {
  * - /saml/admin/* - Admin API for SAML provider management
  */
 app.all('/saml/*', async (c) => {
+  if (!c.env.OP_SAML) {
+    return notFoundResponse();
+  }
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_SAML.fetch(request);
+});
+
+/**
+ * VC / DID endpoints - Route to OP_VC worker when enabled
+ */
+app.all('/vci/*', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_VC.fetch(request);
+});
+
+app.all('/vp/*', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_VC.fetch(request);
+});
+
+app.all('/did/*', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_VC.fetch(request);
 });
 
 /**
