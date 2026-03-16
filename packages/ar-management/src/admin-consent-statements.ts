@@ -107,7 +107,7 @@ export async function adminConsentStatementGetHandler(c: Context<{ Bindings: Env
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const rows = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statements WHERE id = ? AND tenant_id = ?`,
@@ -131,7 +131,7 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const body = await c.req.json<{
       slug?: string;
       category?: string;
@@ -210,7 +210,7 @@ export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: 
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     await authCtx.coreAdapter.execute(
       `UPDATE consent_statements SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?`,
@@ -235,7 +235,7 @@ export async function adminConsentVersionsListHandler(c: Context<{ Bindings: Env
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const sid = c.req.param('sid');
+    const sid = c.req.param('sid')!;
 
     const rows = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statement_versions WHERE statement_id = ? AND tenant_id = ? ORDER BY effective_at DESC`,
@@ -255,7 +255,7 @@ export async function adminConsentVersionCreateHandler(c: Context<{ Bindings: En
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const sid = c.req.param('sid');
+    const sid = c.req.param('sid')!;
     const body = await c.req.json<{
       version: string;
       content_type?: string;
@@ -324,7 +324,7 @@ export async function adminConsentVersionGetHandler(c: Context<{ Bindings: Env }
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const vid = c.req.param('vid');
+    const vid = c.req.param('vid')!;
 
     const rows = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statement_versions WHERE id = ? AND tenant_id = ?`,
@@ -348,7 +348,7 @@ export async function adminConsentVersionUpdateHandler(c: Context<{ Bindings: En
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const vid = c.req.param('vid');
+    const vid = c.req.param('vid')!;
     const body = await c.req.json<{
       content_type?: string;
       effective_at?: number;
@@ -411,8 +411,8 @@ export async function adminConsentVersionActivateHandler(c: Context<{ Bindings: 
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const sid = c.req.param('sid');
-    const vid = c.req.param('vid');
+    const sid = c.req.param('sid')!;
+    const vid = c.req.param('vid')!;
 
     await activateVersion(authCtx.coreAdapter, tenantId, sid, vid);
 
@@ -443,7 +443,7 @@ export async function adminConsentVersionDeleteHandler(c: Context<{ Bindings: En
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const vid = c.req.param('vid');
+    const vid = c.req.param('vid')!;
 
     const existing = await authCtx.coreAdapter.query<{ status: string }>(
       `SELECT status FROM consent_statement_versions WHERE id = ? AND tenant_id = ?`,
@@ -482,7 +482,7 @@ export async function adminConsentLocalizationsListHandler(c: Context<{ Bindings
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const vid = c.req.param('vid');
+    const vid = c.req.param('vid')!;
 
     const rows = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statement_localizations WHERE version_id = ? AND tenant_id = ? ORDER BY language ASC`,
@@ -505,8 +505,8 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const vid = c.req.param('vid');
-    const lang = c.req.param('lang');
+    const vid = c.req.param('vid')!;
+    const lang = c.req.param('lang')!;
     const body = await c.req.json<{
       title: string;
       description: string;
@@ -591,8 +591,8 @@ export async function adminConsentLocalizationDeleteHandler(c: Context<{ Binding
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const vid = c.req.param('vid');
-    const lang = c.req.param('lang');
+    const vid = c.req.param('vid')!;
+    const lang = c.req.param('lang')!;
 
     await authCtx.coreAdapter.execute(
       `DELETE FROM consent_statement_localizations WHERE version_id = ? AND language = ? AND tenant_id = ?`,
@@ -643,7 +643,7 @@ export async function adminConsentRequirementUpsertHandler(c: Context<{ Bindings
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const statementId = c.req.param('statementId');
+    const statementId = c.req.param('statementId')!;
     const body = await c.req.json<{
       is_required: boolean;
       min_version?: string;
@@ -734,7 +734,7 @@ export async function adminConsentRequirementDeleteHandler(c: Context<{ Bindings
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const statementId = c.req.param('statementId');
+    const statementId = c.req.param('statementId')!;
 
     await authCtx.coreAdapter.execute(
       `DELETE FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
@@ -762,7 +762,7 @@ export async function adminConsentOverridesListHandler(c: Context<{ Bindings: En
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const clientId = c.req.param('clientId');
+    const clientId = c.req.param('clientId')!;
 
     const rows = await authCtx.coreAdapter.query(
       `SELECT * FROM client_consent_overrides WHERE tenant_id = ? AND client_id = ?`,
@@ -782,8 +782,8 @@ export async function adminConsentOverrideUpsertHandler(c: Context<{ Bindings: E
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const clientId = c.req.param('clientId');
-    const statementId = c.req.param('statementId');
+    const clientId = c.req.param('clientId')!;
+    const statementId = c.req.param('statementId')!;
     const body = await c.req.json<{
       requirement: string;
       min_version?: string;
@@ -865,8 +865,8 @@ export async function adminConsentOverrideDeleteHandler(c: Context<{ Bindings: E
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const clientId = c.req.param('clientId');
-    const statementId = c.req.param('statementId');
+    const clientId = c.req.param('clientId')!;
+    const statementId = c.req.param('statementId')!;
 
     await authCtx.coreAdapter.execute(
       `DELETE FROM client_consent_overrides WHERE tenant_id = ? AND client_id = ? AND statement_id = ?`,
@@ -891,7 +891,7 @@ export async function adminUserConsentRecordsListHandler(c: Context<{ Bindings: 
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
 
     const rows = await authCtx.coreAdapter.query(
       `SELECT ucr.*, cs.slug, cs.category
@@ -919,8 +919,8 @@ export async function adminUserConsentHistoryHandler(c: Context<{ Bindings: Env 
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('userId');
-    const statementId = c.req.param('statementId');
+    const userId = c.req.param('userId')!;
+    const statementId = c.req.param('statementId')!;
 
     const rows = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_item_history
@@ -942,8 +942,8 @@ export async function adminUserConsentWithdrawHandler(c: Context<{ Bindings: Env
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('userId');
-    const statementId = c.req.param('statementId');
+    const userId = c.req.param('userId')!;
+    const statementId = c.req.param('statementId')!;
     const now = Date.now();
 
     // Verify the record exists and is granted

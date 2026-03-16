@@ -151,7 +151,7 @@ export async function setPlatformCacheModeHandler(
  */
 export async function getClientCacheModeHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
-    const clientId = c.req.param('clientId');
+    const clientId = c.req.param('clientId')!;
 
     if (!clientId) {
       return c.json(
@@ -196,7 +196,7 @@ export async function getClientCacheModeHandler(c: Context<{ Bindings: Env }>): 
  */
 export async function setClientCacheModeHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
-    const clientId = c.req.param('clientId');
+    const clientId = c.req.param('clientId')!;
 
     if (!clientId) {
       return c.json(

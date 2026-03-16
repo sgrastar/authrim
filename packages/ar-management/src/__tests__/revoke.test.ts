@@ -74,6 +74,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     validateClientAssertion: mockValidateClientAssertion,
     createOAuthConfigManager: mockCreateOAuthConfigManager,
+    buildIssuerUrl: (env: Partial<Env>, tenantId?: string) => {
+      if (env.BASE_DOMAIN) {
+        const resolvedTenantId = tenantId || env.DEFAULT_TENANT_ID || 'default';
+        const primaryTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || 'default';
+        if (env.NAKED_DOMAIN_AS_ISSUER === 'true' && resolvedTenantId === primaryTenantId) {
+          return `https://${env.BASE_DOMAIN}`;
+        }
+        return `https://${resolvedTenantId}.${env.BASE_DOMAIN}`;
+      }
+      return env.ISSUER_URL || '';
+    },
   };
 });
 
@@ -402,6 +413,56 @@ describe('Token Revocation Endpoint', () => {
       await revokeHandler(c);
 
       expect(verifyClientSecretHash).toHaveBeenCalledWith('client-secret', 'hash_client-secret');
+    });
+
+    it('should use tenant subdomain issuer for non-primary private_key_jwt validation', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('acme');
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'client-123',
+          client_assertion: 'assertion.jwt',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        },
+        env: {
+          BASE_DOMAIN: 'oidc.example.com',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        jti: 'token-jti-123',
+        client_id: 'client-123',
+        aud: 'https://acme.oidc.example.com',
+        iss: 'https://acme.oidc.example.com',
+        sub: 'user-123',
+        rtv: 1,
+      });
+
+      const clientMetadata = {
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      };
+      mockClientRepository.findByClientId.mockResolvedValue(clientMetadata);
+
+      await revokeHandler(c);
+
+      expect(mockValidateClientAssertion).toHaveBeenCalledWith(
+        'assertion.jwt',
+        'https://acme.oidc.example.com/revoke',
+        clientMetadata
+      );
+      expect(verifyToken).toHaveBeenCalledWith(
+        'valid.jwt.token',
+        expect.anything(),
+        'https://acme.oidc.example.com',
+        { audience: 'https://acme.oidc.example.com' }
+      );
     });
 
     it('should return 401 for invalid Basic auth header format', async () => {

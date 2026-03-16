@@ -44,6 +44,7 @@ import {
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
   generateEmailCode,
@@ -291,7 +292,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
 
       // Authentication-Info header for OTP AutoFill (Safari/iOS)
       // This enables domain-bound code verification for phishing protection
-      const authenticationInfoHeader = `<${c.env.ISSUER_URL}>; otpauth=email`;
+      const authenticationInfoHeader = `<${getRequestIssuer(c)}>; otpauth=email`;
 
       const emailResult = await emailNotifier.send({
         channel: 'email',

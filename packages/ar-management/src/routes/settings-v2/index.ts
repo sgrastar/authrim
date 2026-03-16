@@ -59,6 +59,7 @@ import {
   // Admin Auth
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
+import { ensureSupportedTenantId } from '../../single-tenant-guard';
 
 // Module-level logger for settings audit
 const log = createLogger().module('SETTINGS_AUDIT');
@@ -243,6 +244,11 @@ function errorResponse(
 
 // Tenant settings - lenient for GET, moderate for PATCH
 settingsV2.use('/tenants/:tenantId/settings/:category', async (c, next) => {
+  const blocked = await ensureSupportedTenantId(c, c.req.param('tenantId')!, 'tenantId');
+  if (blocked) {
+    return blocked;
+  }
+
   const profile = await getRateLimitProfileAsync(
     c.env,
     c.req.method === 'PATCH' ? 'moderate' : 'lenient'
@@ -300,8 +306,8 @@ settingsV2.use('/settings/meta/:category', async (c, next) => {
  * Get all settings for a tenant and category
  */
 settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
-  const tenantId = c.req.param('tenantId');
-  const category = c.req.param('category') as CategoryName;
+  const tenantId = c.req.param('tenantId')!;
+  const category = c.req.param('category')! as CategoryName;
 
   // Security Check 1: Validate category exists
   if (!ALL_CATEGORY_META[category]) {
@@ -350,8 +356,8 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
  * Partial update settings for a tenant and category
  */
 settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
-  const tenantId = c.req.param('tenantId');
-  const category = c.req.param('category') as CategoryName;
+  const tenantId = c.req.param('tenantId')!;
+  const category = c.req.param('category')! as CategoryName;
 
   // Security Check 1: Validate category exists
   if (!ALL_CATEGORY_META[category]) {
@@ -455,7 +461,7 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
  * Get all settings for a client (default 'client' category)
  */
 settingsV2.get('/clients/:clientId/settings', async (c) => {
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
   const category: CategoryName = 'client';
 
   // Security Check 1: Validate user has permission for client settings
@@ -502,8 +508,8 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
  * Get category-specific settings for a client (for categories that allow client-level override)
  */
 settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
-  const clientId = c.req.param('clientId');
-  const category = c.req.param('category') as CategoryName;
+  const clientId = c.req.param('clientId')!;
+  const category = c.req.param('category')! as CategoryName;
 
   // Security Check 1: Check if category exists
   if (!ALL_CATEGORY_META[category]) {
@@ -563,7 +569,7 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
  * Partial update settings for a client (default 'client' category)
  */
 settingsV2.patch('/clients/:clientId/settings', async (c) => {
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
   const category: CategoryName = 'client';
 
   // Security Check 1: Validate user has EDIT permission for client settings
@@ -645,8 +651,8 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
  * Partial update category-specific settings for a client
  */
 settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
-  const clientId = c.req.param('clientId');
-  const category = c.req.param('category') as CategoryName;
+  const clientId = c.req.param('clientId')!;
+  const category = c.req.param('category')! as CategoryName;
 
   // Security Check 1: Check if category exists
   if (!ALL_CATEGORY_META[category]) {
@@ -747,7 +753,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
  * Get platform settings (read-only)
  */
 settingsV2.get('/platform/settings/:category', async (c) => {
-  const category = c.req.param('category') as CategoryName;
+  const category = c.req.param('category')! as CategoryName;
 
   // Security Check 1: Validate category exists
   if (!ALL_CATEGORY_META[category]) {
@@ -811,7 +817,7 @@ settingsV2.delete('/platform/settings/:category', (c) => {
  * Get settings metadata for a category
  */
 settingsV2.get('/settings/meta/:category', async (c) => {
-  const category = c.req.param('category');
+  const category = c.req.param('category')!;
 
   const manager = getSettingsManager(c.env);
   const meta = manager.getMeta(category);
@@ -853,7 +859,7 @@ settingsV2.get('/settings/meta', (c) => {
  * to prevent information disclosure about the permission structure.
  */
 settingsV2.get('/settings/meta/:category/scope', async (c) => {
-  const category = c.req.param('category') as CategoryName;
+  const category = c.req.param('category')! as CategoryName;
 
   // Check if category exists
   if (!ALL_CATEGORY_META[category]) {

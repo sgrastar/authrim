@@ -130,7 +130,7 @@ adminPoliciesRouter.get('/admin-policies/:id', async (c: AdminContext) => {
     const adapter = getAdminAdapter(c);
     const repo = new AdminPolicyRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const policy = await repo.getPolicy(id);
     if (!policy) {
@@ -228,7 +228,7 @@ adminPoliciesRouter.patch('/admin-policies/:id', async (c: AdminContext) => {
     const adapter = getAdminAdapter(c);
     const repo = new AdminPolicyRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if policy exists and belongs to this tenant
     const existing = await repo.getPolicy(id);
@@ -290,7 +290,7 @@ adminPoliciesRouter.post('/admin-policies/:id/activate', async (c: AdminContext)
     const adapter = getAdminAdapter(c);
     const repo = new AdminPolicyRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if policy exists and belongs to this tenant
     const existing = await repo.getPolicy(id);
@@ -331,7 +331,7 @@ adminPoliciesRouter.post('/admin-policies/:id/deactivate', async (c: AdminContex
     const adapter = getAdminAdapter(c);
     const repo = new AdminPolicyRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if policy exists and belongs to this tenant
     const existing = await repo.getPolicy(id);
@@ -372,7 +372,7 @@ adminPoliciesRouter.delete('/admin-policies/:id', async (c: AdminContext) => {
     const adapter = getAdminAdapter(c);
     const repo = new AdminPolicyRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if policy exists and belongs to this tenant
     const existing = await repo.getPolicy(id);

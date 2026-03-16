@@ -225,7 +225,7 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const requestId = c.req.param('id');
+    const requestId = c.req.param('id')!;
     if (!requestId) {
       return c.json(
         {
@@ -315,7 +315,7 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const requestId = c.req.param('id');
+    const requestId = c.req.param('id')!;
     if (!requestId) {
       return c.json(
         {

@@ -358,6 +358,7 @@ export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Pro
   }
 
   const id = c.req.param('id');
+  if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
     const provider = await getProvider(c.env, id);
@@ -390,6 +391,7 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
   }
 
   const id = c.req.param('id');
+  if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
     const body = await c.req.json<{
@@ -521,6 +523,7 @@ export async function handleAdminDeleteProvider(c: Context<{ Bindings: Env }>): 
   }
 
   const id = c.req.param('id');
+  if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
     const deleted = await deleteProvider(c.env, id);

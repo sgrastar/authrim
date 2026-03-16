@@ -139,6 +139,7 @@ async function generateAuthCode(
 export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('CALLBACK');
   const providerIdOrSlug = c.req.param('provider');
+  if (!providerIdOrSlug) return redirectWithError(c, 'invalid_request', 'Missing provider');
   const { code, state, error, errorDescription, tenantId, user } = await getCallbackParams(c);
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
 
@@ -206,7 +207,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 4. Build callback URL (use slug if available, same as in start)
     const providerIdentifier = provider.slug || provider.id;
-    const callbackUri = `${c.env.ISSUER_URL}/auth/external/${providerIdentifier}/callback`;
+    const callbackTenantId = authState.tenantId || tenantId;
+    const callbackUri = `${buildIssuerUrl(c.env, callbackTenantId)}/auth/external/${providerIdentifier}/callback`;
 
     // 4b. Log authorization response (OIDF conformance)
     if (diagnosticLogger) {
@@ -529,7 +531,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       });
 
       // セッションCookie設定
-      const issuerUrl = buildIssuerUrl(c.env);
+      const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
       const isSecure = issuerUrl.startsWith('https://');
 
       setCookie(c, 'authrim_session', sessionId, {

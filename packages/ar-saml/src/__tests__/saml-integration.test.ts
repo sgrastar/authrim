@@ -21,6 +21,8 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { handleSPACS } from '../sp/acs';
 import { handleSPSLO } from '../sp/slo';
+import { handleSPMetadata } from '../sp/metadata';
+import { handleIdPMetadata } from '../idp/metadata';
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
@@ -281,6 +283,14 @@ describe('SAML Integration', () => {
       Object.assign(c, { env: mockEnv });
       return handleSPACS(c as any);
     });
+    app.get('/saml/sp/metadata', (c) => {
+      Object.assign(c, { env: mockEnv });
+      return handleSPMetadata(c as any);
+    });
+    app.get('/saml/idp/metadata', (c) => {
+      Object.assign(c, { env: mockEnv });
+      return handleIdPMetadata(c as any);
+    });
     app.post('/saml/sp/slo', (c) => {
       Object.assign(c, { env: mockEnv });
       return handleSPSLO(c as any);
@@ -478,6 +488,34 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(302);
       // Without RelayState, should redirect to UI_URL
       expect(res.headers.get('Location')).toBe('https://ui.example.com/');
+    });
+  });
+
+  describe('Metadata endpoints', () => {
+    it('should return SP metadata XML', async () => {
+      const req = new Request('http://localhost/saml/sp/metadata');
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('application/samlmetadata+xml');
+      const body = await res.text();
+      expect(body).toContain('<md:EntityDescriptor');
+      expect(body).toContain('xml:lang="en"');
+      expect(body).toContain('https://auth.example.com/saml/sp');
+    });
+
+    it('should return IdP metadata XML', async () => {
+      const req = new Request('http://localhost/saml/idp/metadata');
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('application/samlmetadata+xml');
+      const body = await res.text();
+      expect(body).toContain('<md:EntityDescriptor');
+      expect(body).toContain('xml:lang="en"');
+      expect(body).toContain('https://auth.example.com/saml/idp');
     });
   });
 

@@ -19,7 +19,9 @@ import { importJWK } from 'jose';
 import { verifyToken } from './jwt';
 import { isTokenRevoked } from './kv';
 import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken } from './dpop';
+import { buildIssuerUrl } from './issuer';
 import { createLogger } from './logger';
+import { getTenantIdFromHost } from './tenant-context';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
 
@@ -184,6 +186,16 @@ function extractAccessToken(authHeader: string): {
   }
 
   return null;
+}
+
+function getValidationIssuerUrl(request: TokenValidationRequest): string {
+  const requestHost = request.headers.get('Host') || new URL(request.url).host;
+  const tenantResolution = getTenantIdFromHost(requestHost || undefined, request.env);
+  const tenantId = tenantResolution.success
+    ? tenantResolution.tenantId
+    : request.env.DEFAULT_TENANT_ID || 'default';
+
+  return buildIssuerUrl(request.env, tenantId);
 }
 
 /**
@@ -397,7 +409,7 @@ export async function introspectToken(
     };
   }
 
-  const issuerUrl = request.env.ISSUER_URL;
+  const issuerUrl = getValidationIssuerUrl(request);
   if (!issuerUrl) {
     return {
       valid: false,

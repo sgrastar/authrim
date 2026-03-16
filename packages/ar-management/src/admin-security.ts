@@ -503,7 +503,7 @@ export async function adminSecurityAlertsListHandler(c: Context<{ Bindings: Env 
  */
 export async function adminSecurityAlertAcknowledgeHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const alertId = c.req.param('id');
+  const alertId = c.req.param('id')!;
 
   if (!alertId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

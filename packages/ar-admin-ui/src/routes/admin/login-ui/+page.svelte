@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { getTenantInfo } from '$lib/api/admin-info';
 	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
@@ -26,6 +27,8 @@
 	let saving = $state(false);
 	let error = $state('');
 	let successMessage = $state('');
+	let loginUiDeployed = $state(true);
+	let loginUiStatusMessage = $state('');
 
 	// Track pending changes
 	let pendingPatches = $state<UIPatch[]>([]);
@@ -33,6 +36,7 @@
 	// Get current scope context from store
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
+	let canEditLoginUi = $derived(canEdit && loginUiDeployed);
 	let currentLevel = $derived(settingsContext.currentLevel);
 
 	// Derived: Check if there are unsaved changes
@@ -63,6 +67,12 @@
 		pendingPatches = [];
 
 		try {
+			const tenantInfo = await getTenantInfo(scopeContext.tenantId ?? 'default');
+			loginUiDeployed = !!tenantInfo.login_ui_url;
+			loginUiStatusMessage = loginUiDeployed
+				? ''
+				: 'Login UI is not deployed for this environment. Settings are read-only.';
+
 			// Fetch meta
 			const metaResult = await adminSettingsAPI.getMeta(CATEGORY);
 			meta = metaResult;
@@ -102,7 +112,7 @@
 
 	// Check if a setting is locked
 	function isSettingLocked(key: string, settingMeta: SettingMetaItem): boolean {
-		if (!canEdit) return true;
+		if (!canEditLoginUi) return true;
 		if (isLockedByEnv(key)) return true;
 		if (isInternalSetting(settingMeta)) return true;
 		return false;
@@ -130,6 +140,11 @@
 	// Save changes
 	async function saveChanges() {
 		if (!settings || pendingPatches.length === 0) return;
+
+		if (!loginUiDeployed) {
+			error = 'Login UI is not deployed for this environment.';
+			return;
+		}
 
 		if (!canEdit) {
 			error = 'You do not have permission to edit settings at this scope level';
@@ -192,12 +207,18 @@
 			<span class="scope-badge {currentLevel}">
 				{currentLevel === 'platform' ? 'Platform' : currentLevel === 'tenant' ? 'Tenant' : 'Client'}
 			</span>
-			{#if !canEdit}
+			{#if !canEditLoginUi}
 				<span class="readonly-badge">Read-only</span>
 			{/if}
 		</div>
 		<p class="page-description">Customize the appearance of the login page for end users.</p>
 	</div>
+
+	{#if !loginUiDeployed && !loading}
+		<div class="alert alert-warning">
+			{loginUiStatusMessage}
+		</div>
+	{/if}
 
 	<!-- Error message -->
 	{#if error}
@@ -310,10 +331,14 @@
 
 		<!-- Action buttons -->
 		<div class="settings-actions">
-			<button onclick={discardChanges} disabled={!hasChanges || saving} class="btn btn-secondary">
+			<button onclick={discardChanges} disabled={!hasChanges || saving || !loginUiDeployed} class="btn btn-secondary">
 				Discard Changes
 			</button>
-			<button onclick={saveChanges} disabled={!hasChanges || saving} class="btn btn-primary">
+			<button
+				onclick={saveChanges}
+				disabled={!hasChanges || saving || !loginUiDeployed}
+				class="btn btn-primary"
+			>
 				{saving ? 'Saving...' : `Save Changes${hasChanges ? ` (${pendingPatches.length})` : ''}`}
 			</button>
 		</div>

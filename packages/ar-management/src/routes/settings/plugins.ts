@@ -460,7 +460,7 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
  * Get plugin details including configuration and schema
  */
 export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
-  const pluginId = c.req.param('id');
+  const pluginId = c.req.param('id')!;
   const kv = getPluginKV(c.env);
 
   if (!kv) {
@@ -523,7 +523,7 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
  * Get plugin configuration (with masked sensitive fields)
  */
 export async function getPluginConfigHandler(c: Context<{ Bindings: Env }>) {
-  const pluginId = c.req.param('id');
+  const pluginId = c.req.param('id')!;
   const tenantId = c.req.query('tenant_id');
   const kv = getPluginKV(c.env);
 
@@ -552,7 +552,7 @@ export async function getPluginConfigHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('PluginAdminAPI');
-  const pluginId = c.req.param('id');
+  const pluginId = c.req.param('id')!;
   const adminAuth = getAdminAuth(c);
   const adminId = adminAuth?.userId ?? adminAuth?.authMethod;
   const kv = getPluginKV(c.env);
@@ -636,7 +636,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('PluginAdminAPI');
-  const pluginId = c.req.param('id');
+  const pluginId = c.req.param('id')!;
   const adminAuth = getAdminAuth(c);
   const adminId = adminAuth?.userId ?? adminAuth?.authMethod;
   const kv = getPluginKV(c.env);
@@ -687,7 +687,7 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('PluginAdminAPI');
-  const pluginId = c.req.param('id');
+  const pluginId = c.req.param('id')!;
   const adminAuth = getAdminAuth(c);
   const adminId = adminAuth?.userId ?? adminAuth?.authMethod;
   const kv = getPluginKV(c.env);
@@ -737,7 +737,7 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
  * Get plugin health status (and trigger health check)
  */
 export async function getPluginHealthHandler(c: Context<{ Bindings: Env }>) {
-  const pluginId = c.req.param('id');
+  const pluginId = c.req.param('id')!;
   const kv = getPluginKV(c.env);
 
   if (!kv) {
@@ -780,7 +780,7 @@ export async function getPluginHealthHandler(c: Context<{ Bindings: Env }>) {
  * Get plugin configuration JSON Schema (for Admin UI)
  */
 export async function getPluginSchemaHandler(c: Context<{ Bindings: Env }>) {
-  const pluginId = c.req.param('id');
+  const pluginId = c.req.param('id')!;
   const kv = getPluginKV(c.env);
 
   if (!kv) {

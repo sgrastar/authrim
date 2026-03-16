@@ -86,6 +86,12 @@ describe('generateEnvVars - ar-management', () => {
     const expected = scenario.expected.arManagementEnvVars;
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
+    expect(vars['UI_URL']).toBe(scenario.expected.arAuthEnvVars.UI_URL);
+    expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
+    expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
+    expect(vars['SAML_ENABLED']).toBe((config.components?.saml ?? false) ? 'true' : 'false');
+    expect(vars['ASYNC_ENABLED']).toBe((config.components?.async ?? false) ? 'true' : 'false');
+    expect(vars['VC_ENABLED']).toBe((config.components?.vc ?? false) ? 'true' : 'false');
     expect(vars['DEFAULT_TENANT_ID']).toBe(expected.DEFAULT_TENANT_ID);
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
     expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe(expected.ADMIN_COOKIE_SAME_SITE);
@@ -111,6 +117,19 @@ describe('generateEnvVars - ar-management', () => {
       expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBe('true');
     } else {
       expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBeUndefined();
+    }
+  });
+});
+
+describe('generateEnvVars - ar-saml', () => {
+  it.each(SCENARIOS.map((s) => [scenarioLabel(s), s] as const))('%s', (_label, scenario) => {
+    const config = buildAuthrimConfig(scenario) as AuthrimConfig;
+    const vars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
+
+    if (scenario.config.baseDomain) {
+      expect(vars['ISSUER_URL']).toBe(scenario.config.apiAuto);
+    } else {
+      expect(vars['ISSUER_URL']).toBe(scenario.expected.issuerUrl);
     }
   });
 });
@@ -200,9 +219,8 @@ describe('ISSUER_URL consistency with runtime issuer', () => {
     const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
 
     if (scenario.config.baseDomain) {
-      // Multi-tenant mode: buildIssuerUrl() ignores ISSUER_URL and dynamically
-      // builds from {tenant}.{baseDomain}. The ISSUER_URL env var is set to the
-      // auto (workers.dev) URL as a fallback for internal routing.
+      // Multi-tenant mode: runtime issuer is built from BASE_DOMAIN and tenant context.
+      // The ISSUER_URL env var remains the auto (workers.dev) fallback for internal routing.
       expect(vars['ISSUER_URL']).toBe(scenario.config.apiAuto);
     } else {
       // Single-tenant mode: buildIssuerUrl() uses env.ISSUER_URL directly.

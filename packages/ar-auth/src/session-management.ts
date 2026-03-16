@@ -23,6 +23,7 @@ import {
   getTenantIdFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 
 /**
  * Issue a short-lived session token (5 minute TTL, single-use)
@@ -441,7 +442,7 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
  * https://openid.net/specs/openid-connect-session-1_0.html#OPiframe
  */
 export async function checkSessionIframeHandler(c: Context<{ Bindings: Env }>) {
-  const issuerUrl = c.env.ISSUER_URL;
+  const issuerUrl = getRequestIssuer(c);
 
   // Generate a cryptographically secure nonce for CSP
   // This prevents XSS attacks while allowing our inline script to execute

@@ -55,6 +55,44 @@ describe('Issuer URL Builder', () => {
         expect(issuer).toBe('https://default.authrim.com');
       });
 
+      it('should use naked base domain for the primary/default tenant when enabled', () => {
+        const issuer = buildIssuerUrl({
+          ...mtEnv,
+          DEFAULT_TENANT_ID: 'default',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
+        } as Env);
+
+        expect(issuer).toBe('https://authrim.com');
+      });
+
+      it('should keep subdomain URLs for non-primary tenants when naked domain is enabled', () => {
+        const issuer = buildIssuerUrl(
+          {
+            ...mtEnv,
+            DEFAULT_TENANT_ID: 'default',
+            PRIMARY_TENANT_ID: 'default',
+            NAKED_DOMAIN_AS_ISSUER: 'true',
+          } as Env,
+          'acme'
+        );
+
+        expect(issuer).toBe('https://acme.authrim.com');
+      });
+
+      it('should use PRIMARY_TENANT_ID for naked-domain issuer selection', () => {
+        expect(
+          buildIssuerUrl(
+            {
+              ...mtEnv,
+              DEFAULT_TENANT_ID: 'default',
+              PRIMARY_TENANT_ID: 'main',
+              NAKED_DOMAIN_AS_ISSUER: 'true',
+            } as Env,
+            'main'
+          )
+        ).toBe('https://authrim.com');
+      });
+
       it('should handle different subdomains', () => {
         expect(buildIssuerUrl(mtEnv, 'tenant1')).toBe('https://tenant1.authrim.com');
         expect(buildIssuerUrl(mtEnv, 'company-a')).toBe('https://company-a.authrim.com');

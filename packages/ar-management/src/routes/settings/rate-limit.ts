@@ -115,7 +115,7 @@ export async function getRateLimitSettings(c: Context<{ Bindings: Env }>) {
  * Get specific profile configuration
  */
 export async function getRateLimitProfile(c: Context<{ Bindings: Env }>) {
-  const profileName = c.req.param('profile') as string;
+  const profileName = c.req.param('profile')! as string;
 
   if (!VALID_PROFILES.includes(profileName as ProfileName)) {
     return c.json(
@@ -170,7 +170,7 @@ export async function getRateLimitProfile(c: Context<{ Bindings: Env }>) {
  * Update rate limit profile configuration
  */
 export async function updateRateLimitProfile(c: Context<{ Bindings: Env }>) {
-  const profileName = c.req.param('profile') as string;
+  const profileName = c.req.param('profile')! as string;
 
   if (!VALID_PROFILES.includes(profileName as ProfileName)) {
     return c.json(
@@ -272,7 +272,7 @@ export async function updateRateLimitProfile(c: Context<{ Bindings: Env }>) {
  * Reset profile to default values (remove KV overrides)
  */
 export async function resetRateLimitProfile(c: Context<{ Bindings: Env }>) {
-  const profileName = c.req.param('profile') as string;
+  const profileName = c.req.param('profile')! as string;
 
   if (!VALID_PROFILES.includes(profileName as ProfileName)) {
     return c.json(

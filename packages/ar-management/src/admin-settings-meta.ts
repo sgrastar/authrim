@@ -27,6 +27,11 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
+import {
+  createSingleTenantMutationError,
+  ensureSupportedTenantId,
+  isSingleTenantMode,
+} from './single-tenant-guard';
 
 // =============================================================================
 // Constants
@@ -1127,10 +1132,19 @@ const TenantCloneRequestSchema = z.object({
  * Returns the new tenant ID and summary of cloned items
  */
 export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
-  const sourceTenantId = c.req.param('id');
+  const sourceTenantId = c.req.param('id')!;
   // Note: getTenantIdFromContext is called for audit context but cross-tenant cloning
   // is allowed for system_admin/distributor_admin (verified by RBAC middleware)
   void getTenantIdFromContext(c);
+
+  const blocked = await ensureSupportedTenantId(c, sourceTenantId);
+  if (blocked) {
+    return blocked;
+  }
+
+  if (isSingleTenantMode(c.env)) {
+    return createSingleTenantMutationError(c, 'id');
+  }
 
   if (!sourceTenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

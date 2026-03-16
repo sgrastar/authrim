@@ -24,6 +24,12 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
+import {
+  createSingleTenantMutationError,
+  ensureSupportedTenantId,
+  getSingleTenantId,
+  isSingleTenantMode,
+} from './single-tenant-guard';
 
 // =============================================================================
 // Constants
@@ -454,14 +460,22 @@ export async function seedDefaultClaimsForTenant(
 export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const adapter = createAdapter(c);
+    const singleTenantMode = isSingleTenantMode(c.env);
+    const query = singleTenantMode
+      ? 'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ? ORDER BY is_default DESC, name ASC'
+      : 'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants ORDER BY is_default DESC, name ASC';
     const rows = await adapter.query<TenantRow>(
-      'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants ORDER BY is_default DESC, name ASC',
-      []
+      query,
+      singleTenantMode ? [getSingleTenantId(c.env)] : []
     );
 
     return c.json({
       tenants: rows.map(formatTenant),
       total: rows.length,
+      single_tenant_mode: singleTenantMode,
+      single_tenant_reason: singleTenantMode
+        ? 'API custom domain is not configured. This deployment runs in single-tenant mode.'
+        : null,
     });
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
@@ -475,6 +489,10 @@ export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
  * Create a new tenant
  */
 export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
+  if (isSingleTenantMode(c.env)) {
+    return createSingleTenantMutationError(c, 'tenant');
+  }
+
   try {
     const body = await c.req.json<unknown>();
     const parseResult = CreateTenantSchema.safeParse(body);
@@ -523,7 +541,6 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     // Seed default OIDC claim schemas for the new tenant (soft failure)
     await seedDefaultClaimsForTenant(id, adapter, getLogger(c));
 
-
     return c.json(formatTenant(created!), 201);
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
@@ -537,7 +554,11 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
  * Get a single tenant
  */
 export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
+  const blocked = await ensureSupportedTenantId(c, id);
+  if (blocked) {
+    return blocked;
+  }
 
   try {
     const adapter = createAdapter(c);
@@ -566,7 +587,11 @@ export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
  * Note: id and is_default cannot be changed via this endpoint
  */
 export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
+  const blocked = await ensureSupportedTenantId(c, id);
+  if (blocked) {
+    return blocked;
+  }
 
   try {
     const body = await c.req.json<unknown>();
@@ -599,8 +624,11 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
     // The default tenant cannot be deactivated: doing so would lock out the ability
     // to reassign the default (set-default rejects inactive tenants)
     if (existing.is_default === 1 && updates.is_active === false) {
+      const reason = isSingleTenantMode(c.env)
+        ? 'The default tenant must remain active in single-tenant mode'
+        : 'Cannot deactivate the default tenant';
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'is_active', reason: 'Cannot deactivate the default tenant' },
+        variables: { field: 'is_active', reason },
       });
     }
 
@@ -657,7 +685,11 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
  * The 'default' tenant cannot be deleted.
  */
 export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
+  const blocked = await ensureSupportedTenantId(c, id);
+  if (blocked) {
+    return blocked;
+  }
 
   if (id === 'default') {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -746,7 +778,15 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
  * Set a tenant as the default tenant (atomically, using D1 batch)
  */
 export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
+  const blocked = await ensureSupportedTenantId(c, id);
+  if (blocked) {
+    return blocked;
+  }
+
+  if (isSingleTenantMode(c.env)) {
+    return createSingleTenantMutationError(c, 'id');
+  }
 
   try {
     const adapter = createAdapter(c);

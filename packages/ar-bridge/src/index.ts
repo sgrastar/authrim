@@ -29,6 +29,8 @@ import {
   RateLimitProfiles,
   isAllowedOrigin,
   parseAllowedOrigins,
+  buildIssuerUrl,
+  getTenantIdFromContext,
   requestContextMiddleware,
   pluginContextMiddleware,
   createErrorResponse,
@@ -102,7 +104,7 @@ app.use('*', async (c, next) => {
   const corsMiddleware = cors({
     origin: (origin) => {
       if (!origin) {
-        return c.env.ISSUER_URL;
+        return buildIssuerUrl(c.env, getTenantIdFromContext(c));
       }
       if (isAllowedOrigin(origin, allowedOrigins)) {
         return origin;

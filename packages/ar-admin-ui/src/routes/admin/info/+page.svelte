@@ -107,8 +107,15 @@
 				{@render urlRow('Tenant Name', info.tenant_name, 'tenant_name')}
 				{@render urlRow('Issuer', info.issuer, 'issuer', info.issuer)}
 				{@render urlRow('API Base URL', info.api_url, 'api_url', info.api_url)}
-				{#if info.admin_ui_url}
+				{#if info.components.login_ui && info.login_ui_url}
+					{@render urlRow('Login UI URL', info.login_ui_url, 'login_ui_url', info.login_ui_url)}
+				{:else}
+					{@render urlRow('Login UI', 'Not deployed', 'login_ui_status')}
+				{/if}
+				{#if info.components.admin_ui && info.admin_ui_url}
 					{@render urlRow('Admin UI URL', info.admin_ui_url, 'admin_ui_url', info.admin_ui_url)}
+				{:else}
+					{@render urlRow('Admin UI', 'Not deployed', 'admin_ui_status')}
 				{/if}
 			</div>
 		</section>
@@ -144,7 +151,11 @@
 
 			<h3 class="subsection-title">OAuth 2.0 Extensions</h3>
 			<div class="url-grid">
-				{@render urlRow('Device Authorization (RFC 8628)', info.oauth_extensions.device_authorization, 'oauth_device')}
+				{#if info.components.async}
+					{@render urlRow('Device Authorization (RFC 8628)', info.oauth_extensions.device_authorization, 'oauth_device')}
+				{:else}
+					{@render urlRow('Device Authorization (RFC 8628)', 'Not deployed', 'oauth_device_status')}
+				{/if}
 				{@render urlRow('Pushed Authorization Request (RFC 9126)', info.oauth_extensions.pushed_authorization_request, 'oauth_par')}
 				{@render urlRow('Dynamic Client Registration (RFC 7591)', info.oauth_extensions.dynamic_client_registration, 'oauth_dcr')}
 			</div>
@@ -157,7 +168,11 @@
 				CIBA (Client-Initiated Backchannel Authentication)
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('Backchannel Authentication (RFC 9449)', info.ciba.backchannel_authentication, 'ciba_auth')}
+				{#if info.components.async}
+					{@render urlRow('Backchannel Authentication (RFC 9449)', info.ciba.backchannel_authentication, 'ciba_auth')}
+				{:else}
+					{@render urlRow('Status', 'Not deployed', 'ciba_status')}
+				{/if}
 			</div>
 		</section>
 
@@ -168,10 +183,14 @@
 				SAML 2.0
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('SSO (Single Sign-On)', info.saml.sso, 'saml_sso')}
-				{@render urlRow('Metadata', info.saml.metadata, 'saml_metadata', info.saml.metadata)}
-				{@render urlRow('ACS (Assertion Consumer Service)', info.saml.acs, 'saml_acs')}
-				{@render urlRow('SLO (Single Logout)', info.saml.slo, 'saml_slo')}
+				{#if info.components.saml}
+					{@render urlRow('SSO (Single Sign-On)', info.saml.sso, 'saml_sso')}
+					{@render urlRow('Metadata', info.saml.metadata, 'saml_metadata', info.saml.metadata)}
+					{@render urlRow('ACS (Assertion Consumer Service)', info.saml.acs, 'saml_acs')}
+					{@render urlRow('SLO (Single Logout)', info.saml.slo, 'saml_slo')}
+				{:else}
+					{@render urlRow('Status', 'Not deployed', 'saml_status')}
+				{/if}
 			</div>
 		</section>
 
@@ -182,11 +201,15 @@
 				Verifiable Credentials (OID4VC)
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('Credential Issuer Metadata', info.vc.credential_issuer_metadata, 'vc_meta', info.vc.credential_issuer_metadata)}
-				{@render urlRow('Credential Endpoint', info.vc.credential, 'vc_credential')}
-				{@render urlRow('Batch Credential', info.vc.batch_credential, 'vc_batch')}
-				{@render urlRow('Deferred Credential', info.vc.deferred_credential, 'vc_deferred')}
-				{@render urlRow('VP Token Request', info.vc.vp_token_request, 'vc_vp')}
+				{#if info.components.vc}
+					{@render urlRow('Credential Issuer Metadata', info.vc.credential_issuer_metadata, 'vc_meta', info.vc.credential_issuer_metadata)}
+					{@render urlRow('Credential Endpoint', info.vc.credential, 'vc_credential')}
+					{@render urlRow('Batch Credential', info.vc.batch_credential, 'vc_batch')}
+					{@render urlRow('Deferred Credential', info.vc.deferred_credential, 'vc_deferred')}
+					{@render urlRow('VP Token Request', info.vc.vp_token_request, 'vc_vp')}
+				{:else}
+					{@render urlRow('Status', 'Not deployed', 'vc_status')}
+				{/if}
 			</div>
 		</section>
 

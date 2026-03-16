@@ -152,7 +152,7 @@ export async function adminRelationDefinitionGetHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const results = await adapter.query<{
       id: string;
@@ -289,7 +289,7 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const body = await c.req.json<{
       definition?: Record<string, unknown>;
       description?: string;
@@ -362,7 +362,7 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if exists and belongs to tenant (not default)
     const existing = await adapter.query<{ tenant_id: string }>(
@@ -593,7 +593,7 @@ export async function adminRelationshipTupleDeleteHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if exists
     const existing = await adapter.query<{ tenant_id: string }>(

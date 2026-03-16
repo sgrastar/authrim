@@ -230,7 +230,7 @@ export async function resetLoggingConfig(c: Context<{ Bindings: Env }>) {
  * Get logging configuration for a specific tenant
  */
 export async function getTenantLoggingConfig(c: Context<{ Bindings: Env }>) {
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(
@@ -295,7 +295,7 @@ export async function updateTenantLoggingConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(
@@ -358,7 +358,7 @@ export async function resetTenantLoggingConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(

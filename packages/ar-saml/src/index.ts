@@ -135,6 +135,7 @@ app.get('/saml/idp/slo', handleIdPSLO);
  * SP Metadata
  * Returns SAML 2.0 SP metadata XML document
  */
+app.get('/saml/metadata', handleSPMetadata);
 app.get('/saml/sp/metadata', handleSPMetadata);
 
 /**

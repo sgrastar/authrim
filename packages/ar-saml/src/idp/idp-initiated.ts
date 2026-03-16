@@ -40,11 +40,13 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
   try {
     // Get SP entity ID from query parameter
     const spEntityId = c.req.query('sp');
+    const tenantId = getTenantIdFromContext(c);
+    const issuerUrl = buildIssuerUrl(env, tenantId);
 
     if (!spEntityId) {
       // Return list of available SPs if no SP specified
       const sps = await listSPConfigs(env);
-      return c.html(buildSPSelectionPage(env.ISSUER_URL, sps));
+      return c.html(buildSPSelectionPage(issuerUrl, sps));
     }
 
     // Get SP configuration
@@ -58,12 +60,11 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
 
     if (!userId) {
       // Redirect to login with return URL
-      const tenantId = getTenantIdFromContext(c);
-      const returnTo = `${buildIssuerUrl(env, tenantId)}/saml/idp/init?sp=${encodeURIComponent(spEntityId)}`;
+      const returnTo = `${issuerUrl}/saml/idp/init?sp=${encodeURIComponent(spEntityId)}`;
 
       // Conformance mode: use built-in login path
       if (await shouldUseBuiltinForms(env)) {
-        const loginUrl = new URL('/flow/login', buildIssuerUrl(env, tenantId));
+        const loginUrl = new URL('/flow/login', issuerUrl);
         loginUrl.searchParams.set('return_to', returnTo);
         return c.redirect(loginUrl.toString());
       }
@@ -90,7 +91,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     }
 
     // Generate SAML Response (no InResponseTo since this is IdP-initiated)
-    const responseXml = await generateIdPInitiatedResponse(env, spConfig, userInfo);
+    const responseXml = await generateIdPInitiatedResponse(issuerUrl, env, spConfig, userInfo);
 
     // Return auto-submit form
     return sendSAMLResponse(c, spConfig, responseXml);
@@ -184,11 +185,11 @@ async function getUserInfo(
  * Generate SAML Response for IdP-initiated SSO
  */
 async function generateIdPInitiatedResponse(
+  issuerUrl: string,
   env: Env,
   spConfig: SAMLSPConfig,
   userInfo: { id: string; email: string; name?: string }
 ): Promise<string> {
-  const issuerUrl = env.ISSUER_URL;
   const { privateKeyPem } = await getSigningKey(env);
   const certificate = await getSigningCertificate(env);
 

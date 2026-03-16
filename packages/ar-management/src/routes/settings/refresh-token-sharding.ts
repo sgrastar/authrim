@@ -347,7 +347,7 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
 export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('RefreshTokenShardingAPI');
   try {
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
     const clientId = c.req.query('clientId') || null;
 
     if (!userId) {

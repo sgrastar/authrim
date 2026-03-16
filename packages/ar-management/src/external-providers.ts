@@ -129,7 +129,7 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
  * GET /api/admin/external-providers/:id - Get external IdP provider details
  */
 export async function adminExternalProvidersGetHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },
@@ -142,7 +142,7 @@ export async function adminExternalProvidersGetHandler(c: Context<{ Bindings: En
  * PUT /api/admin/external-providers/:id - Update external IdP provider
  */
 export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },
@@ -156,7 +156,7 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
  * DELETE /api/admin/external-providers/:id - Delete external IdP provider
  */
 export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },

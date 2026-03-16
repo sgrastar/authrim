@@ -287,6 +287,7 @@ import {
   listTenantInvitationsHandler,
   cancelTenantInvitationHandler,
 } from './admin-tenant-invitations';
+import { requireSupportedTenantParam } from './single-tenant-guard';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getLoginMethodsHandler } from './login-methods';
 import {
@@ -991,6 +992,8 @@ app.post('/api/admin/settings/validate', adminSettingsValidateHandler);
 // - POST   /api/admin/tenants/:id/set-default - Set as default tenant
 // - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
+app.use('/api/admin/tenants/:id', requireSupportedTenantParam('id'));
+app.use('/api/admin/tenants/:id/*', requireSupportedTenantParam('id'));
 app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
@@ -2279,7 +2282,7 @@ app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-g
  * Requires: Bearer token (ADMIN_API_SECRET)
  */
 app.post('/api/internal/versions/:workerName', adminAuthMiddleware(), async (c) => {
-  const workerName = c.req.param('workerName');
+  const workerName = c.req.param('workerName')!;
 
   // Validate worker name (only allow known workers)
   const validWorkers = [

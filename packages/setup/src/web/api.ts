@@ -50,6 +50,7 @@ import {
 import { generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { syncWranglerConfigs } from '../core/wrangler-sync.js';
 import { buildUrlsConfig } from '../core/url-config.js';
+import { normalizeTenantConfigForApiDomain } from '../core/tenant-mode.js';
 import {
   deployAll,
   uploadSecrets,
@@ -406,15 +407,7 @@ export function createApiRoutes(): Hono {
 
         // Update tenant configuration
         if (tenant) {
-          config.tenant = {
-            name: tenant.name || 'default',
-            displayName: tenant.displayName || 'Default Tenant',
-            multiTenant: tenant.multiTenant || false,
-            userIdFormat: tenant.userIdFormat || 'nanoid',
-            baseDomain: tenant.baseDomain,
-            primaryTenant: tenant.primaryTenant,
-            nakedDomain: tenant.nakedDomain ?? false,
-          };
+          config.tenant = normalizeTenantConfigForApiDomain(tenant);
         }
 
         // Update URLs with domain configuration
@@ -902,6 +895,7 @@ export function createApiRoutes(): Hono {
           const secrets: Record<string, string> = {};
           const secretFiles = [
             { file: join(keysDir, 'private.pem'), name: 'PRIVATE_KEY_PEM' },
+            { file: join(keysDir, 'public.jwk.json'), name: 'PUBLIC_JWK_JSON' },
             { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
             { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
             { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
@@ -1080,7 +1074,7 @@ export function createApiRoutes(): Hono {
             `https://${env}-ar-router.workers.dev`;
 
           let loginUiClientId: string | undefined;
-          if (cfg?.components?.loginUi && !dryRun && resolved.type === 'new') {
+          if (cfg?.components?.loginUi && !dryRun) {
             const loginUiUrl =
               cfg?.urls?.loginUi?.custom ||
               cfg?.urls?.loginUi?.auto ||
@@ -1915,7 +1909,7 @@ export function createApiRoutes(): Hono {
               `https://${env}-ar-router.workers.dev`;
 
             let loginUiClientId: string | undefined;
-            if (componentName === 'ar-login-ui' && !dryRun && resolved.type === 'new') {
+            if (componentName === 'ar-login-ui' && !dryRun) {
               const loginUiUrl =
                 cfg?.urls?.loginUi?.custom ||
                 cfg?.urls?.loginUi?.auto ||
@@ -1963,6 +1957,7 @@ export function createApiRoutes(): Hono {
               apiBaseUrl: uiSettings.apiBaseUrl,
               runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
               uiEnvConfig: uiSettings.uiEnv,
+              serviceBindingName: uiSettings.serviceBindingName,
               onProgress: addProgress,
             });
 
