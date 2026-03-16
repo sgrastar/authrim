@@ -4,7 +4,9 @@ export function hasApiCustomDomain(baseDomain?: string | null): boolean {
   return !!baseDomain?.trim();
 }
 
-export function normalizeTenantConfigForApiDomain(tenant?: Partial<TenantConfig> | null): TenantConfig {
+export function normalizeTenantConfigForApiDomain(
+  tenant?: Partial<TenantConfig> | null
+): TenantConfig {
   const baseDomain = tenant?.baseDomain?.trim() || undefined;
   const customDomainEnabled = hasApiCustomDomain(baseDomain);
 
@@ -15,6 +17,6 @@ export function normalizeTenantConfigForApiDomain(tenant?: Partial<TenantConfig>
     baseDomain,
     userIdFormat: tenant?.userIdFormat || 'nanoid',
     primaryTenant: customDomainEnabled ? tenant?.primaryTenant : undefined,
-    nakedDomain: customDomainEnabled ? tenant?.nakedDomain ?? false : false,
+    nakedDomain: customDomainEnabled ? (tenant?.nakedDomain ?? false) : false,
   };
 }

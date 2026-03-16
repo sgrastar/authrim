@@ -37,7 +37,9 @@ export async function ensureSupportedTenantId(
   });
 }
 
-export function requireSupportedTenantParam(paramName: string): MiddlewareHandler<{ Bindings: Env }> {
+export function requireSupportedTenantParam(
+  paramName: string
+): MiddlewareHandler<{ Bindings: Env }> {
   return async (c, next) => {
     const blocked = await ensureSupportedTenantId(c, c.req.param(paramName), paramName);
     if (blocked) {

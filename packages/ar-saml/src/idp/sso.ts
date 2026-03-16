@@ -129,7 +129,13 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     // Generate SAML Response
-    const responseXml = await generateSAMLResponse(issuerUrl, env, authnRequest, spConfig, userInfo);
+    const responseXml = await generateSAMLResponse(
+      issuerUrl,
+      env,
+      authnRequest,
+      spConfig,
+      userInfo
+    );
 
     // Return response based on SP's preferred binding
     return sendSAMLResponse(c, spConfig, responseXml, relayState);
@@ -258,7 +264,10 @@ function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
 /**
  * Validate AuthnRequest
  */
-async function validateAuthnRequest(authnRequest: SAMLAuthnRequest, issuerUrl: string): Promise<void> {
+async function validateAuthnRequest(
+  authnRequest: SAMLAuthnRequest,
+  issuerUrl: string
+): Promise<void> {
   // Check request is not expired (allow clock skew)
   const issueInstant = new Date(authnRequest.issueInstant);
   const now = new Date();

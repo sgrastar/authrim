@@ -179,7 +179,8 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Legitimate browser POST requests always include Origin or Referer headers.
     // Skipping this check when headers are absent would allow CSRF attacks.
     const origin = c.req.header('Origin');
-    const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || buildIssuerUrl(c.env, getTenantIdFromContext(c));
+    const allowedOriginsEnv =
+      c.env.ALLOWED_ORIGINS || buildIssuerUrl(c.env, getTenantIdFromContext(c));
     const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
 
     if (origin) {

@@ -87,12 +87,8 @@ describe('generateEnvVars - ar-management', () => {
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
     expect(vars['UI_URL']).toBe(scenario.expected.arAuthEnvVars.UI_URL);
-    expect(vars['LOGIN_UI_ENABLED']).toBe(
-      (config.components?.loginUi ?? true) ? 'true' : 'false'
-    );
-    expect(vars['ADMIN_UI_ENABLED']).toBe(
-      (config.components?.adminUi ?? true) ? 'true' : 'false'
-    );
+    expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
+    expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
     expect(vars['SAML_ENABLED']).toBe((config.components?.saml ?? false) ? 'true' : 'false');
     expect(vars['ASYNC_ENABLED']).toBe((config.components?.async ?? false) ? 'true' : 'false');
     expect(vars['VC_ENABLED']).toBe((config.components?.vc ?? false) ? 'true' : 'false');

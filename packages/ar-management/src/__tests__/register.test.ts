@@ -319,7 +319,9 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
       const json = (await res.json()) as RegistrationResponse;
-      expect(json.registration_client_uri).toMatch(/^https:\/\/default\.oidc\.example\.com\/clients\//);
+      expect(json.registration_client_uri).toMatch(
+        /^https:\/\/default\.oidc\.example\.com\/clients\//
+      );
     });
 
     it('should build registration_client_uri with naked domain for the default tenant when enabled', async () => {
@@ -383,7 +385,9 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
       const json = (await res.json()) as RegistrationResponse;
-      expect(json.registration_client_uri).toMatch(/^https:\/\/acme\.oidc\.example\.com\/clients\//);
+      expect(json.registration_client_uri).toMatch(
+        /^https:\/\/acme\.oidc\.example\.com\/clients\//
+      );
     });
   });
 

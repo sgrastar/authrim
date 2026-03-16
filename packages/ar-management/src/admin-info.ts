@@ -209,8 +209,8 @@ export function getConfiguredUiUrls(env: AdminInfoEnv): {
 } {
   const components = getComponentAvailability(env);
   return {
-    loginUiUrl: components.login_ui ? (env.UI_URL || null) : null,
-    adminUiUrl: components.admin_ui ? (env.ADMIN_UI_URL || null) : null,
+    loginUiUrl: components.login_ui ? env.UI_URL || null : null,
+    adminUiUrl: components.admin_ui ? env.ADMIN_UI_URL || null : null,
   };
 }
 

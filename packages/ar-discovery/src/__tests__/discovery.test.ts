@@ -422,9 +422,7 @@ describe('Discovery Handler', () => {
       expect(metadata.grant_types_supported).not.toContain(
         'urn:ietf:params:oauth:grant-type:device_code'
       );
-      expect(metadata.grant_types_supported).not.toContain(
-        'urn:openid:params:grant-type:ciba'
-      );
+      expect(metadata.grant_types_supported).not.toContain('urn:openid:params:grant-type:ciba');
     });
   });
 });

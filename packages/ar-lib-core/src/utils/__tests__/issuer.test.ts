@@ -66,12 +66,15 @@ describe('Issuer URL Builder', () => {
       });
 
       it('should keep subdomain URLs for non-primary tenants when naked domain is enabled', () => {
-        const issuer = buildIssuerUrl({
-          ...mtEnv,
-          DEFAULT_TENANT_ID: 'default',
-          PRIMARY_TENANT_ID: 'default',
-          NAKED_DOMAIN_AS_ISSUER: 'true',
-        } as Env, 'acme');
+        const issuer = buildIssuerUrl(
+          {
+            ...mtEnv,
+            DEFAULT_TENANT_ID: 'default',
+            PRIMARY_TENANT_ID: 'default',
+            NAKED_DOMAIN_AS_ISSUER: 'true',
+          } as Env,
+          'acme'
+        );
 
         expect(issuer).toBe('https://acme.authrim.com');
       });

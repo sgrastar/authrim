@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  getSingleTenantId,
-  isSingleTenantMode,
-} from '../single-tenant-guard';
+import { getSingleTenantId, isSingleTenantMode } from '../single-tenant-guard';
 
 describe('single-tenant guard helpers', () => {
   it('treats missing BASE_DOMAIN as single-tenant mode', () => {

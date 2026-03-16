@@ -196,9 +196,7 @@ describe('resolveUiDeploymentSettings', () => {
       'https://test-ar-router.example.workers.dev'
     );
     expect(login.uiEnv.API_BACKEND_URL).toBe('https://test-ar-router.example.workers.dev');
-    expect(login.uiEnv.PUBLIC_AUTHRIM_ISSUER).toBe(
-      'https://test-ar-router.example.workers.dev'
-    );
+    expect(login.uiEnv.PUBLIC_AUTHRIM_ISSUER).toBe('https://test-ar-router.example.workers.dev');
     expect(login.uiEnv.PUBLIC_LOGIN_UI_CLIENT_ID).toBe('login-ui-client');
     expect(login.runtimeApiBackendUrl).toBe('https://test-ar-router.example.workers.dev');
   });
