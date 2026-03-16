@@ -6,6 +6,7 @@
 import { browser } from '$app/environment';
 import { getAuthConfig } from '$lib/auth';
 import { generatePKCE } from '$lib/utils/pkce';
+import { getDiagnosticSessionId as getLoggerSessionId } from '$lib/stores/diagnostic';
 
 // Type definitions
 interface User {
@@ -119,21 +120,30 @@ export function resolveApiBaseUrl(): string {
 export const API_BASE_URL = resolveApiBaseUrl();
 
 const DEFAULT_API_TIMEOUT = 30000; // 30 seconds
-const DIAGNOSTIC_SESSION_KEY = 'authrim_diagnostic_session_id';
 
+/**
+ * Get the current diagnostic session ID.
+ * Uses DiagnosticLogger if enabled, otherwise falls back to sessionStorage.
+ */
 export function getDiagnosticSessionId(): string | undefined {
 	if (!browser) return undefined;
-	let sessionId = sessionStorage.getItem(DIAGNOSTIC_SESSION_KEY);
+
+	// Prefer the DiagnosticLogger's session ID for consistency with ingest logs
+	const fromLogger = getLoggerSessionId();
+	if (fromLogger) return fromLogger;
+
+	// Fallback: generate/persist via sessionStorage when logger is disabled
+	const FALLBACK_KEY = 'authrim_diagnostic_session_id';
+	let sessionId = sessionStorage.getItem(FALLBACK_KEY);
 	if (!sessionId) {
 		try {
 			sessionId = crypto.randomUUID();
 		} catch {
-			// Fallback using cryptographically secure random values
 			const randomBytes = crypto.getRandomValues(new Uint8Array(8));
 			const randomStr = Array.from(randomBytes, (b) => b.toString(16).padStart(2, '0')).join('');
 			sessionId = `diag_${Date.now()}_${randomStr}`;
 		}
-		sessionStorage.setItem(DIAGNOSTIC_SESSION_KEY, sessionId);
+		sessionStorage.setItem(FALLBACK_KEY, sessionId);
 	}
 	return sessionId;
 }
