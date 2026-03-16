@@ -80,6 +80,7 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
   const mockEnv = {
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockKV,
+    BASE_DOMAIN: 'example.com', // enable multi-tenant mode so ensureSupportedTenantId passes
     ...options.env,
   } as unknown as Env;
 
