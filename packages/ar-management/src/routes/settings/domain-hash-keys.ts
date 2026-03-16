@@ -349,7 +349,7 @@ export async function getDomainHashKeyStatus(c: Context) {
  */
 export async function deleteDomainHashKeyVersion(c: Context) {
   const log = getLogger(c).module('DomainHashKeysAPI');
-  const version = parseInt(c.req.param('version'), 10);
+  const version = parseInt(c.req.param('version')!, 10);
 
   if (isNaN(version)) {
     return c.json(

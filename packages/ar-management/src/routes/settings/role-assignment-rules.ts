@@ -267,7 +267,7 @@ export async function listRoleAssignmentRules(c: Context) {
  */
 export async function getRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
@@ -307,7 +307,7 @@ export async function getRoleAssignmentRule(c: Context) {
  */
 export async function updateRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<Partial<RoleAssignmentRuleInput>>();
 
@@ -430,7 +430,7 @@ export async function updateRoleAssignmentRule(c: Context) {
  */
 export async function deleteRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
@@ -479,7 +479,7 @@ export async function deleteRoleAssignmentRule(c: Context) {
  */
 export async function testRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<{
     context: {

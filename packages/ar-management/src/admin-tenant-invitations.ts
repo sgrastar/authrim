@@ -110,7 +110,7 @@ function getAdminUserId(c: Context<{ Bindings: Env }>): string {
  */
 export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-TENANT-INVITATIONS');
-  const tenantId = c.req.param('id');
+  const tenantId = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, tenantId);
   if (blocked) {
     return blocked;
@@ -232,7 +232,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
  */
 export async function listTenantInvitationsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-TENANT-INVITATIONS');
-  const tenantId = c.req.param('id');
+  const tenantId = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, tenantId);
   if (blocked) {
     return blocked;
@@ -285,8 +285,8 @@ export async function listTenantInvitationsHandler(c: Context<{ Bindings: Env }>
  */
 export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-TENANT-INVITATIONS');
-  const tenantId = c.req.param('id');
-  const invId = c.req.param('inv_id');
+  const tenantId = c.req.param('id')!;
+  const invId = c.req.param('inv_id')!;
   const blocked = await ensureSupportedTenantId(c, tenantId);
   if (blocked) {
     return blocked;

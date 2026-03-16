@@ -195,7 +195,7 @@ export async function adminPolicyGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const db = new D1Adapter({ db: c.env.DB });
-    const ruleId = c.req.param('id');
+    const ruleId = c.req.param('id')!;
 
     const row = await db.queryOne<PolicyRuleRow>(
       'SELECT * FROM policy_rules WHERE tenant_id = ? AND id = ?',
@@ -335,7 +335,7 @@ export async function adminPolicyUpdateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = new D1Adapter({ db: c.env.DB });
-    const ruleId = c.req.param('id');
+    const ruleId = c.req.param('id')!;
 
     // Check existence
     const existing = await db.queryOne<PolicyRuleRow>(
@@ -440,7 +440,7 @@ export async function adminPolicyDeleteHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = new D1Adapter({ db: c.env.DB });
-    const ruleId = c.req.param('id');
+    const ruleId = c.req.param('id')!;
 
     // Check existence
     const existing = await db.queryOne<PolicyRuleRow>(

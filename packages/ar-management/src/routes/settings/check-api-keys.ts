@@ -361,7 +361,7 @@ export async function getCheckApiKey(c: Context) {
   }
 
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const tenantId = getTenantId(c);
 
     const result = await db
@@ -444,7 +444,7 @@ export async function deleteCheckApiKey(c: Context) {
   }
 
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const tenantId = getTenantId(c);
 
     // Soft delete by setting is_active = 0
@@ -500,7 +500,7 @@ export async function rotateCheckApiKey(c: Context) {
   }
 
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const tenantId = getTenantId(c);
 
     // First, get the existing key details

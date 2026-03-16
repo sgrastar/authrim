@@ -109,7 +109,7 @@ export async function getPolicyFlags(c: Context) {
  */
 export async function updatePolicyFlag(c: Context) {
   const log = getLogger(c).module('PolicyFlagsAPI');
-  const name = c.req.param('name');
+  const name = c.req.param('name')!;
 
   // Validate flag name
   if (!POLICY_FLAG_NAMES.includes(name as keyof typeof POLICY_FLAGS)) {
@@ -220,7 +220,7 @@ export async function updatePolicyFlag(c: Context) {
  */
 export async function clearPolicyFlag(c: Context) {
   const log = getLogger(c).module('PolicyFlagsAPI');
-  const name = c.req.param('name');
+  const name = c.req.param('name')!;
 
   // Validate flag name
   if (!POLICY_FLAG_NAMES.includes(name as keyof typeof POLICY_FLAGS)) {

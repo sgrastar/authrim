@@ -1132,7 +1132,7 @@ const TenantCloneRequestSchema = z.object({
  * Returns the new tenant ID and summary of cloned items
  */
 export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
-  const sourceTenantId = c.req.param('id');
+  const sourceTenantId = c.req.param('id')!;
   // Note: getTenantIdFromContext is called for audit context but cross-tenant cloning
   // is allowed for system_admin/distributor_admin (verified by RBAC middleware)
   void getTenantIdFromContext(c);

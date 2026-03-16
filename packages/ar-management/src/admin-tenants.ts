@@ -555,7 +555,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
  * Get a single tenant
  */
 export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
     return blocked;
@@ -588,7 +588,7 @@ export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
  * Note: id and is_default cannot be changed via this endpoint
  */
 export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
     return blocked;
@@ -686,7 +686,7 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
  * The 'default' tenant cannot be deleted.
  */
 export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
     return blocked;
@@ -779,7 +779,7 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
  * Set a tenant as the default tenant (atomically, using D1 batch)
  */
 export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
     return blocked;

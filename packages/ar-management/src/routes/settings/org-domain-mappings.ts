@@ -262,7 +262,7 @@ export async function listOrgDomainMappings(c: Context) {
  */
 export async function getOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
 
   try {
@@ -297,7 +297,7 @@ export async function getOrgDomainMapping(c: Context) {
  */
 export async function updateOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<Partial<OrgDomainMappingInput>>();
 
@@ -341,7 +341,7 @@ export async function updateOrgDomainMapping(c: Context) {
  */
 export async function deleteOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
 
   try {
@@ -376,7 +376,7 @@ export async function deleteOrgDomainMapping(c: Context) {
  */
 export async function listOrgDomainMappingsByOrg(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
-  const orgId = c.req.param('org_id');
+  const orgId = c.req.param('org_id')!;
   const tenantId = DEFAULT_TENANT_ID;
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_MAPPINGS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);

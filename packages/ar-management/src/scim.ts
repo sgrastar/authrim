@@ -634,7 +634,7 @@ app.get('/ResourceTypes', (c) => {
  * GET /scim/v2/ResourceTypes/:name - Single Resource Type
  */
 app.get('/ResourceTypes/:name', (c) => {
-  const name = c.req.param('name');
+  const name = c.req.param('name')!;
   const baseUrl = getBaseUrl(c);
 
   if (name === 'User') {
@@ -847,7 +847,7 @@ app.get('/Schemas', (c) => {
  * GET /scim/v2/Schemas/:id - Single Schema
  */
 app.get('/Schemas/:id', (c) => {
-  const schemaId = decodeURIComponent(c.req.param('id'));
+  const schemaId = decodeURIComponent(c.req.param('id')!);
   const baseUrl = getBaseUrl(c);
 
   // Return schema based on ID
@@ -1171,7 +1171,7 @@ app.get('/Users', async (c) => {
  */
 app.get('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
@@ -1365,7 +1365,7 @@ app.post('/Users', async (c) => {
  */
 app.put('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
@@ -1493,7 +1493,7 @@ app.put('/Users/:id', async (c) => {
  */
 app.patch('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
@@ -1628,7 +1628,7 @@ app.patch('/Users/:id', async (c) => {
  */
 app.delete('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if user exists - fetch from both DBs
@@ -1801,7 +1801,7 @@ app.get('/Groups', async (c) => {
  */
 app.get('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id');
+    const groupId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
@@ -1934,7 +1934,7 @@ app.post('/Groups', async (c) => {
  */
 app.put('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id');
+    const groupId = c.req.param('id')!;
     const scimGroup = await c.req.json<Partial<ScimGroup>>();
     const baseUrl = getBaseUrl(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
@@ -2025,7 +2025,7 @@ app.put('/Groups/:id', async (c) => {
  */
 app.patch('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id');
+    const groupId = c.req.param('id')!;
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
@@ -2129,7 +2129,7 @@ app.patch('/Groups/:id', async (c) => {
  */
 app.delete('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id');
+    const groupId = c.req.param('id')!;
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if group exists

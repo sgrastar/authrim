@@ -82,7 +82,7 @@ export async function listLogoutFailures(c: Context<{ Bindings: Env }>) {
  */
 export async function getLogoutFailure(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LogoutFailuresAPI');
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
 
   if (!clientId) {
     return c.json(
@@ -141,7 +141,7 @@ export async function getLogoutFailure(c: Context<{ Bindings: Env }>) {
  */
 export async function clearLogoutFailure(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LogoutFailuresAPI');
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
 
   if (!clientId) {
     return c.json(

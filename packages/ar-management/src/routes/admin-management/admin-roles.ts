@@ -137,7 +137,7 @@ adminRolesRouter.get('/:id', async (c) => {
     const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const role = await roleRepo.getRole(id);
     if (!role) {
@@ -256,7 +256,7 @@ adminRolesRouter.patch('/:id', async (c) => {
     const roleRepo = new AdminRoleRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if role exists
     const existing = await roleRepo.getRole(id);
@@ -344,7 +344,7 @@ adminRolesRouter.delete('/:id', async (c) => {
     const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if role exists
     const existing = await roleRepo.getRole(id);
@@ -394,7 +394,7 @@ adminRolesRouter.get('/:id/effective-permissions', async (c) => {
     const roleRepo = new AdminRoleRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const role = await roleRepo.getRole(id);
     if (!role) {

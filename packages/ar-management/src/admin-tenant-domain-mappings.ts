@@ -277,7 +277,7 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
  * Get a single tenant domain mapping
  */
 export async function getTenantDomainMappingHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
 
   try {
     const adapter = new D1Adapter({ db: c.env.DB });
@@ -305,7 +305,7 @@ export async function getTenantDomainMappingHandler(c: Context<{ Bindings: Env }
  * Update a tenant domain mapping (priority and is_active only; domain cannot change)
  */
 export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
 
   try {
     const body = await c.req.json<unknown>();
@@ -388,7 +388,7 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
  * Delete a tenant domain mapping
  */
 export async function deleteTenantDomainMappingHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
 
   try {
     const adapter = new D1Adapter({ db: c.env.DB });

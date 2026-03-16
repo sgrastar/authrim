@@ -168,7 +168,7 @@ export async function getTombstone(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
   }
 
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },
@@ -409,7 +409,7 @@ export async function deleteTombstone(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
   }
 
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },

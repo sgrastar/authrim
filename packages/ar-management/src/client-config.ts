@@ -269,7 +269,7 @@ async function validateRegistrationAccessToken(
   }
 
   const token = authHeader.slice(7); // Remove 'Bearer ' prefix
-  const clientId = c.req.param('client_id');
+  const clientId = c.req.param('client_id')!;
 
   if (!clientId || !token) {
     return null;

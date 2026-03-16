@@ -459,7 +459,7 @@ function toSeconds(timestamp: number | null | undefined): number | null {
  */
 export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const filename = c.req.param('filename');
+    const filename = c.req.param('filename')!;
     const filePath = `avatars/${filename}`;
 
     // Get file from R2
@@ -825,7 +825,7 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
 
     // Create AuthContext first, then elevate to PIIContext if PII DB is available
     const authCtx = createAuthContextFromHono(c);
@@ -1132,7 +1132,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const body = await c.req.json<{
       name?: string;
       given_name?: string;
@@ -1308,7 +1308,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -1416,7 +1416,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -1581,7 +1581,7 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -2061,7 +2061,7 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const clientId = c.req.param('id');
+    const clientId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -2118,7 +2118,7 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const clientId = c.req.param('id');
+    const clientId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -2389,7 +2389,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const clientId = c.req.param('id');
+    const clientId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -2559,7 +2559,7 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
 export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-CLIENT');
   const tenantId = getTenantIdFromContext(c);
-  const clientId = c.req.param('id');
+  const clientId = c.req.param('id')!;
 
   if (!clientId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -2687,7 +2687,7 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
  */
 export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -2822,7 +2822,7 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
  */
 export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -3034,7 +3034,7 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const sessionId = c.req.param('id');
+    const sessionId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -3127,7 +3127,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const sessionId = c.req.param('id');
+    const sessionId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -3206,7 +3206,7 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -3328,7 +3328,7 @@ const LOCK_REASON_CODES = new Set([
 export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-USER');
   const tenantId = getTenantIdFromContext(c);
-  const userId = c.req.param('id');
+  const userId = c.req.param('id')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -3492,7 +3492,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-USER');
   const tenantId = getTenantIdFromContext(c);
-  const userId = c.req.param('id');
+  const userId = c.req.param('id')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -3662,7 +3662,7 @@ const ACTIVATE_REASON_CODES = new Set([
 export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-USER');
   const tenantId = getTenantIdFromContext(c);
-  const userId = c.req.param('id');
+  const userId = c.req.param('id')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -3836,7 +3836,7 @@ const ANONYMIZE_REASON_CODES = new Set([
 export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-USER');
   const tenantId = getTenantIdFromContext(c);
-  const userId = c.req.param('id');
+  const userId = c.req.param('id')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -4145,7 +4145,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const env = c.env as Env;
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     if (!id) {
       return c.json(
@@ -4533,7 +4533,7 @@ export async function adminListCertificationProfilesHandler(c: Context<{ Binding
 export async function adminApplyCertificationProfileHandler(c: Context<{ Bindings: Env }>) {
   try {
     const env = c.env as Env;
-    const profileName = c.req.param('profileName');
+    const profileName = c.req.param('profileName')!;
 
     if (!profileName) {
       return c.json(
@@ -5180,7 +5180,7 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
     if (!userId) {
       return c.json(
         {
@@ -5272,8 +5272,8 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
  */
 export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const userId = c.req.param('userId');
-    const clientId = c.req.param('clientId');
+    const userId = c.req.param('userId')!;
+    const clientId = c.req.param('clientId')!;
 
     if (!userId || !clientId) {
       return c.json(
@@ -5399,7 +5399,7 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
  */
 export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const clientId = c.req.param('id');
+  const clientId = c.req.param('id')!;
 
   if (!clientId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -5514,7 +5514,7 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const userId = c.req.param('id');
+  const userId = c.req.param('id')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -5649,7 +5649,7 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
  */
 export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const userId = c.req.param('id');
+  const userId = c.req.param('id')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

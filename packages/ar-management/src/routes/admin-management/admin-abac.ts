@@ -124,7 +124,7 @@ adminAbacRouter.get('/admin-attributes/:id', async (c: AdminContext) => {
     const adapter = getAdminAdapter(c);
     const repo = new AdminAttributeRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const attribute = await repo.getAttribute(id);
     if (!attribute) {
@@ -219,7 +219,7 @@ adminAbacRouter.patch('/admin-attributes/:id', async (c: AdminContext) => {
     const adapter = getAdminAdapter(c);
     const repo = new AdminAttributeRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if attribute exists and belongs to this tenant
     const existing = await repo.getAttribute(id);
@@ -287,7 +287,7 @@ adminAbacRouter.delete('/admin-attributes/:id', async (c: AdminContext) => {
     const repo = new AdminAttributeRepository(adapter);
     const valueRepo = new AdminAttributeValueRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if attribute exists and belongs to this tenant
     const existing = await repo.getAttribute(id);
@@ -331,7 +331,7 @@ adminAbacRouter.get('/admins/:userId/attributes', async (c: AdminContext) => {
   try {
     const adapter = getAdminAdapter(c);
     const repo = new AdminAttributeValueRepository(adapter);
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
 
     const values = await repo.getAttributesByUser(userId);
 
@@ -359,8 +359,8 @@ adminAbacRouter.put('/admins/:userId/attributes/:attributeId', async (c: AdminCo
     const repo = new AdminAttributeValueRepository(adapter);
     const attrRepo = new AdminAttributeRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const userId = c.req.param('userId');
-    const attributeId = c.req.param('attributeId');
+    const userId = c.req.param('userId')!;
+    const attributeId = c.req.param('attributeId')!;
 
     // Verify attribute exists and belongs to this tenant
     const attribute = await attrRepo.getAttribute(attributeId);
@@ -413,8 +413,8 @@ adminAbacRouter.delete('/admins/:userId/attributes/:attributeId', async (c: Admi
   try {
     const adapter = getAdminAdapter(c);
     const repo = new AdminAttributeValueRepository(adapter);
-    const userId = c.req.param('userId');
-    const attributeId = c.req.param('attributeId');
+    const userId = c.req.param('userId')!;
+    const attributeId = c.req.param('attributeId')!;
     const valueIndex = parseInt(c.req.query('value_index') || '0');
 
     const deleted = await repo.deleteAttributeValue(userId, attributeId, valueIndex);

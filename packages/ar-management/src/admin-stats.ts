@@ -546,7 +546,7 @@ interface ClientStats {
  */
 export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const clientId = c.req.param('id');
+  const clientId = c.req.param('id')!;
 
   if (!clientId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

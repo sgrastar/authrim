@@ -287,7 +287,7 @@ export async function listResourcePermissions(c: Context) {
  */
 export async function deleteResourcePermission(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
@@ -361,7 +361,7 @@ export async function deleteResourcePermission(c: Context) {
  */
 export async function getPermissionsBySubject(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
-  const subjectId = c.req.param('id');
+  const subjectId = c.req.param('id')!;
   const subjectType = (c.req.query('type') as ResourcePermissionSubjectType) || 'user';
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -399,8 +399,8 @@ export async function getPermissionsBySubject(c: Context) {
  */
 export async function getPermissionsByResource(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
-  const resourceType = c.req.param('type');
-  const resourceId = c.req.param('id');
+  const resourceType = c.req.param('type')!;
+  const resourceId = c.req.param('id')!;
   const tenantId = DEFAULT_TENANT_ID;
 
   try {

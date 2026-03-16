@@ -165,7 +165,7 @@ export async function adminUserAttributesHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
     const includeExpired = c.req.query('include_expired') === 'true';
 
     let query = `
@@ -308,7 +308,7 @@ export async function adminAttributeUpdateHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const body = await c.req.json<{
       attribute_value?: string;
       expires_at?: number | null;
@@ -378,7 +378,7 @@ export async function adminAttributeDeleteHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if attribute exists
     const existing = await adapter.query<{

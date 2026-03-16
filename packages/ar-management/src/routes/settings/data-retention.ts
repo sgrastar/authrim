@@ -187,7 +187,7 @@ export async function getDataRetentionEstimate(c: Context<{ Bindings: Env }>) {
  */
 export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const category = c.req.param('category');
+  const category = c.req.param('category')!;
 
   // Validate category exists
   if (!RETENTION_CATEGORIES[category]) {
@@ -415,7 +415,7 @@ export async function runDataRetentionCleanup(c: Context<{ Bindings: Env }>) {
  * the run ID validation. For async implementation, would query a jobs table.
  */
 export async function getCleanupRunStatus(c: Context<{ Bindings: Env }>) {
-  const runId = c.req.param('runId');
+  const runId = c.req.param('runId')!;
 
   // Validate UUID format
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

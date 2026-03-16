@@ -225,7 +225,7 @@ export async function adminAIGrantGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(c);
-    const grantId = c.req.param('id');
+    const grantId = c.req.param('id')!;
 
     const grant = await adapter.queryOne<AIGrant>(
       'SELECT * FROM ai_grants WHERE id = ? AND tenant_id = ?',
@@ -383,7 +383,7 @@ export async function adminAIGrantUpdateHandler(c: AdminContext) {
     const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
     const tenantId = getAdminTenantId(c);
     const adminAuth = getAdminAuth(c);
-    const grantId = c.req.param('id');
+    const grantId = c.req.param('id')!;
     const body = await c.req.json<AIGrantUpdateRequest>();
 
     // Check if grant exists
@@ -478,7 +478,7 @@ export async function adminAIGrantRevokeHandler(c: AdminContext) {
     const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
     const tenantId = getAdminTenantId(c);
     const adminAuth = getAdminAuth(c);
-    const grantId = c.req.param('id');
+    const grantId = c.req.param('id')!;
 
     // Check if grant exists
     const existing = await adapter.queryOne<AIGrant>(

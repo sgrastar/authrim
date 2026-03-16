@@ -2282,7 +2282,7 @@ app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-g
  * Requires: Bearer token (ADMIN_API_SECRET)
  */
 app.post('/api/internal/versions/:workerName', adminAuthMiddleware(), async (c) => {
-  const workerName = c.req.param('workerName');
+  const workerName = c.req.param('workerName')!;
 
   // Validate worker name (only allow known workers)
   const validWorkers = [

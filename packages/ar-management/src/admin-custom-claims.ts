@@ -748,7 +748,7 @@ export async function adminCustomClaimGetHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const results = await adapter.query(
       'SELECT * FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
@@ -802,7 +802,7 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const body = await c.req.json();
 
     // Fetch existing
@@ -1081,7 +1081,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Fetch existing
     const existing = await adapter.query<Record<string, unknown>>(
@@ -1270,7 +1270,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const body = await c.req.json();
 
     const newKey = body.new_field_key;
@@ -1530,7 +1530,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Fetch existing
     const existing = await adapter.query<Record<string, unknown>>(
@@ -1780,7 +1780,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
 export async function adminCustomClaimHistoryListHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const schemaId = c.req.param('schemaId');
+    const schemaId = c.req.param('schemaId')!;
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
     const offset = parseInt(c.req.query('offset') || '0', 10);
 
@@ -1801,8 +1801,8 @@ export async function adminCustomClaimHistoryListHandler(c: AdminContext) {
 export async function adminCustomClaimHistoryVersionHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const schemaId = c.req.param('schemaId');
-    const version = parseInt(c.req.param('version'), 10);
+    const schemaId = c.req.param('schemaId')!;
+    const version = parseInt(c.req.param('version')!, 10);
 
     if (!Number.isFinite(version) || version < 1) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {

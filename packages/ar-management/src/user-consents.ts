@@ -169,7 +169,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const clientId = c.req.param('clientId');
+    const clientId = c.req.param('clientId')!;
     if (!clientId) {
       return c.json(
         {

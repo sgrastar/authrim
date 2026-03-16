@@ -43,7 +43,7 @@ interface ComponentAvailability {
  * No database writes — read-only, rate-limit friendly.
  */
 export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
-  const tenantId = c.req.param('id');
+  const tenantId = c.req.param('id')!;
   const log = getLogger(c).module('ADMIN-INFO');
 
   if (!tenantId) {

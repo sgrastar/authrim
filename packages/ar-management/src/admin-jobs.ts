@@ -460,7 +460,7 @@ export async function adminJobsListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const jobId = c.req.param('id');
+  const jobId = c.req.param('id')!;
 
   if (!jobId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -497,7 +497,7 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const jobId = c.req.param('id');
+  const jobId = c.req.param('id')!;
 
   if (!jobId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -951,7 +951,7 @@ const BulkMembersOptionsSchema = z.object({
  */
 export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const organizationId = c.req.param('id');
+  const organizationId = c.req.param('id')!;
 
   if (!organizationId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

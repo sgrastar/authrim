@@ -377,7 +377,7 @@ myPasskeysRouter.post('/complete', async (c) => {
  */
 myPasskeysRouter.patch('/:id', async (c) => {
   const authContext = c.get('adminAuth') as AdminAuthContext;
-  const passkeyId = c.req.param('id');
+  const passkeyId = c.req.param('id')!;
 
   try {
     const body = await c.req.json<{
@@ -439,7 +439,7 @@ myPasskeysRouter.patch('/:id', async (c) => {
  */
 myPasskeysRouter.delete('/:id', async (c) => {
   const authContext = c.get('adminAuth') as AdminAuthContext;
-  const passkeyId = c.req.param('id');
+  const passkeyId = c.req.param('id')!;
 
   try {
     const adapter = getAdminAdapter(c);

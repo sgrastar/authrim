@@ -133,7 +133,7 @@ export async function getCheckApiAuditSettings(c: Context) {
  */
 export async function updateCheckApiAuditSetting(c: Context) {
   const log = getLogger(c).module('CheckApiAuditAPI');
-  const name = c.req.param('name');
+  const name = c.req.param('name')!;
 
   // Validate setting name
   if (!AUDIT_SETTING_NAMES.includes(name as keyof typeof AUDIT_SETTINGS)) {
@@ -265,7 +265,7 @@ export async function updateCheckApiAuditSetting(c: Context) {
  */
 export async function clearCheckApiAuditSetting(c: Context) {
   const log = getLogger(c).module('CheckApiAuditAPI');
-  const name = c.req.param('name');
+  const name = c.req.param('name')!;
 
   // Validate setting name
   if (!AUDIT_SETTING_NAMES.includes(name as keyof typeof AUDIT_SETTINGS)) {

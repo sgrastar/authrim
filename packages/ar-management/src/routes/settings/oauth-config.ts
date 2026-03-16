@@ -62,7 +62,7 @@ export async function getOAuthConfig(c: Context) {
  */
 export async function updateOAuthConfig(c: Context) {
   const log = getLogger(c).module('OAuthConfigAPI');
-  const name = c.req.param('name') as ConfigName;
+  const name = c.req.param('name')! as ConfigName;
 
   // Validate config name
   if (!CONFIG_NAMES.includes(name)) {
@@ -173,7 +173,7 @@ export async function updateOAuthConfig(c: Context) {
  */
 export async function clearOAuthConfig(c: Context) {
   const log = getLogger(c).module('OAuthConfigAPI');
-  const name = c.req.param('name') as ConfigName;
+  const name = c.req.param('name')! as ConfigName;
 
   // Validate config name
   if (!CONFIG_NAMES.includes(name)) {
