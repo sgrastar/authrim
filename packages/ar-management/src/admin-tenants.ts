@@ -20,6 +20,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
+  generateId,
   getLogger,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
@@ -192,6 +193,257 @@ const UpdateTenantSchema = z.object({
 });
 
 // =============================================================================
+// Default claim seeding
+// =============================================================================
+
+/**
+ * Default OIDC claim schemas to seed for each new tenant.
+ * All claims default to include_in_id_token=0 (OIDC compliant).
+ * System claims cannot be deleted or renamed via the admin API.
+ *
+ * display_order ranges:
+ *   1-13  : profile scope claims
+ *   20-21 : email scope claims
+ *   30-31 : phone scope claims
+ *   40-45 : address scope claims (individual fields, not JSON object)
+ */
+const DEFAULT_CLAIM_SCHEMAS = [
+  // Profile scope
+  {
+    field_key: 'name',
+    display_label: 'Full Name',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 1,
+  },
+  {
+    field_key: 'given_name',
+    display_label: 'First Name',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 2,
+  },
+  {
+    field_key: 'family_name',
+    display_label: 'Last Name',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 3,
+  },
+  {
+    field_key: 'middle_name',
+    display_label: 'Middle Name',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 4,
+  },
+  {
+    field_key: 'nickname',
+    display_label: 'Nickname',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 5,
+  },
+  {
+    field_key: 'preferred_username',
+    display_label: 'Preferred Username',
+    field_type: 'string',
+    is_pii: 0,
+    display_order: 6,
+  },
+  {
+    field_key: 'profile',
+    display_label: 'Profile URL',
+    field_type: 'string',
+    is_pii: 0,
+    display_order: 7,
+  },
+  {
+    field_key: 'picture',
+    display_label: 'Picture URL',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 8,
+  },
+  {
+    field_key: 'website',
+    display_label: 'Website',
+    field_type: 'string',
+    is_pii: 0,
+    display_order: 9,
+  },
+  {
+    field_key: 'birthdate',
+    display_label: 'Birthdate',
+    field_type: 'date',
+    is_pii: 1,
+    display_order: 10,
+  },
+  {
+    field_key: 'zoneinfo',
+    display_label: 'Time Zone',
+    field_type: 'string',
+    is_pii: 0,
+    display_order: 11,
+  },
+  {
+    field_key: 'locale',
+    display_label: 'Locale',
+    field_type: 'string',
+    is_pii: 0,
+    display_order: 12,
+  },
+  {
+    field_key: 'updated_at',
+    display_label: 'Last Updated',
+    field_type: 'number',
+    is_pii: 0,
+    display_order: 13,
+  },
+  // Email scope
+  {
+    field_key: 'email',
+    display_label: 'Email',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 20,
+  },
+  {
+    field_key: 'email_verified',
+    display_label: 'Email Verified',
+    field_type: 'boolean',
+    is_pii: 0,
+    display_order: 21,
+  },
+  // Phone scope
+  {
+    field_key: 'phone_number',
+    display_label: 'Phone Number',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 30,
+  },
+  {
+    field_key: 'phone_number_verified',
+    display_label: 'Phone Number Verified',
+    field_type: 'boolean',
+    is_pii: 0,
+    display_order: 31,
+  },
+  // Address scope (individual fields; address_country is non-PII for regulatory flexibility)
+  {
+    field_key: 'address_formatted',
+    display_label: 'Address (Formatted)',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 40,
+  },
+  {
+    field_key: 'address_street_address',
+    display_label: 'Street Address',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 41,
+  },
+  {
+    field_key: 'address_locality',
+    display_label: 'City / Locality',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 42,
+  },
+  {
+    field_key: 'address_region',
+    display_label: 'State / Region',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 43,
+  },
+  {
+    field_key: 'address_postal_code',
+    display_label: 'Postal Code',
+    field_type: 'string',
+    is_pii: 1,
+    display_order: 44,
+  },
+  {
+    field_key: 'address_country',
+    display_label: 'Country',
+    field_type: 'string',
+    is_pii: 0,
+    display_order: 45,
+  },
+] as const;
+
+/**
+ * Seeds default OIDC claim schemas for a newly created tenant.
+ * Skips any field_key that already exists for the tenant (idempotent).
+ * Errors are caught and logged as soft failures so tenant creation succeeds.
+ */
+export async function seedDefaultClaimsForTenant(
+  tenantId: string,
+  adapter: DatabaseAdapter,
+  log: ReturnType<typeof getLogger>
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+
+  for (const claim of DEFAULT_CLAIM_SCHEMAS) {
+    try {
+      const existing = await adapter.queryOne<{ id: string }>(
+        'SELECT id FROM custom_claim_schemas WHERE tenant_id = ? AND field_key = ?',
+        [tenantId, claim.field_key]
+      );
+      if (existing) continue;
+
+      await adapter.execute(
+        `INSERT INTO custom_claim_schemas (
+          id, tenant_id, field_key, display_label, field_type,
+          is_pii, is_required, is_active, is_system,
+          is_searchable, is_exportable, is_vc_claim,
+          include_in_id_token, include_in_userinfo, include_in_introspection,
+          scope_mode, display_order, schema_version, operation_status,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, 1, 'active', ?, ?)`,
+        [
+          generateId(),
+          tenantId,
+          claim.field_key,
+          claim.display_label,
+          claim.field_type,
+          claim.is_pii,
+          // is_searchable: 1 for identifier-like fields, 0 for URL/meta fields
+          [
+            'name',
+            'given_name',
+            'family_name',
+            'email',
+            'preferred_username',
+            'phone_number',
+          ].includes(claim.field_key)
+            ? 1
+            : 0,
+          // is_exportable: 1 for most fields, 0 for verified-status and meta fields
+          ['email_verified', 'phone_number_verified', 'updated_at'].includes(claim.field_key)
+            ? 0
+            : 1,
+          claim.display_order,
+          now,
+          now,
+        ]
+      );
+    } catch (err) {
+      log
+        .module('ADMIN-TENANTS')
+        .error(
+          `Failed to seed default claim '${claim.field_key}' for tenant '${tenantId}'`,
+          {},
+          err as Error
+        );
+    }
+  }
+}
+
+// =============================================================================
 // Handlers
 // =============================================================================
 
@@ -267,6 +519,10 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       name,
       description: description ?? null,
     });
+
+    // Seed default OIDC claim schemas for the new tenant (soft failure)
+    await seedDefaultClaimsForTenant(id, adapter, getLogger(c));
+
 
     return c.json(formatTenant(created!), 201);
   } catch (error) {

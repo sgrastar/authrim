@@ -75,11 +75,12 @@
 			{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' }
 		],
 		identitySchema: [
-			{ path: '/admin/custom-claims', label: 'Custom Claims', icon: 'i-ph-tag' },
+			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
 		branding: [{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' }],
 		configuration: [
+			{ path: '/admin/info', label: 'Info', icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: 'Settings', icon: 'i-ph-gear' },
 			{ path: '/admin/plugins', label: 'Plugins', icon: 'i-ph-puzzle-piece' }
 		]
@@ -294,7 +295,7 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label="Identity Schema" />
+				<NavGroupLabel label="Schema Settings" />
 				{#each navTenant.identitySchema as item (item.path)}
 					<NavItem
 						href={item.path}

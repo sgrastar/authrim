@@ -124,3 +124,4 @@ load-testing/seeds/
 
 # Wrangler/Miniflare remote storage cache
 remote/
+AGENTS.md

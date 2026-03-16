@@ -97,6 +97,13 @@ const RESERVED_CLAIM_NAMES = new Set([
   'phone_number_verified',
   'address',
   'updated_at',
+  // Address sub-field system claims (stored as individual columns, not JSON)
+  'address_formatted',
+  'address_street_address',
+  'address_locality',
+  'address_region',
+  'address_postal_code',
+  'address_country',
 ]);
 
 /** Valid field types */
@@ -308,6 +315,7 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
     const fieldType = c.req.query('field_type');
     const isPii = c.req.query('is_pii');
     const isActive = c.req.query('is_active');
+    const isSystem = c.req.query('is_system');
     const operationStatus = c.req.query('operation_status');
 
     // Build query
@@ -333,6 +341,11 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
     if (isActive === '0' || isActive === '1') {
       whereConditions.push('is_active = ?');
       params.push(parseInt(isActive));
+    }
+
+    if (isSystem === '0' || isSystem === '1') {
+      whereConditions.push('is_system = ?');
+      params.push(parseInt(isSystem));
     }
 
     if (operationStatus && VALID_OPERATION_STATUSES.has(operationStatus)) {
@@ -567,7 +580,7 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
         body.is_vc_claim ? 1 : 0,
         claimNamespaceValue,
         body.description || null,
-        body.display_order || 0,
+        body.display_order ?? 100,
         createdBy,
         now,
         now,

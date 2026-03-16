@@ -94,6 +94,24 @@ describe('generateEnvVars - ar-management', () => {
     expect(vars['ALLOWED_ORIGINS'].split(',').sort()).toEqual(
       expected.ALLOWED_ORIGINS.split(',').sort()
     );
+
+    if (scenario.config.baseDomain) {
+      expect(vars['BASE_DOMAIN']).toBe(scenario.config.baseDomain);
+    } else {
+      expect(vars['BASE_DOMAIN']).toBeUndefined();
+    }
+
+    if (scenario.config.primaryTenantId) {
+      expect(vars['PRIMARY_TENANT_ID']).toBe(scenario.config.primaryTenantId);
+    } else {
+      expect(vars['PRIMARY_TENANT_ID']).toBeUndefined();
+    }
+
+    if (scenario.config.nakedDomain) {
+      expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBe('true');
+    } else {
+      expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBeUndefined();
+    }
   });
 });
 

@@ -30,6 +30,7 @@
 	let filterFieldType = $state<FieldType | ''>('');
 	let filterIsPii = $state<'' | '0' | '1'>('');
 	let filterIsActive = $state<'' | '0' | '1'>('');
+	let filterIsSystem = $state<'' | '0' | '1'>('');
 
 	// Create dialog
 	let showCreateDialog = $state(false);
@@ -83,7 +84,8 @@
 				search: filterSearch || undefined,
 				field_type: filterFieldType || undefined,
 				is_pii: filterIsPii || undefined,
-				is_active: filterIsActive || undefined
+				is_active: filterIsActive || undefined,
+				is_system: filterIsSystem || undefined
 			});
 
 			schemas = response.schemas;
@@ -114,6 +116,7 @@
 		filterFieldType = '';
 		filterIsPii = '';
 		filterIsActive = '';
+		filterIsSystem = '';
 		pagination.page = 1;
 		loadSchemas();
 	}
@@ -208,7 +211,7 @@
 	// Delete
 	// =========================================================================
 
-	async function openDeleteDialog(schema: CustomClaimSchema, event: Event) {
+	async function _openDeleteDialog(schema: CustomClaimSchema, event: Event) {
 		event.stopPropagation();
 		schemaToDelete = schema;
 		deleteError = '';
@@ -252,7 +255,7 @@
 	// Rename
 	// =========================================================================
 
-	async function openRenameDialog(schema: CustomClaimSchema, event: Event) {
+	async function _openRenameDialog(schema: CustomClaimSchema, event: Event) {
 		event.stopPropagation();
 		schemaToRename = schema;
 		renameNewKey = '';
@@ -327,7 +330,7 @@
 </script>
 
 <svelte:head>
-	<title>Custom Claims Schema - Admin Dashboard - Authrim</title>
+	<title>Schema Settings - Admin Dashboard - Authrim</title>
 </svelte:head>
 
 <div class="admin-page">
@@ -350,16 +353,16 @@
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Custom Claims Schema</h1>
+			<h1 class="page-title">Schema Settings</h1>
 			<p class="page-description">
-				Define and manage custom claim fields for users. Control field types, validation rules, and
-				how claims map to OIDC tokens.
+				Define and manage claim fields for users. Control field types, validation rules, and how
+				claims map to OIDC tokens.
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Add Custom Claim
+				Add Schema
 			</button>
 		</div>
 	</div>
@@ -436,6 +439,13 @@
 				</select>
 			</div>
 			<div class="form-group">
+				<select class="form-select" bind:value={filterIsSystem} onchange={applyFilters}>
+					<option value="">All</option>
+					<option value="0">Custom</option>
+					<option value="1">System</option>
+				</select>
+			</div>
+			<div class="form-group">
 				<button class="btn btn-primary" onclick={applyFilters}>Apply</button>
 				<button class="btn btn-secondary" onclick={clearFilters}>Clear</button>
 			</div>
@@ -451,13 +461,13 @@
 	{:else if schemas.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No custom claim schemas found.</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Add Custom Claim</button>
+				<p class="empty-state-description">No schemas found.</p>
+				<button class="btn btn-primary" onclick={openCreateDialog}>Add Schema</button>
 			</div>
 		</div>
 	{:else}
 		<div class="data-table-container">
-			<table class="data-table">
+			<table class="data-table schema-table">
 				<thead>
 					<tr>
 						<th>Field Key</th>
@@ -467,7 +477,6 @@
 						<th>Token</th>
 						<th>Required</th>
 						<th>Status</th>
-						<th>Actions</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -482,6 +491,9 @@
 							<td>
 								<div class="flex items-center gap-2">
 									<code class="text-sm font-mono">{schema.field_key}</code>
+									{#if schema.is_system}
+										<span class="badge badge-neutral text-xs">System</span>
+									{/if}
 									{#if schema.claim_namespace}
 										<span class="badge badge-neutral text-xs" title={schema.claim_namespace}
 											>NS</span
@@ -539,27 +551,6 @@
 									<span class="badge badge-success">Active</span>
 								{/if}
 							</td>
-							<td>
-								<div class="flex gap-1">
-									<button
-										class="btn btn-secondary btn-xs"
-										title="Rename"
-										onclick={(e) => openRenameDialog(schema, e)}
-										disabled={schema.operation_status !== 'active'}
-									>
-										<i class="i-ph-pencil-simple"></i>
-									</button>
-									<button
-										class="btn btn-danger btn-xs"
-										title="Delete"
-										onclick={(e) => openDeleteDialog(schema, e)}
-										disabled={schema.operation_status !== 'active' &&
-											schema.operation_status !== 'error'}
-									>
-										<i class="i-ph-trash"></i>
-									</button>
-								</div>
-							</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -598,7 +589,7 @@
 		showCreateDialog = false;
 		createError = '';
 	}}
-	title="Create Custom Claim Schema"
+	title="Add Schema"
 	size="lg"
 >
 	{#if createError}
@@ -891,5 +882,14 @@
 		font-size: 0.75rem;
 		color: #6b7280;
 		margin-top: 0.25rem;
+	}
+
+	/* Compact row spacing for schema list */
+	:global(.schema-table td) {
+		padding: 6px 16px;
+	}
+
+	:global(.schema-table th) {
+		padding: 8px 16px;
 	}
 </style>

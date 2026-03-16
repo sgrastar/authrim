@@ -168,6 +168,7 @@ export const adminCustomClaimsAPI = {
 		field_type?: FieldType;
 		is_pii?: string;
 		is_active?: string;
+		is_system?: '0' | '1';
 		operation_status?: OperationStatus;
 	}): Promise<CustomClaimsListResponse> {
 		const searchParams = new URLSearchParams();
@@ -177,6 +178,7 @@ export const adminCustomClaimsAPI = {
 		if (params?.field_type) searchParams.set('field_type', params.field_type);
 		if (params?.is_pii) searchParams.set('is_pii', params.is_pii);
 		if (params?.is_active) searchParams.set('is_active', params.is_active);
+		if (params?.is_system) searchParams.set('is_system', params.is_system);
 		if (params?.operation_status) searchParams.set('operation_status', params.operation_status);
 
 		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims?${searchParams}`, {
