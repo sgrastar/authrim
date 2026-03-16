@@ -281,7 +281,7 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
 
     if (!userId) {
       return c.json(
@@ -396,7 +396,7 @@ export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
 
     if (!userId) {
       return c.json(
@@ -461,7 +461,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
 
     if (!userId) {
       return c.json(

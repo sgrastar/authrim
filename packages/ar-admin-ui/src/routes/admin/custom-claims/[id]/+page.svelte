@@ -44,7 +44,11 @@
 		claim_namespace: '',
 		is_searchable: false,
 		is_exportable: false,
-		is_vc_claim: false
+		is_vc_claim: false,
+		show_on_registration: false,
+		registration_required: false,
+		registration_order: 0,
+		registration_placeholder: ''
 	});
 
 	// Delete dialog
@@ -99,7 +103,11 @@
 			claim_namespace: s.claim_namespace || '',
 			is_searchable: !!s.is_searchable,
 			is_exportable: !!s.is_exportable,
-			is_vc_claim: !!s.is_vc_claim
+			is_vc_claim: !!s.is_vc_claim,
+			show_on_registration: !!s.show_on_registration,
+			registration_required: !!s.registration_required,
+			registration_order: (s.registration_order as number) ?? 0,
+			registration_placeholder: (s.registration_placeholder as string) || ''
 		};
 	}
 
@@ -150,7 +158,11 @@
 				claim_namespace: editForm.claim_namespace || null,
 				is_searchable: editForm.is_searchable,
 				is_exportable: editForm.is_exportable,
-				is_vc_claim: editForm.is_vc_claim
+				is_vc_claim: editForm.is_vc_claim,
+				show_on_registration: editForm.show_on_registration,
+				registration_required: editForm.registration_required,
+				registration_order: editForm.registration_order,
+				registration_placeholder: editForm.registration_placeholder || null
 			});
 
 			schema = result.schema;
@@ -231,14 +243,14 @@
 
 <svelte:head>
 	<title
-		>{schema?.display_label ?? 'Custom Claim'} — Custom Claims — Admin Dashboard — Authrim</title
+		>{schema?.display_label ?? 'Schema'} — Schema Settings — Admin Dashboard — Authrim</title
 	>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Breadcrumb -->
 	<nav class="breadcrumb mb-4">
-		<a href="/admin/custom-claims" class="breadcrumb-link">Custom Claims</a>
+		<a href="/admin/custom-claims" class="breadcrumb-link">Schema Settings</a>
 		<span class="breadcrumb-sep">/</span>
 		<span class="breadcrumb-current"
 			>{loading ? '...' : (schema?.display_label ?? schema?.field_key ?? schemaId)}</span
@@ -355,7 +367,7 @@
 								id="field-type"
 								class="form-select"
 								bind:value={editForm.field_type}
-								disabled={!isEditable}
+								disabled={!isEditable || isSystem}
 							>
 								<option value="string">String</option>
 								<option value="number">Number</option>
@@ -455,7 +467,7 @@
 										Introspection
 									</span>
 									<small style="color: var(--color-warning, #b08800); font-size: 0.75rem;"
-										>現在、Introspectionレスポンスへのカスタムクレーム埋め込みは無効です。</small
+										>Custom claim embedding in Introspection responses is currently disabled.</small
 									>
 								</label>
 							</div>
@@ -540,6 +552,55 @@
 					</div>
 				</div>
 
+				<!-- Section: Registration Form -->
+				<div class="panel mb-4">
+					<h2 class="panel-title">Registration Form</h2>
+					<div class="flex gap-6 flex-wrap mb-4">
+						<label class="form-label">
+							<input
+								type="checkbox"
+								bind:checked={editForm.show_on_registration}
+								disabled={!isEditable}
+							/>
+							Show on signup form
+						</label>
+						<label class="form-label">
+							<input
+								type="checkbox"
+								bind:checked={editForm.registration_required}
+								disabled={!isEditable || !editForm.show_on_registration}
+							/>
+							Required on signup
+						</label>
+					</div>
+					{#if editForm.show_on_registration}
+						<div class="flex gap-4 flex-wrap">
+							<div style="min-width:120px;">
+								<label class="form-label" for="reg-order">Display order</label>
+								<input
+									id="reg-order"
+									type="number"
+									bind:value={editForm.registration_order}
+									disabled={!isEditable}
+									min="0"
+									class="form-input"
+								/>
+							</div>
+							<div style="flex:1; min-width:200px;">
+								<label class="form-label" for="reg-placeholder">Placeholder text</label>
+								<input
+									id="reg-placeholder"
+									type="text"
+									bind:value={editForm.registration_placeholder}
+									disabled={!isEditable}
+									placeholder="e.g. Enter your department"
+									class="form-input"
+								/>
+							</div>
+						</div>
+					{/if}
+				</div>
+
 				<!-- Save button -->
 				{#if isEditable}
 					<div class="flex justify-end">
@@ -550,15 +611,15 @@
 				{/if}
 
 				<!-- Danger Zone -->
-				<div class="panel mt-6 border-red-200">
-					<h2 class="panel-title text-red-700">Danger Zone</h2>
+				<div class="danger-panel mt-6">
+					<h2 class="panel-title danger-title">Danger Zone</h2>
 
 					<div class="flex flex-col gap-3">
 						<!-- Rename -->
-						<div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+						<div class="danger-zone-row">
 							<div>
-								<p class="font-medium text-sm">Rename Field Key</p>
-								<p class="text-xs text-gray-500">
+								<p class="danger-zone-row-title">Rename Field Key</p>
+								<p class="danger-zone-description">
 									Changes the claim name in API responses and tokens. May break RP integrations.
 								</p>
 							</div>
@@ -578,13 +639,13 @@
 						</div>
 
 						<!-- Delete -->
-						<div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+						<div class="danger-zone-row">
 							<div>
-								<p class="font-medium text-sm">Delete Schema</p>
-								<p class="text-xs text-gray-500">
+								<p class="danger-zone-row-title">Delete Schema</p>
+								<p class="danger-zone-description">
 									Permanently deletes this schema and all associated user data.
 									{#if userCount > 0}
-										<span class="text-red-600 font-medium">
+										<span class="danger-zone-affected">
 											{userCountApproximate ? '~' : ''}{userCount} user(s) will lose this data.
 										</span>
 									{/if}
@@ -794,6 +855,47 @@
 		font-size: 1rem;
 		font-weight: 600;
 		margin-bottom: 1rem;
+	}
+
+	/* Danger Zone */
+	.danger-panel {
+		background: var(--bg-card, #fff);
+		border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 30%, var(--border, #e5e7eb));
+		border-radius: 8px;
+		padding: 1.25rem;
+	}
+
+	.danger-title {
+		color: var(--danger, #dc2626);
+	}
+
+	.danger-zone-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.75rem;
+		background: color-mix(in srgb, var(--danger, #dc2626) 5%, var(--bg-subtle, #f8fafc));
+		border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 20%, var(--border, #e5e7eb));
+		border-radius: 6px;
+	}
+
+	.danger-zone-row-title {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--text-primary, #111827);
+		margin: 0 0 0.25rem 0;
+	}
+
+	.danger-zone-description {
+		font-size: 0.75rem;
+		color: var(--text-secondary, #6b7280);
+		margin: 0;
+	}
+
+	.danger-zone-affected {
+		color: var(--danger, #dc2626);
+		font-weight: 500;
 	}
 
 	.form-grid {

@@ -859,6 +859,8 @@ const de: Translations = {
   'web.form.envName': 'Umgebungsname',
   'web.form.envNamePlaceholder': 'z.B. prod, staging, dev',
   'web.form.envNameHint': 'Nur Kleinbuchstaben, Zahlen und Bindestriche',
+  'web.form.envNameError':
+    'Nur Kleinbuchstaben, Zahlen und Bindestriche erlaubt (muss mit einem Buchstaben beginnen)',
   'web.form.baseDomain': 'Basis-Domain (API-Domain)',
   'web.form.baseDomainPlaceholder': 'oidc.beispiel.de',
   'web.form.baseDomainHint': 'Benutzerdefinierte Domain für Authrim. Leer lassen für workers.dev',

@@ -10,6 +10,7 @@ export const SAML_NAMESPACES = {
   SAML2: 'urn:oasis:names:tc:SAML:2.0:assertion',
   MD: 'urn:oasis:names:tc:SAML:2.0:metadata',
   DS: 'http://www.w3.org/2000/09/xmldsig#',
+  XML: 'http://www.w3.org/XML/1998/namespace',
   XS: 'http://www.w3.org/2001/XMLSchema',
   XSI: 'http://www.w3.org/2001/XMLSchema-instance',
   XS_INSTANCE: 'http://www.w3.org/2001/XMLSchema-instance',

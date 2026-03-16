@@ -220,7 +220,7 @@ ipAllowlistRouter.get('/:id', async (c) => {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const entry = await ipRepo.getEntry(id);
 
     if (!entry) {
@@ -319,7 +319,7 @@ ipAllowlistRouter.patch('/:id', async (c) => {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if entry exists
     const existing = await ipRepo.getEntry(id);
@@ -380,7 +380,7 @@ ipAllowlistRouter.delete('/:id', async (c) => {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if entry exists
     const existing = await ipRepo.getEntry(id);
@@ -416,7 +416,7 @@ ipAllowlistRouter.post('/:id/enable', async (c) => {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const success = await ipRepo.enableEntry(id);
     if (!success) {
@@ -447,7 +447,7 @@ ipAllowlistRouter.post('/:id/disable', async (c) => {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const success = await ipRepo.disableEntry(id);
     if (!success) {

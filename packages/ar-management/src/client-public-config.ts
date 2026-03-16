@@ -36,7 +36,7 @@ export interface PublicClientConfig {
  * @returns Public client configuration or error response
  */
 export async function clientPublicConfigHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const clientId = c.req.param('client_id');
+  const clientId = c.req.param('client_id')!;
 
   if (!clientId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

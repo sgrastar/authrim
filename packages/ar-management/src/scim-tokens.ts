@@ -171,7 +171,7 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
  */
 export async function adminScimTokenRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const tokenHash = c.req.param('tokenHash');
+    const tokenHash = c.req.param('tokenHash')!;
 
     if (!tokenHash) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

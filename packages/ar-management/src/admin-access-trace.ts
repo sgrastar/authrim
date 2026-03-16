@@ -162,7 +162,7 @@ export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) 
   try {
     const tenantId = getTenantIdFromContext(c);
     const db = new D1Adapter({ db: c.env.DB });
-    const entryId = c.req.param('id');
+    const entryId = c.req.param('id')!;
 
     const row = await db.queryOne<PermissionCheckAuditRow>(
       'SELECT * FROM permission_check_audit WHERE tenant_id = ? AND id = ?',

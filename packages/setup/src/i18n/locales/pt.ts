@@ -859,6 +859,8 @@ const pt: Translations = {
   'web.form.envName': 'Nome do Ambiente',
   'web.form.envNamePlaceholder': 'ex: prod, staging, dev',
   'web.form.envNameHint': 'Apenas letras minúsculas, números e hífens',
+  'web.form.envNameError':
+    'Apenas letras minúsculas, números e hífens são permitidos (deve começar com uma letra)',
   'web.form.baseDomain': 'Domínio Base (Domínio API)',
   'web.form.baseDomainPlaceholder': 'oidc.exemplo.com',
   'web.form.baseDomainHint':

@@ -11,8 +11,13 @@
 	import NavGroupLabel from '$lib/components/admin/NavGroupLabel.svelte';
 	import AdminHeader from '$lib/components/admin/AdminHeader.svelte';
 	import type { Snippet } from 'svelte';
+	import { tenantStore } from '$lib/stores/tenants.svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let { children }: { children: Snippet } = $props();
+
+	// Tenant selector state — derived from shared store
+	let selectedTenantId = $state('default');
 
 	// Check if current page is login page
 	const isLoginPage = $derived($page.url.pathname === '/admin/login');
@@ -29,22 +34,15 @@
 		mobileMenuOpen = false;
 	});
 
-	// Navigation structure - Tenant scope (managed by tenant admins)
-	// Note: "End Users" refers to application users (not admin operators)
-	const tenantNavItems = {
-		// End Users - Identity Management
-		endUsers: [
+	// END USER section - identity management for application users
+	const navEndUser = {
+		identity: [
 			{ path: '/admin/users', label: 'End Users', icon: 'i-ph-users' },
 			{ path: '/admin/sessions', label: 'User Sessions', icon: 'i-ph-clock' },
 			{ path: '/admin/organizations', label: 'Organizations', icon: 'i-ph-buildings' }
 		],
-		// End User Access Control (RBAC/ABAC/ReBAC)
-		endUserAccessControl: {
-			parent: {
-				href: '/admin/access-control',
-				icon: 'i-ph-shield-star',
-				label: 'Access Control'
-			},
+		accessControl: {
+			parent: { href: '/admin/access-control', icon: 'i-ph-shield-star', label: 'Access Control' },
 			children: [
 				{ href: '/admin/roles', label: 'RBAC (Roles)' },
 				{ href: '/admin/attributes', label: 'ABAC (Attributes)' },
@@ -52,120 +50,111 @@
 				{ href: '/admin/policies', label: 'Policies' }
 			]
 		},
-		// End User Monitoring
-		endUserMonitoring: [
+		monitoring: [
 			{ path: '/admin/audit-logs', label: 'User Audit Logs', icon: 'i-ph-file-text' },
 			{ path: '/admin/access-trace', label: 'Access Trace', icon: 'i-ph-path' },
 			{ path: '/admin/diagnostic-logging', label: 'Diagnostic Logging', icon: 'i-ph-bug' }
-		],
-		// Applications
+		]
+	};
+
+	// CLIENT section - application/client management
+	const navClient = {
 		applications: [
 			{ path: '/admin/clients', label: 'Clients', icon: 'i-ph-monitor' },
-			{ path: '/admin/iat-tokens', label: 'IAT Tokens', icon: 'i-ph-key' },
-			{ path: '/admin/webhooks', label: 'Webhooks', icon: 'i-ph-webhooks-logo' }
-		],
-		// Authentication
+			{ path: '/admin/webhooks', label: 'Webhooks', icon: 'i-ph-webhooks-logo' },
+			{ path: '/admin/iat-tokens', label: 'IAT Tokens', icon: 'i-ph-key' }
+		]
+	};
+
+	// TENANT section - tenant-level configuration
+	const navTenant = {
 		authentication: [
-			{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' },
+			{ path: '/admin/external-idp', label: 'External IdP', icon: 'i-ph-globe' },
 			{ path: '/admin/consents', label: 'Consents', icon: 'i-ph-handshake' },
 			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' },
-			{ path: '/admin/external-idp', label: 'External IdP', icon: 'i-ph-globe' }
+			{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' }
 		],
-		// Configuration
+		identitySchema: [
+			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
+			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
+		],
+		branding: [{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' }],
 		configuration: [
-			{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' },
+			{ path: '/admin/info', label: 'Info', icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: 'Settings', icon: 'i-ph-gear' },
 			{ path: '/admin/plugins', label: 'Plugins', icon: 'i-ph-puzzle-piece' }
 		]
 	};
 
-	// Navigation structure - Platform scope (managed by system admins)
-	// Note: Admin management is for admin operators (not end users)
-	const platformNavItems = {
-		// Identity Schema
-		identitySchema: [
-			{ path: '/admin/custom-claims', label: 'Custom Claims', icon: 'i-ph-tag' },
-			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
-		],
-		// Security & Compliance
-		securityCompliance: [
+	// PLATFORM section - system administration
+	const navPlatform = {
+		tenantManagement: [{ path: '/admin/tenants', label: 'Tenants', icon: 'i-ph-buildings' }],
+		security: [
 			{ path: '/admin/security', label: 'Security', icon: 'i-ph-lock-key' },
 			{ path: '/admin/compliance', label: 'Compliance', icon: 'i-ph-certificate' }
 		],
-		// System Operations
 		operations: [
 			{ path: '/admin/scale', label: 'Scale', icon: 'i-ph-chart-bar' },
 			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' }
 		],
-		// Admin Management (Admin operators, not end users)
-		adminManagement: [
-			{ path: '/admin/admins', label: 'Admin Users', icon: 'i-ph-user-gear' },
-			{
-				parent: {
-					href: '/admin/admin-access-control',
-					icon: 'i-ph-shield-star',
-					label: 'Admin Access Control'
-				},
-				children: [
-					{ href: '/admin/admin-rbac', label: 'RBAC (Roles)' },
-					{ href: '/admin/admin-abac', label: 'ABAC (Attributes)' },
-					{ href: '/admin/admin-rebac', label: 'ReBAC' },
-					{ href: '/admin/admin-policies', label: 'Policies' }
-				]
+		adminUsers: { path: '/admin/admins', label: 'Admin Users', icon: 'i-ph-user-gear' },
+		adminAccessControl: {
+			parent: {
+				href: '/admin/admin-access-control',
+				icon: 'i-ph-shield-star',
+				label: 'Admin Access Control'
 			},
+			children: [
+				{ href: '/admin/admin-rbac', label: 'RBAC (Roles)' },
+				{ href: '/admin/admin-abac', label: 'ABAC (Attributes)' },
+				{ href: '/admin/admin-rebac', label: 'ReBAC' },
+				{ href: '/admin/admin-policies', label: 'Policies' }
+			]
+		},
+		adminOthers: [
 			{ path: '/admin/ip-allowlist', label: 'IP Allowlist', icon: 'i-ph-shield-check' },
 			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' }
 		]
 	};
 
-	// Extract admin management items for type safety
-	const [adminUsersItem, adminAccessControlItem, ...adminOtherItems] = platformNavItems.adminManagement;
-
 	// All nav items flattened for breadcrumb lookup
 	const allNavItems = [
-		// End Users section
-		...tenantNavItems.endUsers,
-		// End User Access Control Hub parent and children
+		// End User
+		...navEndUser.identity,
 		{
-			path: tenantNavItems.endUserAccessControl.parent.href,
-			label: tenantNavItems.endUserAccessControl.parent.label,
-			icon: tenantNavItems.endUserAccessControl.parent.icon
+			path: navEndUser.accessControl.parent.href,
+			label: navEndUser.accessControl.parent.label,
+			icon: navEndUser.accessControl.parent.icon
 		},
-		...tenantNavItems.endUserAccessControl.children.map((c) => ({
+		...navEndUser.accessControl.children.map((c) => ({
 			path: c.href,
 			label: c.label,
 			icon: 'i-ph-arrow-right'
 		})),
-		...tenantNavItems.endUserMonitoring,
-		...tenantNavItems.applications,
-		...tenantNavItems.authentication,
-		...tenantNavItems.configuration,
-		// Platform section
-		...platformNavItems.identitySchema,
-		...platformNavItems.securityCompliance,
-		...platformNavItems.operations,
-		// Admin Management with Access Control Hub
+		...navEndUser.monitoring,
+		// Client
+		...navClient.applications,
+		// Tenant
+		...navTenant.authentication,
+		...navTenant.identitySchema,
+		...navTenant.branding,
+		...navTenant.configuration,
+		// Platform
+		...navPlatform.tenantManagement,
+		...navPlatform.security,
+		...navPlatform.operations,
+		navPlatform.adminUsers,
 		{
-			path: adminUsersItem.path!,
-			label: adminUsersItem.label!,
-			icon: adminUsersItem.icon!
+			path: navPlatform.adminAccessControl.parent.href,
+			label: navPlatform.adminAccessControl.parent.label,
+			icon: navPlatform.adminAccessControl.parent.icon
 		},
-		{
-			path: adminAccessControlItem.parent!.href,
-			label: adminAccessControlItem.parent!.label,
-			icon: adminAccessControlItem.parent!.icon
-		},
-		...adminAccessControlItem.children!.map((c) => ({
+		...navPlatform.adminAccessControl.children.map((c) => ({
 			path: c.href,
 			label: c.label,
 			icon: 'i-ph-arrow-right'
 		})),
-		// IP Allowlist, Admin Audit
-		...adminOtherItems.map((item) => ({
-			path: item.path!,
-			label: item.label!,
-			icon: item.icon!
-		}))
+		...navPlatform.adminOthers
 	];
 
 	// Check if nav item is active
@@ -212,8 +201,18 @@
 		// Redirect to login if not authenticated and still on the same page
 		if (!adminAuth.isAuthenticated && $page.url.pathname === currentPath) {
 			goto('/admin/login');
+			return;
 		}
+
+		// Load tenant list into the shared store for the header selector
+		await tenantStore.load();
+		selectedTenantId = tenantStore.defaultTenantId;
 	});
+
+	async function handleTenantChange(tenantId: string) {
+		selectedTenantId = tenantId;
+		await settingsContext.setTenantId(tenantId);
+	}
 
 	function toggleMobileMenu() {
 		mobileMenuOpen = !mobileMenuOpen;
@@ -235,19 +234,18 @@
 	<!-- Authenticated - layout with floating sidebar -->
 	<div class="app-layout">
 		<FloatingNav mobileOpen={mobileMenuOpen} onMobileClose={() => (mobileMenuOpen = false)}>
-			<!-- Tenant Section -->
-			<NavSection level="tenant" tenantName="Default">
-				<!-- Dashboard -->
-				<NavItem
-					href="/admin"
-					icon="i-ph-squares-four"
-					label="Dashboard"
-					active={isActive('/admin', true)}
-				/>
+			<!-- Dashboard (above all sections) -->
+			<NavItem
+				href="/admin"
+				icon="i-ph-squares-four"
+				label="Dashboard"
+				active={isActive('/admin', true)}
+			/>
 
-				<!-- End Users (Application Users) -->
-				<NavGroupLabel label="End Users" />
-				{#each tenantNavItems.endUsers as item (item.path)}
+			<!-- END USER Section -->
+			<NavSection level="enduser" label="End User">
+				<NavGroupLabel label="Identity" />
+				{#each navEndUser.identity as item (item.path)}
 					<NavItem
 						href={item.path}
 						icon={item.icon}
@@ -256,48 +254,13 @@
 					/>
 				{/each}
 
-				<!-- End User Access Control (RBAC/ABAC/ReBAC) -->
 				<NavItemGroup
-					parent={tenantNavItems.endUserAccessControl.parent}
-					children={tenantNavItems.endUserAccessControl.children}
+					parent={navEndUser.accessControl.parent}
+					children={navEndUser.accessControl.children}
 				/>
 
-				<!-- End User Monitoring -->
-				<NavGroupLabel label="User Monitoring" />
-				{#each tenantNavItems.endUserMonitoring as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-					/>
-				{/each}
-
-				<!-- Applications -->
-				<NavGroupLabel label="Applications" />
-				{#each tenantNavItems.applications as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-					/>
-				{/each}
-
-				<!-- Authentication -->
-				<NavGroupLabel label="Authentication" />
-				{#each tenantNavItems.authentication as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-					/>
-				{/each}
-
-				<!-- Configuration -->
-				<NavGroupLabel label="Configuration" />
-				{#each tenantNavItems.configuration as item (item.path)}
+				<NavGroupLabel label="Monitoring" />
+				{#each navEndUser.monitoring as item (item.path)}
 					<NavItem
 						href={item.path}
 						icon={item.icon}
@@ -307,11 +270,86 @@
 				{/each}
 			</NavSection>
 
-			<!-- Platform Section -->
-			<NavSection level="system" label="Platform">
-				<!-- Operations -->
+			<!-- CLIENT Section -->
+			<NavSection level="client" label="Client">
+				<NavGroupLabel label="Applications" />
+				{#each navClient.applications as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+			</NavSection>
+
+			<!-- TENANT Section -->
+			<NavSection level="tenant" label="Tenant">
+				<NavGroupLabel label="Authentication" />
+				{#each navTenant.authentication as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+
+				<NavGroupLabel label="Schema Settings" />
+				{#each navTenant.identitySchema as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+
+				<NavGroupLabel label="Branding" />
+				{#each navTenant.branding as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+
+				<NavGroupLabel label="Configuration" />
+				{#each navTenant.configuration as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+			</NavSection>
+
+			<!-- PLATFORM Section -->
+			<NavSection level="platform" label="Platform">
+				<NavGroupLabel label="Tenant Management" />
+				{#each navPlatform.tenantManagement as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+
+				<NavGroupLabel label="Security & Compliance" />
+				{#each navPlatform.security as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+
 				<NavGroupLabel label="Operations" />
-				{#each platformNavItems.operations as item (item.path)}
+				{#each navPlatform.operations as item (item.path)}
 					<NavItem
 						href={item.path}
 						icon={item.icon}
@@ -320,46 +358,23 @@
 					/>
 				{/each}
 
-				<!-- Security & Compliance -->
-				<NavGroupLabel label="Security" />
-				{#each platformNavItems.securityCompliance as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-					/>
-				{/each}
-
-				<!-- Identity Schema -->
-				<NavGroupLabel label="Identity Schema" />
-				{#each platformNavItems.identitySchema as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-					/>
-				{/each}
-
-				<!-- Admin Management (Admin Operators) -->
 				<NavGroupLabel label="Admin Operators" />
 				<NavItem
-					href={adminUsersItem.path!}
-					icon={adminUsersItem.icon!}
-					label={adminUsersItem.label!}
-					active={isActive(adminUsersItem.path!)}
+					href={navPlatform.adminUsers.path}
+					icon={navPlatform.adminUsers.icon}
+					label={navPlatform.adminUsers.label}
+					active={isActive(navPlatform.adminUsers.path)}
 				/>
 				<NavItemGroup
-					parent={adminAccessControlItem.parent!}
-					children={adminAccessControlItem.children!}
+					parent={navPlatform.adminAccessControl.parent}
+					children={navPlatform.adminAccessControl.children}
 				/>
-				{#each adminOtherItems as item (item.path)}
+				{#each navPlatform.adminOthers as item (item.path)}
 					<NavItem
-						href={item.path!}
-						icon={item.icon!}
-						label={item.label!}
-						active={isActive(item.path!)}
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
 					/>
 				{/each}
 			</NavSection>
@@ -369,6 +384,9 @@
 		<main class="main-content">
 			<AdminHeader
 				breadcrumbs={currentBreadcrumb()}
+				tenants={tenantStore.activeTenants}
+				{selectedTenantId}
+				onTenantChange={handleTenantChange}
 				onMobileMenuClick={toggleMobileMenu}
 				userEmail={adminAuth.user?.email}
 				userName={adminAuth.user?.name}

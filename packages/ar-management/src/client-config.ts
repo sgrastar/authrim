@@ -31,6 +31,8 @@ import {
   CLIENT_EVENTS,
   // Cache key builder
   buildKVKey,
+  getTenantIdFromContext,
+  buildIssuerUrl,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -267,7 +269,7 @@ async function validateRegistrationAccessToken(
   }
 
   const token = authHeader.slice(7); // Remove 'Bearer ' prefix
-  const clientId = c.req.param('client_id');
+  const clientId = c.req.param('client_id')!;
 
   if (!clientId || !token) {
     return null;
@@ -386,6 +388,9 @@ function buildClientResponse(
  */
 export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
+    const tenantId = getTenantIdFromContext(c);
+    const issuerUrl = buildIssuerUrl(c.env, tenantId);
+
     // Validate registration_access_token
     const clientId = await validateRegistrationAccessToken(c);
     if (!clientId) {
@@ -413,13 +418,13 @@ export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Pro
     }
 
     // Build response (excludes sensitive fields)
-    const response = buildClientResponse(client, c.env.ISSUER_URL);
+    const response = buildClientResponse(client, issuerUrl);
 
     const log = getLogger(c).module('RFC7592');
     // Publish event (non-blocking)
     publishEvent(c, {
       type: CLIENT_EVENTS.CONFIG_READ,
-      tenantId: 'default',
+      tenantId,
       data: { clientId },
     }).catch((err) =>
       log.error('Failed to publish config read event', { action: 'config_read' }, err as Error)
@@ -449,6 +454,9 @@ export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Pro
  */
 export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
+    const tenantId = getTenantIdFromContext(c);
+    const issuerUrl = buildIssuerUrl(c.env, tenantId);
+
     // Validate registration_access_token
     const clientId = await validateRegistrationAccessToken(c);
     if (!clientId) {
@@ -622,7 +630,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const response = buildClientResponse(updatedClient, c.env.ISSUER_URL);
+    const response = buildClientResponse(updatedClient, issuerUrl);
 
     // Audit log (non-blocking) - client self-modification is security-relevant
     createAuditLog(c.env, {
@@ -641,7 +649,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
     // Publish event (non-blocking)
     publishEvent(c, {
       type: CLIENT_EVENTS.CONFIG_UPDATED,
-      tenantId: 'default',
+      tenantId,
       data: { clientId },
     }).catch((err) =>
       log.error('Failed to publish config updated event', { action: 'config_update' }, err as Error)
@@ -671,6 +679,8 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
  */
 export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
+    const tenantId = getTenantIdFromContext(c);
+
     // Validate registration_access_token
     const clientId = await validateRegistrationAccessToken(c);
     if (!clientId) {
@@ -711,7 +721,7 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
     // Publish event (non-blocking)
     publishEvent(c, {
       type: CLIENT_EVENTS.CONFIG_DELETED,
-      tenantId: 'default',
+      tenantId,
       data: { clientId },
     }).catch((err) =>
       log.error('Failed to publish config deleted event', { action: 'config_delete' }, err as Error)

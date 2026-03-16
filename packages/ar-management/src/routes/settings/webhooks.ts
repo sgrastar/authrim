@@ -335,7 +335,7 @@ export async function listWebhooks(c: Context<{ Bindings: Env }>) {
 export async function getWebhook(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
-  const webhookId = c.req.param('id');
+  const webhookId = c.req.param('id')!;
 
   try {
     const registry = createRegistry(c);
@@ -359,7 +359,7 @@ export async function getWebhook(c: Context<{ Bindings: Env }>) {
 export async function updateWebhook(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
-  const webhookId = c.req.param('id');
+  const webhookId = c.req.param('id')!;
 
   let body: UpdateWebhookRequest;
   try {
@@ -441,7 +441,7 @@ export async function updateWebhook(c: Context<{ Bindings: Env }>) {
 export async function deleteWebhook(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
-  const webhookId = c.req.param('id');
+  const webhookId = c.req.param('id')!;
 
   try {
     const registry = createRegistry(c);
@@ -484,7 +484,7 @@ export async function deleteWebhook(c: Context<{ Bindings: Env }>) {
 export async function testWebhook(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
-  const webhookId = c.req.param('id');
+  const webhookId = c.req.param('id')!;
 
   if (!webhookId) {
     return c.json({ error: 'invalid_request', error_description: 'Webhook ID is required' }, 400);
@@ -655,7 +655,7 @@ interface WebhookDeliveryRow {
 export async function listWebhookDeliveries(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
-  const webhookId = c.req.param('id');
+  const webhookId = c.req.param('id')!;
 
   if (!webhookId) {
     return c.json({ error: 'invalid_request', error_description: 'Webhook ID is required' }, 400);
@@ -846,7 +846,7 @@ export async function listWebhookDeliveries(c: Context<{ Bindings: Env }>) {
 export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
-  const webhookId = c.req.param('id');
+  const webhookId = c.req.param('id')!;
 
   if (!webhookId) {
     return c.json({ error: 'invalid_request', error_description: 'Webhook ID is required' }, 400);

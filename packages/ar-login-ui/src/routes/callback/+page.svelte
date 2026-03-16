@@ -8,6 +8,7 @@
 	import { getAuthConfig } from '$lib/auth';
 	import { auth } from '$lib/stores/auth';
 	import { API_BASE_URL } from '$lib/api/client';
+	import { getDiagnosticLogger } from '$lib/stores/diagnostic';
 
 	let status = $state<'processing' | 'success' | 'error'>('processing');
 	let errorMessage = $state('');
@@ -53,6 +54,12 @@
 				errorCode = data.error || 'handoff_verification_failed';
 				errorMessage = data.error_description || 'Handoff token verification failed';
 				status = 'error';
+				getDiagnosticLogger()?.logAuthDecision({
+					decision: 'deny',
+					reason: errorCode,
+					flow: 'smart-handoff',
+					context: { status: response.status }
+				});
 				return;
 			}
 
@@ -73,6 +80,12 @@
 
 			console.log('[Authrim] Handoff login successful');
 
+			getDiagnosticLogger()?.logAuthDecision({
+				decision: 'allow',
+				reason: 'handoff_verification_success',
+				flow: 'smart-handoff'
+			});
+
 			status = 'success';
 
 			// Redirect to stored return URL or home
@@ -89,6 +102,11 @@
 			errorCode = 'network_error';
 			errorMessage = 'An error occurred during handoff authentication';
 			status = 'error';
+			getDiagnosticLogger()?.logAuthDecision({
+				decision: 'deny',
+				reason: 'network_error',
+				flow: 'smart-handoff'
+			});
 		}
 	}
 
@@ -198,6 +216,12 @@
 				errorCode = data.error || 'callback_failed';
 				errorMessage = data.error_description || $LL.callback_errorExchangeFailed();
 				status = 'error';
+				getDiagnosticLogger()?.logAuthDecision({
+					decision: 'deny',
+					reason: errorCode,
+					flow: 'authorization_code',
+					context: { status: response.status, provider_id: providerId ?? undefined }
+				});
 				return;
 			}
 
@@ -211,6 +235,13 @@
 					name: tokenData.user.name
 				});
 			}
+
+			getDiagnosticLogger()?.logAuthDecision({
+				decision: 'allow',
+				reason: 'token_exchange_success',
+				flow: 'authorization_code',
+				context: { provider_id: providerId ?? undefined }
+			});
 
 			status = 'success';
 
@@ -229,6 +260,11 @@
 			errorCode = 'network_error';
 			errorMessage = $LL.callback_errorNetwork();
 			status = 'error';
+			getDiagnosticLogger()?.logAuthDecision({
+				decision: 'deny',
+				reason: 'network_error',
+				flow: 'authorization_code'
+			});
 		}
 	});
 

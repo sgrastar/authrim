@@ -7,6 +7,24 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    buildIssuerUrl: (env: Partial<Env>, tenantId?: string) => {
+      if (env.BASE_DOMAIN) {
+        const resolvedTenantId = tenantId || env.DEFAULT_TENANT_ID || 'default';
+        const primaryTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || 'default';
+        if (env.NAKED_DOMAIN_AS_ISSUER === 'true' && resolvedTenantId === primaryTenantId) {
+          return `https://${env.BASE_DOMAIN}`;
+        }
+        return `https://${resolvedTenantId}.${env.BASE_DOMAIN}`;
+      }
+      return env.ISSUER_URL || '';
+    },
+  };
+});
+
 // Mock crypto utils to handle ESM barrel export resolution issues in Vitest
 vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core/utils/crypto')>();
@@ -271,6 +289,105 @@ describe('Dynamic Client Registration Handler', () => {
 
       const json = (await res.json()) as RegistrationResponse;
       expect(json.redirect_uris).toEqual(['http://localhost:3000/callback']);
+    });
+
+    it('should build registration_client_uri with default tenant subdomain when naked domain is disabled', async () => {
+      const localApp = new Hono<{ Bindings: Env }>();
+      localApp.use('*', async (c, next) => {
+        (c as any).set('tenantId', 'default');
+        await next();
+      });
+      localApp.post('/register', registerHandler);
+
+      const localMockEnv = createMockEnv();
+      localMockEnv.CLIENTS_CACHE = createMockKV();
+      localMockEnv.BASE_DOMAIN = 'oidc.example.com';
+
+      const res = await localApp.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+          }),
+        },
+        localMockEnv
+      );
+
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.registration_client_uri).toMatch(
+        /^https:\/\/default\.oidc\.example\.com\/clients\//
+      );
+    });
+
+    it('should build registration_client_uri with naked domain for the default tenant when enabled', async () => {
+      const localApp = new Hono<{ Bindings: Env }>();
+      localApp.use('*', async (c, next) => {
+        (c as any).set('tenantId', 'default');
+        await next();
+      });
+      localApp.post('/register', registerHandler);
+
+      const localMockEnv = createMockEnv();
+      localMockEnv.CLIENTS_CACHE = createMockKV();
+      localMockEnv.BASE_DOMAIN = 'oidc.example.com';
+      localMockEnv.NAKED_DOMAIN_AS_ISSUER = 'true';
+
+      const res = await localApp.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+          }),
+        },
+        localMockEnv
+      );
+
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.registration_client_uri).toMatch(/^https:\/\/oidc\.example\.com\/clients\//);
+    });
+
+    it('should keep tenant subdomains for non-primary tenants when naked domain is enabled', async () => {
+      const localApp = new Hono<{ Bindings: Env }>();
+      localApp.use('*', async (c, next) => {
+        (c as any).set('tenantId', 'acme');
+        await next();
+      });
+      localApp.post('/register', registerHandler);
+
+      const localMockEnv = createMockEnv();
+      localMockEnv.CLIENTS_CACHE = createMockKV();
+      localMockEnv.BASE_DOMAIN = 'oidc.example.com';
+      localMockEnv.NAKED_DOMAIN_AS_ISSUER = 'true';
+
+      const res = await localApp.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+          }),
+        },
+        localMockEnv
+      );
+
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.registration_client_uri).toMatch(
+        /^https:\/\/acme\.oidc\.example\.com\/clients\//
+      );
     });
   });
 

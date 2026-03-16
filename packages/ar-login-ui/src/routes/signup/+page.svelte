@@ -15,6 +15,20 @@
 	// ---------------------------------------------------------------------------
 	let email = $state('');
 	let name = $state('');
+	let inviteToken = $state('');
+	let inviteTenantName = $state('');
+
+	// Registration fields (custom)
+	interface RegistrationField {
+		field_key: string;
+		display_label: string;
+		field_type: string;
+		required: boolean;
+		placeholder: string | null;
+		validation_rules: Record<string, unknown> | null;
+	}
+	let registrationFields = $state<RegistrationField[]>([]);
+	let customFieldValues = $state<Record<string, string>>({});
 	let error = $state('');
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
@@ -67,7 +81,23 @@
 			isDarkMode = checkDarkMode();
 		});
 
-		await loadLoginMethods();
+		// Read invite context from URL params
+		const params = new URLSearchParams(window.location.search);
+		const token = params.get('invite_token');
+		const prefilledEmail = params.get('email');
+		const tenant = params.get('tenant');
+
+		if (token) {
+			inviteToken = token;
+		}
+		if (prefilledEmail) {
+			email = prefilledEmail;
+		}
+		if (tenant) {
+			inviteTenantName = tenant;
+		}
+
+		await Promise.all([loadLoginMethods(), loadRegistrationFields()]);
 	});
 
 	async function loadLoginMethods() {
@@ -86,6 +116,22 @@
 			emailCodeEnabled = true;
 		} finally {
 			methodsLoading = false;
+		}
+	}
+
+	async function loadRegistrationFields() {
+		try {
+			const res = await fetch('/api/v1/registration-fields');
+			if (res.ok) {
+				const data = (await res.json()) as { fields: RegistrationField[] };
+				registrationFields = data.fields ?? [];
+				// Initialize values
+				for (const f of registrationFields) {
+					customFieldValues[f.field_key] = '';
+				}
+			}
+		} catch {
+			// Non-fatal: proceed without custom fields
 		}
 	}
 
@@ -157,6 +203,22 @@
 				});
 			}
 
+			// Apply invitation if present (passkey flow: server doesn't see invite_token during registration)
+			if (inviteToken && verifyData?.userId) {
+				try {
+					const inviteRes = await fetch('/api/v1/invitations/use', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ token: inviteToken, user_id: verifyData.userId })
+					});
+					if (!inviteRes.ok) {
+						console.warn('[signup] Failed to apply invitation:', inviteRes.status);
+					}
+				} catch (inviteErr) {
+					console.warn('[signup] Failed to apply invitation:', inviteErr);
+				}
+			}
+
 			window.location.href = '/';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
@@ -177,7 +239,17 @@
 			if (apiError) {
 				throw new Error(apiError.error_description || 'Failed to send verification code');
 			}
-			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}`;
+			// Persist custom field values for post-verification saving
+			if (Object.keys(customFieldValues).length > 0) {
+				try {
+					sessionStorage.setItem('signup_custom_fields', JSON.stringify(customFieldValues));
+				} catch {
+					// Non-fatal
+				}
+			}
+			let verifyQs = `email=${encodeURIComponent(email)}`;
+			if (inviteToken) verifyQs += `&invite_token=${encodeURIComponent(inviteToken)}`;
+			window.location.href = `/verify-email-code?${verifyQs}`;
 		} catch (err) {
 			error =
 				err instanceof Error ? err.message : 'An error occurred while sending verification code';
@@ -292,9 +364,15 @@
 					<h2 class="auth-section-title">
 						{$LL.register_title()}
 					</h2>
-					<p class="auth-section-subtitle">
-						{$LL.register_subtitle()}
-					</p>
+					{#if inviteTenantName}
+						<p class="auth-section-subtitle">
+							You've been invited to <strong>{inviteTenantName}</strong>. Create your account to continue.
+						</p>
+					{:else}
+						<p class="auth-section-subtitle">
+							{$LL.register_subtitle()}
+						</p>
+					{/if}
 				</div>
 
 				<!-- Error Alert -->
@@ -330,6 +408,48 @@
 						required
 					/>
 				</div>
+
+				<!-- Custom Registration Fields -->
+				{#if registrationFields.length > 0}
+					{#each registrationFields as field (field.field_key)}
+						<div class="mb-4">
+							{#if field.field_type === 'boolean'}
+								<label class="flex items-center gap-2" style="cursor: pointer;">
+									<input
+										type="checkbox"
+										checked={customFieldValues[field.field_key] === 'true'}
+										onchange={(e) => {
+											customFieldValues[field.field_key] = (
+												e.currentTarget as HTMLInputElement
+											).checked
+												? 'true'
+												: 'false';
+										}}
+									/>
+									<span style="font-size: 0.875rem; color: var(--text);"
+										>{field.display_label}{field.required ? ' *' : ''}</span
+									>
+								</label>
+							{:else if field.field_type === 'number'}
+								<Input
+									label="{field.display_label}{field.required ? ' *' : ''}"
+									type="number"
+									placeholder={field.placeholder ?? ''}
+									bind:value={customFieldValues[field.field_key]}
+									required={field.required}
+								/>
+							{:else}
+								<Input
+									label="{field.display_label}{field.required ? ' *' : ''}"
+									type="text"
+									placeholder={field.placeholder ?? ''}
+									bind:value={customFieldValues[field.field_key]}
+									required={field.required}
+								/>
+							{/if}
+						</div>
+					{/each}
+				{/if}
 
 				<!-- Passkey Button -->
 				{#if showPasskey}

@@ -3,6 +3,47 @@
 -- Generated from conformance environment
 -- =============================================================================
 
+-- tenants table must be created first as other tables reference it via FK
+CREATE TABLE tenants (
+  id          TEXT PRIMARY KEY,           -- slug形式: ^[a-z0-9-]+$, max 63chars
+  name        TEXT NOT NULL,              -- 表示名
+  description TEXT,
+  is_active   INTEGER NOT NULL DEFAULT 1, -- 0=無効, 1=有効
+  is_default  INTEGER NOT NULL DEFAULT 0, -- デフォルトテナント（1つのみ）
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
+-- is_default=1 は1行のみ（SQLite partial unique index）
+CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(is_default)
+  WHERE is_default = 1;
+
+-- 既存の 'default' テナントを初期挿入
+INSERT INTO tenants (id, name, is_active, is_default, created_at, updated_at)
+VALUES ('default', 'Default', 1, 1, unixepoch(), unixepoch());
+
+-- Platform-level email domain → tenant routing (system_admin only)
+CREATE TABLE tenant_domain_mappings (
+  id                      TEXT PRIMARY KEY,
+  domain_hash             TEXT NOT NULL,
+  hash_version            INTEGER NOT NULL DEFAULT 1,
+  tenant_id               TEXT NOT NULL,
+  priority                INTEGER NOT NULL DEFAULT 0,
+  is_active               INTEGER NOT NULL DEFAULT 1,
+  verified                INTEGER NOT NULL DEFAULT 0,
+  verification_token      TEXT,
+  verification_expires_at INTEGER,
+  created_by              TEXT,
+  created_at              INTEGER NOT NULL,
+  updated_at              INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+
+CREATE UNIQUE INDEX idx_tdm_domain_hash ON tenant_domain_mappings(domain_hash)
+  WHERE is_active = 1;
+CREATE INDEX idx_tdm_tenant ON tenant_domain_mappings(tenant_id);
+CREATE INDEX idx_tdm_verified ON tenant_domain_mappings(verified, is_active, priority DESC);
+
 CREATE TABLE access_review_items (
   id TEXT PRIMARY KEY,
   review_id TEXT NOT NULL REFERENCES access_reviews(id) ON DELETE CASCADE,
@@ -2149,7 +2190,11 @@ CREATE TABLE custom_claim_schemas (
   is_system INTEGER NOT NULL DEFAULT 0,
   created_by TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  show_on_registration    INTEGER NOT NULL DEFAULT 0,
+  registration_required   INTEGER NOT NULL DEFAULT 0,
+  registration_order      INTEGER NOT NULL DEFAULT 0,
+  registration_placeholder TEXT
 );
 
 CREATE UNIQUE INDEX uniq_ccs_active_key ON custom_claim_schemas(tenant_id, field_key) WHERE is_active = 1;
@@ -2178,3 +2223,27 @@ CREATE TABLE custom_claim_schema_history (
 
 CREATE INDEX idx_ccsh_schema ON custom_claim_schema_history(tenant_id, schema_id, version DESC);
 CREATE INDEX idx_ccsh_cleanup ON custom_claim_schema_history(tenant_id, created_at);
+
+-- =============================================================================
+-- From 059: Tenant Invitations
+-- =============================================================================
+
+CREATE TABLE tenant_invitations (
+  id             TEXT PRIMARY KEY,
+  token          TEXT NOT NULL UNIQUE,         -- 256-bit entropy token
+  tenant_id      TEXT NOT NULL,
+  invited_email  TEXT,                         -- NULL=anyone, NON-NULL=specific email only
+  invited_by     TEXT NOT NULL,                -- Admin user ID who created the invitation
+  role_id        TEXT,                         -- Optional: auto-assign this role on signup
+  org_id         TEXT,                         -- Optional: auto-assign to this org on signup
+  max_uses       INTEGER NOT NULL DEFAULT 1,   -- -1=unlimited
+  use_count      INTEGER NOT NULL DEFAULT 0,
+  expires_at     INTEGER NOT NULL,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+
+CREATE INDEX idx_ti_token  ON tenant_invitations(token)
+  WHERE expires_at > unixepoch();
+CREATE INDEX idx_ti_tenant ON tenant_invitations(tenant_id, created_at DESC);

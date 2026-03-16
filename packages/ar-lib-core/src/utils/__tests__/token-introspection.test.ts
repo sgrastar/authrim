@@ -289,5 +289,77 @@ describe('Token Introspection Utility', () => {
       expect(result.error?.error).toBe('server_error');
       expect(result.error?.statusCode).toBe(500);
     });
+
+    it('should validate the default tenant with the naked-domain issuer when enabled', async () => {
+      const multiTenantEnv = {
+        ...mockEnv,
+        BASE_DOMAIN: 'oidc.example.com',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        PRIMARY_TENANT_ID: 'default',
+      } as Env;
+
+      const token = await new SignJWT({
+        iss: 'https://oidc.example.com',
+        sub: 'user123',
+        aud: 'https://oidc.example.com',
+        scope: 'openid',
+        client_id: 'test-client',
+        jti: 'test-jti',
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: multiTenantEnv.KEY_ID })
+        .sign(privateKey);
+
+      const headers = new Headers();
+      headers.set('Authorization', `Bearer ${token}`);
+      headers.set('Host', 'oidc.example.com');
+
+      const result = await introspectToken({
+        method: 'GET',
+        url: 'https://oidc.example.com/userinfo',
+        headers,
+        env: multiTenantEnv,
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.claims?.iss).toBe('https://oidc.example.com');
+    });
+
+    it('should validate non-primary tenants against their subdomain issuer', async () => {
+      const multiTenantEnv = {
+        ...mockEnv,
+        BASE_DOMAIN: 'oidc.example.com',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        PRIMARY_TENANT_ID: 'default',
+      } as Env;
+
+      const token = await new SignJWT({
+        iss: 'https://acme.oidc.example.com',
+        sub: 'user123',
+        aud: 'https://acme.oidc.example.com',
+        scope: 'openid',
+        client_id: 'test-client',
+        jti: 'test-jti',
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: multiTenantEnv.KEY_ID })
+        .sign(privateKey);
+
+      const headers = new Headers();
+      headers.set('Authorization', `Bearer ${token}`);
+      headers.set('Host', 'acme.oidc.example.com');
+
+      const result = await introspectToken({
+        method: 'GET',
+        url: 'https://acme.oidc.example.com/userinfo',
+        headers,
+        env: multiTenantEnv,
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.claims?.iss).toBe('https://acme.oidc.example.com');
+    });
   });
 });

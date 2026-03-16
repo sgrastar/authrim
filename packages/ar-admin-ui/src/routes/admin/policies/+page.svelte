@@ -377,7 +377,7 @@
 				set: { 'feature.enable_custom_rules': newValue }
 			});
 			customRulesEnabled = newValue;
-			featureFlagsVersion = result.newVersion;
+			featureFlagsVersion = result.version;
 		} catch (err) {
 			console.error('Failed to update Custom Rules status:', err);
 			customRulesError =

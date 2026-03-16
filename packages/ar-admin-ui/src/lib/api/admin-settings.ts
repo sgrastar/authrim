@@ -99,7 +99,7 @@ export interface SettingsPatchResult {
 	cleared: string[];
 	disabled: string[];
 	rejected: Record<string, string>;
-	newVersion: string;
+	version: string;
 }
 
 /**

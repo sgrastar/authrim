@@ -7,7 +7,13 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  buildIssuerUrl,
+  getTenantIdFromContext,
+  getLogger,
+} from '@authrim/ar-lib-core';
 import { SAML_NAMESPACES, BINDING_URIS, NAMEID_FORMATS } from '../common/constants';
 import {
   createDocument,
@@ -29,8 +35,7 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
 
-  // Get issuer URL from environment
-  const issuerUrl = env.ISSUER_URL || 'https://conformance.authrim.com';
+  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
   const entityId = `${issuerUrl}/saml/sp`;
 
   // Get signing certificate
@@ -158,17 +163,17 @@ function buildSPMetadata(options: SPMetadataOptions): string {
   const organization = createElement(doc, SAML_NAMESPACES.MD, 'Organization', 'md');
 
   const orgName = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationName', 'md');
-  setAttributeNS(orgName, SAML_NAMESPACES.XS_INSTANCE, 'xml:lang', 'en');
+  setAttributeNS(orgName, SAML_NAMESPACES.XML, 'xml:lang', 'en');
   setTextContent(orgName, 'Authrim');
   appendChild(organization, orgName);
 
   const orgDisplayName = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationDisplayName', 'md');
-  setAttributeNS(orgDisplayName, SAML_NAMESPACES.XS_INSTANCE, 'xml:lang', 'en');
+  setAttributeNS(orgDisplayName, SAML_NAMESPACES.XML, 'xml:lang', 'en');
   setTextContent(orgDisplayName, 'Authrim Service Provider');
   appendChild(organization, orgDisplayName);
 
   const orgUrl = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationURL', 'md');
-  setAttributeNS(orgUrl, SAML_NAMESPACES.XS_INSTANCE, 'xml:lang', 'en');
+  setAttributeNS(orgUrl, SAML_NAMESPACES.XML, 'xml:lang', 'en');
   setTextContent(orgUrl, issuerUrl);
   appendChild(organization, orgUrl);
 

@@ -149,7 +149,7 @@ adminAuditRouter.get('/:id', async (c) => {
     const auditRepo = new AdminAuditLogRepository(adapter);
     const userRepo = new AdminUserRepository(adapter);
 
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const log = await auditRepo.getAuditLog(id);
 
     if (!log) {
@@ -323,7 +323,7 @@ adminAuditRouter.get('/user/:userId', async (c) => {
     const auditRepo = new AdminAuditLogRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
     const page = parseInt(c.req.query('page') || '1', 10);
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
 

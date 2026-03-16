@@ -30,7 +30,7 @@ const MAX_OPERATIONAL_LOG_RETENTION_DAYS = 365; // 1 year max for operational lo
  * Get PII configuration for a tenant
  */
 export async function getTenantPIIConfig(c: Context<{ Bindings: Env }>) {
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(
@@ -120,7 +120,7 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(
@@ -263,7 +263,7 @@ export async function resetTenantPIIConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(
@@ -306,7 +306,7 @@ export async function applyGDPRPreset(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(
@@ -371,7 +371,7 @@ export async function applyMinimalPreset(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const tenantId = c.req.param('tenantId');
+  const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
     return c.json(

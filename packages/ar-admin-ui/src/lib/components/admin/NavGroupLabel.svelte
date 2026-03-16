@@ -10,7 +10,7 @@
 
 <style>
 	.nav-group-label {
-		padding: 16px 12px 8px 12px;
+		padding: 8px 12px 8px 12px;
 		font-size: 0.625rem;
 		font-weight: 700;
 		text-transform: uppercase;

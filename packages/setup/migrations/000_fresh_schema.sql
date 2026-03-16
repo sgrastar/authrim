@@ -2117,3 +2117,69 @@ CREATE INDEX idx_ws_subs_connection
 CREATE INDEX idx_ws_subs_subject
     ON websocket_subscriptions(subject_id, is_active);
 
+
+-- =============================================================================
+-- From 053: Custom Claim Schemas (with registration form fields from 060)
+-- =============================================================================
+
+CREATE TABLE custom_claim_schemas (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  field_key TEXT NOT NULL,
+  display_label TEXT NOT NULL,
+  field_type TEXT NOT NULL DEFAULT 'string',
+  is_pii INTEGER NOT NULL DEFAULT 0,
+  is_required INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  validation_rules TEXT CHECK(validation_rules IS NULL OR json_valid(validation_rules)),
+  include_in_id_token INTEGER NOT NULL DEFAULT 0,
+  include_in_userinfo INTEGER NOT NULL DEFAULT 0,
+  include_in_introspection INTEGER NOT NULL DEFAULT 0,
+  required_scopes TEXT CHECK(required_scopes IS NULL OR json_valid(required_scopes)),
+  scope_mode TEXT NOT NULL DEFAULT 'any' CHECK(scope_mode IN ('all', 'any')),
+  is_searchable INTEGER NOT NULL DEFAULT 1,
+  is_exportable INTEGER NOT NULL DEFAULT 1,
+  is_vc_claim INTEGER NOT NULL DEFAULT 0,
+  claim_namespace TEXT,
+  description TEXT,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  operation_status TEXT NOT NULL DEFAULT 'active',
+  operation_detail TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  show_on_registration    INTEGER NOT NULL DEFAULT 0,
+  registration_required   INTEGER NOT NULL DEFAULT 0,
+  registration_order      INTEGER NOT NULL DEFAULT 0,
+  registration_placeholder TEXT
+);
+
+CREATE UNIQUE INDEX uniq_ccs_active_key ON custom_claim_schemas(tenant_id, field_key) WHERE is_active = 1;
+CREATE INDEX idx_ccs_tenant_active ON custom_claim_schemas(tenant_id, is_active, display_order);
+CREATE INDEX idx_ccs_tenant_key ON custom_claim_schemas(tenant_id, field_key);
+CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status) WHERE operation_status != 'active';
+
+-- =============================================================================
+-- From 059: Tenant Invitations
+-- =============================================================================
+
+CREATE TABLE tenant_invitations (
+  id             TEXT PRIMARY KEY,
+  token          TEXT NOT NULL UNIQUE,
+  tenant_id      TEXT NOT NULL DEFAULT 'default',
+  invited_email  TEXT,
+  invited_by     TEXT NOT NULL,
+  role_id        TEXT,
+  org_id         TEXT,
+  max_uses       INTEGER NOT NULL DEFAULT 1,
+  use_count      INTEGER NOT NULL DEFAULT 0,
+  expires_at     INTEGER NOT NULL,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
+);
+
+CREATE INDEX idx_ti_token  ON tenant_invitations(token)
+  WHERE expires_at > unixepoch();
+CREATE INDEX idx_ti_tenant ON tenant_invitations(tenant_id, created_at DESC);

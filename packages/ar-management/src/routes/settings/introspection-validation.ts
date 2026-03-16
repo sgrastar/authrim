@@ -9,7 +9,7 @@
  *
  * RFC 7662 states aud/client_id validation is optional, but
  * when strict validation mode is enabled, the following additional checks are performed:
- *   - Whether aud matches ISSUER_URL
+ *   - Whether aud matches the current tenant's canonical issuer
  *   - Whether client_id is a registered client
  *
  * Settings stored in SETTINGS KV under "system_settings" key:
@@ -111,11 +111,26 @@ export async function getIntrospectionStrictValidation(env: Env): Promise<boolea
 
 /**
  * Get expectedAudience setting value only (for use in introspect.ts)
- * Returns ISSUER_URL if not explicitly set
+ * Returns the default tenant's canonical issuer if not explicitly set.
  */
 export async function getIntrospectionExpectedAudience(env: Env): Promise<string> {
   const { settings } = await getIntrospectionValidationSettings(env);
-  return settings.expectedAudience || env.ISSUER_URL || '';
+  if (settings.expectedAudience) {
+    return settings.expectedAudience;
+  }
+
+  const defaultTenantId = env.DEFAULT_TENANT_ID || 'default';
+  const primaryTenantId = env.PRIMARY_TENANT_ID || defaultTenantId;
+
+  if (env.BASE_DOMAIN) {
+    if (env.NAKED_DOMAIN_AS_ISSUER === 'true' && defaultTenantId === primaryTenantId) {
+      return `https://${env.BASE_DOMAIN}`;
+    }
+
+    return `https://${defaultTenantId}.${env.BASE_DOMAIN}`;
+  }
+
+  return env.ISSUER_URL || '';
 }
 
 /**
@@ -134,13 +149,14 @@ export async function getIntrospectionValidationConfig(c: Context<{ Bindings: En
           source: sources.strictValidation,
           default: DEFAULT_SETTINGS.strictValidation,
           description:
-            'When enabled, validates aud matches ISSUER_URL and client_id exists in database',
+            'When enabled, validates aud matches the current tenant issuer and client_id exists in database',
         },
         expectedAudience: {
           value: settings.expectedAudience,
           source: sources.expectedAudience,
           default: DEFAULT_SETTINGS.expectedAudience,
-          description: 'Expected audience value (null = use ISSUER_URL)',
+          description:
+            'Expected audience value (null = use the canonical issuer for the default tenant)',
         },
       },
       note: 'RFC 7662 does not require aud/client_id validation. Enable strictValidation for additional security checks.',

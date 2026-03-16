@@ -582,6 +582,11 @@ export function generateWranglerSecretCommands(
     `cat ${join(keysDir, 'private.pem')} | wrangler secret put PRIVATE_KEY_PEM${envFlag}`
   );
 
+  // Public JWK
+  commands.push(
+    `cat ${join(keysDir, 'public.jwk.json')} | wrangler secret put PUBLIC_JWK_JSON${envFlag}`
+  );
+
   // RP Token encryption key
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'rp_token_encryption_key.txt')})" | wrangler secret put RP_TOKEN_ENCRYPTION_KEY${envFlag}`

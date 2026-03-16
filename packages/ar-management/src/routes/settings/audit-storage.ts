@@ -545,7 +545,7 @@ export async function deleteRoutingRule(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const ruleName = c.req.param('name');
+  const ruleName = c.req.param('name')!;
 
   if (!ruleName) {
     return c.json(

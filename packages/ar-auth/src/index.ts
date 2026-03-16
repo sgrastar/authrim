@@ -26,6 +26,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import { getRequestIssuer } from './issuer';
 
 // Import handlers
 import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from './authorize';
@@ -74,6 +75,8 @@ import {
   directSessionHandler,
   directLogoutHandler,
 } from './direct-auth';
+import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
+import { registrationFieldsHandler } from './registration-fields';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -163,7 +166,7 @@ app.use('*', async (c, next) => {
     origin: (origin) => {
       // Allow requests without Origin header (same-origin or non-browser)
       if (!origin) {
-        return c.env.ISSUER_URL;
+        return getRequestIssuer(c);
       }
 
       // Validate against allowlist
@@ -474,6 +477,16 @@ app.get('/api/v1/auth/direct/session', directSessionHandler);
 
 // Logout endpoint
 app.post('/api/v1/auth/direct/logout', directLogoutHandler);
+
+// Invitation API (public)
+// - GET  /api/v1/invitations/validate?token=xxx  - Validate token
+// - POST /api/v1/invitations/use                 - Mark token used
+app.get('/api/v1/invitations/validate', validateInvitationHandler);
+app.post('/api/v1/invitations/use', useInvitationHandler);
+
+// Registration fields (public)
+// - GET /api/v1/registration-fields  - Fields visible on signup form
+app.get('/api/v1/registration-fields', registrationFieldsHandler);
 
 // Flow Engine API
 // Track C: Flow-based authentication with UIContract

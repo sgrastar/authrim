@@ -170,7 +170,7 @@ export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>)
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id');
+    const orgId = c.req.param('id')!;
 
     // Execute queries in parallel
     const [org, memberCount] = await Promise.all([
@@ -316,7 +316,7 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
 export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const orgId = c.req.param('id');
+    const orgId = c.req.param('id')!;
     const body = await c.req.json<{
       name?: string;
       display_name?: string;
@@ -447,7 +447,7 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
 export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const orgId = c.req.param('id');
+    const orgId = c.req.param('id')!;
 
     // Check if organization exists
     const org = await coreAdapter.queryOne<{ id: string }>(
@@ -497,7 +497,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
   try {
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id');
+    const orgId = c.req.param('id')!;
     const page = parseInt(c.req.query('page') || '1');
     const limit = parseInt(c.req.query('limit') || '20');
     const offset = (page - 1) * limit;
@@ -606,7 +606,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
 export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const orgId = c.req.param('id');
+    const orgId = c.req.param('id')!;
     const body = await c.req.json<{
       subject_id: string;
       org_role?: string;
@@ -725,8 +725,8 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
 export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const orgId = c.req.param('id');
-    const subjectId = c.req.param('subjectId');
+    const orgId = c.req.param('id')!;
+    const subjectId = c.req.param('subjectId')!;
 
     // Check if membership exists
     const membership = await coreAdapter.queryOne<{ subject_id: string }>(
@@ -829,7 +829,7 @@ export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const roleId = c.req.param('id');
+    const roleId = c.req.param('id')!;
 
     const role = await coreAdapter.queryOne<Record<string, unknown>>(
       'SELECT * FROM roles WHERE id = ?',
@@ -916,7 +916,7 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
 
     // Check if user exists
     const user = await coreAdapter.queryOne<{ id: string }>(
@@ -986,7 +986,7 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserRoleAssignHandler(c: AdminContext) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c as unknown as Context<{ Bindings: Env }>);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<{
       role_id?: string;
@@ -1150,8 +1150,8 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
 export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const userId = c.req.param('id');
-    const assignmentId = c.req.param('assignmentId');
+    const userId = c.req.param('id')!;
+    const assignmentId = c.req.param('assignmentId')!;
 
     // Check if assignment exists and belongs to this user
     const assignment = await coreAdapter.queryOne<{ id: string }>(
@@ -1199,7 +1199,7 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
 export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const direction = c.req.query('direction'); // 'outgoing', 'incoming', or undefined for both
 
     // Check if user exists in Core DB
@@ -1345,7 +1345,7 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
 export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const body = await c.req.json<{
       related_subject_id: string;
       relationship_type: string;
@@ -1494,8 +1494,8 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
 export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
-    const userId = c.req.param('id');
-    const relationshipId = c.req.param('relationshipId');
+    const userId = c.req.param('id')!;
+    const relationshipId = c.req.param('relationshipId')!;
 
     // Check if relationship exists and involves this user
     const relationship = await coreAdapter.queryOne<{ id: string }>(
@@ -1565,7 +1565,7 @@ export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: E
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id');
+    const orgId = c.req.param('id')!;
     const maxDepth = parseInt(c.req.query('max_depth') || '10', 10);
 
     if (!orgId) {
@@ -1730,7 +1730,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
 
     if (!userId) {
       return c.json({ error: 'invalid_request', error_description: 'User ID is required' }, 400);
@@ -1884,7 +1884,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
 export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const roleId = c.req.param('id');
+    const roleId = c.req.param('id')!;
     const page = parseInt(c.req.query('page') || '1');
     const limit = parseInt(c.req.query('limit') || '20');
     const offset = (page - 1) * limit;
@@ -2138,7 +2138,7 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const roleId = c.req.param('id');
+  const roleId = c.req.param('id')!;
   const log = getLogger(c).module('ADMIN-RBAC');
 
   try {
@@ -2256,7 +2256,7 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const roleId = c.req.param('id');
+  const roleId = c.req.param('id')!;
   const log = getLogger(c).module('ADMIN-RBAC');
 
   try {

@@ -24,6 +24,7 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
+  buildIssuerUrl,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 
@@ -90,6 +91,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // RFC 7009 Section 2.1: The authorization server first validates the client credentials
   // Fetch client to verify client_secret via Repository
   const tenantId = getTenantIdFromContext(c);
+  const issuerUrl = buildIssuerUrl(c.env, tenantId);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
@@ -113,7 +115,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   ) {
     const assertionValidation = await validateClientAssertion(
       client_assertion,
-      `${c.env.ISSUER_URL}/revoke`, // Revocation endpoint URL
+      `${issuerUrl}/revoke`, // Revocation endpoint URL
       clientMetadata
     );
 
@@ -206,7 +208,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   // Verify token signature
   try {
-    const expectedIssuer = c.env.ISSUER_URL;
+    const expectedIssuer = issuerUrl;
     if (!expectedIssuer) {
       log.error('ISSUER_URL not configured for revocation', { action: 'revoke' });
       return c.body(null, 200);
@@ -465,6 +467,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   // Fetch and verify client
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
+  const issuerUrl = buildIssuerUrl(c.env, tenantId);
   const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
   if (!clientRecord) {
@@ -544,11 +547,10 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
 
         // Verify token signature
         try {
-          const expectedIssuer = c.env.ISSUER_URL;
-          if (!expectedIssuer) {
+          if (!issuerUrl) {
             return { token_hint: tokenHint, status: 'invalid' };
           }
-          await verifyToken(item.token, publicKey, expectedIssuer, { audience: aud });
+          await verifyToken(item.token, publicKey, issuerUrl, { audience: aud });
         } catch {
           return { token_hint: tokenHint, status: 'invalid' };
         }

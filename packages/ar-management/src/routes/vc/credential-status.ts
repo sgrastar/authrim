@@ -33,7 +33,7 @@ import {
  */
 export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('CredentialStatusAPI');
-  const credentialId = c.req.param('id');
+  const credentialId = c.req.param('id')!;
 
   if (!credentialId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -97,7 +97,7 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
  */
 export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('CredentialStatusAPI');
-  const credentialId = c.req.param('id');
+  const credentialId = c.req.param('id')!;
 
   if (!credentialId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -165,7 +165,7 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
  */
 export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('CredentialStatusAPI');
-  const credentialId = c.req.param('id');
+  const credentialId = c.req.param('id')!;
 
   if (!credentialId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -276,7 +276,7 @@ export async function listStatusListsHandler(c: Context<{ Bindings: Env }>): Pro
  */
 export async function getStatusListHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('CredentialStatusAPI');
-  const listId = c.req.param('id');
+  const listId = c.req.param('id')!;
 
   if (!listId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

@@ -100,6 +100,10 @@ async function proxyToExternalIdp(
  * GET /api/admin/external-providers - List all external IdP providers
  */
 export async function adminExternalProvidersListHandler(c: Context<{ Bindings: Env }>) {
+  // When bridge is not configured, return an empty list instead of 500
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json({ providers: [] });
+  }
   return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'GET');
 }
 
@@ -107,6 +111,16 @@ export async function adminExternalProvidersListHandler(c: Context<{ Bindings: E
  * POST /api/admin/external-providers - Create a new external IdP provider
  */
 export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json(
+      {
+        error: 'service_unavailable',
+        message:
+          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+      },
+      503
+    );
+  }
   const body = await c.req.text();
   return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'POST', body);
 }
@@ -115,7 +129,7 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
  * GET /api/admin/external-providers/:id - Get external IdP provider details
  */
 export async function adminExternalProvidersGetHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },
@@ -128,7 +142,7 @@ export async function adminExternalProvidersGetHandler(c: Context<{ Bindings: En
  * PUT /api/admin/external-providers/:id - Update external IdP provider
  */
 export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },
@@ -142,7 +156,7 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
  * DELETE /api/admin/external-providers/:id - Delete external IdP provider
  */
 export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings: Env }>) {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },

@@ -56,6 +56,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
   const env = c.env;
   const method = c.req.method;
   const log = getLogger(c).module('SAML-IDP');
+  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
 
   try {
     // Parse AuthnRequest based on binding
@@ -75,7 +76,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     // Validate AuthnRequest
-    await validateAuthnRequest(authnRequest, env);
+    await validateAuthnRequest(authnRequest, issuerUrl);
 
     // Get SP configuration
     const spConfig = await getSPConfig(env, authnRequest.issuer);
@@ -128,7 +129,13 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     // Generate SAML Response
-    const responseXml = await generateSAMLResponse(env, authnRequest, spConfig, userInfo);
+    const responseXml = await generateSAMLResponse(
+      issuerUrl,
+      env,
+      authnRequest,
+      spConfig,
+      userInfo
+    );
 
     // Return response based on SP's preferred binding
     return sendSAMLResponse(c, spConfig, responseXml, relayState);
@@ -257,7 +264,10 @@ function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
 /**
  * Validate AuthnRequest
  */
-async function validateAuthnRequest(authnRequest: SAMLAuthnRequest, env: Env): Promise<void> {
+async function validateAuthnRequest(
+  authnRequest: SAMLAuthnRequest,
+  issuerUrl: string
+): Promise<void> {
   // Check request is not expired (allow clock skew)
   const issueInstant = new Date(authnRequest.issueInstant);
   const now = new Date();
@@ -274,7 +284,7 @@ async function validateAuthnRequest(authnRequest: SAMLAuthnRequest, env: Env): P
 
   // Validate Destination if present
   if (authnRequest.destination) {
-    const expectedDestination = `${env.ISSUER_URL}/saml/idp/sso`;
+    const expectedDestination = `${issuerUrl}/saml/idp/sso`;
     if (authnRequest.destination !== expectedDestination) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Destination in SAML AuthnRequest');
@@ -397,12 +407,12 @@ async function getUserInfo(
  * Generate SAML Response with Assertion
  */
 async function generateSAMLResponse(
+  issuerUrl: string,
   env: Env,
   authnRequest: SAMLAuthnRequest,
   spConfig: SAMLSPConfig,
   userInfo: { id: string; email: string; name?: string }
 ): Promise<string> {
-  const issuerUrl = env.ISSUER_URL;
   const { privateKeyPem, kid } = await getSigningKey(env);
   const certificate = await getSigningCertificate(env);
 

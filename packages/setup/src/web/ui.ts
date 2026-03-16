@@ -2049,6 +2049,7 @@ export function getHtmlTemplate(
         <label for="env"><span data-i18n="web.form.envName">Environment Name</span> <span style="color: var(--error);">*</span></label>
         <input type="text" id="env" placeholder="e.g., prod, staging, dev" data-i18n-placeholder="web.form.envNamePlaceholder" required>
         <small style="color: var(--text-muted)" data-i18n="web.form.envNameHint">Lowercase letters, numbers, and hyphens only</small>
+        <span id="env-error" style="display: none; color: var(--error); font-size: 0.85rem;" data-i18n="web.form.envNameError">Only lowercase letters, numbers, and hyphens are allowed (must start with a letter)</span>
       </div>
 
       <!-- 3. Domain Configuration -->
@@ -2086,7 +2087,7 @@ export function getHtmlTemplate(
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
             <label for="tenant-name" data-i18n="web.form.tenantId">Default Tenant ID</label>
-            <input type="text" id="tenant-name" placeholder="default" value="" data-i18n-placeholder="web.form.tenantIdPlaceholder">
+            <input type="text" id="tenant-name" placeholder="default" value="default" disabled readonly data-i18n-placeholder="web.form.tenantIdPlaceholder">
             <small style="color: var(--text-muted)" data-i18n="web.form.tenantIdHint">First tenant identifier (lowercase, no spaces). Leave empty to use "default".</small>
             <small id="tenant-workers-note" style="color: #6b7280; display: none;" data-i18n="web.form.tenantIdWorkerNote">
               (Tenant ID is used internally. URL subdomain requires custom domain.)
@@ -2101,7 +2102,7 @@ export function getHtmlTemplate(
         </div>
 
         <!-- Primary Tenant (for naked domain) -->
-        <div class="form-group" style="margin-bottom: 0.75rem;">
+        <div class="form-group" id="primary-tenant-row" style="margin-bottom: 0.75rem;">
           <label for="primary-tenant">Primary Tenant (for naked domain)</label>
           <input type="text" id="primary-tenant" placeholder="Leave empty to use default tenant">
           <small style="color: var(--text-muted)">Tenant ID to use when accessing the naked domain (e.g., example.com). Leave empty to use the default tenant above.</small>
@@ -2577,6 +2578,15 @@ export function getHtmlTemplate(
           <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.75rem; text-align: center;" data-i18n="web.envDetail.urlValidFor">
             This URL is valid for 1 hour. Open it in a browser to register the first admin account.
           </div>
+        </div>
+      </div>
+
+      <div class="resource-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          🔗 URLs
+        </div>
+        <div id="detail-url-list" class="resource-list">
+          <div style="color: var(--text-muted); padding: 0.75rem 0;" data-i18n="web.status.loading">Loading...</div>
         </div>
       </div>
 
@@ -3114,7 +3124,7 @@ export function getHtmlTemplate(
       return div;
     }
 
-    function createUrlItem(label, url) {
+    function createUrlItem(label, text, href) {
       const div = document.createElement('div');
       div.className = 'url-item';
 
@@ -3122,14 +3132,23 @@ export function getHtmlTemplate(
       labelSpan.className = 'url-label';
       labelSpan.textContent = label;
 
-      const link = document.createElement('a');
-      link.href = url;
-      link.target = '_blank';
-      link.className = 'url-value';
-      link.textContent = url;
+      let valueEl;
+      if (href) {
+        const link = document.createElement('a');
+        link.href = href;
+        link.target = '_blank';
+        link.className = 'url-value';
+        link.textContent = text;
+        valueEl = link;
+      } else {
+        const span = document.createElement('span');
+        span.className = 'url-value';
+        span.textContent = text;
+        valueEl = span;
+      }
 
       div.appendChild(labelSpan);
-      div.appendChild(link);
+      div.appendChild(valueEl);
       return div;
     }
 
@@ -3567,6 +3586,32 @@ export function getHtmlTemplate(
       }
     });
 
+    // Validate environment name on blur
+    const envInput = document.getElementById('env');
+    const envError = document.getElementById('env-error');
+    function validateEnvName(value) {
+      return /^[a-z][a-z0-9-]*$/.test(value);
+    }
+    envInput.addEventListener('blur', () => {
+      const value = envInput.value.trim();
+      if (value && !validateEnvName(value)) {
+        envInput.style.borderColor = 'var(--error)';
+        if (envError) envError.style.display = 'block';
+      } else {
+        envInput.style.borderColor = '';
+        if (envError) envError.style.display = 'none';
+      }
+    });
+    envInput.addEventListener('input', () => {
+      if (envInput.style.borderColor) {
+        const value = envInput.value.trim();
+        if (!value || validateEnvName(value)) {
+          envInput.style.borderColor = '';
+          if (envError) envError.style.display = 'none';
+        }
+      }
+    });
+
     // Update UI based on base domain presence
     function updateBaseDomainUI() {
       const baseDomain = document.getElementById('base-domain').value.trim();
@@ -3576,6 +3621,9 @@ export function getHtmlTemplate(
       const workersDevNote = document.getElementById('workers-dev-note');
       const tenantWorkersNote = document.getElementById('tenant-workers-note');
       const tenantFields = document.getElementById('tenant-fields');
+      const tenantNameInput = document.getElementById('tenant-name');
+      const primaryTenantRow = document.getElementById('primary-tenant-row');
+      const primaryTenantInput = document.getElementById('primary-tenant');
 
       if (baseDomain) {
         // Custom domain - enable tenant subdomain options
@@ -3584,10 +3632,13 @@ export function getHtmlTemplate(
         nakedDomainHint.style.display = 'block';
         workersDevNote.style.display = 'none';
         tenantWorkersNote.style.display = 'none';
+        tenantNameInput.disabled = false;
+        tenantNameInput.readOnly = false;
         // Show tenant fields if naked domain is not checked
         if (!nakedDomainCheckbox.checked) {
           tenantFields.style.display = 'block';
         }
+        primaryTenantRow.style.display = nakedDomainCheckbox.checked ? 'block' : 'none';
       } else {
         // Workers.dev - tenant subdomains not supported
         nakedDomainCheckbox.disabled = true;
@@ -3596,7 +3647,12 @@ export function getHtmlTemplate(
         nakedDomainHint.style.display = 'none';
         workersDevNote.style.display = 'block';
         tenantWorkersNote.style.display = 'block';
-        tenantFields.style.display = 'block'; // Show tenant fields (for internal use)
+        tenantFields.style.display = 'block';
+        tenantNameInput.value = 'default';
+        tenantNameInput.disabled = true;
+        tenantNameInput.readOnly = true;
+        primaryTenantInput.value = '';
+        primaryTenantRow.style.display = 'none';
       }
     }
 
@@ -3674,12 +3730,15 @@ export function getHtmlTemplate(
     // Naked domain toggle - show/hide tenant name field and update placeholder
     document.getElementById('naked-domain').addEventListener('change', (e) => {
       const tenantFields = document.getElementById('tenant-fields');
+      const primaryTenantRow = document.getElementById('primary-tenant-row');
       const baseDomainInput = document.getElementById('base-domain');
       if (e.target.checked) {
         tenantFields.style.display = 'none';
+        primaryTenantRow.style.display = 'block';
         baseDomainInput.placeholder = 'example.com';
       } else {
         tenantFields.style.display = 'block';
+        primaryTenantRow.style.display = 'none';
         baseDomainInput.placeholder = 'oidc.example.com';
       }
       updatePreview();
@@ -3722,11 +3781,15 @@ export function getHtmlTemplate(
 
     document.getElementById('btn-configure').addEventListener('click', async () => {
       // Get and validate environment name
-      let env = document.getElementById('env').value.toLowerCase().replace(/[^a-z0-9-]/g, '');
-      if (!env) {
-        alert('Please enter a valid environment name');
+      const envRaw = document.getElementById('env').value.trim();
+      if (!envRaw || !validateEnvName(envRaw)) {
+        document.getElementById('env').style.borderColor = 'var(--error)';
+        const errEl = document.getElementById('env-error');
+        if (errEl) errEl.style.display = 'block';
+        document.getElementById('env').focus();
         return;
       }
+      const env = envRaw;
 
       // Check if environment already exists
       const configureBtn = document.getElementById('btn-configure');
@@ -3752,11 +3815,16 @@ export function getHtmlTemplate(
       }
 
       const baseDomain = document.getElementById('base-domain').value.trim();
-      const nakedDomain = document.getElementById('naked-domain').checked;
-      const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
+      const hasCustomApiDomain = !!baseDomain;
+      const nakedDomain = hasCustomApiDomain && document.getElementById('naked-domain').checked;
+      const tenantName = hasCustomApiDomain
+        ? (document.getElementById('tenant-name').value.trim() || 'default')
+        : 'default';
       const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Default Tenant';
       const userIdFormat = document.getElementById('user-id-format').value || 'nanoid';
-      const primaryTenant = document.getElementById('primary-tenant').value.trim() || undefined;
+      const primaryTenant = hasCustomApiDomain && nakedDomain
+        ? (document.getElementById('primary-tenant').value.trim() || undefined)
+        : undefined;
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
 
@@ -3766,11 +3834,11 @@ export function getHtmlTemplate(
         loginUiDomain: loginDomain || null,
         adminUiDomain: adminDomain || null,
         tenant: {
-          name: nakedDomain ? null : tenantName,  // null for naked domain
+          name: tenantName,
           displayName: tenantDisplayName,
-          multiTenant: baseDomain ? true : false,  // Always multi-tenant when baseDomain is set
-          baseDomain: baseDomain || undefined,
-          nakedDomain: baseDomain ? nakedDomain : false,
+          multiTenant: hasCustomApiDomain,
+          baseDomain: hasCustomApiDomain ? baseDomain : undefined,
+          nakedDomain: nakedDomain,
           userIdFormat: userIdFormat,
           primaryTenant: primaryTenant,
         },
@@ -4085,7 +4153,7 @@ export function getHtmlTemplate(
 
         const result = await api('/provision', {
           method: 'POST',
-          body: { env: config.env, databaseConfig: config.database },
+          body: { env: config.env, databaseConfig: config.database, createR2: true },
         });
 
         // Stop polling
@@ -4261,11 +4329,14 @@ export function getHtmlTemplate(
             apiUrl = 'https://' + workersDomain;
           }
           // Login UI URL for setup page (setup page is in Login UI, not API)
+          const loginUiEnabled = config.components?.loginUi !== false;
           const loginPagesDomain = config.env + '-ar-login-ui.pages.dev';
-          const loginUiUrl = config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain;
+          const loginUiUrl = loginUiEnabled
+            ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain)
+            : null;
 
           output.textContent += '  API URL: ' + apiUrl + '\\n';
-          output.textContent += '  Login UI URL: ' + loginUiUrl + '\\n';
+          output.textContent += '  Login UI URL: ' + (loginUiUrl || 'Not deployed') + '\\n';
           output.textContent += '  Keys Dir: .authrim-keys/' + config.env + '/\\n';
           scrollToBottom(log);
 
@@ -4348,19 +4419,22 @@ export function getHtmlTemplate(
         // Workers.dev - no tenant prefix (wildcard subdomains not supported)
         apiUrl = 'https://' + workersDomain;
       }
-      const loginUrl = config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain;
+      const loginUiEnabled = config.components?.loginUi !== false;
+      const loginUrl = loginUiEnabled
+        ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain)
+        : null;
       const adminUrl = (config.adminUiDomain ? 'https://' + config.adminUiDomain : 'https://' + adminPagesDomain) + '/admin';
 
       // Clear and rebuild URLs section safely
       urlsEl.textContent = '';
 
       // API URL with OIDC Discovery link
-      urlsEl.appendChild(createUrlItem('API (Issuer):', apiUrl));
+      urlsEl.appendChild(createUrlItem('API (Issuer):', apiUrl, apiUrl));
       const discoveryUrl = apiUrl + '/.well-known/openid-configuration';
-      urlsEl.appendChild(createUrlItem('Discovery:', discoveryUrl));
+      urlsEl.appendChild(createUrlItem('Discovery:', discoveryUrl, discoveryUrl));
 
-      urlsEl.appendChild(createUrlItem('Login UI:', loginUrl));
-      urlsEl.appendChild(createUrlItem('Admin UI:', adminUrl));
+      urlsEl.appendChild(createUrlItem('Login UI:', loginUrl || t('web.status.notDeployed'), loginUrl || undefined));
+      urlsEl.appendChild(createUrlItem('Admin UI:', adminUrl, adminUrl));
 
       // Show custom domain propagation note when any custom domain is set
       if (config.apiDomain || config.loginUiDomain || config.adminUiDomain) {
@@ -4906,6 +4980,7 @@ export function getHtmlTemplate(
       selectedEnvForDetail = env;
 
       document.getElementById('detail-env-name').textContent = env.env;
+      renderEnvDetailUrls(env);
 
       // Render resource lists with loading state
       renderResourceList('detail-workers-list', 'detail-workers-count', env.workers, 'name', 'worker');
@@ -4950,6 +5025,118 @@ export function getHtmlTemplate(
 
       // Load details asynchronously
       loadResourceDetails(env);
+    }
+
+    function stripTrailingSlash(url) {
+      const value = String(url || '');
+      return value.endsWith('/') ? value.slice(0, -1) : value;
+    }
+
+    function createEnvDetailUrlRow(label, url, description) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display: flex; flex-direction: column; gap: 0.35rem; padding: 0.875rem 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;';
+
+      const top = document.createElement('div');
+      top.style.cssText = 'display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;';
+
+      const labelEl = document.createElement('div');
+      labelEl.style.cssText = 'font-weight: 600;';
+      labelEl.textContent = label;
+      top.appendChild(labelEl);
+
+      const open = document.createElement('a');
+      open.href = url;
+      open.target = '_blank';
+      open.rel = 'noopener noreferrer';
+      open.className = 'btn-secondary';
+      open.style.cssText = 'padding: 0.35rem 0.75rem; font-size: 0.8rem; white-space: nowrap;';
+      open.textContent = 'Open';
+      top.appendChild(open);
+
+      const urlEl = document.createElement('a');
+      urlEl.href = url;
+      urlEl.target = '_blank';
+      urlEl.rel = 'noopener noreferrer';
+      urlEl.style.cssText = 'font-family: var(--font-mono); font-size: 0.85rem; color: var(--primary); word-break: break-all;';
+      urlEl.textContent = url;
+
+      row.appendChild(top);
+      row.appendChild(urlEl);
+
+      if (description) {
+        const descEl = document.createElement('div');
+        descEl.style.cssText = 'font-size: 0.8rem; color: var(--text-muted);';
+        descEl.textContent = description;
+        row.appendChild(descEl);
+      }
+
+      return row;
+    }
+
+    function buildEnvDetailUrls(envName, config) {
+      const workersDomain = workersSubdomain
+        ? envName + '-ar-router.' + workersSubdomain + '.workers.dev'
+        : envName + '-ar-router.workers.dev';
+      const fallbackIssuer = 'https://' + workersDomain;
+
+      const tenant = config?.tenant || {};
+      const tenantName = tenant.name || 'default';
+      const baseDomain = tenant.baseDomain;
+      const nakedDomain = tenant.nakedDomain === true;
+
+      let issuerUrl = fallbackIssuer;
+      if (baseDomain) {
+        issuerUrl = nakedDomain
+          ? 'https://' + baseDomain
+          : 'https://' + tenantName + '.' + baseDomain;
+      } else if (config?.urls?.api?.custom) {
+        issuerUrl = stripTrailingSlash(config.urls.api.custom);
+      }
+
+      const loginBaseUrl = stripTrailingSlash(
+        config?.urls?.loginUi?.custom || 'https://' + envName + '-ar-login-ui.pages.dev'
+      );
+      const adminBaseUrl = stripTrailingSlash(
+        config?.urls?.adminUi?.custom || 'https://' + envName + '-ar-admin-ui.pages.dev'
+      );
+
+      return [
+        {
+          label: 'Issuer',
+          url: issuerUrl,
+          description: 'Canonical OIDC issuer URL',
+        },
+        {
+          label: 'Login UI',
+          url: loginBaseUrl + '/login',
+          description: 'Login screen entry point',
+        },
+        {
+          label: 'Admin UI',
+          url: adminBaseUrl + '/admin/info',
+          description: 'Admin console entry point',
+        },
+      ];
+    }
+
+    async function renderEnvDetailUrls(env) {
+      const listEl = document.getElementById('detail-url-list');
+      listEl.textContent = '';
+
+      let config = null;
+      try {
+        const configResponse = await api('/config?env=' + encodeURIComponent(env.env));
+        if (configResponse.exists && configResponse.config) {
+          config = configResponse.config;
+        }
+      } catch (error) {
+        console.warn('Failed to load config for env detail URLs:', error);
+      }
+
+      const urls = buildEnvDetailUrls(env.env, config);
+      for (const item of urls) {
+        listEl.appendChild(createEnvDetailUrlRow(item.label, item.url, item.description));
+      }
     }
 
     // ===========================================

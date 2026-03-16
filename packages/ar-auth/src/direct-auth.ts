@@ -58,7 +58,10 @@ import {
   buildRefreshTokenRotatorInstanceName,
   createRefreshTokenJti,
   generateRefreshTokenRandomPart,
+  // Tenant domain resolution
+  resolveTenantFromEmailDomain,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 
 import {
   generateRegistrationOptions,
@@ -1115,9 +1118,19 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       code_challenge: string;
       code_challenge_method: CodeChallengeMethod;
       locale?: string;
+      invite_token?: string;
+      custom_fields?: Record<string, unknown>;
     }>();
 
-    const { client_id, email, code_challenge, code_challenge_method, locale } = body;
+    const {
+      client_id,
+      email,
+      code_challenge,
+      code_challenge_method,
+      locale,
+      invite_token,
+      custom_fields,
+    } = body;
 
     if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -1150,7 +1163,61 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Check/create user
-    const tenantId = getTenantIdFromContext(c);
+    let tenantId = getTenantIdFromContext(c);
+
+    // Invitation token routing: overrides all other tenant resolution
+    let inviteData: {
+      invite_id: string;
+      invite_token: string;
+      invite_role_id: string | null;
+      invite_org_id: string | null;
+      invited_email: string | null;
+    } | null = null;
+
+    if (invite_token && c.env.DB) {
+      const nowTs = Math.floor(Date.now() / 1000);
+      const row = await c.env.DB.prepare(
+        `SELECT id, tenant_id, invited_email, role_id, org_id, max_uses, use_count
+         FROM tenant_invitations WHERE token = ? AND expires_at > ?`
+      )
+        .bind(invite_token, nowTs)
+        .first<{
+          id: string;
+          tenant_id: string;
+          invited_email: string | null;
+          role_id: string | null;
+          org_id: string | null;
+          max_uses: number;
+          use_count: number;
+        }>();
+
+      if (!row) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      if (row.max_uses !== -1 && row.use_count >= row.max_uses) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      // If invitation is restricted to a specific email, enforce it
+      if (row.invited_email && row.invited_email.toLowerCase() !== email.toLowerCase()) {
+        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      }
+
+      tenantId = row.tenant_id;
+      inviteData = {
+        invite_id: row.id,
+        invite_token,
+        invite_role_id: row.role_id,
+        invite_org_id: row.org_id,
+        invited_email: row.invited_email,
+      };
+    } else if (tenantId === 'default' && c.env.DB) {
+      // If Host header did not resolve a specific tenant, try email domain routing
+      const resolvedTenantId = await resolveTenantFromEmailDomain(c.env.DB, email, c.env);
+      if (resolvedTenantId) {
+        tenantId = resolvedTenantId;
+      }
+    }
+
     const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
@@ -1229,6 +1296,18 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         client_id,
         email_hash: emailHash,
         issued_at: issuedAt,
+        // Invite metadata (present only when signup is via invitation)
+        ...(inviteData
+          ? {
+              invite_id: inviteData.invite_id,
+              invite_token: inviteData.invite_token,
+              invite_role_id: inviteData.invite_role_id,
+              invite_org_id: inviteData.invite_org_id,
+              invite_tenant_id: tenantId,
+            }
+          : {}),
+        // Custom registration fields (validated and saved after email verification)
+        ...(custom_fields ? { custom_fields } : {}),
       },
     });
 
@@ -1355,11 +1434,8 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       challenge: string;
       userId: string;
       email?: string;
-      metadata?: {
-        code_challenge: string;
-        client_id: string;
-        issued_at: number;
-      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      metadata?: Record<string, any>;
     };
 
     try {
@@ -1412,6 +1488,138 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     );
 
     const isNewUser = userCore ? now - (userCore.created_at || 0) < 60000 : false;
+
+    // Apply invitation role/org assignment if present
+    const inviteId = challengeData.metadata?.invite_id as string | undefined;
+    const inviteToken = challengeData.metadata?.invite_token as string | undefined;
+    const inviteRoleId = challengeData.metadata?.invite_role_id as string | undefined;
+    const inviteOrgId = challengeData.metadata?.invite_org_id as string | undefined;
+
+    if (inviteId && inviteToken && c.env.DB) {
+      const inviteNow = Math.floor(now / 1000);
+      try {
+        // Increment use_count atomically
+        await c.env.DB.prepare(
+          'UPDATE tenant_invitations SET use_count = use_count + 1, updated_at = ? WHERE id = ?'
+        )
+          .bind(inviteNow, inviteId)
+          .run();
+
+        // Assign role if specified
+        if (inviteRoleId) {
+          await c.env.DB.prepare(
+            `INSERT OR IGNORE INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?)`
+          )
+            .bind(
+              crypto.randomUUID(),
+              tenantId,
+              challengeData.userId,
+              inviteRoleId,
+              tenantId,
+              inviteNow,
+              inviteNow
+            )
+            .run();
+        }
+
+        // Assign org if specified
+        if (inviteOrgId) {
+          await c.env.DB.prepare(
+            `INSERT OR IGNORE INTO org_memberships (id, tenant_id, user_id, org_id, membership_type, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'member', ?, ?)`
+          )
+            .bind(
+              crypto.randomUUID(),
+              tenantId,
+              challengeData.userId,
+              inviteOrgId,
+              inviteNow,
+              inviteNow
+            )
+            .run();
+        }
+      } catch (inviteErr) {
+        log.warn('Failed to apply invitation assignments', {
+          error: String(inviteErr),
+          invite_id: inviteId,
+        });
+      }
+    }
+
+    // Save custom registration fields if present
+    const customFields = challengeData.metadata?.custom_fields as
+      | Record<string, unknown>
+      | undefined;
+    if (customFields && c.env.DB) {
+      const schemaRows = await c.env.DB.prepare(
+        `SELECT field_key, field_type, validation_rules
+         FROM custom_claim_schemas
+         WHERE tenant_id = ? AND show_on_registration = 1 AND is_active = 1`
+      )
+        .bind(tenantId)
+        .all<{ field_key: string; field_type: string; validation_rules: string | null }>();
+      const schemaMap = new Map((schemaRows.results ?? []).map((r) => [r.field_key, r]));
+      const fieldNow = Math.floor(now / 1000);
+
+      for (const [key, value] of Object.entries(customFields)) {
+        const schema = schemaMap.get(key);
+        if (!schema) continue; // unknown field — reject
+
+        const strVal = String(value);
+
+        // Apply validation_rules if present
+        if (schema.validation_rules) {
+          try {
+            const rules = JSON.parse(schema.validation_rules) as Record<string, unknown>;
+            if (schema.field_type === 'number') {
+              const numVal = Number(strVal);
+              if (isNaN(numVal)) continue;
+              if (rules.min !== undefined && numVal < (rules.min as number)) continue;
+              if (rules.max !== undefined && numVal > (rules.max as number)) continue;
+            } else if (schema.field_type === 'enum') {
+              const enumVals = rules.enum_values as string[] | undefined;
+              if (enumVals && !enumVals.includes(strVal)) continue;
+            } else {
+              // string / date
+              if (rules.min_length !== undefined && strVal.length < (rules.min_length as number))
+                continue;
+              if (rules.max_length !== undefined && strVal.length > (rules.max_length as number))
+                continue;
+              if (rules.pattern) {
+                try {
+                  if (!new RegExp(rules.pattern as string).test(strVal)) continue;
+                } catch {
+                  /* invalid regex — skip pattern check */
+                }
+              }
+            }
+          } catch {
+            /* malformed validation_rules JSON — skip validation */
+          }
+        }
+
+        try {
+          await c.env.DB.prepare(
+            `INSERT INTO user_custom_fields (id, user_id, tenant_id, field_key, field_value, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(user_id, tenant_id, field_key) DO UPDATE SET field_value=excluded.field_value, updated_at=excluded.updated_at`
+          )
+            .bind(
+              crypto.randomUUID(),
+              challengeData.userId,
+              tenantId,
+              key,
+              strVal,
+              fieldNow,
+              fieldNow
+            )
+            .run();
+        } catch {
+          // Non-fatal
+        }
+      }
+    }
 
     // Generate auth_code
     const authCode = await generateAuthCode(
@@ -1682,7 +1890,7 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
         // Create refresh token JWT with rtv (Refresh Token Version) claim
         const refreshTokenResult = await createRefreshToken(
           {
-            iss: c.env.ISSUER_URL,
+            iss: getRequestIssuer(c),
             sub: userId,
             aud: client_id,
             client_id,

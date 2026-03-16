@@ -23,6 +23,7 @@ import {
   verifyClientSecretHash,
   // Database adapter for user status check
   D1Adapter,
+  buildIssuerUrl,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
@@ -109,6 +110,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // RFC 7662 Section 2.1: The authorization server first validates the client credentials
   // Fetch client to verify client_secret via Repository
   const tenantId = getTenantIdFromContext(c);
+  const issuerUrl = buildIssuerUrl(c.env, tenantId);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
@@ -132,7 +134,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   ) {
     const assertionValidation = await validateClientAssertion(
       client_assertion,
-      `${c.env.ISSUER_URL}/introspect`, // Introspection endpoint URL
+      `${issuerUrl}/introspect`, // Introspection endpoint URL
       clientMetadata
     );
 
@@ -284,9 +286,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     // For refresh tokens, aud should be the client_id
     // Use the actual aud from the token to determine verification strategy
     const expectedAud = aud;
-    // RFC 7662: Use server's configured ISSUER_URL for issuer validation
+    // RFC 7662: Use the current tenant's canonical issuer for issuer validation
     // This prevents accepting tokens from other issuers even if signed with the same key
-    const expectedIssuer = c.env.ISSUER_URL;
+    const expectedIssuer = issuerUrl;
     if (!expectedIssuer) {
       log.error('ISSUER_URL not configured', { action: 'introspect' });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -307,7 +309,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
 
   if (validationSettings.strictValidation) {
     // 1. Audience validation (RFC 7519: aud can be array)
-    const expectedAudience = validationSettings.expectedAudience || c.env.ISSUER_URL || '';
+    const expectedAudience = validationSettings.expectedAudience || issuerUrl || '';
     if (expectedAudience && !audArray.includes(expectedAudience)) {
       // Token audience does not match expected audience
       return c.json<IntrospectionResponse>({

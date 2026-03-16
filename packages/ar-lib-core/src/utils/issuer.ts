@@ -33,6 +33,31 @@ export interface HostValidationResult {
 }
 
 /**
+ * Get the effective default tenant ID for the current environment.
+ */
+export function getDefaultTenantId(env: Partial<Env>): string {
+  return env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+}
+
+/**
+ * Get the tenant ID that should own the naked domain when BASE_DOMAIN is used.
+ */
+export function getPrimaryTenantId(env: Partial<Env>): string {
+  return env.PRIMARY_TENANT_ID || getDefaultTenantId(env);
+}
+
+/**
+ * Returns true when the provided tenant should use the naked BASE_DOMAIN as its canonical issuer.
+ */
+export function usesNakedDomainIssuer(env: Partial<Env>, tenantId?: string): boolean {
+  if (env.NAKED_DOMAIN_AS_ISSUER !== 'true' || !env.BASE_DOMAIN) {
+    return false;
+  }
+
+  return (tenantId || getDefaultTenantId(env)) === getPrimaryTenantId(env);
+}
+
+/**
  * Build the OIDC issuer URL for a tenant.
  *
  * Multi-tenant mode is always enabled. Constructs dynamic issuer URL
@@ -54,7 +79,12 @@ export interface HostValidationResult {
 export function buildIssuerUrl(env: Env, tenantSubdomain?: string): string {
   // Multi-tenant mode: construct from subdomain + BASE_DOMAIN
   if (env.BASE_DOMAIN) {
-    const sub = tenantSubdomain || env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+    const sub = tenantSubdomain || getDefaultTenantId(env);
+
+    if (usesNakedDomainIssuer(env, sub)) {
+      return `https://${env.BASE_DOMAIN}`;
+    }
+
     return `https://${sub}.${env.BASE_DOMAIN}`;
   }
 
@@ -95,7 +125,7 @@ export function validateHostHeader(
   if (!env.BASE_DOMAIN) {
     return {
       valid: true,
-      tenantId: env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID,
+      tenantId: getDefaultTenantId(env),
     };
   }
 
@@ -126,7 +156,7 @@ export function validateHostHeader(
   // Check if hostname matches BASE_DOMAIN
   if (hostname === env.BASE_DOMAIN) {
     // Naked domain access
-    const tenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+    const tenantId = getPrimaryTenantId(env);
     return {
       valid: true,
       tenantId,

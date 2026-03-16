@@ -128,7 +128,7 @@ adminRebacRouter.get('/admin-rebac-definitions/:id', async (c: AdminContext) => 
     const adapter = getAdminAdapter(c);
     const repo = new AdminRebacDefinitionRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const definition = await repo.getDefinition(id);
     if (!definition) {
@@ -227,7 +227,7 @@ adminRebacRouter.patch('/admin-rebac-definitions/:id', async (c: AdminContext) =
     const adapter = getAdminAdapter(c);
     const repo = new AdminRebacDefinitionRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if definition exists
     const existing = await repo.getDefinition(id);
@@ -296,7 +296,7 @@ adminRebacRouter.delete('/admin-rebac-definitions/:id', async (c: AdminContext) 
     const adapter = getAdminAdapter(c);
     const repo = new AdminRebacDefinitionRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if definition exists
     const existing = await repo.getDefinition(id);
@@ -382,7 +382,7 @@ adminRebacRouter.get('/admin-relationships/:id', async (c: AdminContext) => {
     const adapter = getAdminAdapter(c);
     const repo = new AdminRelationshipRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     const relationship = await repo.getRelationship(id);
     if (!relationship) {
@@ -489,7 +489,7 @@ adminRebacRouter.delete('/admin-relationships/:id', async (c: AdminContext) => {
     const adapter = getAdminAdapter(c);
     const repo = new AdminRelationshipRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
 
     // Check if relationship exists and belongs to this tenant
     const existing = await repo.getRelationship(id);
@@ -527,7 +527,7 @@ adminRebacRouter.get('/admins/:userId/relationships', async (c: AdminContext) =>
   try {
     const adapter = getAdminAdapter(c);
     const repo = new AdminRelationshipRepository(adapter);
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
     const relationshipType = c.req.query('type');
     const direction = c.req.query('direction') || 'both'; // from, to, both
 
@@ -575,7 +575,7 @@ adminRebacRouter.post('/admins/:userId/relationships', async (c: AdminContext) =
     const adapter = getAdminAdapter(c);
     const repo = new AdminRelationshipRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
-    const userId = c.req.param('userId');
+    const userId = c.req.param('userId')!;
     const body = await c.req.json<{
       relationship_type: string;
       to_type?: string;
@@ -647,7 +647,7 @@ adminRebacRouter.delete(
       const adapter = getAdminAdapter(c);
       const repo = new AdminRelationshipRepository(adapter);
       const tenantId = getTenantIdFromContext(c);
-      const relationshipId = c.req.param('relationshipId');
+      const relationshipId = c.req.param('relationshipId')!;
 
       // Check if relationship exists and belongs to this tenant
       const existing = await repo.getRelationship(relationshipId);

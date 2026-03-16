@@ -487,7 +487,7 @@ export async function adminFlowGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const db = new D1Adapter({ db: c.env.DB });
-    const flowId = c.req.param('id');
+    const flowId = c.req.param('id')!;
 
     const row = await db.queryOne<FlowRow>('SELECT * FROM flows WHERE tenant_id = ? AND id = ?', [
       tenantId,
@@ -675,7 +675,7 @@ export async function adminFlowUpdateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = new D1Adapter({ db: c.env.DB });
-    const flowId = c.req.param('id');
+    const flowId = c.req.param('id')!;
 
     // Check existence
     const existing = await db.queryOne<FlowRow>(
@@ -798,7 +798,7 @@ export async function adminFlowDeleteHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = new D1Adapter({ db: c.env.DB });
-    const flowId = c.req.param('id');
+    const flowId = c.req.param('id')!;
 
     // Check existence
     const existing = await db.queryOne<FlowRow>(
@@ -854,7 +854,7 @@ export async function adminFlowCopyHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = new D1Adapter({ db: c.env.DB });
-    const flowId = c.req.param('id');
+    const flowId = c.req.param('id')!;
 
     // Get source flow
     const source = await db.queryOne<FlowRow>(
@@ -1036,7 +1036,7 @@ function serializeCompiledPlan(plan: CompiledPlan): Record<string, unknown> {
  */
 export async function adminFlowCompileHandler(c: AdminContext) {
   try {
-    const flowId = c.req.param('id');
+    const flowId = c.req.param('id')!;
     if (!flowId) {
       return c.json(
         {

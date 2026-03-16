@@ -236,7 +236,7 @@ async function applySnapshot(
  */
 export async function listSettingsHistory(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
-  const category = c.req.param('category');
+  const category = c.req.param('category')!;
 
   if (!isValidCategory(category)) {
     return c.json(
@@ -309,8 +309,8 @@ export async function listSettingsHistory(c: SettingsContext) {
  */
 export async function getSettingsVersion(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
-  const category = c.req.param('category');
-  const versionStr = c.req.param('version');
+  const category = c.req.param('category')!;
+  const versionStr = c.req.param('version')!;
 
   if (!isValidCategory(category)) {
     return c.json(
@@ -397,7 +397,7 @@ export async function getSettingsVersion(c: SettingsContext) {
  */
 export async function rollbackSettings(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
-  const category = c.req.param('category');
+  const category = c.req.param('category')!;
   const tenantId = c.req.query('tenantId') || DEFAULT_TENANT_ID;
 
   if (!isValidCategory(category)) {
@@ -553,7 +553,7 @@ export async function rollbackSettings(c: SettingsContext) {
  */
 export async function getCurrentSettings(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
-  const category = c.req.param('category');
+  const category = c.req.param('category')!;
 
   if (!isValidCategory(category)) {
     return c.json(
@@ -609,7 +609,7 @@ export async function getCurrentSettings(c: SettingsContext) {
  */
 export async function compareSettingsVersions(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
-  const category = c.req.param('category');
+  const category = c.req.param('category')!;
   const fromStr = c.req.query('from');
   const toStr = c.req.query('to');
 

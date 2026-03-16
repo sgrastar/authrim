@@ -38,6 +38,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 import { jwtVerify, compactDecrypt, importJWK, createRemoteJWKSet } from 'jose';
 
 /**
@@ -122,6 +123,7 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
  */
 export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('PAR');
+  const issuer = getRequestIssuer(c);
   try {
     // RFC 9126: PAR endpoint MUST only accept POST requests
     if (c.req.method !== 'POST') {
@@ -204,7 +206,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       // private_key_jwt or client_secret_jwt authentication
       const assertionValidation = await validateClientAssertion(
         client_assertion,
-        `${c.env.ISSUER_URL}/par`, // PAR endpoint URL
+        `${issuer}/par`,
         clientMetadata
       );
 
@@ -442,7 +444,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               // We need to call them separately to satisfy TypeScript
               const verifyOptions = {
                 issuer: params.client_id, // RFC 9101: iss MUST be client_id
-                audience: c.env.ISSUER_URL, // RFC 9101: aud MUST be OP issuer
+                audience: issuer, // RFC 9101: aud MUST be OP issuer
               };
 
               let payload: Record<string, unknown>;
@@ -631,7 +633,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     const dpopHeader = c.req.header('DPoP');
 
     if (dpopHeader) {
-      const parEndpointUrl = `${c.env.ISSUER_URL}/par`;
+      const parEndpointUrl = `${issuer}/par`;
       const dpopValidation = await validateDPoPProof(
         dpopHeader,
         'POST',

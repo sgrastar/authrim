@@ -920,7 +920,7 @@ policyRouter.get('/clients/:clientId/profile', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
   const tenantId = getTenantIdFromContext(c);
   const { coreAdapter } = createAdaptersFromContext(c);
 
@@ -967,7 +967,7 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
   const tenantId = getTenantIdFromContext(c);
   const adminAuth = getAdminAuth(c);
   const actor = adminAuth?.userId ?? 'unknown';
@@ -1201,7 +1201,7 @@ policyRouter.post('/clients/:clientId/apply-preset', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
   const tenantId = getTenantIdFromContext(c);
   const adminAuth = getAdminAuth(c);
   const actor = adminAuth?.userId ?? 'unknown';
@@ -1306,7 +1306,7 @@ policyRouter.get('/clients/:clientId/profile/validate', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId');
+  const clientId = c.req.param('clientId')!;
   const tenantId = getTenantIdFromContext(c);
   const { coreAdapter } = createAdaptersFromContext(c);
 

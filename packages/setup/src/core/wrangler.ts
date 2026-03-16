@@ -320,8 +320,8 @@ export function generateWranglerConfig(
     }
   }
 
-  // R2 Buckets (optional)
-  if (config.features.r2?.enabled && resourceIds.r2) {
+  // R2 Buckets — add bindings whenever provisioned resources are available
+  if (resourceIds.r2 && Object.keys(resourceIds.r2).length > 0) {
     const r2Buckets: Array<{ binding: string; bucket_name: string }> = [];
 
     if (component === 'ar-auth' || component === 'ar-management') {
@@ -387,6 +387,9 @@ export function generateWranglerConfig(
     }
     if (config.components.saml) {
       services.push({ binding: 'OP_SAML', service: `${env}-ar-saml` });
+    }
+    if (config.components.vc) {
+      services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
     }
 
     wranglerConfig.services = services;
@@ -456,7 +459,8 @@ export function generateEnvVars(
     component === 'ar-auth' ||
     component === 'ar-token' ||
     component === 'ar-discovery' ||
-    component === 'ar-management'
+    component === 'ar-management' ||
+    component === 'ar-saml'
   ) {
     vars['ISSUER_URL'] = issuerUrl;
   }
@@ -489,8 +493,13 @@ export function generateEnvVars(
     }
   }
 
-  if (component === 'ar-auth') {
+  if (component === 'ar-auth' || component === 'ar-management') {
     vars['UI_URL'] = uiUrl;
+    vars['LOGIN_UI_ENABLED'] = config.components.loginUi ? 'true' : 'false';
+    vars['ADMIN_UI_ENABLED'] = config.components.adminUi ? 'true' : 'false';
+  }
+
+  if (component === 'ar-auth') {
     vars['ENABLE_CONFORMANCE_MODE'] = 'false';
 
     // Cookie SameSite configuration based on origin relationship
@@ -517,6 +526,13 @@ export function generateEnvVars(
     vars['ADMIN_UI_URL'] = adminUiUrl;
     const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
     vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
+    vars['SAML_ENABLED'] = config.components.saml ? 'true' : 'false';
+    vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
+    vars['VC_ENABLED'] = config.components.vc ? 'true' : 'false';
+  }
+
+  if (component === 'ar-discovery') {
+    vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
   }
 
   // OIDC settings

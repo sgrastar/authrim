@@ -15,6 +15,7 @@ import {
   keysExistForEnvironment,
   validatePrivateKey,
   validatePublicKeyJwk,
+  generateWranglerSecretCommands,
 } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR, AUTHRIM_DIR, LEGACY_KEYS_DIR } from '../core/paths.js';
 
@@ -215,5 +216,16 @@ describe('keysExistForEnvironment with external keys', () => {
 
   it('should return false when no keys exist', () => {
     expect(keysExistForEnvironment(testDir, 'prod', testDir)).toBe(false);
+  });
+});
+
+describe('generateWranglerSecretCommands', () => {
+  it('includes PUBLIC_JWK_JSON upload command', () => {
+    const secrets = generateAllSecrets('test-key');
+    const commands = generateWranglerSecretCommands(secrets, '/tmp/keys', 'dev');
+
+    expect(commands).toContain(
+      'cat /tmp/keys/public.jwk.json | wrangler secret put PUBLIC_JWK_JSON --env dev'
+    );
   });
 });

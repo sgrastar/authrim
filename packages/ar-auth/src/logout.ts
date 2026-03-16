@@ -60,6 +60,7 @@ import {
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 import type {
   BackchannelLogoutConfig,
   LogoutSendResult,
@@ -155,6 +156,7 @@ async function getLogoutConfig(env: Env): Promise<LogoutConfig> {
  */
 export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LOGOUT');
+  const issuer = getRequestIssuer(c);
   try {
     // Get query parameters
     const idTokenHint = c.req.query('id_token_hint');
@@ -216,7 +218,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // to prevent attackers from crafting fake tokens to log out other users
     let idTokenValid = false;
     if (idTokenHint) {
-      const idTokenResult = await validateIdTokenHint(idTokenHint, getPublicKey, c.env.ISSUER_URL, {
+      const idTokenResult = await validateIdTokenHint(idTokenHint, getPublicKey, issuer, {
         required: false,
         allowExpired: true, // Allow expired tokens for logout
       });
@@ -572,7 +574,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
               const results = await orchestrator.sendToAll(
                 backchannelClients,
                 {
-                  issuer: c.env.ISSUER_URL,
+                  issuer,
                   userId: sessUserId,
                   sessionId: sessId,
                   privateKey,
@@ -674,7 +676,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
               const results = await orchestrator.sendToAll(
                 webhookClients,
                 {
-                  issuer: c.env.ISSUER_URL,
+                  issuer,
                   userId: sessUserId,
                   sessionId: sessId,
                 },
@@ -812,12 +814,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     } else if (validationError) {
       // Validation failed - redirect to error page
       // Per OIDC spec, OP SHOULD display an error page when validation fails
-      const errorUrl = new URL(`${c.env.ISSUER_URL}/logout-error`);
+      const errorUrl = new URL(`${issuer}/logout-error`);
       errorUrl.searchParams.set('error', validationError);
       redirectUrl = errorUrl.toString();
     } else {
       // No URI requested and no error - redirect to default logout success page
-      redirectUrl = `${c.env.ISSUER_URL}/logged-out`;
+      redirectUrl = `${issuer}/logged-out`;
     }
 
     // ========================================
@@ -857,7 +859,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         // Build iframe configurations
         const iframes = buildFrontchannelLogoutIframes(
           frontchannelClients,
-          c.env.ISSUER_URL,
+          issuer,
           primarySessionId
         );
 
@@ -969,6 +971,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LOGOUT');
+  const issuer = getRequestIssuer(c);
   try {
     // Parse form data
     const body = await c.req.parseBody();
@@ -1092,7 +1095,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
       // Verify JWT
       const { payload } = await jwtVerify(logoutToken, publicKey, {
-        issuer: c.env.ISSUER_URL,
+        issuer,
         algorithms: ['RS256'],
       });
 

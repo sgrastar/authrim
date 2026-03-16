@@ -120,7 +120,7 @@ function toAdminResponse(entity: {
  */
 export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('DeviceSecretsAPI');
-  const userId = c.req.param('userId');
+  const userId = c.req.param('userId')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -182,7 +182,7 @@ export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Prom
  */
 export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('DeviceSecretsAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
 
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -217,7 +217,7 @@ export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Re
  */
 export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('DeviceSecretsAPI');
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
 
   if (!id) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -284,7 +284,7 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
  */
 export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('DeviceSecretsAPI');
-  const userId = c.req.param('userId');
+  const userId = c.req.param('userId')!;
 
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

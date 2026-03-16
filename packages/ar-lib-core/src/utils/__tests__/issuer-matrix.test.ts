@@ -40,33 +40,6 @@ describe('buildIssuerUrl - with tenant "acme"', () => {
 });
 
 // =============================================================================
-// buildIssuerUrl spec gap: N3 naked domain as issuer
-// =============================================================================
-
-describe.skip('SPEC GAP: buildIssuerUrl should use naked domain when NAKED_DOMAIN_AS_ISSUER=true', () => {
-  // Current behavior: buildIssuerUrl ignores NAKED_DOMAIN_AS_ISSUER and always
-  // builds https://{tenant}.{baseDomain}. For N3 scenarios, the expected issuer
-  // should be https://{baseDomain} (naked) but currently returns
-  // https://default.auth.example.com.
-  //
-  // This is handled at the router/discovery level, not in buildIssuerUrl.
-  // If buildIssuerUrl is updated to respect NAKED_DOMAIN_AS_ISSUER, these
-  // tests should be unskipped and the expected values in SCENARIOS updated.
-
-  const n3Scenarios = SCENARIOS.filter((s) => s.naked === 'N3');
-
-  it.each(n3Scenarios.map((s) => [scenarioLabel(s), s] as const))(
-    '%s - should return https://{baseDomain} for default tenant',
-    (_label, scenario) => {
-      const env = buildEnvFromScenario(scenario) as Partial<Env>;
-      const result = buildIssuerUrl(env as Env);
-      // If spec gap is fixed, expected would be:
-      expect(result).toBe(`https://${scenario.config.baseDomain}`);
-    }
-  );
-});
-
-// =============================================================================
 // validateHostHeader tests — ~30 tests
 // =============================================================================
 

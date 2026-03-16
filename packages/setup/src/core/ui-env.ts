@@ -46,6 +46,12 @@ export interface UiEnvConfig {
    * Auto-created during deployment via ensureLoginUiClient()
    */
   PUBLIC_LOGIN_UI_CLIENT_ID?: string;
+  /**
+   * Enable Diagnostic Logging in the Login UI.
+   * When 'true', DiagnosticLogger is initialized and logs are sent to the ingest endpoint.
+   * Defaults to 'false' to avoid affecting OIDC conformance test results.
+   */
+  PUBLIC_DIAGNOSTIC_LOGGING_ENABLED?: string;
 }
 
 // =============================================================================
@@ -98,6 +104,8 @@ export function buildInitialUiEnvConfig(config: AuthrimConfig): UiEnvConfig | nu
 
   return {
     PUBLIC_API_BASE_URL: apiUrl,
+    PUBLIC_AUTHRIM_ISSUER: apiUrl,
+    PUBLIC_DIAGNOSTIC_LOGGING_ENABLED: 'false',
   };
 }
 

@@ -50,6 +50,8 @@ import {
   parseAllowedOriginsEnv,
   logUIConfigChange,
   logUIConfigValidationFailure,
+  buildIssuerUrl,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -120,7 +122,8 @@ export async function updateUIConfigHandler(c: Context<{ Bindings: Env }>) {
     if (body.baseUrl !== null && body.baseUrl !== '') {
       // Security validation: HTTPS + Domain whitelist
       const allowedOrigins = parseAllowedOriginsEnv(c.env.ALLOWED_ORIGINS);
-      const validation = validateUIBaseUrl(body.baseUrl, c.env.ISSUER_URL, allowedOrigins);
+      const issuerUrl = buildIssuerUrl(c.env, getTenantIdFromContext(c));
+      const validation = validateUIBaseUrl(body.baseUrl, issuerUrl, allowedOrigins);
 
       if (!validation.valid) {
         // Log the rejection for security audit

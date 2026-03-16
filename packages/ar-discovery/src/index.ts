@@ -4,8 +4,6 @@ import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  rateLimitMiddleware,
-  RateLimitProfiles,
   requestContextMiddleware,
   pluginContextMiddleware,
   // Health Check
@@ -16,6 +14,7 @@ import {
 // Import handlers
 import { discoveryHandler } from './discovery';
 import { jwksHandler } from './jwks';
+import { webfingerHandler } from './webfinger';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -60,16 +59,6 @@ app.use(
   })
 );
 
-// Lenient rate limiting for JWKS endpoint only
-// Note: Discovery endpoint is excluded to improve performance (fully public, cacheable data)
-app.use(
-  '/.well-known/jwks.json',
-  rateLimitMiddleware({
-    ...RateLimitProfiles.lenient,
-    endpoints: ['/.well-known/jwks.json'],
-  })
-);
-
 // Health check endpoints
 app.get('/api/health', (c) => {
   return c.json({
@@ -96,6 +85,9 @@ app.get('/.well-known/openid-configuration', discoveryHandler);
 // RFC 8414: OAuth 2.0 Authorization Server Metadata
 // Returns the same metadata as openid-configuration for OAuth 2.0 clients
 app.get('/.well-known/oauth-authorization-server', discoveryHandler);
+
+// OpenID Connect Discovery via WebFinger
+app.get('/.well-known/webfinger', webfingerHandler);
 
 // JWKS endpoint (JSON Web Key Set)
 app.get('/.well-known/jwks.json', jwksHandler);
