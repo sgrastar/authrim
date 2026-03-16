@@ -523,6 +523,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     // Seed default OIDC claim schemas for the new tenant (soft failure)
     await seedDefaultClaimsForTenant(id, adapter, getLogger(c));
 
+
     return c.json(formatTenant(created!), 201);
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
