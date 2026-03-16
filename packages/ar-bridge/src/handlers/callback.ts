@@ -139,6 +139,7 @@ async function generateAuthCode(
 export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('CALLBACK');
   const providerIdOrSlug = c.req.param('provider');
+  if (!providerIdOrSlug) return redirectWithError(c, 'invalid_request', 'Missing provider');
   const { code, state, error, errorDescription, tenantId, user } = await getCallbackParams(c);
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
 

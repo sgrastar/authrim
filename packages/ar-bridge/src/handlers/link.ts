@@ -139,6 +139,7 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
   }
 
   const linkedIdentityId = c.req.param('id');
+  if (!linkedIdentityId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
     // Verify ownership

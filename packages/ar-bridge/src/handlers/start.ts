@@ -80,6 +80,9 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     }
 
     const providerIdOrName = c.req.param('provider');
+    if (!providerIdOrName) {
+      return c.json({ error: 'invalid_request', error_description: 'Missing provider' }, 400);
+    }
     const requestedRedirectUri = c.req.query('redirect_uri');
     const isLinking = c.req.query('link') === 'true';
     const prompt = c.req.query('prompt');
