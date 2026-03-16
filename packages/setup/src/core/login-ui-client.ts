@@ -50,6 +50,8 @@ interface AdminClientListResponse {
     grant_types: string[];
     is_trusted?: boolean;
     skip_consent?: boolean;
+    token_endpoint_auth_method?: string;
+    require_pkce?: boolean;
   }>;
   pagination: {
     total: number;
@@ -101,10 +103,19 @@ async function readAdminApiSecret(secretPath: string): Promise<string> {
   return secret.trim();
 }
 
+interface ExistingClientInfo {
+  clientId: string;
+  needsMigration: boolean;
+}
+
 /**
- * Check if a Login UI client already exists
+ * Check if a Login UI client already exists.
+ * Returns client_id and whether migration to public client is needed.
  */
-async function findExistingClient(apiBaseUrl: string, adminSecret: string): Promise<string | null> {
+async function findExistingClient(
+  apiBaseUrl: string,
+  adminSecret: string
+): Promise<ExistingClientInfo | null> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/clients?search=${encodeURIComponent(LOGIN_UI_CLIENT_NAME)}&limit=10`,
     {
@@ -125,7 +136,43 @@ async function findExistingClient(apiBaseUrl: string, adminSecret: string): Prom
     (c) => c.client_name === LOGIN_UI_CLIENT_NAME && c.is_trusted === true
   );
 
-  return existing?.client_id ?? null;
+  if (!existing) return null;
+
+  return {
+    clientId: existing.client_id,
+    needsMigration:
+      existing.token_endpoint_auth_method !== 'none' || existing.require_pkce !== true,
+  };
+}
+
+/**
+ * Update an existing Login UI client to use public client configuration.
+ * Migrates from client_secret_basic to none + require_pkce.
+ */
+async function updateClientToPublic(
+  apiBaseUrl: string,
+  adminSecret: string,
+  clientId: string
+): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/admin/clients/${clientId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${adminSecret}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      token_endpoint_auth_method: 'none',
+      require_pkce: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => 'Unknown error');
+    throw new Error(
+      `Failed to update Login UI client to public client (${response.status}): ${errorBody}`
+    );
+  }
 }
 
 /**
@@ -153,7 +200,8 @@ async function createClient(
       scope: 'openid profile email',
       is_trusted: true,
       skip_consent: true,
-      token_endpoint_auth_method: 'client_secret_basic',
+      token_endpoint_auth_method: 'none',
+      require_pkce: true,
     }),
   });
 
@@ -184,13 +232,21 @@ export async function ensureLoginUiClient(
 
     // Check for existing client
     onProgress?.('Checking for existing Login UI client...');
-    const existingClientId = await findExistingClient(apiBaseUrl, adminSecret);
+    const existingClient = await findExistingClient(apiBaseUrl, adminSecret);
 
-    if (existingClientId) {
-      onProgress?.(`Login UI client already exists: ${existingClientId}`);
+    if (existingClient) {
+      if (existingClient.needsMigration) {
+        onProgress?.(`Migrating Login UI client to public client: ${existingClient.clientId}`);
+        await updateClientToPublic(apiBaseUrl, adminSecret, existingClient.clientId);
+        onProgress?.(
+          'Login UI client migrated to public client (token_endpoint_auth_method=none, require_pkce=true)'
+        );
+      } else {
+        onProgress?.(`Login UI client already exists: ${existingClient.clientId}`);
+      }
       return {
         success: true,
-        clientId: existingClientId,
+        clientId: existingClient.clientId,
         alreadyExists: true,
       };
     }
