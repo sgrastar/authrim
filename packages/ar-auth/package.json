@@ -13,10 +13,10 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-auth: lint skipped'",
-    "test": "npx vitest run",
-    "test:unit": "npx vitest run",
-    "test:integration": "npx vitest run --config vitest.integration.config.ts",
-    "test:passkey": "npx vitest run --config vitest.passkey.config.ts",
+    "test": "pnpm exec vitest run",
+    "test:unit": "pnpm exec vitest run",
+    "test:integration": "pnpm exec vitest run --config vitest.integration.config.ts",
+    "test:passkey": "pnpm exec vitest run --config vitest.passkey.config.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

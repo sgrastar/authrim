@@ -9,10 +9,6 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     include: ['**/passkey.test.ts'],
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        isolate: true,
-      },
-    },
+    isolate: true,
   },
 });

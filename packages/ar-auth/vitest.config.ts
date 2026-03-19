@@ -10,13 +10,8 @@ export default defineConfig({
     // Only include src tests, exclude dist directory
     include: ['src/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
-    // Use 'forks' pool for better test isolation
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        isolate: true,
-      },
-    },
+    isolate: true,
     fileParallelism: false,
     coverage: {
       provider: 'v8',

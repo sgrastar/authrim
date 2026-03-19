@@ -18,6 +18,7 @@ import type { Env } from '@authrim/ar-lib-core';
 
 // Mock ar-lib-core
 const mockGenerateId = vi.fn().mockReturnValue('test-id-123');
+const mockSchemaHistoryRecordChange = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -39,6 +40,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         execute: mockDbExecute,
       };
     }),
+    CustomClaimSchemaHistoryManager: vi
+      .fn()
+      .mockImplementation(function MockCustomClaimSchemaHistoryManager() {
+        return {
+          recordChange: mockSchemaHistoryRecordChange,
+        };
+      }),
   };
 });
 
@@ -172,6 +180,8 @@ describe('Custom Claims Admin API', () => {
     mockPiiQuery.mockReset();
     mockPiiExecute.mockReset();
     mockGenerateId.mockReturnValue('test-id-123');
+    mockSchemaHistoryRecordChange.mockReset();
+    mockSchemaHistoryRecordChange.mockResolvedValue(undefined);
   });
 
   // ===========================================================================
