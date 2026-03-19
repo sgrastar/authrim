@@ -8,6 +8,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { confirm } from '@inquirer/prompts';
+import { join } from 'node:path';
 import { t } from '../../i18n/index.js';
 import {
   isWranglerInstalled,
@@ -15,6 +16,8 @@ import {
   detectEnvironments,
   deleteEnvironment,
 } from '../../core/cloudflare.js';
+import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
+import { findAuthrimBaseDir } from '../../core/paths.js';
 
 // =============================================================================
 // Types
@@ -139,6 +142,19 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     deleteR2,
     onProgress: (msg) => console.log(msg),
   });
+
+  const baseDir = findAuthrimBaseDir(process.cwd());
+  const cleanupResult = await cleanupLocalEnvironmentArtifacts({
+    baseDir,
+    env,
+    packagesDir: join(baseDir, 'packages'),
+    keysBaseDir: process.cwd(),
+    onProgress: (msg) => console.log(msg),
+  });
+  if (cleanupResult.errors.length > 0) {
+    result.errors.push(...cleanupResult.errors);
+  }
+  result.success = result.errors.length === 0;
 
   // Summary
   console.log(chalk.bold('\n━━━ Deletion Summary ━━━\n'));

@@ -110,6 +110,11 @@ export const DEFAULT_SECRET_TARGET_WORKERS: WorkerComponent[] = [
   'ar-saml',
 ];
 
+export function getSecretTargetWorkers(workers?: WorkerComponent[]): WorkerComponent[] {
+  const requestedWorkers = workers && workers.length > 0 ? workers : DEFAULT_SECRET_TARGET_WORKERS;
+  return requestedWorkers.filter((component) => DEFAULT_SECRET_TARGET_WORKERS.includes(component));
+}
+
 /**
  * Prepare build-time env for Pages UIs.
  * When a package-local .env exists, strip conflicting PUBLIC_* variables from
@@ -474,7 +479,7 @@ export async function uploadSecrets(
   const errors: string[] = [];
 
   // Workers that need secrets
-  const targetWorkers = workers || DEFAULT_SECRET_TARGET_WORKERS;
+  const targetWorkers = getSecretTargetWorkers(workers);
 
   for (const component of targetWorkers) {
     const workerName = getWorkerName(env, component);

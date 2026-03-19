@@ -189,6 +189,12 @@ const id: Translations = {
   'domain.enterDomains': 'Masukkan domain kustom (kosongkan untuk menggunakan default Cloudflare)',
   'domain.singleTenantNote': 'Dalam mode single-tenant, URL Issuer = domain API',
   'domain.usingWorkersDev': '(menggunakan domain Cloudflare workers.dev)',
+  'web.form.multiTenantEnable': 'Aktifkan mode multi-tenant',
+  'web.form.multiTenantHint': 'Buat subdomain tenant di bawah domain kustom Anda',
+  'web.form.multiTenantExamples': 'Contoh URL tenant',
+  'web.form.multiTenantExampleDefaultOmitted': 'Tenant default tanpa nama: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Tenant default dengan nama eksplisit: {{url}}',
+  'web.form.multiTenantExampleOther': 'Tenant non-default: {{url}}',
 
   // Database
   'db.title': 'Konfigurasi Database',

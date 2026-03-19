@@ -188,6 +188,12 @@ const en: Translations = {
   'domain.enterDomains': 'Enter custom domains (leave empty to use Cloudflare defaults)',
   'domain.singleTenantNote': 'In single-tenant mode, Issuer URL = API domain',
   'domain.usingWorkersDev': '(using Cloudflare workers.dev domain)',
+  'web.form.multiTenantEnable': 'Enable multi-tenant mode',
+  'web.form.multiTenantHint': 'Create tenant subdomains under your custom domain',
+  'web.form.multiTenantExamples': 'Tenant URL Examples',
+  'web.form.multiTenantExampleDefaultOmitted': 'Default tenant with omitted name: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Default tenant with explicit name: {{url}}',
+  'web.form.multiTenantExampleOther': 'Non-default tenant: {{url}}',
 
   // Database
   'db.title': 'Database Configuration',

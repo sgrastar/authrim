@@ -256,6 +256,20 @@
 		};
 	}
 
+	function syncClientSettingsWithClient(
+		settings: CategorySettings | null,
+		currentClient: Client | null
+	): CategorySettings | null {
+		if (!settings) return settings;
+		return {
+			...settings,
+			values: {
+				...settings.values,
+				'client.login_ui_url': currentClient?.login_ui_url ?? ''
+			}
+		};
+	}
+
 	function arraysEqual(a?: string[], b?: string[]) {
 		const left = a ?? [];
 		const right = b ?? [];
@@ -629,16 +643,22 @@
 			}
 			// Load client settings
 			try {
-				clientSettings = await scopedSettingsAPI.getClientSettings(clientId, 'client');
+				clientSettings = syncClientSettingsWithClient(
+					await scopedSettingsAPI.getClientSettings(clientId, 'client'),
+					client
+				);
 			} catch (err) {
 				console.warn('Failed to load client settings:', err);
 				// Initialize with empty values if settings don't exist yet
-				clientSettings = {
-					category: 'client',
-					version: '',
-					values: {},
-					sources: {}
-				};
+				clientSettings = syncClientSettingsWithClient(
+					{
+						category: 'client',
+						version: '',
+						values: {},
+						sources: {}
+					},
+					client
+				);
 			}
 		} catch (err) {
 			console.error('Failed to load client:', err);
@@ -732,12 +752,13 @@
 			// Metadata tab
 			logo_uri: (clientSettings.values['client.logo_uri'] as string) ?? '',
 			contacts: (clientSettings.values['client.contacts'] as string) ?? '',
-			tos_uri: (clientSettings.values['client.tos_uri'] as string) ?? '',
-			policy_uri: (clientSettings.values['client.policy_uri'] as string) ?? '',
-			client_uri: (clientSettings.values['client.client_uri'] as string) ?? '',
-			initiate_login_uri: (clientSettings.values['client.initiate_login_uri'] as string) ?? '',
-			login_ui_url: (clientSettings.values['client.login_ui_url'] as string) ?? '',
-			application_type: (clientSettings.values['client.application_type'] as string) ?? 'web',
+				tos_uri: (clientSettings.values['client.tos_uri'] as string) ?? '',
+				policy_uri: (clientSettings.values['client.policy_uri'] as string) ?? '',
+				client_uri: (clientSettings.values['client.client_uri'] as string) ?? '',
+				initiate_login_uri: (clientSettings.values['client.initiate_login_uri'] as string) ?? '',
+				login_ui_url:
+					client.login_ui_url ?? (clientSettings.values['client.login_ui_url'] as string) ?? '',
+				application_type: (clientSettings.values['client.application_type'] as string) ?? 'web',
 			sector_identifier_uri:
 				(clientSettings.values['client.sector_identifier_uri'] as string) ?? '',
 			// Advanced tab
@@ -788,7 +809,14 @@
 
 		try {
 			// Save to Client API
-			client = normalizeClientArrays(await adminClientsAPI.update(clientId, editForm));
+			client = normalizeClientArrays(
+				await adminClientsAPI.update(clientId, {
+					...editForm,
+					login_ui_url: settingsEditForm.login_ui_url?.trim()
+						? settingsEditForm.login_ui_url.trim()
+						: null
+				})
+			);
 
 			// Save to Settings API (all tab fields)
 			if (clientSettings && Object.keys(settingsEditForm).length > 0) {
@@ -882,17 +910,23 @@
 						saveError = `Warning: Some settings could not be saved: ${rejectedKeys}`;
 					}
 
-					// Reload client settings to get the new version
-					clientSettings = await scopedSettingsAPI.getClientSettings(clientId, 'client');
-				} catch (err) {
-					if (err instanceof SettingsConflictError) {
-						saveError = `設定が他のユーザーによって更新されました。現在の設定を確認して再度お試しください。(Current version: ${err.currentVersion})`;
-						// Reload settings to show current state
-						try {
-							clientSettings = await scopedSettingsAPI.getClientSettings(clientId, 'client');
-						} catch (reloadErr) {
-							console.error('Failed to reload settings after conflict:', reloadErr);
-						}
+						// Reload client settings to get the new version
+						clientSettings = syncClientSettingsWithClient(
+							await scopedSettingsAPI.getClientSettings(clientId, 'client'),
+							client
+						);
+					} catch (err) {
+						if (err instanceof SettingsConflictError) {
+							saveError = `設定が他のユーザーによって更新されました。現在の設定を確認して再度お試しください。(Current version: ${err.currentVersion})`;
+							// Reload settings to show current state
+							try {
+								clientSettings = syncClientSettingsWithClient(
+									await scopedSettingsAPI.getClientSettings(clientId, 'client'),
+									client
+								);
+							} catch (reloadErr) {
+								console.error('Failed to reload settings after conflict:', reloadErr);
+							}
 						return;
 					}
 					throw err;
@@ -2299,9 +2333,9 @@
 									localhost.
 								</p>
 							{:else}
-								<p class="display-text">
-									{clientSettings?.values['client.login_ui_url'] || 'Not configured'}
-								</p>
+									<p class="display-text">
+										{client?.login_ui_url || 'Not configured'}
+									</p>
 								<p class="form-hint">
 									Client-specific login UI base URL (overrides global UI_URL)
 								</p>

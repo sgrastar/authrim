@@ -809,6 +809,143 @@ export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> 
   }
 }
 
+export interface EnsureWildcardDnsResult {
+  created: boolean;
+  updated: boolean;
+  recordId?: string;
+  name: string;
+  target: string;
+}
+
+/**
+ * Ensure a proxied wildcard DNS record exists for tenant subdomains.
+ *
+ * Creates or updates `*.{baseDomain}` as a proxied CNAME pointing to `{baseDomain}`.
+ * This allows wildcard tenant hosts to resolve through Cloudflare so Worker routes can match.
+ */
+export async function ensureWildcardDnsRecord(
+  baseDomain: string,
+  zoneId?: string | null
+): Promise<EnsureWildcardDnsResult> {
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo) {
+    throw new Error('Not logged in to Cloudflare (run: wrangler login)');
+  }
+
+  let resolvedZoneId = zoneId || undefined;
+  if (!resolvedZoneId) {
+    const zoneResult = await checkZoneExists(baseDomain);
+    if (!zoneResult.found || !zoneResult.zone?.id) {
+      throw new Error(`Cloudflare zone not found for ${baseDomain}`);
+    }
+    resolvedZoneId = zoneResult.zone.id;
+  }
+
+  const recordName = `*.${baseDomain}`;
+  const recordTarget = baseDomain;
+
+  const recordResponse = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records?name=${encodeURIComponent(recordName)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+      },
+    }
+  );
+
+  if (!recordResponse.ok) {
+    throw new Error(`Failed to query DNS records (${recordResponse.status})`);
+  }
+
+  const recordData = (await recordResponse.json()) as {
+    success: boolean;
+    result: Array<{
+      id: string;
+      type: string;
+      name: string;
+      content: string;
+      proxied?: boolean;
+    }>;
+  };
+
+  if (!recordData.success) {
+    throw new Error('Cloudflare DNS query failed');
+  }
+
+  const existingRecord = recordData.result?.find((record) => record.name === recordName);
+  const payload = {
+    type: 'CNAME',
+    name: recordName,
+    content: recordTarget,
+    proxied: true,
+    ttl: 1,
+  };
+
+  if (existingRecord) {
+    if (existingRecord.content === recordTarget && existingRecord.proxied === true) {
+      return {
+        created: false,
+        updated: false,
+        recordId: existingRecord.id,
+        name: recordName,
+        target: recordTarget,
+      };
+    }
+
+    const updateResponse = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records/${existingRecord.id}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${tokenInfo.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (!updateResponse.ok) {
+      throw new Error(`Failed to update wildcard DNS record (${updateResponse.status})`);
+    }
+
+    return {
+      created: false,
+      updated: true,
+      recordId: existingRecord.id,
+      name: recordName,
+      target: recordTarget,
+    };
+  }
+
+  const createResponse = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!createResponse.ok) {
+    throw new Error(`Failed to create wildcard DNS record (${createResponse.status})`);
+  }
+
+  const createdData = (await createResponse.json()) as {
+    result?: { id?: string };
+  };
+
+  return {
+    created: true,
+    updated: false,
+    recordId: createdData.result?.id,
+    name: recordName,
+    target: recordTarget,
+  };
+}
+
 // =============================================================================
 // D1 Database Operations
 // =============================================================================

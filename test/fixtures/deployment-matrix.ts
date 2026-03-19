@@ -134,7 +134,7 @@ export function buildAuthrimConfig(scenario: Scenario) {
     tenant: {
       name: c.defaultTenantId,
       displayName: 'Default Tenant',
-      multiTenant: false,
+      multiTenant: c.baseDomain !== null,
       baseDomain: c.baseDomain ?? undefined,
       userIdFormat: 'nanoid' as const,
       primaryTenant: c.primaryTenantId ?? undefined,

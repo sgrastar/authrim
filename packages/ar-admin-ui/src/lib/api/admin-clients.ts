@@ -19,6 +19,7 @@ export interface Client {
 	redirect_uris: string[];
 	token_endpoint_auth_method: string;
 	scope?: string;
+	login_ui_url?: string | null;
 	id_token_signed_response_alg?: string;
 	require_pkce?: boolean;
 	access_token_ttl?: number;
@@ -64,6 +65,7 @@ export interface UpdateClientInput {
 	response_types?: string[];
 	token_endpoint_auth_method?: string;
 	scope?: string;
+	login_ui_url?: string | null;
 	require_pkce?: boolean;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;

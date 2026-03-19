@@ -27,7 +27,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     const tenant = normalizeTenantConfigForApiDomain({
       name: 'acme',
       displayName: 'Acme',
-      multiTenant: false,
+      multiTenant: true,
       baseDomain: 'oidc.example.com',
       userIdFormat: 'nanoid',
       nakedDomain: true,
@@ -42,6 +42,28 @@ describe('normalizeTenantConfigForApiDomain', () => {
       userIdFormat: 'nanoid',
       primaryTenant: 'main',
       nakedDomain: true,
+    });
+  });
+
+  it('keeps custom-domain setups single-tenant when multiTenant is disabled', () => {
+    const tenant = normalizeTenantConfigForApiDomain({
+      name: 'acme',
+      displayName: 'Acme',
+      multiTenant: false,
+      baseDomain: 'oidc.example.com',
+      userIdFormat: 'nanoid',
+      nakedDomain: true,
+      primaryTenant: 'main',
+    });
+
+    expect(tenant).toEqual({
+      name: 'default',
+      displayName: 'Acme',
+      multiTenant: false,
+      baseDomain: undefined,
+      userIdFormat: 'nanoid',
+      primaryTenant: undefined,
+      nakedDomain: false,
     });
   });
 });

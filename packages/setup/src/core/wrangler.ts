@@ -253,6 +253,9 @@ export function generateWranglerConfig(
   workersSubdomain?: string
 ): WranglerConfig {
   const env = config.environment.prefix;
+  const multiTenantBaseDomain =
+    config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
+  const multiTenantEnabled = !!multiTenantBaseDomain;
   const workerName = getWorkerName(env, component);
 
   // Base configuration
@@ -399,14 +402,26 @@ export function generateWranglerConfig(
       try {
         const customUrl = new URL(config.urls.api.custom);
         const hostname = customUrl.hostname;
+        const zoneName = extractZoneName(hostname);
         if (config.urls?.api?.customDomainBinding) {
-          // Custom Domain Binding: Cloudflare assigns the domain directly to the Worker.
-          // No zone_name required; pattern is just the hostname.
-          wranglerConfig.routes = [{ pattern: hostname, custom_domain: true }];
+          // In multi-tenant mode, the naked domain can use a custom domain binding, but
+          // tenant subdomains still need wildcard route matching.
+          if (multiTenantEnabled) {
+            wranglerConfig.routes = [
+              { pattern: hostname, custom_domain: true },
+              { pattern: `*.${hostname}/*`, zone_name: zoneName },
+            ];
+          } else {
+            // Custom Domain Binding: Cloudflare assigns the domain directly to the Worker.
+            // No zone_name required; pattern is just the hostname.
+            wranglerConfig.routes = [{ pattern: hostname, custom_domain: true }];
+          }
         } else {
           // Route: Pattern-based routing via DNS zone.
-          const zoneName = extractZoneName(hostname);
           wranglerConfig.routes = [{ pattern: `${hostname}/*`, zone_name: zoneName }];
+          if (multiTenantEnabled) {
+            wranglerConfig.routes.push({ pattern: `*.${hostname}/*`, zone_name: zoneName });
+          }
         }
       } catch {
         // Invalid URL, skip routing configuration
@@ -435,12 +450,15 @@ export function generateEnvVars(
   workersSubdomain?: string
 ): Record<string, string> {
   const vars: Record<string, string> = {};
+  const multiTenantBaseDomain =
+    config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
+  const multiTenantEnabled = !!multiTenantBaseDomain;
 
   // Determine issuer URL
   // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
   // Otherwise: use workers.dev or custom API domain
   let issuerUrl: string;
-  if (config.tenant?.baseDomain) {
+  if (multiTenantEnabled) {
     // Multi-tenant mode: use BASE_DOMAIN (ISSUER_URL is not used, kept for fallback)
     issuerUrl = config.urls?.api?.auto || '';
   } else {
@@ -479,8 +497,8 @@ export function generateEnvVars(
     // User ID format (nanoid or uuid)
     vars['USER_ID_FORMAT'] = config.tenant?.userIdFormat || 'nanoid';
 
-    if (config.tenant?.baseDomain) {
-      vars['BASE_DOMAIN'] = config.tenant.baseDomain;
+    if (multiTenantEnabled) {
+      vars['BASE_DOMAIN'] = multiTenantBaseDomain;
 
       if (config.tenant.primaryTenant) {
         vars['PRIMARY_TENANT_ID'] = config.tenant.primaryTenant;

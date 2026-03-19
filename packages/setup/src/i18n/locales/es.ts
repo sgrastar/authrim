@@ -191,6 +191,14 @@ const es: Translations = {
     'Ingresa dominios personalizados (dejar vacío para usar predeterminados de Cloudflare)',
   'domain.singleTenantNote': 'En modo single-tenant, URL del emisor = dominio API',
   'domain.usingWorkersDev': '(usando dominio workers.dev de Cloudflare)',
+  'web.form.multiTenantEnable': 'Habilitar modo multi-tenant',
+  'web.form.multiTenantHint': 'Crear subdominios de tenant bajo su dominio personalizado',
+  'web.form.multiTenantExamples': 'Ejemplos de URL de tenant',
+  'web.form.multiTenantExampleDefaultOmitted':
+    'Tenant predeterminado con nombre omitido: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded':
+    'Tenant predeterminado con nombre explícito: {{url}}',
+  'web.form.multiTenantExampleOther': 'Tenant no predeterminado: {{url}}',
 
   // Database
   'db.title': 'Configuración de Base de Datos',

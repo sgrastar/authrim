@@ -110,6 +110,24 @@ function createMockDO() {
 }
 
 /**
+ * Mock SessionStore Durable Object with RPC methods
+ */
+function createMockSessionStore() {
+  const sessions = new Map<string, any>();
+
+  return {
+    idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-session-store-id' }),
+    get: vi.fn().mockReturnValue({
+      getSessionRpc: vi.fn().mockImplementation(async (sessionId: string) => {
+        return sessions.get(sessionId) || null;
+      }),
+      fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+    }),
+    _sessions: sessions,
+  };
+}
+
+/**
  * Mock ChallengeStore Durable Object with RPC methods
  */
 function createMockChallengeStore() {
@@ -148,6 +166,27 @@ function createMockChallengeStore() {
 
 // Type for error response
 type ErrorResponse = Record<string, unknown>;
+const TEST_SESSION_ID = 'g1:apac:3:session_test-session';
+
+function getChallengeMap(env: Env): Map<string, unknown> {
+  return (env.CHALLENGE_STORE as unknown as { _challenges: Map<string, unknown> })._challenges;
+}
+
+function getSessionMap(env: Env): Map<string, unknown> {
+  return (env.SESSION_STORE as unknown as { _sessions: Map<string, unknown> })._sessions;
+}
+
+function seedSession(env: Env, userId: string = 'test-user') {
+  getSessionMap(env).set(TEST_SESSION_ID, {
+    id: TEST_SESSION_ID,
+    userId,
+    createdAt: Date.now() - 60000,
+    expiresAt: Date.now() + 3600000,
+    data: {
+      authTime: Math.floor(Date.now() / 1000) - 60,
+    },
+  });
+}
 
 /**
  * Create a mock environment for testing (partial - only what's needed)
@@ -170,7 +209,7 @@ function createMockEnv(): Env {
     DB: createMockDB(),
     AVATARS: {} as R2Bucket,
     KEY_MANAGER: createMockDO() as unknown as Env['KEY_MANAGER'],
-    SESSION_STORE: createMockDO() as unknown as Env['SESSION_STORE'],
+    SESSION_STORE: createMockSessionStore() as unknown as Env['SESSION_STORE'],
     AUTH_CODE_STORE: createMockAuthCodeStore() as unknown as Env['AUTH_CODE_STORE'],
     REFRESH_TOKEN_ROTATOR: createMockDO() as unknown as Env['REFRESH_TOKEN_ROTATOR'],
     CHALLENGE_STORE: createMockChallengeStore() as unknown as Env['CHALLENGE_STORE'],
@@ -247,6 +286,71 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toContain('/flow/login');
+    });
+
+    it('should redirect with temporarily_unavailable when login UI is not configured', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      const redirectUrl = new URL(location!, 'https://example.com');
+      expect(redirectUrl.searchParams.get('error')).toBe('temporarily_unavailable');
+      expect(redirectUrl.searchParams.get('error_description')).toBe(
+        'Login UI is not configured'
+      );
+      expect(redirectUrl.searchParams.get('state')).toBe('test-state');
+      expect(redirectUrl.searchParams.get('iss')).toBe('https://test.example.com');
+      expect(getChallengeMap(env).size).toBe(0);
+    });
+
+    it('should preserve client-specific login_ui_url when global UI_URL is not configured', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+        login_ui_url: 'https://client-login.example.com',
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toContain('https://client-login.example.com/login');
+      expect(location).toContain('challenge_id=');
+    });
+
+    it('should use form_post for temporarily_unavailable when response_mode=form_post', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+
+      const response = await app.request(
+        '/authorize?response_type=code&response_mode=form_post&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain('form id="auth-form"');
+      expect(body).toContain('action="https://example.com/callback"');
+      expect(body).toContain('name="error" value="temporarily_unavailable"');
+      expect(body).toContain('name="error_description" value="Login UI is not configured"');
+      expect(body).toContain('name="state" value="test-state"');
     });
   });
 
@@ -328,6 +432,31 @@ describe('Authorization Handler', () => {
       expect(body.error_description).toContain('response_type');
     });
 
+    it('should return a local 400 error page when response_type is missing and external UI is configured', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          ui: {
+            baseUrl: 'https://login.example.com',
+          },
+        })
+      );
+
+      const response = await app.request(
+        '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('Location')).toBeNull();
+      const body = await response.text();
+      expect(body).toContain('Invalid Authorization Request');
+      expect(body).toContain('invalid_request');
+      expect(body).toContain('response_type is required');
+    });
+
     it('should return 400 when response_type is unsupported', async () => {
       const response = await app.request(
         '/authorize?response_type=token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -339,6 +468,31 @@ describe('Authorization Handler', () => {
       const body = (await response.json()) as ErrorResponse;
       expect(body.error).toBe('unsupported_response_type');
       expect(body.error_description).toContain('response_type');
+    });
+
+    it('should return a local 400 error page when response_type is unsupported and external UI is configured', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          ui: {
+            baseUrl: 'https://login.example.com',
+          },
+        })
+      );
+
+      const response = await app.request(
+        '/authorize?response_type=token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('Location')).toBeNull();
+      const body = await response.text();
+      expect(body).toContain('Invalid Authorization Request');
+      expect(body).toContain('unsupported_response_type');
+      expect(body).toContain('Unsupported response_type');
     });
 
     it('should return 400 when client_id is missing', async () => {
@@ -374,6 +528,22 @@ describe('Authorization Handler', () => {
 
       // Returns HTML error page for redirect_uri issues (security)
       expect(response.status).toBe(400);
+    });
+
+    it('should return a local HTML error page before redirect_uri is validated', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+
+      const response = await app.request(
+        '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.text();
+      expect(body).toContain('Invalid Authorization Request');
+      expect(body).toContain('invalid_request');
+      expect(body).toContain('response_type is required');
     });
   });
 
@@ -451,6 +621,38 @@ describe('Authorization Handler', () => {
   });
 
   describe('Edge Cases', () => {
+    it('should clean up consent challenge when consent UI is not configured', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:client:test-client:client',
+        JSON.stringify({
+          'client.sso_enabled': true,
+        })
+      );
+      seedSession(env);
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      const redirectUrl = new URL(location!, 'https://example.com');
+      expect(redirectUrl.searchParams.get('error')).toBe('temporarily_unavailable');
+      expect(redirectUrl.searchParams.get('error_description')).toBe(
+        'Login UI is not configured'
+      );
+      expect(getChallengeMap(env).size).toBe(0);
+    });
+
     it('should handle multiple scopes and redirect to login', async () => {
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile%20email',
@@ -500,10 +702,36 @@ describe('Authorization Handler', () => {
         env
       );
 
-      // RFC 6749: invalid_client returns 401
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(400);
       const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_client');
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toBe('client_id is invalid');
+    });
+
+    it('should return a local 400 error page for an unknown client when external UI is configured', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      mockGetClient.mockResolvedValue(null);
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          ui: {
+            baseUrl: 'https://login.example.com',
+          },
+        })
+      );
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=unknown-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('Location')).toBeNull();
+      const body = await response.text();
+      expect(body).toContain('Invalid Client');
+      expect(body).toContain('invalid_request');
+      expect(body).toContain('client_id is invalid');
     });
 
     it('should reject request with mismatched redirect_uri', async () => {

@@ -31,7 +31,6 @@ import {
   getUIConfig,
   buildUIUrl,
   shouldUseBuiltinForms,
-  createConfigurationError,
   DEFAULT_UI_PATHS,
   type UIConfig,
   // Custom Redirect URIs (Authrim Extension)
@@ -105,6 +104,7 @@ const KEY_CACHE_TTL = 60000; // 60 seconds
 // This reduces ~133ms (2x KV reads) to near-zero for cached requests
 let cachedSettingsManager: ReturnType<typeof createSettingsManager> | null = null;
 let cachedSettingsTimestamp = 0;
+let cachedSettingsBinding: Env['SETTINGS'] | null = null;
 const SETTINGS_CACHE_TTL = 60000; // 60 seconds
 
 /**
@@ -113,9 +113,14 @@ const SETTINGS_CACHE_TTL = 60000; // 60 seconds
  */
 function getSettingsManager(env: Env): ReturnType<typeof createSettingsManager> {
   const now = Date.now();
+  const currentSettingsBinding = env.SETTINGS ?? null;
 
   // Return cached instance if valid
-  if (cachedSettingsManager && now - cachedSettingsTimestamp < SETTINGS_CACHE_TTL) {
+  if (
+    cachedSettingsManager &&
+    cachedSettingsBinding === currentSettingsBinding &&
+    now - cachedSettingsTimestamp < SETTINGS_CACHE_TTL
+  ) {
     return cachedSettingsManager;
   }
 
@@ -133,6 +138,7 @@ function getSettingsManager(env: Env): ReturnType<typeof createSettingsManager> 
   // Update cache
   cachedSettingsManager = settingsManager;
   cachedSettingsTimestamp = now;
+  cachedSettingsBinding = currentSettingsBinding;
 
   return settingsManager;
 }
@@ -147,7 +153,7 @@ const moduleLogger = createLogger().module('AUTHORIZE');
 type UIRedirectResult =
   | { type: 'redirect'; url: string }
   | { type: 'builtin'; fallbackPath: string }
-  | { type: 'error'; response: Response };
+  | { type: 'config_error'; reason: 'ui_not_configured' };
 
 /**
  * Determine UI redirect target based on conformance mode and configuration.
@@ -155,7 +161,7 @@ type UIRedirectResult =
  * Priority:
  * 1. Conformance mode enabled → use builtin forms
  * 2. UI configured → redirect to external UI
- * 3. Neither → return configuration error
+ * 3. Neither → signal configuration error
  *
  * @param env - Environment bindings
  * @param path - UI path key (e.g., 'login', 'consent', 'error')
@@ -209,19 +215,174 @@ async function getUIRedirectTarget(
   // Check global UI configuration (priority 3)
   const uiConfig = await getUIConfig(env);
   if (!uiConfig?.baseUrl) {
-    // No UI configured and conformance mode disabled
-    return {
-      type: 'error',
-      response: new Response(JSON.stringify(createConfigurationError()), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    };
+    return { type: 'config_error', reason: 'ui_not_configured' };
   }
 
   // Build UI URL with optional query params and tenant hint
   const url = buildUIUrl(uiConfig, path, queryParams, tenantHint);
   return { type: 'redirect', url };
+}
+
+function createLocalUiUnavailableResponse(
+  c: Context<{ Bindings: Env }>,
+  title = 'Authorization UI Unavailable',
+  description = 'Login UI is not configured. Please try again later or contact the administrator.'
+): Response {
+  return c.html(
+    `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #f4f5f7;
+      color: #1f2937;
+    }
+    .container {
+      background: white;
+      padding: 2rem;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      max-width: 520px;
+      width: calc(100% - 2rem);
+      border: 1px solid #e5e7eb;
+    }
+    h1 {
+      margin: 0 0 1rem 0;
+      font-size: 1.5rem;
+      color: #b42318;
+    }
+    p {
+      margin: 0 0 1rem 0;
+      line-height: 1.5;
+      color: #475467;
+    }
+    .error-code {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.75rem;
+      font-family: monospace;
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>${title}</h1>
+    <p>${description}</p>
+    <div class="error-code">
+      <strong>Error:</strong> temporarily_unavailable<br>
+      <strong>Description:</strong> Login UI is not configured
+    </div>
+  </div>
+</body>
+</html>`,
+    400
+  );
+}
+
+function createLocalAuthorizationErrorResponse(
+  c: Context<{ Bindings: Env }>,
+  error: string,
+  description: string,
+  title = 'Invalid Authorization Request'
+): Response {
+  return c.html(
+    `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #f4f5f7;
+      color: #1f2937;
+    }
+    .container {
+      background: white;
+      padding: 2rem;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      max-width: 520px;
+      width: calc(100% - 2rem);
+      border: 1px solid #e5e7eb;
+    }
+    h1 {
+      margin: 0 0 1rem 0;
+      font-size: 1.5rem;
+      color: #b42318;
+    }
+    p {
+      margin: 0 0 1rem 0;
+      line-height: 1.5;
+      color: #475467;
+    }
+    .error-code {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.75rem;
+      font-family: monospace;
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>${title}</h1>
+    <p>${description}</p>
+    <div class="error-code">
+      <strong>Error:</strong> ${error}<br>
+      <strong>Description:</strong> ${description}
+    </div>
+  </div>
+</body>
+</html>`,
+    400
+  );
+}
+
+async function cleanupFailedUIChallenge(
+  challengeStore: { deleteChallengeRpc(id: string): Promise<{ deleted: boolean }> },
+  challengeId: string,
+  challengeType: 'login' | 'reauth' | 'consent'
+): Promise<void> {
+  try {
+    const result = await challengeStore.deleteChallengeRpc(challengeId);
+    if (!result.deleted) {
+      moduleLogger.warn('Failed to delete challenge after UI configuration error', {
+        action: 'ui_config_challenge_cleanup_missing',
+        challengeId,
+        challengeType,
+      });
+    }
+  } catch (error) {
+    moduleLogger.warn(
+      'Failed to delete challenge after UI configuration error',
+      {
+        action: 'ui_config_challenge_cleanup_error',
+        challengeId,
+        challengeType,
+      },
+      error as Error
+    );
+  }
 }
 
 /**
@@ -1124,44 +1285,40 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // - unsupported_response_type: response_type value is not supported
   if (!response_type) {
     // response_type is missing - use invalid_request per RFC 6749
-    const uiTarget = await getUIRedirectTarget(c.env, 'error', {
-      error: 'invalid_request',
-      error_description: 'response_type is required',
-    });
-    if (uiTarget.type === 'redirect') {
-      return c.redirect(uiTarget.url, 302);
-    } else if (uiTarget.type === 'error') {
-      return uiTarget.response;
+    // This is a pre-redirect validation error, so respond from the AS directly.
+    if (await shouldUseBuiltinForms(c.env)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'response_type is required',
+        },
+        400
+      );
     }
-    // Builtin forms - return JSON error (no UI error page in conformance mode for this case)
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'response_type is required',
-      },
-      400
+    return createLocalAuthorizationErrorResponse(
+      c,
+      'invalid_request',
+      'response_type is required'
     );
   }
 
   const responseTypeValidation = validateResponseType(response_type);
   if (!responseTypeValidation.valid) {
     // response_type is present but unsupported - use unsupported_response_type
-    const uiTarget = await getUIRedirectTarget(c.env, 'error', {
-      error: 'unsupported_response_type',
-      error_description: responseTypeValidation.error || 'Unsupported response_type',
-    });
-    if (uiTarget.type === 'redirect') {
-      return c.redirect(uiTarget.url, 302);
-    } else if (uiTarget.type === 'error') {
-      return uiTarget.response;
+    // This is a pre-redirect validation error, so respond from the AS directly.
+    if (await shouldUseBuiltinForms(c.env)) {
+      return c.json(
+        {
+          error: 'unsupported_response_type',
+          error_description: responseTypeValidation.error,
+        },
+        400
+      );
     }
-    // Builtin forms - return JSON error
-    return c.json(
-      {
-        error: 'unsupported_response_type',
-        error_description: responseTypeValidation.error,
-      },
-      400
+    return createLocalAuthorizationErrorResponse(
+      c,
+      'unsupported_response_type',
+      responseTypeValidation.error || 'Unsupported response_type'
     );
   }
 
@@ -1198,12 +1355,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Fetch client metadata to validate redirect_uri (request-level cached)
   const clientMetadata = await getClientCached(c, c.env, validClientId);
   if (!clientMetadata) {
-    return c.json(
-      {
-        error: 'invalid_client',
-        error_description: 'Client authentication failed',
-      },
-      401
+    if (await shouldUseBuiltinForms(c.env)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'client_id is invalid',
+        },
+        400
+      );
+    }
+    return createLocalAuthorizationErrorResponse(
+      c,
+      'invalid_request',
+      'client_id is invalid',
+      'Invalid Client'
     );
   }
 
@@ -2358,8 +2523,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     );
     if (reauthTarget.type === 'redirect') {
       return c.redirect(reauthTarget.url, 302);
-    } else if (reauthTarget.type === 'error') {
-      return reauthTarget.response;
+    } else if (reauthTarget.type === 'config_error') {
+      await cleanupFailedUIChallenge(challengeStore, challengeId, 'reauth');
+      return sendError('temporarily_unavailable', 'Login UI is not configured');
     }
     // Builtin forms: redirect to local confirm endpoint
     return c.redirect(
@@ -2427,8 +2593,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     );
     if (loginTarget.type === 'redirect') {
       return c.redirect(loginTarget.url, 302);
-    } else if (loginTarget.type === 'error') {
-      return loginTarget.response;
+    } else if (loginTarget.type === 'config_error') {
+      await cleanupFailedUIChallenge(challengeStore, challengeId, 'login');
+      return sendError('temporarily_unavailable', 'Login UI is not configured');
     }
     // Builtin forms: redirect to local login endpoint
     return c.redirect(
@@ -2666,8 +2833,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         );
         if (consentTarget.type === 'redirect') {
           return c.redirect(consentTarget.url, 302);
-        } else if (consentTarget.type === 'error') {
-          return consentTarget.response;
+        } else if (consentTarget.type === 'config_error') {
+          await cleanupFailedUIChallenge(challengeStore, challengeId, 'consent');
+          return sendError('temporarily_unavailable', 'Login UI is not configured');
         }
         // Builtin forms: redirect to local consent endpoint
         return c.redirect(
@@ -2790,8 +2958,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             );
             if (consentTarget.type === 'redirect') {
               return c.redirect(consentTarget.url, 302);
-            } else if (consentTarget.type === 'error') {
-              return consentTarget.response;
+            } else if (consentTarget.type === 'config_error') {
+              await cleanupFailedUIChallenge(challengeStore, challengeId, 'consent');
+              return sendError('temporarily_unavailable', 'Login UI is not configured');
             }
             return c.redirect(
               `${consentTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,

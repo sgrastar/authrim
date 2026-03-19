@@ -2061,6 +2061,13 @@ export function getHtmlTemplate(
           <label for="base-domain" data-i18n="web.form.baseDomain">Base Domain (API Domain)</label>
           <input type="text" id="base-domain" placeholder="oidc.example.com" data-i18n-placeholder="web.form.baseDomainPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.baseDomainHint">Custom domain for Authrim. Leave empty to use workers.dev</small>
+          <label class="checkbox-item" id="multi-tenant-label" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; opacity: 0.5;">
+            <input type="checkbox" id="enable-multi-tenant" disabled>
+            <span data-i18n="web.form.multiTenantEnable">Enable multi-tenant mode</span>
+          </label>
+          <small id="multi-tenant-hint" style="color: var(--text-muted); margin-left: 1.5rem;" data-i18n="web.form.multiTenantHint">
+            Create tenant subdomains under your custom domain
+          </small>
           <div id="domain-check-row" style="display: none; margin-top: 0.5rem; align-items: center; gap: 0.5rem;">
             <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkZoneButton">
               Check Zone
@@ -2081,6 +2088,12 @@ export function getHtmlTemplate(
           <small id="workers-dev-note" style="color: #d97706; margin-left: 1.5rem; display: none;" data-i18n="web.form.nakedDomainWarning">
             ⚠️ Tenant subdomains require a custom domain. Workers.dev does not support wildcard subdomains.
           </small>
+          <div id="tenant-url-examples" class="issuer-preview" style="display: none; margin-top: 0.75rem;">
+            <div class="label" data-i18n="web.form.multiTenantExamples">Tenant URL Examples</div>
+            <div class="value" id="tenant-example-default-omitted" data-i18n="web.form.multiTenantExampleDefaultOmitted">Default tenant with omitted name: https://example.com</div>
+            <div class="value" id="tenant-example-default-included" data-i18n="web.form.multiTenantExampleDefaultIncluded">Default tenant with explicit name: https://default.example.com</div>
+            <div class="value" id="tenant-example-other" data-i18n="web.form.multiTenantExampleOther">Non-default tenant: https://{tenantName}.example.com</div>
+          </div>
         </div>
 
         <!-- Default Tenant (hidden when naked domain is checked or using workers.dev) -->
@@ -3152,6 +3165,201 @@ export function getHtmlTemplate(
       return div;
     }
 
+    async function resetServerState() {
+      try {
+        await api('/reset', { method: 'POST' });
+      } catch (error) {
+        console.warn('Failed to reset setup state:', error);
+      }
+    }
+
+    function resetLogToggle(toggleId, logId) {
+      const toggle = document.getElementById(toggleId);
+      const log = document.getElementById(logId);
+      if (toggle && log) {
+        log.classList.add('hidden');
+        toggle.classList.remove('open');
+        const label = toggle.querySelector('span:last-child');
+        if (label) {
+          label.textContent = t('web.provision.showLog');
+        }
+      }
+    }
+
+    function resetProgressContainer(prefix) {
+      const progressBar = document.getElementById(prefix + '-progress-bar');
+      const progressText = document.getElementById(prefix + '-progress-text');
+      const currentTaskEl = document.getElementById(prefix + '-current-task');
+      const spinner = document.getElementById(prefix + '-spinner');
+      const progressDiv = document.getElementById(prefix + '-progress-ui');
+
+      if (progressBar) progressBar.style.width = '0%';
+      if (spinner) spinner.style.display = 'block';
+      if (progressDiv) progressDiv.classList.add('hidden');
+
+      if (currentTaskEl) {
+        currentTaskEl.textContent = t('web.provision.initializing') || 'Initializing...';
+      }
+
+      if (progressText) {
+        progressText.textContent =
+          prefix === 'deploy' ? '0% complete' : '0 / 0 resources';
+      }
+    }
+
+    function resetDynamicCompleteSections() {
+      const dynamicSection = document.getElementById('complete-admin-setup-section');
+      if (dynamicSection) {
+        dynamicSection.remove();
+      }
+    }
+
+    function resetLoadConfigUI() {
+      loadedConfig = null;
+
+      const configFile = document.getElementById('config-file');
+      if (configFile) configFile.value = '';
+
+      document.getElementById('config-file-name').textContent = '';
+      document.getElementById('config-validation-error').classList.add('hidden');
+      document.getElementById('config-validation-success').classList.add('hidden');
+      document.getElementById('config-preview-section').classList.add('hidden');
+      document.getElementById('config-preview-content').textContent = '';
+      document.getElementById('btn-load-config').disabled = true;
+
+      const errorList = document.getElementById('config-validation-errors');
+      while (errorList.firstChild) {
+        errorList.removeChild(errorList.firstChild);
+      }
+    }
+
+    function resetConfigurationForm() {
+      setupMode = 'quick';
+      config = {};
+      provisioningCompleted = false;
+      domainZoneId = null;
+
+      document.getElementById('mode-quick').classList.remove('selected');
+      document.getElementById('mode-custom').classList.remove('selected');
+      document.getElementById('advanced-options').classList.add('hidden');
+
+      document.getElementById('env').value = '';
+      document.getElementById('base-domain').value = '';
+      document.getElementById('login-domain').value = '';
+      document.getElementById('admin-domain').value = '';
+      document.getElementById('tenant-name').value = 'default';
+      document.getElementById('tenant-display').value = '';
+      document.getElementById('primary-tenant').value = '';
+      document.getElementById('enable-multi-tenant').checked = false;
+      document.getElementById('naked-domain').checked = false;
+      document.getElementById('user-id-format').value = 'nanoid';
+
+      document.getElementById('comp-login-ui').checked = true;
+      document.getElementById('comp-admin-ui').checked = true;
+      document.getElementById('comp-saml').checked = false;
+      document.getElementById('comp-async').checked = false;
+      document.getElementById('comp-vc').checked = false;
+
+      document.getElementById('domain-check-row').style.display = 'none';
+      document.getElementById('domain-check-status').textContent = '';
+      document.getElementById('custom-domain-binding-row').style.display = 'none';
+      document.getElementById('custom-domain-binding').checked = true;
+
+      const envInput = document.getElementById('env');
+      const envError = document.getElementById('env-error');
+      envInput.style.borderColor = '';
+      if (envError) envError.style.display = 'none';
+
+      updateBaseDomainUI();
+
+      const loginDomainRow = document.getElementById('login-domain-row');
+      const adminDomainRow = document.getElementById('admin-domain-row');
+      loginDomainRow.style.opacity = '1';
+      adminDomainRow.style.opacity = '1';
+      document.getElementById('login-domain').disabled = false;
+      document.getElementById('admin-domain').disabled = false;
+
+      updatePreview();
+    }
+
+    function resetDatabaseAndEmailForm() {
+      document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
+        input.checked = input.value === 'auto';
+      });
+      document.querySelectorAll('input[name="db-pii-location"]').forEach((input) => {
+        input.checked = input.value === 'auto';
+      });
+
+      document.querySelectorAll('input[name="email-setup-choice"]').forEach((input) => {
+        input.checked = input.value === 'later';
+      });
+      document.getElementById('resend-config-form').classList.add('hidden');
+      document.getElementById('resend-api-key').value = '';
+      document.getElementById('email-from-address').value = '';
+      document.getElementById('email-from-name').value = '';
+      document.getElementById('btn-continue-email').disabled = false;
+      document.getElementById('btn-continue-email').textContent = t('web.btn.continue');
+    }
+
+    function resetProvisionSection() {
+      if (provisionPollInterval) {
+        clearInterval(provisionPollInterval);
+        provisionPollInterval = null;
+      }
+
+      document.getElementById('provision-status').textContent = t('web.provision.ready');
+      document.getElementById('provision-status').className = 'status-badge status-pending';
+      document.getElementById('resource-preview').classList.remove('hidden');
+      document.getElementById('keys-saved-info').classList.add('hidden');
+      document.getElementById('keys-path').textContent = '';
+      document.getElementById('provision-output').textContent = '';
+      document.getElementById('btn-provision').disabled = false;
+      resetProgressContainer('provision');
+      resetLogToggle('provision-log-toggle', 'provision-log');
+      updateProvisionButtons();
+    }
+
+    function resetDeploySection() {
+      document.getElementById('deploy-status').textContent = t('web.provision.ready');
+      document.getElementById('deploy-status').className = 'status-badge status-pending';
+      document.getElementById('deploy-ready-text').classList.remove('hidden');
+      document.getElementById('deploy-output').textContent = '';
+      document.getElementById('btn-deploy').disabled = false;
+      document.getElementById('btn-deploy').classList.remove('hidden');
+      resetProgressContainer('deploy');
+      resetLogToggle('deploy-log-toggle', 'deploy-log');
+    }
+
+    function resetCompleteSection() {
+      document.getElementById('urls').textContent = '';
+      resetDynamicCompleteSections();
+    }
+
+    function resetDeleteSection() {
+      document.getElementById('delete-output').textContent = '';
+      document.getElementById('delete-result').classList.add('hidden');
+      document.getElementById('delete-result').textContent = '';
+      document.getElementById('delete-options-section').classList.remove('hidden');
+      document.getElementById('btn-confirm-delete').classList.remove('hidden');
+      document.getElementById('btn-confirm-delete').disabled = false;
+      resetProgressContainer('delete');
+      resetLogToggle('delete-log-toggle', 'delete-log');
+    }
+
+    async function resetSetupFlowState() {
+      await resetServerState();
+      resetLoadConfigUI();
+      resetConfigurationForm();
+      resetDatabaseAndEmailForm();
+      resetProvisionSection();
+      resetDeploySection();
+      resetCompleteSection();
+      resetDeleteSection();
+      selectedEnvForDetail = null;
+      selectedEnvForDelete = null;
+      setStep(1);
+    }
+
     // Check prerequisites
     async function checkPrerequisites() {
       const prereqStatus = document.getElementById('prereq-status');
@@ -3273,7 +3481,8 @@ export function getHtmlTemplate(
     }
 
     // Top menu handlers
-    document.getElementById('menu-new-setup').addEventListener('click', () => {
+    document.getElementById('menu-new-setup').addEventListener('click', async () => {
+      await resetSetupFlowState();
       showSection('mode');
     });
 
@@ -3449,6 +3658,7 @@ export function getHtmlTemplate(
       document.getElementById('admin-domain').value = stripProtocol(config.adminUiDomain);
       document.getElementById('tenant-name').value = config.tenant?.name || 'default';
       document.getElementById('tenant-display').value = config.tenant?.displayName || 'Default Tenant';
+      document.getElementById('enable-multi-tenant').checked = config.tenant?.multiTenant === true;
       document.getElementById('naked-domain').checked = config.tenant?.nakedDomain || false;
       if (document.getElementById('user-id-format')) {
         document.getElementById('user-id-format').value = config.tenant?.userIdFormat || 'nanoid';
@@ -3456,6 +3666,8 @@ export function getHtmlTemplate(
       if (document.getElementById('primary-tenant')) {
         document.getElementById('primary-tenant').value = config.tenant?.primaryTenant || '';
       }
+
+      updateBaseDomainUI();
 
       // Set component checkboxes
       if (document.getElementById('comp-login-ui')) {
@@ -3499,8 +3711,9 @@ export function getHtmlTemplate(
     function updatePreview() {
       const env = document.getElementById('env').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '{env}';
       const baseDomain = document.getElementById('base-domain').value.trim();
+      const multiTenantEnabled = baseDomain && document.getElementById('enable-multi-tenant').checked;
       const nakedDomain = document.getElementById('naked-domain').checked;
-      const tenantName = document.getElementById('tenant-name').value.trim();
+      const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
 
@@ -3532,18 +3745,35 @@ export function getHtmlTemplate(
       // Note: Tenant subdomain is only supported with custom domains, NOT workers.dev
       // Workers.dev doesn't support wildcard subdomains, so tenant prefix cannot be used
 
-      if (baseDomain) {
-        // Custom domain - tenant prefix can be used
+      if (multiTenantEnabled) {
         if (nakedDomain) {
           document.getElementById('preview-issuer').textContent = 'https://' + baseDomain;
         } else {
-          // Multi-tenant: show placeholder or actual tenant name
-          const tenantDisplay = tenantName || '{tenant}';
-          document.getElementById('preview-issuer').textContent = 'https://' + tenantDisplay + '.' + baseDomain;
+          document.getElementById('preview-issuer').textContent =
+            'https://' + tenantName + '.' + baseDomain;
         }
+      } else if (baseDomain) {
+        document.getElementById('preview-issuer').textContent = 'https://' + baseDomain;
       } else {
         // Workers.dev - no tenant prefix (wildcard subdomains not supported)
         document.getElementById('preview-issuer').textContent = 'https://' + workersDomain;
+      }
+
+      const examples = document.getElementById('tenant-url-examples');
+      if (multiTenantEnabled) {
+        examples.style.display = 'block';
+        document.getElementById('tenant-example-default-omitted').textContent =
+          t('web.form.multiTenantExampleDefaultOmitted', { url: 'https://' + baseDomain });
+        document.getElementById('tenant-example-default-included').textContent =
+          t('web.form.multiTenantExampleDefaultIncluded', {
+            url: 'https://' + tenantName + '.' + baseDomain,
+          });
+        document.getElementById('tenant-example-other').textContent =
+          t('web.form.multiTenantExampleOther', {
+            url: 'https://{tenantName}.' + baseDomain,
+          });
+      } else {
+        examples.style.display = 'none';
       }
 
       // Login UI - check if component is enabled (in custom mode)
@@ -3578,7 +3808,7 @@ export function getHtmlTemplate(
     }
 
     // Attach event listeners to all inputs
-    ['env', 'base-domain', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain', 'comp-login-ui', 'comp-admin-ui', 'comp-saml', 'comp-async', 'comp-vc'].forEach(id => {
+    ['env', 'base-domain', 'enable-multi-tenant', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain', 'comp-login-ui', 'comp-admin-ui', 'comp-saml', 'comp-async', 'comp-vc'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener('input', updatePreview);
@@ -3615,6 +3845,8 @@ export function getHtmlTemplate(
     // Update UI based on base domain presence
     function updateBaseDomainUI() {
       const baseDomain = document.getElementById('base-domain').value.trim();
+      const multiTenantCheckbox = document.getElementById('enable-multi-tenant');
+      const multiTenantLabel = document.getElementById('multi-tenant-label');
       const nakedDomainCheckbox = document.getElementById('naked-domain');
       const nakedDomainLabel = document.getElementById('naked-domain-label');
       const nakedDomainHint = document.getElementById('naked-domain-hint');
@@ -3624,23 +3856,43 @@ export function getHtmlTemplate(
       const tenantNameInput = document.getElementById('tenant-name');
       const primaryTenantRow = document.getElementById('primary-tenant-row');
       const primaryTenantInput = document.getElementById('primary-tenant');
+      const multiTenantEnabled = baseDomain && multiTenantCheckbox.checked;
 
       if (baseDomain) {
-        // Custom domain - enable tenant subdomain options
-        nakedDomainCheckbox.disabled = false;
-        nakedDomainLabel.style.opacity = '1';
-        nakedDomainHint.style.display = 'block';
+        multiTenantCheckbox.disabled = false;
+        multiTenantLabel.style.opacity = '1';
         workersDevNote.style.display = 'none';
-        tenantWorkersNote.style.display = 'none';
-        tenantNameInput.disabled = false;
-        tenantNameInput.readOnly = false;
-        // Show tenant fields if naked domain is not checked
-        if (!nakedDomainCheckbox.checked) {
-          tenantFields.style.display = 'block';
+        if (multiTenantEnabled) {
+          nakedDomainCheckbox.disabled = false;
+          nakedDomainLabel.style.opacity = '1';
+          nakedDomainHint.style.display = 'block';
+          tenantWorkersNote.style.display = 'none';
+          tenantNameInput.disabled = false;
+          tenantNameInput.readOnly = false;
+          if (!nakedDomainCheckbox.checked) {
+            tenantFields.style.display = 'block';
+          } else {
+            tenantFields.style.display = 'none';
+          }
+          primaryTenantRow.style.display = nakedDomainCheckbox.checked ? 'block' : 'none';
+        } else {
+          nakedDomainCheckbox.disabled = true;
+          nakedDomainCheckbox.checked = false;
+          nakedDomainLabel.style.opacity = '0.5';
+          nakedDomainHint.style.display = 'none';
+          tenantWorkersNote.style.display = 'none';
+          tenantFields.style.display = 'none';
+          tenantNameInput.value = 'default';
+          tenantNameInput.disabled = true;
+          tenantNameInput.readOnly = true;
+          primaryTenantInput.value = '';
+          primaryTenantRow.style.display = 'none';
         }
-        primaryTenantRow.style.display = nakedDomainCheckbox.checked ? 'block' : 'none';
       } else {
         // Workers.dev - tenant subdomains not supported
+        multiTenantCheckbox.checked = false;
+        multiTenantCheckbox.disabled = true;
+        multiTenantLabel.style.opacity = '0.5';
         nakedDomainCheckbox.disabled = true;
         nakedDomainCheckbox.checked = false;
         nakedDomainLabel.style.opacity = '0.5';
@@ -3670,6 +3922,17 @@ export function getHtmlTemplate(
         document.getElementById('domain-check-status').textContent = '';
         document.getElementById('custom-domain-binding-row').style.display = 'none';
       }
+    });
+
+    document.getElementById('enable-multi-tenant').addEventListener('change', (e) => {
+      const baseDomainInput = document.getElementById('base-domain');
+      if (e.target.checked) {
+        baseDomainInput.placeholder = 'test.example.com';
+      } else {
+        baseDomainInput.placeholder = 'oidc.example.com';
+      }
+      updateBaseDomainUI();
+      updatePreview();
     });
 
     // Check Domain button handler
@@ -3739,7 +4002,9 @@ export function getHtmlTemplate(
       } else {
         tenantFields.style.display = 'block';
         primaryTenantRow.style.display = 'none';
-        baseDomainInput.placeholder = 'oidc.example.com';
+        baseDomainInput.placeholder = document.getElementById('enable-multi-tenant').checked
+          ? 'test.example.com'
+          : 'oidc.example.com';
       }
       updatePreview();
     });
@@ -3816,13 +4081,15 @@ export function getHtmlTemplate(
 
       const baseDomain = document.getElementById('base-domain').value.trim();
       const hasCustomApiDomain = !!baseDomain;
-      const nakedDomain = hasCustomApiDomain && document.getElementById('naked-domain').checked;
-      const tenantName = hasCustomApiDomain
+      const multiTenantEnabled =
+        hasCustomApiDomain && document.getElementById('enable-multi-tenant').checked;
+      const nakedDomain = multiTenantEnabled && document.getElementById('naked-domain').checked;
+      const tenantName = multiTenantEnabled
         ? (document.getElementById('tenant-name').value.trim() || 'default')
         : 'default';
       const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Default Tenant';
       const userIdFormat = document.getElementById('user-id-format').value || 'nanoid';
-      const primaryTenant = hasCustomApiDomain && nakedDomain
+      const primaryTenant = multiTenantEnabled && nakedDomain
         ? (document.getElementById('primary-tenant').value.trim() || undefined)
         : undefined;
       const loginDomain = document.getElementById('login-domain').value.trim();
@@ -3836,8 +4103,8 @@ export function getHtmlTemplate(
         tenant: {
           name: tenantName,
           displayName: tenantDisplayName,
-          multiTenant: hasCustomApiDomain,
-          baseDomain: hasCustomApiDomain ? baseDomain : undefined,
+          multiTenant: multiTenantEnabled,
+          baseDomain: multiTenantEnabled ? baseDomain : undefined,
           nakedDomain: nakedDomain,
           userIdFormat: userIdFormat,
           primaryTenant: primaryTenant,
@@ -4318,8 +4585,7 @@ export function getHtmlTemplate(
           // Note: Tenant subdomain only works with custom domains, NOT workers.dev
           let apiUrl;
           if (config.apiDomain) {
-            // Custom domain - add tenant prefix if not naked domain
-            if (config.tenant && config.tenant.name && !config.tenant.nakedDomain) {
+            if (config.tenant?.multiTenant && config.tenant.name && !config.tenant.nakedDomain) {
               apiUrl = 'https://' + config.tenant.name + '.' + config.apiDomain;
             } else {
               apiUrl = 'https://' + config.apiDomain;
@@ -4409,8 +4675,7 @@ export function getHtmlTemplate(
       // Note: Tenant subdomain only works with custom domains, NOT workers.dev
       let apiUrl;
       if (config.apiDomain) {
-        // Custom domain - add tenant prefix if not naked domain
-        if (config.tenant && config.tenant.name && !config.tenant.nakedDomain) {
+        if (config.tenant?.multiTenant && config.tenant.name && !config.tenant.nakedDomain) {
           apiUrl = 'https://' + config.tenant.name + '.' + config.apiDomain;
         } else {
           apiUrl = 'https://' + config.apiDomain;
@@ -4447,7 +4712,10 @@ export function getHtmlTemplate(
       }
 
       // Create Admin Setup section (separate, prominent box)
+      resetDynamicCompleteSections();
+
       const adminSetupSection = document.createElement('div');
+      adminSetupSection.id = 'complete-admin-setup-section';
       adminSetupSection.style.cssText = 'margin-top: 1.5rem; padding: 1.25rem; background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%); border: 2px solid var(--primary); border-radius: 12px;';
 
       if (result && result.setupUrl) {
@@ -4809,9 +5077,9 @@ export function getHtmlTemplate(
     document.getElementById('btn-save-config-complete').addEventListener('click', saveConfigToFile);
 
     // Back to main button (from complete screen)
-    document.getElementById('btn-back-to-main').addEventListener('click', () => {
+    document.getElementById('btn-back-to-main').addEventListener('click', async () => {
+      await resetSetupFlowState();
       showSection('topMenu');
-      setStep(1);
     });
 
     // =============================================================================
@@ -5032,7 +5300,7 @@ export function getHtmlTemplate(
       return value.endsWith('/') ? value.slice(0, -1) : value;
     }
 
-    function createEnvDetailUrlRow(label, url, description) {
+    function createEnvDetailUrlRow(label, value, description, href) {
       const row = document.createElement('div');
       row.style.cssText = 'display: flex; flex-direction: column; gap: 0.35rem; padding: 0.875rem 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;';
 
@@ -5044,21 +5312,27 @@ export function getHtmlTemplate(
       labelEl.textContent = label;
       top.appendChild(labelEl);
 
-      const open = document.createElement('a');
-      open.href = url;
-      open.target = '_blank';
-      open.rel = 'noopener noreferrer';
-      open.className = 'btn-secondary';
-      open.style.cssText = 'padding: 0.35rem 0.75rem; font-size: 0.8rem; white-space: nowrap;';
-      open.textContent = 'Open';
-      top.appendChild(open);
+      if (href) {
+        const open = document.createElement('a');
+        open.href = href;
+        open.target = '_blank';
+        open.rel = 'noopener noreferrer';
+        open.className = 'btn-secondary';
+        open.style.cssText = 'padding: 0.35rem 0.75rem; font-size: 0.8rem; white-space: nowrap;';
+        open.textContent = 'Open';
+        top.appendChild(open);
+      }
 
-      const urlEl = document.createElement('a');
-      urlEl.href = url;
-      urlEl.target = '_blank';
-      urlEl.rel = 'noopener noreferrer';
-      urlEl.style.cssText = 'font-family: var(--font-mono); font-size: 0.85rem; color: var(--primary); word-break: break-all;';
-      urlEl.textContent = url;
+      const urlEl = href ? document.createElement('a') : document.createElement('div');
+      if (href) {
+        urlEl.href = href;
+        urlEl.target = '_blank';
+        urlEl.rel = 'noopener noreferrer';
+        urlEl.style.cssText = 'font-family: var(--font-mono); font-size: 0.85rem; color: var(--primary); word-break: break-all;';
+      } else {
+        urlEl.style.cssText = 'font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); word-break: break-all;';
+      }
+      urlEl.textContent = value;
 
       row.appendChild(top);
       row.appendChild(urlEl);
@@ -5073,7 +5347,12 @@ export function getHtmlTemplate(
       return row;
     }
 
-    function buildEnvDetailUrls(envName, config) {
+    function hasPagesProject(env, projectName) {
+      return (env.pages || []).some((page) => page && page.name === projectName);
+    }
+
+    function buildEnvDetailUrls(env, config) {
+      const envName = env.env;
       const workersDomain = workersSubdomain
         ? envName + '-ar-router.' + workersSubdomain + '.workers.dev'
         : envName + '-ar-router.workers.dev';
@@ -5081,7 +5360,7 @@ export function getHtmlTemplate(
 
       const tenant = config?.tenant || {};
       const tenantName = tenant.name || 'default';
-      const baseDomain = tenant.baseDomain;
+      const baseDomain = tenant.multiTenant ? tenant.baseDomain : undefined;
       const nakedDomain = tenant.nakedDomain === true;
 
       let issuerUrl = fallbackIssuer;
@@ -5093,27 +5372,40 @@ export function getHtmlTemplate(
         issuerUrl = stripTrailingSlash(config.urls.api.custom);
       }
 
-      const loginBaseUrl = stripTrailingSlash(
-        config?.urls?.loginUi?.custom || 'https://' + envName + '-ar-login-ui.pages.dev'
-      );
-      const adminBaseUrl = stripTrailingSlash(
-        config?.urls?.adminUi?.custom || 'https://' + envName + '-ar-admin-ui.pages.dev'
-      );
+      const loginProjectName = envName + '-ar-login-ui';
+      const adminProjectName = envName + '-ar-admin-ui';
+      const loginUiDeployed = hasPagesProject(env, loginProjectName);
+      const adminUiDeployed = hasPagesProject(env, adminProjectName);
+
+      const loginBaseUrl = loginUiDeployed
+        ? stripTrailingSlash(
+            config?.urls?.loginUi?.custom || 'https://' + envName + '-ar-login-ui.pages.dev'
+          )
+        : null;
+      const adminBaseUrl = adminUiDeployed
+        ? stripTrailingSlash(
+            config?.urls?.adminUi?.custom || 'https://' + envName + '-ar-admin-ui.pages.dev'
+          )
+        : null;
+      const notDeployed = t('web.envDetail.notDeployed') || 'Not Deployed';
 
       return [
         {
           label: 'Issuer',
-          url: issuerUrl,
+          value: issuerUrl,
+          href: issuerUrl,
           description: 'Canonical OIDC issuer URL',
         },
         {
           label: 'Login UI',
-          url: loginBaseUrl + '/login',
+          value: loginBaseUrl ? loginBaseUrl + '/login' : notDeployed,
+          href: loginBaseUrl ? loginBaseUrl + '/login' : null,
           description: 'Login screen entry point',
         },
         {
           label: 'Admin UI',
-          url: adminBaseUrl + '/admin/info',
+          value: adminBaseUrl ? adminBaseUrl + '/admin/info' : notDeployed,
+          href: adminBaseUrl ? adminBaseUrl + '/admin/info' : null,
           description: 'Admin console entry point',
         },
       ];
@@ -5133,9 +5425,9 @@ export function getHtmlTemplate(
         console.warn('Failed to load config for env detail URLs:', error);
       }
 
-      const urls = buildEnvDetailUrls(env.env, config);
+      const urls = buildEnvDetailUrls(env, config);
       for (const item of urls) {
-        listEl.appendChild(createEnvDetailUrlRow(item.label, item.url, item.description));
+        listEl.appendChild(createEnvDetailUrlRow(item.label, item.value, item.description, item.href));
       }
     }
 
@@ -5880,7 +6172,11 @@ export function getHtmlTemplate(
           result.appendChild(createAlert('success', '✅ Environment deleted successfully!'));
 
           // Refresh environment list after a short delay
-          setTimeout(() => {
+          setTimeout(async () => {
+            await resetServerState();
+            resetDeleteSection();
+            selectedEnvForDelete = null;
+            selectedEnvForDetail = null;
             loadEnvironments();
             showSection('envList');
           }, 2000);

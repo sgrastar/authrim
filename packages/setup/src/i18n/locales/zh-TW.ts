@@ -185,6 +185,12 @@ const zhTW: Translations = {
   'domain.enterDomains': '輸入自訂網域（留空以使用 Cloudflare 預設值）',
   'domain.singleTenantNote': '在單租戶模式中，發行者 URL = API 網域',
   'domain.usingWorkersDev': '（使用 Cloudflare workers.dev 網域）',
+  'web.form.multiTenantEnable': '啟用多租戶模式',
+  'web.form.multiTenantHint': '在您的自訂網域下建立租戶子網域',
+  'web.form.multiTenantExamples': '租戶 URL 範例',
+  'web.form.multiTenantExampleDefaultOmitted': '省略預設租戶名稱時：{{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': '包含預設租戶名稱時：{{url}}',
+  'web.form.multiTenantExampleOther': '非預設租戶時：{{url}}',
 
   // Database
   'db.title': '資料庫配置',

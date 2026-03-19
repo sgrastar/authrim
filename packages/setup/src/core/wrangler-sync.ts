@@ -82,6 +82,60 @@ function normalizeToml(content: string): string {
     .join('\n');
 }
 
+function isTargetEnvLine(line: string, env: string): boolean {
+  const trimmed = line.trim();
+  return (
+    trimmed === `# Environment: ${env}` ||
+    trimmed === `[env.${env}]` ||
+    trimmed.startsWith(`[env.${env}.`) ||
+    trimmed.startsWith(`[[env.${env}.`)
+  );
+}
+
+function isOtherEnvBoundary(line: string, env: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('# Environment: ')) {
+    return trimmed !== `# Environment: ${env}`;
+  }
+
+  const envHeader = trimmed.match(/^\[\[?env\.([a-z0-9-]+)/);
+  return !!envHeader && envHeader[1] !== env;
+}
+
+export function removeEnvironmentSectionFromToml(
+  content: string,
+  env: string
+): { content: string; removed: boolean } {
+  const lines = content.split('\n');
+  const kept: string[] = [];
+  let skipping = false;
+  let removed = false;
+
+  for (const line of lines) {
+    if (!skipping && isTargetEnvLine(line, env)) {
+      skipping = true;
+      removed = true;
+      continue;
+    }
+
+    if (skipping) {
+      if (isOtherEnvBoundary(line, env)) {
+        skipping = false;
+        kept.push(line);
+      }
+      continue;
+    }
+
+    kept.push(line);
+  }
+
+  const normalized = kept.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+  return {
+    content: normalized.length > 0 ? normalized + '\n' : '',
+    removed,
+  };
+}
+
 /**
  * Get the master wrangler.toml path for a component
  */

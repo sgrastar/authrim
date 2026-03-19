@@ -987,12 +987,32 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Validate client authentication (using HTTP Basic Auth or client assertion)
+    // Validate client authentication (currently HTTP Basic only)
     // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
     const authHeader = c.req.header('Authorization');
     let clientId: string | undefined;
 
-    if (authHeader?.startsWith('Basic ')) {
+    if (!authHeader) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Client authentication is required',
+        },
+        401
+      );
+    }
+
+    if (!authHeader.startsWith('Basic ')) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Unsupported client authentication method',
+        },
+        401
+      );
+    }
+
+    if (authHeader.startsWith('Basic ')) {
       // HTTP Basic Authentication
       let id: string;
       let secret: string;
@@ -1045,10 +1065,6 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
 
       clientId = id;
-    } else {
-      // For now, allow unauthenticated back-channel logout for testing
-      // In production, this should require proper client authentication
-      log.warn('Back-channel logout called without client authentication');
     }
 
     // Verify logout token

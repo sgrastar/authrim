@@ -107,10 +107,20 @@
 				{@render urlRow('Tenant Name', info.tenant_name, 'tenant_name')}
 				{@render urlRow('Issuer', info.issuer, 'issuer', info.issuer)}
 				{@render urlRow('API Base URL', info.api_url, 'api_url', info.api_url)}
-				{#if info.components.login_ui && info.login_ui_url}
-					{@render urlRow('Login UI URL', info.login_ui_url, 'login_ui_url', info.login_ui_url)}
+				{#if info.components.login_ui}
+					{@render urlRow('Built-in Login UI', 'Deployed', 'login_ui_deployment')}
 				{:else}
-					{@render urlRow('Login UI', 'Not deployed', 'login_ui_status')}
+					{@render urlRow('Built-in Login UI', 'Not deployed', 'login_ui_deployment')}
+				{/if}
+				{#if info.global_login_ui_url}
+					{@render urlRow(
+						'Global Login UI URL',
+						info.global_login_ui_url,
+						'global_login_ui_url',
+						info.global_login_ui_url
+					)}
+				{:else}
+					{@render urlRow('Global Login UI URL', 'Not configured', 'global_login_ui_url_status')}
 				{/if}
 				{#if info.components.admin_ui && info.admin_ui_url}
 					{@render urlRow('Admin UI URL', info.admin_ui_url, 'admin_ui_url', info.admin_ui_url)}

@@ -94,7 +94,8 @@ export function resolveUiDeploymentSettings(
   const apiOrigin = new URL(apiBaseUrl);
   const uiOrigin = new URL(uiUrl);
 
-  const configuredBaseDomain = normalizeHostname(config.tenant?.baseDomain);
+  const configuredBaseDomain =
+    config.tenant?.multiTenant === true ? normalizeHostname(config.tenant?.baseDomain) : undefined;
   const sameOrigin = apiOrigin.origin === uiOrigin.origin;
   const sameConfiguredSite =
     isWithinBaseDomain(apiOrigin.hostname, configuredBaseDomain) &&

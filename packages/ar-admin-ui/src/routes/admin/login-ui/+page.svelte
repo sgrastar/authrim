@@ -3,6 +3,7 @@
 	import { getTenantInfo } from '$lib/api/admin-info';
 	import {
 		adminSettingsAPI,
+		adminUiConfigAPI,
 		scopedSettingsAPI,
 		isInternalSetting,
 		SettingsConflictError,
@@ -12,6 +13,7 @@
 		type SettingMetaItem,
 		type UIPatch,
 		type SettingSource,
+		type UIConfigResponse,
 		type ScopeContext
 	} from '$lib/api/admin-settings';
 	import { InheritanceIndicator } from '$lib/components/admin';
@@ -27,8 +29,33 @@
 	let saving = $state(false);
 	let error = $state('');
 	let successMessage = $state('');
-	let loginUiDeployed = $state(true);
+	let uiConfigError = $state('');
+	let uiConfigSuccessMessage = $state('');
+	let uiConfigSaving = $state(false);
+	let loginUiAvailable = $state(true);
+	let loginUiConfigured = $state(false);
 	let loginUiStatusMessage = $state('');
+	let uiConfig = $state<UIConfigResponse | null>(null);
+	type UIPathKey = keyof UIConfigResponse['config']['paths'];
+	type UIConfigForm = {
+		baseUrl: string;
+		paths: Record<UIPathKey, string>;
+	};
+	let uiConfigForm = $state<UIConfigForm>({
+		baseUrl: '',
+		paths: {
+			login: '',
+			consent: '',
+			reauth: '',
+			error: '',
+			device: '',
+			deviceAuthorize: '',
+			logoutComplete: '',
+			loggedOut: '',
+			register: ''
+		}
+	});
+	let initialUiConfigForm = $state<UIConfigForm | null>(null);
 
 	// Track pending changes
 	let pendingPatches = $state<UIPatch[]>([]);
@@ -36,11 +63,15 @@
 	// Get current scope context from store
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
-	let canEditLoginUi = $derived(canEdit && loginUiDeployed);
+	let canEditGlobalUiConfig = $derived(canEdit);
+	let canEditLoginUiSettings = $derived(canEdit && loginUiAvailable && loginUiConfigured);
 	let currentLevel = $derived(settingsContext.currentLevel);
 
 	// Derived: Check if there are unsaved changes
 	const hasChanges = $derived(pendingPatches.length > 0);
+	const hasUiConfigChanges = $derived(
+		initialUiConfigForm ? JSON.stringify(uiConfigForm) !== JSON.stringify(initialUiConfigForm) : false
+	);
 
 	// Load data on mount
 	onMount(async () => {
@@ -64,14 +95,29 @@
 	async function loadData() {
 		loading = true;
 		error = '';
+		uiConfigError = '';
 		pendingPatches = [];
 
 		try {
 			const tenantInfo = await getTenantInfo(scopeContext.tenantId ?? 'default');
-			loginUiDeployed = !!tenantInfo.login_ui_url;
-			loginUiStatusMessage = loginUiDeployed
-				? ''
-				: 'Login UI is not deployed for this environment. Settings are read-only.';
+			const uiConfigResult = await adminUiConfigAPI.get();
+			const nextUiConfigForm: UIConfigForm = {
+				baseUrl: uiConfigResult.config.baseUrl ?? '',
+				paths: { ...uiConfigResult.config.paths }
+			};
+			uiConfig = uiConfigResult;
+			uiConfigForm = nextUiConfigForm;
+			initialUiConfigForm = {
+				baseUrl: nextUiConfigForm.baseUrl,
+				paths: { ...nextUiConfigForm.paths }
+			};
+			loginUiAvailable = tenantInfo.components.login_ui;
+			loginUiConfigured = !!uiConfigResult.config.baseUrl;
+			loginUiStatusMessage = !loginUiAvailable
+				? 'Built-in Login UI is not deployed for this environment. You can still configure a global Login UI URL below.'
+				: loginUiConfigured
+					? ''
+					: 'Global Login UI URL is not configured yet. Configure it below.';
 
 			// Fetch meta
 			const metaResult = await adminSettingsAPI.getMeta(CATEGORY);
@@ -112,7 +158,7 @@
 
 	// Check if a setting is locked
 	function isSettingLocked(key: string, settingMeta: SettingMetaItem): boolean {
-		if (!canEditLoginUi) return true;
+		if (!canEditLoginUiSettings) return true;
 		if (isLockedByEnv(key)) return true;
 		if (isInternalSetting(settingMeta)) return true;
 		return false;
@@ -137,16 +183,47 @@
 		pendingPatches = [];
 	}
 
+	function discardUiConfigChanges() {
+		if (!initialUiConfigForm) return;
+		uiConfigForm = {
+			baseUrl: initialUiConfigForm.baseUrl,
+			paths: { ...initialUiConfigForm.paths }
+		};
+		uiConfigError = '';
+	}
+
+	async function saveUiConfig() {
+		if (!canEditGlobalUiConfig) {
+			uiConfigError = 'You do not have permission to edit Login UI configuration.';
+			return;
+		}
+
+		uiConfigSaving = true;
+		uiConfigError = '';
+		uiConfigSuccessMessage = '';
+
+		try {
+			await adminUiConfigAPI.update({
+				baseUrl: uiConfigForm.baseUrl.trim() || null,
+				paths: { ...uiConfigForm.paths }
+			});
+			uiConfigSuccessMessage = 'Global Login UI configuration updated.';
+			await loadData();
+			setTimeout(() => {
+				uiConfigSuccessMessage = '';
+			}, 3000);
+		} catch (err) {
+			uiConfigError = err instanceof Error ? err.message : 'Failed to update UI config';
+		} finally {
+			uiConfigSaving = false;
+		}
+	}
+
 	// Save changes
 	async function saveChanges() {
 		if (!settings || pendingPatches.length === 0) return;
 
-		if (!loginUiDeployed) {
-			error = 'Login UI is not deployed for this environment.';
-			return;
-		}
-
-		if (!canEdit) {
+		if (!canEditLoginUiSettings) {
 			error = 'You do not have permission to edit settings at this scope level';
 			return;
 		}
@@ -201,22 +278,129 @@
 <div class="settings-detail-page">
 	<!-- Header -->
 	<div class="settings-detail-header">
-		<div class="settings-header-row">
-			<h1 class="page-title">Login UI</h1>
+			<div class="settings-header-row">
+				<h1 class="page-title">Login UI</h1>
 			<!-- Scope Badge -->
 			<span class="scope-badge {currentLevel}">
 				{currentLevel === 'platform' ? 'Platform' : currentLevel === 'tenant' ? 'Tenant' : 'Client'}
 			</span>
-			{#if !canEditLoginUi}
-				<span class="readonly-badge">Read-only</span>
-			{/if}
-		</div>
+				{#if !canEditGlobalUiConfig && !canEditLoginUiSettings}
+					<span class="readonly-badge">Read-only</span>
+				{/if}
+			</div>
 		<p class="page-description">Customize the appearance of the login page for end users.</p>
 	</div>
 
-	{#if !loginUiDeployed && !loading}
+	{#if !loginUiAvailable && !loading}
 		<div class="alert alert-warning">
 			{loginUiStatusMessage}
+		</div>
+	{:else if !loginUiConfigured && !loading}
+		<div class="alert alert-warning">
+			{loginUiStatusMessage}
+			Customization settings remain read-only until the global UI URL is configured.
+		</div>
+	{/if}
+
+	{#if uiConfigError}
+		<div class="alert alert-error">{uiConfigError}</div>
+	{/if}
+
+	{#if uiConfigSuccessMessage}
+		<div class="alert alert-success">{uiConfigSuccessMessage}</div>
+	{/if}
+
+	{#if !loading && uiConfig}
+		<div class="settings-form-card">
+			<div class="ui-config-header">
+				<div>
+					<h2 class="section-title">Global UI Configuration</h2>
+					<p class="section-description">
+						Configure the global Login UI base URL and page paths used by the authorization flow.
+					</p>
+				</div>
+				<span class="config-source-badge">Source: {uiConfig.source}</span>
+			</div>
+
+			<div class="setting-item" class:modified={hasUiConfigChanges}>
+				<div class="setting-item-content">
+					<div class="setting-info">
+						<div class="setting-label-row">
+							<label for="ui-config-base-url" class="setting-label">Global UI Base URL</label>
+							{#if hasUiConfigChanges}
+								<span class="setting-modified">Modified</span>
+							{/if}
+						</div>
+						<p class="setting-description">
+							Base URL for the shared Login UI deployment. Must use HTTPS except localhost.
+						</p>
+					</div>
+
+					<div class="setting-control">
+						<input
+								type="url"
+								id="ui-config-base-url"
+								value={uiConfigForm.baseUrl}
+								disabled={!canEditGlobalUiConfig}
+								placeholder="https://single-ar-login-ui.pages.dev"
+							oninput={(e) => {
+								uiConfigForm = {
+									...uiConfigForm,
+									baseUrl: e.currentTarget.value
+								};
+							}}
+							class="settings-input"
+						/>
+					</div>
+				</div>
+			</div>
+
+			{#each Object.entries(uiConfig.metadata) as [key, metaItem] (key)}
+				<div class="setting-item" class:modified={hasUiConfigChanges}>
+					<div class="setting-item-content">
+						<div class="setting-info">
+							<label for={`ui-path-${key}`} class="setting-label">{metaItem.label}</label>
+							<p class="setting-description">{metaItem.description}</p>
+						</div>
+
+						<div class="setting-control">
+							<input
+									type="text"
+									id={`ui-path-${key}`}
+									value={uiConfigForm.paths[key as UIPathKey]}
+									disabled={!canEditGlobalUiConfig}
+									oninput={(e) => {
+									uiConfigForm = {
+										...uiConfigForm,
+										paths: {
+											...uiConfigForm.paths,
+											[key]: e.currentTarget.value
+										}
+									};
+								}}
+								class="settings-input"
+							/>
+						</div>
+					</div>
+				</div>
+			{/each}
+
+			<div class="settings-actions">
+					<button
+						onclick={discardUiConfigChanges}
+						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+						class="btn btn-secondary"
+					>
+					Discard Changes
+				</button>
+					<button
+						onclick={saveUiConfig}
+						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+						class="btn btn-primary"
+					>
+					{uiConfigSaving ? 'Saving...' : 'Save Global UI Configuration'}
+				</button>
+			</div>
 		</div>
 	{/if}
 
@@ -330,16 +514,16 @@
 		</div>
 
 		<!-- Action buttons -->
-		<div class="settings-actions">
-			<button onclick={discardChanges} disabled={!hasChanges || saving || !loginUiDeployed} class="btn btn-secondary">
-				Discard Changes
-			</button>
-			<button
-				onclick={saveChanges}
-				disabled={!hasChanges || saving || !loginUiDeployed}
-				class="btn btn-primary"
-			>
-				{saving ? 'Saving...' : `Save Changes${hasChanges ? ` (${pendingPatches.length})` : ''}`}
+				<div class="settings-actions">
+					<button onclick={discardChanges} disabled={!hasChanges || saving || !canEditLoginUiSettings} class="btn btn-secondary">
+						Discard Changes
+					</button>
+					<button
+						onclick={saveChanges}
+						disabled={!hasChanges || saving || !canEditLoginUiSettings}
+						class="btn btn-primary"
+					>
+					{saving ? 'Saving...' : `Save Changes${hasChanges ? ` (${pendingPatches.length})` : ''}`}
 			</button>
 		</div>
 
@@ -393,6 +577,38 @@
 </div>
 
 <style>
+	.ui-config-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 16px;
+		margin-bottom: 20px;
+	}
+
+	.section-title {
+		font-size: 18px;
+		font-weight: 600;
+		margin: 0 0 6px 0;
+	}
+
+	.section-description {
+		font-size: 14px;
+		color: var(--text-secondary);
+		margin: 0;
+	}
+
+	.config-source-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 4px 10px;
+		border-radius: 999px;
+		background: var(--surface-secondary);
+		color: var(--text-secondary);
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+	}
+
 	.coming-soon-section {
 		margin-top: 32px;
 		padding: 20px;

@@ -138,7 +138,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_BASE_URL',
     label: 'UI Base URL',
     description: 'Base URL for authentication UI (if different from issuer)',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_login_path': {
     key: 'tenant.ui_login_path',
@@ -147,7 +147,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_LOGIN_PATH',
     label: 'Login Path',
     description: 'Path for user login page',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_consent_path': {
     key: 'tenant.ui_consent_path',
@@ -156,7 +156,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_CONSENT_PATH',
     label: 'Consent Path',
     description: 'Path for OAuth consent page',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_reauth_path': {
     key: 'tenant.ui_reauth_path',
@@ -165,7 +165,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_REAUTH_PATH',
     label: 'Reauth Path',
     description: 'Path for re-authentication page',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_error_path': {
     key: 'tenant.ui_error_path',
@@ -174,7 +174,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_ERROR_PATH',
     label: 'Error Path',
     description: 'Path for error display page',
-    visibility: 'admin',
+    visibility: 'page',
   },
 };
 

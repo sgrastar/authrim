@@ -57,27 +57,47 @@ describe('admin-info tenant base URL resolution', () => {
     expect(buildTenantBaseUrl(env, 'default')).toBe('https://default.auth.example.com');
   });
 
-  it('returns configured Login/Admin UI URLs when present', () => {
+  it('returns configured Login/Admin UI URLs when present', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
     } as Env;
 
-    expect(getConfiguredUiUrls(env)).toEqual({
+    await expect(getConfiguredUiUrls(env)).resolves.toEqual({
       loginUiUrl: 'https://nodomain-ar-login-ui.pages.dev',
       adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
     });
   });
 
-  it('hides Login UI URL when Login UI is disabled', () => {
+  it('prefers UI config from SETTINGS over env UI_URL', async () => {
+    const env = {
+      UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
+      ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+      SETTINGS: {
+        get: async () =>
+          JSON.stringify({
+            ui: {
+              baseUrl: 'https://configured-login.example.com',
+            },
+          }),
+      },
+    } as unknown as Env;
+
+    await expect(getConfiguredUiUrls(env)).resolves.toEqual({
+      loginUiUrl: 'https://configured-login.example.com',
+      adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
+    });
+  });
+
+  it('keeps global Login UI URL available even when built-in Login UI is disabled', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
       LOGIN_UI_ENABLED: 'false',
     } as unknown as Env;
 
-    expect(getConfiguredUiUrls(env)).toEqual({
-      loginUiUrl: null,
+    await expect(getConfiguredUiUrls(env)).resolves.toEqual({
+      loginUiUrl: 'https://nodomain-ar-login-ui.pages.dev',
       adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
     });
   });

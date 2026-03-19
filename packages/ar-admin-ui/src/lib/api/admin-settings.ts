@@ -102,6 +102,33 @@ export interface SettingsPatchResult {
 	version: string;
 }
 
+export interface UIPathConfig {
+	login: string;
+	consent: string;
+	reauth: string;
+	error: string;
+	device: string;
+	deviceAuthorize: string;
+	logoutComplete: string;
+	loggedOut: string;
+	register: string;
+}
+
+export interface UIPathMetadataItem {
+	label: string;
+	description: string;
+}
+
+export interface UIConfigResponse {
+	config: {
+		baseUrl: string | null;
+		paths: UIPathConfig;
+	};
+	source: 'kv' | 'env' | 'none';
+	defaults: UIPathConfig;
+	metadata: Record<keyof UIPathConfig, UIPathMetadataItem>;
+}
+
 /**
  * UI patch operation (for internal use)
  */
@@ -292,6 +319,43 @@ export const adminSettingsAPI = {
 		}
 
 		return response.json();
+	}
+};
+
+export const adminUiConfigAPI = {
+	async get(): Promise<UIConfigResponse> {
+		const response = await fetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
+			credentials: 'include'
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.message || 'Failed to fetch UI config');
+		}
+
+		return response.json();
+	},
+
+	async update(request: {
+		baseUrl: string | null;
+		paths: Partial<UIPathConfig>;
+	}): Promise<UIConfigResponse['config']> {
+		const response = await fetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
+			method: 'PUT',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			credentials: 'include',
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.message || 'Failed to update UI config');
+		}
+
+		const result = await response.json();
+		return result.config;
 	}
 };
 

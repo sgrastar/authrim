@@ -110,7 +110,7 @@ describe('generateRoutes', () => {
     expect(managementConfig.routes).toBeUndefined();
   });
 
-  it('uses custom_domain=true for ar-router when customDomainBinding is set', () => {
+  it('uses custom_domain=true for the base domain and wildcard routes for tenant subdomains', () => {
     const config = {
       version: '1.0.0',
       createdAt: '2026-03-10T00:00:00.000Z',
@@ -136,7 +136,7 @@ describe('generateRoutes', () => {
       tenant: {
         name: 'default',
         displayName: 'Default Tenant',
-        multiTenant: false,
+        multiTenant: true,
         userIdFormat: 'nanoid',
         baseDomain: 'test.authrim.com',
         nakedDomain: true,
@@ -191,9 +191,99 @@ describe('generateRoutes', () => {
     const resourceIds = { d1: {}, kv: {} };
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
-    expect(routerConfig.routes).toEqual([{ pattern: 'test.authrim.com', custom_domain: true }]);
+    expect(routerConfig.routes).toEqual([
+      { pattern: 'test.authrim.com', custom_domain: true },
+      { pattern: '*.test.authrim.com/*', zone_name: 'authrim.com' },
+    ]);
     // workers_dev should be false when custom domain is set
     expect(routerConfig.workers_dev).toBe(false);
+  });
+
+  it('adds wildcard tenant routes in route mode when BASE_DOMAIN is configured', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: 'https://test.authrim.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+          customDomainBinding: false,
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: true,
+        userIdFormat: 'nanoid',
+        baseDomain: 'test.authrim.com',
+        nakedDomain: false,
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const resourceIds = { d1: {}, kv: {} };
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    expect(routerConfig.routes).toEqual([
+      { pattern: 'test.authrim.com/*', zone_name: 'authrim.com' },
+      { pattern: '*.test.authrim.com/*', zone_name: 'authrim.com' },
+    ]);
   });
 
   it('adds OP_VC service binding to ar-router when VC is enabled', () => {

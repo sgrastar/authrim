@@ -185,6 +185,12 @@ const zhCN: Translations = {
   'domain.enterDomains': '输入自定义域名（留空使用 Cloudflare 默认）',
   'domain.singleTenantNote': '在单租户模式下，发行者 URL = API 域名',
   'domain.usingWorkersDev': '（使用 Cloudflare workers.dev 域名）',
+  'web.form.multiTenantEnable': '启用多租户模式',
+  'web.form.multiTenantHint': '在您的自定义域名下创建租户子域名',
+  'web.form.multiTenantExamples': '租户 URL 示例',
+  'web.form.multiTenantExampleDefaultOmitted': '省略默认租户名称时：{{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': '包含默认租户名称时：{{url}}',
+  'web.form.multiTenantExampleOther': '非默认租户时：{{url}}',
 
   // Database
   'db.title': '数据库配置',

@@ -186,6 +186,12 @@ const ko: Translations = {
   'domain.enterDomains': '사용자 정의 도메인 입력 (Cloudflare 기본값을 사용하려면 비워두세요)',
   'domain.singleTenantNote': '단일 테넌트 모드에서는 발급자 URL = API 도메인',
   'domain.usingWorkersDev': '(Cloudflare workers.dev 도메인 사용)',
+  'web.form.multiTenantEnable': '멀티 테넌트 모드 활성화',
+  'web.form.multiTenantHint': '사용자 지정 도메인 아래에 테넌트 서브도메인을 생성합니다',
+  'web.form.multiTenantExamples': '테넌트 URL 예시',
+  'web.form.multiTenantExampleDefaultOmitted': '기본 테넌트 이름 생략: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': '기본 테넌트 이름 명시: {{url}}',
+  'web.form.multiTenantExampleOther': '기본 이외 테넌트: {{url}}',
 
   // Database
   'db.title': '데이터베이스 구성',

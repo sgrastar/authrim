@@ -75,6 +75,7 @@ export interface TenantInfo extends TenantEndpoints {
 		vc: boolean;
 	};
 	login_ui_url: string | null;
+	global_login_ui_url: string | null;
 	admin_ui_url: string | null;
 	api_url: string;
 }

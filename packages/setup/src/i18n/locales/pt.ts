@@ -190,6 +190,13 @@ const pt: Translations = {
     'Digite domínios personalizados (deixe vazio para usar padrões do Cloudflare)',
   'domain.singleTenantNote': 'No modo single-tenant, URL do Emissor = domínio API',
   'domain.usingWorkersDev': '(usando domínio workers.dev do Cloudflare)',
+  'web.form.multiTenantEnable': 'Ativar modo multi-tenant',
+  'web.form.multiTenantHint': 'Criar subdomínios de tenant sob seu domínio personalizado',
+  'web.form.multiTenantExamples': 'Exemplos de URL de tenant',
+  'web.form.multiTenantExampleDefaultOmitted': 'Tenant padrão com nome omitido: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded':
+    'Tenant padrão com nome explícito: {{url}}',
+  'web.form.multiTenantExampleOther': 'Tenant não padrão: {{url}}',
 
   // Database
   'db.title': 'Configuração do Banco de Dados',

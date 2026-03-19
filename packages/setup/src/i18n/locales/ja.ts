@@ -186,6 +186,12 @@ const ja: Translations = {
   'domain.enterDomains': 'カスタムドメインを入力（空欄でCloudflareデフォルトを使用）',
   'domain.singleTenantNote': 'シングルテナントモードでは、Issuer URL = APIドメインです',
   'domain.usingWorkersDev': '（Cloudflare workers.devドメインを使用）',
+  'web.form.multiTenantEnable': 'マルチテナントを有効にする',
+  'web.form.multiTenantHint': 'カスタムドメイン配下にテナントサブドメインを作成します',
+  'web.form.multiTenantExamples': 'テナントURLの例',
+  'web.form.multiTenantExampleDefaultOmitted': 'defaultテナント名省略の場合: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'defaultテナント名省略しない場合: {{url}}',
+  'web.form.multiTenantExampleOther': 'defaultテナント以外の場合: {{url}}',
 
   // Database
   'db.title': 'データベース設定',

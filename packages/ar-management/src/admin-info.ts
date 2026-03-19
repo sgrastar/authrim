@@ -16,6 +16,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   buildIssuerUrl,
+  getUIConfig,
   getLogger,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from './single-tenant-guard';
@@ -77,7 +78,7 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     const issuer = buildTenantBaseUrl(c.env, tenantId);
 
     const components = getComponentAvailability(c.env);
-    const { loginUiUrl, adminUiUrl } = getConfiguredUiUrls(c.env);
+    const { loginUiUrl, adminUiUrl } = await getConfiguredUiUrls(c.env);
 
     // API base URL — same origin as the management API (relative construction)
     // We infer from the issuer since the API runs on the same Worker
@@ -92,6 +93,7 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
       issuer,
       components,
       login_ui_url: loginUiUrl,
+      global_login_ui_url: loginUiUrl,
       admin_ui_url: adminUiUrl,
       api_url: apiBaseUrl,
       ...endpoints,
@@ -203,13 +205,14 @@ export function usesNakedDomainIssuer(env: Env, tenantId: string): boolean {
   return tenantId === nakedDomainTenantId;
 }
 
-export function getConfiguredUiUrls(env: AdminInfoEnv): {
+export async function getConfiguredUiUrls(env: AdminInfoEnv): Promise<{
   loginUiUrl: string | null;
   adminUiUrl: string | null;
-} {
+}> {
   const components = getComponentAvailability(env);
+  const uiConfig = await getUIConfig(env);
   return {
-    loginUiUrl: components.login_ui ? env.UI_URL || null : null,
+    loginUiUrl: uiConfig?.baseUrl ?? null,
     adminUiUrl: components.admin_ui ? env.ADMIN_UI_URL || null : null,
   };
 }

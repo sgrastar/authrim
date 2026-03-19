@@ -127,6 +127,21 @@ function createMockContext(options: {
   return { c, mockSessionStore, mockKeyManager };
 }
 
+const VALID_BACKCHANNEL_AUTH_HEADER = {
+  Authorization: 'Basic ' + btoa('client-123:client-secret'),
+};
+
+function mockValidBackchannelClient(c: { env: Env }, clientId = 'client-123', secret = 'client-secret') {
+  c.env.DB.prepare = vi.fn().mockReturnValue({
+    bind: vi.fn().mockReturnValue({
+      first: vi.fn().mockResolvedValue({
+        client_id: clientId,
+        client_secret_hash: `hash_${secret}`,
+      }),
+    }),
+  }) as unknown as D1Database['prepare'];
+}
+
 describe('Front-channel Logout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -582,7 +597,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'invalid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockRejectedValue(new Error('Invalid signature'));
@@ -606,7 +623,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -637,7 +656,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -666,7 +687,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -694,6 +717,25 @@ describe('Back-channel Logout', () => {
   });
 
   describe('Client Authentication', () => {
+    it('should require client authentication', async () => {
+      const { c } = createMockContext({
+        method: 'POST',
+        body: {
+          logout_token: 'valid.logout.token',
+        },
+      });
+
+      await backChannelLogoutHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_client',
+          error_description: 'Client authentication is required',
+        }),
+        401
+      );
+    });
+
     it('should authenticate client with HTTP Basic', async () => {
       const { c, mockSessionStore } = createMockContext({
         method: 'POST',
@@ -845,7 +887,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -871,7 +915,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -903,7 +949,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -958,7 +1006,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       // Mock RPC call to reject (simulating JWKS fetch failure)
       mockKeyManager.getAllPublicKeysRpc.mockRejectedValue(new Error('Failed to fetch JWKS'));

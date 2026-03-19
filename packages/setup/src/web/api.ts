@@ -49,6 +49,7 @@ import {
 } from '../core/paths.js';
 import { generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { syncWranglerConfigs } from '../core/wrangler-sync.js';
+import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import { buildUrlsConfig } from '../core/url-config.js';
 import { normalizeTenantConfigForApiDomain } from '../core/tenant-mode.js';
 import {
@@ -165,6 +166,29 @@ function sanitizeError(error: unknown): string {
     .replace(/\/[^\s:]+/g, '[path]')
     .replace(/\\[^\s:]+/g, '[path]')
     .replace(/[a-f0-9]{32,}/gi, '[redacted]');
+}
+
+async function ensureWildcardDnsForMultiTenant(
+  cfg: Partial<AuthrimConfig> | null | undefined,
+  onProgress?: (message: string) => void
+): Promise<void> {
+  const baseDomain =
+    cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
+  if (!baseDomain) {
+    return;
+  }
+
+  const { ensureWildcardDnsRecord } = await import('../core/cloudflare.js');
+  onProgress?.(`Ensuring wildcard DNS for *.${baseDomain}...`);
+
+  const result = await ensureWildcardDnsRecord(baseDomain, cfg?.urls?.api?.zoneId ?? null);
+  if (result.created) {
+    onProgress?.(`✓ Wildcard DNS created: ${result.name} -> ${result.target}`);
+  } else if (result.updated) {
+    onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
+  } else {
+    onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
+  }
 }
 
 // =============================================================================
@@ -871,10 +895,48 @@ export function createApiRoutes(): Hono {
           addProgress('Packages built successfully');
         }
 
-        // Upload secrets first (secrets are read but not stored in state)
-        // Check external (.authrim-keys/), new (.authrim/{env}/keys/), and legacy (.keys/{env}/) structures
         const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
+        let enabledComponents: WorkerComponent[] | undefined = components;
+        let cfg = state.config;
+
+        if (!enabledComponents && !cfg) {
+          try {
+            const configPath =
+              resolved.type === 'new'
+                ? (resolved.paths as EnvironmentPaths).config
+                : (resolved.paths as LegacyPaths).config;
+
+            if (existsSync(configPath)) {
+              const configContent = await readFile(configPath, 'utf-8');
+              cfg = JSON.parse(configContent);
+              state.config = cfg;
+              addProgress(`Loaded config from ${configPath}`);
+            }
+          } catch (configErr) {
+            addProgress(`Warning: Could not load config.json: ${sanitizeError(configErr)}`);
+          }
+        }
+
+        if (!enabledComponents && cfg) {
+          enabledComponents = [
+            'ar-lib-core',
+            'ar-discovery',
+            'ar-auth',
+            'ar-token',
+            'ar-userinfo',
+            'ar-management',
+          ];
+          if (cfg?.components?.saml) enabledComponents.push('ar-saml');
+          if (cfg?.components?.async) enabledComponents.push('ar-async');
+          if (cfg?.components?.vc) enabledComponents.push('ar-vc');
+          if (cfg?.components?.bridge) enabledComponents.push('ar-bridge');
+          if (cfg?.components?.policy) enabledComponents.push('ar-policy');
+          enabledComponents.push('ar-router');
+        }
+
+        // Upload secrets first (secrets are read but not stored in state)
+        // Check external (.authrim-keys/), new (.authrim/{env}/keys/), and legacy (.keys/{env}/) structures
         let keysDir: string;
         const foundKeys = findKeysDirectory({
           env,
@@ -915,7 +977,7 @@ export function createApiRoutes(): Hono {
               env,
               rootDir: resolve(rootDir),
               onProgress: addProgress,
-            });
+            }, enabledComponents);
             // Note: secrets object goes out of scope here and will be garbage collected
           }
         } else if (!dryRun) {
@@ -931,7 +993,6 @@ export function createApiRoutes(): Hono {
           if (lock) {
             const { validateWranglerConfigs, generateWranglerConfig, toToml } =
               await import('../core/wrangler.js');
-            const { getEnabledComponents } = await import('../core/naming.js');
             const { getWorkersSubdomain } = await import('../core/cloudflare.js');
 
             // Build resource IDs from lock file
@@ -945,13 +1006,12 @@ export function createApiRoutes(): Hono {
             };
 
             // Get enabled components
-            const cfg = state.config || {};
             const enabledForValidation = getEnabledComponents({
-              saml: cfg.components?.saml,
-              async: cfg.components?.async,
-              vc: cfg.components?.vc,
-              bridge: cfg.components?.bridge,
-              policy: cfg.components?.policy,
+              saml: cfg?.components?.saml,
+              async: cfg?.components?.async,
+              vc: cfg?.components?.vc,
+              bridge: cfg?.components?.bridge,
+              policy: cfg?.components?.policy,
             });
 
             // Validate wrangler.toml files
@@ -1002,47 +1062,8 @@ export function createApiRoutes(): Hono {
 
         addProgress('Deploying workers...');
 
-        // Determine enabled components from config (same logic as CLI)
-        // Load config from file if state.config is not set (e.g., after page reload)
-        let enabledComponents: WorkerComponent[] | undefined = components;
-        let cfg = state.config;
-
-        if (!enabledComponents && !cfg) {
-          // Try to load config.json from disk
-          try {
-            const configPath =
-              resolved.type === 'new'
-                ? (resolved.paths as EnvironmentPaths).config
-                : (resolved.paths as LegacyPaths).config;
-
-            if (existsSync(configPath)) {
-              const configContent = await readFile(configPath, 'utf-8');
-              cfg = JSON.parse(configContent);
-              state.config = cfg; // Cache for later use
-              addProgress(`Loaded config from ${configPath}`);
-            }
-          } catch (configErr) {
-            addProgress(`Warning: Could not load config.json: ${sanitizeError(configErr)}`);
-          }
-        }
-
-        if (!enabledComponents && cfg) {
-          enabledComponents = [
-            'ar-lib-core',
-            'ar-discovery',
-            'ar-auth',
-            'ar-token',
-            'ar-userinfo',
-            'ar-management',
-          ];
-          // Add optional components based on config
-          if (cfg.components?.saml) enabledComponents.push('ar-saml');
-          if (cfg.components?.async) enabledComponents.push('ar-async');
-          if (cfg.components?.vc) enabledComponents.push('ar-vc');
-          if (cfg.components?.bridge) enabledComponents.push('ar-bridge');
-          if (cfg.components?.policy) enabledComponents.push('ar-policy');
-          // Router is always last
-          enabledComponents.push('ar-router');
+        if (!dryRun) {
+          await ensureWildcardDnsForMultiTenant(cfg, addProgress);
         }
 
         const summary = await deployAll(
@@ -1508,6 +1529,18 @@ export function createApiRoutes(): Hono {
           deletePages,
           onProgress: addProgress,
         });
+
+        const cleanupResult = await cleanupLocalEnvironmentArtifacts({
+          baseDir: findAuthrimBaseDir(process.cwd()),
+          env,
+          packagesDir: join(findAuthrimBaseDir(process.cwd()), 'packages'),
+          keysBaseDir: process.cwd(),
+          onProgress: addProgress,
+        });
+        if (cleanupResult.errors.length > 0) {
+          result.errors.push(...cleanupResult.errors);
+        }
+        result.success = result.errors.length === 0;
 
         state.status = result.success ? 'complete' : 'error';
         if (!result.success) {
@@ -2093,6 +2126,10 @@ export function createApiRoutes(): Hono {
               state.status = 'error';
               return c.json({ success: false, error: `Build failed: ${buildResult.error}` }, 500);
             }
+          }
+
+          if (!dryRun && componentName === 'ar-router') {
+            await ensureWildcardDnsForMultiTenant(cfg, addProgress);
           }
 
           // Deploy the worker

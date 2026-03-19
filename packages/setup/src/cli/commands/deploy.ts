@@ -581,7 +581,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           rootDir,
           dryRun: options.dryRun,
           onProgress: (msg) => console.log(msg),
-        });
+        }, componentsToDeply);
 
         if (!secretResult.success) {
           console.log(chalk.yellow('\n⚠️  Some secrets failed to upload'));
