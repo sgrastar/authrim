@@ -89,7 +89,9 @@ function createMockContext(options: {
     DB: {
       prepare: vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
-          first: vi.fn(),
+          first: vi.fn().mockResolvedValue(null),
+          all: vi.fn().mockResolvedValue({ results: [] }),
+          run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
         }),
       }),
     } as unknown as D1Database,
@@ -138,6 +140,8 @@ function mockValidBackchannelClient(c: { env: Env }, clientId = 'client-123', se
         client_id: clientId,
         client_secret_hash: `hash_${secret}`,
       }),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
     }),
   }) as unknown as D1Database['prepare'];
 }
@@ -731,6 +735,28 @@ describe('Back-channel Logout', () => {
         expect.objectContaining({
           error: 'invalid_client',
           error_description: 'Client authentication is required',
+        }),
+        401
+      );
+    });
+
+    it('should reject unsupported client authentication methods', async () => {
+      const { c } = createMockContext({
+        method: 'POST',
+        body: {
+          logout_token: 'valid.logout.token',
+        },
+        headers: {
+          Authorization: 'Bearer test-token',
+        },
+      });
+
+      await backChannelLogoutHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_client',
+          error_description: 'Unsupported client authentication method',
         }),
         401
       );

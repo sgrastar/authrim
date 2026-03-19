@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  adminTenantInfoHandler,
   buildTenantBaseUrl,
   getComponentAvailability,
   getConfiguredUiUrls,
@@ -100,6 +101,41 @@ describe('admin-info tenant base URL resolution', () => {
       loginUiUrl: 'https://nodomain-ar-login-ui.pages.dev',
       adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
     });
+  });
+
+  it('includes global_login_ui_url in tenant info responses', async () => {
+    const env = {
+      UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
+      ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }),
+      get: vi.fn(),
+    } as any);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      login_ui_url: string | null;
+      global_login_ui_url: string | null;
+    };
+    expect(body.login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev');
+    expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev');
   });
 
   it('derives component availability from env flags', () => {

@@ -621,6 +621,47 @@ describe('Authorization Handler', () => {
   });
 
   describe('Edge Cases', () => {
+    it('should not reuse cached UI settings across different SETTINGS bindings', async () => {
+      const envWithUi = createMockEnv();
+      envWithUi.ENABLE_CONFORMANCE_MODE = 'false';
+      await (envWithUi.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          ui: {
+            baseUrl: 'https://login.example.com',
+          },
+        })
+      );
+
+      const firstResponse = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
+        { method: 'GET' },
+        envWithUi
+      );
+
+      expect(firstResponse.status).toBe(302);
+      expect(firstResponse.headers.get('Location')).toContain('https://login.example.com/login');
+
+      const envWithoutUi = createMockEnv();
+      envWithoutUi.ENABLE_CONFORMANCE_MODE = 'false';
+
+      const secondResponse = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
+        { method: 'GET' },
+        envWithoutUi
+      );
+
+      expect(secondResponse.status).toBe(302);
+      const secondLocation = secondResponse.headers.get('Location');
+      expect(secondLocation).not.toContain('https://login.example.com/login');
+
+      const redirectUrl = new URL(secondLocation!, 'https://example.com');
+      expect(redirectUrl.searchParams.get('error')).toBe('temporarily_unavailable');
+      expect(redirectUrl.searchParams.get('error_description')).toBe(
+        'Login UI is not configured'
+      );
+    });
+
     it('should clean up consent challenge when consent UI is not configured', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
       await (env.SETTINGS as unknown as MockKVNamespace).put(

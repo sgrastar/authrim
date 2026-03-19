@@ -11,6 +11,10 @@ describe('DEFAULT_SECRET_TARGET_WORKERS', () => {
 });
 
 describe('getSecretTargetWorkers', () => {
+  it('returns the default secret-bearing workers when no override is provided', () => {
+    expect(getSecretTargetWorkers()).toEqual(DEFAULT_SECRET_TARGET_WORKERS);
+  });
+
   it('limits uploads to enabled workers that actually require secrets', () => {
     expect(
       getSecretTargetWorkers([
