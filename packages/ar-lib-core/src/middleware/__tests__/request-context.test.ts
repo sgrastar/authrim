@@ -80,11 +80,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null }); // no cache hit
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(
-        makeRequest(`sample.${BASE_DOMAIN}`),
-        undefined,
-        env as Env
-      );
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
       expect(body.tenantId).toBe('sample');
@@ -95,11 +91,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(
-        makeRequest(`nosuch.${BASE_DOMAIN}`),
-        undefined,
-        env as Env
-      );
+      const res = await app.request(makeRequest(`nosuch.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(404);
       const body = await res.json<{ error: string }>();
       expect(body.error).toBe('not_found');
@@ -111,11 +103,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(
-        makeRequest(`inactive.${BASE_DOMAIN}`),
-        undefined,
-        env as Env
-      );
+      const res = await app.request(makeRequest(`inactive.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(404);
     });
 
@@ -124,11 +112,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: 'true' }); // cache hit
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(
-        makeRequest(`sample.${BASE_DOMAIN}`),
-        undefined,
-        env as Env
-      );
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(200);
       expect(db.prepare).not.toHaveBeenCalled(); // no D1 query
     });
@@ -154,11 +138,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(
-        makeRequest(`sample.${BASE_DOMAIN}`),
-        undefined,
-        env as Env
-      );
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(200); // fail-open
     });
   });

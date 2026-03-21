@@ -144,10 +144,7 @@ export function getLegacyLockFileName(env?: string): string {
   return env ? `authrim-${env}-lock.json` : LEGACY_LOCK_FILE;
 }
 
-function getExistingLegacyFilePath(
-  baseDir: string,
-  candidates: string[]
-): string | undefined {
+function getExistingLegacyFilePath(baseDir: string, candidates: string[]): string | undefined {
   const existingCandidate = candidates.find((candidate) => existsSync(join(baseDir, candidate)));
   return existingCandidate ? join(baseDir, existingCandidate) : undefined;
 }
@@ -160,9 +157,7 @@ export function getLegacyConfigCandidates(baseDir: string, env?: string): string
 }
 
 export function getLegacyLockCandidates(baseDir: string, env?: string): string[] {
-  const candidates = env
-    ? [getLegacyLockFileName(env), LEGACY_LOCK_FILE]
-    : [LEGACY_LOCK_FILE];
+  const candidates = env ? [getLegacyLockFileName(env), LEGACY_LOCK_FILE] : [LEGACY_LOCK_FILE];
   return candidates.map((candidate) => join(baseDir, candidate));
 }
 
@@ -174,9 +169,7 @@ export function findLegacyConfigPath(baseDir: string, env?: string): string {
 }
 
 export function findLegacyLockPath(baseDir: string, env?: string): string {
-  const candidates = env
-    ? [getLegacyLockFileName(env), LEGACY_LOCK_FILE]
-    : [LEGACY_LOCK_FILE];
+  const candidates = env ? [getLegacyLockFileName(env), LEGACY_LOCK_FILE] : [LEGACY_LOCK_FILE];
   return getExistingLegacyFilePath(baseDir, candidates) || join(baseDir, candidates[0]);
 }
 
@@ -306,7 +299,10 @@ export function findAuthrimBaseDir(startDir: string): string {
   // Check legacy structure in subdirectories
   for (const subdir of COMMON_SUBDIRS) {
     const subdirPath = join(startDir, subdir);
-    if (listLegacyConfigPaths(subdirPath).length > 0 || listLegacyLockPaths(subdirPath).length > 0) {
+    if (
+      listLegacyConfigPaths(subdirPath).length > 0 ||
+      listLegacyLockPaths(subdirPath).length > 0
+    ) {
       return subdirPath;
     }
   }

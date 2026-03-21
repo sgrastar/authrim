@@ -104,11 +104,12 @@ function createMockContext(options: {
       parseBody: vi.fn().mockResolvedValue(options.body ?? {}),
     },
     env,
-    json: vi.fn((body: unknown, status = 200) =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    json: vi.fn(
+      (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
     ),
     get: vi.fn().mockImplementation((key: string) => {
       if (key === 'tenantId') return 'default';

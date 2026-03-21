@@ -1028,9 +1028,7 @@ function hasCloudflareAlreadyExistsError(payload: {
   const entries = [...(payload.errors ?? []), ...(payload.messages ?? [])];
   return entries.some(
     (entry) =>
-      entry.code === 81057 ||
-      entry.code === 81058 ||
-      /already exists/i.test(entry.message ?? '')
+      entry.code === 81057 || entry.code === 81058 || /already exists/i.test(entry.message ?? '')
   );
 }
 
@@ -1093,7 +1091,9 @@ export async function ensureWildcardDnsRecord(
       }
     );
 
-    const createdData = (await createResponse.json().catch(() => ({}))) as CloudflareDnsMutationResponse;
+    const createdData = (await createResponse
+      .json()
+      .catch(() => ({}))) as CloudflareDnsMutationResponse;
 
     if (!createResponse.ok || createdData.success === false) {
       if (hasCloudflareAlreadyExistsError(createdData) || createResponse.status === 409) {
@@ -1188,8 +1188,7 @@ export async function ensureWildcardDnsForMultiTenant(
   cfg: Partial<AuthrimConfig> | null | undefined,
   onProgress?: (message: string) => void
 ): Promise<void> {
-  const baseDomain =
-    cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
+  const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
   if (!baseDomain) {
     return;
   }

@@ -96,7 +96,9 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
     warmupPromises.push(
       (async () => {
         try {
-          const stub = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName(`${getTenantIdFromContext(c)}-v3`));
+          const stub = c.env.KEY_MANAGER.get(
+            c.env.KEY_MANAGER.idFromName(`${getTenantIdFromContext(c)}-v3`)
+          );
           // Use RPC status call - lightweight health check that warms the DO
           await stub.getStatusRpc();
           results.keyManager.warmed = true;

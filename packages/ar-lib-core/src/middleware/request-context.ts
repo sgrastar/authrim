@@ -120,10 +120,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
           host: c.req.header('Host'),
           path: c.req.path,
         });
-        return c.json(
-          { error: 'not_found', error_description: 'Tenant not found' },
-          404
-        );
+        return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
       }
     }
 

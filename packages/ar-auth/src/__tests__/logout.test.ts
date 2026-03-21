@@ -133,7 +133,11 @@ const VALID_BACKCHANNEL_AUTH_HEADER = {
   Authorization: 'Basic ' + btoa('client-123:client-secret'),
 };
 
-function mockValidBackchannelClient(c: { env: Env }, clientId = 'client-123', secret = 'client-secret') {
+function mockValidBackchannelClient(
+  c: { env: Env },
+  clientId = 'client-123',
+  secret = 'client-secret'
+) {
   c.env.DB.prepare = vi.fn().mockReturnValue({
     bind: vi.fn().mockReturnValue({
       first: vi.fn().mockResolvedValue({

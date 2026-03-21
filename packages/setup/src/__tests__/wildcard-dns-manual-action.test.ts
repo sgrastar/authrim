@@ -46,8 +46,8 @@ describe('wildcard DNS manual action guidance', () => {
   });
 
   it('builds a dashboard deep link when account and zone are known', () => {
-    expect(
-      getCloudflareDnsRecordsDashboardUrl('acct-123', 'test.authrim.com')
-    ).toBe('https://dash.cloudflare.com/acct-123/authrim.com/dns/records');
+    expect(getCloudflareDnsRecordsDashboardUrl('acct-123', 'test.authrim.com')).toBe(
+      'https://dash.cloudflare.com/acct-123/authrim.com/dns/records'
+    );
   });
 });

@@ -38,7 +38,11 @@ function describeCapability(
           : copy.workersDeployNg;
   }
 
-  return status === 'ok' ? copy.pagesOk : status === 'review' ? copy.pagesReview : copy.workersDeployNg;
+  return status === 'ok'
+    ? copy.pagesOk
+    : status === 'review'
+      ? copy.pagesReview
+      : copy.workersDeployNg;
 }
 
 export function buildCliCapabilityRows(

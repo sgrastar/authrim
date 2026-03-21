@@ -205,9 +205,7 @@ app.use('*', async (c, next) => {
       // Resolve tenant from Host header for multi-tenant CORS settings
       const hostResult = validateHostHeader(c.req.header('Host'), c.env);
       const tenantId =
-        hostResult.valid && hostResult.tenantId
-          ? hostResult.tenantId
-          : getDefaultTenantId(c.env);
+        hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
 
       const kvData = await c.env.AUTHRIM_CONFIG.get(`settings:tenant:${tenantId}:tenant`);
       if (kvData) {

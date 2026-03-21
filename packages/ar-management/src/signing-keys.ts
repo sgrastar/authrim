@@ -30,10 +30,9 @@ import type {
  * @param tenantId - Tenant whose signing key was rotated
  */
 async function bumpKeyVersion(env: Env, tenantId: string): Promise<void> {
-  await env.AUTHRIM_CONFIG?.put(
-    `v1:key-version:${tenantId}`,
-    Date.now().toString()
-  ).catch(() => {});
+  await env.AUTHRIM_CONFIG?.put(`v1:key-version:${tenantId}`, Date.now().toString()).catch(
+    () => {}
+  );
 }
 
 /**
@@ -103,7 +102,10 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
     const oldKeyId = 'previous-key'; // We don't have this info from the response, but it's in overlap now
 
     // Invalidate JWKS KV cache and bump version signal before returning
-    await Promise.allSettled([invalidateJwksKvCache(c.env, tenantId), bumpKeyVersion(c.env, tenantId)]);
+    await Promise.allSettled([
+      invalidateJwksKvCache(c.env, tenantId),
+      bumpKeyVersion(c.env, tenantId),
+    ]);
 
     // Record audit log (warning severity for key rotation)
     await createAuditLogFromContext(
@@ -172,10 +174,7 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
     // Invalidate JWKS KV cache and bump version signal immediately
     const log = getLogger(c).module('SIGNING-KEYS');
     try {
-      await Promise.all([
-        invalidateJwksKvCache(c.env, tenantId),
-        bumpKeyVersion(c.env, tenantId),
-      ]);
+      await Promise.all([invalidateJwksKvCache(c.env, tenantId), bumpKeyVersion(c.env, tenantId)]);
       log.info('Emergency rotation: JWKS cache and version signal updated', { tenantId });
     } catch (error) {
       log.error('Failed to invalidate JWKS cache after emergency rotation', {}, error as Error);

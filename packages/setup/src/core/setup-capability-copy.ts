@@ -31,8 +31,10 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     review: '要確認',
     ng: 'NG',
     workersDeploy: 'Workers デプロイ',
-    workersDeployOk: 'wrangler のログイン状態を確認できたため、Workers 配備は進められる見込みです。',
-    workersDeployReview: 'Workers 配備の前提が一部確認できていません。ログイン状態と token を確認してください。',
+    workersDeployOk:
+      'wrangler のログイン状態を確認できたため、Workers 配備は進められる見込みです。',
+    workersDeployReview:
+      'Workers 配備の前提が一部確認できていません。ログイン状態と token を確認してください。',
     workersDeployNg: 'wrangler のインストールまたは Cloudflare ログインが未完了です。',
     customDomain: 'カスタムドメイン',
     customDomainOk: 'Zone 一覧にアクセスできるため、カスタムドメイン設定を進められる見込みです。',
@@ -51,8 +53,7 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       'マルチテナント用の DNS 前提を確認できないため、ネイキッドドメイン構成は追加確認付きで進める扱いです。',
     pages: 'Cloudflare Pages',
-    pagesOk:
-      'Pages API に到達できるため、Login/Admin UI の Pages 配備も進められる見込みです。',
+    pagesOk: 'Pages API に到達できるため、Login/Admin UI の Pages 配備も進められる見込みです。',
     pagesReview:
       'Pages API を確認できないため、Pages 配備は進められる可能性がありますが追加確認が必要です。',
   },
@@ -83,8 +84,7 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       'The DNS prerequisites for multi-tenant routing could not be verified, so naked-domain routing needs review.',
     pages: 'Cloudflare Pages',
-    pagesOk:
-      'The Pages API is reachable, so Login/Admin UI deployment to Pages is likely to work.',
+    pagesOk: 'The Pages API is reachable, so Login/Admin UI deployment to Pages is likely to work.',
     pagesReview:
       'The Pages API could not be verified, so Pages deployment may still work but needs review.',
   },
@@ -105,12 +105,10 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     customDomainNgNoZone: '未找到可访问的 Cloudflare Zone，因此无法使用自定义域名。',
     multiTenant: '多租户',
     multiTenantOk: '已确认 DNS 记录读取能力，因此预计可以继续进行租户通配 DNS 设置。',
-    multiTenantReview:
-      '无法确认 DNS 权限，因此多租户子域名设置可能可行，但仍有失败风险。',
+    multiTenantReview: '无法确认 DNS 权限，因此多租户子域名设置可能可行，但仍有失败风险。',
     nakedDomain: '裸域名',
     nakedDomainOk: '多租户路由所需的 DNS 前提已满足，因此预计可以继续使用裸域名配置。',
-    nakedDomainReview:
-      '无法确认多租户路由所需的 DNS 前提，因此裸域名配置需要进一步确认。',
+    nakedDomainReview: '无法确认多租户路由所需的 DNS 前提，因此裸域名配置需要进一步确认。',
     pages: 'Cloudflare Pages',
     pagesOk: '可以访问 Pages API，因此预计可以继续部署 Login/Admin UI 到 Pages。',
     pagesReview: '无法确认 Pages API，因此 Pages 部署可能可行，但需要进一步确认。',
@@ -132,12 +130,10 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     customDomainNgNoZone: '找不到可存取的 Cloudflare Zone，因此無法使用自訂網域。',
     multiTenant: '多租戶',
     multiTenantOk: '已確認 DNS 記錄讀取能力，因此預期可以進行租戶萬用字元 DNS 設定。',
-    multiTenantReview:
-      '無法確認 DNS 權限，因此多租戶子網域設定可能可行，但仍有失敗風險。',
+    multiTenantReview: '無法確認 DNS 權限，因此多租戶子網域設定可能可行，但仍有失敗風險。',
     nakedDomain: '裸網域',
     nakedDomainOk: '多租戶路由所需的 DNS 前提已滿足，因此預期可以使用裸網域設定。',
-    nakedDomainReview:
-      '無法確認多租戶路由所需的 DNS 前提，因此裸網域設定需要進一步確認。',
+    nakedDomainReview: '無法確認多租戶路由所需的 DNS 前提，因此裸網域設定需要進一步確認。',
     pages: 'Cloudflare Pages',
     pagesOk: '可以存取 Pages API，因此預期可以繼續部署 Login/Admin UI 到 Pages。',
     pagesReview: '無法確認 Pages API，因此 Pages 部署可能可行，但需要進一步確認。',
@@ -152,9 +148,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     workersDeployOk: 'La autenticación de Wrangler parece válida para desplegar Workers.',
     workersDeployReview:
       'No se pudieron verificar algunos requisitos del despliegue de Workers. Revise el inicio de sesión y el acceso del token antes de continuar.',
-    workersDeployNg: 'Wrangler no está instalado o el inicio de sesión en Cloudflare está incompleto.',
+    workersDeployNg:
+      'Wrangler no está instalado o el inicio de sesión en Cloudflare está incompleto.',
     customDomain: 'Dominio personalizado',
-    customDomainOk: 'Hay acceso a la zona, por lo que la configuración del dominio personalizado debería funcionar.',
+    customDomainOk:
+      'Hay acceso a la zona, por lo que la configuración del dominio personalizado debería funcionar.',
     customDomainReviewZoneRead:
       'No se pudo verificar el acceso a la zona, por lo que la configuración del dominio personalizado podría funcionar, pero requiere revisión.',
     customDomainNgNoZone:
@@ -170,7 +168,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       'No se pudieron verificar los requisitos DNS para el enrutamiento multi-tenant, por lo que el dominio raíz requiere revisión.',
     pages: 'Cloudflare Pages',
-    pagesOk: 'La API de Pages es accesible, por lo que el despliegue de Login/Admin UI en Pages debería funcionar.',
+    pagesOk:
+      'La API de Pages es accesible, por lo que el despliegue de Login/Admin UI en Pages debería funcionar.',
     pagesReview:
       'No se pudo verificar la API de Pages, por lo que el despliegue en Pages podría funcionar, pero requiere revisión.',
   },
@@ -186,7 +185,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Alguns pré-requisitos do deploy do Workers não puderam ser verificados. Revise o login e o acesso do token antes de continuar.',
     workersDeployNg: 'O Wrangler não está instalado ou o login no Cloudflare está incompleto.',
     customDomain: 'Domínio personalizado',
-    customDomainOk: 'O acesso à zona está disponível, então a configuração de domínio personalizado deve funcionar.',
+    customDomainOk:
+      'O acesso à zona está disponível, então a configuração de domínio personalizado deve funcionar.',
     customDomainReviewZoneRead:
       'Não foi possível verificar o acesso à zona, então a configuração de domínio personalizado pode funcionar, mas exige revisão.',
     customDomainNgNoZone:
@@ -202,7 +202,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       'Os pré-requisitos de DNS para roteamento multi-tenant não puderam ser verificados, então o domínio raiz exige revisão.',
     pages: 'Cloudflare Pages',
-    pagesOk: 'A API do Pages está acessível, então o deploy do Login/Admin UI no Pages deve funcionar.',
+    pagesOk:
+      'A API do Pages está acessível, então o deploy do Login/Admin UI no Pages deve funcionar.',
     pagesReview:
       'Não foi possível verificar a API do Pages, então o deploy no Pages pode funcionar, mas exige revisão.',
   },
@@ -218,7 +219,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       "Certains prérequis du déploiement Workers n'ont pas pu être vérifiés. Vérifiez la connexion et l'accès du jeton avant de continuer.",
     workersDeployNg: "Wrangler n'est pas installé ou la connexion Cloudflare est incomplète.",
     customDomain: 'Domaine personnalisé',
-    customDomainOk: "L'accès à la zone est disponible, la configuration du domaine personnalisé devrait donc fonctionner.",
+    customDomainOk:
+      "L'accès à la zone est disponible, la configuration du domaine personnalisé devrait donc fonctionner.",
     customDomainReviewZoneRead:
       "L'accès à la zone n'a pas pu être vérifié, la configuration du domaine personnalisé peut donc fonctionner mais doit être vérifiée.",
     customDomainNgNoZone:
@@ -234,7 +236,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       "Les prérequis DNS pour le routage multi-tenant n'ont pas pu être vérifiés, le domaine nu doit donc être vérifié.",
     pages: 'Cloudflare Pages',
-    pagesOk: "L'API Pages est accessible, le déploiement des UI Login/Admin sur Pages devrait donc fonctionner.",
+    pagesOk:
+      "L'API Pages est accessible, le déploiement des UI Login/Admin sur Pages devrait donc fonctionner.",
     pagesReview:
       "L'API Pages n'a pas pu être vérifiée, le déploiement sur Pages peut donc fonctionner mais doit être vérifié.",
   },
@@ -245,12 +248,14 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     review: 'Prüfen',
     ng: 'Nein',
     workersDeploy: 'Workers-Bereitstellung',
-    workersDeployOk: 'Die Wrangler-Authentifizierung scheint für die Bereitstellung von Workers verwendbar zu sein.',
+    workersDeployOk:
+      'Die Wrangler-Authentifizierung scheint für die Bereitstellung von Workers verwendbar zu sein.',
     workersDeployReview:
       'Einige Voraussetzungen für die Workers-Bereitstellung konnten nicht verifiziert werden. Bitte Login und Tokenzugriff prüfen.',
     workersDeployNg: 'Wrangler ist nicht installiert oder der Cloudflare-Login ist unvollständig.',
     customDomain: 'Benutzerdefinierte Domain',
-    customDomainOk: 'Zugriff auf die Zone ist vorhanden, daher sollte die Einrichtung der benutzerdefinierten Domain funktionieren.',
+    customDomainOk:
+      'Zugriff auf die Zone ist vorhanden, daher sollte die Einrichtung der benutzerdefinierten Domain funktionieren.',
     customDomainReviewZoneRead:
       'Der Zugriff auf die Zone konnte nicht verifiziert werden. Die Einrichtung kann funktionieren, muss aber geprüft werden.',
     customDomainNgNoZone:
@@ -279,7 +284,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     ng: '불가',
     workersDeploy: 'Workers 배포',
     workersDeployOk: 'Wrangler 로그인 상태가 확인되어 Workers 배포를 진행할 가능성이 높습니다.',
-    workersDeployReview: 'Workers 배포 전제 중 일부를 확인하지 못했습니다. 로그인 상태와 token 권한을 확인하세요.',
+    workersDeployReview:
+      'Workers 배포 전제 중 일부를 확인하지 못했습니다. 로그인 상태와 token 권한을 확인하세요.',
     workersDeployNg: 'Wrangler가 설치되지 않았거나 Cloudflare 로그인 상태가 완료되지 않았습니다.',
     customDomain: '커스텀 도메인',
     customDomainOk: 'Zone 목록에 접근할 수 있어 커스텀 도메인 설정을 진행할 가능성이 높습니다.',
@@ -288,7 +294,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     customDomainNgNoZone:
       '접근 가능한 Cloudflare Zone을 찾지 못해 커스텀 도메인을 사용할 수 없습니다.',
     multiTenant: '멀티테넌트',
-    multiTenantOk: 'DNS 레코드 조회를 확인해 테넌트용 와일드카드 DNS 설정을 진행할 가능성이 높습니다.',
+    multiTenantOk:
+      'DNS 레코드 조회를 확인해 테넌트용 와일드카드 DNS 설정을 진행할 가능성이 높습니다.',
     multiTenantReview:
       'DNS 권한을 확인하지 못해 멀티테넌트 서브도메인 설정이 가능할 수도 있지만 실패 가능성이 있습니다.',
     nakedDomain: '네이키드 도메인',
@@ -313,7 +320,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Некоторые предпосылки для деплоя Workers не удалось проверить. Проверьте вход и доступ токена перед продолжением.',
     workersDeployNg: 'Wrangler не установлен или вход в Cloudflare не завершен.',
     customDomain: 'Пользовательский домен',
-    customDomainOk: 'Доступ к зоне есть, поэтому настройка пользовательского домена, вероятно, сработает.',
+    customDomainOk:
+      'Доступ к зоне есть, поэтому настройка пользовательского домена, вероятно, сработает.',
     customDomainReviewZoneRead:
       'Не удалось проверить доступ к зоне, поэтому настройка пользовательского домена может сработать, но требует проверки.',
     customDomainNgNoZone:
@@ -329,8 +337,7 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       'Не удалось проверить DNS-предпосылки для мультитенантной маршрутизации, поэтому конфигурация naked domain требует проверки.',
     pages: 'Cloudflare Pages',
-    pagesOk:
-      'API Pages доступен, поэтому деплой Login/Admin UI в Pages, вероятно, сработает.',
+    pagesOk: 'API Pages доступен, поэтому деплой Login/Admin UI в Pages, вероятно, сработает.',
     pagesReview:
       'Не удалось проверить API Pages, поэтому деплой в Pages может сработать, но требует проверки.',
   },
@@ -346,7 +353,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Beberapa prasyarat deploy Workers tidak dapat diverifikasi. Periksa login dan akses token sebelum melanjutkan.',
     workersDeployNg: 'Wrangler belum terpasang atau login Cloudflare belum lengkap.',
     customDomain: 'Domain kustom',
-    customDomainOk: 'Akses ke zone tersedia, jadi pengaturan domain kustom kemungkinan akan berhasil.',
+    customDomainOk:
+      'Akses ke zone tersedia, jadi pengaturan domain kustom kemungkinan akan berhasil.',
     customDomainReviewZoneRead:
       'Akses ke zone tidak dapat diverifikasi, jadi pengaturan domain kustom mungkin bisa berhasil tetapi perlu diperiksa.',
     customDomainNgNoZone:

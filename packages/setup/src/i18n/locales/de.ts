@@ -194,10 +194,8 @@ const de: Translations = {
   'web.form.multiTenantEnable': 'Multi-Tenant-Modus aktivieren',
   'web.form.multiTenantHint': 'Tenant-Subdomains unter Ihrer benutzerdefinierten Domain erstellen',
   'web.form.multiTenantExamples': 'Beispiele für Tenant-URLs',
-  'web.form.multiTenantExampleDefaultOmitted':
-    'Standard-Tenant mit ausgelassenem Namen: {{url}}',
-  'web.form.multiTenantExampleDefaultIncluded':
-    'Standard-Tenant mit explizitem Namen: {{url}}',
+  'web.form.multiTenantExampleDefaultOmitted': 'Standard-Tenant mit ausgelassenem Namen: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Standard-Tenant mit explizitem Namen: {{url}}',
   'web.form.multiTenantExampleOther': 'Nicht-Standard-Tenant: {{url}}',
 
   // Database
