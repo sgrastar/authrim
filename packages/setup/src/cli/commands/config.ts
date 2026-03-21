@@ -12,6 +12,7 @@ import { AuthrimConfigSchema, safeParseConfig } from '../../core/config.js';
 import { loadLockFileAuto } from '../../core/lock.js';
 import {
   findAuthrimBaseDir,
+  findLegacyConfigPath,
   getEnvironmentPaths,
   resolvePaths,
   listEnvironments,
@@ -59,10 +60,10 @@ export async function configCommand(options: ConfigCommandOptions): Promise<void
       if (existsSync(envPaths.config)) {
         configPath = envPaths.config;
       } else {
-        configPath = 'authrim-config.json';
+        configPath = findLegacyConfigPath(baseDir, environments[0]);
       }
     } else {
-      configPath = 'authrim-config.json';
+      configPath = findLegacyConfigPath(baseDir);
     }
   }
 

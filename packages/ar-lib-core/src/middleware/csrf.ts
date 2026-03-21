@@ -24,6 +24,8 @@ import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { isAllowedOrigin, parseAllowedOrigins } from '../utils/origin-validator';
 import { createLogger } from '../utils/logger';
+import { getTenantIdFromContext } from './request-context';
+import { getTenantSettings } from '../utils/tenant-settings';
 
 const log = createLogger().module('CSRF');
 
@@ -58,25 +60,19 @@ export interface CsrfProtectionOptions {
  * Default function to resolve allowed origins from environment
  */
 async function defaultResolveAllowedOrigins(c: Context<{ Bindings: Env }>): Promise<string[]> {
-  // 1. Try KV (tenant settings) for dynamic configuration
-  if (c.env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await c.env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const settings = JSON.parse(kvData) as Record<string, unknown>;
-        const kvValue = settings['tenant.allowed_origins'];
-        if (typeof kvValue === 'string' && kvValue.length > 0) {
-          // Merge KV origins with env origins
-          const kvOrigins = parseAllowedOrigins(kvValue);
-          const envOrigins = c.env.ALLOWED_ORIGINS
-            ? parseAllowedOrigins(c.env.ALLOWED_ORIGINS)
-            : [];
-          const issuerOrigins = c.env.ISSUER_URL ? parseAllowedOrigins(c.env.ISSUER_URL) : [];
-          return [...new Set([...kvOrigins, ...envOrigins, ...issuerOrigins])];
-        }
-      }
-    } catch {
-      // KV read error - fall through to env
+  // 1. Try KV (tenant-aware settings) for dynamic configuration
+  const tenantSettings = await getTenantSettings(
+    c.env.AUTHRIM_CONFIG,
+    getTenantIdFromContext(c),
+    'tenant'
+  );
+  if (tenantSettings) {
+    const kvValue = tenantSettings['tenant.allowed_origins'];
+    if (typeof kvValue === 'string' && kvValue.length > 0) {
+      const kvOrigins = parseAllowedOrigins(kvValue);
+      const envOrigins = c.env.ALLOWED_ORIGINS ? parseAllowedOrigins(c.env.ALLOWED_ORIGINS) : [];
+      const issuerOrigins = c.env.ISSUER_URL ? parseAllowedOrigins(c.env.ISSUER_URL) : [];
+      return [...new Set([...kvOrigins, ...envOrigins, ...issuerOrigins])];
     }
   }
 

@@ -10,13 +10,16 @@ import type { Env } from '../../types/env';
 import type { JWK } from 'jose';
 
 /**
- * Test suite for Hierarchical JWKS Cache Manager
+ * Test suite for Hierarchical JWKS Cache Manager (per-tenant)
  *
  * Tests the 3-tier caching strategy:
- * 1. In-memory cache (per-isolate)
- * 2. KV cache (shared across Workers)
- * 3. KeyManager DO (authoritative source)
+ * 1. In-memory cache (per-isolate, per-tenant)
+ * 2. KV cache (shared across Workers, per-tenant)
+ * 3. KeyManager DO (authoritative source, per-tenant)
  */
+
+const TEST_TENANT = 'test-tenant';
+const OTHER_TENANT = 'other-tenant';
 
 // Mock JWKs for testing
 const mockJwk1: JWK = {
@@ -45,13 +48,15 @@ function createMockEnv(
     envJwk?: JWK;
     kvThrows?: boolean;
     doThrows?: boolean;
+    keyVersion?: string;
   } = {}
 ): Env {
-  const { kvKeys, doKeys, envJwk, kvThrows = false, doThrows = false } = options;
+  const { kvKeys, doKeys, envJwk, kvThrows = false, doThrows = false, keyVersion = '' } = options;
 
   const mockKV = {
-    get: vi.fn().mockImplementation(async () => {
+    get: vi.fn().mockImplementation(async (key: string) => {
       if (kvThrows) throw new Error('KV error');
+      if (key.startsWith('v1:key-version:')) return keyVersion;
       return kvKeys ?? null;
     }),
     put: vi.fn().mockResolvedValue(undefined),
@@ -76,7 +81,7 @@ function createMockEnv(
 
 describe('JWKS Cache', () => {
   beforeEach(() => {
-    // Clear in-memory cache before each test
+    // Clear in-memory cache for all tenants before each test
     invalidateJwksCache();
     vi.clearAllMocks();
   });
@@ -86,16 +91,16 @@ describe('JWKS Cache', () => {
       it('should fetch from KeyManager DO and cache in memory and KV', async () => {
         const env = createMockEnv({ doKeys: [mockJwk1, mockJwk2] });
 
-        const result = await getJwksWithCache(env);
+        const result = await getJwksWithCache(env, TEST_TENANT);
 
         expect(result.keys).toHaveLength(2);
         expect(result.source).toBe('do');
         expect(result.keys[0].kid).toBe('key-1');
 
-        // Verify KV was updated
+        // Verify KV was updated with tenant-scoped key
         expect(env.AUTHRIM_CONFIG!.put).toHaveBeenCalledWith(
-          'cache:jwks',
-          expect.any(String),
+          `cache:jwks:${TEST_TENANT}`,
+          expect.stringContaining('"version":""'),
           expect.objectContaining({ expirationTtl: 60 })
         );
       });
@@ -103,7 +108,7 @@ describe('JWKS Cache', () => {
       it('should return from KV cache if available', async () => {
         const env = createMockEnv({ kvKeys: [mockJwk1] });
 
-        const result = await getJwksWithCache(env);
+        const result = await getJwksWithCache(env, TEST_TENANT);
 
         expect(result.keys).toHaveLength(1);
         expect(result.source).toBe('kv');
@@ -111,25 +116,67 @@ describe('JWKS Cache', () => {
         expect(env.KEY_MANAGER.get).not.toHaveBeenCalled();
       });
 
-      it('should use in-memory cache on subsequent calls', async () => {
+      it('should use in-memory cache on subsequent calls for same tenant', async () => {
         const env = createMockEnv({ doKeys: [mockJwk1] });
 
         // First call - fetches from DO
-        const result1 = await getJwksWithCache(env);
+        const result1 = await getJwksWithCache(env, TEST_TENANT);
         expect(result1.source).toBe('do');
 
-        // Second call - should use memory cache
-        const result2 = await getJwksWithCache(env);
+        // Second call - should use memory cache (no extra KV call)
+        const result2 = await getJwksWithCache(env, TEST_TENANT);
         expect(result2.source).toBe('do'); // Source preserved from first call
 
-        // KV should only be checked once
-        expect(env.AUTHRIM_CONFIG!.get).toHaveBeenCalledTimes(1);
+        // KeyManager should only be queried once for the same tenant
+        expect(env.KEY_MANAGER.get).toHaveBeenCalledTimes(1);
+      });
+
+      it('should keep separate caches for different tenants', async () => {
+        const env = createMockEnv({ doKeys: [mockJwk1] });
+
+        await getJwksWithCache(env, TEST_TENANT);
+        await getJwksWithCache(env, OTHER_TENANT);
+
+        // KeyManager should be queried once per tenant
+        expect(env.KEY_MANAGER.get).toHaveBeenCalledTimes(2);
+        // KV key should be different for each tenant
+        expect(env.AUTHRIM_CONFIG!.get).toHaveBeenCalledWith(
+          `cache:jwks:${TEST_TENANT}`,
+          expect.any(Object)
+        );
+        expect(env.AUTHRIM_CONFIG!.get).toHaveBeenCalledWith(
+          `cache:jwks:${OTHER_TENANT}`,
+          expect.any(Object)
+        );
+      });
+
+      it('should fetch from correct tenant DO instance', async () => {
+        const env = createMockEnv({ doKeys: [mockJwk1] });
+
+        await getJwksWithCache(env, TEST_TENANT);
+
+        expect(env.KEY_MANAGER.idFromName).toHaveBeenCalledWith(`${TEST_TENANT}-v3`);
+      });
+
+      it('should refresh in-memory cache when key version changes', async () => {
+        const env = createMockEnv({ doKeys: [mockJwk1], keyVersion: 'v1' });
+        const kvGet = env.AUTHRIM_CONFIG!.get as unknown as ReturnType<typeof vi.fn>;
+
+        await getJwksWithCache(env, TEST_TENANT);
+        kvGet.mockImplementation(async (key: string) => {
+          if (key.startsWith('v1:key-version:')) return 'v2';
+          return null;
+        });
+
+        await getJwksWithCache(env, TEST_TENANT);
+
+        expect(env.KEY_MANAGER.get).toHaveBeenCalledTimes(2);
       });
 
       it('should fallback to env variable if DO fails', async () => {
         const env = createMockEnv({ doThrows: true, envJwk: mockJwk1 });
 
-        const result = await getJwksWithCache(env);
+        const result = await getJwksWithCache(env, TEST_TENANT);
 
         expect(result.keys).toHaveLength(1);
         expect(result.source).toBe('env');
@@ -139,7 +186,7 @@ describe('JWKS Cache', () => {
       it('should fallback to DO if KV fails', async () => {
         const env = createMockEnv({ kvThrows: true, doKeys: [mockJwk1] });
 
-        const result = await getJwksWithCache(env);
+        const result = await getJwksWithCache(env, TEST_TENANT);
 
         expect(result.keys).toHaveLength(1);
         expect(result.source).toBe('do');
@@ -148,7 +195,7 @@ describe('JWKS Cache', () => {
       it('should return empty array if all sources fail', async () => {
         const env = createMockEnv({ doThrows: true });
 
-        const result = await getJwksWithCache(env);
+        const result = await getJwksWithCache(env, TEST_TENANT);
 
         expect(result.keys).toHaveLength(0);
       });
@@ -158,7 +205,7 @@ describe('JWKS Cache', () => {
       it('should use custom KV cache key', async () => {
         const env = createMockEnv({ doKeys: [mockJwk1] });
 
-        await getJwksWithCache(env, { kvCacheKey: 'custom:jwks' });
+        await getJwksWithCache(env, TEST_TENANT, { kvCacheKey: 'custom:jwks' });
 
         expect(env.AUTHRIM_CONFIG!.get).toHaveBeenCalledWith('custom:jwks', expect.any(Object));
         expect(env.AUTHRIM_CONFIG!.put).toHaveBeenCalledWith(
@@ -171,7 +218,7 @@ describe('JWKS Cache', () => {
       it('should use custom KV TTL', async () => {
         const env = createMockEnv({ doKeys: [mockJwk1] });
 
-        await getJwksWithCache(env, { kvTtlSeconds: 120 });
+        await getJwksWithCache(env, TEST_TENANT, { kvTtlSeconds: 120 });
 
         expect(env.AUTHRIM_CONFIG!.put).toHaveBeenCalledWith(
           expect.any(String),
@@ -183,7 +230,7 @@ describe('JWKS Cache', () => {
       it('should skip env fallback when disabled', async () => {
         const env = createMockEnv({ doThrows: true, envJwk: mockJwk1 });
 
-        const result = await getJwksWithCache(env, { useEnvFallback: false });
+        const result = await getJwksWithCache(env, TEST_TENANT, { useEnvFallback: false });
 
         expect(result.keys).toHaveLength(0);
       });
@@ -194,7 +241,7 @@ describe('JWKS Cache', () => {
     it('should find key by kid', async () => {
       const env = createMockEnv({ doKeys: [mockJwk1, mockJwk2] });
 
-      const key = await getKeyByKid(env, 'key-2');
+      const key = await getKeyByKid(env, TEST_TENANT, 'key-2');
 
       expect(key).toBeDefined();
       expect(key?.kid).toBe('key-2');
@@ -203,7 +250,7 @@ describe('JWKS Cache', () => {
     it('should return undefined if kid not found', async () => {
       const env = createMockEnv({ doKeys: [mockJwk1] });
 
-      const key = await getKeyByKid(env, 'non-existent');
+      const key = await getKeyByKid(env, TEST_TENANT, 'non-existent');
 
       expect(key).toBeUndefined();
     });
@@ -211,7 +258,7 @@ describe('JWKS Cache', () => {
     it('should return first key if no kid specified', async () => {
       const env = createMockEnv({ doKeys: [mockJwk1, mockJwk2] });
 
-      const key = await getKeyByKid(env, undefined);
+      const key = await getKeyByKid(env, TEST_TENANT, undefined);
 
       expect(key).toBeDefined();
       expect(key?.kid).toBe('key-1');
@@ -219,51 +266,73 @@ describe('JWKS Cache', () => {
   });
 
   describe('invalidateJwksCache', () => {
-    it('should clear in-memory cache', async () => {
+    it('should clear in-memory cache for specific tenant', async () => {
       const env = createMockEnv({ doKeys: [mockJwk1] });
 
-      // Populate cache
-      await getJwksWithCache(env);
-      expect(getJwksCacheStatus()).not.toBeNull();
+      // Populate caches for both tenants
+      await getJwksWithCache(env, TEST_TENANT);
+      await getJwksWithCache(env, OTHER_TENANT);
+      expect(getJwksCacheStatus(TEST_TENANT)).not.toBeNull();
+      expect(getJwksCacheStatus(OTHER_TENANT)).not.toBeNull();
 
-      // Invalidate
+      // Invalidate only TEST_TENANT
+      invalidateJwksCache(TEST_TENANT);
+
+      expect(getJwksCacheStatus(TEST_TENANT)).toBeNull();
+      expect(getJwksCacheStatus(OTHER_TENANT)).not.toBeNull();
+    });
+
+    it('should clear all caches when called without tenantId', async () => {
+      const env = createMockEnv({ doKeys: [mockJwk1] });
+
+      await getJwksWithCache(env, TEST_TENANT);
+      await getJwksWithCache(env, OTHER_TENANT);
+
       invalidateJwksCache();
 
-      expect(getJwksCacheStatus()).toBeNull();
+      expect(getJwksCacheStatus(TEST_TENANT)).toBeNull();
+      expect(getJwksCacheStatus(OTHER_TENANT)).toBeNull();
     });
 
     it('should force fresh fetch after invalidation', async () => {
       const env = createMockEnv({ doKeys: [mockJwk1] });
 
       // Populate cache
-      await getJwksWithCache(env);
+      await getJwksWithCache(env, TEST_TENANT);
 
       // Invalidate
-      invalidateJwksCache();
+      invalidateJwksCache(TEST_TENANT);
 
       // Next call should fetch fresh
-      await getJwksWithCache(env);
+      await getJwksWithCache(env, TEST_TENANT);
 
-      // KV should be checked twice (once for each call after invalidation)
-      expect(env.AUTHRIM_CONFIG!.get).toHaveBeenCalledTimes(2);
+      // KeyManager should be queried twice (once before and once after invalidation)
+      expect(env.KEY_MANAGER.get).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('getJwksCacheStatus', () => {
-    it('should return null when cache is empty', () => {
-      expect(getJwksCacheStatus()).toBeNull();
+    it('should return null when cache is empty for tenant', () => {
+      expect(getJwksCacheStatus(TEST_TENANT)).toBeNull();
     });
 
     it('should return status when cache is populated', async () => {
       const env = createMockEnv({ doKeys: [mockJwk1, mockJwk2] });
-      await getJwksWithCache(env);
+      await getJwksWithCache(env, TEST_TENANT);
 
-      const status = getJwksCacheStatus();
+      const status = getJwksCacheStatus(TEST_TENANT);
 
       expect(status).not.toBeNull();
       expect(status?.keyCount).toBe(2);
       expect(status?.source).toBe('do');
       expect(status?.expiresIn).toBeGreaterThan(0);
+    });
+
+    it('should return null for different tenant even if one is populated', async () => {
+      const env = createMockEnv({ doKeys: [mockJwk1] });
+      await getJwksWithCache(env, TEST_TENANT);
+
+      expect(getJwksCacheStatus(OTHER_TENANT)).toBeNull();
     });
   });
 
@@ -271,7 +340,7 @@ describe('JWKS Cache', () => {
     it('should return undefined if key not found', async () => {
       const env = createMockEnv({ doKeys: [] });
 
-      const key = await getVerificationKey(env, 'non-existent');
+      const key = await getVerificationKey(env, TEST_TENANT, 'non-existent');
 
       expect(key).toBeUndefined();
     });

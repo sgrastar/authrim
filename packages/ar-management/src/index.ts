@@ -30,6 +30,8 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   csrfProtectionMiddleware,
+  getTenantIdFromContext,
+  getTenantSettings,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -624,20 +626,16 @@ app.use(
 app.use('*', async (c, next) => {
   let allowedOriginsStr: string | null = null;
 
-  // 1. Try to get from KV (tenant settings)
-  if (c.env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await c.env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const parsed = JSON.parse(kvData) as Record<string, unknown>;
-        const kvValue = parsed['tenant.allowed_origins'];
-        if (typeof kvValue === 'string' && kvValue.length > 0) {
-          allowedOriginsStr = kvValue;
-        }
-      }
-    } catch {
-      // KV read error - continue with env fallback
-      // Fail-safe: don't block requests due to KV issues
+  // 1. Try to get from KV (tenant-aware settings)
+  const tenantSettings = await getTenantSettings(
+    c.env.AUTHRIM_CONFIG,
+    getTenantIdFromContext(c),
+    'tenant'
+  );
+  if (tenantSettings) {
+    const kvValue = tenantSettings['tenant.allowed_origins'];
+    if (typeof kvValue === 'string' && kvValue.length > 0) {
+      allowedOriginsStr = kvValue;
     }
   }
 

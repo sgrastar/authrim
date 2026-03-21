@@ -8,6 +8,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../types/env.js';
+import { getTenantIdFromContext } from '../middleware/request-context.js';
 
 // =============================================================================
 // Types
@@ -92,7 +93,7 @@ async function checkKV(kv: KVNamespace): Promise<HealthCheckResult> {
 /**
  * Check KeyManager Durable Object
  */
-async function checkKeyManager(env: Env): Promise<HealthCheckResult> {
+async function checkKeyManager(env: Env, tenantId: string): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
     if (!env.KEY_MANAGER) {
@@ -101,7 +102,7 @@ async function checkKeyManager(env: Env): Promise<HealthCheckResult> {
         latencyMs: Date.now() - start,
       };
     }
-    const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+    const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = env.KEY_MANAGER.get(keyManagerId);
     // Get public keys to verify DO is responsive
     await keyManager.getAllPublicKeysRpc();
@@ -173,7 +174,7 @@ export function createReadinessHandler(options: HealthCheckOptions) {
 
     if (options.checkKeyManager && env.KEY_MANAGER) {
       checkPromises.push(
-        checkKeyManager(env).then((result) => {
+        checkKeyManager(env, getTenantIdFromContext(c)).then((result) => {
           checks.keyManager = result;
           if (result.status === 'error') allHealthy = false;
         })

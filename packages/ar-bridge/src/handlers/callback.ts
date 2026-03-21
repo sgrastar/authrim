@@ -518,7 +518,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       }
 
       // 11b. セッション作成（SSOセッション）
-      const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
+      const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
       const sessionTTL = 24 * 60 * 60; // 24 hours
 
       await sessionStore.createSessionRpc(sessionId, result.userId, sessionTTL, {
@@ -702,6 +702,7 @@ async function redirectWithError(
  */
 interface CreateSessionOptions {
   userId: string;
+  tenantId: string;
   /** External provider ID used for authentication */
   externalProviderId: string;
   /** Subject ID from the external provider (for backchannel logout) */
@@ -716,7 +717,10 @@ interface CreateSessionOptions {
  */
 async function createSession(env: Env, options: CreateSessionOptions): Promise<string> {
   try {
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
+      env,
+      options.tenantId
+    );
     const now = Date.now();
     const ttl = 3600; // 1 hour in seconds
     const expiresAt = now + ttl * 1000;

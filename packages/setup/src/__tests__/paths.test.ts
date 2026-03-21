@@ -21,6 +21,10 @@ import {
   LEGACY_CONFIG_FILE,
   LEGACY_LOCK_FILE,
   LEGACY_KEYS_DIR,
+  findLegacyConfigPath,
+  findLegacyLockPath,
+  getLegacyConfigFileName,
+  getLegacyLockFileName,
 } from '../core/paths.js';
 
 describe('paths module', () => {
@@ -80,8 +84,8 @@ describe('paths module', () => {
     it('should generate correct legacy paths', () => {
       const paths = getLegacyPaths('/project', 'dev');
 
-      expect(paths.config).toBe('/project/authrim-config.json');
-      expect(paths.lock).toBe('/project/authrim-lock.json');
+      expect(paths.config).toBe('/project/authrim-dev-config.json');
+      expect(paths.lock).toBe('/project/authrim-dev-lock.json');
       expect(paths.keys).toBe('/project/.keys/dev');
       expect(paths.keyFiles.privateKey).toBe('/project/.keys/dev/private.pem');
     });
@@ -90,13 +94,29 @@ describe('paths module', () => {
       const devPaths = getLegacyPaths('/project', 'dev');
       const prodPaths = getLegacyPaths('/project', 'prod');
 
-      // Config and lock are the same (global)
-      expect(devPaths.config).toBe(prodPaths.config);
-      expect(devPaths.lock).toBe(prodPaths.lock);
+      expect(devPaths.config).toBe('/project/authrim-dev-config.json');
+      expect(devPaths.lock).toBe('/project/authrim-dev-lock.json');
+      expect(prodPaths.config).toBe('/project/authrim-prod-config.json');
+      expect(prodPaths.lock).toBe('/project/authrim-prod-lock.json');
 
       // Keys are different per environment
       expect(devPaths.keys).toBe('/project/.keys/dev');
       expect(prodPaths.keys).toBe('/project/.keys/prod');
+    });
+
+    it('prefers environment-specific legacy filenames when they exist', () => {
+      const env = 'staging';
+      const configPath = join(testDir, getLegacyConfigFileName(env));
+      const lockPath = join(testDir, getLegacyLockFileName(env));
+      writeFileSync(configPath, JSON.stringify({ environment: { prefix: env } }));
+      writeFileSync(lockPath, JSON.stringify({ env }));
+
+      expect(findLegacyConfigPath(testDir, env)).toBe(configPath);
+      expect(findLegacyLockPath(testDir, env)).toBe(lockPath);
+
+      const paths = getLegacyPaths(testDir, env);
+      expect(paths.config).toBe(configPath);
+      expect(paths.lock).toBe(lockPath);
     });
   });
 
@@ -140,6 +160,18 @@ describe('paths module', () => {
 
       expect(result.type).toBe('legacy');
       expect(result.legacyEnv).toBe('myenv');
+    });
+
+    it('should detect env-specific legacy config filenames', () => {
+      writeFileSync(
+        join(testDir, getLegacyConfigFileName('preview')),
+        JSON.stringify({ environment: { prefix: 'preview' } })
+      );
+
+      const result = detectStructure(testDir);
+
+      expect(result.type).toBe('legacy');
+      expect(result.legacyEnv).toBe('preview');
     });
 
     it('should detect legacy structure with lock file', () => {
@@ -219,6 +251,17 @@ describe('paths module', () => {
       expect(envs).toHaveLength(2);
       expect(envs).toContain('alpha');
       expect(envs).toContain('beta');
+    });
+
+    it('should include environments from env-specific legacy config filenames', () => {
+      writeFileSync(
+        join(testDir, getLegacyConfigFileName('preview')),
+        JSON.stringify({ environment: { prefix: 'preview' } })
+      );
+
+      const envs = listEnvironments(testDir);
+
+      expect(envs).toContain('preview');
     });
 
     it('should list environments from legacy .keys structure', () => {
@@ -303,7 +346,7 @@ describe('paths module', () => {
       const result = resolvePaths({ baseDir: testDir, env: 'test', forceLegacy: true });
 
       expect(result.type).toBe('legacy');
-      expect(result.paths.config).toContain('authrim-config.json');
+      expect(result.paths.config).toContain('authrim-test-config.json');
     });
 
     it('should detect existing new structure', () => {

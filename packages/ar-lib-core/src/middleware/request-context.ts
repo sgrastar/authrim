@@ -15,7 +15,7 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID, resolveTenantFromRequest } from '../utils/tenant-context';
-import { isMultiTenantEnabled } from '../utils/issuer';
+import { isMultiTenantEnabled, validateTenantExistsAsync } from '../utils/issuer';
 import { createLogger, type Logger } from '../utils/logger';
 
 /**
@@ -106,6 +106,25 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Fallback to default tenant if resolution failed but not required
     if (!tenantResult.success) {
       tenantId = c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+    }
+
+    // In multi-tenant mode, validate that the resolved tenant actually exists in D1.
+    // Uses positive-only KV cache (300s TTL) to avoid per-request D1 queries.
+    // Fail-open on D1 errors to prevent outages from blocking all requests.
+    if (isMultiTenantEnabled(c.env) && tenantResult.success && tenantId) {
+      const exists = await validateTenantExistsAsync(c.env.DB, c.env.AUTHRIM_CONFIG, tenantId);
+      if (!exists) {
+        const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
+        errorLogger.warn('Tenant existence check failed', {
+          tenantId,
+          host: c.req.header('Host'),
+          path: c.req.path,
+        });
+        return c.json(
+          { error: 'not_found', error_description: 'Tenant not found' },
+          404
+        );
+      }
     }
 
     // Create logger with request context

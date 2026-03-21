@@ -13,6 +13,7 @@ import {
   createShardedAuthCode,
   buildAuthCodeShardInstanceName,
   getShardCount,
+  buildDOInstanceName,
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
   isShardedSessionId,
@@ -94,9 +95,13 @@ import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 
 // ===== Key Caching for Performance Optimization =====
-// Cache signing key to avoid expensive RSA key import (5-7ms) on every request
-let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
-let cachedKeyTimestamp = 0;
+// Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
+const signingKeyCache = new Map<string, {
+  privateKey: CryptoKey;
+  kid: string;
+  timestamp: number;
+  version: string;
+}>();
 const KEY_CACHE_TTL = 60000; // 60 seconds
 
 // ===== SettingsManager Caching for Performance Optimization =====
@@ -844,7 +849,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         if (parsedPar) {
           // New region-sharded format: route via embedded shard info
-          const { stub } = getPARRequestStoreByUri(c.env, request_uri!, 'default');
+          const { stub } = getPARRequestStoreByUri(c.env, request_uri!, getTenantIdFromContext(c));
           consumed = (await stub.consumeRequestRpc({
             requestUri: request_uri!,
             client_id: client_id || '', // May be empty for new format
@@ -2218,7 +2223,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       if (c.env.KEY_MANAGER) {
         try {
-          const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+          const tenantId = getTenantIdFromContext(c);
+          const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
           const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
           const keys = await keyManager.getAllPublicKeysRpc();
 
@@ -3160,9 +3166,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const instanceName = buildAuthCodeShardInstanceName(shardIndex);
       authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
     } else {
-      // Sharding disabled - use legacy 'global' instance
+      // Sharding disabled - use tenant-scoped legacy instance
       code = randomCode;
-      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(
+        buildDOInstanceName('auth-code', getTenantIdFromContext(c))
+      );
     }
 
     // Store authorization code using AuthorizationCodeStore Durable Object (RPC)
@@ -3200,7 +3208,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Get issuer from environment
       const issuer = getRequestIssuer(c);
 
-      const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env);
+      const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
 
       // Generate region-aware JTI for token revocation sharding
       const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
@@ -3245,7 +3253,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Get issuer from environment
       const issuer = getRequestIssuer(c);
 
-      const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env);
+      const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
 
       // Calculate c_hash if code is present (for hybrid flows)
       // Per OIDC Core 3.3.2.11
@@ -3550,21 +3558,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * Get signing key from KeyManager with caching
- * Performance optimization: Caches the imported CryptoKey to avoid expensive
- * RSA key import operation (5-7ms) on every request. Cache TTL is 60 seconds.
+ * Get signing key from per-tenant KeyManager with caching.
+ * Checks KV version signal to detect cross-worker emergency rotations.
  */
 async function getSigningKeyFromKeyManager(
-  env: Env
+  env: Env,
+  tenantId: string
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
+  const cached = signingKeyCache.get(tenantId);
 
-  // Check cache first (cache hit = avoid KeyManager DO call + RSA import)
-  if (cachedSigningKey && now - cachedKeyTimestamp < KEY_CACHE_TTL) {
-    return cachedSigningKey;
+  // Check cache — if within TTL, verify KV version to detect emergency rotation
+  if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
+    const currentVersion = await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null) ?? '';
+    if (currentVersion === cached.version) {
+      return { privateKey: cached.privateKey, kid: cached.kid };
+    }
+    // Version mismatch: emergency rotation detected — fall through to refresh
   }
 
-  // Cache miss: fetch from KeyManager
+  // Cache miss or version mismatch: fetch from per-tenant KeyManager DO
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
   }
@@ -3573,7 +3586,7 @@ async function getSigningKeyFromKeyManager(
     throw new Error('KEY_MANAGER_SECRET not configured');
   }
 
-  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Try to get active key via RPC
@@ -3625,10 +3638,10 @@ async function getSigningKeyFromKeyManager(
   // Import private key (expensive operation: 5-7ms)
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
-  // Update cache
-  cachedSigningKey = { privateKey, kid: keyData.kid };
-  cachedKeyTimestamp = now;
+  // Fetch current version for cache coherence
+  const version = await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null) ?? '';
 
+  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
   return { privateKey, kid: keyData.kid };
 }
 

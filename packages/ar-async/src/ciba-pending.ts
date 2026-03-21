@@ -13,7 +13,15 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getClient,
+  getTenantIdFromContext,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+
+function resolveTenantId(c: Context<{ Bindings: Env }>): string {
+  return typeof (c as { get?: unknown }).get === 'function'
+    ? getTenantIdFromContext(c)
+    : c.env.DEFAULT_TENANT_ID || 'default';
+}
 
 /**
  * GET /api/ciba/pending
@@ -43,6 +51,7 @@ import {
  */
 export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
+  const tenantId = resolveTenantId(c);
   try {
     // User identification for CIBA pending requests
     //
@@ -75,7 +84,9 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get CIBA request metadata from CIBARequestStore
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
+    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
+      buildDOInstanceName('ciba', tenantId)
+    );
     const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
 
     // Use login_hint if provided, otherwise fall back to user_id

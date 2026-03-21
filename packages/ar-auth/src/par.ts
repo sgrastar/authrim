@@ -36,6 +36,7 @@ import {
   validateAuthorizationDetails,
   // Logging
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
@@ -294,7 +295,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         if (tokenFormat === 'jwe') {
           try {
             // Get private key for decryption from KeyManager
-            const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+            const keyManagerId = c.env.KEY_MANAGER.idFromName(`${getTenantIdFromContext(c)}-v3`);
             const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
             const keyData = await keyManager.getActiveKeyWithPrivateRpc();
 
@@ -719,7 +720,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     const uuid = crypto.randomUUID();
     const { stub, requestUri } = await getPARRequestStoreForNewRequest(
       c.env,
-      'default', // tenantId - will support multi-tenant in future
+      getTenantIdFromContext(c),
       params.client_id,
       uuid
     );

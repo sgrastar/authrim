@@ -7,7 +7,21 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+  buildDOInstanceName,
+  parseCIBARequestId,
+  getCIBARequestStoreById,
+} from '@authrim/ar-lib-core';
+
+function resolveTenantId(c: Context<{ Bindings: Env }>): string {
+  return typeof (c as { get?: unknown }).get === 'function'
+    ? getTenantIdFromContext(c)
+    : c.env.DEFAULT_TENANT_ID || 'default';
+}
 
 /**
  * POST /api/ciba/deny
@@ -27,6 +41,7 @@ import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-
  */
 export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
+  const tenantId = resolveTenantId(c);
   try {
     // Parse JSON request body
     const body = await c.req.json();
@@ -41,8 +56,12 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get CIBA request metadata from CIBARequestStore
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
-    const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
+    const parsedCibaId = parseCIBARequestId(authReqId);
+    const cibaRequestStore = parsedCibaId
+      ? getCIBARequestStoreById(c.env, authReqId, tenantId).stub
+      : c.env.CIBA_REQUEST_STORE.get(
+          c.env.CIBA_REQUEST_STORE.idFromName(buildDOInstanceName('ciba', tenantId))
+        );
 
     // First, verify the request exists and is pending
     const getResponse = await cibaRequestStore.fetch(

@@ -131,4 +131,165 @@ describe('ensureWildcardDnsRecord', () => {
       target: 'test.example.com',
     });
   });
+
+  it('falls back to direct creation when DNS read is forbidden', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
+      .mockResolvedValueOnce(jsonResponse({ success: true, result: { id: 'record-2' } }, 200));
+
+    const result = await cloudflare.ensureWildcardDnsRecord('test.example.com', 'zone-123');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records?name=*.test.example.com'
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records'
+    );
+    expect(result).toEqual({
+      created: true,
+      updated: false,
+      recordId: 'record-2',
+      name: '*.test.example.com',
+      target: 'test.example.com',
+    });
+  });
+
+  it('treats duplicate creation as already satisfied when DNS read is forbidden', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            success: false,
+            errors: [{ code: 81057, message: 'A record with that name already exists.' }],
+          },
+          409
+        )
+      );
+
+    const result = await cloudflare.ensureWildcardDnsRecord('test.example.com', 'zone-123');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      created: false,
+      updated: false,
+      name: '*.test.example.com',
+      target: 'test.example.com',
+    });
+  });
+
+  it('continues with limited verification when DNS read and edit are both forbidden', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403));
+
+    const result = await cloudflare.ensureWildcardDnsRecord('test.example.com', 'zone-123');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      created: false,
+      updated: false,
+      name: '*.test.example.com',
+      target: 'test.example.com',
+      verificationLimited: true,
+    });
+  });
+});
+
+describe('ensureWildcardDnsForMultiTenant', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('skips DNS work when multi-tenant custom domain is not enabled', async () => {
+    const ensureSpy = vi.spyOn(cloudflare, 'ensureWildcardDnsRecord');
+    const onProgress = vi.fn();
+
+    await cloudflare.ensureWildcardDnsForMultiTenant(
+      {
+        tenant: {
+          multiTenant: false,
+          baseDomain: 'test.example.com',
+        },
+      },
+      onProgress
+    );
+
+    expect(ensureSpy).not.toHaveBeenCalled();
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('delegates wildcard DNS creation for multi-tenant custom domains', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(cloudflare, 'getCloudflareApiToken').mockResolvedValue({
+      token: 'test-token',
+      source: 'oauth',
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: true, result: [] }))
+      .mockResolvedValueOnce(jsonResponse({ result: { id: 'record-3' } }));
+    const onProgress = vi.fn();
+
+    await cloudflare.ensureWildcardDnsForMultiTenant(
+      {
+        tenant: {
+          multiTenant: true,
+          baseDomain: 'test.example.com',
+        },
+        urls: {
+          api: {
+            zoneId: 'zone-123',
+          },
+        },
+      },
+      onProgress
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records?name=*.test.example.com'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(1, 'Ensuring wildcard DNS for *.test.example.com...');
+    expect(onProgress).toHaveBeenNthCalledWith(
+      2,
+      '✓ Wildcard DNS created: *.test.example.com -> test.example.com'
+    );
+  });
+
+  it('warns and continues when wildcard DNS cannot be verified through the API', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(cloudflare, 'getCloudflareApiToken').mockResolvedValue({
+      token: 'test-token',
+      source: 'oauth',
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403));
+    const onProgress = vi.fn();
+
+    await cloudflare.ensureWildcardDnsForMultiTenant(
+      {
+        tenant: {
+          multiTenant: true,
+          baseDomain: 'test.example.com',
+        },
+        urls: {
+          api: {
+            zoneId: 'zone-123',
+          },
+        },
+      },
+      onProgress
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenNthCalledWith(1, 'Ensuring wildcard DNS for *.test.example.com...');
+    expect(onProgress).toHaveBeenNthCalledWith(
+      2,
+      '⚠ Wildcard DNS could not be verified via API permissions. Continuing under the assumption that *.test.example.com -> test.example.com was created manually.'
+    );
+  });
 });
