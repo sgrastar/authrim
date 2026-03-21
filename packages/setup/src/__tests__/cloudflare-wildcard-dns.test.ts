@@ -10,20 +10,23 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe('ensureWildcardDnsRecord', () => {
   const fetchMock = vi.fn<typeof fetch>();
+  const originalApiToken = process.env.CLOUDFLARE_API_TOKEN;
 
   beforeEach(() => {
     vi.restoreAllMocks();
     fetchMock.mockReset();
     vi.stubGlobal('fetch', fetchMock);
-    vi.spyOn(cloudflare, 'getCloudflareApiToken').mockResolvedValue({
-      token: 'test-token',
-      source: 'oauth',
-    });
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    if (originalApiToken === undefined) {
+      delete process.env.CLOUDFLARE_API_TOKEN;
+    } else {
+      process.env.CLOUDFLARE_API_TOKEN = originalApiToken;
+    }
   });
 
   it('creates a wildcard CNAME when no record exists', async () => {
@@ -198,8 +201,20 @@ describe('ensureWildcardDnsRecord', () => {
 });
 
 describe('ensureWildcardDnsForMultiTenant', () => {
+  const originalApiToken = process.env.CLOUDFLARE_API_TOKEN;
+
+  beforeEach(() => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    if (originalApiToken === undefined) {
+      delete process.env.CLOUDFLARE_API_TOKEN;
+    } else {
+      process.env.CLOUDFLARE_API_TOKEN = originalApiToken;
+    }
   });
 
   it('skips DNS work when multi-tenant custom domain is not enabled', async () => {
@@ -223,10 +238,6 @@ describe('ensureWildcardDnsForMultiTenant', () => {
   it('delegates wildcard DNS creation for multi-tenant custom domains', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
-    vi.spyOn(cloudflare, 'getCloudflareApiToken').mockResolvedValue({
-      token: 'test-token',
-      source: 'oauth',
-    });
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ success: true, result: [] }))
       .mockResolvedValueOnce(jsonResponse({ result: { id: 'record-3' } }));
@@ -261,10 +272,6 @@ describe('ensureWildcardDnsForMultiTenant', () => {
   it('warns and continues when wildcard DNS cannot be verified through the API', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
-    vi.spyOn(cloudflare, 'getCloudflareApiToken').mockResolvedValue({
-      token: 'test-token',
-      source: 'oauth',
-    });
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
       .mockResolvedValueOnce(jsonResponse({ success: false }, 403));
