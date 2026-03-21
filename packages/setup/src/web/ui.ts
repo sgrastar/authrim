@@ -5,7 +5,21 @@
  * Follows the setup flow defined in the design document.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Locale, LocaleInfo } from '../i18n/types.js';
+import { SETUP_CAPABILITY_COPY } from '../core/setup-capability-copy.js';
+import {
+  CLOUDFLARE_DNS_RECORDS_DOCS_URL,
+  WILDCARD_DNS_MANUAL_COPY,
+  getCloudflareDnsRecordsDashboardUrl,
+} from '../core/wildcard-dns-manual-action.js';
+import { computeApiDomainUiState, isValidCustomDomain } from './domain-form-state.js';
+
+const CLOUDFLARE_DNS_ADD_RECORD_IMAGE_DATA_URI = `data:image/png;base64,${readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'cloudflare-dns-add-record-example.png')
+).toString('base64')}`;
 
 export function getHtmlTemplate(
   sessionToken?: string,
@@ -21,6 +35,32 @@ export function getHtmlTemplate(
   // Safely stringify translations for embedding in JavaScript
   const translationsJson = JSON.stringify(translations);
   const availableLocalesJson = JSON.stringify(availableLocales);
+  const wildcardDnsManualCopyJson = JSON.stringify(
+    Object.fromEntries(
+      Object.entries(WILDCARD_DNS_MANUAL_COPY).map(([code, copy]) => [
+        code,
+        {
+          title: copy.title,
+          summaryTemplate: copy.summary('{baseDomain}'),
+          timing: copy.timing,
+          stepsTemplate: copy.steps(
+            '{zoneName}',
+            '*.{baseDomain}',
+            '{baseDomain}',
+            '{dashboardRecordName}'
+          ),
+          retryHint: copy.retryHint,
+          continueHint: copy.continueHint,
+          dashboardLinkLabel: copy.dashboardLinkLabel,
+          docsLinkLabel: copy.docsLinkLabel,
+          confirmSuffix: copy.confirmSuffix,
+        },
+      ])
+    )
+  );
+  const cloudflareDnsAddRecordImageDataUriJson = JSON.stringify(
+    CLOUDFLARE_DNS_ADD_RECORD_IMAGE_DATA_URI
+  );
 
   // Generate locale options HTML server-side
   const localeOptionsHtml = availableLocales
@@ -825,6 +865,40 @@ export function getHtmlTemplate(
       word-break: break-all;
     }
 
+    .issuer-preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+    }
+
+    .issuer-preview-table th,
+    .issuer-preview-table td {
+      padding: 0.45rem 0;
+      border-top: 1px solid rgba(5, 150, 105, 0.14);
+      vertical-align: top;
+    }
+
+    [data-theme="dark"] .issuer-preview-table th,
+    [data-theme="dark"] .issuer-preview-table td {
+      border-top-color: rgba(52, 211, 153, 0.18);
+    }
+
+    .issuer-preview-table th {
+      width: 44%;
+      text-align: left;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding-right: 0.75rem;
+    }
+
+    .issuer-preview-table td {
+      color: var(--success);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+
     /* ========================================
        BUTTONS
        ======================================== */
@@ -1120,6 +1194,21 @@ export function getHtmlTemplate(
       border: 1px solid rgba(37, 99, 235, 0.15);
     }
 
+    .manual-guide-visual {
+      margin-top: 1rem;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(15, 23, 42, 0.5);
+      box-shadow: 0 22px 48px rgba(15, 23, 42, 0.26);
+    }
+
+    .manual-guide-visual img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
     [data-theme="dark"] .alert-success {
       background: rgba(52, 211, 153, 0.1);
       border-color: rgba(52, 211, 153, 0.25);
@@ -1135,6 +1224,191 @@ export function getHtmlTemplate(
     [data-theme="dark"] .alert-info {
       background: rgba(96, 165, 250, 0.1);
       border-color: rgba(96, 165, 250, 0.2);
+    }
+
+    [data-theme="dark"] .manual-guide-visual {
+      background: rgba(2, 6, 23, 0.88);
+      border-color: rgba(148, 163, 184, 0.22);
+    }
+
+    .prereq-capabilities {
+      margin-top: 1rem;
+      padding: 1rem 1.125rem;
+      border-radius: 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+    }
+
+    .prereq-capabilities-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 0.2rem;
+      color: var(--text);
+    }
+
+    .prereq-capabilities-hint {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 0.85rem;
+      line-height: 1.5;
+    }
+
+    .prereq-capability-list {
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .prereq-capability-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem 0.85rem;
+      border-radius: 10px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-light);
+    }
+
+    .prereq-capability-body {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .prereq-capability-name {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.15rem;
+    }
+
+    .prereq-capability-desc {
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+
+    .prereq-capability-pill {
+      flex: 0 0 auto;
+      min-width: 52px;
+      text-align: center;
+      padding: 0.32rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .prereq-capability-pill.ok {
+      background: rgba(5, 150, 105, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(5, 150, 105, 0.22);
+    }
+
+    .prereq-capability-pill.review {
+      background: rgba(217, 119, 6, 0.1);
+      color: var(--warning);
+      border: 1px solid rgba(217, 119, 6, 0.22);
+    }
+
+    .prereq-capability-pill.ng {
+      background: rgba(220, 38, 38, 0.1);
+      color: var(--error);
+      border: 1px solid rgba(220, 38, 38, 0.22);
+    }
+
+    [data-theme="dark"] .prereq-capability-item {
+      background: rgba(28, 25, 23, 0.68);
+    }
+
+    [data-theme="dark"] .prereq-capability-pill.ok {
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.24);
+    }
+
+    [data-theme="dark"] .prereq-capability-pill.review {
+      background: rgba(251, 191, 36, 0.14);
+      border-color: rgba(251, 191, 36, 0.26);
+    }
+
+    [data-theme="dark"] .prereq-capability-pill.ng {
+      background: rgba(248, 113, 113, 0.12);
+      border-color: rgba(248, 113, 113, 0.24);
+    }
+
+    .keys-saved-box {
+      margin-top: 1rem;
+      padding: 1rem 1.125rem;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.08), rgba(14, 165, 233, 0.05));
+      color: #1e3a8a;
+      border: 1px solid rgba(37, 99, 235, 0.22);
+    }
+
+    [data-theme="dark"] .keys-saved-box {
+      background: linear-gradient(180deg, rgba(30, 64, 175, 0.22), rgba(8, 47, 73, 0.18));
+      color: #bfdbfe;
+      border-color: rgba(96, 165, 250, 0.3);
+    }
+
+    .keys-saved-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .keys-saved-title {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-weight: 700;
+    }
+
+    .keys-path-row {
+      display: flex;
+      align-items: stretch;
+      gap: 0.5rem;
+    }
+
+    .keys-path-code {
+      flex: 1;
+      min-width: 0;
+      display: block;
+      padding: 0.75rem 0.875rem;
+      border-radius: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      line-height: 1.4;
+      word-break: break-all;
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--primary);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    [data-theme="dark"] .keys-path-code {
+      background: rgba(15, 23, 42, 0.82);
+      color: #93c5fd;
+      border-color: rgba(96, 165, 250, 0.2);
+    }
+
+    .keys-copy-btn {
+      white-space: nowrap;
+      align-self: center;
+      min-width: 96px;
+    }
+
+    @media (max-width: 640px) {
+      .keys-saved-header,
+      .keys-path-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .keys-copy-btn {
+        width: 100%;
+      }
     }
 
     /* ========================================
@@ -1736,6 +2010,427 @@ export function getHtmlTemplate(
       return text;
     }
 
+    const isValidCustomDomain = ${isValidCustomDomain.toString()};
+    const computeApiDomainUiState = ${computeApiDomainUiState.toString()};
+
+    function getApiDomainUiCopy() {
+      const locale = String(_currentLocale || 'en').toLowerCase();
+      const copyByLocale = {
+        ja: {
+          initialTenantLabel: '最初のテナントID',
+          initialTenantHintGeneric:
+            '最初に作成するテナント識別子です。URLに使わない場合でも内部設定に使います。',
+          initialTenantHintSubdomain: (_tenantName, baseDomain, url) =>
+            '最初のテナントは ' + url + ' を使います。',
+          primaryTenantLabel: 'URLにテナント名を含めないテナント',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' で表示するテナントIDです。空欄なら ' + tenantName + ' を使います。',
+          multiTenantHintNeedsDomain:
+            'カスタムドメインを入力すると、テナントごとのURLを有効にできます。',
+          multiTenantHintSingleTenant:
+            '今は1つのURLだけを使います。必要になったらテナントごとのURLに切り替えられます。',
+          multiTenantHintEnabled: (baseDomain) => baseDomain + ' 配下にテナントごとのURLを作成します。',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '最初のテナントも ' + url + ' を使います。',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' のURLは ' + url + ' になります。',
+          examplesTitle: 'テナントURLの見え方',
+          tableHeaderLabel: 'ケース',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '最初のテナント (' + tenantName + ') のURL',
+          rowInitialTenantExplicit: (tenantName) =>
+            '最初のテナント名をURLに含める場合 (' + tenantName + ')',
+          rowOtherTenant: '他のテナントのURL',
+        },
+        de: {
+          initialTenantLabel: 'ID des ersten Tenants',
+          initialTenantHintGeneric:
+            'Bezeichner für den ersten Tenant. Er bleibt erhalten, auch wenn die URL keinen Tenant-Teil anzeigt.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Der erste Tenant verwendet ' + url + '.',
+          primaryTenantLabel: 'Tenant für die Domain ohne Tenant-Segment',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'Tenant-ID für ' + url + '. Leer lassen, um ' + tenantName + ' zu verwenden.',
+          multiTenantHintNeedsDomain:
+            'Geben Sie eine benutzerdefinierte Domain ein, um tenant-spezifische URLs zu aktivieren.',
+          multiTenantHintSingleTenant:
+            'Derzeit wird nur eine URL verwendet. Sie können später auf tenant-spezifische URLs umstellen.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Tenant-spezifische URLs werden unter ' + baseDomain + ' erstellt.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Der erste Tenant verwendet ebenfalls ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' verwendet ' + url + '.',
+          examplesTitle: 'So sehen die Tenant-URLs aus',
+          tableHeaderLabel: 'Fall',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL des ersten Tenants (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Erster Tenant, wenn das Tenant-Segment in der URL enthalten ist (' + tenantName + ')',
+          rowOtherTenant: 'URL für andere Tenants',
+        },
+        es: {
+          initialTenantLabel: 'ID del primer tenant',
+          initialTenantHintGeneric:
+            'Identificador del primer tenant que crea. Se conserva incluso si la URL no muestra un segmento de tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'El primer tenant usará ' + url + '.',
+          primaryTenantLabel: 'Tenant que usa la URL sin nombre de tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID del tenant que se mostrará en ' + url + '. Déjelo vacío para usar ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Ingrese un dominio personalizado para habilitar URLs por tenant.',
+          multiTenantHintSingleTenant:
+            'Por ahora solo se usa una URL. Más tarde puede cambiar a URLs por tenant.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Las URLs por tenant se crearán bajo ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'El primer tenant también usará ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' usará ' + url + '.',
+          examplesTitle: 'Cómo se verán las URLs de tenant',
+          tableHeaderLabel: 'Caso',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL del primer tenant (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Primer tenant cuando el segmento de tenant se incluye en la URL (' + tenantName + ')',
+          rowOtherTenant: 'URL de otros tenants',
+        },
+        fr: {
+          initialTenantLabel: 'ID du premier tenant',
+          initialTenantHintGeneric:
+            'Identifiant du premier tenant créé. Il est conservé même si l’URL n’affiche pas de segment tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Le premier tenant utilisera ' + url + '.',
+          primaryTenantLabel: 'Tenant utilisant l’URL sans segment tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID du tenant servi sur ' + url + '. Laissez vide pour utiliser ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Saisissez un domaine personnalisé pour activer des URL par tenant.',
+          multiTenantHintSingleTenant:
+            'Une seule URL est utilisée pour le moment. Vous pourrez passer plus tard à des URL par tenant.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Des URL par tenant seront créées sous ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Le premier tenant utilisera aussi ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' utilisera ' + url + '.',
+          examplesTitle: 'Apparence des URL de tenant',
+          tableHeaderLabel: 'Cas',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL du premier tenant (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Premier tenant lorsque le segment tenant est inclus dans l’URL (' + tenantName + ')',
+          rowOtherTenant: 'URL des autres tenants',
+        },
+        id: {
+          initialTenantLabel: 'ID tenant pertama',
+          initialTenantHintGeneric:
+            'Identifier untuk tenant pertama yang Anda buat. Tetap dipakai walaupun URL tidak menampilkan segmen tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Tenant pertama akan menggunakan ' + url + '.',
+          primaryTenantLabel: 'Tenant yang menggunakan URL tanpa nama tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID tenant yang dilayani di ' + url + '. Kosongkan untuk menggunakan ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Masukkan domain kustom untuk mengaktifkan URL per tenant.',
+          multiTenantHintSingleTenant:
+            'Saat ini hanya satu URL yang digunakan. Anda bisa beralih ke URL per tenant nanti.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'URL per tenant akan dibuat di bawah ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Tenant pertama juga akan menggunakan ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' akan menggunakan ' + url + '.',
+          examplesTitle: 'Bentuk URL tenant',
+          tableHeaderLabel: 'Kasus',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL tenant pertama (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Tenant pertama ketika segmen tenant disertakan di URL (' + tenantName + ')',
+          rowOtherTenant: 'URL tenant lain',
+        },
+        ko: {
+          initialTenantLabel: '첫 번째 테넌트 ID',
+          initialTenantHintGeneric:
+            '처음 생성하는 테넌트의 식별자입니다. URL에 테넌트 세그먼트가 없어도 내부 설정에 사용됩니다.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            '첫 번째 테넌트는 ' + url + ' 를 사용합니다.',
+          primaryTenantLabel: '테넌트 이름 없는 URL을 사용하는 테넌트',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' 에서 사용할 테넌트 ID입니다. 비워 두면 ' + tenantName + ' 를 사용합니다.',
+          multiTenantHintNeedsDomain:
+            '테넌트별 URL을 사용하려면 사용자 지정 도메인을 입력하세요.',
+          multiTenantHintSingleTenant:
+            '현재는 하나의 URL만 사용합니다. 나중에 테넌트별 URL로 전환할 수 있습니다.',
+          multiTenantHintEnabled: (baseDomain) => baseDomain + ' 아래에 테넌트별 URL이 생성됩니다.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '첫 번째 테넌트도 ' + url + ' 를 사용합니다.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' 의 URL은 ' + url + ' 입니다.',
+          examplesTitle: '테넌트 URL 예시',
+          tableHeaderLabel: '구분',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '첫 번째 테넌트 URL (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'URL에 테넌트 세그먼트가 포함된 첫 번째 테넌트 (' + tenantName + ')',
+          rowOtherTenant: '다른 테넌트 URL',
+        },
+        pt: {
+          initialTenantLabel: 'ID do primeiro tenant',
+          initialTenantHintGeneric:
+            'Identificador do primeiro tenant que você criar. Ele continua sendo usado mesmo quando a URL não expõe um segmento de tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'O primeiro tenant usará ' + url + '.',
+          primaryTenantLabel: 'Tenant que usa a URL sem nome de tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID do tenant servido em ' + url + '. Deixe em branco para usar ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Digite um domínio personalizado para habilitar URLs por tenant.',
+          multiTenantHintSingleTenant:
+            'No momento apenas uma URL é usada. Você pode mudar para URLs por tenant depois.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'URLs por tenant serão criadas sob ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'O primeiro tenant também usará ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' usará ' + url + '.',
+          examplesTitle: 'Como as URLs de tenant ficarão',
+          tableHeaderLabel: 'Caso',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL do primeiro tenant (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Primeiro tenant quando o segmento de tenant é incluído na URL (' + tenantName + ')',
+          rowOtherTenant: 'URL de outros tenants',
+        },
+        ru: {
+          initialTenantLabel: 'ID первого тенанта',
+          initialTenantHintGeneric:
+            'Идентификатор первого создаваемого тенанта. Он сохраняется, даже если URL не содержит сегмент тенанта.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Первый тенант будет использовать ' + url + '.',
+          primaryTenantLabel: 'Тенант, использующий URL без имени тенанта',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID тенанта для ' + url + '. Оставьте пустым, чтобы использовать ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Введите пользовательский домен, чтобы включить URL для отдельных тенантов.',
+          multiTenantHintSingleTenant:
+            'Сейчас используется только один URL. Позже можно переключиться на URL для отдельных тенантов.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'URL для отдельных тенантов будут созданы под ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Первый тенант также будет использовать ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' будет использовать ' + url + '.',
+          examplesTitle: 'Как будут выглядеть URL тенантов',
+          tableHeaderLabel: 'Случай',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL первого тенанта (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Первый тенант, когда сегмент тенанта включён в URL (' + tenantName + ')',
+          rowOtherTenant: 'URL других тенантов',
+        },
+        'zh-cn': {
+          initialTenantLabel: '第一个租户 ID',
+          initialTenantHintGeneric:
+            '这是您创建的第一个租户标识。即使 URL 不显示租户段，也会在内部配置中使用。',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            '第一个租户将使用 ' + url + '。',
+          primaryTenantLabel: '使用无租户名 URL 的租户',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' 对应的租户 ID。留空则使用 ' + tenantName + '。',
+          multiTenantHintNeedsDomain:
+            '输入自定义域名后，才能启用按租户区分的 URL。',
+          multiTenantHintSingleTenant:
+            '当前只使用一个 URL，之后可以再切换为按租户区分的 URL。',
+          multiTenantHintEnabled: (baseDomain) =>
+            '将在 ' + baseDomain + ' 下创建按租户区分的 URL。',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '第一个租户也会使用 ' + url + '。',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' 将使用 ' + url + '。',
+          examplesTitle: '租户 URL 的显示方式',
+          tableHeaderLabel: '场景',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '第一个租户的 URL（' + tenantName + '）',
+          rowInitialTenantExplicit: (tenantName) =>
+            '当 URL 中包含租户段时的第一个租户（' + tenantName + '）',
+          rowOtherTenant: '其他租户的 URL',
+        },
+        'zh-tw': {
+          initialTenantLabel: '第一個租戶 ID',
+          initialTenantHintGeneric:
+            '這是您建立的第一個租戶識別碼。即使 URL 不顯示租戶段，內部設定仍會使用它。',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            '第一個租戶將使用 ' + url + '。',
+          primaryTenantLabel: '使用無租戶名稱 URL 的租戶',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' 對應的租戶 ID。留空則使用 ' + tenantName + '。',
+          multiTenantHintNeedsDomain:
+            '輸入自訂網域後，才能啟用依租戶區分的 URL。',
+          multiTenantHintSingleTenant:
+            '目前只使用一個 URL，之後可以再切換成依租戶區分的 URL。',
+          multiTenantHintEnabled: (baseDomain) =>
+            '將在 ' + baseDomain + ' 下建立依租戶區分的 URL。',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '第一個租戶也會使用 ' + url + '。',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' 將使用 ' + url + '。',
+          examplesTitle: '租戶 URL 的顯示方式',
+          tableHeaderLabel: '情境',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '第一個租戶的 URL（' + tenantName + '）',
+          rowInitialTenantExplicit: (tenantName) =>
+            '當 URL 包含租戶段時的第一個租戶（' + tenantName + '）',
+          rowOtherTenant: '其他租戶的 URL',
+        },
+        en: {
+          initialTenantLabel: 'Initial Tenant ID',
+          initialTenantHintGeneric:
+            'Identifier for the first tenant you create. It is kept even when the URL does not expose a tenant segment.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'The first tenant will use ' + url + '.',
+          primaryTenantLabel: 'Tenant that uses the naked URL',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'Tenant ID served at ' + url + '. Leave empty to use ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Enter a custom domain to enable tenant-specific URLs.',
+          multiTenantHintSingleTenant:
+            'Only one URL is used right now. You can switch to tenant-specific URLs later.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Tenant-specific URLs will be created under ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'The first tenant will also use ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' will use ' + url + '.',
+          examplesTitle: 'How tenant URLs will look',
+          tableHeaderLabel: 'Case',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'First tenant URL (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'First tenant when the tenant segment is included (' + tenantName + ')',
+          rowOtherTenant: 'Other tenant URL',
+        },
+      };
+
+      const selected =
+        copyByLocale[locale] ||
+        copyByLocale[locale.split('-')[0]] ||
+        copyByLocale.en;
+
+      return selected;
+    }
+
+    const PREREQ_CAPABILITY_COPY = ${JSON.stringify(SETUP_CAPABILITY_COPY)};
+    const CLOUDFLARE_DNS_RECORDS_DOCS = ${JSON.stringify(CLOUDFLARE_DNS_RECORDS_DOCS_URL)};
+
+    function getPrereqCapabilityCopy() {
+      const locale = String(_currentLocale || 'en');
+      return (
+        PREREQ_CAPABILITY_COPY[locale] ||
+        PREREQ_CAPABILITY_COPY[locale.split('-')[0]] ||
+        PREREQ_CAPABILITY_COPY.en
+      );
+    }
+
+    function renderPrereqCapabilities(container, result) {
+      if (!container) return;
+
+      const statuses = result.capabilityStatuses || {};
+      const diagnostics = result.capabilityDiagnostics || {};
+      const copy = getPrereqCapabilityCopy();
+      const wrapper = document.createElement('div');
+      wrapper.className = 'prereq-capabilities';
+
+      const title = document.createElement('div');
+      title.className = 'prereq-capabilities-title';
+      title.textContent = copy.title;
+      wrapper.appendChild(title);
+
+      const hint = document.createElement('div');
+      hint.className = 'prereq-capabilities-hint';
+      hint.textContent = copy.hint;
+      wrapper.appendChild(hint);
+
+      const list = document.createElement('div');
+      list.className = 'prereq-capability-list';
+
+      function getStatusMeta(status, okDescription, reviewDescription, ngDescription) {
+        if (status === 'ok') {
+          return { status: 'ok', description: okDescription, badgeLabel: copy.ok };
+        }
+        if (status === 'review') {
+          return { status: 'review', description: reviewDescription, badgeLabel: copy.review };
+        }
+        return { status: 'ng', description: ngDescription, badgeLabel: copy.ng };
+      }
+
+      const items = [
+        Object.assign(
+          {
+          label: copy.workersDeploy,
+          },
+          getStatusMeta(
+            statuses.workersDeploy,
+            copy.workersDeployOk,
+            copy.workersDeployReview,
+            copy.workersDeployNg
+          )
+        ),
+        Object.assign(
+          {
+          label: copy.customDomain,
+          },
+          getStatusMeta(
+            statuses.customDomain,
+            copy.customDomainOk,
+            copy.customDomainReviewZoneRead,
+            diagnostics.zoneReadAvailable ? copy.customDomainNgNoZone : copy.workersDeployNg
+          )
+        ),
+        Object.assign(
+          {
+          label: copy.pages,
+          },
+          getStatusMeta(
+            statuses.pages,
+            copy.pagesOk,
+            copy.pagesReview,
+            copy.workersDeployNg
+          )
+        ),
+      ];
+
+      items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'prereq-capability-item';
+
+        const body = document.createElement('div');
+        body.className = 'prereq-capability-body';
+
+        const name = document.createElement('div');
+        name.className = 'prereq-capability-name';
+        name.textContent = item.label;
+        body.appendChild(name);
+
+        const desc = document.createElement('div');
+        desc.className = 'prereq-capability-desc';
+        desc.textContent = item.description;
+        body.appendChild(desc);
+
+        const pill = document.createElement('span');
+        pill.className = 'prereq-capability-pill ' + item.status;
+        pill.textContent = item.badgeLabel;
+
+        row.appendChild(body);
+        row.appendChild(pill);
+        list.appendChild(row);
+      });
+
+      wrapper.appendChild(list);
+      container.appendChild(wrapper);
+    }
+
     /**
      * Update all elements with data-i18n attribute
      */
@@ -1757,6 +2452,12 @@ export function getHtmlTemplate(
       });
       // Update html lang attribute
       document.documentElement.lang = _currentLocale;
+      if (typeof window.refreshApiDomainUi === 'function') {
+        window.refreshApiDomainUi();
+      }
+      if (typeof window.renderDeployManualWildcardWarning === 'function') {
+        window.renderDeployManualWildcardWarning();
+      }
     }
 
     /**
@@ -2078,30 +2779,36 @@ export function getHtmlTemplate(
             <input type="checkbox" id="custom-domain-binding" checked>
             <span data-i18n="domain.configureBinding">Configure custom domain binding for Workers</span>
           </label>
-          <label class="checkbox-item" id="naked-domain-label" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+          <label class="checkbox-item" id="naked-domain-label" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
             <input type="checkbox" id="naked-domain">
             <span data-i18n="web.form.nakedDomain">Exclude tenant name from URL</span>
           </label>
-          <small id="naked-domain-hint" style="color: var(--text-muted); margin-left: 1.5rem;" data-i18n="web.form.nakedDomainHint">
+          <small id="naked-domain-hint" style="color: var(--text-muted); margin-left: 1.5rem; display: none;" data-i18n="web.form.nakedDomainHint">
             Use https://example.com instead of https://{tenant}.example.com
           </small>
           <small id="workers-dev-note" style="color: #d97706; margin-left: 1.5rem; display: none;" data-i18n="web.form.nakedDomainWarning">
             ⚠️ Tenant subdomains require a custom domain. Workers.dev does not support wildcard subdomains.
           </small>
           <div id="tenant-url-examples" class="issuer-preview" style="display: none; margin-top: 0.75rem;">
-            <div class="label" data-i18n="web.form.multiTenantExamples">Tenant URL Examples</div>
-            <div class="value" id="tenant-example-default-omitted" data-i18n="web.form.multiTenantExampleDefaultOmitted">Default tenant with omitted name: https://example.com</div>
-            <div class="value" id="tenant-example-default-included" data-i18n="web.form.multiTenantExampleDefaultIncluded">Default tenant with explicit name: https://default.example.com</div>
-            <div class="value" id="tenant-example-other" data-i18n="web.form.multiTenantExampleOther">Non-default tenant: https://{tenantName}.example.com</div>
+            <div class="label" id="tenant-url-examples-title">How tenant URLs will look</div>
+            <table class="issuer-preview-table" aria-live="polite">
+              <thead>
+                <tr>
+                  <th id="tenant-url-examples-header-label">Case</th>
+                  <th id="tenant-url-examples-header-url">URL</th>
+                </tr>
+              </thead>
+              <tbody id="tenant-url-examples-body"></tbody>
+            </table>
           </div>
         </div>
 
         <!-- Default Tenant (hidden when naked domain is checked or using workers.dev) -->
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
-            <label for="tenant-name" data-i18n="web.form.tenantId">Default Tenant ID</label>
+            <label for="tenant-name" id="tenant-id-label">Initial Tenant ID</label>
             <input type="text" id="tenant-name" placeholder="default" value="default" disabled readonly data-i18n-placeholder="web.form.tenantIdPlaceholder">
-            <small style="color: var(--text-muted)" data-i18n="web.form.tenantIdHint">First tenant identifier (lowercase, no spaces). Leave empty to use "default".</small>
+            <small id="tenant-id-hint" style="color: var(--text-muted)">Identifier for the first tenant you create.</small>
             <small id="tenant-workers-note" style="color: #6b7280; display: none;" data-i18n="web.form.tenantIdWorkerNote">
               (Tenant ID is used internally. URL subdomain requires custom domain.)
             </small>
@@ -2116,9 +2823,9 @@ export function getHtmlTemplate(
 
         <!-- Primary Tenant (for naked domain) -->
         <div class="form-group" id="primary-tenant-row" style="margin-bottom: 0.75rem;">
-          <label for="primary-tenant">Primary Tenant (for naked domain)</label>
+          <label for="primary-tenant" id="primary-tenant-label">Tenant that uses the naked URL</label>
           <input type="text" id="primary-tenant" placeholder="Leave empty to use default tenant">
-          <small style="color: var(--text-muted)">Tenant ID to use when accessing the naked domain (e.g., example.com). Leave empty to use the default tenant above.</small>
+          <small id="primary-tenant-hint" style="color: var(--text-muted)">Tenant ID to use when accessing the naked domain. Leave empty to use the first tenant above.</small>
         </div>
 
         <div class="form-group" style="margin-bottom: 0;">
@@ -2446,9 +3153,16 @@ export function getHtmlTemplate(
       </div>
 
       <!-- Keys saved location (shown after completion) -->
-      <div id="keys-saved-info" class="alert alert-info hidden" style="margin-top: 1rem;">
-        <strong>🔑 <span data-i18n="web.provision.keysSavedTo">Keys saved to:</span></strong>
-        <code style="display: block; margin-top: 0.5rem; padding: 0.5rem; background: #f1f5f9; border-radius: 4px;" id="keys-path"></code>
+      <div id="keys-saved-info" class="keys-saved-box hidden">
+        <div class="keys-saved-header">
+          <strong class="keys-saved-title">🔑 <span data-i18n="web.provision.keysSavedTo">Keys saved to:</span></strong>
+          <button type="button" class="btn-secondary keys-copy-btn" id="keys-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
+        <div class="keys-path-row">
+          <code class="keys-path-code" id="keys-path"></code>
+        </div>
         <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted);" data-i18n="web.provision.keepSafe">
           ⚠️ Keep this directory safe and add it to .gitignore
         </p>
@@ -2470,6 +3184,24 @@ export function getHtmlTemplate(
       </h2>
 
       <p id="deploy-ready-text" style="margin-bottom: 1rem;" data-i18n="web.deploy.readyText">Ready to deploy Authrim workers to Cloudflare.</p>
+      <div id="deploy-manual-wildcard-warning" class="alert alert-warning hidden" style="margin-bottom: 1rem;">
+        <strong id="deploy-manual-wildcard-title"></strong>
+        <p id="deploy-manual-wildcard-summary" style="margin-top: 0.5rem;"></p>
+        <p id="deploy-manual-wildcard-timing" style="margin-top: 0.5rem;"></p>
+        <ol id="deploy-manual-wildcard-steps" style="margin: 0.75rem 0 0 1.25rem;"></ol>
+        <div class="manual-guide-visual">
+          <img
+            id="deploy-manual-wildcard-example-image"
+            alt="Cloudflare DNS Add record example"
+            src=${cloudflareDnsAddRecordImageDataUriJson}
+          >
+        </div>
+        <p id="deploy-manual-wildcard-retry" style="margin-top: 0.75rem;"></p>
+        <div class="button-group" style="margin-top: 0.75rem;">
+          <a id="deploy-manual-wildcard-dashboard-link" class="btn-secondary hidden" target="_blank" rel="noreferrer">Open Cloudflare DNS</a>
+          <a id="deploy-manual-wildcard-docs-link" class="btn-secondary" target="_blank" rel="noreferrer">Open DNS docs</a>
+        </div>
+      </div>
 
       <!-- Progress UI (shown during deployment) -->
       <div id="deploy-progress-ui" class="progress-container hidden">
@@ -2941,6 +3673,7 @@ export function getHtmlTemplate(
     let loadedConfig = null;
     let provisioningCompleted = false;
     let provisionPollInterval = null;
+    let lastPrerequisitesResult = null;
 
     // Elements
     const steps = {
@@ -2992,6 +3725,174 @@ export function getHtmlTemplate(
       return response.json();
     }
 
+    const WILDCARD_DNS_MANUAL_COPY_DATA = ${wildcardDnsManualCopyJson};
+
+    function getWildcardDnsManualCopy() {
+      const locale = String(_currentLocale || 'en');
+      return (
+        WILDCARD_DNS_MANUAL_COPY_DATA[locale] ||
+        WILDCARD_DNS_MANUAL_COPY_DATA[locale.split('-')[0]] ||
+        WILDCARD_DNS_MANUAL_COPY_DATA.en
+      );
+    }
+
+    function buildWildcardDnsManualMessage(baseDomain, includeConfirmSuffix = false) {
+      const copy = getWildcardDnsManualCopy();
+      const recordName = '*.' + baseDomain;
+      const zoneName = getManualWildcardDnsZoneName(baseDomain);
+      const dashboardRecordName = getManualWildcardDnsRecordName(baseDomain, zoneName);
+      const summary = copy.summaryTemplate.replaceAll('{baseDomain}', baseDomain);
+      const steps = copy.stepsTemplate.map((step) =>
+        step
+          .replaceAll('*.{baseDomain}', recordName)
+          .replaceAll('{baseDomain}', baseDomain)
+          .replaceAll('{zoneName}', zoneName)
+          .replaceAll('{dashboardRecordName}', dashboardRecordName)
+      );
+      const lines = [
+        copy.title,
+        summary,
+        copy.timing,
+        '',
+        ...steps.map((step, index) => (index + 1) + '. ' + step),
+        '',
+        copy.retryHint,
+        copy.continueHint,
+      ];
+
+      if (includeConfirmSuffix) {
+        lines.push('', copy.confirmSuffix);
+      }
+
+      return lines.join('\\n');
+    }
+
+    function getManualWildcardDnsBaseDomain() {
+      return config?.tenant?.multiTenant === true ? config.tenant.baseDomain : '';
+    }
+
+    function getManualWildcardDnsZoneName(domain) {
+      const normalized = String(domain || '').trim().toLowerCase();
+      if (!normalized) return '';
+      const parts = normalized.split('.').filter(Boolean);
+      const twoPartTlds = new Set([
+        'co.uk',
+        'org.uk',
+        'gov.uk',
+        'ac.uk',
+        'co.jp',
+        'or.jp',
+        'ne.jp',
+        'co.nz',
+        'org.nz',
+        'net.nz',
+        'co.kr',
+        'or.kr',
+        'ne.kr',
+        'co.in',
+        'firm.in',
+        'net.in',
+        'org.in',
+        'gen.in',
+        'co.id',
+        'web.id',
+        'ac.id',
+        'or.id',
+        'co.za',
+        'org.za',
+        'net.za',
+        'com.au',
+        'net.au',
+        'org.au',
+        'com.br',
+        'net.br',
+        'org.br',
+      ]);
+      const lastTwo = parts.slice(-2).join('.');
+      if (twoPartTlds.has(lastTwo) && parts.length >= 3) {
+        return parts.slice(-3).join('.');
+      }
+      return parts.length >= 2 ? parts.slice(-2).join('.') : normalized;
+    }
+
+    function getManualWildcardDnsRecordName(baseDomain, zoneName) {
+      if (baseDomain === zoneName) {
+        return '*';
+      }
+
+      const suffix = '.' + zoneName;
+      if (baseDomain.endsWith(suffix)) {
+        return '*.' + baseDomain.slice(0, -suffix.length);
+      }
+
+      return '*.' + baseDomain;
+    }
+
+    function getManualWildcardDnsDashboardUrl() {
+      const accountId = lastPrerequisitesResult?.auth?.accountId || null;
+      const baseDomain = getManualWildcardDnsBaseDomain();
+      return ${getCloudflareDnsRecordsDashboardUrl.toString()}(accountId, baseDomain);
+    }
+
+    function shouldPromptManualWildcardDnsBeforeDeploy() {
+      const baseDomain = getManualWildcardDnsBaseDomain();
+      const status = lastPrerequisitesResult?.capabilityStatuses?.multiTenant;
+      return !!baseDomain && status && status !== 'ok';
+    }
+
+    function renderDeployManualWildcardWarning() {
+      const warning = document.getElementById('deploy-manual-wildcard-warning');
+      const baseDomain = getManualWildcardDnsBaseDomain();
+
+      if (!shouldPromptManualWildcardDnsBeforeDeploy()) {
+        warning.classList.add('hidden');
+        return;
+      }
+
+      const copy = getWildcardDnsManualCopy();
+      const recordName = '*.' + baseDomain;
+      const zoneName = getManualWildcardDnsZoneName(baseDomain);
+      const dashboardRecordName = getManualWildcardDnsRecordName(baseDomain, zoneName);
+      const dashboardUrl = getManualWildcardDnsDashboardUrl();
+      const summary = copy.summaryTemplate.replaceAll('{baseDomain}', baseDomain);
+      const stepsTemplate = copy.stepsTemplate.map((step) =>
+        step
+          .replaceAll('*.{baseDomain}', recordName)
+          .replaceAll('{baseDomain}', baseDomain)
+          .replaceAll('{zoneName}', zoneName)
+          .replaceAll('{dashboardRecordName}', dashboardRecordName)
+      );
+
+      document.getElementById('deploy-manual-wildcard-title').textContent = copy.title;
+      document.getElementById('deploy-manual-wildcard-summary').textContent = summary;
+      document.getElementById('deploy-manual-wildcard-timing').textContent = copy.timing;
+      document.getElementById('deploy-manual-wildcard-retry').textContent = copy.retryHint;
+
+      const steps = document.getElementById('deploy-manual-wildcard-steps');
+      steps.textContent = '';
+      stepsTemplate.forEach((step) => {
+        const li = document.createElement('li');
+        li.textContent = step;
+        steps.appendChild(li);
+      });
+
+      const dashboardLink = document.getElementById('deploy-manual-wildcard-dashboard-link');
+      dashboardLink.textContent = copy.dashboardLinkLabel;
+      if (dashboardUrl) {
+        dashboardLink.href = dashboardUrl;
+        dashboardLink.classList.remove('hidden');
+      } else {
+        dashboardLink.removeAttribute('href');
+        dashboardLink.classList.add('hidden');
+      }
+
+      const docsLink = document.getElementById('deploy-manual-wildcard-docs-link');
+      docsLink.textContent = copy.docsLinkLabel;
+      docsLink.href = CLOUDFLARE_DNS_RECORDS_DOCS;
+
+      warning.classList.remove('hidden');
+    }
+
     // Step navigation
     function setStep(step) {
       currentStep = step;
@@ -3012,6 +3913,30 @@ export function getHtmlTemplate(
       if (element) {
         element.scrollTop = element.scrollHeight;
       }
+    }
+
+    async function copyTextWithFeedback(button, text, copyKey = 'web.envDetail.copyBtn') {
+      if (!button || !text) return;
+
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const tempInput = document.createElement('input');
+        tempInput.value = text;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+      }
+
+      const label = button.querySelector('[data-copy-label]') || button;
+      label.textContent = t('web.complete.copied');
+      button.disabled = true;
+
+      setTimeout(() => {
+        label.textContent = t(copyKey);
+        button.disabled = false;
+      }, 2000);
     }
 
     // Log toggle functionality
@@ -3367,6 +4292,7 @@ export function getHtmlTemplate(
 
       try {
         const result = await api('/prerequisites');
+        lastPrerequisitesResult = result;
 
         // Clear existing content
         prereqContent.textContent = '';
@@ -3396,6 +4322,7 @@ export function getHtmlTemplate(
           alertDiv.appendChild(code);
 
           prereqContent.appendChild(alertDiv);
+          renderPrereqCapabilities(prereqContent, result);
           return false;
         }
 
@@ -3429,6 +4356,7 @@ export function getHtmlTemplate(
           alertDiv.appendChild(para2);
 
           prereqContent.appendChild(alertDiv);
+          renderPrereqCapabilities(prereqContent, result);
           return false;
         }
 
@@ -3452,6 +4380,7 @@ export function getHtmlTemplate(
         alertDiv.appendChild(p2);
 
         prereqContent.appendChild(alertDiv);
+        renderPrereqCapabilities(prereqContent, result);
 
         const buttonGroup = document.createElement('div');
         buttonGroup.className = 'button-group';
@@ -3708,11 +4637,107 @@ export function getHtmlTemplate(
 
     // Configuration handlers
     // Update preview section when any input changes
+    function getCurrentApiDomainUiState() {
+      return computeApiDomainUiState({
+        baseDomain: document.getElementById('base-domain').value.trim(),
+        multiTenantChecked: document.getElementById('enable-multi-tenant').checked,
+        nakedDomainChecked: document.getElementById('naked-domain').checked,
+        tenantName: document.getElementById('tenant-name').value.trim(),
+        primaryTenant: document.getElementById('primary-tenant').value.trim(),
+      });
+    }
+
+    function renderTenantUrlExamples(state, copy) {
+      const body = document.getElementById('tenant-url-examples-body');
+      body.textContent = '';
+
+      state.exampleRows.forEach((row) => {
+        const tr = document.createElement('tr');
+        const th = document.createElement('th');
+        const td = document.createElement('td');
+
+        if (row.kind === 'initial-tenant') {
+          th.textContent = copy.rowInitialTenant(row.tenantName || 'default');
+        } else if (row.kind === 'initial-tenant-explicit') {
+          th.textContent = copy.rowInitialTenantExplicit(row.tenantName || 'default');
+        } else {
+          th.textContent = copy.rowOtherTenant;
+        }
+
+        td.textContent = row.url;
+        tr.appendChild(th);
+        tr.appendChild(td);
+        body.appendChild(tr);
+      });
+    }
+
+    function refreshApiDomainUi() {
+      const state = getCurrentApiDomainUiState();
+      const copy = getApiDomainUiCopy();
+      const baseDomain = document.getElementById('base-domain').value.trim();
+      const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
+      const primaryTenant = document.getElementById('primary-tenant').value.trim() || tenantName;
+
+      document.getElementById('tenant-id-label').textContent = copy.initialTenantLabel;
+      document.getElementById('primary-tenant-label').textContent = copy.primaryTenantLabel;
+      document.getElementById('tenant-url-examples-title').textContent = copy.examplesTitle;
+      document.getElementById('tenant-url-examples-header-label').textContent =
+        copy.tableHeaderLabel;
+      document.getElementById('tenant-url-examples-header-url').textContent = copy.tableHeaderUrl;
+
+      if (state.multiTenantHintMode === 'needs-custom-domain') {
+        document.getElementById('multi-tenant-hint').textContent = copy.multiTenantHintNeedsDomain;
+      } else if (state.multiTenantHintMode === 'single-tenant') {
+        document.getElementById('multi-tenant-hint').textContent = copy.multiTenantHintSingleTenant;
+      } else {
+        document.getElementById('multi-tenant-hint').textContent =
+          copy.multiTenantHintEnabled(baseDomain);
+      }
+
+      if (state.showTenantFields && state.multiTenantEnabled) {
+        document.getElementById('tenant-id-hint').textContent = copy.initialTenantHintSubdomain(
+          tenantName,
+          baseDomain,
+          'https://' + tenantName + '.' + baseDomain
+        );
+      } else {
+        document.getElementById('tenant-id-hint').textContent = copy.initialTenantHintGeneric;
+      }
+
+      document.getElementById('primary-tenant-hint').textContent = copy.primaryTenantHint(
+        baseDomain || 'example.com',
+        primaryTenant,
+        'https://' + (baseDomain || 'example.com')
+      );
+
+      if (state.nakedDomainHintMode === 'omit-tenant') {
+        document.getElementById('naked-domain-hint').textContent = copy.nakedDomainHintOmit(
+          primaryTenant,
+          baseDomain,
+          'https://' + (baseDomain || 'example.com')
+        );
+      } else if (state.nakedDomainHintMode === 'include-tenant') {
+        document.getElementById('naked-domain-hint').textContent = copy.nakedDomainHintInclude(
+          tenantName,
+          baseDomain,
+          'https://' + tenantName + '.' + baseDomain
+        );
+      } else {
+        document.getElementById('naked-domain-hint').textContent = '';
+      }
+
+      renderTenantUrlExamples(state, copy);
+    }
+
+    window.refreshApiDomainUi = refreshApiDomainUi;
+    window.renderDeployManualWildcardWarning = renderDeployManualWildcardWarning;
+
     function updatePreview() {
       const env = document.getElementById('env').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '{env}';
       const baseDomain = document.getElementById('base-domain').value.trim();
-      const multiTenantEnabled = baseDomain && document.getElementById('enable-multi-tenant').checked;
-      const nakedDomain = document.getElementById('naked-domain').checked;
+      const domainUiState = getCurrentApiDomainUiState();
+      const multiTenantEnabled = domainUiState.multiTenantEnabled;
+      const nakedDomain = multiTenantEnabled && document.getElementById('naked-domain').checked;
       const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
@@ -3759,22 +4784,9 @@ export function getHtmlTemplate(
         document.getElementById('preview-issuer').textContent = 'https://' + workersDomain;
       }
 
-      const examples = document.getElementById('tenant-url-examples');
-      if (multiTenantEnabled) {
-        examples.style.display = 'block';
-        document.getElementById('tenant-example-default-omitted').textContent =
-          t('web.form.multiTenantExampleDefaultOmitted', { url: 'https://' + baseDomain });
-        document.getElementById('tenant-example-default-included').textContent =
-          t('web.form.multiTenantExampleDefaultIncluded', {
-            url: 'https://' + tenantName + '.' + baseDomain,
-          });
-        document.getElementById('tenant-example-other').textContent =
-          t('web.form.multiTenantExampleOther', {
-            url: 'https://{tenantName}.' + baseDomain,
-          });
-      } else {
-        examples.style.display = 'none';
-      }
+      document.getElementById('tenant-url-examples').style.display =
+        domainUiState.showExamples ? 'block' : 'none';
+      refreshApiDomainUi();
 
       // Login UI - check if component is enabled (in custom mode)
       const loginUiEnabled = document.getElementById('comp-login-ui').checked;
@@ -3845,6 +4857,7 @@ export function getHtmlTemplate(
     // Update UI based on base domain presence
     function updateBaseDomainUI() {
       const baseDomain = document.getElementById('base-domain').value.trim();
+      const domainUiState = getCurrentApiDomainUiState();
       const multiTenantCheckbox = document.getElementById('enable-multi-tenant');
       const multiTenantLabel = document.getElementById('multi-tenant-label');
       const nakedDomainCheckbox = document.getElementById('naked-domain');
@@ -3856,38 +4869,11 @@ export function getHtmlTemplate(
       const tenantNameInput = document.getElementById('tenant-name');
       const primaryTenantRow = document.getElementById('primary-tenant-row');
       const primaryTenantInput = document.getElementById('primary-tenant');
-      const multiTenantEnabled = baseDomain && multiTenantCheckbox.checked;
 
       if (baseDomain) {
         multiTenantCheckbox.disabled = false;
         multiTenantLabel.style.opacity = '1';
         workersDevNote.style.display = 'none';
-        if (multiTenantEnabled) {
-          nakedDomainCheckbox.disabled = false;
-          nakedDomainLabel.style.opacity = '1';
-          nakedDomainHint.style.display = 'block';
-          tenantWorkersNote.style.display = 'none';
-          tenantNameInput.disabled = false;
-          tenantNameInput.readOnly = false;
-          if (!nakedDomainCheckbox.checked) {
-            tenantFields.style.display = 'block';
-          } else {
-            tenantFields.style.display = 'none';
-          }
-          primaryTenantRow.style.display = nakedDomainCheckbox.checked ? 'block' : 'none';
-        } else {
-          nakedDomainCheckbox.disabled = true;
-          nakedDomainCheckbox.checked = false;
-          nakedDomainLabel.style.opacity = '0.5';
-          nakedDomainHint.style.display = 'none';
-          tenantWorkersNote.style.display = 'none';
-          tenantFields.style.display = 'none';
-          tenantNameInput.value = 'default';
-          tenantNameInput.disabled = true;
-          tenantNameInput.readOnly = true;
-          primaryTenantInput.value = '';
-          primaryTenantRow.style.display = 'none';
-        }
       } else {
         // Workers.dev - tenant subdomains not supported
         multiTenantCheckbox.checked = false;
@@ -3896,16 +4882,44 @@ export function getHtmlTemplate(
         nakedDomainCheckbox.disabled = true;
         nakedDomainCheckbox.checked = false;
         nakedDomainLabel.style.opacity = '0.5';
-        nakedDomainHint.style.display = 'none';
-        workersDevNote.style.display = 'block';
-        tenantWorkersNote.style.display = 'block';
-        tenantFields.style.display = 'block';
         tenantNameInput.value = 'default';
         tenantNameInput.disabled = true;
         tenantNameInput.readOnly = true;
         primaryTenantInput.value = '';
-        primaryTenantRow.style.display = 'none';
       }
+
+      if (domainUiState.showNakedDomainControls) {
+        nakedDomainCheckbox.disabled = false;
+        nakedDomainLabel.style.display = 'flex';
+        nakedDomainLabel.style.opacity = '1';
+        nakedDomainHint.style.display = 'block';
+      } else {
+        nakedDomainCheckbox.disabled = true;
+        nakedDomainCheckbox.checked = false;
+        nakedDomainLabel.style.display = 'none';
+        nakedDomainHint.style.display = 'none';
+      }
+
+      workersDevNote.style.display = domainUiState.showWorkersDevNote ? 'block' : 'none';
+      tenantWorkersNote.style.display = domainUiState.showWorkersDevNote ? 'block' : 'none';
+      tenantFields.style.display = domainUiState.showTenantFields ? 'block' : 'none';
+      primaryTenantRow.style.display = domainUiState.showPrimaryTenantRow ? 'block' : 'none';
+
+      if (domainUiState.showTenantFields && domainUiState.multiTenantEnabled) {
+        tenantNameInput.disabled = false;
+        tenantNameInput.readOnly = false;
+      } else if (domainUiState.showWorkersDevNote) {
+        tenantNameInput.disabled = true;
+        tenantNameInput.readOnly = true;
+      } else {
+        tenantNameInput.disabled = true;
+        tenantNameInput.readOnly = true;
+      }
+
+      document.getElementById('base-domain').placeholder = domainUiState.baseDomainPlaceholder;
+      document.getElementById('tenant-url-examples').style.display =
+        domainUiState.showExamples ? 'block' : 'none';
+      refreshApiDomainUi();
     }
 
     // Base domain change - update UI for tenant subdomain options
@@ -3915,7 +4929,7 @@ export function getHtmlTemplate(
       // Show/hide domain check row
       const domainCheckRow = document.getElementById('domain-check-row');
       const baseDomain = document.getElementById('base-domain').value.trim();
-      if (baseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(baseDomain)) {
+      if (baseDomain && isValidCustomDomain(baseDomain)) {
         domainCheckRow.style.display = 'flex';
       } else {
         domainCheckRow.style.display = 'none';
@@ -3925,12 +4939,6 @@ export function getHtmlTemplate(
     });
 
     document.getElementById('enable-multi-tenant').addEventListener('change', (e) => {
-      const baseDomainInput = document.getElementById('base-domain');
-      if (e.target.checked) {
-        baseDomainInput.placeholder = 'test.example.com';
-      } else {
-        baseDomainInput.placeholder = 'oidc.example.com';
-      }
       updateBaseDomainUI();
       updatePreview();
     });
@@ -3981,7 +4989,7 @@ export function getHtmlTemplate(
       clearTimeout(domainCheckTimer);
       domainCheckTimer = setTimeout(() => {
         const domain = document.getElementById('base-domain').value.trim();
-        if (domain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(domain)) {
+        if (domain && isValidCustomDomain(domain)) {
           document.getElementById('check-domain-btn').click();
         }
       }, 500);
@@ -3991,21 +4999,8 @@ export function getHtmlTemplate(
     updateBaseDomainUI();
 
     // Naked domain toggle - show/hide tenant name field and update placeholder
-    document.getElementById('naked-domain').addEventListener('change', (e) => {
-      const tenantFields = document.getElementById('tenant-fields');
-      const primaryTenantRow = document.getElementById('primary-tenant-row');
-      const baseDomainInput = document.getElementById('base-domain');
-      if (e.target.checked) {
-        tenantFields.style.display = 'none';
-        primaryTenantRow.style.display = 'block';
-        baseDomainInput.placeholder = 'example.com';
-      } else {
-        tenantFields.style.display = 'block';
-        primaryTenantRow.style.display = 'none';
-        baseDomainInput.placeholder = document.getElementById('enable-multi-tenant').checked
-          ? 'test.example.com'
-          : 'oidc.example.com';
-      }
+    document.getElementById('naked-domain').addEventListener('change', () => {
+      updateBaseDomainUI();
       updatePreview();
     });
 
@@ -4140,6 +5135,7 @@ export function getHtmlTemplate(
       // Update resource preview with the selected env
       updateResourcePreview(env);
       updateProvisionButtons();
+      renderDeployManualWildcardWarning();
 
       // Go to database configuration step
       setStep(4);
@@ -4313,6 +5309,7 @@ export function getHtmlTemplate(
 
     function proceedToProvision() {
       updateResourcePreview(config.env);
+      renderDeployManualWildcardWarning();
       setStep(6);
       showSection('provision');
     }
@@ -4490,6 +5487,11 @@ export function getHtmlTemplate(
       showSection('provision');
     });
 
+    document.getElementById('keys-copy-btn').addEventListener('click', async () => {
+      const keysPath = document.getElementById('keys-path').textContent || '';
+      await copyTextWithFeedback(document.getElementById('keys-copy-btn'), keysPath);
+    });
+
     // Deploy
     document.getElementById('btn-deploy').addEventListener('click', async () => {
       const btn = document.getElementById('btn-deploy');
@@ -4498,6 +5500,14 @@ export function getHtmlTemplate(
       const output = document.getElementById('deploy-output');
       const progressUI = document.getElementById('deploy-progress-ui');
       const readyText = document.getElementById('deploy-ready-text');
+
+      if (shouldPromptManualWildcardDnsBeforeDeploy()) {
+        const baseDomain = getManualWildcardDnsBaseDomain();
+        const confirmed = confirm(buildWildcardDnsManualMessage(baseDomain, true));
+        if (!confirmed) {
+          return;
+        }
+      }
 
       btn.disabled = true;
       btn.classList.add('hidden');
@@ -4646,6 +5656,14 @@ export function getHtmlTemplate(
             expiresAt: adminSetupResult.expiresAt,
             adminSetupDebug: adminSetupResult,
           });
+        } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
+          output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
+          scrollToBottom(log);
+          status.textContent = t('web.status.error');
+          status.className = 'status-badge status-warning';
+          btn.disabled = false;
+          btn.classList.remove('hidden');
+          return;
         } else {
           throw new Error(result.error || 'Deployment failed');
         }
@@ -4655,6 +5673,7 @@ export function getHtmlTemplate(
         status.textContent = t('web.status.error');
         status.className = 'status-badge status-error';
         btn.disabled = false;
+        btn.classList.remove('hidden');
       }
     });
 
@@ -5065,7 +6084,7 @@ export function getHtmlTemplate(
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'authrim-config.json';
+      a.download = 'authrim-' + env + '-config.json';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -5633,6 +6652,12 @@ export function getHtmlTemplate(
         } else {
           addLog('');
           addLog('❌ Update failed: ' + (response.error || 'Unknown error'));
+          if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
+            addLog('');
+            buildWildcardDnsManualMessage(response.manualAction.baseDomain)
+              .split('\\n')
+              .forEach((line) => addLog(line));
+          }
         }
       } catch (error) {
         addLog('❌ Error: ' + error.message);

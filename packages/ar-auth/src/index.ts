@@ -24,6 +24,9 @@ import {
   csrfProtectionMiddleware,
   // Logger
   getLogger,
+  // Tenant-aware utilities
+  getTenantIdFromContext,
+  getTenantSettings,
 } from '@authrim/ar-lib-core';
 import { resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { getRequestIssuer } from './issuer';
@@ -144,18 +147,13 @@ app.use('*', async (c, next) => {
   // Try to get allowed origins from KV (Settings Manager format)
   let allowedOriginsValue: string | undefined;
 
-  if (c.env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await c.env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const settings = JSON.parse(kvData) as Record<string, unknown>;
-        if (typeof settings['tenant.allowed_origins'] === 'string') {
-          allowedOriginsValue = settings['tenant.allowed_origins'];
-        }
-      }
-    } catch {
-      // KV read failed, fall through to env
-    }
+  const tenantSettings = await getTenantSettings(
+    c.env.AUTHRIM_CONFIG,
+    getTenantIdFromContext(c),
+    'tenant'
+  );
+  if (tenantSettings && typeof tenantSettings['tenant.allowed_origins'] === 'string') {
+    allowedOriginsValue = tenantSettings['tenant.allowed_origins'];
   }
 
   // Fallback to environment variable, then ISSUER_URL

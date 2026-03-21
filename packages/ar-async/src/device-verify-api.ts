@@ -12,7 +12,15 @@ import {
   validateUserCodeFormat,
   isMockAuthEnabled,
   getLogger,
+  getTenantIdFromContext,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+
+function resolveTenantId(c: Context<{ Bindings: Env }>): string {
+  return typeof (c as { get?: unknown }).get === 'function'
+    ? getTenantIdFromContext(c)
+    : c.env.DEFAULT_TENANT_ID || 'default';
+}
 
 /**
  * POST /api/device/verify
@@ -45,6 +53,7 @@ import {
  */
 export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
+  const tenantId = resolveTenantId(c);
   try {
     // Get client IP for rate limiting
     const clientIp =
@@ -112,7 +121,9 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get device code metadata from DeviceCodeStore
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
+      buildDOInstanceName('device', tenantId)
+    );
     const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
 
     const getResponse = await deviceCodeStore.fetch(

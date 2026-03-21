@@ -12,12 +12,22 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
+  buildDOInstanceName,
+  parseCIBARequestId,
+  getCIBARequestStoreById,
   checkRateLimit,
   getCloudProvider,
   getClientIP,
   RateLimitProfiles,
 } from '@authrim/ar-lib-core';
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
+
+function resolveTenantId(c: Context<{ Bindings: Env }>): string {
+  return typeof (c as { get?: unknown }).get === 'function'
+    ? getTenantIdFromContext(c)
+    : c.env.DEFAULT_TENANT_ID || 'default';
+}
 
 /**
  * POST /api/ciba/approve
@@ -39,6 +49,7 @@ import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
  */
 export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
+  const tenantId = resolveTenantId(c);
   try {
     // Get client IP for rate limiting using cloud provider configuration
     const cloudProvider = await getCloudProvider(c.env);
@@ -86,8 +97,12 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get CIBA request metadata from CIBARequestStore
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
-    const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
+    const parsedCibaId = parseCIBARequestId(authReqId);
+    const cibaRequestStore = parsedCibaId
+      ? getCIBARequestStoreById(c.env, authReqId, tenantId).stub
+      : c.env.CIBA_REQUEST_STORE.get(
+          c.env.CIBA_REQUEST_STORE.idFromName(buildDOInstanceName('ciba', tenantId))
+        );
 
     // First, verify the request exists and is pending
     const getResponse = await cibaRequestStore.fetch(

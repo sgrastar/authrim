@@ -4614,8 +4614,8 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
 export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get the active key from KeyManager DO via RPC
-    // Use 'default-v3' to match the existing KeyManager instance used throughout the system
-    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+    const tenantId = getTenantIdFromContext(c);
+    const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
     const keyData = await keyManager.getActiveKeyWithPrivateRpc();
@@ -4881,7 +4881,10 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
     const now = Date.now();
     const expiresAt = now + ttl_seconds * 1000;
 
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
+      c.env,
+      getTenantIdFromContext(c)
+    );
 
     try {
       await sessionStore.createSessionRpc(sessionId, user_id, ttl_seconds, {

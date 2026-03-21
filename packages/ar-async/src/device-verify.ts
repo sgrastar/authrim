@@ -18,8 +18,15 @@ import {
   createConfigurationError,
   getTenantIdFromContext,
   getLogger,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
 import { html } from 'hono/html';
+
+function resolveTenantId(c: Context<{ Bindings: Env }>): string {
+  return typeof (c as { get?: unknown }).get === 'function'
+    ? getTenantIdFromContext(c)
+    : c.env.DEFAULT_TENANT_ID || 'default';
+}
 
 /**
  * GET /device
@@ -89,6 +96,7 @@ async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
  */
 async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
+  const tenantId = resolveTenantId(c);
   try {
     const body = await c.req.parseBody();
     let userCode = body.user_code as string;
@@ -105,7 +113,9 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     }
 
     // Get device code metadata from DeviceCodeStore
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
+      buildDOInstanceName('device', tenantId)
+    );
     const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
 
     const getResponse = await deviceCodeStore.fetch(
@@ -142,7 +152,6 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
       // Check UI configuration
       const uiConfig = await getUIConfig(c.env);
       if (uiConfig?.baseUrl) {
-        const tenantId = getTenantIdFromContext(c);
         const deviceAuthPath = uiConfig.paths?.deviceAuthorize || '/device/authorize';
         const loginUrl = new URL(`${uiConfig.baseUrl}${deviceAuthPath}`);
         loginUrl.searchParams.set('user_code', userCode);

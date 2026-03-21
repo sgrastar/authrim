@@ -193,7 +193,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Get matching key from KeyManager DO (with hierarchical caching: memory → KV → DO → env)
-  const matchingKey = await getKeyByKid(c.env, tokenKid);
+  const matchingKey = await getKeyByKid(c.env, getTenantIdFromContext(c), tokenKid);
   if (matchingKey) {
     try {
       publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
@@ -532,7 +532,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // Get matching key with hierarchical caching (memory → KV → DO → env)
-        const matchingKey = await getKeyByKid(c.env, tokenKid);
+        const matchingKey = await getKeyByKid(c.env, getTenantIdFromContext(c), tokenKid);
         if (matchingKey) {
           try {
             publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;

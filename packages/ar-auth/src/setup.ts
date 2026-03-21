@@ -31,6 +31,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
+  getTenantSettings,
   parseAllowedOrigins,
   isAllowedOrigin,
   // Logger
@@ -86,25 +87,14 @@ function toBase64URLString(input: CredentialIDLike): string {
  * Get allowed origins from KV (priority) or environment variables
  * Priority: KV > env > ISSUER_URL
  */
-async function getAllowedOriginsFromKV(env: Env): Promise<string[]> {
+async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  // Try to read from KV first
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const settings = JSON.parse(kvData) as Record<string, unknown>;
-        if (typeof settings['tenant.allowed_origins'] === 'string') {
-          allowedOriginsValue = settings['tenant.allowed_origins'];
-        }
-      }
-    } catch {
-      // Ignore KV read errors, fall back to env
-    }
+  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
+    allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  // Fall back to environment variables
   const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
@@ -534,7 +524,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       );
     }
 
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // During initial setup, if no allowed origins are configured (ISSUER_URL not set),
     // allow the current request's origin. This is safe because:

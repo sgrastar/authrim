@@ -21,7 +21,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { getLogger } from '@authrim/ar-lib-core';
+import { getLogger, getTenantIdFromContext, getTenantSettings } from '@authrim/ar-lib-core';
 
 // =============================================================================
 // Types
@@ -233,6 +233,7 @@ function safeParseJsonArray<T>(json: string | undefined): T[] {
  */
 async function getLoginUISettings(
   env: Env,
+  tenantId: string,
   systemSettings: SystemSettings
 ): Promise<LoginUIResolved> {
   const defaults: LoginUIResolved = {
@@ -250,9 +251,9 @@ async function getLoginUISettings(
     customBlocks: [...DEFAULT_UI_CONFIG.appearance.customBlocks],
   };
 
-  // Try settings-v2 (SETTINGS KV) first
+  // Try settings-v2 (SETTINGS KV) first — tenant-aware
   try {
-    const kvJson = await env.SETTINGS?.get('settings:tenant:default:login-ui');
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`);
     if (kvJson) {
       const kvSettings = JSON.parse(kvJson) as LoginUIKVSettings;
       return {
@@ -418,10 +419,10 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
  * Resolve cache TTL from KV → env → default
  * Priority: KV (SETTINGS) → env (LOGIN_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
  */
-async function resolveCacheTTL(env: Env): Promise<number> {
-  // 1. Try KV (settings-v2)
+async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
+  // 1. Try KV (settings-v2) — tenant-aware
   try {
-    const kvJson = await env.SETTINGS?.get('settings:tenant:default:login-methods');
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
     if (kvJson) {
       const kvSettings = JSON.parse(kvJson) as { 'login-methods.cache_ttl'?: number };
       const kvTTL = kvSettings['login-methods.cache_ttl'];
@@ -499,10 +500,11 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
       },
     };
 
-    // Resolve Login UI settings and cache TTL in parallel
+    // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
+    const tenantId = getTenantIdFromContext(c);
     const [loginUISettings, cacheTTL] = await Promise.all([
-      getLoginUISettings(env, settings),
-      resolveCacheTTL(env),
+      getLoginUISettings(env, tenantId, settings),
+      resolveCacheTTL(env, tenantId),
     ]);
     const ui = buildUIConfig(loginUISettings);
 

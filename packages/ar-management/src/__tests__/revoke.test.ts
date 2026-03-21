@@ -24,6 +24,7 @@ const {
   mockCreateAuthContextFromHono,
   mockValidateClientAssertion,
   mockCreateOAuthConfigManager,
+  mockGetKeyByKid,
 } = vi.hoisted(() => {
   const clientRepo = {
     findByClientId: vi.fn(),
@@ -54,6 +55,12 @@ const {
     }),
     mockValidateClientAssertion: vi.fn().mockResolvedValue({ valid: true }),
     mockCreateOAuthConfigManager: vi.fn().mockReturnValue(mockConfigManager),
+    mockGetKeyByKid: vi.fn().mockResolvedValue({
+      kty: 'RSA',
+      kid: 'key-1',
+      n: 'mock-n',
+      e: 'AQAB',
+    }),
   };
 });
 
@@ -74,6 +81,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     validateClientAssertion: mockValidateClientAssertion,
     createOAuthConfigManager: mockCreateOAuthConfigManager,
+    getKeyByKid: mockGetKeyByKid,
     buildIssuerUrl: (env: Partial<Env>, tenantId?: string) => {
       if (env.BASE_DOMAIN) {
         const resolvedTenantId = tenantId || env.DEFAULT_TENANT_ID || 'default';

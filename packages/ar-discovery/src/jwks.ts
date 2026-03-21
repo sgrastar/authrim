@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { Env, Logger } from '@authrim/ar-lib-core';
-import { getLogger } from '@authrim/ar-lib-core';
+import { getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
 /**
  * JSON Web Key Set (JWKS) Endpoint Handler
@@ -20,8 +20,9 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DISCOVERY');
 
   try {
-    // Get KeyManager DO instance
-    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+    // Get per-tenant KeyManager DO instance
+    const tenantId = getTenantIdFromContext(c);
+    const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
     // Fetch JWKS from KeyManager DO via RPC

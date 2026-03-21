@@ -2,11 +2,12 @@
  * Hierarchical JWKS Cache Manager
  *
  * Implements 3-tier caching for JWKS (JSON Web Key Set):
- * 1. In-memory cache (fastest, per Worker isolate)
- * 2. KV cache (shared across Workers)
- * 3. KeyManager DO (authoritative source)
+ * 1. In-memory cache (fastest, per Worker isolate, per tenant)
+ * 2. KV cache (shared across Workers, per tenant)
+ * 3. KeyManager DO (authoritative source, per tenant)
  *
  * Features:
+ * - Per-tenant isolation: all cache keys are scoped to tenantId
  * - Environment variable fallback (PUBLIC_JWK_JSON)
  * - Key rotation support with cache invalidation
  * - Configurable TTLs
@@ -28,7 +29,10 @@ export interface JWKSCacheConfig {
   inMemoryTtlMs?: number;
   /** KV cache TTL in seconds (default: 60 seconds - shorter for key rotation) */
   kvTtlSeconds?: number;
-  /** KV cache key (default: 'cache:jwks') */
+  /**
+   * Override KV cache key prefix (default: 'cache:jwks').
+   * The effective KV key is `${kvCacheKey}:${tenantId}` unless explicitly overridden.
+   */
   kvCacheKey?: string;
   /** Use environment variable fallback for PUBLIC_JWK_JSON (default: true) */
   useEnvFallback?: boolean;
@@ -49,81 +53,119 @@ const DEFAULT_IN_MEMORY_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_KV_TTL_SECONDS = 60; // 1 minute (shorter to allow key rotation)
 const DEFAULT_KV_CACHE_KEY = 'cache:jwks';
 
-// Module-level cache (per Worker isolate)
-// This is intentionally a global variable to persist across requests within the same isolate
-let jwksCache: {
+// Module-level per-tenant cache (per Worker isolate)
+// Map key is tenantId, value is the cached JWKS entry
+type JwksCacheEntry = {
   keys: JWK[];
   expiry: number;
   source: 'memory' | 'kv' | 'do' | 'env';
-} | null = null;
+  version: string;
+};
+
+const jwksCacheMap = new Map<string, JwksCacheEntry>();
+
+type CachedJwksRecord = {
+  keys: JWK[];
+  version?: string;
+};
+
+async function getKeyVersion(env: Env, tenantId: string): Promise<string> {
+  return (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
+}
 
 /**
- * Get JWKS with hierarchical caching
+ * Get JWKS with hierarchical caching (per tenant)
  *
  * Cache hierarchy:
- * 1. In-memory cache - Fastest, per-isolate, 5-minute TTL
- * 2. KV cache - Shared across Workers, 1-minute TTL
- * 3. KeyManager DO - Authoritative source, singleton
+ * 1. In-memory cache - Fastest, per-isolate per-tenant, 5-minute TTL
+ * 2. KV cache - Shared across Workers, per-tenant, 1-minute TTL
+ * 3. KeyManager DO - Authoritative source, per tenant (${tenantId}-v3)
  * 4. Environment variable fallback - PUBLIC_JWK_JSON
  *
  * @param env - Cloudflare Workers environment bindings
+ * @param tenantId - Tenant ID for isolation
  * @param config - Optional cache configuration
  * @returns JWKS keys and their source
- *
- * @example
- * ```typescript
- * const { keys, source } = await getJwksWithCache(env);
- * console.log(`Got ${keys.length} keys from ${source}`);
- * ```
  */
 export async function getJwksWithCache(
   env: Env,
+  tenantId: string,
   config: JWKSCacheConfig = {}
 ): Promise<JWKSCacheResult> {
   const {
     inMemoryTtlMs = DEFAULT_IN_MEMORY_TTL_MS,
     kvTtlSeconds = DEFAULT_KV_TTL_SECONDS,
-    kvCacheKey = DEFAULT_KV_CACHE_KEY,
     useEnvFallback = true,
   } = config;
+  // Effective KV key: use explicit override, or default per-tenant key
+  const kvCacheKey = config.kvCacheKey ?? `${DEFAULT_KV_CACHE_KEY}:${tenantId}`;
 
   const now = Date.now();
+  const currentVersion = await getKeyVersion(env, tenantId);
 
   // 1. Check in-memory cache (fastest path)
-  if (jwksCache && jwksCache.expiry > now) {
-    return { keys: jwksCache.keys, source: jwksCache.source };
+  const cached = jwksCacheMap.get(tenantId);
+  if (cached && cached.expiry > now && cached.version === currentVersion) {
+    return { keys: cached.keys, source: cached.source };
+  }
+  if (cached && cached.version !== currentVersion) {
+    jwksCacheMap.delete(tenantId);
   }
 
   // 2. Check KV cache (shared across Worker instances)
   if (env.AUTHRIM_CONFIG) {
     try {
-      const kvCached = await env.AUTHRIM_CONFIG.get<JWK[]>(kvCacheKey, { type: 'json' });
-      if (kvCached && Array.isArray(kvCached) && kvCached.length > 0) {
+      const kvCached = await env.AUTHRIM_CONFIG.get<JWK[] | CachedJwksRecord>(kvCacheKey, {
+        type: 'json',
+      });
+      const kvKeys = Array.isArray(kvCached) ? kvCached : kvCached?.keys;
+      const kvVersion = Array.isArray(kvCached) ? '' : kvCached?.version ?? '';
+
+      if (
+        kvKeys &&
+        Array.isArray(kvKeys) &&
+        kvKeys.length > 0 &&
+        kvVersion === currentVersion
+      ) {
         // Update in-memory cache from KV
-        jwksCache = { keys: kvCached, expiry: now + inMemoryTtlMs, source: 'kv' };
-        return { keys: kvCached, source: 'kv' };
+        jwksCacheMap.set(tenantId, {
+          keys: kvKeys,
+          expiry: now + inMemoryTtlMs,
+          source: 'kv',
+          version: currentVersion,
+        });
+        return { keys: kvKeys, source: 'kv' };
       }
     } catch {
       // KV read failed, continue to next source
     }
   }
 
-  // 3. Fetch from KeyManager DO (singleton, authoritative source)
+  // 3. Fetch from KeyManager DO — per-tenant (${tenantId}-v3)
   if (env.KEY_MANAGER) {
     try {
-      const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+      const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
       const keyManager = env.KEY_MANAGER.get(keyManagerId);
       const keys = await keyManager.getAllPublicKeysRpc();
 
       if (keys && keys.length > 0) {
         // Update in-memory cache
-        jwksCache = { keys, expiry: now + inMemoryTtlMs, source: 'do' };
+        jwksCacheMap.set(tenantId, {
+          keys,
+          expiry: now + inMemoryTtlMs,
+          source: 'do',
+          version: currentVersion,
+        });
 
         // Update KV cache (fire-and-forget, non-blocking)
         if (env.AUTHRIM_CONFIG) {
-          env.AUTHRIM_CONFIG.put(kvCacheKey, JSON.stringify(keys), {
-            expirationTtl: kvTtlSeconds,
-          }).catch(() => {
+          env.AUTHRIM_CONFIG.put(
+            kvCacheKey,
+            JSON.stringify({ keys, version: currentVersion } satisfies CachedJwksRecord),
+            {
+              expirationTtl: kvTtlSeconds,
+            }
+          ).catch(() => {
             // Ignore KV write errors - not critical
           });
         }
@@ -131,7 +173,7 @@ export async function getJwksWithCache(
         return { keys, source: 'do' };
       }
     } catch (error) {
-      log.error('Failed to get JWKS from KeyManager', {}, error as Error);
+      log.error('Failed to get JWKS from KeyManager', { tenantId }, error as Error);
       // Continue to fallback
     }
   }
@@ -142,7 +184,12 @@ export async function getJwksWithCache(
       const jwk = JSON.parse(env.PUBLIC_JWK_JSON) as JWK;
       const keys = [jwk];
       // Cache env fallback with shorter TTL since it's less reliable
-      jwksCache = { keys, expiry: now + inMemoryTtlMs, source: 'env' };
+      jwksCacheMap.set(tenantId, {
+        keys,
+        expiry: now + inMemoryTtlMs,
+        source: 'env',
+        version: currentVersion,
+      });
       return { keys, source: 'env' };
     } catch {
       log.error('Failed to parse PUBLIC_JWK_JSON');
@@ -154,64 +201,48 @@ export async function getJwksWithCache(
 }
 
 /**
- * Get a specific key by kid from cached JWKS
+ * Get a specific key by kid from cached JWKS (per tenant)
  *
  * @param env - Cloudflare Workers environment bindings
+ * @param tenantId - Tenant ID for isolation
  * @param kid - Key ID to search for (optional - returns first key if not specified)
  * @param config - Optional cache configuration
  * @returns JWK if found, undefined otherwise
- *
- * @example
- * ```typescript
- * const header = decodeProtectedHeader(token);
- * const jwk = await getKeyByKid(env, header.kid);
- * if (jwk) {
- *   const publicKey = await importJWK(jwk, 'RS256');
- * }
- * ```
  */
 export async function getKeyByKid(
   env: Env,
+  tenantId: string,
   kid: string | undefined,
   config: JWKSCacheConfig = {}
 ): Promise<JWK | undefined> {
-  const { keys } = await getJwksWithCache(env, config);
+  const { keys } = await getJwksWithCache(env, tenantId, config);
 
   if (kid) {
     return keys.find((k) => k.kid === kid);
   }
 
-  // Return first key if no kid specified (backward compatibility)
+  // Return first key if no kid specified
   return keys[0];
 }
 
 /**
- * Get CryptoKey for verification with caching
- *
- * Convenience function that combines getKeyByKid and importJWK.
+ * Get CryptoKey for verification with caching (per tenant)
  *
  * @param env - Cloudflare Workers environment bindings
+ * @param tenantId - Tenant ID for isolation
  * @param kid - Key ID to search for (optional)
  * @param algorithm - JWA algorithm (default: 'RS256')
  * @param config - Optional cache configuration
  * @returns CryptoKey for verification, undefined if key not found
- *
- * @example
- * ```typescript
- * const header = decodeProtectedHeader(token);
- * const publicKey = await getVerificationKey(env, header.kid);
- * if (publicKey) {
- *   await verifyToken(token, publicKey, issuer);
- * }
- * ```
  */
 export async function getVerificationKey(
   env: Env,
+  tenantId: string,
   kid: string | undefined,
   algorithm: string = 'RS256',
   config: JWKSCacheConfig = {}
 ): Promise<CryptoKey | undefined> {
-  const jwk = await getKeyByKid(env, kid, config);
+  const jwk = await getKeyByKid(env, tenantId, kid, config);
   if (!jwk) return undefined;
 
   try {
@@ -223,41 +254,67 @@ export async function getVerificationKey(
 }
 
 /**
- * Invalidate the in-memory cache
+ * Fetch a public key directly from the KeyManager DO by kid (per tenant).
  *
- * Call this when key rotation is detected or when you need to force
- * a fresh fetch from KeyManager DO.
+ * Unlike getVerificationKey, this bypasses the in-memory / KV cache and
+ * always goes to the authoritative source. Use this for token verification
+ * where cache staleness would be a security risk.
  *
- * Note: This only invalidates the local in-memory cache.
- * KV cache will expire based on its TTL.
- *
- * @example
- * ```typescript
- * // After detecting a key rotation event
- * invalidateJwksCache();
- * const { keys } = await getJwksWithCache(env); // Will fetch fresh keys
- * ```
+ * @param env - Cloudflare Workers environment bindings
+ * @param tenantId - Tenant ID for isolation
+ * @param kid - Key ID to look up
+ * @returns CryptoKey if found, null otherwise
  */
-export function invalidateJwksCache(): void {
-  jwksCache = null;
+export async function getPublicKeyByKid(
+  env: Env,
+  tenantId: string,
+  kid: string
+): Promise<CryptoKey | null> {
+  if (!env.KEY_MANAGER) return null;
+
+  try {
+    const km = env.KEY_MANAGER.get(env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
+    const keys = await km.getAllPublicKeysRpc().catch(() => [] as JWK[]);
+    const jwk = keys.find((k) => k.kid === kid);
+    if (!jwk) return null;
+    return (await importJWK(jwk, (jwk.alg as string) || 'RS256')) as CryptoKey;
+  } catch (error) {
+    log.error('Failed to get public key from KeyManager', { tenantId, kid }, error as Error);
+    return null;
+  }
 }
 
 /**
- * Get current cache status for debugging/monitoring
+ * Invalidate the in-memory JWKS cache for a specific tenant (or all tenants).
  *
+ * @param tenantId - Tenant to invalidate; if omitted, clears all tenant caches
+ */
+export function invalidateJwksCache(tenantId?: string): void {
+  if (tenantId !== undefined) {
+    jwksCacheMap.delete(tenantId);
+  } else {
+    jwksCacheMap.clear();
+  }
+}
+
+/**
+ * Get current cache status for a specific tenant (for debugging/monitoring)
+ *
+ * @param tenantId - Tenant ID to check
  * @returns Current cache state or null if empty
  */
-export function getJwksCacheStatus(): {
+export function getJwksCacheStatus(tenantId: string): {
   keyCount: number;
   expiresIn: number;
   source: 'memory' | 'kv' | 'do' | 'env';
 } | null {
-  if (!jwksCache) return null;
+  const cached = jwksCacheMap.get(tenantId);
+  if (!cached) return null;
 
   const now = Date.now();
   return {
-    keyCount: jwksCache.keys.length,
-    expiresIn: Math.max(0, jwksCache.expiry - now),
-    source: jwksCache.source,
+    keyCount: cached.keys.length,
+    expiresIn: Math.max(0, cached.expiry - now),
+    source: cached.source,
   };
 }

@@ -7,7 +7,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { confirm, select } from '@inquirer/prompts';
-import { t } from '../../i18n/index.js';
+import { t, getLocale } from '../../i18n/index.js';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -16,6 +16,7 @@ import { saveLockFile, loadLockFileAuto } from '../../core/lock.js';
 import {
   getEnvironmentPaths,
   getLegacyPaths,
+  findLegacyConfigPath,
   resolvePaths,
   listEnvironments,
   findAuthrimBaseDir,
@@ -37,6 +38,7 @@ import {
   checkAuth,
   runMigrationsForEnvironment,
   getWorkersSubdomain,
+  ensureWildcardDnsForMultiTenant,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
 import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
@@ -44,6 +46,13 @@ import { completeInitialSetup, displaySetupInstructions } from '../../core/admin
 import { ensureLoginUiClient } from '../../core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
+import { printCliCapabilitySummary } from '../capability-summary.js';
+import {
+  formatWildcardDnsManualAction,
+  getCloudflareDnsRecordsDashboardUrl,
+  getWildcardDnsManualAction,
+  isWildcardDnsPermissionError,
+} from '../../core/wildcard-dns-manual-action.js';
 
 // =============================================================================
 // Types
@@ -131,10 +140,18 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   spinner.succeed(`Logged in as ${auth.email || 'unknown'}`);
 
+  const workersSubdomain = await getWorkersSubdomain();
+  await printCliCapabilitySummary({
+    auth,
+    wranglerInstalled: true,
+    workersSubdomain,
+    locale: getLocale(),
+  });
+
   // Find config file (support both new and legacy structures)
   // Also search in common subdirectories (authrim/) for cases where setup was run from parent dir
   let baseDir = findAuthrimBaseDir(process.cwd());
-  let configPath: string = 'authrim-config.json';
+  let configPath: string = findLegacyConfigPath(baseDir, options.env);
   let config: AuthrimConfig | null = null;
   // rootDir is where the authrim source code is (containing packages/)
   // If --source is provided, use that; otherwise will be determined during search
@@ -289,7 +306,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
       // Fall back to legacy
       if (!config) {
-        configPath = join(searchDir, 'authrim-config.json');
+        configPath = findLegacyConfigPath(searchDir, options.env);
         if (existsSync(configPath)) {
           config = await loadConfig(configPath);
           if (config) {
@@ -600,6 +617,57 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   // Deploy workers
   console.log(chalk.bold('🔨 Deploying workers...\n'));
 
+  const shouldEnsureWildcardDns =
+    !options.dryRun && (!options.component || options.component === 'ar-router');
+
+  if (shouldEnsureWildcardDns) {
+    const wildcardBaseDomain =
+      config.tenant?.multiTenant === true ? config.tenant.baseDomain?.trim() : undefined;
+
+    if (wildcardBaseDomain) {
+      const action = getWildcardDnsManualAction(wildcardBaseDomain, getLocale());
+      console.log(
+        chalk.yellow(
+          `${action.summary}`
+        )
+      );
+      console.log(chalk.gray(action.timing));
+      console.log('');
+    }
+
+    try {
+      await ensureWildcardDnsForMultiTenant(config, (message) => {
+        console.log(chalk.gray(message));
+      });
+      console.log('');
+    } catch (error) {
+      const wildcardBaseDomain =
+        config.tenant?.multiTenant === true ? config.tenant.baseDomain?.trim() : undefined;
+      if (wildcardBaseDomain && isWildcardDnsPermissionError(error)) {
+        const action = getWildcardDnsManualAction(wildcardBaseDomain, getLocale());
+        console.error(chalk.red(action.title));
+        console.log('');
+        console.log(formatWildcardDnsManualAction(action));
+        const dashboardUrl = getCloudflareDnsRecordsDashboardUrl(
+          auth.accountId,
+          wildcardBaseDomain
+        );
+        if (dashboardUrl) {
+          console.log(dashboardUrl);
+          console.log('');
+        }
+        console.log('');
+        process.exit(1);
+      }
+      console.error(
+        chalk.red(
+          `Failed to prepare wildcard DNS: ${error instanceof Error ? error.message : String(error)}`
+        )
+      );
+      process.exit(1);
+    }
+  }
+
   const deployOptions: DeployOptions = {
     env,
     rootDir,
@@ -891,7 +959,7 @@ export async function statusCommand(options: { config?: string; env?: string }):
       }
     }
     if (!config) {
-      configPath = 'authrim-config.json';
+      configPath = findLegacyConfigPath(baseDir, env);
       config = await loadConfig(configPath);
     }
   }
