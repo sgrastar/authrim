@@ -3,10 +3,7 @@ import { rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WORKER_COMPONENTS } from './naming.js';
 import { AUTHRIM_KEYS_DIR, getEnvironmentPaths, getLegacyPaths } from './paths.js';
-import {
-  getDeployWranglerPath,
-  removeEnvironmentSectionFromToml,
-} from './wrangler-sync.js';
+import { getDeployWranglerPath, removeEnvironmentSectionFromToml } from './wrangler-sync.js';
 
 export interface LocalEnvironmentCleanupOptions {
   baseDir: string;

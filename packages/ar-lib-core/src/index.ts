@@ -98,6 +98,7 @@ export * from './utils/do-retry';
 export * from './utils/url-security';
 export * from './utils/basic-auth';
 export * from './utils/jwks-cache';
+export * from './utils/tenant-settings';
 export * from './utils/email-domain-hash';
 export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';

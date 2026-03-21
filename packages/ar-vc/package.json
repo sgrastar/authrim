@@ -9,7 +9,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
-    "test": "npx vitest run",
+    "test": "pnpm exec vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {

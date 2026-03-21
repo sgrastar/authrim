@@ -19,7 +19,14 @@ import {
   buildIssuerUrl,
   getTenantIdFromContext,
   getLogger,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+
+function resolveTenantId(c: Context<{ Bindings: Env }>): string {
+  return typeof (c as { get?: unknown }).get === 'function'
+    ? getTenantIdFromContext(c)
+    : c.env.DEFAULT_TENANT_ID || 'default';
+}
 
 /**
  * POST /device_authorization
@@ -29,6 +36,7 @@ import {
  */
 export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
+  const tenantId = resolveTenantId(c);
 
   try {
     // Parse request body
@@ -79,7 +87,9 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     // Store in DeviceCodeStore Durable Object
     // NOTE: Currently using global DO. Future: implement region-sharding with
     // KV-based user_code→device_code index for reverse lookups.
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
+      buildDOInstanceName('device', tenantId)
+    );
     const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
 
     const storeResponse = await deviceCodeStore.fetch(
@@ -103,7 +113,6 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     // Build verification URIs
     // Use UI config if available (for external UI), otherwise fall back to ISSUER_URL
     // tenant_hint is added to verification_uri_complete for UX branding (untrusted, security is via Host header)
-    const tenantId = getTenantIdFromContext(c);
     const uiConfig = await getUIConfig(c.env);
     let verificationBaseUrl: string;
 

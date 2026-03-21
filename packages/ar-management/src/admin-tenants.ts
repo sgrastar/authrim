@@ -22,7 +22,24 @@ import {
   createAuditLogFromContext,
   generateId,
   getLogger,
+  // Contract provisioning
+  TENANT_POLICY_PRESETS,
+  type TenantContract,
+  buildContractKey,
+  usesNakedDomainIssuer,
 } from '@authrim/ar-lib-core';
+
+/**
+ * Invalidate the tenant existence KV cache for a given tenant.
+ * Called after create, is_active change, and deactivate to ensure
+ * request-context middleware picks up the new state promptly.
+ */
+async function invalidateTenantExistsCache(
+  kv: KVNamespace | undefined,
+  tenantId: string
+): Promise<void> {
+  await kv?.delete(`v1:tenant-exists:${tenantId}`).catch(() => {});
+}
 import { z } from 'zod';
 import {
   createSingleTenantMutationError,
@@ -384,14 +401,18 @@ const DEFAULT_CLAIM_SCHEMAS = [
 /**
  * Seeds default OIDC claim schemas for a newly created tenant.
  * Skips any field_key that already exists for the tenant (idempotent).
- * Errors are caught and logged as soft failures so tenant creation succeeds.
+ *
+ * @param throwOnError - When true, per-claim errors are rethrown instead of logged.
+ *   Use true during initial provisioning (hard-fail), false for soft-failure mode.
  */
 export async function seedDefaultClaimsForTenant(
   tenantId: string,
   adapter: DatabaseAdapter,
-  log: ReturnType<typeof getLogger>
+  log: ReturnType<typeof getLogger>,
+  options: { throwOnError?: boolean } = {}
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
+  const { throwOnError = false } = options;
 
   for (const claim of DEFAULT_CLAIM_SCHEMAS) {
     try {
@@ -438,6 +459,7 @@ export async function seedDefaultClaimsForTenant(
         ]
       );
     } catch (err) {
+      if (throwOnError) throw err;
       log
         .module('ADMIN-TENANTS')
         .error(
@@ -447,6 +469,89 @@ export async function seedDefaultClaimsForTenant(
         );
     }
   }
+}
+
+// =============================================================================
+// Tenant Provisioning Helpers
+// =============================================================================
+
+/**
+ * Build default allowed origins for a new tenant.
+ * Includes tenant subdomain, naked domain (if primary), and UI URLs.
+ */
+function buildDefaultAllowedOrigins(tenantId: string, env: Env): string {
+  const origins: string[] = [];
+  if (env.BASE_DOMAIN) {
+    origins.push(`https://${tenantId}.${env.BASE_DOMAIN}`);
+    // Naked domain only for the primary tenant
+    if (usesNakedDomainIssuer(env, tenantId)) {
+      origins.push(`https://${env.BASE_DOMAIN}`);
+    }
+  }
+  if (env.UI_URL) origins.push(env.UI_URL);
+  if (env.ADMIN_UI_URL) origins.push(env.ADMIN_UI_URL);
+  return origins.join(',');
+}
+
+/**
+ * Build default TenantContract using the b2c-standard preset.
+ */
+function buildDefaultTenantContract(tenantId: string): TenantContract {
+  const preset = TENANT_POLICY_PRESETS.find((p) => p.id === 'b2c-standard')!;
+  const now = new Date().toISOString();
+
+  return {
+    ...preset.defaults,
+    tenantId,
+    version: 1,
+    preset: 'b2c-standard',
+    profile: 'human',
+    metadata: {
+      createdAt: now,
+      updatedAt: now,
+      createdBy: 'system',
+      status: 'active',
+    },
+  } as TenantContract;
+}
+
+/**
+ * Seed default per-tenant settings into KV.
+ * Writes to AUTHRIM_CONFIG (tenant settings) and SETTINGS (UI settings).
+ */
+async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId: string) {
+  const env = c.env;
+  const allowedOrigins = buildDefaultAllowedOrigins(tenantId, env);
+
+  await Promise.all([
+    env.AUTHRIM_CONFIG?.put(
+      `settings:tenant:${tenantId}:tenant`,
+      JSON.stringify({ 'tenant.allowed_origins': allowedOrigins })
+    ),
+    env.SETTINGS?.put(
+      `settings:tenant:${tenantId}:login-ui`,
+      JSON.stringify({ 'login-ui.brand_name': tenantId })
+    ),
+    env.SETTINGS?.put(`settings:tenant:${tenantId}:login-methods`, JSON.stringify({})),
+  ]);
+}
+
+/**
+ * Initialize KeyManager DO for a tenant (idempotent).
+ * Creates signing keys only if none exist yet.
+ */
+async function initTenantKeyManager(
+  keyManagerBinding: Env['KEY_MANAGER'],
+  tenantId: string
+): Promise<void> {
+  // All tenants (including 'default') use ${tenantId}-v3 as the DO name
+  const km = keyManagerBinding.get(keyManagerBinding.idFromName(`${tenantId}-v3`));
+  const status = await km.getStatusRpc();
+  if (!status.activeKeyId) {
+    // No keys yet — generate the initial key
+    await km.rotateKeysRpc();
+  }
+  // If activeKeyId exists (idempotent: same tenant ID re-provisioned), reuse existing keys
 }
 
 // =============================================================================
@@ -533,13 +638,41 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       [id]
     );
 
+    // Provisioning — all-or-nothing (hard-fail with compensation on error)
+    const contractKey = buildContractKey(c.env, 'tenant', id);
+    try {
+      // 1. Seed default OIDC claim schemas (hard-fail: rethrow on any error)
+      await seedDefaultClaimsForTenant(id, adapter, getLogger(c), { throwOnError: true });
+      // 2. Write TenantContract to KV
+      await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
+      // 3. Seed per-tenant KV settings (allowed_origins, login-ui, login-methods)
+      await seedTenantDefaultSettings(c, id);
+      // 4. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
+      await initTenantKeyManager(c.env.KEY_MANAGER, id);
+      // 5. Invalidate tenant-exists cache so request-context middleware sees the new tenant
+      await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
+    } catch (error) {
+      const log = getLogger(c).module('ADMIN-TENANTS');
+      log.error('Tenant provisioning failed — rolling back', { tenantId: id }, error as Error);
+      // Compensation: best-effort cleanup of all written state
+      await Promise.allSettled([
+        adapter.execute('DELETE FROM tenants WHERE id = ?', [id]),
+        adapter.execute('DELETE FROM custom_claim_schemas WHERE tenant_id = ?', [id]),
+        c.env.AUTHRIM_CONFIG?.delete(contractKey),
+        c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
+        c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
+        c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
+        c.env.SETTINGS?.delete(`settings:tenant:${id}:login-methods`),
+        // KeyManager DO cleanup is not possible (no delete/reset RPC) — orphaned DO is harmless
+      ]);
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+
+    // Audit log written AFTER successful provisioning
     await createAuditLogFromContext(c, 'tenant.created', 'tenant', id, {
       name,
       description: description ?? null,
     });
-
-    // Seed default OIDC claim schemas for the new tenant (soft failure)
-    await seedDefaultClaimsForTenant(id, adapter, getLogger(c));
 
     return c.json(formatTenant(created!), 201);
   } catch (error) {
@@ -660,6 +793,11 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     await adapter.execute(`UPDATE tenants SET ${fields.join(', ')} WHERE id = ?`, values);
 
+    // Invalidate cache if is_active changed (tenant may have been activated or deactivated)
+    if (updates.is_active !== undefined) {
+      await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
+    }
+
     const updated = await adapter.queryOne<TenantRow>(
       'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
@@ -724,6 +862,9 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
       nowTs,
       id,
     ]);
+
+    // Invalidate cache so subsequent requests to this tenant return 404 immediately
+    await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
 
     // Get admin identity for job attribution
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access

@@ -57,6 +57,12 @@ vi.mock('@authrim/ar-lib-core', async () => {
       getNumber: vi.fn().mockResolvedValue(3600),
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    getKeyByKid: vi.fn().mockResolvedValue({
+      kty: 'RSA',
+      kid: 'test-kid',
+      n: 'test',
+      e: 'AQAB',
+    }),
     TOKEN_EVENTS: {
       BATCH_REVOKED: 'token.batch.revoked',
       ACCESS_REVOKED: 'token.access.revoked',

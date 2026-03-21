@@ -194,8 +194,7 @@ const es: Translations = {
   'web.form.multiTenantEnable': 'Habilitar modo multi-tenant',
   'web.form.multiTenantHint': 'Crear subdominios de tenant bajo su dominio personalizado',
   'web.form.multiTenantExamples': 'Ejemplos de URL de tenant',
-  'web.form.multiTenantExampleDefaultOmitted':
-    'Tenant predeterminado con nombre omitido: {{url}}',
+  'web.form.multiTenantExampleDefaultOmitted': 'Tenant predeterminado con nombre omitido: {{url}}',
   'web.form.multiTenantExampleDefaultIncluded':
     'Tenant predeterminado con nombre explícito: {{url}}',
   'web.form.multiTenantExampleOther': 'Tenant no predeterminado: {{url}}',

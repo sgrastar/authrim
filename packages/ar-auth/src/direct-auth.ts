@@ -29,6 +29,7 @@ import {
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
+  getTenantSettings,
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
@@ -97,30 +98,45 @@ const AUTH_CODE_TTL = 60; // 60 seconds
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
 
-// Module-level cache for signing key (per Worker isolate)
-let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
-let cachedKeyTimestamp = 0;
+// Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
+const signingKeyCache = new Map<
+  string,
+  {
+    privateKey: CryptoKey;
+    kid: string;
+    timestamp: number;
+    version: string;
+  }
+>();
 const KEY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Get signing key from KeyManager DO (with caching)
+ * Get signing key from per-tenant KeyManager DO (with per-tenant caching).
+ * Checks KV version signal to detect cross-worker emergency rotations.
  */
 async function getSigningKeyFromKeyManager(
-  env: Env
+  env: Env,
+  tenantId: string
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
+  const cached = signingKeyCache.get(tenantId);
 
-  // Return from cache if valid
-  if (cachedSigningKey && now - cachedKeyTimestamp < KEY_CACHE_TTL) {
-    return cachedSigningKey;
+  // Check cache — if within TTL, verify KV version to detect emergency rotation
+  if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
+    const currentVersion =
+      (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
+    if (currentVersion === cached.version) {
+      return { privateKey: cached.privateKey, kid: cached.kid };
+    }
+    // Version mismatch: emergency rotation detected — fall through to refresh
   }
 
-  // Fetch from KeyManager
+  // Fetch from per-tenant KeyManager DO
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
   }
 
-  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Get active key via RPC
@@ -134,11 +150,12 @@ async function getSigningKeyFromKeyManager(
   // Import private key
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
-  // Update cache
-  cachedSigningKey = { privateKey, kid: keyData.kid };
-  cachedKeyTimestamp = now;
+  // Fetch current version for cache coherence
+  const version =
+    (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  return cachedSigningKey;
+  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
+  return { privateKey, kid: keyData.kid };
 }
 
 // WebAuthn transport types
@@ -171,21 +188,12 @@ type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
  * Get allowed origins from KV (Settings Manager format) with fallback to env
  * Priority: KV (tenant.allowed_origins) > env (ALLOWED_ORIGINS) > ISSUER_URL
  */
-async function getAllowedOriginsFromKV(env: Env): Promise<string[]> {
+async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const settings = JSON.parse(kvData) as Record<string, unknown>;
-        if (typeof settings['tenant.allowed_origins'] === 'string') {
-          allowedOriginsValue = settings['tenant.allowed_origins'];
-        }
-      }
-    } catch {
-      // KV read failed, fall through to env
-    }
+  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
+    allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
   const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
@@ -460,7 +468,7 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
@@ -761,7 +769,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     // Validate Origin
     const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
@@ -1735,7 +1743,10 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
     const platform = detectPlatform(originHeader, userAgent);
 
     // Create session
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
+      c.env,
+      getTenantIdFromContext(c)
+    );
     const sessionTTL = 24 * 60 * 60; // 24 hours
 
     try {
@@ -1849,7 +1860,10 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
     if (request_refresh_token && c.env.REFRESH_TOKEN_ROTATOR) {
       try {
         // Get signing key from KeyManager
-        const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
+        const { privateKey, kid } = await getSigningKeyFromKeyManager(
+          c.env,
+          getTenantIdFromContext(c)
+        );
 
         // Get shard configuration and calculate shard index
         const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
@@ -1973,7 +1987,7 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
 
     // Validate Origin header
     const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);

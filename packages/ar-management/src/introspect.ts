@@ -266,7 +266,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
 
   // Get matching key with hierarchical caching (memory → KV → DO → env)
   const log = getLogger(c).module('INTROSPECT');
-  const matchingKey = await getKeyByKid(c.env, tokenKid);
+  const matchingKey = await getKeyByKid(c.env, getTenantIdFromContext(c), tokenKid);
   if (matchingKey) {
     try {
       publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;

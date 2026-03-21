@@ -9,8 +9,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'external-idp: lint skipped'",
-    "test": "npx vitest run",
-    "test:unit": "npx vitest run",
+    "test": "pnpm exec vitest run",
+    "test:unit": "pnpm exec vitest run",
     "test:property": "vitest run -c vitest.property.config.ts",
     "clean": "rm -rf dist"
   },

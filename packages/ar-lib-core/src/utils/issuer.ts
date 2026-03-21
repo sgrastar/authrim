@@ -23,6 +23,57 @@ import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 
 /**
+ * Validate that a tenant exists and is active using D1 + KV positive cache.
+ *
+ * - Positive cache TTL: 300s (negative results are NOT cached to allow immediate
+ *   recognition after tenant creation)
+ * - DB error → fail-open to prevent outage from blocking all requests
+ *
+ * @param db - D1 database binding (undefined = fail-open)
+ * @param kv - KV namespace for caching (undefined = skip cache)
+ * @param tenantId - Tenant ID to validate
+ * @returns true if tenant exists and is active, false if not found or inactive
+ */
+export async function validateTenantExistsAsync(
+  db: D1Database | undefined,
+  kv: KVNamespace | undefined,
+  tenantId: string
+): Promise<boolean> {
+  const cacheKey = `v1:tenant-exists:${tenantId}`;
+
+  // Check KV positive cache first
+  if (kv) {
+    try {
+      const cached = await kv.get(cacheKey);
+      if (cached === 'true') return true;
+    } catch {
+      // KV error → fall through to D1
+    }
+  }
+
+  // Fail-open if no DB binding
+  if (!db) return true;
+
+  try {
+    const row = await db
+      .prepare('SELECT id FROM tenants WHERE id = ? AND is_active = 1')
+      .bind(tenantId)
+      .first<{ id: string }>();
+
+    if (!row) return false;
+
+    // Write positive cache only (never cache negative to ensure immediate visibility)
+    if (kv) {
+      await kv.put(cacheKey, 'true', { expirationTtl: 300 }).catch(() => {});
+    }
+    return true;
+  } catch {
+    // D1 error → fail-open to prevent outage from blocking requests
+    return true;
+  }
+}
+
+/**
  * Result of Host validation
  */
 export interface HostValidationResult {

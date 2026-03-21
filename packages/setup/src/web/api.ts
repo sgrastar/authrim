@@ -18,6 +18,10 @@ import { randomBytes } from 'node:crypto';
 import {
   isWranglerInstalled,
   checkAuth,
+  getSetupCapabilityDiagnostics,
+  deriveSetupCapabilityEstimate,
+  deriveSetupCapabilityStatuses,
+  ensureWildcardDnsForMultiTenant,
   provisionResources,
   detectEnvironments,
   deleteEnvironment,
@@ -28,6 +32,7 @@ import {
   getWorkerDeployments,
   type CloudflareAuth,
 } from '../core/cloudflare.js';
+import { isWildcardDnsPermissionError } from '../core/wildcard-dns-manual-action.js';
 import {
   AuthrimConfigSchema,
   createDefaultConfig,
@@ -44,6 +49,7 @@ import {
   resolvePaths,
   listEnvironments,
   findAuthrimBaseDir,
+  findLegacyConfigPath,
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../core/paths.js';
@@ -168,27 +174,18 @@ function sanitizeError(error: unknown): string {
     .replace(/[a-f0-9]{32,}/gi, '[redacted]');
 }
 
-async function ensureWildcardDnsForMultiTenant(
-  cfg: Partial<AuthrimConfig> | null | undefined,
-  onProgress?: (message: string) => void
-): Promise<void> {
-  const baseDomain =
-    cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
+function getWildcardDnsManualActionPayload(
+  cfg: Partial<AuthrimConfig> | null | undefined
+): { kind: 'wildcard-dns'; baseDomain: string } | null {
+  const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
   if (!baseDomain) {
-    return;
+    return null;
   }
 
-  const { ensureWildcardDnsRecord } = await import('../core/cloudflare.js');
-  onProgress?.(`Ensuring wildcard DNS for *.${baseDomain}...`);
-
-  const result = await ensureWildcardDnsRecord(baseDomain, cfg?.urls?.api?.zoneId ?? null);
-  if (result.created) {
-    onProgress?.(`✓ Wildcard DNS created: ${result.name} -> ${result.target}`);
-  } else if (result.updated) {
-    onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
-  } else {
-    onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
-  }
+  return {
+    kind: 'wildcard-dns',
+    baseDomain,
+  };
 }
 
 // =============================================================================
@@ -258,6 +255,13 @@ export function createApiRoutes(): Hono {
     const wranglerInstalled = await isWranglerInstalled();
     const auth = await checkAuth();
     const workersSubdomain = auth.isLoggedIn ? await getWorkersSubdomain() : null;
+    const capabilityDiagnostics = await getSetupCapabilityDiagnostics(
+      auth,
+      wranglerInstalled,
+      workersSubdomain
+    );
+    const capabilities = deriveSetupCapabilityEstimate(capabilityDiagnostics);
+    const capabilityStatuses = deriveSetupCapabilityStatuses(capabilityDiagnostics);
 
     state.auth = auth;
 
@@ -265,6 +269,9 @@ export function createApiRoutes(): Hono {
       wranglerInstalled,
       auth,
       workersSubdomain,
+      capabilityDiagnostics,
+      capabilities,
+      capabilityStatuses,
       cwd: process.cwd(),
     });
   });
@@ -300,7 +307,7 @@ export function createApiRoutes(): Hono {
         }
       }
       if (!configPath || !existsSync(configPath)) {
-        configPath = 'authrim-config.json';
+        configPath = findLegacyConfigPath(baseDir);
         structureType = 'legacy';
       }
     }
@@ -973,11 +980,15 @@ export function createApiRoutes(): Hono {
           }
 
           if (Object.keys(secrets).length > 0) {
-            await uploadSecrets(secrets, {
-              env,
-              rootDir: resolve(rootDir),
-              onProgress: addProgress,
-            }, enabledComponents);
+            await uploadSecrets(
+              secrets,
+              {
+                env,
+                rootDir: resolve(rootDir),
+                onProgress: addProgress,
+              },
+              enabledComponents
+            );
             // Note: secrets object goes out of scope here and will be garbage collected
           }
         } else if (!dryRun) {
@@ -1063,7 +1074,26 @@ export function createApiRoutes(): Hono {
         addProgress('Deploying workers...');
 
         if (!dryRun) {
-          await ensureWildcardDnsForMultiTenant(cfg, addProgress);
+          try {
+            await ensureWildcardDnsForMultiTenant(cfg, addProgress);
+          } catch (error) {
+            const manualAction = getWildcardDnsManualActionPayload(cfg);
+            if (manualAction && isWildcardDnsPermissionError(error)) {
+              state.status = 'error';
+              state.error = 'Manual wildcard DNS setup required';
+              addProgress('⚠️ Automatic wildcard DNS setup is unavailable.');
+              addProgress('⚠️ Create the wildcard DNS record manually, then rerun deploy.');
+              return c.json(
+                {
+                  success: false,
+                  error: 'Manual wildcard DNS setup required',
+                  manualAction,
+                },
+                409
+              );
+            }
+            throw error;
+          }
         }
 
         const summary = await deployAll(
@@ -1927,7 +1957,6 @@ export function createApiRoutes(): Hono {
           // Build first (unless skipped)
           if (!skipBuild && !dryRun) {
             addProgress(`Building ${componentName}...`);
-            const { execa } = await import('execa');
             const uiDir = join(rootDir, 'packages', componentName);
 
             if (!existsSync(uiDir)) {
@@ -2129,7 +2158,28 @@ export function createApiRoutes(): Hono {
           }
 
           if (!dryRun && componentName === 'ar-router') {
-            await ensureWildcardDnsForMultiTenant(cfg, addProgress);
+            try {
+              await ensureWildcardDnsForMultiTenant(cfg, addProgress);
+            } catch (error) {
+              const manualAction = getWildcardDnsManualActionPayload(cfg);
+              if (manualAction && isWildcardDnsPermissionError(error)) {
+                state.status = 'error';
+                state.error = 'Manual wildcard DNS setup required';
+                addProgress('⚠️ Automatic wildcard DNS setup is unavailable.');
+                addProgress('⚠️ Create the wildcard DNS record manually, then rerun deploy.');
+                return c.json(
+                  {
+                    success: false,
+                    component: componentName,
+                    type: 'worker',
+                    error: 'Manual wildcard DNS setup required',
+                    manualAction,
+                  },
+                  409
+                );
+              }
+              throw error;
+            }
           }
 
           // Deploy the worker

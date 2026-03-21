@@ -17,6 +17,7 @@
 
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
+import type { AuthrimConfig } from './core/config.js';
 import { initCommand } from './cli/commands/init.js';
 import { deployCommand, statusCommand } from './cli/commands/deploy.js';
 import { updateCommand } from './cli/commands/update.js';
@@ -160,7 +161,7 @@ program
 
     // Load config for API URL (needed for Pages deployment)
     const resolved = resolvePaths({ baseDir, env });
-    let cfg: Record<string, unknown> | null = null;
+    let cfg: AuthrimConfig | null = null;
     try {
       const configPath =
         resolved.type === 'new'
@@ -228,7 +229,7 @@ program
         const deploySpinner = ora(`Deploying ${componentName}...`).start();
         const uiSettings = resolveUiDeploymentSettings({
           component: componentName as 'ar-admin-ui' | 'ar-login-ui',
-          config: cfg as any,
+          config: cfg as AuthrimConfig,
           apiBaseUrl,
           loginUiClientId,
         });

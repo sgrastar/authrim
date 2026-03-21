@@ -20,9 +20,17 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
   getJwksWithCache,
   publishEvent,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+
+function resolveTenantId(c: Context<{ Bindings: Env }>): string {
+  return typeof (c as { get?: unknown }).get === 'function'
+    ? getTenantIdFromContext(c)
+    : c.env.DEFAULT_TENANT_ID || 'default';
+}
 
 /**
  * POST /bc-authorize
@@ -32,6 +40,7 @@ import {
  */
 export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
+  const tenantId = resolveTenantId(c);
 
   try {
     // Parse request body
@@ -120,7 +129,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // Validate id_token_hint if provided (JWT signed by this server)
     if (id_token_hint) {
       // Get JWKS for signature verification (this server's keys)
-      const { keys: jwksKeys } = await getJwksWithCache(c.env);
+      const { keys: jwksKeys } = await getJwksWithCache(c.env, tenantId);
       const idTokenValidation = await validateCIBAIdTokenHint(id_token_hint, {
         issuerUrl: c.env.ISSUER_URL,
         jwks: { keys: jwksKeys },
@@ -203,7 +212,9 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     };
 
     // Store in CIBARequestStore Durable Object
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
+    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
+      buildDOInstanceName('ciba', tenantId)
+    );
     const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
 
     const storeResponse = await cibaRequestStore.fetch(
@@ -255,7 +266,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // External systems can subscribe to this event to send notifications
     publishEvent(c, {
       type: 'ciba.request.created',
-      tenantId: clientMetadata.tenant_id as string,
+      tenantId,
       data: {
         auth_req_id: authReqId,
         client_id,

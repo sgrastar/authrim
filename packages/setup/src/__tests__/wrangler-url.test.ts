@@ -13,7 +13,6 @@ import {
   buildAuthrimConfig,
   scenarioLabel,
   WORKERS_SUBDOMAIN,
-  type Scenario,
 } from '../../../../test/fixtures/deployment-matrix.js';
 
 // =============================================================================

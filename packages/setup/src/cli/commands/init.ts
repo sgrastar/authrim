@@ -17,7 +17,7 @@ import {
 } from '../../i18n/index.js';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { execa } from 'execa';
 import { createDefaultConfig, parseConfig, type AuthrimConfig } from '../../core/config.js';
@@ -45,6 +45,13 @@ import {
   getExternalKeysDir,
   getExternalKeysPathForConfig,
   AUTHRIM_DIR,
+  LEGACY_CONFIG_FILE,
+  LEGACY_LOCK_FILE,
+  findLegacyConfigPath,
+  findLegacyLockPath,
+  getLegacyConfigFileName,
+  getLegacyLockFileName,
+  listEnvironments,
 } from '../../core/paths.js';
 import {
   downloadSource,
@@ -53,12 +60,8 @@ import {
   getLocalVersion,
 } from '../../core/source.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
-import {
-  buildUrlsConfig,
-  ensureHttps,
-  getPagesDevUrl,
-  getWorkersDevUrl,
-} from '../../core/url-config.js';
+import { buildUrlsConfig, getPagesDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
+import { printCliCapabilitySummary } from '../capability-summary.js';
 
 // =============================================================================
 // Zone Check Helper
@@ -67,6 +70,32 @@ import {
 interface ZoneDomainConfig {
   zoneId?: string | null;
   customDomainBinding?: boolean;
+}
+
+let cliCapabilitySummaryShown = false;
+
+async function showCliCapabilitySummaryOnce(options?: {
+  installed?: boolean;
+  auth?: Awaited<ReturnType<typeof checkAuth>>;
+  workersSubdomain?: string | null;
+}): Promise<void> {
+  if (cliCapabilitySummaryShown) {
+    return;
+  }
+
+  const installed = options?.installed ?? (await isWranglerInstalled());
+  const auth = options?.auth ?? (installed ? await checkAuth() : { isLoggedIn: false });
+  const workersSubdomain =
+    options?.workersSubdomain ??
+    (installed && auth.isLoggedIn ? await getWorkersSubdomain() : null);
+
+  await printCliCapabilitySummary({
+    auth,
+    wranglerInstalled: installed,
+    workersSubdomain,
+    locale: getLocale(),
+  });
+  cliCapabilitySummaryShown = true;
 }
 
 /**
@@ -542,7 +571,14 @@ async function updateExistingSource(sourceDir: string, gitRef: string): Promise<
   try {
     // Backup existing configuration files
     // Support both legacy (authrim-*.json, .keys/) and new (.authrim/) structures
-    const configFiles = ['authrim-config.json', 'authrim-lock.json'];
+    const configFiles = [
+      LEGACY_CONFIG_FILE,
+      LEGACY_LOCK_FILE,
+      ...listEnvironments(sourceDir).flatMap((env) => [
+        getLegacyConfigFileName(env),
+        getLegacyLockFileName(env),
+      ]),
+    ];
     const backups: { file: string; content?: string }[] = [];
 
     for (const file of configFiles) {
@@ -756,6 +792,8 @@ export async function initCommand(options: InitOptions): Promise<void> {
 // =============================================================================
 
 async function runCliSetup(options: InitOptions): Promise<void> {
+  await showCliCapabilitySummaryOnce();
+
   // Main menu loop - keeps returning to menu until user exits
   while (true) {
     const setupMode = await select({
@@ -937,17 +975,26 @@ async function runLoadConfig(): Promise<boolean> {
     }
   }
 
-  // Check legacy structure (authrim-config.json)
-  const legacyConfigPath = './authrim-config.json';
-  if (existsSync(legacyConfigPath) && !foundConfigs.some((c) => c.type === 'legacy')) {
-    // Try to read env from legacy config
+  // Check legacy structure (authrim-{env}-config.json or authrim-config.json)
+  for (const env of environments) {
+    const legacyConfigPath = findLegacyConfigPath(baseDir, env);
+    if (existsSync(legacyConfigPath) && !foundConfigs.some((c) => c.path === legacyConfigPath)) {
+      foundConfigs.push({ path: legacyConfigPath, env, type: 'legacy' });
+    }
+  }
+
+  const fallbackLegacyConfigPath = findLegacyConfigPath(baseDir);
+  if (
+    existsSync(fallbackLegacyConfigPath) &&
+    !foundConfigs.some((c) => c.path === fallbackLegacyConfigPath)
+  ) {
     try {
-      const legacyContent = await readFile(legacyConfigPath, 'utf-8');
+      const legacyContent = await readFile(fallbackLegacyConfigPath, 'utf-8');
       const legacyConfig = JSON.parse(legacyContent);
       const legacyEnv = legacyConfig.environment?.prefix || 'unknown';
-      foundConfigs.push({ path: legacyConfigPath, env: legacyEnv, type: 'legacy' });
+      foundConfigs.push({ path: fallbackLegacyConfigPath, env: legacyEnv, type: 'legacy' });
     } catch {
-      foundConfigs.push({ path: legacyConfigPath, env: 'unknown', type: 'legacy' });
+      foundConfigs.push({ path: fallbackLegacyConfigPath, env: 'unknown', type: 'legacy' });
     }
   }
 
@@ -966,8 +1013,8 @@ async function runLoadConfig(): Promise<boolean> {
     if (legacyConfigs.length > 0) {
       console.log(chalk.yellow('━━━ Legacy Structure Detected ━━━'));
       console.log(chalk.gray('Legacy files:'));
-      console.log(chalk.gray('  • authrim-config.json'));
-      console.log(chalk.gray('  • authrim-lock.json'));
+      console.log(chalk.gray('  • authrim-{env}-config.json (or authrim-config.json)'));
+      console.log(chalk.gray('  • authrim-{env}-lock.json (or authrim-lock.json)'));
       console.log(chalk.gray('  • .keys/{env}/'));
       console.log('');
       console.log(chalk.gray('New structure benefits:'));
@@ -1100,9 +1147,7 @@ async function runLoadConfig(): Promise<boolean> {
     console.log(chalk.yellow('No configuration found in current directory.'));
     console.log('');
     console.log(chalk.gray('💡 Tip: You can specify a config file with:'));
-    console.log(
-      chalk.cyan(`   ${getCommandPrefix()} --config /path/to/.authrim/{env}/config.json`)
-    );
+    console.log(chalk.cyan(`   ${getCommandPrefix()} --config /path/to/authrim-{env}-config.json`));
     console.log('');
 
     const action = await select({
@@ -2241,6 +2286,11 @@ async function executeSetup(
 
     // Get workers.dev subdomain for correct URL generation
     workersSubdomain = await getWorkersSubdomain();
+    await showCliCapabilitySummaryOnce({
+      installed,
+      auth,
+      workersSubdomain,
+    });
   } catch (error) {
     wranglerCheck.fail('Failed to check wrangler');
     console.error(error);
@@ -2548,14 +2598,14 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
 
   // Determine lock file path based on config file structure
   // New structure: .authrim/{env}/config.json -> .authrim/{env}/lock.json
-  // Legacy structure: authrim-config.json -> authrim-lock.json
+  // Legacy structure: authrim-{env}-config.json -> authrim-{env}-lock.json
   let lockPath: string;
   const isNewStructure =
     configPath.includes(`${AUTHRIM_DIR}/`) && configPath.endsWith('/config.json');
   if (isNewStructure) {
     lockPath = configPath.replace('/config.json', '/lock.json');
   } else {
-    lockPath = configPath.replace('authrim-config.json', 'authrim-lock.json');
+    lockPath = findLegacyLockPath(dirname(resolve(configPath)), env);
   }
 
   console.log('');
@@ -2593,6 +2643,11 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
 
     // Get workers.dev subdomain for correct URL generation
     workersSubdomain = await getWorkersSubdomain();
+    await showCliCapabilitySummaryOnce({
+      installed,
+      auth,
+      workersSubdomain,
+    });
   } catch (error) {
     wranglerCheck.fail('Failed to check wrangler');
     console.error(error);

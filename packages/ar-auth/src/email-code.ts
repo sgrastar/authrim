@@ -573,7 +573,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       if (!isAnonymousUpgrade) {
         try {
           const { stub: sessionStore, sessionId: newSessionId } =
-            await getSessionStoreForNewSession(c.env);
+            await getSessionStoreForNewSession(c.env, getTenantIdFromContext(c));
           sessionId = newSessionId;
 
           await sessionStore.createSessionRpc(

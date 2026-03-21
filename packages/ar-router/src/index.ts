@@ -7,6 +7,8 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   csrfProtectionMiddleware,
+  validateHostHeader,
+  getDefaultTenantId,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -34,6 +36,10 @@ interface Env {
   // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
   // If not set, defaults to '*' with credentials disabled for security
   ALLOWED_ORIGINS?: string;
+  // Multi-tenant configuration (optional)
+  BASE_DOMAIN?: string;
+  PRIMARY_TENANT_ID?: string;
+  DEFAULT_TENANT_ID?: string;
 
   // UI Proxy configuration (optional)
   // When enabled, routes UI paths through the router for same-domain deployment
@@ -193,10 +199,15 @@ app.use('*', async (c, next) => {
 app.use('*', async (c, next) => {
   let allowedOriginsStr: string | null = null;
 
-  // 1. Try to get from KV (tenant settings)
+  // 1. Try to get from KV (tenant-aware settings)
   if (c.env.AUTHRIM_CONFIG) {
     try {
-      const kvData = await c.env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
+      // Resolve tenant from Host header for multi-tenant CORS settings
+      const hostResult = validateHostHeader(c.req.header('Host'), c.env);
+      const tenantId =
+        hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
+
+      const kvData = await c.env.AUTHRIM_CONFIG.get(`settings:tenant:${tenantId}:tenant`);
       if (kvData) {
         const parsed = JSON.parse(kvData) as Record<string, unknown>;
         const kvValue = parsed['tenant.allowed_origins'];

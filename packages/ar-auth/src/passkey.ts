@@ -13,6 +13,7 @@ import {
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
+  getTenantSettings,
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
@@ -82,21 +83,12 @@ interface RegistrationInfoCompat {
  * Get allowed origins from KV (Settings Manager format) with fallback to env
  * Priority: KV (tenant.allowed_origins) > env (ALLOWED_ORIGINS) > ISSUER_URL
  */
-async function getAllowedOriginsFromKV(env: Env): Promise<string[]> {
+async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const settings = JSON.parse(kvData) as Record<string, unknown>;
-        if (typeof settings['tenant.allowed_origins'] === 'string') {
-          allowedOriginsValue = settings['tenant.allowed_origins'];
-        }
-      }
-    } catch {
-      // KV read failed, fall through to env
-    }
+  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
+    allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
   const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
@@ -167,7 +159,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
@@ -385,7 +377,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
@@ -440,7 +432,10 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't store the passkey
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
+      c.env,
+      getTenantIdFromContext(c)
+    );
 
     let sessionData: { id: string };
     try {
@@ -545,7 +540,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
@@ -727,7 +722,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
@@ -813,7 +808,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't update the database
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
+      c.env,
+      getTenantIdFromContext(c)
+    );
 
     let sessionData: { id: string };
     try {

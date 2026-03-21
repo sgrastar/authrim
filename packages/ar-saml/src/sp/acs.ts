@@ -144,7 +144,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const userId = await findOrCreateUser(env, userInfo, issuer);
 
     // Create session
-    const sessionId = await createSession(env, userId);
+    const sessionId = await createSession(env, userId, getTenantIdFromContext(c));
 
     // Publish SAML authentication success event (non-blocking)
     const tenantId = getTenantIdFromContext(c);
@@ -809,8 +809,8 @@ async function findOrCreateUser(
 /**
  * Create session for user (sharded)
  */
-async function createSession(env: Env, userId: string): Promise<string> {
-  const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env);
+async function createSession(env: Env, userId: string, tenantId: string): Promise<string> {
+  const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env, tenantId);
 
   const response = await sessionStore.fetch(
     new Request('https://session-store/session', {

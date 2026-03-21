@@ -15,7 +15,7 @@ import {
   D1_DATABASES,
   KV_NAMESPACES,
 } from './naming.js';
-import type { D1Location, D1Jurisdiction } from './config.js';
+import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
 
 // Package directory (for bundled migrations)
 const __filename = fileURLToPath(import.meta.url);
@@ -296,6 +296,184 @@ export async function getWorkersSubdomain(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export interface SetupCapabilityDiagnostics {
+  wranglerInstalled: boolean;
+  loggedIn: boolean;
+  tokenAvailable: boolean;
+  workersSubdomainAvailable: boolean;
+  zoneReadAvailable: boolean;
+  accessibleZoneCount: number;
+  dnsReadAvailable: boolean;
+  pagesReadAvailable: boolean;
+}
+
+export interface SetupCapabilityEstimate {
+  workersDeploy: boolean;
+  customDomain: boolean;
+  multiTenant: boolean;
+  nakedDomain: boolean;
+  pages: boolean;
+}
+
+export type SetupCapabilityStatus = 'ok' | 'review' | 'ng';
+
+export interface SetupCapabilityStatuses {
+  workersDeploy: SetupCapabilityStatus;
+  customDomain: SetupCapabilityStatus;
+  multiTenant: SetupCapabilityStatus;
+  nakedDomain: SetupCapabilityStatus;
+  pages: SetupCapabilityStatus;
+}
+
+export function deriveSetupCapabilityEstimate(
+  diagnostics: SetupCapabilityDiagnostics
+): SetupCapabilityEstimate {
+  const workersDeploy = diagnostics.wranglerInstalled && diagnostics.loggedIn;
+  const customDomain =
+    workersDeploy &&
+    diagnostics.tokenAvailable &&
+    diagnostics.zoneReadAvailable &&
+    diagnostics.accessibleZoneCount > 0;
+  const multiTenant = customDomain && diagnostics.dnsReadAvailable;
+  const nakedDomain = multiTenant;
+  const pages = workersDeploy && diagnostics.tokenAvailable && diagnostics.pagesReadAvailable;
+
+  return {
+    workersDeploy,
+    customDomain,
+    multiTenant,
+    nakedDomain,
+    pages,
+  };
+}
+
+export function deriveSetupCapabilityStatuses(
+  diagnostics: SetupCapabilityDiagnostics
+): SetupCapabilityStatuses {
+  const workersDeploy: SetupCapabilityStatus =
+    diagnostics.wranglerInstalled && diagnostics.loggedIn ? 'ok' : 'ng';
+
+  let customDomain: SetupCapabilityStatus;
+  if (workersDeploy === 'ng') {
+    customDomain = 'ng';
+  } else if (diagnostics.zoneReadAvailable && diagnostics.accessibleZoneCount > 0) {
+    customDomain = 'ok';
+  } else if (diagnostics.zoneReadAvailable && diagnostics.accessibleZoneCount === 0) {
+    customDomain = 'ng';
+  } else {
+    customDomain = 'review';
+  }
+
+  let multiTenant: SetupCapabilityStatus;
+  if (customDomain === 'ng') {
+    multiTenant = 'ng';
+  } else if (diagnostics.dnsReadAvailable) {
+    multiTenant = 'ok';
+  } else {
+    multiTenant = 'review';
+  }
+
+  const nakedDomain: SetupCapabilityStatus =
+    multiTenant === 'ok' ? 'ok' : multiTenant === 'review' ? 'review' : 'ng';
+
+  let pages: SetupCapabilityStatus;
+  if (workersDeploy === 'ng') {
+    pages = 'ng';
+  } else if (diagnostics.pagesReadAvailable) {
+    pages = 'ok';
+  } else {
+    pages = 'review';
+  }
+
+  return {
+    workersDeploy,
+    customDomain,
+    multiTenant,
+    nakedDomain,
+    pages,
+  };
+}
+
+export async function getSetupCapabilityDiagnostics(
+  auth: CloudflareAuth,
+  wranglerInstalled: boolean,
+  workersSubdomain?: string | null
+): Promise<SetupCapabilityDiagnostics> {
+  const baseDiagnostics: SetupCapabilityDiagnostics = {
+    wranglerInstalled,
+    loggedIn: auth.isLoggedIn,
+    tokenAvailable: false,
+    workersSubdomainAvailable: !!workersSubdomain,
+    zoneReadAvailable: false,
+    accessibleZoneCount: 0,
+    dnsReadAvailable: false,
+    pagesReadAvailable: false,
+  };
+
+  if (!wranglerInstalled || !auth.isLoggedIn) {
+    return baseDiagnostics;
+  }
+
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo?.token) {
+    return baseDiagnostics;
+  }
+
+  baseDiagnostics.tokenAvailable = true;
+
+  try {
+    const zoneResponse = await fetch('https://api.cloudflare.com/client/v4/zones?per_page=1', {
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+      },
+    });
+
+    if (zoneResponse.ok) {
+      const zoneData = (await zoneResponse.json()) as {
+        success?: boolean;
+        result?: Array<{ id?: string }>;
+      };
+      if (zoneData.success) {
+        baseDiagnostics.zoneReadAvailable = true;
+        baseDiagnostics.accessibleZoneCount = zoneData.result?.length ?? 0;
+
+        const sampleZoneId = zoneData.result?.[0]?.id;
+        if (sampleZoneId) {
+          const dnsResponse = await fetch(
+            `https://api.cloudflare.com/client/v4/zones/${sampleZoneId}/dns_records?per_page=1`,
+            {
+              headers: {
+                Authorization: `Bearer ${tokenInfo.token}`,
+              },
+            }
+          );
+          baseDiagnostics.dnsReadAvailable = dnsResponse.ok;
+        }
+      }
+    }
+  } catch {
+    // Keep defaults; this is an estimate only.
+  }
+
+  if (auth.accountId) {
+    try {
+      const pagesResponse = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${auth.accountId}/pages/projects?per_page=1`,
+        {
+          headers: {
+            Authorization: `Bearer ${tokenInfo.token}`,
+          },
+        }
+      );
+      baseDiagnostics.pagesReadAvailable = pagesResponse.ok;
+    } catch {
+      // Keep default false; this is an estimate only.
+    }
+  }
+
+  return baseDiagnostics;
 }
 
 // =============================================================================
@@ -815,6 +993,43 @@ export interface EnsureWildcardDnsResult {
   recordId?: string;
   name: string;
   target: string;
+  verificationLimited?: boolean;
+}
+
+interface CloudflareApiMessage {
+  code?: number;
+  message?: string;
+}
+
+interface CloudflareDnsRecordResponse {
+  success?: boolean;
+  result?: Array<{
+    id: string;
+    type: string;
+    name: string;
+    content: string;
+    proxied?: boolean;
+  }>;
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareDnsMutationResponse {
+  success?: boolean;
+  result?: { id?: string };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+function hasCloudflareAlreadyExistsError(payload: {
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}): boolean {
+  const entries = [...(payload.errors ?? []), ...(payload.messages ?? [])];
+  return entries.some(
+    (entry) =>
+      entry.code === 81057 || entry.code === 81058 || /already exists/i.test(entry.message ?? '')
+  );
 }
 
 /**
@@ -853,26 +1068,6 @@ export async function ensureWildcardDnsRecord(
     }
   );
 
-  if (!recordResponse.ok) {
-    throw new Error(`Failed to query DNS records (${recordResponse.status})`);
-  }
-
-  const recordData = (await recordResponse.json()) as {
-    success: boolean;
-    result: Array<{
-      id: string;
-      type: string;
-      name: string;
-      content: string;
-      proxied?: boolean;
-    }>;
-  };
-
-  if (!recordData.success) {
-    throw new Error('Cloudflare DNS query failed');
-  }
-
-  const existingRecord = recordData.result?.find((record) => record.name === recordName);
   const payload = {
     type: 'CNAME',
     name: recordName,
@@ -880,6 +1075,75 @@ export async function ensureWildcardDnsRecord(
     proxied: true,
     ttl: 1,
   };
+
+  const createWildcardRecord = async (
+    assumeExistingOnForbidden: boolean
+  ): Promise<EnsureWildcardDnsResult> => {
+    const createResponse = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenInfo.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const createdData = (await createResponse
+      .json()
+      .catch(() => ({}))) as CloudflareDnsMutationResponse;
+
+    if (!createResponse.ok || createdData.success === false) {
+      if (hasCloudflareAlreadyExistsError(createdData) || createResponse.status === 409) {
+        return {
+          created: false,
+          updated: false,
+          name: recordName,
+          target: recordTarget,
+        };
+      }
+
+      if (createResponse.status === 403) {
+        if (assumeExistingOnForbidden) {
+          return {
+            created: false,
+            updated: false,
+            name: recordName,
+            target: recordTarget,
+            verificationLimited: true,
+          };
+        }
+        throw new Error('Token lacks dns:edit permission to create wildcard DNS record');
+      }
+
+      throw new Error(`Failed to create wildcard DNS record (${createResponse.status})`);
+    }
+
+    return {
+      created: true,
+      updated: false,
+      recordId: createdData.result?.id,
+      name: recordName,
+      target: recordTarget,
+    };
+  };
+
+  if (!recordResponse.ok) {
+    if (recordResponse.status === 403) {
+      return createWildcardRecord(true);
+    }
+    throw new Error(`Failed to query DNS records (${recordResponse.status})`);
+  }
+
+  const recordData = (await recordResponse.json()) as CloudflareDnsRecordResponse;
+
+  if (!recordData.success) {
+    throw new Error('Cloudflare DNS query failed');
+  }
+
+  const existingRecord = recordData.result?.find((record) => record.name === recordName);
 
   if (existingRecord) {
     if (existingRecord.content === recordTarget && existingRecord.proxied === true) {
@@ -917,33 +1181,32 @@ export async function ensureWildcardDnsRecord(
     };
   }
 
-  const createResponse = await fetch(
-    `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${tokenInfo.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    }
-  );
+  return createWildcardRecord(false);
+}
 
-  if (!createResponse.ok) {
-    throw new Error(`Failed to create wildcard DNS record (${createResponse.status})`);
+export async function ensureWildcardDnsForMultiTenant(
+  cfg: Partial<AuthrimConfig> | null | undefined,
+  onProgress?: (message: string) => void
+): Promise<void> {
+  const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
+  if (!baseDomain) {
+    return;
   }
 
-  const createdData = (await createResponse.json()) as {
-    result?: { id?: string };
-  };
+  onProgress?.(`Ensuring wildcard DNS for *.${baseDomain}...`);
 
-  return {
-    created: true,
-    updated: false,
-    recordId: createdData.result?.id,
-    name: recordName,
-    target: recordTarget,
-  };
+  const result = await ensureWildcardDnsRecord(baseDomain, cfg?.urls?.api?.zoneId ?? null);
+  if (result.created) {
+    onProgress?.(`✓ Wildcard DNS created: ${result.name} -> ${result.target}`);
+  } else if (result.updated) {
+    onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
+  } else if (result.verificationLimited) {
+    onProgress?.(
+      `⚠ Wildcard DNS could not be verified via API permissions. Continuing under the assumption that ${result.name} -> ${result.target} was created manually.`
+    );
+  } else {
+    onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
+  }
 }
 
 // =============================================================================

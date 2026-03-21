@@ -302,9 +302,7 @@ describe('Authorization Handler', () => {
       expect(location).toBeTruthy();
       const redirectUrl = new URL(location!, 'https://example.com');
       expect(redirectUrl.searchParams.get('error')).toBe('temporarily_unavailable');
-      expect(redirectUrl.searchParams.get('error_description')).toBe(
-        'Login UI is not configured'
-      );
+      expect(redirectUrl.searchParams.get('error_description')).toBe('Login UI is not configured');
       expect(redirectUrl.searchParams.get('state')).toBe('test-state');
       expect(redirectUrl.searchParams.get('iss')).toBe('https://test.example.com');
       expect(getChallengeMap(env).size).toBe(0);
@@ -657,9 +655,7 @@ describe('Authorization Handler', () => {
 
       const redirectUrl = new URL(secondLocation!, 'https://example.com');
       expect(redirectUrl.searchParams.get('error')).toBe('temporarily_unavailable');
-      expect(redirectUrl.searchParams.get('error_description')).toBe(
-        'Login UI is not configured'
-      );
+      expect(redirectUrl.searchParams.get('error_description')).toBe('Login UI is not configured');
     });
 
     it('should clean up consent challenge when consent UI is not configured', async () => {
@@ -688,9 +684,7 @@ describe('Authorization Handler', () => {
       expect(location).toBeTruthy();
       const redirectUrl = new URL(location!, 'https://example.com');
       expect(redirectUrl.searchParams.get('error')).toBe('temporarily_unavailable');
-      expect(redirectUrl.searchParams.get('error_description')).toBe(
-        'Login UI is not configured'
-      );
+      expect(redirectUrl.searchParams.get('error_description')).toBe('Login UI is not configured');
       expect(getChallengeMap(env).size).toBe(0);
     });
 

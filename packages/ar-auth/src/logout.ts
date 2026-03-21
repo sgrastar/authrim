@@ -170,7 +170,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Helper function to get public key from KeyManager via RPC
     // Matches the key by 'kid' from the JWT header
     const getPublicKey = async (): Promise<CryptoKey> => {
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+      const tenantId = getTenantIdFromContext(c);
+      const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
       const keys = await keyManager.getAllPublicKeysRpc();
@@ -523,7 +524,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             }
 
             // Get signing key for logout tokens
-            const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+            const tenantId = getTenantIdFromContext(c);
+            const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
             const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
             const keys = await keyManager.getAllPublicKeysRpc();
 
@@ -1071,7 +1073,8 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     let logoutClaims: LogoutTokenPayload;
     try {
       // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+      const tenantId = getTenantIdFromContext(c);
+      const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
       const keys = await keyManager.getAllPublicKeysRpc();

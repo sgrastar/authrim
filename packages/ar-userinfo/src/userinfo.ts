@@ -10,6 +10,7 @@ import {
   validateJWEOptions,
   createOAuthConfigManager,
   getLogger,
+  getTenantIdFromContext,
   type JWEAlgorithm,
   type JWEEncryption,
   loadFeatureConfig,
@@ -18,28 +19,41 @@ import {
 import { SignJWT } from 'jose';
 
 // ===== Key Caching for Performance Optimization =====
-// Cache signing key to avoid expensive RSA key import (5-7ms) on every request
-let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
-let cachedKeyTimestamp = 0;
+// Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
+const signingKeyCache = new Map<
+  string,
+  {
+    privateKey: CryptoKey;
+    kid: string;
+    timestamp: number;
+    version: string;
+  }
+>();
 const KEY_CACHE_TTL = 60000; // 60 seconds
 
 /**
- * Get signing key from KeyManager with caching
- * Performance optimization: Caches the imported CryptoKey to avoid expensive
- * RSA key import operation (5-7ms) on every request. Cache TTL is 60 seconds.
+ * Get signing key from KeyManager with per-tenant caching.
+ * Checks KV version signal to detect cross-worker emergency rotations.
  */
 async function getSigningKeyFromKeyManager(
-  env: Env
+  env: Env,
+  tenantId: string
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
+  const cached = signingKeyCache.get(tenantId);
 
-  // Check cache first (cache hit = avoid KeyManager DO call + RSA import)
-  if (cachedSigningKey && now - cachedKeyTimestamp < KEY_CACHE_TTL) {
-    return cachedSigningKey;
+  // Check cache — if within TTL, verify KV version to detect emergency rotation
+  if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
+    const currentVersion =
+      (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
+    if (currentVersion === cached.version) {
+      return { privateKey: cached.privateKey, kid: cached.kid };
+    }
+    // Version mismatch: emergency rotation detected — fall through to refresh
   }
 
-  // Cache miss: fetch from KeyManager via RPC
-  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  // Cache miss or version mismatch: fetch from per-tenant KeyManager DO
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   const keyData = await keyManager.getActiveKeyWithPrivateRpc();
@@ -52,10 +66,11 @@ async function getSigningKeyFromKeyManager(
   const { importPKCS8 } = await import('jose');
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
-  // Update cache
-  cachedSigningKey = { privateKey, kid: keyData.kid };
-  cachedKeyTimestamp = now;
+  // Fetch current version for cache coherence
+  const version =
+    (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
+  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
   return { privateKey, kid: keyData.kid };
 }
 
@@ -381,7 +396,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // This creates a nested JWT: JWS inside JWE
     try {
       // Get signing key from KeyManager (with caching)
-      const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
+      const { privateKey, kid } = await getSigningKeyFromKeyManager(
+        c.env,
+        getTenantIdFromContext(c)
+      );
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)
@@ -425,7 +443,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   if (userinfoSignedResponseAlg && userinfoSignedResponseAlg !== 'none') {
     try {
       // Get signing key from KeyManager (with caching)
-      const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
+      const { privateKey, kid } = await getSigningKeyFromKeyManager(
+        c.env,
+        getTenantIdFromContext(c)
+      );
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)

@@ -12,6 +12,7 @@ import {
   validateRedirectUri,
   parseShardedAuthCode,
   buildAuthCodeShardInstanceName,
+  buildDOInstanceName,
   remapShardIndex,
   getShardCount,
   // Refresh Token Sharding
@@ -100,6 +101,8 @@ import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core'
 import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-core';
 // Custom Claim Schema Resolver
 import { loadFeatureConfig, createCustomClaimSchemaResolver } from '@authrim/ar-lib-core';
+// Tenant context
+import { getTenantIdFromContext } from '@authrim/ar-lib-core';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';
 // ID-JAG (Identity Assertion Authorization Grant)
@@ -160,23 +163,28 @@ function oauthError(
 const moduleLogger = createLogger().module('TOKEN');
 
 // ===== Key Caching for Performance Optimization =====
-// Cache signing key to avoid expensive RSA key import (5-7ms) and DO hop on every request
+// Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
 // Security considerations:
 // - Private key remains in Worker memory (same security boundary as DO)
 // - TTL limits exposure window if key is rotated
-// - kid is cached to detect rotation (new kid = cache invalidation)
-// Note: 30 minutes is safe with 24h key rotation overlap period (KeyManager.ts:198-200)
-// (Auth0/Okta cache in-memory until process restart, which can be hours)
-let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
-let cachedKeyTimestamp = 0;
+// - KV version check detects cross-worker emergency rotations
+const signingKeyCache = new Map<
+  string,
+  {
+    privateKey: CryptoKey;
+    kid: string;
+    timestamp: number;
+    version: string;
+  }
+>();
 const KEY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes - safe with 24h rotation overlap
 
 // ===== JWKS (Public Key) Caching for Refresh Token Verification =====
-// Cache JWKS to avoid KeyManager DO hop and expensive RSA key import on every refresh token request
+// Per-tenant Map cache for JWKS (avoids KeyManager DO hop on every refresh token request)
 //
 // ARCHITECTURE OPTIMIZATION (issue #DO-bottleneck):
 // - Priority 1: Use PUBLIC_JWK_JSON env variable if available (DO access = 0)
-// - Priority 2: Fall back to KeyManager DO if env not set
+// - Priority 2: Fall back to per-tenant KeyManager DO if env not set
 //
 // Security considerations:
 // - Public keys only (no security risk if exposed)
@@ -188,7 +196,7 @@ interface CachedJWKS {
   fetchedAt: number;
   source: 'env' | 'do'; // Track where keys came from
 }
-let cachedJWKS: CachedJWKS | null = null;
+const cachedJWKSMap = new Map<string, CachedJWKS>(); // tenantId → CachedJWKS
 const JWKS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - aligned with signing key cache
 
 /**
@@ -217,8 +225,13 @@ const JWKS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - aligned with signing key ca
  * @param kid - Key ID from JWT header (optional, uses first key if not specified)
  * @returns CryptoKey for verification
  */
-async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<CryptoKey> {
+async function getVerificationKeyFromJWKS(
+  env: Env,
+  tenantId: string,
+  kid?: string
+): Promise<CryptoKey> {
   const now = Date.now();
+  let cachedJWKS = cachedJWKSMap.get(tenantId) ?? null;
 
   // Check if cache is valid and contains the requested kid
   if (cachedJWKS && now - cachedJWKS.fetchedAt < JWKS_CACHE_TTL) {
@@ -236,6 +249,7 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
         action: 'JWKS',
       });
       cachedJWKS = null; // Force cache invalidation
+      cachedJWKSMap.delete(tenantId);
     } else {
       // No kid specified, return first cached key
       const firstKey = cachedJWKS.keys.values().next().value;
@@ -257,11 +271,11 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
       const envKeys = new Map<string, CryptoKey>();
       envKeys.set(keyKid, importedKey);
 
-      cachedJWKS = {
+      cachedJWKSMap.set(tenantId, {
         keys: envKeys,
         fetchedAt: now,
         source: 'env',
-      };
+      });
 
       // If kid is specified and doesn't match env key, we have a problem
       // This means rotation happened but env wasn't updated
@@ -297,7 +311,7 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
 
   moduleLogger.debug('Fetching from KeyManager DO', { kid: kid || 'any', action: 'JWKS' });
 
-  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Use RPC to get all public keys
@@ -319,12 +333,12 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
     throw new Error('No valid keys in JWKS');
   }
 
-  // Update cache
-  cachedJWKS = {
+  // Update per-tenant cache
+  cachedJWKSMap.set(tenantId, {
     keys: newKeys,
     fetchedAt: now,
     source: 'do',
-  };
+  });
 
   // Return requested key or first key
   if (kid) {
@@ -385,24 +399,34 @@ interface AuthCodeStoreResponse {
  */
 async function getSigningKeyFromKeyManager(
   env: Env,
+  tenantId: string,
   expectedKid?: string
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
+  const cached = signingKeyCache.get(tenantId);
 
-  // Check cache with kid mismatch logic
-  if (cachedSigningKey) {
-    const ttlValid = now - cachedKeyTimestamp < KEY_CACHE_TTL;
+  // Check cache with kid mismatch logic + KV version check
+  if (cached) {
+    const ttlValid = now - cached.timestamp < KEY_CACHE_TTL;
 
-    // Case 1: expectedKid provided and matches cache → return immediately (skip TTL check)
-    // This is the "kid mismatch trigger" pattern - if the incoming token's kid matches
-    // our cached key, we know the cache is still valid for signing responses
-    if (expectedKid && cachedSigningKey.kid === expectedKid) {
-      return cachedSigningKey;
+    // Case 1: expectedKid provided and matches cache → verify KV version before returning
+    if (expectedKid && cached.kid === expectedKid) {
+      const currentVersion =
+        (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
+      if (currentVersion === cached.version) {
+        return { privateKey: cached.privateKey, kid: cached.kid };
+      }
+      // Version mismatch: fall through to refresh
     }
 
-    // Case 2: No expectedKid but TTL valid → return from cache
+    // Case 2: No expectedKid but TTL valid → verify KV version before returning
     if (!expectedKid && ttlValid) {
-      return cachedSigningKey;
+      const currentVersion =
+        (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
+      if (currentVersion === cached.version) {
+        return { privateKey: cached.privateKey, kid: cached.kid };
+      }
+      // Version mismatch: fall through to refresh
     }
 
     // Case 3: expectedKid provided but doesn't match → need to fetch new key (key rotation)
@@ -410,7 +434,7 @@ async function getSigningKeyFromKeyManager(
     // Both cases fall through to fetch from DO
   }
 
-  // Cache miss: fetch from KeyManager
+  // Cache miss: fetch from per-tenant KeyManager DO
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
   }
@@ -419,7 +443,7 @@ async function getSigningKeyFromKeyManager(
     throw new Error('KEY_MANAGER_SECRET not configured');
   }
 
-  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Try to get active key via RPC
@@ -427,7 +451,10 @@ async function getSigningKeyFromKeyManager(
 
   if (!keyData) {
     // No active key, generate and activate one
-    moduleLogger.info('No active signing key found, generating new key', { action: 'KeyManager' });
+    moduleLogger.info('No active signing key found, generating new key', {
+      action: 'KeyManager',
+      tenantId,
+    });
     keyData = await keyManager.rotateKeysWithPrivateRpc();
     moduleLogger.info('Generated new signing key', { kid: keyData.kid, action: 'KeyManager' });
   }
@@ -435,9 +462,11 @@ async function getSigningKeyFromKeyManager(
   // Import private key (expensive operation: 5-7ms)
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
-  // Update cache with new key
-  cachedSigningKey = { privateKey, kid: keyData.kid };
-  cachedKeyTimestamp = now;
+  // Fetch current version for cache coherence
+  const version =
+    (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
+
+  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
   moduleLogger.debug('Signing key cached', {
     kid: keyData.kid,
     ttlMs: KEY_CACHE_TTL,
@@ -710,8 +739,10 @@ async function handleAuthorizationCodeGrant(
     const instanceName = buildAuthCodeShardInstanceName(actualShardIndex);
     authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
   } else {
-    // Legacy format (no shard prefix) - use 'global' instance
-    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+    // Legacy format (no shard prefix) - use tenant-scoped legacy instance
+    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(
+      buildDOInstanceName('auth-code', getTenantIdFromContext(c))
+    );
   }
   const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
 
@@ -891,7 +922,7 @@ async function handleAuthorizationCodeGrant(
   let keyId: string;
 
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -1798,7 +1829,7 @@ async function handleRefreshTokenGrant(
     refreshTokenKid = headerJson.kid;
 
     // Use cached JWKS for performance (avoids KeyManager DO hop + RSA import on every request)
-    publicKey = await getVerificationKeyFromJWKS(c.env, refreshTokenKid);
+    publicKey = await getVerificationKeyFromJWKS(c.env, getTenantIdFromContext(c), refreshTokenKid);
   } catch (err) {
     log.error('Failed to load verification key', {}, err as Error);
     return oauthError(c, 'server_error', 'Failed to load verification key', 500);
@@ -1835,7 +1866,11 @@ async function handleRefreshTokenGrant(
   let keyId: string;
 
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, refreshTokenKid);
+    const signingKey = await getSigningKeyFromKeyManager(
+      c.env,
+      getTenantIdFromContext(c),
+      refreshTokenKid
+    );
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -2304,7 +2339,7 @@ async function handleJWTBearerGrant(
   let keyId: string;
 
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -2366,7 +2401,7 @@ async function handleJWTBearerGrant(
   c.executionCtx.waitUntil(
     publishEvent(c, {
       type: TOKEN_EVENTS.ACCESS_ISSUED,
-      tenantId: 'default', // JWT Bearer is for service-to-service, no tenant context
+      tenantId: getTenantIdFromContext(c),
       data: {
         jti: accessTokenJti,
         clientId: claims.iss, // Issuer acts as client_id for service accounts
@@ -2435,11 +2470,13 @@ async function handleDeviceCodeGrant(
 
   if (parsedDeviceCode) {
     // New region-sharded format: route via embedded shard info
-    const { stub } = getDeviceCodeStoreById(c.env, deviceCode, 'default');
+    const { stub } = getDeviceCodeStoreById(c.env, deviceCode, getTenantIdFromContext(c));
     deviceCodeStore = stub;
   } else {
-    // Legacy format: use global DO
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+    // Legacy format: use tenant-scoped global DO
+    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
+      buildDOInstanceName('device', getTenantIdFromContext(c))
+    );
     deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
   }
 
@@ -2578,7 +2615,7 @@ async function handleDeviceCodeGrant(
   let privateKey: CryptoKey;
   let keyId: string;
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -2764,7 +2801,7 @@ async function handleDeviceCodeGrant(
   const deviceEventPromises: Promise<unknown>[] = [
     publishEvent(c, {
       type: TOKEN_EVENTS.ACCESS_ISSUED,
-      tenantId: 'default', // Device flow uses default tenant
+      tenantId: getTenantIdFromContext(c),
       data: {
         jti: accessTokenJti,
         clientId: client_id,
@@ -2778,7 +2815,7 @@ async function handleDeviceCodeGrant(
     }),
     publishEvent(c, {
       type: TOKEN_EVENTS.REFRESH_ISSUED,
-      tenantId: 'default',
+      tenantId: getTenantIdFromContext(c),
       data: {
         jti: refreshJti,
         clientId: client_id,
@@ -2796,7 +2833,7 @@ async function handleDeviceCodeGrant(
     deviceEventPromises.push(
       publishEvent(c, {
         type: TOKEN_EVENTS.ID_ISSUED,
-        tenantId: 'default',
+        tenantId: getTenantIdFromContext(c),
         data: {
           clientId: client_id,
           userId: metadata.sub,
@@ -2863,11 +2900,13 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   if (parsedCIBAId) {
     // New region-sharded format: route via embedded shard info
-    const { stub } = getCIBARequestStoreById(c.env, authReqId, 'default');
+    const { stub } = getCIBARequestStoreById(c.env, authReqId, getTenantIdFromContext(c));
     cibaRequestStore = stub;
   } else {
-    // Legacy format: use global DO
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
+    // Legacy format: use tenant-scoped global DO
+    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
+      buildDOInstanceName('ciba', getTenantIdFromContext(c))
+    );
     cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
   }
 
@@ -3061,7 +3100,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   }
 
   // Get signing key from KeyManager
-  const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
+  const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
 
   // Extract DPoP proof if present
   const dpopProof = extractDPoPProof(c.req.raw.headers);
@@ -3255,7 +3294,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const cibaEventPromises: Promise<unknown>[] = [
     publishEvent(c, {
       type: TOKEN_EVENTS.ACCESS_ISSUED,
-      tenantId: 'default', // CIBA uses default tenant
+      tenantId: getTenantIdFromContext(c),
       data: {
         jti: tokenJti,
         clientId: metadata.client_id,
@@ -3269,7 +3308,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }),
     publishEvent(c, {
       type: TOKEN_EVENTS.REFRESH_ISSUED,
-      tenantId: 'default',
+      tenantId: getTenantIdFromContext(c),
       data: {
         jti: refreshTokenJti,
         clientId: metadata.client_id,
@@ -3287,7 +3326,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     cibaEventPromises.push(
       publishEvent(c, {
         type: TOKEN_EVENTS.ID_ISSUED,
-        tenantId: 'default',
+        tenantId: getTenantIdFromContext(c),
         data: {
           clientId: metadata.client_id,
           userId: metadata.sub,
@@ -3846,7 +3885,7 @@ async function handleTokenExchangeGrant(
     // Only fetch our own JWKS for non-ID-JAG requests
     isIdJagTokenRequest
       ? Promise.resolve(null)
-      : getVerificationKeyFromJWKS(c.env, subjectTokenKid),
+      : getVerificationKeyFromJWKS(c.env, getTenantIdFromContext(c), subjectTokenKid),
     subjectJti ? isTokenRevoked(c.env, subjectJti) : Promise.resolve(false),
   ]);
 
@@ -4077,7 +4116,11 @@ async function handleTokenExchangeGrant(
       }
 
       try {
-        const actorPublicKey = await getVerificationKeyFromJWKS(c.env, actorTokenKid);
+        const actorPublicKey = await getVerificationKeyFromJWKS(
+          c.env,
+          getTenantIdFromContext(c),
+          actorTokenKid
+        );
         // Verify signature and issuer only; audience is validated below
         await verifyToken(actor_token, actorPublicKey, c.env.ISSUER_URL, {
           skipAudienceCheck: true, // We validate audience ourselves after this
@@ -4174,7 +4217,7 @@ async function handleTokenExchangeGrant(
   let keyId: string;
 
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -4553,7 +4596,11 @@ async function handleNativeSSOTokenExchange(
 
   // Verify ID Token signature
   try {
-    const publicKey = await getVerificationKeyFromJWKS(c.env, idTokenKid);
+    const publicKey = await getVerificationKeyFromJWKS(
+      c.env,
+      getTenantIdFromContext(c),
+      idTokenKid
+    );
     await verifyToken(idToken, publicKey, c.env.ISSUER_URL, {
       skipAudienceCheck: true, // We validate audience ourselves
     });
@@ -4710,7 +4757,7 @@ async function handleNativeSSOTokenExchange(
   let privateKey: CryptoKey;
   let keyId: string;
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -4866,7 +4913,7 @@ async function handleNativeSSOTokenExchange(
     Promise.all([
       publishEvent(c, {
         type: TOKEN_EVENTS.ACCESS_ISSUED,
-        tenantId: 'default', // Native SSO uses default tenant
+        tenantId: getTenantIdFromContext(c),
         data: {
           jti: accessTokenJti,
           clientId,
@@ -4881,7 +4928,7 @@ async function handleNativeSSOTokenExchange(
       // ID Token issued event (Native SSO token exchange)
       publishEvent(c, {
         type: TOKEN_EVENTS.ID_ISSUED,
-        tenantId: 'default',
+        tenantId: getTenantIdFromContext(c),
         data: {
           clientId,
           userId: idTokenSub,
@@ -5088,7 +5135,7 @@ async function handleClientCredentialsGrant(
   let keyId: string;
 
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {

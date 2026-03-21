@@ -14,12 +14,33 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import type {
   SigningKeysStatusResponse,
   KeyRotationResponse,
   EmergencyRotationRequest,
 } from '@authrim/ar-lib-core';
+
+/**
+ * Update the cross-worker cache-bust signal for signing keys.
+ * Workers check this KV key to decide whether to invalidate their in-memory cache.
+ *
+ * @param env - Cloudflare Workers environment bindings
+ * @param tenantId - Tenant whose signing key was rotated
+ */
+async function bumpKeyVersion(env: Env, tenantId: string): Promise<void> {
+  await env.AUTHRIM_CONFIG?.put(`v1:key-version:${tenantId}`, Date.now().toString()).catch(
+    () => {}
+  );
+}
+
+/**
+ * Invalidate the per-tenant JWKS KV cache entry.
+ */
+async function invalidateJwksKvCache(env: Env, tenantId: string): Promise<void> {
+  await env.AUTHRIM_CONFIG?.delete(`cache:jwks:${tenantId}`).catch(() => {});
+}
 
 /**
  * GET /api/admin/signing-keys/status
@@ -29,8 +50,9 @@ import type {
  */
 export async function adminSigningKeysStatusHandler(c: Context<{ Bindings: Env }>) {
   try {
-    // Get key status from KeyManager via RPC
-    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+    const tenantId = getTenantIdFromContext(c);
+    // Get key status from per-tenant KeyManager DO
+    const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
     const data = (await keyManager.getStatusRpc()) as SigningKeysStatusResponse;
@@ -61,8 +83,9 @@ export async function adminSigningKeysStatusHandler(c: Context<{ Bindings: Env }
  */
 export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    // Perform normal rotation via KeyManager RPC
-    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+    const tenantId = getTenantIdFromContext(c);
+    // Perform normal rotation via per-tenant KeyManager DO
+    const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
     const rotationResult = await keyManager.rotateKeysRpc();
@@ -78,14 +101,11 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
     // Get old active key for audit log
     const oldKeyId = 'previous-key'; // We don't have this info from the response, but it's in overlap now
 
-    // Invalidate JWKS cache to ensure clients get updated keys
-    try {
-      await c.env.JWKS_CACHE?.delete('jwks');
-    } catch (error) {
-      const log = getLogger(c).module('SIGNING-KEYS');
-      log.warn('Failed to invalidate JWKS cache', { error: (error as Error).message });
-      // Non-blocking - continue even if cache invalidation fails
-    }
+    // Invalidate JWKS KV cache and bump version signal before returning
+    await Promise.allSettled([
+      invalidateJwksKvCache(c.env, tenantId),
+      bumpKeyVersion(c.env, tenantId),
+    ]);
 
     // Record audit log (warning severity for key rotation)
     await createAuditLogFromContext(
@@ -137,8 +157,9 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
       });
     }
 
-    // Execute emergency rotation via KeyManager RPC
-    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+    const tenantId = getTenantIdFromContext(c);
+    // Execute emergency rotation via per-tenant KeyManager DO
+    const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
     let result: { oldKid: string; newKid: string };
@@ -150,13 +171,13 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    // Invalidate JWKS cache immediately to remove revoked key
+    // Invalidate JWKS KV cache and bump version signal immediately
     const log = getLogger(c).module('SIGNING-KEYS');
     try {
-      await c.env.JWKS_CACHE?.delete('jwks');
-      log.info('Emergency rotation: JWKS cache invalidated', {});
+      await Promise.all([invalidateJwksKvCache(c.env, tenantId), bumpKeyVersion(c.env, tenantId)]);
+      log.info('Emergency rotation: JWKS cache and version signal updated', { tenantId });
     } catch (error) {
-      log.error('Failed to invalidate JWKS cache', {}, error as Error);
+      log.error('Failed to invalidate JWKS cache after emergency rotation', {}, error as Error);
       // This is critical - log as error but don't fail the operation
     }
 
