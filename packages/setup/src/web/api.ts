@@ -1954,7 +1954,6 @@ export function createApiRoutes(): Hono {
           // Build first (unless skipped)
           if (!skipBuild && !dryRun) {
             addProgress(`Building ${componentName}...`);
-            const { execa } = await import('execa');
             const uiDir = join(rootDir, 'packages', componentName);
 
             if (!existsSync(uiDir)) {

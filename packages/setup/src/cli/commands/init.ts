@@ -62,7 +62,6 @@ import {
 import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
 import {
   buildUrlsConfig,
-  ensureHttps,
   getPagesDevUrl,
   getWorkersDevUrl,
 } from '../../core/url-config.js';
