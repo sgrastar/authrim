@@ -85,10 +85,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 import { adminLogoutHandler, adminSessionStatusHandler } from '../admin-session';
 
-function createMockContext(options: {
-  headers?: Record<string, string>;
-  env?: Partial<Env>;
-}) {
+function createMockContext(options: { headers?: Record<string, string>; env?: Partial<Env> }) {
   const headers = Object.fromEntries(
     Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
   );
@@ -102,11 +99,12 @@ function createMockContext(options: {
       DB_ADMIN: {} as D1Database,
       ...options.env,
     } as Env,
-    json: vi.fn((body: unknown, status = 200) =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    json: vi.fn(
+      (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
     ),
   } as any;
 }

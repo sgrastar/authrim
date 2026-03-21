@@ -191,13 +191,10 @@ const ru: Translations = {
   'domain.singleTenantNote': 'В однотенантном режиме URL издателя = домен API',
   'domain.usingWorkersDev': '(используется домен Cloudflare workers.dev)',
   'web.form.multiTenantEnable': 'Включить мультитенантный режим',
-  'web.form.multiTenantHint':
-    'Создавать субдомены тенантов под вашим пользовательским доменом',
+  'web.form.multiTenantHint': 'Создавать субдомены тенантов под вашим пользовательским доменом',
   'web.form.multiTenantExamples': 'Примеры URL тенантов',
-  'web.form.multiTenantExampleDefaultOmitted':
-    'Тенант по умолчанию без имени в URL: {{url}}',
-  'web.form.multiTenantExampleDefaultIncluded':
-    'Тенант по умолчанию с явным именем: {{url}}',
+  'web.form.multiTenantExampleDefaultOmitted': 'Тенант по умолчанию без имени в URL: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Тенант по умолчанию с явным именем: {{url}}',
   'web.form.multiTenantExampleOther': 'Неосновной тенант: {{url}}',
 
   // Database

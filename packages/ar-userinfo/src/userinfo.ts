@@ -20,12 +20,15 @@ import { SignJWT } from 'jose';
 
 // ===== Key Caching for Performance Optimization =====
 // Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
-const signingKeyCache = new Map<string, {
-  privateKey: CryptoKey;
-  kid: string;
-  timestamp: number;
-  version: string;
-}>();
+const signingKeyCache = new Map<
+  string,
+  {
+    privateKey: CryptoKey;
+    kid: string;
+    timestamp: number;
+    version: string;
+  }
+>();
 const KEY_CACHE_TTL = 60000; // 60 seconds
 
 /**
@@ -41,7 +44,8 @@ async function getSigningKeyFromKeyManager(
 
   // Check cache — if within TTL, verify KV version to detect emergency rotation
   if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
-    const currentVersion = await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null) ?? '';
+    const currentVersion =
+      (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
     if (currentVersion === cached.version) {
       return { privateKey: cached.privateKey, kid: cached.kid };
     }
@@ -63,7 +67,8 @@ async function getSigningKeyFromKeyManager(
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
   // Fetch current version for cache coherence
-  const version = await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null) ?? '';
+  const version =
+    (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
   signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
   return { privateKey, kid: keyData.kid };
@@ -391,7 +396,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // This creates a nested JWT: JWS inside JWE
     try {
       // Get signing key from KeyManager (with caching)
-      const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+      const { privateKey, kid } = await getSigningKeyFromKeyManager(
+        c.env,
+        getTenantIdFromContext(c)
+      );
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)
@@ -435,7 +443,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   if (userinfoSignedResponseAlg && userinfoSignedResponseAlg !== 'none') {
     try {
       // Get signing key from KeyManager (with caching)
-      const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+      const { privateKey, kid } = await getSigningKeyFromKeyManager(
+        c.env,
+        getTenantIdFromContext(c)
+      );
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)

@@ -177,8 +177,7 @@ function sanitizeError(error: unknown): string {
 function getWildcardDnsManualActionPayload(
   cfg: Partial<AuthrimConfig> | null | undefined
 ): { kind: 'wildcard-dns'; baseDomain: string } | null {
-  const baseDomain =
-    cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
+  const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
   if (!baseDomain) {
     return null;
   }
@@ -981,11 +980,15 @@ export function createApiRoutes(): Hono {
           }
 
           if (Object.keys(secrets).length > 0) {
-            await uploadSecrets(secrets, {
-              env,
-              rootDir: resolve(rootDir),
-              onProgress: addProgress,
-            }, enabledComponents);
+            await uploadSecrets(
+              secrets,
+              {
+                env,
+                rootDir: resolve(rootDir),
+                onProgress: addProgress,
+              },
+              enabledComponents
+            );
             // Note: secrets object goes out of scope here and will be garbage collected
           }
         } else if (!dryRun) {

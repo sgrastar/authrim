@@ -64,11 +64,12 @@ export function getCloudflareDnsRecordsDashboardUrl(
     'org.br',
   ]);
   const lastTwo = parts.slice(-2).join('.');
-  const zoneName = twoPartTlds.has(lastTwo) && parts.length >= 3
-    ? parts.slice(-3).join('.')
-    : parts.length >= 2
-      ? parts.slice(-2).join('.')
-      : normalized;
+  const zoneName =
+    twoPartTlds.has(lastTwo) && parts.length >= 3
+      ? parts.slice(-3).join('.')
+      : parts.length >= 2
+        ? parts.slice(-2).join('.')
+        : normalized;
 
   return `https://dash.cloudflare.com/${accountId}/${zoneName}/dns/records`;
 }
@@ -77,7 +78,12 @@ interface WildcardDnsManualCopy {
   title: string;
   summary: (baseDomain: string) => string;
   timing: string;
-  steps: (zoneName: string, recordName: string, target: string, dashboardRecordName: string) => string[];
+  steps: (
+    zoneName: string,
+    recordName: string,
+    target: string,
+    dashboardRecordName: string
+  ) => string[];
   retryHint: string;
   continueHint: string;
   dashboardLinkLabel: string;
@@ -132,10 +138,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
   },
   'zh-CN': {
     title: '需要手动配置通配 DNS',
-    summary: (baseDomain) =>
-      `无法自动创建 ${baseDomain} 下租户子域名所需的通配 DNS。`,
-    timing:
-      '建议时机：请在部署前完成此设置。如果部署已经停止，请现在添加该记录后重新执行部署。',
+    summary: (baseDomain) => `无法自动创建 ${baseDomain} 下租户子域名所需的通配 DNS。`,
+    timing: '建议时机：请在部署前完成此设置。如果部署已经停止，请现在添加该记录后重新执行部署。',
     steps: (zoneName, recordName, target, dashboardRecordName) => [
       `在 Cloudflare Dashboard 中打开 ${zoneName} 的 DNS management，然后点击 Add record。`,
       'Type: CNAME',
@@ -153,10 +157,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
   },
   'zh-TW': {
     title: '需要手動設定萬用字元 DNS',
-    summary: (baseDomain) =>
-      `無法自動建立 ${baseDomain} 底下租戶子網域所需的萬用字元 DNS。`,
-    timing:
-      '建議時機：請在部署前完成此設定。如果部署已經中斷，請現在新增該記錄後再重新部署。',
+    summary: (baseDomain) => `無法自動建立 ${baseDomain} 底下租戶子網域所需的萬用字元 DNS。`,
+    timing: '建議時機：請在部署前完成此設定。如果部署已經中斷，請現在新增該記錄後再重新部署。',
     steps: (zoneName, recordName, target, dashboardRecordName) => [
       `在 Cloudflare Dashboard 中開啟 ${zoneName} 的 DNS management，然後按 Add record。`,
       'Type: CNAME',
@@ -192,7 +194,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Si ya creó manualmente el registro, puede continuar. Si no, deténgase aquí, créelo y vuelva a intentarlo.',
     dashboardLinkLabel: 'Abrir Cloudflare DNS',
     docsLinkLabel: 'Abrir documentación DNS',
-    confirmSuffix: 'Pulse OK para continuar igualmente, o Cancel para detenerse y configurar primero el DNS.',
+    confirmSuffix:
+      'Pulse OK para continuar igualmente, o Cancel para detenerse y configurar primero el DNS.',
   },
   pt: {
     title: 'A configuração manual do DNS curinga é necessária',
@@ -214,7 +217,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Se você já criou o registro manualmente, pode continuar. Caso contrário, pare aqui, crie-o e tente de novo.',
     dashboardLinkLabel: 'Abrir Cloudflare DNS',
     docsLinkLabel: 'Abrir documentação DNS',
-    confirmSuffix: 'Pressione OK para continuar mesmo assim, ou Cancel para parar e configurar o DNS primeiro.',
+    confirmSuffix:
+      'Pressione OK para continuar mesmo assim, ou Cancel para parar e configurar o DNS primeiro.',
   },
   fr: {
     title: 'Une configuration manuelle du DNS wildcard est nécessaire',
@@ -236,7 +240,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Si vous avez déjà créé cet enregistrement manuellement, vous pouvez continuer. Sinon, arrêtez-vous ici, créez-le puis réessayez.',
     dashboardLinkLabel: 'Ouvrir Cloudflare DNS',
     docsLinkLabel: 'Ouvrir la documentation DNS',
-    confirmSuffix: 'Appuyez sur OK pour continuer quand même, ou sur Cancel pour arrêter et configurer le DNS d’abord.',
+    confirmSuffix:
+      'Appuyez sur OK pour continuer quand même, ou sur Cancel pour arrêter et configurer le DNS d’abord.',
   },
   de: {
     title: 'Manuelle Wildcard-DNS-Konfiguration erforderlich',
@@ -258,7 +263,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Wenn Sie den Eintrag bereits manuell erstellt haben, können Sie fortfahren. Andernfalls hier stoppen, einrichten und erneut versuchen.',
     dashboardLinkLabel: 'Cloudflare DNS öffnen',
     docsLinkLabel: 'DNS-Dokumentation öffnen',
-    confirmSuffix: 'Mit OK trotzdem fortfahren oder mit Cancel abbrechen und zuerst DNS konfigurieren.',
+    confirmSuffix:
+      'Mit OK trotzdem fortfahren oder mit Cancel abbrechen und zuerst DNS konfigurieren.',
   },
   ko: {
     title: '와일드카드 DNS를 수동으로 설정해야 합니다',
@@ -302,7 +308,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Если запись уже создана вручную, можно продолжать. Иначе остановитесь здесь, создайте её и повторите попытку.',
     dashboardLinkLabel: 'Открыть Cloudflare DNS',
     docsLinkLabel: 'Открыть документацию DNS',
-    confirmSuffix: 'Нажмите OK, чтобы продолжить, или Cancel, чтобы остановиться и сначала настроить DNS.',
+    confirmSuffix:
+      'Нажмите OK, чтобы продолжить, или Cancel, чтобы остановиться и сначала настроить DNS.',
   },
   id: {
     title: 'Pengaturan DNS wildcard manual diperlukan',
@@ -324,7 +331,8 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Jika Anda sudah membuat record tersebut secara manual, Anda bisa melanjutkan. Jika belum, berhenti di sini, buat dulu, lalu coba lagi.',
     dashboardLinkLabel: 'Buka Cloudflare DNS',
     docsLinkLabel: 'Buka dokumentasi DNS',
-    confirmSuffix: 'Tekan OK untuk tetap lanjut, atau Cancel untuk berhenti dan mengatur DNS terlebih dahulu.',
+    confirmSuffix:
+      'Tekan OK untuk tetap lanjut, atau Cancel untuk berhenti dan mengatur DNS terlebih dahulu.',
   },
 };
 

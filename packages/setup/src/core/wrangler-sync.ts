@@ -129,7 +129,10 @@ export function removeEnvironmentSectionFromToml(
     kept.push(line);
   }
 
-  const normalized = kept.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+  const normalized = kept
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
   return {
     content: normalized.length > 0 ? normalized + '\n' : '',
     removed,

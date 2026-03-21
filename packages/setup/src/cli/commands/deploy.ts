@@ -593,12 +593,16 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const secrets = await loadSecretsFromKeys(keysDir);
 
       if (Object.keys(secrets).length > 0) {
-        const secretResult = await uploadSecrets(secrets, {
-          env,
-          rootDir,
-          dryRun: options.dryRun,
-          onProgress: (msg) => console.log(msg),
-        }, componentsToDeply);
+        const secretResult = await uploadSecrets(
+          secrets,
+          {
+            env,
+            rootDir,
+            dryRun: options.dryRun,
+            onProgress: (msg) => console.log(msg),
+          },
+          componentsToDeply
+        );
 
         if (!secretResult.success) {
           console.log(chalk.yellow('\n⚠️  Some secrets failed to upload'));
@@ -626,11 +630,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
     if (wildcardBaseDomain) {
       const action = getWildcardDnsManualAction(wildcardBaseDomain, getLocale());
-      console.log(
-        chalk.yellow(
-          `${action.summary}`
-        )
-      );
+      console.log(chalk.yellow(`${action.summary}`));
       console.log(chalk.gray(action.timing));
       console.log('');
     }

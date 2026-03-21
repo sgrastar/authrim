@@ -532,10 +532,7 @@ async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId
       `settings:tenant:${tenantId}:login-ui`,
       JSON.stringify({ 'login-ui.brand_name': tenantId })
     ),
-    env.SETTINGS?.put(
-      `settings:tenant:${tenantId}:login-methods`,
-      JSON.stringify({})
-    ),
+    env.SETTINGS?.put(`settings:tenant:${tenantId}:login-methods`, JSON.stringify({})),
   ]);
 }
 

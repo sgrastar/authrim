@@ -194,8 +194,7 @@ const pt: Translations = {
   'web.form.multiTenantHint': 'Criar subdomínios de tenant sob seu domínio personalizado',
   'web.form.multiTenantExamples': 'Exemplos de URL de tenant',
   'web.form.multiTenantExampleDefaultOmitted': 'Tenant padrão com nome omitido: {{url}}',
-  'web.form.multiTenantExampleDefaultIncluded':
-    'Tenant padrão com nome explícito: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Tenant padrão com nome explícito: {{url}}',
   'web.form.multiTenantExampleOther': 'Tenant não padrão: {{url}}',
 
   // Database

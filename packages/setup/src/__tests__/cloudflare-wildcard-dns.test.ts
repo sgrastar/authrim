@@ -159,17 +159,15 @@ describe('ensureWildcardDnsRecord', () => {
   });
 
   it('treats duplicate creation as already satisfied when DNS read is forbidden', async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            success: false,
-            errors: [{ code: 81057, message: 'A record with that name already exists.' }],
-          },
-          409
-        )
-      );
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false }, 403)).mockResolvedValueOnce(
+      jsonResponse(
+        {
+          success: false,
+          errors: [{ code: 81057, message: 'A record with that name already exists.' }],
+        },
+        409
+      )
+    );
 
     const result = await cloudflare.ensureWildcardDnsRecord('test.example.com', 'zone-123');
 
@@ -262,7 +260,10 @@ describe('ensureWildcardDnsForMultiTenant', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records?name=*.test.example.com'
     );
-    expect(onProgress).toHaveBeenNthCalledWith(1, 'Ensuring wildcard DNS for *.test.example.com...');
+    expect(onProgress).toHaveBeenNthCalledWith(
+      1,
+      'Ensuring wildcard DNS for *.test.example.com...'
+    );
     expect(onProgress).toHaveBeenNthCalledWith(
       2,
       '✓ Wildcard DNS created: *.test.example.com -> test.example.com'
@@ -293,7 +294,10 @@ describe('ensureWildcardDnsForMultiTenant', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(onProgress).toHaveBeenNthCalledWith(1, 'Ensuring wildcard DNS for *.test.example.com...');
+    expect(onProgress).toHaveBeenNthCalledWith(
+      1,
+      'Ensuring wildcard DNS for *.test.example.com...'
+    );
     expect(onProgress).toHaveBeenNthCalledWith(
       2,
       '⚠ Wildcard DNS could not be verified via API permissions. Continuing under the assumption that *.test.example.com -> test.example.com was created manually.'

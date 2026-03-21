@@ -60,11 +60,7 @@ import {
   getLocalVersion,
 } from '../../core/source.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
-import {
-  buildUrlsConfig,
-  getPagesDevUrl,
-  getWorkersDevUrl,
-} from '../../core/url-config.js';
+import { buildUrlsConfig, getPagesDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 
 // =============================================================================
@@ -90,7 +86,8 @@ async function showCliCapabilitySummaryOnce(options?: {
   const installed = options?.installed ?? (await isWranglerInstalled());
   const auth = options?.auth ?? (installed ? await checkAuth() : { isLoggedIn: false });
   const workersSubdomain =
-    options?.workersSubdomain ?? (installed && auth.isLoggedIn ? await getWorkersSubdomain() : null);
+    options?.workersSubdomain ??
+    (installed && auth.isLoggedIn ? await getWorkersSubdomain() : null);
 
   await printCliCapabilitySummary({
     auth,
@@ -1150,11 +1147,7 @@ async function runLoadConfig(): Promise<boolean> {
     console.log(chalk.yellow('No configuration found in current directory.'));
     console.log('');
     console.log(chalk.gray('💡 Tip: You can specify a config file with:'));
-    console.log(
-      chalk.cyan(
-        `   ${getCommandPrefix()} --config /path/to/authrim-{env}-config.json`
-      )
-    );
+    console.log(chalk.cyan(`   ${getCommandPrefix()} --config /path/to/authrim-{env}-config.json`));
     console.log('');
 
     const action = await select({

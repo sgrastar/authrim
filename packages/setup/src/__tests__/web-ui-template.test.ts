@@ -35,7 +35,9 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('class="keys-path-code" id="keys-path"');
     expect(html).toContain('class="btn-secondary keys-copy-btn" id="keys-copy-btn"');
     expect(html).toContain('data-copy-label');
-    expect(html).toContain("copyTextWithFeedback(document.getElementById('keys-copy-btn'), keysPath)");
+    expect(html).toContain(
+      "copyTextWithFeedback(document.getElementById('keys-copy-btn'), keysPath)"
+    );
   });
 
   it('renders prerequisite capability list styles and client-side renderer', () => {

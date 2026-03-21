@@ -168,12 +168,15 @@ const moduleLogger = createLogger().module('TOKEN');
 // - Private key remains in Worker memory (same security boundary as DO)
 // - TTL limits exposure window if key is rotated
 // - KV version check detects cross-worker emergency rotations
-const signingKeyCache = new Map<string, {
-  privateKey: CryptoKey;
-  kid: string;
-  timestamp: number;
-  version: string;
-}>();
+const signingKeyCache = new Map<
+  string,
+  {
+    privateKey: CryptoKey;
+    kid: string;
+    timestamp: number;
+    version: string;
+  }
+>();
 const KEY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes - safe with 24h rotation overlap
 
 // ===== JWKS (Public Key) Caching for Refresh Token Verification =====
@@ -222,7 +225,11 @@ const JWKS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - aligned with signing key ca
  * @param kid - Key ID from JWT header (optional, uses first key if not specified)
  * @returns CryptoKey for verification
  */
-async function getVerificationKeyFromJWKS(env: Env, tenantId: string, kid?: string): Promise<CryptoKey> {
+async function getVerificationKeyFromJWKS(
+  env: Env,
+  tenantId: string,
+  kid?: string
+): Promise<CryptoKey> {
   const now = Date.now();
   let cachedJWKS = cachedJWKSMap.get(tenantId) ?? null;
 
@@ -404,7 +411,8 @@ async function getSigningKeyFromKeyManager(
 
     // Case 1: expectedKid provided and matches cache → verify KV version before returning
     if (expectedKid && cached.kid === expectedKid) {
-      const currentVersion = await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null) ?? '';
+      const currentVersion =
+        (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
       if (currentVersion === cached.version) {
         return { privateKey: cached.privateKey, kid: cached.kid };
       }
@@ -413,7 +421,8 @@ async function getSigningKeyFromKeyManager(
 
     // Case 2: No expectedKid but TTL valid → verify KV version before returning
     if (!expectedKid && ttlValid) {
-      const currentVersion = await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null) ?? '';
+      const currentVersion =
+        (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
       if (currentVersion === cached.version) {
         return { privateKey: cached.privateKey, kid: cached.kid };
       }
@@ -442,7 +451,10 @@ async function getSigningKeyFromKeyManager(
 
   if (!keyData) {
     // No active key, generate and activate one
-    moduleLogger.info('No active signing key found, generating new key', { action: 'KeyManager', tenantId });
+    moduleLogger.info('No active signing key found, generating new key', {
+      action: 'KeyManager',
+      tenantId,
+    });
     keyData = await keyManager.rotateKeysWithPrivateRpc();
     moduleLogger.info('Generated new signing key', { kid: keyData.kid, action: 'KeyManager' });
   }
@@ -451,7 +463,8 @@ async function getSigningKeyFromKeyManager(
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
   // Fetch current version for cache coherence
-  const version = await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null) ?? '';
+  const version =
+    (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
   signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
   moduleLogger.debug('Signing key cached', {
@@ -1853,7 +1866,11 @@ async function handleRefreshTokenGrant(
   let keyId: string;
 
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c), refreshTokenKid);
+    const signingKey = await getSigningKeyFromKeyManager(
+      c.env,
+      getTenantIdFromContext(c),
+      refreshTokenKid
+    );
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -4099,7 +4116,11 @@ async function handleTokenExchangeGrant(
       }
 
       try {
-        const actorPublicKey = await getVerificationKeyFromJWKS(c.env, getTenantIdFromContext(c), actorTokenKid);
+        const actorPublicKey = await getVerificationKeyFromJWKS(
+          c.env,
+          getTenantIdFromContext(c),
+          actorTokenKid
+        );
         // Verify signature and issuer only; audience is validated below
         await verifyToken(actor_token, actorPublicKey, c.env.ISSUER_URL, {
           skipAudienceCheck: true, // We validate audience ourselves after this
@@ -4575,7 +4596,11 @@ async function handleNativeSSOTokenExchange(
 
   // Verify ID Token signature
   try {
-    const publicKey = await getVerificationKeyFromJWKS(c.env, getTenantIdFromContext(c), idTokenKid);
+    const publicKey = await getVerificationKeyFromJWKS(
+      c.env,
+      getTenantIdFromContext(c),
+      idTokenKid
+    );
     await verifyToken(idToken, publicKey, c.env.ISSUER_URL, {
       skipAudienceCheck: true, // We validate audience ourselves
     });

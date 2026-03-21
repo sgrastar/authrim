@@ -119,14 +119,9 @@ export async function getJwksWithCache(
         type: 'json',
       });
       const kvKeys = Array.isArray(kvCached) ? kvCached : kvCached?.keys;
-      const kvVersion = Array.isArray(kvCached) ? '' : kvCached?.version ?? '';
+      const kvVersion = Array.isArray(kvCached) ? '' : (kvCached?.version ?? '');
 
-      if (
-        kvKeys &&
-        Array.isArray(kvKeys) &&
-        kvKeys.length > 0 &&
-        kvVersion === currentVersion
-      ) {
+      if (kvKeys && Array.isArray(kvKeys) && kvKeys.length > 0 && kvVersion === currentVersion) {
         // Update in-memory cache from KV
         jwksCacheMap.set(tenantId, {
           keys: kvKeys,

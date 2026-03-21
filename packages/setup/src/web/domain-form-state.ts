@@ -1,7 +1,4 @@
-export type ApiDomainExampleRowKind =
-  | 'initial-tenant'
-  | 'initial-tenant-explicit'
-  | 'other-tenant';
+export type ApiDomainExampleRowKind = 'initial-tenant' | 'initial-tenant-explicit' | 'other-tenant';
 
 export interface ApiDomainExampleRow {
   kind: ApiDomainExampleRowKind;
