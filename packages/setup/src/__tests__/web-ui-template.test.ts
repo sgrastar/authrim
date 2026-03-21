@@ -53,8 +53,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('function renderPrereqCapabilities(container, result)');
     expect(html).toContain('Estimated Feature Availability');
     expect(html).toContain('PREREQ_CAPABILITY_COPY');
-    expect(html).toContain('\"review\":\"Review\"');
-    expect(html).toContain('\"review\":\"需确认\"');
+    expect(html).toContain('"review":"Review"');
+    expect(html).toContain('"review":"需确认"');
   });
 
   it('embeds manual wildcard DNS guidance for deploy warnings', () => {
