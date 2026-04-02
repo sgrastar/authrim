@@ -656,7 +656,7 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Load TenantProfile for TTL limits (Human Auth / AI Ephemeral Auth two-layer model) - request-level cached
-  const tenantId = (clientMetadata.tenant_id as string) || 'default';
+  const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
   const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
 
   // DPoP requirement (FAPI 2.0 / sender-constrained tokens) - request-level cached
@@ -992,7 +992,7 @@ async function handleAuthorizationCodeGrant(
       const allIdPerms = await evaluateIdLevelPermissions(
         c.env.DB,
         authCodeData.sub,
-        'default', // tenant_id
+        getTenantIdFromContext(c),
         { cache: c.env.REBAC_CACHE }
       );
       // Apply limits to prevent token bloat
@@ -1039,7 +1039,7 @@ async function handleAuthorizationCodeGrant(
 
       // Build evaluation context
       const claimContext: TokenClaimEvaluationContext = {
-        tenant_id: 'default',
+        tenant_id: getTenantIdFromContext(c),
         subject_id: authCodeData.sub,
         client_id: client_id,
         scope: authCodeData.scope || '',
@@ -1734,7 +1734,7 @@ async function handleRefreshTokenGrant(
 
   // Profile-based grant_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §5.2: unauthorized_client - client not allowed to use this grant type
-  const tenantId = (clientMetadata.tenant_id as string) || 'default';
+  const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
   const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
   if (!tenantProfile.allows_refresh_token) {
     return oauthError(
@@ -3656,7 +3656,7 @@ async function handleTokenExchangeGrant(
 
   // Profile-based grant_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §5.2: unauthorized_client - client not allowed to use this grant type
-  const tenantId = (clientMetadata.tenant_id as string) || 'default';
+  const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
   const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
   if (!tenantProfile.allows_token_exchange) {
     return oauthError(
@@ -5054,7 +5054,7 @@ async function handleClientCredentialsGrant(
 
   // Profile-based grant_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §5.2: unauthorized_client - client not allowed to use this grant type
-  const tenantId = (clientMetadata.tenant_id as string) || 'default';
+  const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
   const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
   if (!tenantProfile.allows_client_credentials) {
     return oauthError(

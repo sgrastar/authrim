@@ -100,7 +100,7 @@ export const TenantConfigSchema = z.object({
   /** Default tenant identifier */
   name: z.string().default('default'),
   /** Human-readable tenant/organization name */
-  displayName: z.string().default('Default Tenant'),
+  displayName: z.string().default('Initial Tenant'),
   /**
    * @deprecated Multi-tenant mode is always enabled.
    * Kept for backward compatibility during migration.
@@ -122,7 +122,7 @@ export const TenantConfigSchema = z.object({
   /**
    * Primary tenant ID for naked domain access.
    * When set, naked domain (e.g., example.com) routes to this tenant.
-   * When unset, naked domain routes to the default tenant (name field).
+   * When unset, naked domain routes to the initial tenant (name field).
    */
   primaryTenant: z
     .string()

@@ -141,7 +141,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const userInfo = extractUserInfo(assertion, idpConfig);
 
     // Find or create user
-    const userId = await findOrCreateUser(env, userInfo, issuer);
+    const userId = await findOrCreateUser(env, userInfo, issuer, getTenantIdFromContext(c));
 
     // Create session
     const sessionId = await createSession(env, userId, getTenantIdFromContext(c));
@@ -749,11 +749,9 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
 async function findOrCreateUser(
   env: Env,
   userInfo: UserInfo,
-  idpEntityId: string
+  idpEntityId: string,
+  tenantId: string
 ): Promise<string> {
-  // Use default tenant for SAML-authenticated users
-  const tenantId = 'default';
-
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
 
@@ -784,8 +782,8 @@ async function findOrCreateUser(
   // Step 1: Insert into users_core with pii_status='pending'
   await coreAdapter.execute(
     `INSERT INTO users_core (id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at)
-     VALUES (?, ?, 1, 'end_user', 'default', 'pending', ?, ?)`,
-    [userId, tenantId, now, now]
+     VALUES (?, ?, 1, 'end_user', ?, 'pending', ?, ?)`,
+    [userId, tenantId, tenantId, now, now]
   );
 
   // Step 2: Insert into users_pii (if DB_PII is configured)

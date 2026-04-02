@@ -25,6 +25,7 @@ import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from '../utils/logger';
 import { hasAdminPermission } from '../types/admin-user';
+import { getDefaultTenantId } from '../utils/issuer';
 
 const log = createLogger().module('ADMIN-AUTH');
 
@@ -104,7 +105,7 @@ async function authenticateBearer(
       userId: 'system',
       authMethod: 'bearer',
       roles: ['super_admin', 'system_admin', 'admin', 'system'],
-      tenantId: 'default',
+      tenantId: getDefaultTenantId(env),
       permissions: ['*'], // Full access
       hierarchyLevel: 100, // Highest level
       mfaVerified: true, // Bearer token bypasses MFA
@@ -118,7 +119,7 @@ async function authenticateBearer(
       userId: 'system',
       authMethod: 'bearer',
       roles: ['super_admin', 'system_admin', 'admin', 'system'],
-      tenantId: 'default',
+      tenantId: getDefaultTenantId(env),
       permissions: ['*'],
       hierarchyLevel: 100,
       mfaVerified: true,
@@ -472,7 +473,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
 
     // Check IP allowlist (unless skipped)
     if (!options.skipIpCheck && authContext.authMethod === 'session') {
-      const tenantId = authContext.tenantId || 'default';
+      const tenantId = authContext.tenantId || getDefaultTenantId(c.env);
       const ipAllowed = await isIpAllowed(c, tenantId);
       if (!ipAllowed) {
         return c.json(

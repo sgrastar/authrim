@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "This directory contains SQL migration scripts for Authrim's Cloudflare D1 database."
+type: reference
+tags:
+  - authrim
+  - migrations
+  - oauth2
+  - consent
+  - testing
+  - database
+---
 # Authrim Database Migrations 🗄️
 
 This directory contains SQL migration scripts for Authrim's Cloudflare D1 database.

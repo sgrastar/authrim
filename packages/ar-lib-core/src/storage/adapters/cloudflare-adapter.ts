@@ -37,6 +37,7 @@ import {
 import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
 import { buildDOInstanceName } from '../../utils/tenant-context';
+import { getDefaultTenantId } from '../../utils/issuer';
 import type { SessionResponse } from '../../durable-objects/SessionStore';
 import { createLogger } from '../../utils/logger';
 
@@ -50,6 +51,10 @@ const log = createLogger().module('CloudflareStorageAdapter');
  */
 export class CloudflareStorageAdapter implements IStorageAdapter {
   constructor(private env: Env) {}
+
+  getConfiguredTenantId(): string {
+    return getDefaultTenantId(this.env);
+  }
 
   /**
    * Get value by key (routes to appropriate storage backend)
@@ -533,10 +538,11 @@ export class UserStore implements IUserStore {
    *
    * Queries users_pii first (since email is stored there), then fetches users_core.
    */
-  async getByEmail(email: string): Promise<User | null> {
+  async getByEmail(
+    email: string,
+    tenantId = this.adapter.getConfiguredTenantId()
+  ): Promise<User | null> {
     // Use tenant_id + email for idx_users_pii_email composite index
-    // Default to 'default' tenant until multi-tenant support is added to interface
-    const tenantId = 'default';
 
     // First find user in PII DB by email
     const piiResults = await this.adapter.queryPII<UserPIIRow>(
@@ -568,10 +574,13 @@ export class UserStore implements IUserStore {
    *
    * Inserts into both users_core (DB) and users_pii (DB_PII).
    */
-  async create(user: Partial<User>): Promise<User> {
+  async create(
+    user: Partial<User> & { tenant_id?: string; pii_partition?: string }
+  ): Promise<User> {
     const id = crypto.randomUUID();
     const now = Date.now(); // Store in milliseconds
-    const tenantId = 'default';
+    const tenantId = user.tenant_id ?? this.adapter.getConfiguredTenantId();
+    const piiPartition = user.pii_partition ?? tenantId;
 
     const newUser: User = {
       id,
@@ -616,7 +625,7 @@ export class UserStore implements IUserStore {
         newUser.phone_number_verified ? 1 : 0,
         user.password_hash || null,
         newUser.is_active ? 1 : 0,
-        'default', // pii_partition
+        piiPartition,
         'active', // pii_status
         newUser.created_at,
         newUser.updated_at,

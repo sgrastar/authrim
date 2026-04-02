@@ -1,3 +1,13 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "This guide covers Authrim's comprehensive testing strategy including unit tests, integration tests, E2E tests, conformance tests, and load testing."
+type: guide
+tags:
+  - authrim
+  - testing
+---
 # Testing Guide
 
 This guide covers Authrim's comprehensive testing strategy including unit tests, integration tests, E2E tests, conformance tests, and load testing.

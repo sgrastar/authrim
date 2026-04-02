@@ -17,6 +17,7 @@ import {
   createSettingsManager,
   DIAGNOSTIC_LOGGING_CATEGORY_META,
   applyPrivacyModeToEntry,
+  getDefaultTenantId,
   type DiagnosticLogEntry,
   type DiagnosticLogPrivacyMode,
   type DiagnosticLoggingSettings,
@@ -203,7 +204,7 @@ app.post('/', async (c) => {
     );
   }
 
-  const tenantId = validation.client?.tenant_id || 'default';
+  const tenantId = validation.client?.tenant_id || getDefaultTenantId(c.env);
   let diagnosticSettings: DiagnosticLoggingSettings | null = null;
 
   try {

@@ -22,6 +22,7 @@ import {
   validateExternalUrl,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  getDefaultTenantId,
   getTenantIdFromContext,
   buildIssuerUrl,
   D1Adapter,
@@ -860,7 +861,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.software_version || null,
       metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
       // Tenant ID
-      metadata.tenant_id || 'default',
+      metadata.tenant_id || getDefaultTenantId(env),
       metadata.created_at || now,
       metadata.updated_at || now,
     ]
@@ -1232,11 +1233,11 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           testUserId,
-          'default',
+          tenantId,
           1, // email_verified
           1, // phone_number_verified
           1, // is_active
-          'default', // pii_partition
+          tenantId, // pii_partition
           'active', // pii_status
           issuedAt,
           issuedAt,
@@ -1246,7 +1247,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       // Insert into users_pii (PII database) via PIIContext
       if (c.env.DB_PII) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
-        await piiCtx.getPiiAdapter('default').execute(
+        await piiCtx.getPiiAdapter(tenantId).execute(
           `INSERT OR IGNORE INTO users_pii (
             id, tenant_id, email, name, given_name, family_name,
             middle_name, nickname, preferred_username, profile, picture,
@@ -1257,7 +1258,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             testUserId,
-            'default',
+            tenantId,
             'test@example.com',
             'John Doe',
             'John',

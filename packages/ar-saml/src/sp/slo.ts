@@ -26,6 +26,8 @@ import {
   createConfigurationError,
   getTenantIdFromContext,
   buildIssuerUrl,
+  getDefaultTenantId,
+  usesNakedDomainIssuer,
   getLogger,
   createLogger,
 } from '@authrim/ar-lib-core';
@@ -313,7 +315,7 @@ async function terminateSessionByNameId(
     // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
     // Log warning for debugging
     // PII/Non-PII DB separation: search email in PII DB
-    const tenantId = 'default';
+    const tenantId = getTenantIdFromContext(c);
     let user: { id: string } | null = null;
     const piiAdapter: DatabaseAdapter | null = env.DB_PII
       ? new D1Adapter({ db: env.DB_PII })
@@ -388,8 +390,9 @@ async function sendLogoutResponse(
 
   // Sign the response
   try {
-    const { privateKeyPem } = await getSigningKey(env);
-    const certificate = await getSigningCertificate(env);
+    const tenantId = getTenantIdFromContext(c);
+    const { privateKeyPem } = await getSigningKey(env, tenantId);
+    const certificate = await getSigningCertificate(env, tenantId);
 
     responseXml = signXml(responseXml, {
       privateKey: privateKeyPem,
@@ -456,7 +459,7 @@ export async function initiateSPLogout(
   idpConfig: SAMLIdPConfig,
   sessionIndex?: string,
   returnUrl?: string,
-  tenantId = 'default'
+  tenantId = getDefaultTenantId(env)
 ): Promise<{ html: string }> {
   // Get user info for NameID (PII/Non-PII DB separation)
   let nameId: string | null = null;
@@ -489,8 +492,8 @@ export async function initiateSPLogout(
 
   // Sign the request
   try {
-    const { privateKeyPem } = await getSigningKey(env);
-    const certificate = await getSigningCertificate(env);
+    const { privateKeyPem } = await getSigningKey(env, tenantId);
+    const certificate = await getSigningCertificate(env, tenantId);
 
     logoutRequestXml = signXml(logoutRequestXml, {
       privateKey: privateKeyPem,
@@ -561,7 +564,7 @@ async function buildLogoutCompleteUrlForSP(
     uiConfig,
     'logoutComplete',
     {},
-    tenantId !== 'default' ? tenantId : undefined
+    usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
   );
   return { type: 'redirect', url };
 }

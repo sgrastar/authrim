@@ -16,6 +16,7 @@ import {
   getUIConfig,
   shouldUseBuiltinForms,
   createConfigurationError,
+  getDefaultTenantId,
   getTenantIdFromContext,
   getLogger,
   buildDOInstanceName,
@@ -25,7 +26,7 @@ import { html } from 'hono/html';
 function resolveTenantId(c: Context<{ Bindings: Env }>): string {
   return typeof (c as { get?: unknown }).get === 'function'
     ? getTenantIdFromContext(c)
-    : c.env.DEFAULT_TENANT_ID || 'default';
+    : getDefaultTenantId(c.env);
 }
 
 /**
@@ -156,7 +157,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
         const loginUrl = new URL(`${uiConfig.baseUrl}${deviceAuthPath}`);
         loginUrl.searchParams.set('user_code', userCode);
         // Add tenant_hint for UI branding (UX only, untrusted)
-        if (tenantId && tenantId !== 'default') {
+        if (tenantId) {
           loginUrl.searchParams.set('tenant_hint', tenantId);
         }
         return c.redirect(loginUrl.toString());

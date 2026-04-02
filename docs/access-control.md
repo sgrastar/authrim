@@ -1,3 +1,15 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-16
+description: "Comprehensive documentation for Authrim's access control system, covering RBAC, ABAC, and ReBAC models."
+type: architecture
+tags:
+  - authrim
+  - rebac
+  - rbac
+  - access-control
+---
 # Access Control Architecture
 
 Comprehensive documentation for Authrim's access control system, covering RBAC, ABAC, and ReBAC models.

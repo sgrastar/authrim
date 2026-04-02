@@ -4,7 +4,7 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import { D1Adapter, type DatabaseAdapter, getDefaultTenantId } from '@authrim/ar-lib-core';
 import type { LinkedIdentity, TokenResponse } from '../types';
 import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
 
@@ -129,7 +129,7 @@ export async function createLinkedIdentity(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      params.tenantId || 'default',
+      params.tenantId || getDefaultTenantId(env),
       params.userId,
       params.providerId,
       params.providerUserId,

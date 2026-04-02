@@ -19,6 +19,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -62,7 +63,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
   const log = getLogger(c).module('BACKCHANNEL-LOGOUT');
   const providerIdOrSlug = c.req.param('provider');
   if (!providerIdOrSlug) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-  const tenantId = c.req.query('tenant_id') || 'default';
+  const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
 
   try {
     // 1. Get provider configuration

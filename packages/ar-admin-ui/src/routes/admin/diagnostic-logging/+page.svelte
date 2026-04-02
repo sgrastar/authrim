@@ -21,7 +21,7 @@
 	];
 
 	// Export form state
-	let tenantId = $state('default');
+	let tenantId = $state('');
 	let startDate = $state('');
 	let endDate = $state('');
 	let startTime = $state('00:00');
@@ -43,7 +43,7 @@
 	let clientSearchQuery = $state('');
 
 	// Connection test state
-	let testTenantId = $state('default');
+	let testTenantId = $state('');
 	let r2BucketBinding = $state('DIAGNOSTIC_LOGS');
 	let pathPrefix = $state('diagnostic-logs');
 
@@ -584,7 +584,7 @@
 	}
 
 	function handleReset() {
-		tenantId = settingsContext.tenantId || 'default';
+		tenantId = settingsContext.tenantId;
 		testTenantId = tenantId;
 		selectedClientIds = [];
 		sessionIds = '';
@@ -616,7 +616,7 @@
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({
-					tenantId: testTenantId || 'default',
+					tenantId: testTenantId || settingsContext.tenantId,
 					r2BucketBinding,
 					pathPrefix
 				})
@@ -902,7 +902,8 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">HTTP Request</span>
-								<span class="category-description">Full request including Authorization header</span>
+								<span class="category-description">Full request including Authorization header</span
+								>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['http-response']}>
@@ -924,7 +925,9 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">Token Validation</span>
-								<span class="category-description">JWT validation, signature verification, claims validation</span>
+								<span class="category-description"
+									>JWT validation, signature verification, claims validation</span
+								>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['auth-decision']}>
@@ -935,7 +938,9 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">Auth Decision</span>
-								<span class="category-description">Authorization logic, policy evaluation results</span>
+								<span class="category-description"
+									>Authorization logic, policy evaluation results</span
+								>
 							</div>
 						</label>
 					</div>

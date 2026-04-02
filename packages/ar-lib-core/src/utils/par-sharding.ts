@@ -36,6 +36,7 @@ import {
   type ShardResolution,
   ID_PREFIX,
 } from './region-sharding';
+import { getDefaultTenantId } from './issuer';
 
 /**
  * PARRequestStore RPC stub interface
@@ -49,11 +50,6 @@ interface PARRequestStoreStub extends DurableObjectStub {
   }): Promise<void>;
   consumeRequestRpc(request: { requestUri: string; client_id: string }): Promise<PARRequestData>;
 }
-
-/**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
 
 /**
  * PAR request URI prefix as per RFC 9126
@@ -172,7 +168,7 @@ export function parsePARRequestUri(requestUri: string): (ParsedRegionId & { uuid
 export function getPARRequestStoreByUri(
   env: Env,
   requestUri: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string = getDefaultTenantId(env)
 ): {
   stub: PARRequestStoreStub;
   resolution: ShardResolution;

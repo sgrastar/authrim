@@ -193,7 +193,7 @@ const en: Translations = {
   'web.form.multiTenantExamples': 'Tenant URL Examples',
   'web.form.multiTenantExampleDefaultOmitted': 'Default tenant with omitted name: {{url}}',
   'web.form.multiTenantExampleDefaultIncluded': 'Default tenant with explicit name: {{url}}',
-  'web.form.multiTenantExampleOther': 'Non-default tenant: {{url}}',
+  'web.form.multiTenantExampleOther': 'Other tenant: {{url}}',
 
   // Database
   'db.title': 'Database Configuration',
@@ -254,7 +254,7 @@ const en: Translations = {
   'config.baseDomain': 'Base Domain:',
   'config.issuerFormat': 'Issuer Format:',
   'config.issuerUrl': 'Issuer URL:',
-  'config.defaultTenant': 'Default Tenant:',
+  'config.defaultTenant': 'Initial Tenant:',
   'config.displayName': 'Display Name:',
   'config.publicUrls': 'Public URLs:',
   'config.apiRouter': 'API Router:',
@@ -865,7 +865,7 @@ const en: Translations = {
   'web.form.nakedDomainHint': 'Use https://example.com instead of https://{tenant}.example.com',
   'web.form.nakedDomainWarning':
     'Tenant subdomains require a custom domain. Workers.dev does not support wildcard subdomains.',
-  'web.form.tenantId': 'Default Tenant ID',
+  'web.form.tenantId': 'Initial Tenant ID',
   'web.form.tenantIdPlaceholder': 'default',
   'web.form.tenantIdHint': 'First tenant identifier (lowercase, no spaces)',
   'web.form.tenantIdWorkerNote':

@@ -39,12 +39,12 @@ import {
   DOMAIN_EVENTS,
   type DomainEventData,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const DEFAULT_TENANT_ID = 'default';
 const MAX_MAPPINGS_PER_PAGE = 100;
 
 /**
@@ -114,7 +114,7 @@ function validateDomainFormat(domain: string): { valid: boolean; error?: string 
 export async function createOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const body = await c.req.json<OrgDomainMappingInput>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   // Validate domain format (RFC 1035 compliant)
   const domainValidation = validateDomainFormat(body.domain);
@@ -222,7 +222,7 @@ export async function createOrgDomainMapping(c: Context) {
  */
 export async function listOrgDomainMappings(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_MAPPINGS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const orgId = c.req.query('org_id');
@@ -263,7 +263,7 @@ export async function listOrgDomainMappings(c: Context) {
 export async function getOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   try {
     const mapping = await getDomainMappingById(c.env.DB, id, tenantId);
@@ -298,7 +298,7 @@ export async function getOrgDomainMapping(c: Context) {
 export async function updateOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<Partial<OrgDomainMappingInput>>();
 
   try {
@@ -342,7 +342,7 @@ export async function updateOrgDomainMapping(c: Context) {
 export async function deleteOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   try {
     const success = await deleteDomainMapping(c.env.DB, id, tenantId);
@@ -377,7 +377,7 @@ export async function deleteOrgDomainMapping(c: Context) {
 export async function listOrgDomainMappingsByOrg(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const orgId = c.req.param('org_id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_MAPPINGS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
 
@@ -449,7 +449,7 @@ export async function verifyDomainOwnership(c: Context) {
     domain: string;
     verification_method?: string;
   }>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   // Validate input
   if (!body.mapping_id) {
@@ -588,7 +588,7 @@ export async function verifyDomainOwnership(c: Context) {
 export async function confirmDomainVerification(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const body = await c.req.json<{ mapping_id: string; domain: string }>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   // Validate input
   if (!body.mapping_id) {

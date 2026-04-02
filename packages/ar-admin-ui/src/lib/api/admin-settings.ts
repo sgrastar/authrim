@@ -9,9 +9,18 @@
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { settingsContext } from '$lib/stores/settings-context.svelte';
 
-// Default tenant ID for single-tenant environments
-const DEFAULT_TENANT_ID = 'default';
+function resolveTenantId(tenantId?: string): string {
+	const resolved =
+		tenantId?.trim() || settingsContext.tenantId || settingsContext.availableTenants[0]?.id || '';
+
+	if (!resolved) {
+		throw new Error('Tenant ID is required');
+	}
+
+	return resolved;
+}
 
 /**
  * Setting value source (priority: env > kv > default)
@@ -226,12 +235,10 @@ export const adminSettingsAPI = {
 	 * Get settings for a tenant category
 	 * GET /api/admin/tenants/:tenantId/settings/:category
 	 */
-	async getSettings(
-		category: string,
-		tenantId: string = DEFAULT_TENANT_ID
-	): Promise<CategorySettings> {
+	async getSettings(category: string, tenantId?: string): Promise<CategorySettings> {
+		const resolvedTenantId = resolveTenantId(tenantId);
 		const response = await fetch(
-			`${API_BASE_URL}/api/admin/tenants/${tenantId}/settings/${category}`,
+			`${API_BASE_URL}/api/admin/tenants/${resolvedTenantId}/settings/${category}`,
 			{
 				credentials: 'include'
 			}
@@ -275,10 +282,11 @@ export const adminSettingsAPI = {
 	async updateSettings(
 		category: string,
 		request: SettingsPatchRequest,
-		tenantId: string = DEFAULT_TENANT_ID
+		tenantId?: string
 	): Promise<SettingsPatchResult> {
+		const resolvedTenantId = resolveTenantId(tenantId);
 		const response = await fetch(
-			`${API_BASE_URL}/api/admin/tenants/${tenantId}/settings/${category}`,
+			`${API_BASE_URL}/api/admin/tenants/${resolvedTenantId}/settings/${category}`,
 			{
 				method: 'PATCH',
 				headers: {
@@ -507,7 +515,7 @@ export const scopedSettingsAPI = {
 				url = `${API_BASE_URL}/api/admin/platform/settings/${category}`;
 				break;
 			case 'tenant':
-				url = `${API_BASE_URL}/api/admin/tenants/${scope.tenantId || DEFAULT_TENANT_ID}/settings/${category}`;
+				url = `${API_BASE_URL}/api/admin/tenants/${resolveTenantId(scope.tenantId)}/settings/${category}`;
 				break;
 			case 'client':
 				if (!scope.clientId) {
@@ -648,7 +656,7 @@ export const scopedSettingsAPI = {
 			case 'platform':
 				return adminSettingsAPI.getPlatformSettings(category);
 			case 'tenant':
-				return adminSettingsAPI.getSettings(category, scope.tenantId || DEFAULT_TENANT_ID);
+				return adminSettingsAPI.getSettings(category, resolveTenantId(scope.tenantId));
 			case 'client':
 				if (!scope.clientId) {
 					throw new Error('Client ID is required for client scope');
@@ -670,11 +678,7 @@ export const scopedSettingsAPI = {
 			case 'platform':
 				throw new Error('Platform settings are read-only');
 			case 'tenant':
-				return adminSettingsAPI.updateSettings(
-					category,
-					request,
-					scope.tenantId || DEFAULT_TENANT_ID
-				);
+				return adminSettingsAPI.updateSettings(category, request, resolveTenantId(scope.tenantId));
 			case 'client':
 				if (!scope.clientId) {
 					throw new Error('Client ID is required for client scope');

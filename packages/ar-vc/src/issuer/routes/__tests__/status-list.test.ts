@@ -8,6 +8,7 @@ import { statusListRoute, statusListJsonRoute } from '../status-list';
 import type { Env } from '../../../types';
 import { exportJWK, generateKeyPair } from 'jose';
 import type { JWK } from 'jose';
+import { requestContextMiddleware } from '@authrim/ar-lib-core';
 
 // Mock database result
 const mockListData = {
@@ -55,10 +56,14 @@ function createMockEnv(listData: typeof mockListData | null = mockListData): Env
     HAIP_POLICY_VERSION: 'final-1.0',
     VP_REQUEST_EXPIRY_SECONDS: '300',
     NONCE_EXPIRY_SECONDS: '300',
-    ISSUER_IDENTIFIER: 'https://issuer.example.com',
+    ISSUER_IDENTIFIER: 'https://tenant1.issuer.example.com',
     CREDENTIAL_OFFER_EXPIRY_SECONDS: '300',
     C_NONCE_EXPIRY_SECONDS: '300',
-  };
+    BASE_DOMAIN: 'issuer.example.com',
+    DEFAULT_TENANT_ID: 'tenant1',
+    PRIMARY_TENANT_ID: 'tenant1',
+    NAKED_DOMAIN_AS_ISSUER: 'false',
+  } as unknown as Env;
 }
 
 describe('Status List Routes', () => {
@@ -82,6 +87,7 @@ describe('Status List Routes', () => {
   beforeEach(() => {
     mockEnv = createMockEnv();
     app = new Hono<{ Bindings: Env }>();
+    app.use('*', requestContextMiddleware());
     app.get('/vci/status/:listId', statusListRoute);
     app.get('/vci/status/:listId/json', statusListJsonRoute);
     vi.clearAllMocks();
@@ -92,7 +98,7 @@ describe('Status List Routes', () => {
       const res = await app.request(
         '/vci/status/sl_r_tenant1_abc123',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnv
       );
@@ -114,7 +120,7 @@ describe('Status List Routes', () => {
       expect(header.alg).toBe('ES256');
       expect(header.kid).toBe('key-1');
 
-      expect(payload.iss).toBe('did:web:issuer.example.com');
+      expect(payload.iss).toBe('did:web:tenant1.issuer.example.com');
       expect(payload.vc.type).toContain('BitstringStatusListCredential');
       expect(payload.vc.credentialSubject.type).toBe('BitstringStatusList');
       expect(payload.vc.credentialSubject.statusPurpose).toBe('revocation');
@@ -126,7 +132,7 @@ describe('Status List Routes', () => {
       const res1 = await app.request(
         '/vci/status/sl_r_tenant1_abc123',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnv
       );
@@ -139,7 +145,7 @@ describe('Status List Routes', () => {
         '/vci/status/sl_r_tenant1_abc123',
         {
           headers: {
-            host: 'issuer.example.com',
+            host: 'tenant1.issuer.example.com',
             'If-None-Match': etag!,
           },
         },
@@ -157,7 +163,7 @@ describe('Status List Routes', () => {
       const res = await app.request(
         '/vci/status/non-existent',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnvNotFound
       );
@@ -171,7 +177,7 @@ describe('Status List Routes', () => {
       const res = await app.request(
         '/vci/status/sl_r_tenant1_abc123',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnv
       );
@@ -182,7 +188,11 @@ describe('Status List Routes', () => {
 
   describe('GET /vci/status/:listId/json', () => {
     it('should return status list data as JSON', async () => {
-      const res = await app.request('/vci/status/sl_r_tenant1_abc123/json', {}, mockEnv);
+      const res = await app.request(
+        '/vci/status/sl_r_tenant1_abc123/json',
+        { headers: { host: 'tenant1.issuer.example.com' } },
+        mockEnv
+      );
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toContain('application/json');
@@ -197,7 +207,21 @@ describe('Status List Routes', () => {
     it('should return 404 for non-existent list', async () => {
       const mockEnvNotFound = createMockEnv(null);
 
-      const res = await app.request('/vci/status/non-existent/json', {}, mockEnvNotFound);
+      const res = await app.request(
+        '/vci/status/non-existent/json',
+        { headers: { host: 'tenant1.issuer.example.com' } },
+        mockEnvNotFound
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should return 404 for a status list owned by another tenant', async () => {
+      const res = await app.request(
+        '/vci/status/sl_r_tenant1_abc123/json',
+        { headers: { host: 'other.issuer.example.com' } },
+        mockEnv
+      );
 
       expect(res.status).toBe(404);
     });
@@ -212,7 +236,7 @@ describe('Status List Routes', () => {
       const res1 = await app.request(
         '/vci/status/sl_r_tenant1_abc123',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnv1
       );
@@ -220,7 +244,7 @@ describe('Status List Routes', () => {
       const res2 = await app.request(
         '/vci/status/sl_r_tenant1_abc123',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnv2
       );
@@ -233,7 +257,7 @@ describe('Status List Routes', () => {
       const res1 = await app.request(
         '/vci/status/sl_r_tenant1_abc123',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnv1
       );
@@ -250,7 +274,7 @@ describe('Status List Routes', () => {
       const res2 = await app.request(
         '/vci/status/sl_r_tenant1_abc123',
         {
-          headers: { host: 'issuer.example.com' },
+          headers: { host: 'tenant1.issuer.example.com' },
         },
         mockEnvModified
       );

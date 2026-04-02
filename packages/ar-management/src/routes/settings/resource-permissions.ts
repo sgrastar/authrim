@@ -24,12 +24,12 @@ import {
   type ResourcePermissionSubjectType,
   hasIdLevelPermission,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const DEFAULT_TENANT_ID = 'default';
 const MAX_PERMISSIONS_PER_PAGE = 100;
 
 // =============================================================================
@@ -93,7 +93,7 @@ function validatePermissionInput(input: ResourcePermissionInput): string[] {
 export async function createResourcePermission(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const body = await c.req.json<ResourcePermissionInput>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   // Validate input
   const errors = validatePermissionInput(body);
@@ -218,7 +218,7 @@ export async function createResourcePermission(c: Context) {
  */
 export async function listResourcePermissions(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_PERMISSIONS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const isActive = c.req.query('is_active');
@@ -288,7 +288,7 @@ export async function listResourcePermissions(c: Context) {
 export async function deleteResourcePermission(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
 
@@ -363,7 +363,7 @@ export async function getPermissionsBySubject(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const subjectId = c.req.param('id')!;
   const subjectType = (c.req.query('type') as ResourcePermissionSubjectType) || 'user';
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   try {
     const result = await c.env.DB.prepare(
@@ -401,7 +401,7 @@ export async function getPermissionsByResource(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const resourceType = c.req.param('type')!;
   const resourceId = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   try {
     const result = await c.env.DB.prepare(
@@ -443,7 +443,7 @@ export async function checkResourcePermission(c: Context) {
     resource_id: string;
     action: string;
   }>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   try {
     const allowed = await hasIdLevelPermission(

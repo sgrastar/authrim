@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "This folder contains comprehensive load test reports for the Authrim OIDC Provider, conducted in December 2025 using K6 Cloud distributed load testing and Cloudflare Analytics."
+type: reference
+tags:
+  - authrim
+  - load-testing
+  - performance
+  - oidc
+  - token-exchange
+  - token-introspection
+---
 # Authrim Load Test Reports - December 2025
 
 This folder contains comprehensive load test reports for the Authrim OIDC Provider, conducted in December 2025 using K6 Cloud distributed load testing and Cloudflare Analytics monitoring.

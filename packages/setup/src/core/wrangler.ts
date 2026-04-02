@@ -500,8 +500,11 @@ export function generateEnvVars(
     if (multiTenantEnabled) {
       vars['BASE_DOMAIN'] = multiTenantBaseDomain;
 
-      if (config.tenant.primaryTenant) {
-        vars['PRIMARY_TENANT_ID'] = config.tenant.primaryTenant;
+      const primaryTenantId =
+        config.tenant.primaryTenant || (config.tenant.nakedDomain ? config.tenant.name : undefined);
+
+      if (primaryTenantId) {
+        vars['PRIMARY_TENANT_ID'] = primaryTenantId;
       }
 
       // Naked domain as issuer (use naked domain instead of tenant subdomain)

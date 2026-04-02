@@ -201,7 +201,7 @@ export function usesNakedDomainIssuer(env: Env, tenantId: string): boolean {
     return false;
   }
 
-  const nakedDomainTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || 'default';
+  const nakedDomainTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID;
   return tenantId === nakedDomainTenantId;
 }
 

@@ -343,7 +343,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         tenant_id: tenantId,
         email_verified: method === 'email',
         user_type: 'end_user',
-        pii_partition: 'default',
+        pii_partition: tenantId,
         pii_status: email ? 'pending' : 'none',
       });
 

@@ -49,6 +49,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getDefaultTenantId,
   type DatabaseAdapter,
   type ReBACService,
   type CheckRequest,
@@ -655,7 +656,7 @@ rebacRoutes.post('/check', async (c) => {
     }
 
     const request: CheckRequest = {
-      tenant_id: body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default',
+      tenant_id: body.tenant_id || getDefaultTenantId(c.env),
       user_id: body.user_id,
       relation: body.relation,
       object: body.object,
@@ -716,7 +717,7 @@ rebacRoutes.post('/batch-check', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const defaultTenantId = c.env.DEFAULT_TENANT_ID || 'default';
+    const defaultTenantId = getDefaultTenantId(c.env);
     const request: BatchCheckRequest = {
       checks: body.checks.map((check) => ({
         ...check,
@@ -774,7 +775,7 @@ rebacRoutes.post('/list-objects', async (c) => {
     }
 
     const request: ListObjectsRequest = {
-      tenant_id: body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default',
+      tenant_id: body.tenant_id || getDefaultTenantId(c.env),
       user_id: body.user_id,
       relation: body.relation,
       object_type: body.object_type,
@@ -830,7 +831,7 @@ rebacRoutes.post('/list-users', async (c) => {
     }
 
     const request: ListUsersRequest = {
-      tenant_id: body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default',
+      tenant_id: body.tenant_id || getDefaultTenantId(c.env),
       object: body.object,
       object_type: body.object_type,
       relation: body.relation,
@@ -901,7 +902,7 @@ rebacRoutes.post('/write', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
+    const tenantId = body.tenant_id || getDefaultTenantId(c.env);
     const now = Math.floor(Date.now() / 1000);
     const id = crypto.randomUUID();
 
@@ -1024,7 +1025,7 @@ rebacRoutes.delete('/tuples', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
+    const tenantId = body.tenant_id || getDefaultTenantId(c.env);
 
     // Delete relationship tuple
     const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
@@ -1114,7 +1115,7 @@ rebacRoutes.post('/invalidate', async (c) => {
       user_id?: string;
     }>();
 
-    const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
+    const tenantId = body.tenant_id || getDefaultTenantId(c.env);
 
     if (body.type === 'user') {
       if (!body.user_id) {

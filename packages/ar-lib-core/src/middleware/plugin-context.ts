@@ -27,6 +27,7 @@ import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { getTenantIdFromContext } from './request-context';
 import { createLogger } from '../utils/logger';
+import { getDefaultTenantId } from '../utils/issuer';
 
 const log = createLogger().module('PluginContext');
 
@@ -300,7 +301,7 @@ export function getPluginContext(c: Context<{ Bindings: Env }>): WorkerPluginCon
     return {
       registry: emptyRegistry,
       initialized: false,
-      tenantId: 'default',
+      tenantId: getDefaultTenantId(c.env),
       getPluginConfig: async <T>(_pluginId: string, defaultValue: T) => defaultValue,
       isPluginEnabled: async () => true,
     };

@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects)."
+type: reference
+tags:
+  - authrim
+  - ar-lib-core
+  - database
+  - durable-objects
+  - cloudflare-workers
+  - storage
+---
 # Storage Abstraction Layer
 
 This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects).

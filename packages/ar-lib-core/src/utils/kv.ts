@@ -18,6 +18,7 @@ import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from './logger';
 import { getCacheTTL } from './cache-config';
+import { getDefaultTenantId } from './issuer';
 
 const log = createLogger().module('KV');
 
@@ -810,7 +811,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     // PKCE settings
     require_pkce: result.require_pkce === 1,
     // Multi-tenant support
-    tenant_id: result.tenant_id || 'default',
+    tenant_id: result.tenant_id || getDefaultTenantId(env),
     created_at: result.created_at,
     updated_at: result.updated_at,
   };

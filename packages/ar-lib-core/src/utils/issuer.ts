@@ -12,8 +12,11 @@
  * - Complex: tenant-xyz.example.com → "tenant-xyz"
  *
  * Naked domain routing:
- * - If PRIMARY_TENANT_ID is set: example.com → specified tenant
- * - Otherwise: example.com → DEFAULT_TENANT_ID (default: "default")
+ * - If NAKED_DOMAIN_AS_ISSUER=true and PRIMARY_TENANT_ID is set:
+ *   example.com → specified tenant
+ * - If NAKED_DOMAIN_AS_ISSUER=true and PRIMARY_TENANT_ID is not set:
+ *   example.com → DEFAULT_TENANT_ID (default: "default")
+ * - Otherwise the naked domain is not treated as a tenant endpoint
  *
  * Security: Issuer determination is based on Host header (trusted),
  * NOT tenant_hint (untrusted UX hint).
@@ -206,7 +209,16 @@ export function validateHostHeader(
 
   // Check if hostname matches BASE_DOMAIN
   if (hostname === env.BASE_DOMAIN) {
-    // Naked domain access
+    // Naked domain access is only valid when explicitly enabled.
+    if (env.NAKED_DOMAIN_AS_ISSUER !== 'true') {
+      return {
+        valid: false,
+        tenantId: null,
+        error: 'tenant_not_found',
+        statusCode: 404,
+      };
+    }
+
     const tenantId = getPrimaryTenantId(env);
     return {
       valid: true,

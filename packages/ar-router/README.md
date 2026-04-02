@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "The Router Worker provides a unified entry point for all Authrim OpenID Connect endpoints when using workers.dev deployment."
+type: reference
+tags:
+  - authrim
+  - ar-router
+  - oidc
+  - deployment
+  - cloudflare-workers
+  - routing
+---
 # Authrim Router Worker
 
 The Router Worker provides a unified entry point for all Authrim OpenID Connect endpoints when using workers.dev deployment.

@@ -95,7 +95,7 @@ flowApi.post('/init', async (c) => {
     const response = await executor.initFlow({
       flowType: (body.flowType || 'login') as FlowType,
       clientId: body.clientId,
-      tenantId: body.tenantId ?? 'default',
+      tenantId: body.tenantId ?? getTenantIdFromContext(c),
       oauthParams: body.oauthParams,
     });
 

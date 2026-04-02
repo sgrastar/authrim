@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "Test Date: December 11, 2025 Target: Authrim OIDC Provider - Authorization Endpoint (prompt=none) Test Tool: K6 Cloud (Distributed Load Testing) Monitoring: Cloudflare Analytics."
+type: report
+tags:
+  - authrim
+  - load-testing
+  - performance
+  - oidc
+  - testing
+  - cloudflare-workers
+---
 # Silent Authentication Load Test Report
 
 **Test Date**: December 11, 2025

@@ -9,6 +9,15 @@ import {
 } from '../admin-info';
 
 describe('admin-info tenant base URL resolution', () => {
+  it('uses ISSUER_URL directly in single-tenant mode', () => {
+    const env = {
+      ISSUER_URL: 'https://login.example.com',
+    } as unknown as Env;
+
+    expect(usesNakedDomainIssuer(env, 'default')).toBe(false);
+    expect(buildTenantBaseUrl(env, 'default')).toBe('https://login.example.com');
+  });
+
   it('uses the naked domain for the default tenant when configured', () => {
     const env = {
       BASE_DOMAIN: 'auth.example.com',
@@ -51,11 +60,14 @@ describe('admin-info tenant base URL resolution', () => {
     const env = {
       BASE_DOMAIN: 'auth.example.com',
       DEFAULT_TENANT_ID: 'default',
+      PRIMARY_TENANT_ID: 'primary',
       ISSUER_URL: 'https://fallback.example.workers.dev',
     } as Env;
 
     expect(usesNakedDomainIssuer(env, 'default')).toBe(false);
     expect(buildTenantBaseUrl(env, 'default')).toBe('https://default.auth.example.com');
+    expect(usesNakedDomainIssuer(env, 'primary')).toBe(false);
+    expect(buildTenantBaseUrl(env, 'primary')).toBe('https://primary.auth.example.com');
   });
 
   it('returns configured Login/Admin UI URLs when present', async () => {

@@ -454,7 +454,7 @@ function transformComplianceStatus(raw: BackendComplianceStatusResponse): Compli
 function transformAccessReview(raw: BackendAccessReview): AccessReview {
 	return {
 		id: raw.review_id ?? raw.id ?? '',
-		tenant_id: raw.tenant_id ?? 'default',
+		tenant_id: raw.tenant_id ?? '',
 		name: raw.name,
 		scope: (raw.scope as AccessReviewScope) || 'all_users',
 		scope_target: raw.scope_value ?? raw.scope_target,
@@ -487,7 +487,7 @@ function transformComplianceReport(raw: BackendComplianceReport): ComplianceRepo
 
 	return {
 		id: raw.report_id ?? raw.id ?? '',
-		tenant_id: raw.tenant_id ?? 'default',
+		tenant_id: raw.tenant_id ?? '',
 		type: raw.type as ReportType,
 		status: raw.status as ReportStatus,
 		requested_by: raw.requested_by ?? '',

@@ -22,6 +22,7 @@ import type { Env } from '../types';
 import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
 import {
   getRegionShardConfig,
+  getDefaultTenantId,
   resolveShardForNewResource,
   parseRegionId,
   createRegionId,
@@ -36,11 +37,6 @@ import {
  * Uses generic stub type since VPRequestStore uses fetch() pattern
  */
 type VPRequestStoreStub = DurableObjectStub;
-
-/**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
 
 /**
  * Generate a new region-sharded VP request ID.
@@ -142,7 +138,7 @@ export function parseVPRequestId(requestId: string): (ParsedRegionId & { uuid: s
 export function getVPRequestStoreById(
   env: Env,
   requestId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string = getDefaultTenantId(env as unknown as Parameters<typeof getDefaultTenantId>[0])
 ): {
   stub: VPRequestStoreStub;
   resolution: ShardResolution;

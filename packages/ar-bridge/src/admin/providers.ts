@@ -10,6 +10,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import {
   listAllProviders,
@@ -75,7 +76,7 @@ export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): P
   }
 
   try {
-    const tenantId = c.req.query('tenant_id') || 'default';
+    const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
     const providers = await listAllProviders(c.env, tenantId);
 
     // Remove encrypted secrets from response
@@ -300,7 +301,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
     const defaultButtonText = (defaults.buttonText as string | undefined) || undefined;
 
     const provider = await createProvider(c.env, {
-      tenantId: body.tenant_id || 'default',
+      tenantId: body.tenant_id || getTenantIdFromContext(c),
       slug: body.slug,
       name: body.name,
       providerType: body.provider_type || 'oidc',

@@ -35,17 +35,13 @@ import {
   type ShardResolution,
   ID_PREFIX,
 } from './region-sharding';
+import { getDefaultTenantId } from './issuer';
 
 /**
  * Type alias for DeviceCodeStore stub
  * Uses generic stub type since DeviceCodeStore uses fetch() pattern
  */
 type DeviceCodeStoreStub = DurableObjectStub;
-
-/**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
 
 /**
  * Default device code TTL (600 seconds = 10 minutes as per RFC 8628)
@@ -155,7 +151,7 @@ export function parseDeviceCodeId(
 export function getDeviceCodeStoreById(
   env: Env,
   deviceCodeId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string = getDefaultTenantId(env)
 ): {
   stub: DeviceCodeStoreStub;
   resolution: ShardResolution;

@@ -1,3 +1,15 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-30
+description: "Vision: Identity & Access Platform for the modern web — Authentication, Authorization, and Identity Hub in one."
+type: roadmap
+tags:
+  - authrim
+  - identity-platform
+  - product
+  - roadmap
+---
 # Authrim Product Roadmap
 
 **Vision:** Identity & Access Platform for the modern web — Authentication, Authorization, and Identity Hub in one.

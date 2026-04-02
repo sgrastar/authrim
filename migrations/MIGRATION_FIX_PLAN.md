@@ -1,3 +1,15 @@
+---
+project: Authrim
+lang: ja
+date: 2026-01-11
+description: "コードはPII分離アーキテクチャを使用していますが、マイグレーションファイルは古い統合スキーマのままです。"
+type: plan
+tags:
+  - authrim
+  - migrations
+  - database
+  - migration-fix-plan
+---
 # マイグレーション修正計画
 
 ## 問題の概要

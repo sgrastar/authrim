@@ -12,6 +12,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getClient,
+  getDefaultTenantId,
   getTenantIdFromContext,
   buildDOInstanceName,
   parseCIBARequestId,
@@ -21,7 +22,7 @@ import {
 function resolveTenantId(c: Context<{ Bindings: Env }>): string {
   return typeof (c as { get?: unknown }).get === 'function'
     ? getTenantIdFromContext(c)
-    : c.env.DEFAULT_TENANT_ID || 'default';
+    : getDefaultTenantId(c.env);
 }
 
 /**

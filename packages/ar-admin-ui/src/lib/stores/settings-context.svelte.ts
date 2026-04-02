@@ -47,11 +47,6 @@ interface SettingsContextState {
 export type PermissionLevel = 'view' | 'edit' | 'none';
 
 /**
- * Default tenant ID for single-tenant environments
- */
-const DEFAULT_TENANT_ID = 'default';
-
-/**
  * API base URL
  */
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -63,9 +58,9 @@ function createSettingsContextStore() {
 	// Reactive state using Svelte 5 $state rune
 	let state = $state<SettingsContextState>({
 		currentLevel: 'tenant',
-		tenantId: DEFAULT_TENANT_ID,
+		tenantId: '',
 		clientId: null,
-		availableTenants: [{ id: DEFAULT_TENANT_ID, name: 'Default' }],
+		availableTenants: [],
 		availableClients: [],
 		isLoading: false,
 		error: null
@@ -301,13 +296,18 @@ function createSettingsContextStore() {
 						id: t.id,
 						name: t.name || t.id
 					}));
+					if (
+						!state.tenantId ||
+						!state.availableTenants.some((tenant) => tenant.id === state.tenantId)
+					) {
+						state.tenantId = state.availableTenants[0]?.id ?? '';
+					}
 				} else {
-					// Fallback to default tenant
-					state.availableTenants = [{ id: DEFAULT_TENANT_ID, name: 'Default' }];
+					state.availableTenants = [];
 				}
 			} catch (err) {
 				console.warn('Failed to load tenants:', err);
-				state.availableTenants = [{ id: DEFAULT_TENANT_ID, name: 'Default' }];
+				state.availableTenants = [];
 			} finally {
 				state.isLoading = false;
 			}
@@ -385,7 +385,7 @@ function createSettingsContextStore() {
 		 */
 		reset(): void {
 			state.currentLevel = 'tenant';
-			state.tenantId = DEFAULT_TENANT_ID;
+			state.tenantId = state.availableTenants[0]?.id ?? '';
 			state.clientId = null;
 			state.error = null;
 

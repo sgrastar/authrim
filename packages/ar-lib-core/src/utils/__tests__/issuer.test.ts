@@ -93,6 +93,19 @@ describe('Issuer URL Builder', () => {
         ).toBe('https://authrim.com');
       });
 
+      it('should keep the primary tenant on a subdomain when omission is disabled', () => {
+        expect(
+          buildIssuerUrl(
+            {
+              ...mtEnv,
+              DEFAULT_TENANT_ID: 'default',
+              PRIMARY_TENANT_ID: 'main',
+            } as Env,
+            'main'
+          )
+        ).toBe('https://main.authrim.com');
+      });
+
       it('should handle different subdomains', () => {
         expect(buildIssuerUrl(mtEnv, 'tenant1')).toBe('https://tenant1.authrim.com');
         expect(buildIssuerUrl(mtEnv, 'company-a')).toBe('https://company-a.authrim.com');
@@ -197,17 +210,42 @@ describe('Issuer URL Builder', () => {
         expect(result.statusCode).toBe(400);
       });
 
-      it('should handle naked domain with DEFAULT_TENANT_ID', () => {
+      it('should reject naked domain when tenant omission is disabled', () => {
         const result = validateHostHeader('authrim.com', { ...mtEnv, DEFAULT_TENANT_ID: 'main' });
+
+        expect(result.valid).toBe(false);
+        expect(result.tenantId).toBeNull();
+        expect(result.error).toBe('tenant_not_found');
+      });
+
+      it('should reject naked domain even when PRIMARY_TENANT_ID is set but omission is disabled', () => {
+        const result = validateHostHeader('authrim.com', {
+          ...mtEnv,
+          DEFAULT_TENANT_ID: 'default',
+          PRIMARY_TENANT_ID: 'main',
+        });
+
+        expect(result.valid).toBe(false);
+        expect(result.tenantId).toBeNull();
+        expect(result.error).toBe('tenant_not_found');
+      });
+
+      it('should handle naked domain with DEFAULT_TENANT_ID when omission is enabled', () => {
+        const result = validateHostHeader('authrim.com', {
+          ...mtEnv,
+          DEFAULT_TENANT_ID: 'main',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
+        });
 
         expect(result.valid).toBe(true);
         expect(result.tenantId).toBe('main');
       });
 
-      it('should handle naked domain with PRIMARY_TENANT_ID', () => {
+      it('should handle naked domain with PRIMARY_TENANT_ID when omission is enabled', () => {
         const result = validateHostHeader('authrim.com', {
           ...mtEnv,
           PRIMARY_TENANT_ID: 'primary',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
         });
 
         expect(result.valid).toBe(true);

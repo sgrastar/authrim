@@ -16,6 +16,7 @@ import {
   getUIConfig,
   buildIssuerUrl,
   shouldUseBuiltinForms,
+  getDefaultTenantId,
   getTenantIdFromContext,
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
@@ -71,11 +72,11 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
   user: string | undefined; // Apple-specific: user data JSON
 }> {
   // Try GET parameters first (standard OAuth)
+  const tenantId = getTenantIdFromContext(c);
   let code = c.req.query('code');
   let state = c.req.query('state');
   let error = c.req.query('error');
   let errorDescription = c.req.query('error_description');
-  let tenantId = c.req.query('tenant_id') || 'default';
   let user = c.req.query('user');
 
   // If POST request (Apple form_post), try to get from body
@@ -690,7 +691,7 @@ async function redirectWithError(
     redirectUrl.searchParams.set('error_description', description);
   }
   // Add tenant_hint for UI branding (UX only)
-  if (tenantId && tenantId !== 'default') {
+  if (tenantId && tenantId !== getDefaultTenantId(c.env)) {
     redirectUrl.searchParams.set('tenant_hint', tenantId);
   }
 

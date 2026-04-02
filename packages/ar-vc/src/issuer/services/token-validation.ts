@@ -5,7 +5,7 @@
  */
 
 import type { Env } from '../../types';
-import { decodeBase64Url, safeFetch, createLogger } from '@authrim/ar-lib-core';
+import { decodeBase64Url, safeFetch, createLogger, getDefaultTenantId } from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
 
 const log = createLogger().module('VCI-TOKEN');
@@ -118,7 +118,7 @@ export async function validateVCIAccessToken(
     return {
       valid: true,
       userId: payload.sub,
-      tenantId: payload.tenant_id || 'default',
+      tenantId: payload.tenant_id || getDefaultTenantId(env as { DEFAULT_TENANT_ID?: string }),
       vct: payload.credential_configuration_id,
       claims: payload.credential_claims || {},
       holderBinding,

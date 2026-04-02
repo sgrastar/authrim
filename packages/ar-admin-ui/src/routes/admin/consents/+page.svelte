@@ -37,6 +37,7 @@
 	let error = $state('');
 	let tenantSuccessMessage = $state('');
 	let clientSuccessMessage = $state('');
+	let loadedTenantId = $state('');
 
 	// Permissions
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
@@ -92,9 +93,18 @@
 		await loadData();
 	});
 
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (tenantId && tenantId !== loadedTenantId) {
+			loadedTenantId = tenantId;
+			void loadData();
+		}
+	});
+
 	async function loadData() {
 		loading = true;
 		error = '';
+		loadedTenantId = settingsContext.tenantId;
 
 		try {
 			// 1. Fetch consent metadata
@@ -104,7 +114,7 @@
 			// 2. Fetch tenant-level consent settings
 			const tenantResult = await scopedSettingsAPI.getSettingsForScope('consent', {
 				level: 'tenant',
-				tenantId: 'default'
+				tenantId: settingsContext.tenantId
 			});
 			tenantSettings = tenantResult;
 			tenantPatches = [];
@@ -237,7 +247,7 @@
 
 			const result = await scopedSettingsAPI.updateSettingsForScope(
 				'consent',
-				{ level: 'tenant', tenantId: 'default' },
+				{ level: 'tenant', tenantId: settingsContext.tenantId },
 				{
 					ifMatch: tenantSettings.version,
 					...patchData

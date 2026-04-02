@@ -1,3 +1,14 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-07
+description: "Documentation for the Authrim OpenID Connect Provider project."
+type: reference
+tags:
+  - authrim
+  - oidc
+  - documentation
+---
 # Authrim Documentation
 
 Documentation for the Authrim OpenID Connect Provider project.

@@ -21,6 +21,7 @@ import {
   createConfigurationError,
   getTenantIdFromContext,
   buildIssuerUrl,
+  usesNakedDomainIssuer,
   getLogger,
 } from '@authrim/ar-lib-core';
 import { generateSAMLId, nowAsDateTime, offsetDateTime } from '../common/xml-utils';
@@ -79,7 +80,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         uiConfig,
         'login',
         { return_to: returnTo },
-        tenantId !== 'default' ? tenantId : undefined
+        usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
       );
       return c.redirect(loginUrl);
     }
@@ -91,7 +92,13 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     }
 
     // Generate SAML Response (no InResponseTo since this is IdP-initiated)
-    const responseXml = await generateIdPInitiatedResponse(issuerUrl, env, spConfig, userInfo);
+    const responseXml = await generateIdPInitiatedResponse(
+      issuerUrl,
+      env,
+      spConfig,
+      userInfo,
+      tenantId
+    );
 
     // Return auto-submit form
     return sendSAMLResponse(c, spConfig, responseXml);
@@ -188,10 +195,11 @@ async function generateIdPInitiatedResponse(
   issuerUrl: string,
   env: Env,
   spConfig: SAMLSPConfig,
-  userInfo: { id: string; email: string; name?: string }
+  userInfo: { id: string; email: string; name?: string },
+  tenantId: string
 ): Promise<string> {
-  const { privateKeyPem } = await getSigningKey(env);
-  const certificate = await getSigningCertificate(env);
+  const { privateKeyPem } = await getSigningKey(env, tenantId);
+  const certificate = await getSigningCertificate(env, tenantId);
 
   // Determine NameID value
   let nameIdValue: string;

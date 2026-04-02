@@ -6,6 +6,7 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
+import { getDefaultTenantId } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import { importSPKI, exportSPKI } from 'jose';
 
@@ -20,27 +21,29 @@ interface SigningKeyCache {
   cachedAt: number;
 }
 
-// Cache for signing key (5 minutes TTL)
-let signingKeyCache: SigningKeyCache | null = null;
+// Cache for signing key (5 minutes TTL), scoped by tenant
+const signingKeyCache = new Map<string, SigningKeyCache>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Get signing key from KeyManager
  */
 export async function getSigningKey(
-  env: Env
+  env: Env,
+  tenantId = getDefaultTenantId(env)
 ): Promise<{ privateKeyPem: string; publicKeyPem: string; kid: string }> {
   // Check cache
-  if (signingKeyCache && Date.now() - signingKeyCache.cachedAt < CACHE_TTL_MS) {
+  const cached = signingKeyCache.get(tenantId);
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
     return {
-      privateKeyPem: signingKeyCache.privateKeyPem,
-      publicKeyPem: signingKeyCache.publicKeyPem,
-      kid: signingKeyCache.kid,
+      privateKeyPem: cached.privateKeyPem,
+      publicKeyPem: cached.publicKeyPem,
+      kid: cached.kid,
     };
   }
 
   // Get from KeyManager
-  const keyManagerId = env.KEY_MANAGER.idFromName('default');
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   const response = await keyManager.fetch(
@@ -74,18 +77,18 @@ export async function getSigningKey(
       const publicKeyPem = await jwkToPublicKeyPem(rotateData.key.publicJWK);
 
       // Update cache
-      signingKeyCache = {
+      signingKeyCache.set(tenantId, {
         privateKeyPem: rotateData.key.privatePEM,
         publicKeyPem,
         certificate: await generateSelfSignedCertificate(rotateData.key.publicJWK),
         kid: rotateData.key.kid,
         cachedAt: Date.now(),
-      };
+      });
 
       return {
-        privateKeyPem: signingKeyCache.privateKeyPem,
-        publicKeyPem: signingKeyCache.publicKeyPem,
-        kid: signingKeyCache.kid,
+        privateKeyPem: signingKeyCache.get(tenantId)!.privateKeyPem,
+        publicKeyPem: signingKeyCache.get(tenantId)!.publicKeyPem,
+        kid: signingKeyCache.get(tenantId)!.kid,
       };
     }
 
@@ -96,18 +99,18 @@ export async function getSigningKey(
   const publicKeyPem = await jwkToPublicKeyPem(keyData.publicJWK);
 
   // Update cache
-  signingKeyCache = {
+  signingKeyCache.set(tenantId, {
     privateKeyPem: keyData.privatePEM,
     publicKeyPem,
     certificate: await generateSelfSignedCertificate(keyData.publicJWK),
     kid: keyData.kid,
     cachedAt: Date.now(),
-  };
+  });
 
   return {
-    privateKeyPem: signingKeyCache.privateKeyPem,
-    publicKeyPem: signingKeyCache.publicKeyPem,
-    kid: signingKeyCache.kid,
+    privateKeyPem: signingKeyCache.get(tenantId)!.privateKeyPem,
+    publicKeyPem: signingKeyCache.get(tenantId)!.publicKeyPem,
+    kid: signingKeyCache.get(tenantId)!.kid,
   };
 }
 
@@ -115,20 +118,25 @@ export async function getSigningKey(
  * Get signing certificate from KeyManager
  * Returns X.509 certificate in PEM format
  */
-export async function getSigningCertificate(env: Env): Promise<string> {
+export async function getSigningCertificate(
+  env: Env,
+  tenantId = getDefaultTenantId(env)
+): Promise<string> {
   // Check cache
-  if (signingKeyCache && Date.now() - signingKeyCache.cachedAt < CACHE_TTL_MS) {
-    return signingKeyCache.certificate;
+  const cached = signingKeyCache.get(tenantId);
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
+    return cached.certificate;
   }
 
   // Get signing key (this will update cache)
-  await getSigningKey(env);
+  await getSigningKey(env, tenantId);
 
-  if (!signingKeyCache) {
+  const nextCached = signingKeyCache.get(tenantId);
+  if (!nextCached) {
     throw new Error('Failed to get signing certificate');
   }
 
-  return signingKeyCache.certificate;
+  return nextCached.certificate;
 }
 
 /**
@@ -263,5 +271,5 @@ export async function importPrivateKey(privateKeyPem: string): Promise<CryptoKey
  * Useful when keys are rotated
  */
 export function clearSigningKeyCache(): void {
-  signingKeyCache = null;
+  signingKeyCache.clear();
 }

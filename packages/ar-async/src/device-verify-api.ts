@@ -12,6 +12,7 @@ import {
   validateUserCodeFormat,
   isMockAuthEnabled,
   getLogger,
+  getDefaultTenantId,
   getTenantIdFromContext,
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
@@ -19,7 +20,7 @@ import {
 function resolveTenantId(c: Context<{ Bindings: Env }>): string {
   return typeof (c as { get?: unknown }).get === 'function'
     ? getTenantIdFromContext(c)
-    : c.env.DEFAULT_TENANT_ID || 'default';
+    : getDefaultTenantId(c.env);
 }
 
 /**

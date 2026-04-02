@@ -35,17 +35,13 @@ import {
   type ShardResolution,
   ID_PREFIX,
 } from './region-sharding';
+import { getDefaultTenantId } from './issuer';
 
 /**
  * Type alias for CIBARequestStore stub
  * Uses generic stub type since CIBARequestStore uses fetch() pattern
  */
 type CIBARequestStoreStub = DurableObjectStub;
-
-/**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
 
 /**
  * Default CIBA request TTL (300 seconds = 5 minutes)
@@ -155,7 +151,7 @@ export function parseCIBARequestId(
 export function getCIBARequestStoreById(
   env: Env,
   cibaId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string = getDefaultTenantId(env)
 ): {
   stub: CIBARequestStoreStub;
   resolution: ShardResolution;

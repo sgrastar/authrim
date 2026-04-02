@@ -39,14 +39,15 @@ import { getSigningCertificate } from '../common/key-utils';
 export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-IDP');
+  const tenantId = getTenantIdFromContext(c);
 
-  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
+  const issuerUrl = buildIssuerUrl(env, tenantId);
   const entityId = `${issuerUrl}/saml/idp`;
 
   // Get signing certificate from KeyManager
   let signingCertificate: string;
   try {
-    signingCertificate = await getSigningCertificate(env);
+    signingCertificate = await getSigningCertificate(env, tenantId);
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

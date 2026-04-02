@@ -220,9 +220,7 @@
 				</div>
 				<div class="action-buttons">
 					{#if !isEditing}
-						{#if definition.tenant_id !== 'default'}
-							<button class="btn btn-secondary" onclick={startEditing}>Edit</button>
-						{/if}
+						<button class="btn btn-secondary" onclick={startEditing}>Edit</button>
 						<button
 							class="status-badge"
 							class:status-active={definition.is_active}
@@ -327,9 +325,7 @@
 					</div>
 					<div class="info-row">
 						<span class="info-label">Source</span>
-						<span class="source-badge" class:default={definition.tenant_id === 'default'}>
-							{definition.tenant_id === 'default' ? 'Default' : 'Custom'}
-						</span>
+						<span class="source-badge"> Tenant </span>
 					</div>
 					<div class="info-row">
 						<span class="info-label">Created</span>
