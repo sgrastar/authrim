@@ -13,7 +13,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     });
 
     expect(tenant).toEqual({
-      name: 'default',
+      name: 'acme',
       displayName: 'Acme',
       multiTenant: false,
       baseDomain: undefined,
@@ -57,13 +57,34 @@ describe('normalizeTenantConfigForApiDomain', () => {
     });
 
     expect(tenant).toEqual({
-      name: 'default',
+      name: 'acme',
       displayName: 'Acme',
       multiTenant: false,
       baseDomain: undefined,
       userIdFormat: 'nanoid',
       primaryTenant: undefined,
       nakedDomain: false,
+    });
+  });
+
+  it('defaults primaryTenant to the initial tenant when omitted in naked-domain mode', () => {
+    const tenant = normalizeTenantConfigForApiDomain({
+      name: 'acme',
+      displayName: 'Acme',
+      multiTenant: true,
+      baseDomain: 'oidc.example.com',
+      userIdFormat: 'nanoid',
+      nakedDomain: true,
+    });
+
+    expect(tenant).toEqual({
+      name: 'acme',
+      displayName: 'Acme',
+      multiTenant: true,
+      baseDomain: 'oidc.example.com',
+      userIdFormat: 'nanoid',
+      primaryTenant: 'acme',
+      nakedDomain: true,
     });
   });
 });

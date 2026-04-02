@@ -1,13 +1,13 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { AR_ERROR_CODES, createErrorResponse } from '@authrim/ar-lib-core';
+import { AR_ERROR_CODES, createErrorResponse, getDefaultTenantId } from '@authrim/ar-lib-core';
 
 export function isSingleTenantMode(env: Partial<Env>): boolean {
   return !env.BASE_DOMAIN;
 }
 
 export function getSingleTenantId(env: Partial<Env>): string {
-  return env.DEFAULT_TENANT_ID || 'default';
+  return getDefaultTenantId(env);
 }
 
 export function createSingleTenantMutationError(c: Context, field = 'tenant') {

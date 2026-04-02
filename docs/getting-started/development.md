@@ -1,3 +1,13 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "This guide will help you set up your development environment for Authrim."
+type: guide
+tags:
+  - authrim
+  - development
+---
 # Development Guide
 
 This guide will help you set up your development environment for Authrim.

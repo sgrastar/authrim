@@ -155,15 +155,13 @@
 
 	async function handleEdit() {
 		if (!editingTenant) return;
-		const editActiveDisabled = singleTenantMode || editingTenant.is_default;
+		const editActiveDisabled = singleTenantMode;
 		if (!editName.trim()) {
 			editError = 'Name is required';
 			return;
 		}
 		if (editActiveDisabled && editIsActive !== editingTenant.is_active) {
-			editError = singleTenantMode
-				? 'The default tenant must remain active in single-tenant mode.'
-				: 'The default tenant cannot be deactivated.';
+			editError = 'The initial tenant must remain active in single-tenant mode.';
 			return;
 		}
 
@@ -256,11 +254,9 @@
 			class="btn btn-primary"
 			onclick={openCreateDialog}
 			disabled={singleTenantMode}
-			title={
-				singleTenantMode
-					? 'Unavailable in single-tenant mode. Configure an API custom domain to enable multiple tenants.'
-					: 'Add a tenant'
-			}
+			title={singleTenantMode
+				? 'Unavailable in single-tenant mode. Configure an API custom domain to enable multiple tenants.'
+				: 'Add a tenant'}
 		>
 			<i class="i-ph-plus"></i>
 			Add Tenant
@@ -527,16 +523,14 @@
 							bind:checked={editIsActive}
 							class="toggle-input"
 							id="edit-active"
-							disabled={singleTenantMode || editingTenant.is_default}
+							disabled={singleTenantMode}
 						/>
 						<label for="edit-active" class="toggle-slider"></label>
 					</div>
 				</label>
 				<p class="field-hint">
 					{#if singleTenantMode}
-						The default tenant must remain active in single-tenant mode.
-					{:else if editingTenant.is_default}
-						The default tenant must remain active. Change the default tenant first to deactivate it.
+						The initial tenant must remain active in single-tenant mode.
 					{:else}
 						Inactive tenants are hidden from the tenant selector.
 					{/if}

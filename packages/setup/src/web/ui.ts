@@ -2803,7 +2803,7 @@ export function getHtmlTemplate(
           </div>
         </div>
 
-        <!-- Default Tenant (hidden when naked domain is checked or using workers.dev) -->
+        <!-- Initial Tenant (hidden when naked domain is checked or using workers.dev) -->
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
             <label for="tenant-name" id="tenant-id-label">Initial Tenant ID</label>
@@ -2824,7 +2824,7 @@ export function getHtmlTemplate(
         <!-- Primary Tenant (for naked domain) -->
         <div class="form-group" id="primary-tenant-row" style="margin-bottom: 0.75rem;">
           <label for="primary-tenant" id="primary-tenant-label">Tenant that uses the naked URL</label>
-          <input type="text" id="primary-tenant" placeholder="Leave empty to use default tenant">
+          <input type="text" id="primary-tenant" placeholder="Leave empty to use initial tenant">
           <small id="primary-tenant-hint" style="color: var(--text-muted)">Tenant ID to use when accessing the naked domain. Leave empty to use the first tenant above.</small>
         </div>
 
@@ -4549,7 +4549,7 @@ export function getHtmlTemplate(
 
       const tenant = loadedConfig.tenant || {
         name: 'default',
-        displayName: 'Default Tenant',
+        displayName: 'Initial Tenant',
         multiTenant: false,
       };
 
@@ -4586,7 +4586,7 @@ export function getHtmlTemplate(
       document.getElementById('login-domain').value = stripProtocol(config.loginUiDomain);
       document.getElementById('admin-domain').value = stripProtocol(config.adminUiDomain);
       document.getElementById('tenant-name').value = config.tenant?.name || 'default';
-      document.getElementById('tenant-display').value = config.tenant?.displayName || 'Default Tenant';
+      document.getElementById('tenant-display').value = config.tenant?.displayName || 'Initial Tenant';
       document.getElementById('enable-multi-tenant').checked = config.tenant?.multiTenant === true;
       document.getElementById('naked-domain').checked = config.tenant?.nakedDomain || false;
       if (document.getElementById('user-id-format')) {
@@ -5082,7 +5082,7 @@ export function getHtmlTemplate(
       const tenantName = multiTenantEnabled
         ? (document.getElementById('tenant-name').value.trim() || 'default')
         : 'default';
-      const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Default Tenant';
+      const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Initial Tenant';
       const userIdFormat = document.getElementById('user-id-format').value || 'nanoid';
       const primaryTenant = multiTenantEnabled && nakedDomain
         ? (document.getElementById('primary-tenant').value.trim() || undefined)
@@ -6031,7 +6031,7 @@ export function getHtmlTemplate(
         },
         tenant: {
           name: config.tenant?.name || 'default',
-          displayName: config.tenant?.displayName || 'Default Tenant',
+          displayName: config.tenant?.displayName || 'Initial Tenant',
           multiTenant: config.tenant?.multiTenant || false,
           baseDomain: config.tenant?.baseDomain || undefined,
           nakedDomain: config.tenant?.nakedDomain ?? false,

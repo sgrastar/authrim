@@ -28,6 +28,7 @@ import {
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
+  getDefaultTenantId,
   getTenantIdFromContext,
   getTenantSettings,
   generateId,
@@ -813,7 +814,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         tenant_id: tenantId,
         email_verified: false,
         user_type: 'end_user',
-        pii_partition: 'default',
+        pii_partition: tenantId,
         pii_status: 'pending',
       });
 
@@ -1218,7 +1219,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         invite_org_id: row.org_id,
         invited_email: row.invited_email,
       };
-    } else if (tenantId === 'default' && c.env.DB) {
+    } else if (tenantId === getDefaultTenantId(c.env) && c.env.DB) {
       // If Host header did not resolve a specific tenant, try email domain routing
       const resolvedTenantId = await resolveTenantFromEmailDomain(c.env.DB, email, c.env);
       if (resolvedTenantId) {
@@ -1257,7 +1258,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         tenant_id: tenantId,
         email_verified: false,
         user_type: 'end_user',
-        pii_partition: 'default',
+        pii_partition: tenantId,
         pii_status: 'pending',
       });
 

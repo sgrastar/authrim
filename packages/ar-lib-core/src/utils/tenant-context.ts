@@ -112,10 +112,12 @@ export function resolveTenantFromRequest(
     return hostResult;
   }
 
-  const forwardedHost =
-    request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim() ||
-    request.headers.get('X-Forwarded-Host')?.split(',')[0]?.trim();
-  if (forwardedHost) {
+  const forwardedHosts = [
+    request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim(),
+    request.headers.get('X-Forwarded-Host')?.split(',')[0]?.trim(),
+  ].filter((value, index, array): value is string => !!value && array.indexOf(value) === index);
+
+  for (const forwardedHost of forwardedHosts) {
     const forwardedHostResult = getTenantIdFromHost(forwardedHost, env);
     if (forwardedHostResult.success) {
       return forwardedHostResult;

@@ -1,3 +1,15 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "This directory contains setup and deletion scripts for managing Cloudflare resources used by the Authrim OpenID Connect Provider."
+type: reference
+tags:
+  - authrim
+  - oidc
+  - deployment
+  - cloudflare-workers
+---
 # Authrim Scripts Documentation
 
 This directory contains setup and deletion scripts for managing Cloudflare resources used by the Authrim OpenID Connect Provider.

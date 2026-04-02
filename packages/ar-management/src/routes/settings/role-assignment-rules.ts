@@ -30,12 +30,12 @@ import {
   generateEmailDomainHash,
   getEmailDomainHashSecret,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const DEFAULT_TENANT_ID = 'default';
 const MAX_RULES_PER_PAGE = 100;
 
 // =============================================================================
@@ -97,7 +97,7 @@ function validateRuleInput(input: RoleAssignmentRuleInput): string[] {
 export async function createRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const body = await c.req.json<RoleAssignmentRuleInput>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   // Validate input
   const errors = validateRuleInput(body);
@@ -209,7 +209,7 @@ export async function createRoleAssignmentRule(c: Context) {
  */
 export async function listRoleAssignmentRules(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_RULES_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const isActive = c.req.query('is_active');
@@ -268,7 +268,7 @@ export async function listRoleAssignmentRules(c: Context) {
 export async function getRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
 
@@ -308,7 +308,7 @@ export async function getRoleAssignmentRule(c: Context) {
 export async function updateRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<Partial<RoleAssignmentRuleInput>>();
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
@@ -431,7 +431,7 @@ export async function updateRoleAssignmentRule(c: Context) {
 export async function deleteRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
 
@@ -480,7 +480,7 @@ export async function deleteRoleAssignmentRule(c: Context) {
 export async function testRoleAssignmentRule(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<{
     context: {
       email?: string;
@@ -555,7 +555,7 @@ export async function testRoleAssignmentRule(c: Context) {
  */
 export async function evaluateRoleAssignmentRules(c: Context) {
   const log = getLogger(c).module('RoleAssignmentRulesAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<{
     context: {
       email?: string;

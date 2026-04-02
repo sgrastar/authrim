@@ -25,13 +25,13 @@ import {
   calculateRegionRanges,
   createNewRegionGeneration,
   validateColocationGroups,
-  DEFAULT_TENANT_ID,
   DEFAULT_TOTAL_SHARDS,
   DEFAULT_REGION_DISTRIBUTION,
   DEFAULT_COLOCATION_GROUPS,
   createErrorResponse,
   AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsTenantId } from './tenant-resolver';
 
 /**
  * Request body for PUT /api/admin/settings/region-shards
@@ -77,7 +77,7 @@ interface MigrateRequest {
  * - updatedAt: Last update timestamp
  */
 export async function getRegionShards(c: Context) {
-  const config = await getRegionShardConfig(c.env, DEFAULT_TENANT_ID);
+  const config = await getRegionShardConfig(c.env, resolveSettingsTenantId(c));
   const configV2 = config as RegionShardConfigV2;
 
   // Merge default groups with custom groups
@@ -143,7 +143,8 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
   }
 
   // Get current config
-  const currentConfig = await getRegionShardConfig(c.env, DEFAULT_TENANT_ID);
+  const tenantId = resolveSettingsTenantId(c);
+  const currentConfig = await getRegionShardConfig(c.env, tenantId);
   const currentConfigV2 = currentConfig as RegionShardConfigV2;
 
   // Calculate new region ranges
@@ -202,7 +203,7 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
   }
 
   // Save to KV
-  await saveRegionShardConfig(c.env, DEFAULT_TENANT_ID, newConfig);
+  await saveRegionShardConfig(c.env, tenantId, newConfig);
 
   // Merge with defaults for response
   const effectiveGroups = { ...DEFAULT_COLOCATION_GROUPS, ...newConfig.groups };
@@ -233,7 +234,7 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
  * Note: This does NOT affect existing resources with embedded generation/region info.
  */
 export async function deleteRegionShards(c: Context) {
-  await deleteRegionShardConfig(c.env, DEFAULT_TENANT_ID);
+  await deleteRegionShardConfig(c.env, resolveSettingsTenantId(c));
 
   // Return default config info
   const defaultRegions = calculateRegionRanges(DEFAULT_TOTAL_SHARDS, DEFAULT_REGION_DISTRIBUTION);
@@ -276,7 +277,8 @@ export async function migrateRegionShards(c: Context) {
   const reason = body.reason || 'manual-migration';
 
   // Get current config
-  const currentConfig = await getRegionShardConfig(c.env, DEFAULT_TENANT_ID);
+  const tenantId = resolveSettingsTenantId(c);
+  const currentConfig = await getRegionShardConfig(c.env, tenantId);
   const currentConfigV2 = currentConfig as RegionShardConfigV2;
 
   // Create new generation with same settings
@@ -294,7 +296,7 @@ export async function migrateRegionShards(c: Context) {
   };
 
   // Save to KV
-  await saveRegionShardConfig(c.env, DEFAULT_TENANT_ID, newConfig);
+  await saveRegionShardConfig(c.env, tenantId, newConfig);
 
   return c.json({
     success: true,
@@ -319,7 +321,7 @@ export async function migrateRegionShards(c: Context) {
  * - Warnings for non-critical issues
  */
 export async function validateRegionShardsConfig(c: Context) {
-  const config = await getRegionShardConfig(c.env, DEFAULT_TENANT_ID);
+  const config = await getRegionShardConfig(c.env, resolveSettingsTenantId(c));
   const configV2 = config as RegionShardConfigV2;
 
   const validation = validateColocationGroups(config);

@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: en
+date: 2026-03-08
+description: "This document explains the automated deployment pipeline for Authrim, covering required secrets, how to export them from the setup tool, and the overall deployment flow."
+type: guide
+tags:
+  - authrim
+  - deployment
+  - database
+  - cloudflare-workers
+  - ci-cd-deployment
+---
 # CI/CD Deployment Guide
 
 This document explains the automated deployment pipeline for Authrim, covering required secrets, how to export them from the setup tool, and the overall deployment flow.

@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-23
+description: "This document outlines the plan to migrate from raw SQL queries to Drizzle ORM for improved type safety, reduced runtime errors, and better multi-database support."
+type: spec
+tags:
+  - authrim
+  - database
+  - drizzle-orm
+  - drizzle-orm-migration
+  - proposals
+---
 # RFC: Drizzle ORM Migration
 
 | Status | Draft |

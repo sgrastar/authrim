@@ -178,7 +178,7 @@ async function redirectToIdP(
 
   // Sign if we have signing capability
   try {
-    const { privateKeyPem } = await getSigningKey(env);
+    const { privateKeyPem } = await getSigningKey(env, getTenantIdFromContext(c));
     const { signedUrl } = await signRedirectBinding(
       'SAMLRequest',
       base64Encoded,

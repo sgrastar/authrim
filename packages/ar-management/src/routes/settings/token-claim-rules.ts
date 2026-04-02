@@ -16,6 +16,7 @@ import type { Context } from 'hono';
 import {
   D1Adapter,
   getLogger,
+  getTenantIdFromContext,
   type DatabaseAdapter,
   type TokenClaimRule,
   type TokenClaimRuleRow,
@@ -34,7 +35,6 @@ import {
 // Constants
 // =============================================================================
 
-const DEFAULT_TENANT_ID = 'default';
 const MAX_RULES_PER_PAGE = 100;
 
 /** Reserved claim names that cannot be overwritten */
@@ -113,6 +113,10 @@ function validateRuleInput(input: TokenClaimRuleInput): {
   return { errors, warnings };
 }
 
+function resolveTenantId(c: Context): string {
+  return c.req.query('tenantId') || getTenantIdFromContext(c as never);
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -124,7 +128,7 @@ function validateRuleInput(input: TokenClaimRuleInput): {
 export async function createTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const body = await c.req.json<TokenClaimRuleInput>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   // Validate input
   const { errors, warnings } = validateRuleInput(body);
@@ -238,7 +242,7 @@ export async function createTokenClaimRule(c: Context) {
  */
 export async function listTokenClaimRules(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_RULES_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const isActive = c.req.query('is_active');
@@ -303,7 +307,7 @@ export async function listTokenClaimRules(c: Context) {
 export async function getTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
 
@@ -343,7 +347,7 @@ export async function getTokenClaimRule(c: Context) {
 export async function updateTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const body = await c.req.json<Partial<TokenClaimRuleInput>>();
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
@@ -477,7 +481,7 @@ export async function updateTokenClaimRule(c: Context) {
 export async function deleteTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
 
@@ -527,7 +531,7 @@ export async function deleteTokenClaimRule(c: Context) {
 export async function testTokenClaimRuleHandler(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const body = await c.req.json<{
     context: {
       subject_id: string;
@@ -599,7 +603,7 @@ export async function testTokenClaimRuleHandler(c: Context) {
  */
 export async function evaluateTokenClaimRules(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const body = await c.req.json<{
     token_type: 'access' | 'id';
     context: {

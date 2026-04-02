@@ -65,6 +65,7 @@ const { mockCoreQueryOne, mockCoreExecute, mockPiiQueryOne, MockD1Adapter, sqlTr
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  getDefaultTenantId: vi.fn(() => 'default'),
   createRuleEvaluator: vi.fn(() => ({
     evaluate: vi.fn().mockResolvedValue({
       matched_rules: [],
@@ -165,9 +166,9 @@ describe('Identity Stitching Service', () => {
     vi.clearAllMocks();
     sqlTracker.reset();
     // Reset mock implementations to defaults
-    mockCoreQueryOne.mockResolvedValue(null);
-    mockCoreExecute.mockResolvedValue({ rowsAffected: 1 });
-    mockPiiQueryOne.mockResolvedValue(null);
+    mockCoreQueryOne.mockReset().mockResolvedValue(null);
+    mockCoreExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
+    mockPiiQueryOne.mockReset().mockResolvedValue(null);
   });
 
   describe('getStitchingConfig', () => {

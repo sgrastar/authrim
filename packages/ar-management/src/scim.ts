@@ -1660,7 +1660,7 @@ app.delete('/Users/:id', async (c) => {
         ) VALUES (?, ?, ?, 'scim_api', 'scim_delete', ?)`,
           [
             userId,
-            existingUser.tenant_id || 'default',
+            existingUser.tenant_id || getTenantIdFromContext(c),
             now,
             now + retentionDays * 24 * 60 * 60 * 1000,
           ]

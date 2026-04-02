@@ -17,6 +17,7 @@ import type { Context } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
 import {
   getLogger,
+  getTenantIdFromContext,
   type CheckApiKey,
   type CheckApiOperation,
   type RateLimitTier,
@@ -72,8 +73,7 @@ async function generateApiKey(): Promise<{ key: string; hash: string; prefix: st
  * Get tenant ID from context
  */
 function getTenantId(c: Context): string {
-  // Try to get from auth context first, then fall back to default
-  return (c.get('tenant_id') as string | undefined) ?? 'default';
+  return (c.get('tenant_id') as string | undefined) ?? getTenantIdFromContext(c as never);
 }
 
 /**

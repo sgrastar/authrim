@@ -1602,7 +1602,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log('');
 
   let tenantName = 'default';
-  let tenantDisplayName = 'Default Tenant';
+  let tenantDisplayName = 'Initial Tenant';
   let baseDomain: string | undefined;
   let primaryTenant: string | undefined;
   let nakedDomain = false;
@@ -1673,7 +1673,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   tenantDisplayName = await input({
     message: t('tenant.displayNamePrompt'),
-    default: 'Default Tenant',
+    default: 'Initial Tenant',
   });
 
   if (baseDomain) {
@@ -1684,7 +1684,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
     if (nakedDomain) {
       primaryTenant = await input({
-        message: 'Primary tenant ID for naked domain (leave empty for default tenant)',
+        message: 'Primary tenant ID for naked domain (leave empty for initial tenant)',
         default: '',
         validate: (value) => {
           if (!value) {
@@ -2125,7 +2125,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     const issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto;
     console.log(`  Issuer URL:    ${chalk.cyan(issuerUrl)}`);
   }
-  console.log(`  Default Tenant: ${chalk.cyan(tenantName)}`);
+  console.log(`  Initial Tenant: ${chalk.cyan(tenantName)}`);
   console.log(`  Display Name:  ${chalk.cyan(tenantDisplayName)}`);
   console.log('');
 

@@ -90,6 +90,29 @@ describe('computeApiDomainUiState', () => {
       },
     ]);
   });
+
+  it('uses the initial tenant as the omitted-domain tenant when primaryTenant is not provided', () => {
+    const state = computeApiDomainUiState({
+      baseDomain: 'test.authrim.com',
+      multiTenantChecked: true,
+      nakedDomainChecked: true,
+      tenantName: 'acme',
+    });
+
+    expect(state.showTenantFields).toBe(false);
+    expect(state.showPrimaryTenantRow).toBe(true);
+    expect(state.exampleRows).toEqual([
+      {
+        kind: 'initial-tenant',
+        tenantName: 'acme',
+        url: 'https://test.authrim.com',
+      },
+      {
+        kind: 'other-tenant',
+        url: 'https://{tenantName}.test.authrim.com',
+      },
+    ]);
+  });
 });
 
 describe('isValidCustomDomain', () => {

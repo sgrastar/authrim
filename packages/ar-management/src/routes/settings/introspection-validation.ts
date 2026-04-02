@@ -24,7 +24,7 @@
  */
 
 import type { Context } from 'hono';
-import { getLogger, type Env } from '@authrim/ar-lib-core';
+import { getDefaultTenantId, getLogger, type Env } from '@authrim/ar-lib-core';
 
 // Default settings (for security, default is OFF = RFC 7662 standard behavior)
 const DEFAULT_SETTINGS = {
@@ -119,7 +119,7 @@ export async function getIntrospectionExpectedAudience(env: Env): Promise<string
     return settings.expectedAudience;
   }
 
-  const defaultTenantId = env.DEFAULT_TENANT_ID || 'default';
+  const defaultTenantId = getDefaultTenantId(env);
   const primaryTenantId = env.PRIMARY_TENANT_ID || defaultTenantId;
 
   if (env.BASE_DOMAIN) {

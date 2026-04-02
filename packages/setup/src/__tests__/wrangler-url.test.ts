@@ -15,6 +15,14 @@ import {
   WORKERS_SUBDOMAIN,
 } from '../../../../test/fixtures/deployment-matrix.js';
 
+function expectedPrimaryTenantId(config: AuthrimConfig): string | undefined {
+  if (!config.tenant?.multiTenant || !config.tenant.baseDomain) {
+    return undefined;
+  }
+
+  return config.tenant.primaryTenant || (config.tenant.nakedDomain ? config.tenant.name : undefined);
+}
+
 // =============================================================================
 // deriveAllowedOrigins — 27 tests
 // =============================================================================
@@ -53,8 +61,9 @@ describe('generateEnvVars - ar-auth', () => {
     }
 
     // PRIMARY_TENANT_ID
-    if (expected.PRIMARY_TENANT_ID) {
-      expect(vars['PRIMARY_TENANT_ID']).toBe(expected.PRIMARY_TENANT_ID);
+    const expectedPrimaryTenant = expected.PRIMARY_TENANT_ID || expectedPrimaryTenantId(config);
+    if (expectedPrimaryTenant) {
+      expect(vars['PRIMARY_TENANT_ID']).toBe(expectedPrimaryTenant);
     } else {
       expect(vars['PRIMARY_TENANT_ID']).toBeUndefined();
     }
@@ -106,8 +115,9 @@ describe('generateEnvVars - ar-management', () => {
       expect(vars['BASE_DOMAIN']).toBeUndefined();
     }
 
-    if (scenario.config.primaryTenantId) {
-      expect(vars['PRIMARY_TENANT_ID']).toBe(scenario.config.primaryTenantId);
+    const expectedPrimaryTenant = expectedPrimaryTenantId(config);
+    if (expectedPrimaryTenant) {
+      expect(vars['PRIMARY_TENANT_ID']).toBe(expectedPrimaryTenant);
     } else {
       expect(vars['PRIMARY_TENANT_ID']).toBeUndefined();
     }
@@ -226,5 +236,177 @@ describe('ISSUER_URL consistency with runtime issuer', () => {
       // The ISSUER_URL env var must equal the expected runtime issuer URL.
       expect(vars['ISSUER_URL']).toBe(scenario.expected.issuerUrl);
     }
+  });
+});
+
+describe('generateEnvVars - explicit tenant mode toggles', () => {
+  it('does not enable naked-domain issuer mode just because PRIMARY_TENANT_ID is set', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: 'https://test.authrim.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: true,
+        baseDomain: 'test.authrim.com',
+        primaryTenant: 'acme',
+        nakedDomain: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      cloudflare: {},
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+
+    expect(vars['DEFAULT_TENANT_ID']).toBe('default');
+    expect(vars['BASE_DOMAIN']).toBe('test.authrim.com');
+    expect(vars['PRIMARY_TENANT_ID']).toBe('acme');
+    expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBeUndefined();
+  });
+
+  it('defaults PRIMARY_TENANT_ID to the initial tenant when naked-domain mode is enabled', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: 'https://test.authrim.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'acme',
+        displayName: 'Acme',
+        multiTenant: true,
+        baseDomain: 'test.authrim.com',
+        nakedDomain: true,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      cloudflare: {},
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+
+    expect(vars['DEFAULT_TENANT_ID']).toBe('acme');
+    expect(vars['PRIMARY_TENANT_ID']).toBe('acme');
+    expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBe('true');
   });
 });

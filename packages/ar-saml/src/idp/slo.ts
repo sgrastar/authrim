@@ -25,6 +25,8 @@ import {
   shouldUseBuiltinForms,
   createConfigurationError,
   getTenantIdFromContext,
+  getDefaultTenantId,
+  usesNakedDomainIssuer,
   buildIssuerUrl,
   getLogger,
   createLogger,
@@ -293,7 +295,7 @@ async function terminateSessionByNameId(
     // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
     // Log warning for debugging
     // PII/Non-PII DB separation: search email in PII DB
-    const tenantId = 'default';
+    const tenantId = getTenantIdFromContext(c);
     let user: { id: string } | null = null;
     const piiAdapter: DatabaseAdapter | null = env.DB_PII
       ? new D1Adapter({ db: env.DB_PII })
@@ -392,8 +394,9 @@ async function sendLogoutResponse(
 
   // Sign the response
   try {
-    const { privateKeyPem } = await getSigningKey(env);
-    const certificate = await getSigningCertificate(env);
+    const tenantId = getTenantIdFromContext(c);
+    const { privateKeyPem } = await getSigningKey(env, tenantId);
+    const certificate = await getSigningCertificate(env, tenantId);
 
     responseXml = signXml(responseXml, {
       privateKey: privateKeyPem,
@@ -511,7 +514,7 @@ async function buildLogoutCompleteUrl(
     uiConfig,
     'logoutComplete',
     queryParams,
-    tenantId !== 'default' ? tenantId : undefined
+    usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
   );
   return { type: 'redirect', url };
 }
@@ -524,7 +527,7 @@ export async function initiateIdPLogout(
   userId: string,
   spConfig: SAMLSPConfig,
   sessionIndex?: string,
-  tenantId = 'default'
+  tenantId = getDefaultTenantId(env)
 ): Promise<{ logoutRequestXml: string; destination: string }> {
   // Get user info for NameID (PII/Non-PII DB separation)
   let nameId: string | null = null;
@@ -558,8 +561,8 @@ export async function initiateIdPLogout(
 
   // Sign the request
   try {
-    const { privateKeyPem } = await getSigningKey(env);
-    const certificate = await getSigningCertificate(env);
+    const { privateKeyPem } = await getSigningKey(env, tenantId);
+    const certificate = await getSigningCertificate(env, tenantId);
 
     logoutRequestXml = signXml(logoutRequestXml, {
       privateKey: privateKeyPem,

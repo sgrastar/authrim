@@ -14,7 +14,7 @@
 import type { Context } from 'hono';
 import type { JWK } from 'jose';
 import type { Env } from '../../types';
-import { getLogger } from '@authrim/ar-lib-core';
+import { getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
 /**
  * Status List Credential response format
@@ -46,6 +46,10 @@ interface StatusListData {
   purpose: 'revocation' | 'suspension';
   encoded_list: string;
   updated_at: string;
+}
+
+function matchesRequestTenant(c: Context<{ Bindings: Env }>, listData: StatusListData): boolean {
+  return listData.tenant_id === getTenantIdFromContext(c);
 }
 
 /**
@@ -92,7 +96,7 @@ async function generateStatusListCredentialJWT(
   issuerUrl: string
 ): Promise<string> {
   // Get signing key from KeyManager
-  const keyManagerId = env.KEY_MANAGER.idFromName('default');
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${listData.tenant_id}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Get active EC key for signing
@@ -209,6 +213,16 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
     );
   }
 
+  if (!matchesRequestTenant(c, listData)) {
+    return c.json(
+      {
+        error: 'not_found',
+        error_description: 'Status list not found',
+      },
+      404
+    );
+  }
+
   // Calculate ETag
   const etag = await calculateETag(listData.id, listData.encoded_list, listData.updated_at);
 
@@ -275,6 +289,16 @@ export async function statusListJsonRoute(c: Context<{ Bindings: Env }>): Promis
 
   if (!listData) {
     // SECURITY: Do not expose status list ID in error message to prevent enumeration
+    return c.json(
+      {
+        error: 'not_found',
+        error_description: 'Status list not found',
+      },
+      404
+    );
+  }
+
+  if (!matchesRequestTenant(c, listData)) {
     return c.json(
       {
         error: 'not_found',

@@ -22,6 +22,7 @@ import {
   AdminUserRepository,
   AdminPasskeyRepository,
   AdminSessionRepository,
+  getDefaultTenantId,
   getAdminCookieSameSite,
 } from '@authrim/ar-lib-core';
 
@@ -508,8 +509,8 @@ adminSetupApiApp.post('/api/admin/setup-token/generate', async (c) => {
 
     await adminAdapter.execute(
       `INSERT INTO admin_setup_tokens (id, tenant_id, admin_user_id, status, expires_at, created_at, created_by)
-       VALUES (?, 'default', ?, 'pending', ?, ?, 'cli')`,
-      [tokenId, admin_user_id, expiresAt, now]
+       VALUES (?, ?, ?, 'pending', ?, ?, 'cli')`,
+      [tokenId, getDefaultTenantId(c.env), admin_user_id, expiresAt, now]
     );
 
     logger.info('Setup token generated via CLI', {
@@ -702,7 +703,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
     try {
       await adminSessionRepo.createSession({
         id: sessionId,
-        tenant_id: 'default',
+        tenant_id: getDefaultTenantId(c.env),
         admin_user_id: adminUser.id,
         ip_address:
           c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,

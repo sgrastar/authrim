@@ -184,7 +184,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           tenant_id: tenantId,
           email_verified: false,
           user_type: 'end_user',
-          pii_partition: 'default',
+          pii_partition: tenantId,
           pii_status: 'pending',
         });
 

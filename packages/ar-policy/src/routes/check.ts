@@ -24,6 +24,7 @@ import {
   AR_ERROR_CODES,
   createLogger,
   createCheckAuditService,
+  getDefaultTenantId,
   type CheckApiRequest,
   type UnifiedCheckService,
   type ReBACConfig,
@@ -438,6 +439,7 @@ async function getCheckService(
     cacheTTL: 60,
     debugMode,
     auditService,
+    defaultTenantId: getDefaultTenantId(env),
   });
 
   return { checkService, auditService };
@@ -505,7 +507,7 @@ checkRoutes.post('/', async (c) => {
     db: c.env.DB,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: c.env.DEFAULT_TENANT_ID,
+    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -634,7 +636,7 @@ checkRoutes.post('/', async (c) => {
       subject_id: body.subject_id,
       subject_type: body.subject_type ?? 'user',
       permission: body.permission,
-      tenant_id: body.tenant_id ?? auth.tenantId ?? c.env.DEFAULT_TENANT_ID ?? 'default',
+      tenant_id: body.tenant_id ?? auth.tenantId ?? getDefaultTenantId(c.env),
       resource_context: body.resource_context,
       rebac: body.rebac,
     };
@@ -675,7 +677,7 @@ checkRoutes.post('/batch', async (c) => {
     db: c.env.DB,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: c.env.DEFAULT_TENANT_ID,
+    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -794,7 +796,7 @@ checkRoutes.post('/batch', async (c) => {
     }
 
     // Apply default tenant_id (use auth context tenant if available)
-    const defaultTenantId = auth.tenantId ?? c.env.DEFAULT_TENANT_ID ?? 'default';
+    const defaultTenantId = auth.tenantId ?? getDefaultTenantId(c.env);
     const normalizedChecks = body.checks.map((check) => ({
       ...check,
       subject_type: check.subject_type ?? 'user',

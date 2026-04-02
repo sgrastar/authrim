@@ -23,6 +23,7 @@ import type { Env } from '../types';
 import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
 import {
   getRegionShardConfig,
+  getDefaultTenantId,
   resolveShardForNewResource,
   parseRegionId,
   createRegionId,
@@ -37,11 +38,6 @@ import {
  * Uses generic stub type since CredentialOfferStore uses fetch() pattern
  */
 type CredentialOfferStoreStub = DurableObjectStub;
-
-/**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
 
 /**
  * Generate a new region-sharded credential offer ID.
@@ -145,7 +141,7 @@ export function parseCredentialOfferId(
 export function getCredentialOfferStoreById(
   env: Env,
   offerId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string = getDefaultTenantId(env as unknown as Parameters<typeof getDefaultTenantId>[0])
 ): {
   stub: CredentialOfferStoreStub;
   resolution: ShardResolution;

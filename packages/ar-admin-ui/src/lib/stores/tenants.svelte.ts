@@ -35,7 +35,7 @@ function createTenantStore() {
 
 		/** The current default tenant id */
 		get defaultTenantId(): string {
-			return tenants.find((t) => t.is_default)?.id ?? 'default';
+			return tenants.find((t) => t.is_default)?.id ?? tenants[0]?.id ?? '';
 		},
 
 		/** Fetch the full tenant list from the API */

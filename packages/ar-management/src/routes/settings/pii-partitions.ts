@@ -29,6 +29,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsTenantId } from './tenant-resolver';
 
 /**
  * Request body for PUT /api/admin/settings/pii-partitions
@@ -55,11 +56,6 @@ interface TestPartitionRoutingRequest {
   /** Simulated CF geo properties */
   cfData?: CfGeoProperties;
 }
-
-/**
- * Default tenant ID (single-tenant mode)
- */
-const DEFAULT_TENANT_ID = 'default';
 
 /**
  * Available partitions (initially only default)
@@ -104,11 +100,12 @@ function getAvailablePartitions(env: Record<string, unknown>): string[] {
 export async function getPartitionSettings(c: Context) {
   const kv = c.env.AUTHRIM_CONFIG;
   const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);
+  const tenantId = resolveSettingsTenantId(c);
 
   let settings: PartitionSettings | null = null;
 
   if (kv) {
-    const kvKey = buildPartitionSettingsKvKey(DEFAULT_TENANT_ID);
+    const kvKey = buildPartitionSettingsKvKey(tenantId);
     const raw = await kv.get(kvKey);
     if (raw) {
       try {
@@ -165,9 +162,10 @@ export async function updatePartitionSettings(c: Context<{ Bindings: Env }>) {
   }
 
   const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);
+  const tenantId = resolveSettingsTenantId(c);
 
   // Get current settings
-  const kvKey = buildPartitionSettingsKvKey(DEFAULT_TENANT_ID);
+  const kvKey = buildPartitionSettingsKvKey(tenantId);
   let currentSettings: PartitionSettings | null = null;
   const rawSettings = await kv.get(kvKey);
   if (rawSettings) {
@@ -248,7 +246,7 @@ export async function testPartitionRouting(c: Context<{ Bindings: Env }>) {
   // Get settings
   let settings: PartitionSettings | null = null;
   if (kv) {
-    const kvKey = buildPartitionSettingsKvKey(DEFAULT_TENANT_ID);
+    const kvKey = buildPartitionSettingsKvKey(resolveSettingsTenantId(c));
     const raw = await kv.get(kvKey);
     if (raw) {
       try {
@@ -368,7 +366,7 @@ export async function deletePartitionSettings(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.CONFIG_KV_NOT_CONFIGURED);
   }
 
-  const kvKey = buildPartitionSettingsKvKey(DEFAULT_TENANT_ID);
+  const kvKey = buildPartitionSettingsKvKey(resolveSettingsTenantId(c));
   await kv.delete(kvKey);
 
   const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);

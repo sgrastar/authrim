@@ -70,7 +70,9 @@
 	// Derived: Check if there are unsaved changes
 	const hasChanges = $derived(pendingPatches.length > 0);
 	const hasUiConfigChanges = $derived(
-		initialUiConfigForm ? JSON.stringify(uiConfigForm) !== JSON.stringify(initialUiConfigForm) : false
+		initialUiConfigForm
+			? JSON.stringify(uiConfigForm) !== JSON.stringify(initialUiConfigForm)
+			: false
 	);
 
 	// Load data on mount
@@ -99,7 +101,7 @@
 		pendingPatches = [];
 
 		try {
-			const tenantInfo = await getTenantInfo(scopeContext.tenantId ?? 'default');
+			const tenantInfo = await getTenantInfo(scopeContext.tenantId ?? settingsContext.tenantId);
 			const uiConfigResult = await adminUiConfigAPI.get();
 			const nextUiConfigForm: UIConfigForm = {
 				baseUrl: uiConfigResult.config.baseUrl ?? '',
@@ -278,16 +280,16 @@
 <div class="settings-detail-page">
 	<!-- Header -->
 	<div class="settings-detail-header">
-			<div class="settings-header-row">
-				<h1 class="page-title">Login UI</h1>
+		<div class="settings-header-row">
+			<h1 class="page-title">Login UI</h1>
 			<!-- Scope Badge -->
 			<span class="scope-badge {currentLevel}">
 				{currentLevel === 'platform' ? 'Platform' : currentLevel === 'tenant' ? 'Tenant' : 'Client'}
 			</span>
-				{#if !canEditGlobalUiConfig && !canEditLoginUiSettings}
-					<span class="readonly-badge">Read-only</span>
-				{/if}
-			</div>
+			{#if !canEditGlobalUiConfig && !canEditLoginUiSettings}
+				<span class="readonly-badge">Read-only</span>
+			{/if}
+		</div>
 		<p class="page-description">Customize the appearance of the login page for end users.</p>
 	</div>
 
@@ -338,11 +340,11 @@
 
 					<div class="setting-control">
 						<input
-								type="url"
-								id="ui-config-base-url"
-								value={uiConfigForm.baseUrl}
-								disabled={!canEditGlobalUiConfig}
-								placeholder="https://single-ar-login-ui.pages.dev"
+							type="url"
+							id="ui-config-base-url"
+							value={uiConfigForm.baseUrl}
+							disabled={!canEditGlobalUiConfig}
+							placeholder="https://single-ar-login-ui.pages.dev"
 							oninput={(e) => {
 								uiConfigForm = {
 									...uiConfigForm,
@@ -365,11 +367,11 @@
 
 						<div class="setting-control">
 							<input
-									type="text"
-									id={`ui-path-${key}`}
-									value={uiConfigForm.paths[key as UIPathKey]}
-									disabled={!canEditGlobalUiConfig}
-									oninput={(e) => {
+								type="text"
+								id={`ui-path-${key}`}
+								value={uiConfigForm.paths[key as UIPathKey]}
+								disabled={!canEditGlobalUiConfig}
+								oninput={(e) => {
 									uiConfigForm = {
 										...uiConfigForm,
 										paths: {
@@ -386,18 +388,18 @@
 			{/each}
 
 			<div class="settings-actions">
-					<button
-						onclick={discardUiConfigChanges}
-						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
-						class="btn btn-secondary"
-					>
+				<button
+					onclick={discardUiConfigChanges}
+					disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+					class="btn btn-secondary"
+				>
 					Discard Changes
 				</button>
-					<button
-						onclick={saveUiConfig}
-						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
-						class="btn btn-primary"
-					>
+				<button
+					onclick={saveUiConfig}
+					disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+					class="btn btn-primary"
+				>
 					{uiConfigSaving ? 'Saving...' : 'Save Global UI Configuration'}
 				</button>
 			</div>
@@ -514,16 +516,20 @@
 		</div>
 
 		<!-- Action buttons -->
-				<div class="settings-actions">
-					<button onclick={discardChanges} disabled={!hasChanges || saving || !canEditLoginUiSettings} class="btn btn-secondary">
-						Discard Changes
-					</button>
-					<button
-						onclick={saveChanges}
-						disabled={!hasChanges || saving || !canEditLoginUiSettings}
-						class="btn btn-primary"
-					>
-					{saving ? 'Saving...' : `Save Changes${hasChanges ? ` (${pendingPatches.length})` : ''}`}
+		<div class="settings-actions">
+			<button
+				onclick={discardChanges}
+				disabled={!hasChanges || saving || !canEditLoginUiSettings}
+				class="btn btn-secondary"
+			>
+				Discard Changes
+			</button>
+			<button
+				onclick={saveChanges}
+				disabled={!hasChanges || saving || !canEditLoginUiSettings}
+				class="btn btn-primary"
+			>
+				{saving ? 'Saving...' : `Save Changes${hasChanges ? ` (${pendingPatches.length})` : ''}`}
 			</button>
 		</div>
 

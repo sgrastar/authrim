@@ -1,3 +1,14 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "Thank you for your interest in Authrim!"
+type: document
+tags:
+  - authrim
+  - development
+  - contributing
+---
 # Contributing to Authrim
 
 Thank you for your interest in Authrim!

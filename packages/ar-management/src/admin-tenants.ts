@@ -6,7 +6,7 @@
  * - POST   /api/admin/tenants          - Create tenant
  * - GET    /api/admin/tenants/:id      - Get tenant
  * - PATCH  /api/admin/tenants/:id      - Update tenant (name, description, is_active)
- * - DELETE /api/admin/tenants/:id      - Delete tenant (default tenant not allowed)
+ * - DELETE /api/admin/tenants/:id      - Delete tenant (primary tenant not allowed)
  * - POST   /api/admin/tenants/:id/set-default - Set as default tenant
  *
  * @packageDocumentation
@@ -21,7 +21,10 @@ import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
   generateId,
+  getDefaultTenantId,
   getLogger,
+  getPrimaryTenantId,
+  getTenantIdFromContext,
   // Contract provisioning
   TENANT_POLICY_PRESETS,
   type TenantContract,
@@ -754,12 +757,14 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // The default tenant cannot be deactivated: doing so would lock out the ability
-    // to reassign the default (set-default rejects inactive tenants)
-    if (existing.is_default === 1 && updates.is_active === false) {
+    const protectedTenantId = isSingleTenantMode(c.env)
+      ? getDefaultTenantId(c.env)
+      : getPrimaryTenantId(c.env);
+
+    if (id === protectedTenantId && updates.is_active === false) {
       const reason = isSingleTenantMode(c.env)
-        ? 'The default tenant must remain active in single-tenant mode'
-        : 'Cannot deactivate the default tenant';
+        ? 'The initial tenant must remain active in single-tenant mode'
+        : 'Cannot deactivate the primary tenant';
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'is_active', reason },
       });
@@ -820,7 +825,7 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
  * Schedule a tenant deletion as an async job.
  * The tenant is immediately deactivated; all data is deleted by the Cron job.
  * Returns 202 Accepted with the job ID.
- * The 'default' tenant cannot be deleted.
+ * The primary tenant cannot be deleted.
  */
 export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
   const id = c.req.param('id')!;
@@ -829,9 +834,10 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     return blocked;
   }
 
-  if (id === 'default') {
+  const protectedTenantId = getPrimaryTenantId(c.env);
+  if (id === protectedTenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-      variables: { field: 'id', reason: 'Cannot delete the default tenant' },
+      variables: { field: 'id', reason: 'Cannot delete the primary tenant' },
     });
   }
 
@@ -849,9 +855,9 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    if (existing.is_default === 1) {
+    if (id === protectedTenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'id', reason: 'Cannot delete the default tenant' },
+        variables: { field: 'id', reason: 'Cannot delete the primary tenant' },
       });
     }
 
@@ -882,7 +888,7 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         jobId,
-        'default',
+        getTenantIdFromContext(c),
         'tenants/delete',
         'pending',
         JSON.stringify({ stage: 'queued' }),

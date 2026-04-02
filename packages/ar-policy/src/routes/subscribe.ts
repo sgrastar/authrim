@@ -19,7 +19,12 @@
 import { Hono } from 'hono';
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getDefaultTenantId,
+} from '@authrim/ar-lib-core';
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
@@ -113,7 +118,7 @@ subscribeRoutes.get('/subscribe', async (c) => {
     db: c.env.DB,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: c.env.DEFAULT_TENANT_ID,
+    defaultTenantId: getDefaultTenantId(c.env),
   };
 
   const auth = await authenticateCheckApiRequest(`Bearer ${token}`, authContext);
@@ -128,8 +133,7 @@ subscribeRoutes.get('/subscribe', async (c) => {
   }
 
   // Get tenant ID from auth context or query param
-  const tenantId =
-    c.req.query('tenant_id') || auth.tenantId || c.env.DEFAULT_TENANT_ID || 'default';
+  const tenantId = c.req.query('tenant_id') || auth.tenantId || getDefaultTenantId(c.env);
 
   try {
     // Get the PermissionChangeHub DO for this tenant
@@ -176,7 +180,7 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
     db: c.env.DB,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: c.env.DEFAULT_TENANT_ID,
+    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -188,8 +192,7 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  const tenantId =
-    c.req.query('tenant_id') || auth.tenantId || c.env.DEFAULT_TENANT_ID || 'default';
+  const tenantId = c.req.query('tenant_id') || auth.tenantId || getDefaultTenantId(c.env);
 
   try {
     const hubId = c.env.PERMISSION_CHANGE_HUB.idFromName(tenantId);

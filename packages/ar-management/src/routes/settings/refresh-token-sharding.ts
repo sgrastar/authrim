@@ -128,7 +128,7 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           `rtsc_${crypto.randomUUID()}`,
-          'default',
+          tenantId,
           clientId,
           newConfig.currentGeneration,
           newConfig.currentShardCount,
@@ -144,7 +144,7 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
           `UPDATE refresh_token_shard_configs
            SET deprecated_at = ?
            WHERE tenant_id = ? AND client_id = ? AND generation = ? AND deprecated_at IS NULL`,
-          [Date.now(), 'default', clientId, currentConfig.currentGeneration]
+          [Date.now(), tenantId, clientId, currentConfig.currentGeneration]
         );
       }
     }

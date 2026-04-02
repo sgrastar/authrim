@@ -1048,7 +1048,7 @@ export async function adminFlowCompileHandler(c: AdminContext) {
     }
 
     // Get tenantId from context
-    const tenantId = getTenantIdFromContext(asBaseContext(c)) ?? 'default';
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
 
     // Get flow from database
     const db = new D1Adapter({ db: c.env.DB });

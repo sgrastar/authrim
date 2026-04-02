@@ -16,6 +16,7 @@ describe('Domain Pattern Validation - Production Environment', () => {
     BASE_DOMAIN: 'authrim.com',
     DEFAULT_TENANT_ID: 'default',
     PRIMARY_TENANT_ID: 'main',
+    NAKED_DOMAIN_AS_ISSUER: 'true',
   };
 
   describe('Valid patterns', () => {
@@ -143,10 +144,10 @@ describe('Domain Pattern Validation - Staging Environment', () => {
   };
 
   describe('Valid patterns', () => {
-    it('should accept naked domain', () => {
+    it('should reject naked domain when omission is disabled', () => {
       const result = validateHostHeader('staging.authrim.com', stagingEnv);
-      expect(result.valid).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('should accept simple tenant', () => {
@@ -184,10 +185,10 @@ describe('Domain Pattern Validation - Test Environment', () => {
   };
 
   describe('Valid patterns', () => {
-    it('should accept naked domain', () => {
+    it('should reject naked domain when omission is disabled', () => {
       const result = validateHostHeader('test.authrim.com', testEnv);
-      expect(result.valid).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('should accept simple tenant', () => {
@@ -219,10 +220,10 @@ describe('Domain Pattern Validation - Dev Environment', () => {
   };
 
   describe('Valid patterns', () => {
-    it('should accept naked domain', () => {
+    it('should reject naked domain when omission is disabled', () => {
       const result = validateHostHeader('dev.authrim.com', devEnv);
-      expect(result.valid).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('should accept tenant', () => {

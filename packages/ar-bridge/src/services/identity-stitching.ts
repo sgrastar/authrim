@@ -9,6 +9,7 @@ import {
   createLogger,
   D1Adapter,
   type DatabaseAdapter,
+  getDefaultTenantId,
   type JITProvisioningConfig,
   type RuleEvaluationContext,
   type RuleEvaluationResult,
@@ -96,7 +97,7 @@ export async function handleIdentity(
   env: Env,
   params: HandleIdentityParams
 ): Promise<HandleIdentityResult> {
-  const { provider, userInfo, tokens, linkingUserId, tenantId = 'default' } = params;
+  const { provider, userInfo, tokens, linkingUserId, tenantId = getDefaultTenantId(env) } = params;
 
   // 1. Explicit linking to existing account
   if (linkingUserId) {
@@ -419,8 +420,8 @@ async function createUserFromExternalIdentity(
   await coreAdapter.execute(
     `INSERT INTO users_core (
       id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
-    ) VALUES (?, ?, ?, 'end_user', 'default', 'pending', ?, ?)`,
-    [id, params.tenantId, params.emailVerified ? 1 : 0, now, now]
+    ) VALUES (?, ?, ?, 'end_user', ?, 'pending', ?, ?)`,
+    [id, params.tenantId, params.emailVerified ? 1 : 0, params.tenantId, now, now]
   );
 
   // Step 2: Insert into users_pii (if DB_PII is configured)
@@ -592,13 +593,14 @@ async function createUserWithJITProvisioning(
     `INSERT INTO users_core (
       id, tenant_id, email_verified, email_domain_hash, email_domain_hash_version,
       user_type, pii_partition, pii_status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'end_user', 'default', 'pending', ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, 'end_user', ?, 'pending', ?, ?)`,
     [
       id,
       params.tenantId,
       params.emailVerified ? 1 : 0,
       emailDomainHash || null,
       emailDomainHashVersion || null,
+      params.tenantId,
       now,
       now,
     ]

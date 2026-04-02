@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-19
+description: "Load testing framework for Authrim OIDC Provider using K6."
+type: reference
+tags:
+  - authrim
+  - load-testing
+  - performance
+  - oidc
+  - testing
+---
 # Authrim Load Testing
 
 Load testing framework for Authrim OIDC Provider using K6.

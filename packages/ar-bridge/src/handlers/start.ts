@@ -89,7 +89,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const loginHint = c.req.query('login_hint');
     const maxAgeParam = c.req.query('max_age');
     const acrValues = c.req.query('acr_values');
-    const tenantId = c.req.query('tenant_id') || 'default';
+    const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
     const clientId = c.req.query('client_id');
     const codeChallenge = c.req.query('code_challenge');
     const codeChallengeMethod = c.req.query('code_challenge_method');
@@ -144,7 +144,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     );
 
     // 2. Get provider configuration (by slug or ID)
-    const provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantId);
+    const provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantIdResolved);
 
     if (!provider || !provider.enabled) {
       return c.json(
@@ -222,7 +222,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
 
     // 8. Store state in D1 (including code_challenge for client-side PKCE)
     await storeAuthState(c.env, {
-      tenantId,
+      tenantId: tenantIdResolved,
       clientId,
       providerId: provider.id,
       state,
@@ -332,16 +332,19 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           try {
             const tenantSsoSetting = await settingsManager.get('oauth.sso_enabled', {
               type: 'tenant',
-              id: tenantId,
+              id: tenantIdResolved,
             });
             if (typeof tenantSsoSetting === 'boolean') {
               ssoEnabled = tenantSsoSetting;
-              log.debug('SSO setting from tenant config', { tenantId, ssoEnabled });
+              log.debug('SSO setting from tenant config', {
+                tenantId: tenantIdResolved,
+                ssoEnabled,
+              });
             }
           } catch (error) {
             // Tenant setting not found - use provider default
             log.debug('Tenant SSO setting not found, using provider default', {
-              tenantId,
+              tenantId: tenantIdResolved,
               error: error instanceof Error ? error.message : String(error),
             });
           }
@@ -356,7 +359,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
 
       if (!ssoEnabled) {
         // SSO無効 → login_required
-        log.info('Silent Auth: SSO disabled', { clientId, tenantId });
+        log.info('Silent Auth: SSO disabled', { clientId, tenantId: tenantIdResolved });
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'login_required');
         errorRedirectUrl.searchParams.set('error_description', 'SSO is disabled for this client');

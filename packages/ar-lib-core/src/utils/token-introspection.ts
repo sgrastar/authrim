@@ -19,7 +19,7 @@ import { importJWK } from 'jose';
 import { verifyToken } from './jwt';
 import { isTokenRevoked } from './kv';
 import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken } from './dpop';
-import { buildIssuerUrl } from './issuer';
+import { buildIssuerUrl, getDefaultTenantId } from './issuer';
 import { createLogger } from './logger';
 import { getTenantIdFromHost } from './tenant-context';
 import { getTenantIdFromContext } from '../middleware/request-context';
@@ -216,7 +216,7 @@ function getValidationIssuerUrl(request: TokenValidationRequest): string {
   const tenantResolution = getTenantIdFromHost(requestHost || undefined, request.env);
   const tenantId = tenantResolution.success
     ? tenantResolution.tenantId
-    : request.env.DEFAULT_TENANT_ID || 'default';
+    : getDefaultTenantId(request.env);
 
   return buildIssuerUrl(request.env, tenantId);
 }
@@ -341,7 +341,7 @@ export async function introspectToken(
   }
 
   // Resolve tenantId for per-tenant key isolation
-  const tenantId = request.tenantId ?? 'default';
+  const tenantId = request.tenantId ?? getDefaultTenantId(request.env);
 
   // Load public key for verification
   // First, try to extract kid from JWT header

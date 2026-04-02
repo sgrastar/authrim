@@ -4,7 +4,7 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import { D1Adapter, type DatabaseAdapter, getDefaultTenantId } from '@authrim/ar-lib-core';
 import type { UpstreamProvider, TokenEndpointAuthMethod } from '../types';
 
 /**
@@ -28,7 +28,7 @@ export async function getProvider(env: Env, id: string): Promise<UpstreamProvide
 export async function getProviderByIdOrSlug(
   env: Env,
   idOrSlug: string,
-  tenantId = 'default'
+  tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
 
@@ -56,7 +56,7 @@ export async function getProviderByIdOrSlug(
 export async function getProviderByName(
   env: Env,
   name: string,
-  tenantId = 'default'
+  tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
@@ -73,7 +73,7 @@ export async function getProviderByName(
  */
 export async function listEnabledProviders(
   env: Env,
-  tenantId = 'default'
+  tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider[]> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.query<DbUpstreamProvider>(
@@ -89,7 +89,7 @@ export async function listEnabledProviders(
  */
 export async function listAllProviders(
   env: Env,
-  tenantId = 'default'
+  tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider[]> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.query<DbUpstreamProvider>(
@@ -123,7 +123,7 @@ export async function createProvider(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      provider.tenantId || 'default',
+      provider.tenantId || getDefaultTenantId(env),
       provider.slug || null,
       provider.name,
       provider.providerType,
@@ -161,7 +161,7 @@ export async function createProvider(
   return {
     ...provider,
     id,
-    tenantId: provider.tenantId || 'default',
+    tenantId: provider.tenantId || getDefaultTenantId(env),
     createdAt: now,
     updatedAt: now,
   };

@@ -35,7 +35,7 @@ export async function storeAuthState(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      state.tenantId || 'default',
+      state.tenantId,
       state.clientId || null,
       state.providerId,
       state.state,

@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-26
+description: "This file tracks the progress of translating the project to English."
+type: status
+tags:
+  - authrim
+  - localization
+  - translation-status
+  - translation
+  - status
+---
 # Translation Status
 
 This file tracks the progress of translating the project to English.

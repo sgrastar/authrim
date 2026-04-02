@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "The Trusted Client feature optimizes user experience for First-Party clients (clients owned and operated by the same organization). Clients registered as Trusted Clients can skip."
+type: spec
+tags:
+  - authrim
+  - ar-auth
+  - oidc
+  - consent
+  - security
+  - testing
+---
 # Trusted Client Feature Specification
 
 ## Overview

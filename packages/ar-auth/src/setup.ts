@@ -587,7 +587,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
         tenant_id: tenantId,
         email_verified: true, // Admin email is trusted
         user_type: 'admin',
-        pii_partition: 'default',
+        pii_partition: tenantId,
         pii_status: 'pending',
       });
 

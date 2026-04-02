@@ -39,6 +39,7 @@ import { generateAuditId } from './check-audit-service';
 import type { ReBACService, CheckRequest as ReBACCheckRequest } from '../rebac';
 import { hasIdLevelPermission, getUserIdLevelPermissions } from '../utils/resource-permissions';
 import { createLogger } from '../utils/logger';
+import { DEFAULT_TENANT_ID } from '../utils/tenant-context';
 
 const log = createLogger().module('UNIFIED-CHECK-SERVICE');
 
@@ -240,6 +241,8 @@ export interface UnifiedCheckServiceConfig {
   policyEvaluator?: PolicyEvaluator;
   /** Audit service for permission check logging (optional) */
   auditService?: CheckAuditService;
+  /** Defensive fallback when caller omitted tenant_id */
+  defaultTenantId?: string;
 }
 
 /**
@@ -283,6 +286,7 @@ export class UnifiedCheckService {
   private enableAbac: boolean;
   private policyEvaluator?: PolicyEvaluator;
   private auditService?: CheckAuditService;
+  private defaultTenantId: string;
 
   constructor(config: UnifiedCheckServiceConfig) {
     this.db = config.db;
@@ -299,6 +303,7 @@ export class UnifiedCheckService {
     this.enableAbac = config.enableAbac ?? false;
     this.policyEvaluator = config.policyEvaluator;
     this.auditService = config.auditService;
+    this.defaultTenantId = config.defaultTenantId ?? DEFAULT_TENANT_ID;
   }
 
   /**
@@ -322,7 +327,7 @@ export class UnifiedCheckService {
   ): Promise<CheckApiResponse> {
     const startTime = performance.now();
     let parsed: ParsedPermission | undefined;
-    let tenantId = request.tenant_id ?? 'default';
+    let tenantId = request.tenant_id ?? this.defaultTenantId;
 
     try {
       // Parse permission

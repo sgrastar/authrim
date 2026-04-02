@@ -80,12 +80,18 @@ describe('validateHostHeader', () => {
         (_label, scenario) => {
           const env = buildEnvFromScenario(scenario) as Partial<Env>;
           const result = validateHostHeader(BASE_DOMAIN, env);
-          expect(result.valid).toBe(true);
+          if (scenario.config.nakedDomain) {
+            expect(result.valid).toBe(true);
 
-          if (scenario.config.primaryTenantId) {
-            expect(result.tenantId).toBe(PRIMARY_TENANT);
+            if (scenario.config.primaryTenantId) {
+              expect(result.tenantId).toBe(PRIMARY_TENANT);
+            } else {
+              expect(result.tenantId).toBe(DEFAULT_TENANT);
+            }
           } else {
-            expect(result.tenantId).toBe(DEFAULT_TENANT);
+            expect(result.valid).toBe(false);
+            expect(result.tenantId).toBeNull();
+            expect(result.error).toBe('tenant_not_found');
           }
         }
       );
@@ -190,10 +196,10 @@ describe('Special domain formats', () => {
       expect(result.tenantId).toBe('acme');
     });
 
-    it('naked domain example.co.jp → default tenant', () => {
+    it('naked domain example.co.jp is rejected when omission is disabled', () => {
       const result = validateHostHeader('example.co.jp', env);
-      expect(result.valid).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('rejects partial match (evil.co.jp)', () => {
@@ -214,6 +220,7 @@ describe('Special domain formats', () => {
       BASE_DOMAIN: 'example.chiyoda.tokyo.jp',
       DEFAULT_TENANT_ID: 'default',
       PRIMARY_TENANT_ID: 'primary',
+      NAKED_DOMAIN_AS_ISSUER: 'true',
     } as Partial<Env>;
 
     it('extracts tenant from acme.example.chiyoda.tokyo.jp', () => {
@@ -243,10 +250,10 @@ describe('Special domain formats', () => {
       DEFAULT_TENANT_ID: 'default',
     } as Partial<Env>;
 
-    it('uppercase naked domain matches lowercase BASE_DOMAIN', () => {
+    it('uppercase naked domain is rejected when omission is disabled', () => {
       const result = validateHostHeader('EXAMPLE.CHIYODA.TOKYO.JP', env);
-      expect(result.valid).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('mixed case subdomain is normalized', () => {
@@ -255,8 +262,17 @@ describe('Special domain formats', () => {
       expect(result.tenantId).toBe('acme');
     });
 
-    it('lowercase host succeeds', () => {
+    it('lowercase naked host is also rejected when omission is disabled', () => {
       const result = validateHostHeader('example.chiyoda.tokyo.jp', env);
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
+    });
+
+    it('uppercase naked domain resolves when omission is enabled', () => {
+      const result = validateHostHeader('EXAMPLE.CHIYODA.TOKYO.JP', {
+        ...env,
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+      });
       expect(result.valid).toBe(true);
       expect(result.tenantId).toBe('default');
     });
@@ -274,10 +290,10 @@ describe('Special domain formats', () => {
       expect(result.tenantId).toBe('acme');
     });
 
-    it('naked domain xn--wgv71a119e.jp → default tenant', () => {
+    it('naked domain xn--wgv71a119e.jp is rejected when omission is disabled', () => {
       const result = validateHostHeader('xn--wgv71a119e.jp', env);
-      expect(result.valid).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
   });
 

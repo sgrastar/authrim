@@ -22,6 +22,7 @@ import {
   importPublicKeyFromJWK,
   parseTokenHeader,
   createLogger,
+  DEFAULT_TENANT_ID,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import type { CheckApiKey, RateLimitTier, CheckApiOperation } from '@authrim/ar-lib-core';
@@ -296,6 +297,8 @@ async function validateAccessToken(
   token: string
 ): Promise<AccessTokenValidationResult> {
   try {
+    const fallbackTenantId = ctx.defaultTenantId ?? DEFAULT_TENANT_ID;
+
     // Parse JWT parts for validation
     const parts = token.split('.');
     if (parts.length !== 3) {
@@ -320,7 +323,7 @@ async function validateAccessToken(
         valid: true,
         clientId: payload.client_id || payload.azp,
         subjectId: payload.sub,
-        tenantId: payload.tenant_id || 'default',
+        tenantId: payload.tenant_id || fallbackTenantId,
       };
     }
 
@@ -359,7 +362,7 @@ async function validateAccessToken(
       valid: true,
       clientId: tokenPayload.client_id || tokenPayload.azp,
       subjectId: payload.sub,
-      tenantId: tokenPayload.tenant_id || 'default',
+      tenantId: tokenPayload.tenant_id || fallbackTenantId,
     };
   } catch (error) {
     if (error instanceof Error) {
@@ -538,7 +541,7 @@ export async function authenticateCheckApiRequest(
       method: 'access_token',
       clientId: result.clientId,
       subjectId: result.subjectId,
-      tenantId: result.tenantId || ctx.defaultTenantId || 'default',
+      tenantId: result.tenantId || ctx.defaultTenantId || DEFAULT_TENANT_ID,
       // Access tokens get moderate rate limiting by default
       rateLimitTier: 'moderate',
       // Access tokens can do check and batch by default
@@ -551,7 +554,7 @@ export async function authenticateCheckApiRequest(
     return {
       authenticated: true,
       method: 'policy_secret',
-      tenantId: ctx.defaultTenantId || 'default',
+      tenantId: ctx.defaultTenantId || DEFAULT_TENANT_ID,
       // Policy secret gets lenient rate limiting (internal use)
       rateLimitTier: 'lenient',
       allowedOperations: ['check', 'batch', 'subscribe'],

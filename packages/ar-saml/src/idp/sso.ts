@@ -56,7 +56,8 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
   const env = c.env;
   const method = c.req.method;
   const log = getLogger(c).module('SAML-IDP');
-  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
+  const tenantId = getTenantIdFromContext(c);
+  const issuerUrl = buildIssuerUrl(env, tenantId);
 
   try {
     // Parse AuthnRequest based on binding
@@ -96,7 +97,6 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       // Conformance mode: use builtin forms
       // UI configured: redirect to external UI
       // Neither: return configuration error
-      const tenantId = getTenantIdFromContext(c);
       const uiConfig = await getUIConfig(env);
 
       if (await shouldUseBuiltinForms(env)) {
@@ -112,7 +112,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         const loginUrl = new URL(loginPath, uiConfig.baseUrl);
         loginUrl.searchParams.set('saml_request_id', authnRequest.id);
         loginUrl.searchParams.set('return_to', 'saml_sso');
-        if (tenantId && tenantId !== 'default') {
+        if (tenantId) {
           loginUrl.searchParams.set('tenant_hint', tenantId);
         }
         return c.redirect(loginUrl.toString());
@@ -134,7 +134,8 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       env,
       authnRequest,
       spConfig,
-      userInfo
+      userInfo,
+      tenantId
     );
 
     // Return response based on SP's preferred binding
@@ -411,10 +412,11 @@ async function generateSAMLResponse(
   env: Env,
   authnRequest: SAMLAuthnRequest,
   spConfig: SAMLSPConfig,
-  userInfo: { id: string; email: string; name?: string }
+  userInfo: { id: string; email: string; name?: string },
+  tenantId: string
 ): Promise<string> {
-  const { privateKeyPem, kid } = await getSigningKey(env);
-  const certificate = await getSigningCertificate(env);
+  const { privateKeyPem, kid } = await getSigningKey(env, tenantId);
+  const certificate = await getSigningCertificate(env, tenantId);
 
   // Determine NameID value based on format
   let nameIdValue: string;

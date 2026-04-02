@@ -17,7 +17,7 @@
 	let { children }: { children: Snippet } = $props();
 
 	// Tenant selector state — derived from shared store
-	let selectedTenantId = $state('default');
+	let selectedTenantId = $state('');
 
 	// Check if current page is login page
 	const isLoginPage = $derived($page.url.pathname === '/admin/login');

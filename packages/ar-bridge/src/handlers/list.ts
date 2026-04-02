@@ -5,7 +5,12 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+} from '@authrim/ar-lib-core';
 import { listEnabledProviders } from '../services/provider-store';
 import type { ProviderListResponse } from '../types';
 
@@ -16,7 +21,7 @@ import type { ProviderListResponse } from '../types';
 export async function handleListProviders(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('EXTERNAL-IDP');
   try {
-    const tenantId = c.req.query('tenant_id') || 'default';
+    const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
     const providers = await listEnabledProviders(c.env, tenantId);
 
     const response: ProviderListResponse = {

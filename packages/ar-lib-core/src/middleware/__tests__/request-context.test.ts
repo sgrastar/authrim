@@ -133,6 +133,39 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(body.tenantId).toBe('default');
     });
 
+    it('returns 200 for naked domain → explicit PRIMARY_TENANT when omission is enabled', async () => {
+      const db = createMockDB({ tenantRow: { id: 'primary' } });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        PRIMARY_TENANT_ID: 'primary',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env as Env);
+      expect(res.status).toBe(200);
+      const body = await res.json<{ tenantId: string }>();
+      expect(body.tenantId).toBe('primary');
+    });
+
+    it('returns 404 for naked domain when tenant omission is disabled', async () => {
+      const db = createMockDB({ tenantRow: { id: 'default' } });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env as Env);
+      expect(res.status).toBe(404);
+      expect(db.prepare).not.toHaveBeenCalled();
+    });
+
     it('fail-open on D1 error (does not block request)', async () => {
       const db = createMockDB({ shouldThrow: true });
       const kv = createMockKV({ cachedValue: null });

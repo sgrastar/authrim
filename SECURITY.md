@@ -1,3 +1,14 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "If you discover a security vulnerability in Authrim, please report it responsibly."
+type: policy
+tags:
+  - authrim
+  - security
+  - policy
+---
 # Security Policy
 
 ## Reporting a Vulnerability

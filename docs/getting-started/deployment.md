@@ -1,3 +1,15 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-05
+description: "This guide covers deploying Authrim to Cloudflare Workers for a production-ready OpenID Connect Provider."
+type: guide
+tags:
+  - authrim
+  - oidc
+  - deployment
+  - cloudflare-workers
+---
 # Deployment Guide
 
 This guide covers deploying Authrim to Cloudflare Workers for a production-ready OpenID Connect Provider.

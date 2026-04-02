@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "Created: 2025-01-17 Version: 1.0.0 Purpose: Technical specification for script improvements (to be deleted after implementation is complete)"
+type: spec
+tags:
+  - authrim
+  - implementation-spec
+  - improvement
+  - implementation
+  - specification
+---
 # Authrim Script Improvement Implementation Specification
 
 **Created:** 2025-01-17

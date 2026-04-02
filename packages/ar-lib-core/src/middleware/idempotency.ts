@@ -27,6 +27,7 @@ import type { Env } from '../types/env';
 import type { DatabaseAdapter, ExecuteResult } from '../db/adapter';
 import { D1Adapter } from '../db/adapters/d1-adapter';
 import { createLogger } from '../utils/logger';
+import { getDefaultTenantId } from '../utils/issuer';
 
 const log = createLogger().module('IDEMPOTENCY');
 
@@ -139,9 +140,9 @@ function getTenantId(c: Context<{ Bindings: Env }>): string {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const tenantId = (c as any).get('tenantId') as string | null;
-    return tenantId ?? 'default';
+    return tenantId ?? getDefaultTenantId(c.env);
   } catch {
-    return 'default';
+    return getDefaultTenantId(c.env);
   }
 }
 

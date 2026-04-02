@@ -1378,7 +1378,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
-  const tenantId = (clientMetadata.tenant_id as string) || 'default';
+  const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
   const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
   const profileAllowedResponseTypes = filterResponseTypesByProfile(
     ['code', 'id_token', 'id_token token', 'code id_token', 'code token', 'code id_token token'],
@@ -4325,7 +4325,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
           email_verified: true,
           phone_number_verified: true,
           user_type: 'end_user',
-          pii_partition: 'default',
+          pii_partition: tenantId,
           pii_status: 'pending',
         })
         .catch((error: unknown) => {
@@ -4423,7 +4423,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         tenant_id: tenantId,
         email_verified: false,
         user_type: 'end_user',
-        pii_partition: 'default',
+        pii_partition: tenantId,
         pii_status: 'pending',
       })
       .catch((error: unknown) => {

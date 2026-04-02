@@ -1,3 +1,15 @@
+---
+project: Authrim
+lang: en
+date: 2026-03-12
+description: "This document describes the environment variable naming conventions and all available configuration options for Authrim."
+type: document
+tags:
+  - authrim
+  - environment-variables
+  - environment
+  - variables
+---
 # Environment Variables
 
 This document describes the environment variable naming conventions and all available configuration options for Authrim.

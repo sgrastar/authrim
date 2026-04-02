@@ -34,14 +34,15 @@ import { getSigningCertificate } from '../common/key-utils';
 export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
+  const tenantId = getTenantIdFromContext(c);
 
-  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
+  const issuerUrl = buildIssuerUrl(env, tenantId);
   const entityId = `${issuerUrl}/saml/sp`;
 
   // Get signing certificate
   let signingCertificate: string;
   try {
-    signingCertificate = await getSigningCertificate(env);
+    signingCertificate = await getSigningCertificate(env, tenantId);
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

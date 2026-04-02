@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: ja
+date: 2026-01-04
+description: "Authrimの構造化ロギングシステムの仕様、使い方、設定方法についてまとめたドキュメントです。"
+type: spec
+tags:
+  - authrim
+  - diagnostic-logging
+  - multi-tenant
+  - cloudflare-workers
+  - logging
+---
 # ロギングシステム仕様書
 
 Authrimの構造化ロギングシステムの仕様、使い方、設定方法についてまとめたドキュメントです。

@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "This document describes the authentication and consent flows in the Authrim OpenID Provider."
+type: document
+tags:
+  - authrim
+  - ar-auth
+  - oidc
+  - consent
+  - identity-platform
+  - authentication-flow
+---
 # Authentication Flow Documentation
 
 This document describes the authentication and consent flows in the Authrim OpenID Provider.

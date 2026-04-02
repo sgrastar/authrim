@@ -37,17 +37,13 @@ import {
   type ShardResolution,
   ID_PREFIX,
 } from './region-sharding';
+import { getDefaultTenantId } from './issuer';
 
 /**
  * Type alias for DPoPJTIStore stub
  * Uses generic stub type since DPoPJTIStore uses fetch() pattern
  */
 type DPoPJTIStoreStub = DurableObjectStub;
-
-/**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
 
 /**
  * DPoP JTI TTL constants
@@ -183,7 +179,7 @@ export function parseDPoPJTIId(jtiId: string): (ParsedRegionId & { jti: string }
 export function getDPoPJTIStoreById(
   env: Env,
   jtiId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string = getDefaultTenantId(env)
 ): {
   stub: DPoPJTIStoreStub;
   resolution: ShardResolution;

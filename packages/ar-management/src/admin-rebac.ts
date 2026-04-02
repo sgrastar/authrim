@@ -68,8 +68,8 @@ export async function adminRelationDefinitionsListHandler(c: AdminContext) {
     const offset = (page - 1) * limit;
 
     // Build query
-    const whereClauses: string[] = ['tenant_id IN (?, ?)'];
-    const bindings: unknown[] = [tenantId, 'default'];
+    const whereClauses: string[] = ['tenant_id = ?'];
+    const bindings: unknown[] = [tenantId];
 
     if (objectType) {
       whereClauses.push('object_type = ?');
@@ -165,11 +165,7 @@ export async function adminRelationDefinitionGetHandler(c: AdminContext) {
       is_active: number;
       created_at: number;
       updated_at: number;
-    }>('SELECT * FROM relation_definitions WHERE id = ? AND tenant_id IN (?, ?)', [
-      id,
-      tenantId,
-      'default',
-    ]);
+    }>('SELECT * FROM relation_definitions WHERE id = ? AND tenant_id = ?', [id, tenantId]);
 
     if (results.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -297,7 +293,7 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
       is_active?: boolean;
     }>();
 
-    // Check if exists and belongs to tenant (not default)
+    // Check if exists and belongs to the current tenant
     const existing = await adapter.query<{ tenant_id: string }>(
       'SELECT tenant_id FROM relation_definitions WHERE id = ?',
       [id]
@@ -305,10 +301,6 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (existing[0].tenant_id === 'default') {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     if (existing[0].tenant_id !== tenantId) {
@@ -364,7 +356,7 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
 
-    // Check if exists and belongs to tenant (not default)
+    // Check if exists and belongs to the current tenant
     const existing = await adapter.query<{ tenant_id: string }>(
       'SELECT tenant_id FROM relation_definitions WHERE id = ?',
       [id]
@@ -372,10 +364,6 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (existing[0].tenant_id === 'default') {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     if (existing[0].tenant_id !== tenantId) {
@@ -706,10 +694,10 @@ export async function adminObjectTypesListHandler(c: AdminContext) {
     const results = await adapter.query<{ object_type: string; count: number }>(
       `SELECT object_type, COUNT(*) as count
        FROM relation_definitions
-       WHERE tenant_id IN (?, ?)
+       WHERE tenant_id = ?
        GROUP BY object_type
        ORDER BY object_type ASC`,
-      [tenantId, 'default']
+      [tenantId]
     );
 
     return c.json({

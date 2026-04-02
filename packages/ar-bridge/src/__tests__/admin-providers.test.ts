@@ -94,6 +94,9 @@ vi.mock('@authrim/ar-lib-core', () => {
     createLogger: () => ({
       module: () => mockLogger,
     }),
+    getTenantIdFromContext: vi.fn((c: { get?: (key: string) => string | undefined }) => {
+      return c.get?.('tenantId') || 'default';
+    }),
   };
 });
 
@@ -129,6 +132,7 @@ describe('Admin Provider API', () => {
       body?: unknown;
       params?: Record<string, string>;
       query?: Record<string, string>;
+      tenantId?: string;
     } = {}
   ) => {
     const url = new URL(`http://localhost${path}`);
@@ -147,6 +151,7 @@ describe('Admin Provider API', () => {
         json: async () => options.body,
       },
       env: mockEnv as Env,
+      get: (name: string) => (name === 'tenantId' ? options.tenantId || 'default' : undefined),
       json: vi.fn().mockImplementation((data, status = 200) => {
         return new Response(JSON.stringify(data), {
           status,

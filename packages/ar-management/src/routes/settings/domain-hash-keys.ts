@@ -19,6 +19,7 @@ import {
   validateDomainHashConfig,
   getMappingCountByVersion,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -284,7 +285,7 @@ export async function completeDomainHashKeyRotation(c: Context) {
  */
 export async function getDomainHashKeyStatus(c: Context) {
   const log = getLogger(c).module('DomainHashKeysAPI');
-  const tenantId = 'default';
+  const tenantId = getTenantIdFromContext(c as never);
 
   try {
     let config: EmailDomainHashConfig;
@@ -398,7 +399,7 @@ export async function deleteDomainHashKeyVersion(c: Context) {
     }
 
     // Check if any users still use this version
-    const usersByVersion = await getUserCountByVersion(c.env.DB, 'default');
+    const usersByVersion = await getUserCountByVersion(c.env.DB, getTenantIdFromContext(c));
     if (usersByVersion[version] && usersByVersion[version] > 0) {
       // SECURITY: Do not expose user count in error message
       log.warn('Cannot delete version - users still using it', {
