@@ -608,7 +608,10 @@ export function isZoneReadPermissionError(
       (errorOrResult.error ?? '').includes('zone:read')
     );
   }
-  return errorOrResult.code === 'zone_read_forbidden';
+  if ('code' in errorOrResult) {
+    return errorOrResult.code === 'zone_read_forbidden';
+  }
+  return false;
 }
 
 /**
