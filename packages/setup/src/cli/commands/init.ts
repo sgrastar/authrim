@@ -38,6 +38,7 @@ import {
   getWorkersSubdomain,
   checkZoneExists,
   extractZoneName,
+  isZoneReadPermissionError,
 } from '../../core/cloudflare.js';
 import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
 import {
@@ -111,6 +112,17 @@ async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig
 
     if (result.error) {
       console.log(chalk.yellow(`  ⚠ ${t('domain.zoneCheckFailed')}: ${result.error}`));
+      if (isZoneReadPermissionError(result.error)) {
+        console.log(
+          chalk.gray(
+            '    Existing zones can still work. Automatic zone verification and DNS assistance will be limited.'
+          )
+        );
+        console.log('');
+        const bind = await confirm({ message: t('domain.configureBinding'), default: true });
+        domainConfig.customDomainBinding = bind;
+        return;
+      }
       console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
       return;
     }

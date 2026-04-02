@@ -196,6 +196,24 @@ describe('ensureWildcardDnsRecord', () => {
       verificationLimited: true,
     });
   });
+
+  it('continues with limited verification when zone lookup is blocked by missing zone:read', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false }, 403));
+
+    const result = await cloudflare.ensureWildcardDnsRecord('test.example.com');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.cloudflare.com/client/v4/zones?name=example.com'
+    );
+    expect(result).toEqual({
+      created: false,
+      updated: false,
+      name: '*.test.example.com',
+      target: 'test.example.com',
+      verificationLimited: true,
+    });
+  });
 });
 
 describe('ensureWildcardDnsForMultiTenant', () => {

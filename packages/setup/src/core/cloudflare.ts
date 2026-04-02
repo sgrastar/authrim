@@ -492,6 +492,10 @@ export interface ZoneCheckResult {
   error?: string;
 }
 
+export function isZoneReadPermissionError(error?: string): boolean {
+  return (error ?? '').includes('zone:read');
+}
+
 /**
  * Extract zone name (registrable domain) from a hostname.
  * e.g., "auth.example.com" → "example.com"
@@ -1047,17 +1051,26 @@ export async function ensureWildcardDnsRecord(
     throw new Error('Not logged in to Cloudflare (run: wrangler login)');
   }
 
+  const recordName = `*.${baseDomain}`;
+  const recordTarget = baseDomain;
+
   let resolvedZoneId = zoneId || undefined;
   if (!resolvedZoneId) {
     const zoneResult = await checkZoneExists(baseDomain);
     if (!zoneResult.found || !zoneResult.zone?.id) {
+      if (isZoneReadPermissionError(zoneResult.error)) {
+        return {
+          created: false,
+          updated: false,
+          name: recordName,
+          target: recordTarget,
+          verificationLimited: true,
+        };
+      }
       throw new Error(`Cloudflare zone not found for ${baseDomain}`);
     }
     resolvedZoneId = zoneResult.zone.id;
   }
-
-  const recordName = `*.${baseDomain}`;
-  const recordTarget = baseDomain;
 
   const recordResponse = await fetch(
     `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records?name=${encodeURIComponent(recordName)}`,

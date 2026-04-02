@@ -4960,6 +4960,8 @@ export function getHtmlTemplate(
           method: 'POST',
           body: { domain },
         });
+        const permissionLimited =
+          typeof result.error === 'string' && result.error.includes('zone:read');
 
         if (result.found) {
           statusEl.textContent = '✓ ' + t('domain.zoneFound', { zone: result.zone.name, status: result.zone.status });
@@ -4968,11 +4970,13 @@ export function getHtmlTemplate(
           domainZoneId = result.zone.id;
         } else {
           const errorMsg = result.error
-            ? '⚠ ' + t('domain.zoneCheckFailed') + ': ' + result.error
+            ? permissionLimited
+              ? '⚠ ' + t('domain.zoneCheckFailed') + ': ' + result.error + ' — Existing zones can still be used; automatic verification is limited.'
+              : '⚠ ' + t('domain.zoneCheckFailed') + ': ' + result.error
             : '⚠ ' + t('domain.zoneNotFound', { zone: domain });
           statusEl.textContent = errorMsg;
           statusEl.style.color = 'var(--warning, #d97706)';
-          bindingRow.style.display = 'none';
+          bindingRow.style.display = permissionLimited ? 'flex' : 'none';
           domainZoneId = null;
         }
       } catch (e) {
