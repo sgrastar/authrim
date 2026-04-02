@@ -20,7 +20,9 @@ function expectedPrimaryTenantId(config: AuthrimConfig): string | undefined {
     return undefined;
   }
 
-  return config.tenant.primaryTenant || (config.tenant.nakedDomain ? config.tenant.name : undefined);
+  return (
+    config.tenant.primaryTenant || (config.tenant.nakedDomain ? config.tenant.name : undefined)
+  );
 }
 
 // =============================================================================
