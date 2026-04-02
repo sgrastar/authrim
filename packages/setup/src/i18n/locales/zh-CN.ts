@@ -178,6 +178,42 @@ const zhCN: Translations = {
   'domain.zoneCheckSkipped': '已跳过区域检查，继续设置...',
   'domain.continueWithoutZone': '不验证区域继续？',
   'domain.configureBinding': '为 Workers 配置自定义域名绑定',
+  'domain.action.retryCheck': '重新检查',
+  'domain.action.reloadPage': '重新加载页面',
+  'domain.action.openCloudflareDashboard': '打开 Cloudflare 控制台',
+  'domain.prereq.reviewTitle': '自定义域名检查需要额外确认',
+  'domain.prereq.reviewBody':
+    '如果您计划使用自定义域名，请在重新加载页面或刷新 Cloudflare 登录状态后再次检查。',
+  'domain.diagnostic.zone_found.title': 'Cloudflare 区域已就绪',
+  'domain.diagnostic.zone_found.body': '区域 "{{zone}}" 已可在当前 Cloudflare 账户中使用。',
+  'domain.diagnostic.zone_found.next': '您可以继续配置自定义域名绑定。',
+  'domain.diagnostic.not_logged_in.title': '需要登录 Cloudflare',
+  'domain.diagnostic.not_logged_in.body': 'Authrim 无法为这次区域检查确认 Cloudflare 登录状态。',
+  'domain.diagnostic.not_logged_in.next':
+    '1. 在终端运行 `wrangler login`。\n2. 重新加载此页面。\n3. 再次检查区域。',
+  'domain.diagnostic.token_unavailable.title': '无法加载 Cloudflare token',
+  'domain.diagnostic.token_unavailable.body':
+    '看起来 Wrangler 已登录，但当前还拿不到访问区域所需的 API token。',
+  'domain.diagnostic.token_unavailable.next':
+    '1. 先重新加载此页面再检查一次。\n2. 如果仍然失败，请重新执行 `wrangler login`。\n3. 然后再次检查区域。',
+  'domain.diagnostic.zone_read_forbidden.title': '缺少区域列表读取权限',
+  'domain.diagnostic.zone_read_forbidden.body':
+    '当前 Cloudflare token 无法读取区域列表。已有区域可能仍可使用，但自动验证和 DNS 辅助会受到限制。',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. 先重新检查一次。\n2. 如果仍然失败，请重新执行 `wrangler login`。\n3. 确认 token 具备 Zone:Read 权限。\n4. 如果区域已经存在，可以手动继续。',
+  'domain.diagnostic.zone_not_found.title': '当前账户中未找到该区域',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare 已返回响应，但当前账户下看不到区域 "{{zone}}"。',
+  'domain.diagnostic.zone_not_found.next':
+    '1. 确认该区域存在于您正在使用的 Cloudflare 账户中。\n2. 如有需要，请切换账户或打开 Cloudflare 控制台。\n3. 然后再次检查区域。',
+  'domain.diagnostic.api_error.title': 'Cloudflare API 检查失败',
+  'domain.diagnostic.api_error.body': '检查此区域时，Cloudflare API 返回了非预期响应。',
+  'domain.diagnostic.api_error.next': '请先重新检查；如果仍然失败，请重新加载此页面后再试一次。',
+  'domain.diagnostic.network_error.title': 'Cloudflare 网络检查失败',
+  'domain.diagnostic.network_error.body':
+    '由于 Cloudflare 或网络没有按预期响应，区域检查未能完成。',
+  'domain.diagnostic.network_error.next':
+    '请先重新检查；如果仍然失败，请重新加载此页面后再试一次。',
   'domain.issuerUrl': '发行者 URL：{{url}}',
   'domain.apiDomain': 'API / 发行者域名（例如：auth.example.com）',
   'domain.loginUiDomain': '登录 UI 域名（按回车跳过）',

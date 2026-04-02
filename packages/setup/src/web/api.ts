@@ -241,7 +241,19 @@ export function createApiRoutes(): Hono {
       return c.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      return c.json({ found: false, error: message }, 500);
+      return c.json(
+        {
+          found: false,
+          error: message,
+          diagnostic: {
+            code: 'api_error',
+            severity: 'error',
+            allowBinding: false,
+            actions: ['retry_check', 'reload_page'],
+          },
+        },
+        500
+      );
     }
   });
 

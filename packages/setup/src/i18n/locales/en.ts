@@ -182,6 +182,46 @@ const en: Translations = {
   'domain.zoneCheckSkipped': 'Zone check skipped, continuing with setup...',
   'domain.continueWithoutZone': 'Continue without zone verification?',
   'domain.configureBinding': 'Configure custom domain binding for Workers',
+  'domain.action.retryCheck': 'Recheck',
+  'domain.action.reloadPage': 'Reload Page',
+  'domain.action.openCloudflareDashboard': 'Open Cloudflare Dashboard',
+  'domain.prereq.reviewTitle': 'Custom-domain checks need a quick review',
+  'domain.prereq.reviewBody':
+    'If you plan to use a custom domain, retry the check after reloading the page or refreshing your Cloudflare login.',
+  'domain.diagnostic.zone_found.title': 'Cloudflare zone is ready',
+  'domain.diagnostic.zone_found.body':
+    'The zone "{{zone}}" is available in your Cloudflare account.',
+  'domain.diagnostic.zone_found.next': 'You can continue with custom-domain binding.',
+  'domain.diagnostic.not_logged_in.title': 'Cloudflare login is required',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim could not confirm a Cloudflare login for this zone check.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Run `wrangler login` in your terminal.\n2. Reload this page.\n3. Recheck the zone.',
+  'domain.diagnostic.token_unavailable.title': 'Cloudflare token could not be loaded',
+  'domain.diagnostic.token_unavailable.body':
+    'Wrangler login looks present, but the API token needed for zone access is not available yet.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Reload this page and recheck.\n2. If it still fails, run `wrangler login` again.\n3. Then retry the zone check.',
+  'domain.diagnostic.zone_read_forbidden.title': 'Zone list access is limited',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'The current Cloudflare token cannot read zone listings. Existing zones may still work, but automatic verification and DNS assistance are limited.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Recheck first.\n2. If it still fails, run `wrangler login` again.\n3. Verify that the token has Zone:Read permission.\n4. If the zone already exists, you can continue manually.',
+  'domain.diagnostic.zone_not_found.title': 'Zone was not found in this account',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare responded, but the zone "{{zone}}" was not visible in the current account.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Confirm that the zone exists in the Cloudflare account you are using.\n2. If needed, switch accounts or open the Cloudflare dashboard.\n3. Then recheck the zone.',
+  'domain.diagnostic.api_error.title': 'Cloudflare API check failed',
+  'domain.diagnostic.api_error.body':
+    'Cloudflare returned an unexpected response while checking this zone.',
+  'domain.diagnostic.api_error.next':
+    'Retry the check first. If it still fails, reload this page and try again.',
+  'domain.diagnostic.network_error.title': 'Cloudflare network check failed',
+  'domain.diagnostic.network_error.body':
+    'The zone check could not complete because Cloudflare or the network did not respond as expected.',
+  'domain.diagnostic.network_error.next':
+    'Retry the check first. If it still fails, reload this page and try again.',
   'domain.apiDomain': 'API / Issuer domain (e.g., auth.example.com)',
   'domain.loginUiDomain': 'Login UI domain (Enter to skip)',
   'domain.adminUiDomain': 'Admin UI domain (Enter to skip)',

@@ -182,6 +182,46 @@ const id: Translations = {
   'domain.zoneCheckSkipped': 'Pemeriksaan zona dilewati, melanjutkan pengaturan...',
   'domain.continueWithoutZone': 'Lanjutkan tanpa verifikasi zona?',
   'domain.configureBinding': 'Konfigurasi binding domain kustom untuk Workers',
+  'domain.action.retryCheck': 'Periksa lagi',
+  'domain.action.reloadPage': 'Muat ulang halaman',
+  'domain.action.openCloudflareDashboard': 'Buka dashboard Cloudflare',
+  'domain.prereq.reviewTitle': 'Pemeriksaan domain kustom perlu ditinjau',
+  'domain.prereq.reviewBody':
+    'Jika Anda akan memakai domain kustom, coba lagi setelah memuat ulang halaman atau memperbarui login Cloudflare.',
+  'domain.diagnostic.zone_found.title': 'Zona Cloudflare siap digunakan',
+  'domain.diagnostic.zone_found.body': 'Zona "{{zone}}" tersedia di akun Cloudflare Anda.',
+  'domain.diagnostic.zone_found.next':
+    'Anda dapat melanjutkan ke konfigurasi binding domain kustom.',
+  'domain.diagnostic.not_logged_in.title': 'Login Cloudflare diperlukan',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim tidak dapat memastikan status login Cloudflare untuk pemeriksaan zona ini.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Jalankan `wrangler login` di terminal.\n2. Muat ulang halaman ini.\n3. Periksa zona lagi.',
+  'domain.diagnostic.token_unavailable.title': 'Token Cloudflare tidak dapat dimuat',
+  'domain.diagnostic.token_unavailable.body':
+    'Login Wrangler tampak ada, tetapi token API yang dibutuhkan untuk mengakses zona belum tersedia.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Muat ulang halaman ini lalu periksa lagi.\n2. Jika masih gagal, jalankan `wrangler login` lagi.\n3. Setelah itu ulangi pemeriksaan zona.',
+  'domain.diagnostic.zone_read_forbidden.title': 'Akses ke daftar zona dibatasi',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'Token Cloudflare saat ini tidak dapat membaca daftar zona. Zona yang sudah ada mungkin tetap berfungsi, tetapi verifikasi otomatis dan bantuan DNS akan terbatas.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Periksa lagi terlebih dahulu.\n2. Jika masih gagal, jalankan `wrangler login` lagi.\n3. Pastikan token memiliki izin Zone:Read.\n4. Jika zona sudah ada, Anda dapat melanjutkan secara manual.',
+  'domain.diagnostic.zone_not_found.title': 'Zona tidak ditemukan pada akun ini',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare merespons, tetapi zona "{{zone}}" tidak terlihat pada akun saat ini.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Pastikan zona tersebut ada pada akun Cloudflare yang sedang Anda gunakan.\n2. Jika perlu, ganti akun atau buka dashboard Cloudflare.\n3. Setelah itu periksa zonanya lagi.',
+  'domain.diagnostic.api_error.title': 'Pemeriksaan API Cloudflare gagal',
+  'domain.diagnostic.api_error.body':
+    'Cloudflare mengembalikan respons yang tidak terduga saat memeriksa zona ini.',
+  'domain.diagnostic.api_error.next':
+    'Coba periksa lagi terlebih dahulu. Jika masih gagal, muat ulang halaman ini lalu coba lagi.',
+  'domain.diagnostic.network_error.title': 'Pemeriksaan jaringan ke Cloudflare gagal',
+  'domain.diagnostic.network_error.body':
+    'Pemeriksaan zona tidak dapat diselesaikan karena Cloudflare atau jaringan tidak merespons seperti yang diharapkan.',
+  'domain.diagnostic.network_error.next':
+    'Coba periksa lagi terlebih dahulu. Jika masih gagal, muat ulang halaman ini lalu coba lagi.',
   'domain.issuerUrl': 'URL Issuer: {{url}}',
   'domain.apiDomain': 'Domain API / Issuer (contoh: auth.example.com)',
   'domain.loginUiDomain': 'Domain UI Login (Enter untuk lewati)',

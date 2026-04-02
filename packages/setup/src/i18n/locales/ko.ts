@@ -179,6 +179,47 @@ const ko: Translations = {
   'domain.zoneCheckSkipped': '영역 확인을 건너뛰고 설정을 계속합니다...',
   'domain.continueWithoutZone': '영역 확인 없이 계속하시겠습니까?',
   'domain.configureBinding': 'Workers에 대한 사용자 정의 도메인 바인딩 구성',
+  'domain.action.retryCheck': '다시 확인',
+  'domain.action.reloadPage': '페이지 새로고침',
+  'domain.action.openCloudflareDashboard': 'Cloudflare 대시보드 열기',
+  'domain.prereq.reviewTitle': '사용자 정의 도메인 확인에 추가 검토가 필요합니다',
+  'domain.prereq.reviewBody':
+    '사용자 정의 도메인을 사용할 예정이라면 페이지를 새로고침하거나 Cloudflare 로그인 상태를 다시 맞춘 뒤 다시 확인하세요.',
+  'domain.diagnostic.zone_found.title': 'Cloudflare 영역을 확인했습니다',
+  'domain.diagnostic.zone_found.body':
+    '"{{zone}}" 영역을 현재 Cloudflare 계정에서 사용할 수 있습니다.',
+  'domain.diagnostic.zone_found.next':
+    '이제 사용자 정의 도메인 바인딩 설정으로 계속할 수 있습니다.',
+  'domain.diagnostic.not_logged_in.title': 'Cloudflare 로그인이 필요합니다',
+  'domain.diagnostic.not_logged_in.body':
+    '이 영역 확인에서 Cloudflare 로그인 상태를 확인할 수 없었습니다.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. 터미널에서 `wrangler login`을 실행합니다.\n2. 이 페이지를 새로고침합니다.\n3. 영역을 다시 확인합니다.',
+  'domain.diagnostic.token_unavailable.title': 'Cloudflare 토큰을 불러올 수 없습니다',
+  'domain.diagnostic.token_unavailable.body':
+    'Wrangler 로그인 상태는 있는 것 같지만, 영역 확인에 필요한 API 토큰을 아직 사용할 수 없습니다.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. 먼저 이 페이지를 새로고침하고 다시 확인합니다.\n2. 계속 실패하면 `wrangler login`을 다시 실행합니다.\n3. 그다음 영역 확인을 다시 시도합니다.',
+  'domain.diagnostic.zone_read_forbidden.title': '영역 목록 조회 권한이 부족합니다',
+  'domain.diagnostic.zone_read_forbidden.body':
+    '현재 Cloudflare 토큰으로는 영역 목록을 읽을 수 없습니다. 기존 영역은 계속 사용할 수 있을 수 있지만 자동 확인과 DNS 보조는 제한됩니다.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. 먼저 다시 확인합니다.\n2. 계속 실패하면 `wrangler login`을 다시 실행합니다.\n3. 토큰에 Zone:Read 권한이 있는지 확인합니다.\n4. 이미 있는 영역이라면 수동으로 계속할 수 있습니다.',
+  'domain.diagnostic.zone_not_found.title': '현재 계정에서 영역을 찾지 못했습니다',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare 응답은 있었지만 "{{zone}}" 영역은 현재 계정에서 보이지 않았습니다.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. 사용 중인 Cloudflare 계정에 해당 영역이 있는지 확인합니다.\n2. 필요하면 계정을 전환하거나 Cloudflare 대시보드를 엽니다.\n3. 그 후 영역을 다시 확인합니다.',
+  'domain.diagnostic.api_error.title': 'Cloudflare API 확인에 실패했습니다',
+  'domain.diagnostic.api_error.body':
+    '이 영역을 확인하는 동안 Cloudflare API가 예상하지 못한 응답을 반환했습니다.',
+  'domain.diagnostic.api_error.next':
+    '먼저 다시 확인하고, 계속 실패하면 이 페이지를 새로고침한 뒤 다시 시도하세요.',
+  'domain.diagnostic.network_error.title': 'Cloudflare 네트워크 확인에 실패했습니다',
+  'domain.diagnostic.network_error.body':
+    'Cloudflare 또는 네트워크 응답이 불안정하여 영역 확인을 완료할 수 없었습니다.',
+  'domain.diagnostic.network_error.next':
+    '먼저 다시 확인하고, 계속 실패하면 이 페이지를 새로고침한 뒤 다시 시도하세요.',
   'domain.issuerUrl': '발급자 URL: {{url}}',
   'domain.apiDomain': 'API / 발급자 도메인 (예: auth.example.com)',
   'domain.loginUiDomain': '로그인 UI 도메인 (건너뛰려면 Enter)',

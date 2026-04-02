@@ -178,6 +178,41 @@ const zhTW: Translations = {
   'domain.zoneCheckSkipped': '已跳過區域檢查，繼續設定...',
   'domain.continueWithoutZone': '不驗證區域繼續？',
   'domain.configureBinding': '為 Workers 設定自訂網域綁定',
+  'domain.action.retryCheck': '重新檢查',
+  'domain.action.reloadPage': '重新載入頁面',
+  'domain.action.openCloudflareDashboard': '開啟 Cloudflare 控制台',
+  'domain.prereq.reviewTitle': '自訂網域檢查需要額外確認',
+  'domain.prereq.reviewBody':
+    '如果您打算使用自訂網域，請在重新載入頁面或更新 Cloudflare 登入狀態後再次檢查。',
+  'domain.diagnostic.zone_found.title': 'Cloudflare 區域已準備完成',
+  'domain.diagnostic.zone_found.body': '區域 "{{zone}}" 已可在目前的 Cloudflare 帳戶中使用。',
+  'domain.diagnostic.zone_found.next': '您可以繼續設定自訂網域綁定。',
+  'domain.diagnostic.not_logged_in.title': '需要登入 Cloudflare',
+  'domain.diagnostic.not_logged_in.body': 'Authrim 無法為這次區域檢查確認 Cloudflare 的登入狀態。',
+  'domain.diagnostic.not_logged_in.next':
+    '1. 在終端機執行 `wrangler login`。\n2. 重新載入此頁面。\n3. 再次檢查區域。',
+  'domain.diagnostic.token_unavailable.title': '無法載入 Cloudflare token',
+  'domain.diagnostic.token_unavailable.body':
+    '看起來 Wrangler 已登入，但目前仍無法取得存取區域所需的 API token。',
+  'domain.diagnostic.token_unavailable.next':
+    '1. 先重新載入此頁面再檢查一次。\n2. 如果仍然失敗，請重新執行 `wrangler login`。\n3. 然後再次檢查區域。',
+  'domain.diagnostic.zone_read_forbidden.title': '缺少區域清單讀取權限',
+  'domain.diagnostic.zone_read_forbidden.body':
+    '目前的 Cloudflare token 無法讀取區域清單。既有區域可能仍可使用，但自動驗證與 DNS 輔助會受到限制。',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. 先重新檢查一次。\n2. 如果仍然失敗，請重新執行 `wrangler login`。\n3. 確認 token 具備 Zone:Read 權限。\n4. 如果區域已存在，可以手動繼續。',
+  'domain.diagnostic.zone_not_found.title': '目前帳戶中找不到該區域',
+  'domain.diagnostic.zone_not_found.body': 'Cloudflare 已回應，但目前帳戶下看不到區域 "{{zone}}"。',
+  'domain.diagnostic.zone_not_found.next':
+    '1. 確認該區域存在於您正在使用的 Cloudflare 帳戶中。\n2. 如有需要，請切換帳戶或開啟 Cloudflare 控制台。\n3. 然後再次檢查區域。',
+  'domain.diagnostic.api_error.title': 'Cloudflare API 檢查失敗',
+  'domain.diagnostic.api_error.body': '檢查此區域時，Cloudflare API 回傳了非預期的回應。',
+  'domain.diagnostic.api_error.next': '請先重新檢查；如果仍然失敗，請重新載入此頁面後再試一次。',
+  'domain.diagnostic.network_error.title': 'Cloudflare 網路檢查失敗',
+  'domain.diagnostic.network_error.body':
+    '由於 Cloudflare 或網路沒有如預期回應，區域檢查未能完成。',
+  'domain.diagnostic.network_error.next':
+    '請先重新檢查；如果仍然失敗，請重新載入此頁面後再試一次。',
   'domain.issuerUrl': '發行者 URL：{{url}}',
   'domain.apiDomain': 'API / 發行者網域（例如：auth.example.com）',
   'domain.loginUiDomain': '登入 UI 網域（按 Enter 跳過）',

@@ -183,6 +183,47 @@ const de: Translations = {
   'domain.zoneCheckSkipped': 'Zone-Überprüfung übersprungen, Einrichtung wird fortgesetzt...',
   'domain.continueWithoutZone': 'Ohne Zone-Verifizierung fortfahren?',
   'domain.configureBinding': 'Custom-Domain-Binding für Workers konfigurieren',
+  'domain.action.retryCheck': 'Erneut prüfen',
+  'domain.action.reloadPage': 'Seite neu laden',
+  'domain.action.openCloudflareDashboard': 'Cloudflare-Dashboard öffnen',
+  'domain.prereq.reviewTitle': 'Die Prüfung der Custom Domain braucht eine Nachkontrolle',
+  'domain.prereq.reviewBody':
+    'Wenn Sie eine Custom Domain verwenden möchten, prüfen Sie nach dem Neuladen der Seite oder einer erneuten Cloudflare-Anmeldung noch einmal.',
+  'domain.diagnostic.zone_found.title': 'Die Cloudflare-Zone ist bereit',
+  'domain.diagnostic.zone_found.body':
+    'Die Zone "{{zone}}" ist in Ihrem Cloudflare-Konto verfügbar.',
+  'domain.diagnostic.zone_found.next':
+    'Sie können mit der Einrichtung des Custom-Domain-Bindings fortfahren.',
+  'domain.diagnostic.not_logged_in.title': 'Eine Cloudflare-Anmeldung ist erforderlich',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim konnte für diese Zonenprüfung keine Cloudflare-Anmeldung bestätigen.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Führen Sie `wrangler login` im Terminal aus.\n2. Laden Sie diese Seite neu.\n3. Prüfen Sie die Zone erneut.',
+  'domain.diagnostic.token_unavailable.title': 'Das Cloudflare-Token konnte nicht geladen werden',
+  'domain.diagnostic.token_unavailable.body':
+    'Die Wrangler-Anmeldung scheint vorhanden zu sein, aber das für den Zonenzugriff benötigte API-Token ist noch nicht verfügbar.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Laden Sie diese Seite neu und prüfen Sie erneut.\n2. Wenn es weiter fehlschlägt, führen Sie `wrangler login` erneut aus.\n3. Starten Sie danach die Zonenprüfung noch einmal.',
+  'domain.diagnostic.zone_read_forbidden.title': 'Der Zugriff auf die Zonenliste ist eingeschränkt',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'Das aktuelle Cloudflare-Token kann die Zonenliste nicht lesen. Vorhandene Zonen können trotzdem funktionieren, aber automatische Verifizierung und DNS-Hilfe sind eingeschränkt.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Prüfen Sie zuerst erneut.\n2. Wenn es weiter fehlschlägt, führen Sie `wrangler login` erneut aus.\n3. Prüfen Sie, ob das Token die Berechtigung Zone:Read hat.\n4. Wenn die Zone bereits existiert, können Sie manuell fortfahren.',
+  'domain.diagnostic.zone_not_found.title': 'Die Zone wurde in diesem Konto nicht gefunden',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare hat geantwortet, aber die Zone "{{zone}}" ist im aktuellen Konto nicht sichtbar.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Bestätigen Sie, dass die Zone im verwendeten Cloudflare-Konto existiert.\n2. Wechseln Sie bei Bedarf das Konto oder öffnen Sie das Cloudflare-Dashboard.\n3. Prüfen Sie die Zone danach erneut.',
+  'domain.diagnostic.api_error.title': 'Die Cloudflare-API-Prüfung ist fehlgeschlagen',
+  'domain.diagnostic.api_error.body':
+    'Cloudflare hat bei der Prüfung dieser Zone unerwartet geantwortet.',
+  'domain.diagnostic.api_error.next':
+    'Prüfen Sie zuerst erneut. Wenn es weiter fehlschlägt, laden Sie diese Seite neu und versuchen Sie es noch einmal.',
+  'domain.diagnostic.network_error.title': 'Die Netzwerkprüfung zu Cloudflare ist fehlgeschlagen',
+  'domain.diagnostic.network_error.body':
+    'Die Zonenprüfung konnte nicht abgeschlossen werden, weil Cloudflare oder das Netzwerk nicht wie erwartet geantwortet hat.',
+  'domain.diagnostic.network_error.next':
+    'Prüfen Sie zuerst erneut. Wenn es weiter fehlschlägt, laden Sie diese Seite neu und versuchen Sie es noch einmal.',
   'domain.issuerUrl': 'Aussteller-URL: {{url}}',
   'domain.apiDomain': 'API-/Aussteller-Domain (z.B. auth.beispiel.de)',
   'domain.loginUiDomain': 'Login-UI-Domain (Enter zum Überspringen)',
