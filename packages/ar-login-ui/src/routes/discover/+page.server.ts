@@ -25,6 +25,7 @@ interface DiscoveryConfigResponse {
 		allow_manual_tenant_entry: boolean;
 		remember_last_tenant: boolean;
 		redirect_default_login_to_discovery: boolean;
+		host_policy: 'common_entry_only' | 'all_hosts';
 	};
 	single_tenant_mode: boolean;
 	is_common_entry_host: boolean;
@@ -135,6 +136,16 @@ function notFoundMessage(code: string): string {
 	}
 }
 
+function defaultManualMode(
+	config: DiscoveryConfigResponse['config']
+): 'tenant_code' | 'tenant_slug' {
+	if (config.discovery_methods.includes('tenant_code')) {
+		return 'tenant_code';
+	}
+
+	return 'tenant_slug';
+}
+
 export const load: PageServerLoad = async (event) => {
 	const config = await fetchDiscoveryConfig(event.fetch);
 	const rememberedCandidate = readRememberedTenant(event.cookies.get(REMEMBERED_TENANT_COOKIE));
@@ -146,6 +157,17 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (config.config.mode === 'tenant_only' && !inviteToken && !appHint) {
+		throw redirect(303, '/login');
+	}
+
+	const shouldRedirectCurrentHostToLogin =
+		!config.single_tenant_mode &&
+		!config.is_common_entry_host &&
+		config.config.host_policy === 'common_entry_only' &&
+		!inviteToken &&
+		!appHint;
+
+	if (shouldRedirectCurrentHostToLogin) {
 		throw redirect(303, '/login');
 	}
 
@@ -252,9 +274,10 @@ export const actions: Actions = {
 
 			if (result.result === 'manual_required') {
 				return {
-					mode,
+					mode: defaultManualMode(config.config),
 					value,
-					error: 'Tenant could not be resolved automatically. Use tenant code or slug.',
+					error:
+						'Tenant could not be resolved automatically. Enter your tenant code or tenant slug to continue.',
 					candidates: [],
 					result: 'manual_required' as const
 				};

@@ -8,6 +8,11 @@ const mocked = vi.hoisted(() => {
       { id: 'default', tenant_code: 'default', name: 'Default Tenant', is_active: 1 },
       { id: 'acme', tenant_code: 'acme', name: 'Acme Tenant', is_active: 1 },
       { id: 'beta', tenant_code: 'beta', name: 'Beta Tenant', is_active: 1 },
+      { id: 'inactive', tenant_code: 'inactive', name: 'Inactive Tenant', is_active: 0 },
+    ],
+    clients: [
+      { client_id: 'acme-web', tenant_id: 'acme' },
+      { client_id: 'inactive-web', tenant_id: 'inactive' },
     ],
     invitations: [
       {
@@ -33,6 +38,9 @@ const mocked = vi.hoisted(() => {
       if (query.includes('FROM tenants WHERE id = ? AND is_active = 1')) {
         return (state.tenants.find((tenant) => tenant.id === params[0] && tenant.is_active === 1) ??
           null) as T | null;
+      }
+      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
+        return (state.clients.find((client) => client.client_id === params[0]) ?? null) as T | null;
       }
       if (query.includes('FROM tenant_invitations')) {
         const token = params[0];
@@ -93,6 +101,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     SETTINGS: createMockKV({
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
+        'login-entry.host_policy': 'common_entry_only',
       }),
       'settings:tenant:acme:login-ui': JSON.stringify({
         'login-ui.brand_name': 'Acme Brand',
@@ -139,10 +148,14 @@ describe('discovery API', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       is_common_entry_host: boolean;
-      config: { redirect_default_login_to_discovery: boolean };
+      config: {
+        redirect_default_login_to_discovery: boolean;
+        host_policy: 'common_entry_only' | 'all_hosts';
+      };
     };
     expect(body.is_common_entry_host).toBe(true);
     expect(body.config.redirect_default_login_to_discovery).toBe(true);
+    expect(body.config.host_policy).toBe('common_entry_only');
   });
 
   it('resolves a tenant by tenant_code with branding precedence', async () => {
@@ -243,5 +256,72 @@ describe('discovery API', () => {
     };
     expect(body.result).toBe('manual_required');
     expect(body.allow_manual_tenant_entry).toBe(true);
+  });
+
+  it('resolves app_hint via oauth client_id', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'app_hint', value: 'acme-web' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      result: 'resolved';
+      candidate: { tenant_id: string; source: string };
+    };
+    expect(body.result).toBe('resolved');
+    expect(body.candidate.tenant_id).toBe('acme');
+    expect(body.candidate.source).toBe('app_hint');
+  });
+
+  it('returns not_found when app_hint resolves to an inactive tenant', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'app_hint', value: 'inactive-web' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { result: 'not_found'; code: string };
+    expect(body.result).toBe('not_found');
+    expect(body.code).toBe('app_hint_not_found');
+  });
+
+  it('returns not_found when app_hint is disabled in discovery methods', async () => {
+    const { app, env } = createDiscoveryApp({
+      SETTINGS: createMockKV({
+        'settings:tenant:default:login-entry': JSON.stringify({
+          'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+        }),
+      }),
+    });
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'app_hint', value: 'acme-web' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { result: 'not_found'; code: string };
+    expect(body.result).toBe('not_found');
+    expect(body.code).toBe('app_hint_not_found');
   });
 });

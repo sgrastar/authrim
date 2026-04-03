@@ -61,10 +61,16 @@ interface DiscoveryConfigResponse {
     allow_manual_tenant_entry: boolean;
     remember_last_tenant: boolean;
     redirect_default_login_to_discovery: boolean;
+    host_policy: LoginEntrySettings['login-entry.host_policy'];
   };
   single_tenant_mode: boolean;
   is_common_entry_host: boolean;
   default_candidate?: DiscoveryCandidate;
+}
+
+interface ClientLookupRow {
+  client_id: string;
+  tenant_id: string;
 }
 
 type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][number];
@@ -130,6 +136,10 @@ async function getDiscoverySettings(
     redirect_default_login_to_discovery:
       (stored?.['login-entry.redirect_default_login_to_discovery'] as boolean | undefined) ??
       LOGIN_ENTRY_DEFAULTS['login-entry.redirect_default_login_to_discovery'],
+    host_policy:
+      (stored?.['login-entry.host_policy'] as
+        | LoginEntrySettings['login-entry.host_policy']
+        | undefined) ?? LOGIN_ENTRY_DEFAULTS['login-entry.host_policy'],
   };
 }
 
@@ -149,6 +159,14 @@ async function getTenantRowByTenantCode(
   return adapter.queryOne<TenantLookupRow>(
     'SELECT id, tenant_code, name, is_active FROM tenants WHERE tenant_code = ? AND is_active = 1',
     [tenantCode]
+  );
+}
+
+async function getClientRowByClientId(env: Env, clientId: string): Promise<ClientLookupRow | null> {
+  const adapter = new D1Adapter({ db: env.DB });
+  return adapter.queryOne<ClientLookupRow>(
+    'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ?',
+    [clientId]
   );
 }
 
@@ -353,22 +371,19 @@ async function resolveDiscoveryRequest(
 
     case 'app_hint': {
       if (!settings.discovery_methods.includes('app_hint')) {
-        return buildManualRequiredResponse(settings);
+        return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const byCode = await getTenantRowByTenantCode(env, value);
-      if (byCode) {
-        return {
-          result: 'resolved',
-          candidate: await buildCandidate(env, byCode, 'app_hint'),
-        };
+      const client = await getClientRowByClientId(env, value);
+      if (!client) {
+        return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const byId = await getTenantRowById(env, value);
-      if (byId) {
+      const tenant = await getTenantRowById(env, client.tenant_id);
+      if (tenant) {
         return {
           result: 'resolved',
-          candidate: await buildCandidate(env, byId, 'app_hint'),
+          candidate: await buildCandidate(env, tenant, 'app_hint'),
         };
       }
 

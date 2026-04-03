@@ -170,6 +170,7 @@ describe('Settings API v2', () => {
         expect(body.values['login-entry.allow_manual_tenant_entry']).toBe(true);
         expect(body.values['login-entry.remember_last_tenant']).toBe(true);
         expect(body.values['login-entry.redirect_default_login_to_discovery']).toBe(true);
+        expect(body.values['login-entry.host_policy']).toBe('common_entry_only');
       });
     });
 
@@ -363,6 +364,7 @@ describe('Settings API v2', () => {
                 'login-entry.allow_manual_tenant_entry': false,
                 'login-entry.remember_last_tenant': false,
                 'login-entry.redirect_default_login_to_discovery': false,
+                'login-entry.host_policy': 'all_hosts',
               },
             }),
           },
@@ -378,6 +380,7 @@ describe('Settings API v2', () => {
         expect(body.applied).toContain('login-entry.allow_manual_tenant_entry');
         expect(body.applied).toContain('login-entry.remember_last_tenant');
         expect(body.applied).toContain('login-entry.redirect_default_login_to_discovery');
+        expect(body.applied).toContain('login-entry.host_policy');
       });
 
       it('should reject unknown keys in login-entry settings', async () => {
@@ -569,7 +572,7 @@ describe('Settings API v2', () => {
         expect(typeof body.settings).toBe('object');
       });
 
-      it('should return login-entry metadata with six settings', async () => {
+      it('should return login-entry metadata with seven settings', async () => {
         const { app, mockEnv } = createTestApp();
 
         const res = await app.request(
@@ -584,7 +587,7 @@ describe('Settings API v2', () => {
         };
 
         expect(body.category).toBe('login-entry');
-        expect(Object.keys(body.settings)).toHaveLength(6);
+        expect(Object.keys(body.settings)).toHaveLength(7);
       });
 
       it('should return 404 for unknown category', async () => {

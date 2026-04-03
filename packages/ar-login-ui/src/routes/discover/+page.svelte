@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { getDefaultDiscoveryMode, getInteractiveDiscoveryMethods } from '$lib/discovery-ui';
+
 	interface DiscoveryCandidate {
 		tenant_id: string;
 		tenant_code: string;
@@ -15,6 +17,7 @@
 				discovery_methods: string[];
 				selection_policy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
 				allow_manual_tenant_entry: boolean;
+				host_policy: 'common_entry_only' | 'all_hosts';
 			};
 			is_common_entry_host: boolean;
 			single_tenant_mode: boolean;
@@ -35,22 +38,18 @@
 	let { data, form }: { data: PageData; form?: ActionData } = $props();
 
 	const methods = $derived(data.config.config.discovery_methods);
+	const interactiveMethods = $derived(
+		getInteractiveDiscoveryMethods(methods, data.config.config.selection_policy)
+	);
 	const rememberedCandidate = $derived(data.rememberedCandidate);
 	const submittedMode = $derived(form?.mode);
 	const submittedValue = $derived(form?.value || '');
-
-	function defaultMode(methods: string[]): string {
-		if (methods.includes('email_domain')) return 'email';
-		if (methods.includes('tenant_code')) return 'tenant_code';
-		if (methods.includes('tenant_slug')) return 'tenant_slug';
-		return 'tenant_code';
-	}
 
 	let selectedMode = $state('tenant_code');
 	let value = $state('');
 
 	$effect(() => {
-		selectedMode = submittedMode || defaultMode(methods);
+		selectedMode = submittedMode || getDefaultDiscoveryMode(interactiveMethods);
 	});
 
 	$effect(() => {
@@ -116,6 +115,12 @@
 			</div>
 		{/if}
 
+		{#if data.config.config.selection_policy === 'manual_only'}
+			<div class="notice">
+				Automatic tenant discovery is disabled. Enter your tenant code or tenant slug to continue.
+			</div>
+		{/if}
+
 		{#if errorMessage}
 			<div class="alert alert-error">{errorMessage}</div>
 		{/if}
@@ -143,21 +148,18 @@
 				<input type="hidden" name="invite_token" value={data.inviteToken} />
 			{/if}
 
-			{#if methods.length > 1}
+			{#if interactiveMethods.length > 1}
 				<div class="form-group">
 					<label for="mode">Discovery method</label>
 					<select id="mode" name="mode" bind:value={selectedMode}>
-						{#if methods.includes('email_domain')}
+						{#if interactiveMethods.includes('email_domain')}
 							<option value="email">Email address</option>
 						{/if}
-						{#if methods.includes('tenant_code')}
+						{#if interactiveMethods.includes('tenant_code')}
 							<option value="tenant_code">Tenant code</option>
 						{/if}
-						{#if methods.includes('tenant_slug')}
+						{#if interactiveMethods.includes('tenant_slug')}
 							<option value="tenant_slug">Tenant slug</option>
-						{/if}
-						{#if methods.includes('app_hint')}
-							<option value="app_hint">Application hint</option>
 						{/if}
 					</select>
 				</div>
@@ -165,7 +167,7 @@
 				<input
 					type="hidden"
 					name="mode"
-					value={defaultMode(methods)}
+					value={getDefaultDiscoveryMode(interactiveMethods)}
 				/>
 			{/if}
 
