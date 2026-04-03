@@ -160,7 +160,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       ]
     );
 
-    const inviteUrl = `${buildIssuerUrl(c.env, tenantId)}/invite?token=${token}`;
+    const inviteUrl = `${buildIssuerUrl(c.env, tenantId)}/discover?invite_token=${token}`;
 
     // Conditionally send email if invited_email is specified and email plugin is available
     let emailSent = false;

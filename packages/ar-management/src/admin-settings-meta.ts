@@ -1204,9 +1204,9 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
 
     // Clone tenant with new id, name, and description
     await adapter.execute(
-      `INSERT INTO tenants (id, name, description, is_active, is_default, created_at, updated_at)
-       VALUES (?, ?, ?, 1, 0, ?, ?)`,
-      [newTenantId, name, description ?? null, nowTs, nowTs]
+      `INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
+      [newTenantId, newTenantId, name, description ?? null, nowTs, nowTs]
     );
 
     const clonedItems = {

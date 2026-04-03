@@ -26,6 +26,11 @@ interface TenantDomainMappingRow {
   priority: number;
 }
 
+export interface TenantDomainCandidate {
+  tenant_id: string;
+  priority: number;
+}
+
 // =============================================================================
 // Resolver
 // =============================================================================
@@ -44,40 +49,59 @@ interface TenantDomainMappingRow {
  * @param env - Cloudflare Workers environment bindings
  * @returns Tenant ID string, or null if no mapping found
  */
+export async function resolveTenantCandidatesFromEmailDomain(
+  db: D1Database,
+  email: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  env: any
+): Promise<TenantDomainCandidate[]> {
+  try {
+    const hashConfig = await getEmailDomainHashConfig(env);
+    const hashResult = await generateEmailDomainHashWithVersion(email, hashConfig);
+
+    const rows = await db
+      .prepare(
+        `SELECT tenant_domain_mappings.tenant_id, tenant_domain_mappings.priority
+         FROM tenant_domain_mappings
+         INNER JOIN tenants ON tenants.id = tenant_domain_mappings.tenant_id
+         WHERE domain_hash = ?
+           AND tenant_domain_mappings.verified = 1
+           AND tenant_domain_mappings.is_active = 1
+           AND tenants.is_active = 1
+         ORDER BY priority DESC, tenant_domain_mappings.tenant_id ASC`
+      )
+      .bind(hashResult.hash)
+      .all<TenantDomainMappingRow>();
+
+    const results = rows.results ?? [];
+    if (results.length === 0) {
+      return [];
+    }
+
+    log.debug('Resolved tenant candidates from email domain', {
+      count: results.length,
+      tenant_ids: results.map((row) => row.tenant_id),
+    });
+
+    return results;
+  } catch (error) {
+    // Non-fatal: fall back to default tenant
+    log.warn('Tenant domain resolution failed', { error: (error as Error).message });
+    return [];
+  }
+}
+
 export async function resolveTenantFromEmailDomain(
   db: D1Database,
   email: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   env: any
 ): Promise<string | null> {
-  try {
-    const hashConfig = await getEmailDomainHashConfig(env);
-    const hashResult = await generateEmailDomainHashWithVersion(email, hashConfig);
-
-    const row = await db
-      .prepare(
-        `SELECT tenant_id, priority
-         FROM tenant_domain_mappings
-         WHERE domain_hash = ? AND verified = 1 AND is_active = 1
-         ORDER BY priority DESC
-         LIMIT 1`
-      )
-      .bind(hashResult.hash)
-      .first<TenantDomainMappingRow>();
-
-    if (!row) {
-      return null;
-    }
-
-    log.debug('Resolved tenant from email domain', {
-      tenant_id: row.tenant_id,
-      priority: row.priority,
-    });
-
-    return row.tenant_id;
-  } catch (error) {
-    // Non-fatal: fall back to default tenant
-    log.warn('Tenant domain resolution failed', { error: (error as Error).message });
+  const candidates = await resolveTenantCandidatesFromEmailDomain(db, email, env);
+  const first = candidates[0];
+  if (!first) {
     return null;
   }
+
+  return first.tenant_id;
 }

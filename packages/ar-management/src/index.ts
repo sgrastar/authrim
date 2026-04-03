@@ -292,6 +292,7 @@ import {
 import { requireSupportedTenantParam } from './single-tenant-guard';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getLoginMethodsHandler } from './login-methods';
+import { getDiscoveryConfigHandler, postDiscoveryHandler } from './discovery';
 import {
   dataExportRequestHandler,
   dataExportStatusHandler,
@@ -802,6 +803,15 @@ app.use('/api/auth/login-methods', async (c, next) => {
   })(c, next);
 });
 app.get('/api/auth/login-methods', getLoginMethodsHandler);
+app.use('/api/auth/discovery', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/discovery'],
+  })(c, next);
+});
+app.get('/api/auth/discovery', getDiscoveryConfigHandler);
+app.post('/api/auth/discovery', postDiscoveryHandler);
 
 // Dynamic Client Registration endpoint - RFC 7591
 app.post('/register', registerHandler);

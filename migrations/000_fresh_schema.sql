@@ -6,6 +6,7 @@
 -- tenants table must be created first as other tables reference it via FK
 CREATE TABLE tenants (
   id          TEXT PRIMARY KEY,           -- slug形式: ^[a-z0-9-]+$, max 63chars
+  tenant_code TEXT NOT NULL UNIQUE,       -- 手入力/発見用コード（グローバル一意）
   name        TEXT NOT NULL,              -- 表示名
   description TEXT,
   is_active   INTEGER NOT NULL DEFAULT 1, -- 0=無効, 1=有効
@@ -19,8 +20,8 @@ CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(is_default)
   WHERE is_default = 1;
 
 -- 既存の 'default' テナントを初期挿入
-INSERT INTO tenants (id, name, is_active, is_default, created_at, updated_at)
-VALUES ('default', 'Default', 1, 1, unixepoch(), unixepoch());
+INSERT INTO tenants (id, tenant_code, name, is_active, is_default, created_at, updated_at)
+VALUES ('default', 'default', 'Default', 1, 1, unixepoch(), unixepoch());
 
 -- Platform-level email domain → tenant routing (system_admin only)
 CREATE TABLE tenant_domain_mappings (

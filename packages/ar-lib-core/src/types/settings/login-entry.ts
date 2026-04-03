@@ -21,6 +21,7 @@ export interface LoginEntrySettings {
     | 'manual_only';
   'login-entry.allow_manual_tenant_entry': boolean;
   'login-entry.remember_last_tenant': boolean;
+  'login-entry.redirect_default_login_to_discovery': boolean;
 }
 
 /**
@@ -70,6 +71,15 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     description: 'Remember the last resolved tenant for future discovery attempts.',
     visibility: 'admin',
   },
+  'login-entry.redirect_default_login_to_discovery': {
+    key: 'login-entry.redirect_default_login_to_discovery',
+    type: 'boolean',
+    default: true,
+    label: 'Redirect Default Login To Discovery',
+    description:
+      'Redirect the common-entry /login page to /discover while keeping tenant-specific /login unchanged.',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -91,4 +101,5 @@ export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.selection_policy': 'select_if_multiple',
   'login-entry.allow_manual_tenant_entry': true,
   'login-entry.remember_last_tenant': true,
+  'login-entry.redirect_default_login_to_discovery': true,
 };

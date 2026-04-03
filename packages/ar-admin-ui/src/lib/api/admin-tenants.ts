@@ -14,6 +14,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 export interface Tenant {
 	id: string;
+	tenant_code: string;
 	name: string;
 	description: string | null;
 	is_active: boolean;
@@ -37,12 +38,14 @@ export interface TenantDeleteResponse {
 
 export interface CreateTenantRequest {
 	id: string;
+	tenant_code?: string;
 	name: string;
 	description?: string;
 }
 
 export interface UpdateTenantRequest {
 	name?: string;
+	tenant_code?: string;
 	description?: string | null;
 	is_active?: boolean;
 }
