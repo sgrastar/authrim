@@ -16,6 +16,10 @@ import {
   WORKERS_SUBDOMAIN,
 } from '../../../../test/fixtures/deployment-matrix.js';
 
+function isMultiTenantConfigured(config: AuthrimConfig): boolean {
+  return config.tenant?.multiTenant === true && !!config.tenant.baseDomain;
+}
+
 // =============================================================================
 // Serialization tests
 // =============================================================================
@@ -126,6 +130,10 @@ describe('generateUiEnvContent - integration with generateEnvVars', () => {
     (_label, scenario) => {
       const config = buildAuthrimConfig(scenario) as AuthrimConfig;
       const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+      const effectiveApiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+      const expectedUiUrl = isMultiTenantConfigured(config)
+        ? effectiveApiUrl
+        : scenario.expected.arAuthEnvVars.UI_URL;
 
       // Build UI env content from wrangler-generated values (mimics real deployment flow)
       const content = generateUiEnvContent({
@@ -134,10 +142,10 @@ describe('generateUiEnvContent - integration with generateEnvVars', () => {
       });
 
       // Verify UI_URL matches scenario expectation
-      expect(vars['UI_URL']).toBe(scenario.expected.arAuthEnvVars.UI_URL);
+      expect(vars['UI_URL']).toBe(expectedUiUrl);
 
       // Verify serialized content contains the expected values
-      expect(content).toContain(`PUBLIC_API_BASE_URL=${scenario.expected.arAuthEnvVars.UI_URL}`);
+      expect(content).toContain(`PUBLIC_API_BASE_URL=${expectedUiUrl}`);
       expect(content).toContain(
         `PUBLIC_AUTHRIM_ISSUER=${scenario.expected.arAuthEnvVars.ISSUER_URL}`
       );
