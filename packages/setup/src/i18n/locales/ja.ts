@@ -180,6 +180,46 @@ const ja: Translations = {
   'domain.zoneCheckSkipped': 'ゾーン確認をスキップしてセットアップを続行します...',
   'domain.continueWithoutZone': 'ゾーン確認なしで続行しますか？',
   'domain.configureBinding': 'Workersのカスタムドメインバインディングを設定する',
+  'domain.action.retryCheck': '再確認',
+  'domain.action.reloadPage': 'ページを再読み込み',
+  'domain.action.openCloudflareDashboard': 'Cloudflare ダッシュボードを開く',
+  'domain.prereq.reviewTitle': 'カスタムドメインの確認に追加チェックが必要です',
+  'domain.prereq.reviewBody':
+    'カスタムドメインを使う予定なら、ページを再読み込みするか Cloudflare のログイン状態を更新してから再確認してください。',
+  'domain.diagnostic.zone_found.title': 'Cloudflare ゾーンを確認できました',
+  'domain.diagnostic.zone_found.body':
+    'ゾーン「{{zone}}」は現在の Cloudflare アカウントで利用できます。',
+  'domain.diagnostic.zone_found.next': 'このままカスタムドメインバインディングの設定へ進めます。',
+  'domain.diagnostic.not_logged_in.title': 'Cloudflare へのログインが必要です',
+  'domain.diagnostic.not_logged_in.body':
+    'このゾーン確認では Cloudflare のログイン状態を確認できませんでした。',
+  'domain.diagnostic.not_logged_in.next':
+    '1. ターミナルで `wrangler login` を実行します。\n2. このページを再読み込みします。\n3. ゾーンを再確認します。',
+  'domain.diagnostic.token_unavailable.title': 'Cloudflare の token を読み込めませんでした',
+  'domain.diagnostic.token_unavailable.body':
+    'wrangler のログイン状態はありそうですが、ゾーン確認に必要な API token をまだ取得できていません。',
+  'domain.diagnostic.token_unavailable.next':
+    '1. まずこのページを再読み込みして再確認します。\n2. 改善しなければ `wrangler login` をやり直します。\n3. その後でもう一度ゾーン確認を実行します。',
+  'domain.diagnostic.zone_read_forbidden.title': 'ゾーン一覧の参照権限が不足しています',
+  'domain.diagnostic.zone_read_forbidden.body':
+    '現在の Cloudflare token ではゾーン一覧を読めません。既存ゾーンは利用できる可能性がありますが、自動確認と DNS 補助は制限されます。',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. まず再確認します。\n2. 改善しなければ `wrangler login` をやり直します。\n3. token に Zone:Read 権限があるか確認します。\n4. 既存ゾーンなら手動で続行できます。',
+  'domain.diagnostic.zone_not_found.title': 'このアカウントではゾーンが見つかりません',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare から応答はありましたが、ゾーン「{{zone}}」は現在のアカウント配下で確認できませんでした。',
+  'domain.diagnostic.zone_not_found.next':
+    '1. 利用中の Cloudflare アカウントに対象ゾーンが存在するか確認します。\n2. 必要ならアカウントを切り替えるか Cloudflare ダッシュボードを開きます。\n3. その後でゾーンを再確認します。',
+  'domain.diagnostic.api_error.title': 'Cloudflare API の確認に失敗しました',
+  'domain.diagnostic.api_error.body':
+    'このゾーン確認中に Cloudflare API から想定外の応答が返されました。',
+  'domain.diagnostic.api_error.next':
+    'まず再確認し、改善しなければこのページを再読み込みしてからもう一度試してください。',
+  'domain.diagnostic.network_error.title': 'Cloudflare との通信確認に失敗しました',
+  'domain.diagnostic.network_error.body':
+    'Cloudflare またはネットワークの応答が不安定で、ゾーン確認を完了できませんでした。',
+  'domain.diagnostic.network_error.next':
+    'まず再確認し、改善しなければこのページを再読み込みしてからもう一度試してください。',
   'domain.apiDomain': 'API / Issuerドメイン（例: auth.example.com）',
   'domain.loginUiDomain': 'ログインUIドメイン（Enterでスキップ）',
   'domain.adminUiDomain': '管理UIドメイン（Enterでスキップ）',

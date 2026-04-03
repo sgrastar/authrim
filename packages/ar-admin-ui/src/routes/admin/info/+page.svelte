@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { getTenantInfo, type TenantInfo } from '$lib/api/admin-info';
 
@@ -7,6 +8,10 @@
 	let loading = $state(true);
 	let error = $state('');
 	let copiedKey = $state('');
+
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
 
 	// React to tenant switching
 	$effect(() => {
@@ -137,10 +142,30 @@
 				Well-Known / Discovery
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('OpenID Configuration', info.well_known.openid_configuration, 'wk_oidc', info.well_known.openid_configuration)}
-				{@render urlRow('OAuth Authorization Server', info.well_known.oauth_authorization_server, 'wk_oauth', info.well_known.oauth_authorization_server)}
-				{@render urlRow('JWKS (JSON Web Key Set)', info.well_known.jwks, 'wk_jwks', info.well_known.jwks)}
-				{@render urlRow('WebFinger', info.well_known.webfinger, 'wk_webfinger', info.well_known.webfinger)}
+				{@render urlRow(
+					'OpenID Configuration',
+					info.well_known.openid_configuration,
+					'wk_oidc',
+					info.well_known.openid_configuration
+				)}
+				{@render urlRow(
+					'OAuth Authorization Server',
+					info.well_known.oauth_authorization_server,
+					'wk_oauth',
+					info.well_known.oauth_authorization_server
+				)}
+				{@render urlRow(
+					'JWKS (JSON Web Key Set)',
+					info.well_known.jwks,
+					'wk_jwks',
+					info.well_known.jwks
+				)}
+				{@render urlRow(
+					'WebFinger',
+					info.well_known.webfinger,
+					'wk_webfinger',
+					info.well_known.webfinger
+				)}
 			</div>
 		</section>
 
@@ -162,12 +187,24 @@
 			<h3 class="subsection-title">OAuth 2.0 Extensions</h3>
 			<div class="url-grid">
 				{#if info.components.async}
-					{@render urlRow('Device Authorization (RFC 8628)', info.oauth_extensions.device_authorization, 'oauth_device')}
+					{@render urlRow(
+						'Device Authorization (RFC 8628)',
+						info.oauth_extensions.device_authorization,
+						'oauth_device'
+					)}
 				{:else}
 					{@render urlRow('Device Authorization (RFC 8628)', 'Not deployed', 'oauth_device_status')}
 				{/if}
-				{@render urlRow('Pushed Authorization Request (RFC 9126)', info.oauth_extensions.pushed_authorization_request, 'oauth_par')}
-				{@render urlRow('Dynamic Client Registration (RFC 7591)', info.oauth_extensions.dynamic_client_registration, 'oauth_dcr')}
+				{@render urlRow(
+					'Pushed Authorization Request (RFC 9126)',
+					info.oauth_extensions.pushed_authorization_request,
+					'oauth_par'
+				)}
+				{@render urlRow(
+					'Dynamic Client Registration (RFC 7591)',
+					info.oauth_extensions.dynamic_client_registration,
+					'oauth_dcr'
+				)}
 			</div>
 		</section>
 
@@ -179,7 +216,11 @@
 			</h2>
 			<div class="url-grid">
 				{#if info.components.async}
-					{@render urlRow('Backchannel Authentication (RFC 9449)', info.ciba.backchannel_authentication, 'ciba_auth')}
+					{@render urlRow(
+						'Backchannel Authentication (RFC 9449)',
+						info.ciba.backchannel_authentication,
+						'ciba_auth'
+					)}
 				{:else}
 					{@render urlRow('Status', 'Not deployed', 'ciba_status')}
 				{/if}
@@ -212,7 +253,12 @@
 			</h2>
 			<div class="url-grid">
 				{#if info.components.vc}
-					{@render urlRow('Credential Issuer Metadata', info.vc.credential_issuer_metadata, 'vc_meta', info.vc.credential_issuer_metadata)}
+					{@render urlRow(
+						'Credential Issuer Metadata',
+						info.vc.credential_issuer_metadata,
+						'vc_meta',
+						info.vc.credential_issuer_metadata
+					)}
 					{@render urlRow('Credential Endpoint', info.vc.credential, 'vc_credential')}
 					{@render urlRow('Batch Credential', info.vc.batch_credential, 'vc_batch')}
 					{@render urlRow('Deferred Credential', info.vc.deferred_credential, 'vc_deferred')}
@@ -233,7 +279,12 @@
 				{@render urlRow('Base URL', info.scim.base, 'scim_base')}
 				{@render urlRow('Users', info.scim.users, 'scim_users')}
 				{@render urlRow('Groups', info.scim.groups, 'scim_groups')}
-				{@render urlRow('Service Provider Config', info.scim.service_provider_config, 'scim_spc', info.scim.service_provider_config)}
+				{@render urlRow(
+					'Service Provider Config',
+					info.scim.service_provider_config,
+					'scim_spc',
+					info.scim.service_provider_config
+				)}
 			</div>
 		</section>
 

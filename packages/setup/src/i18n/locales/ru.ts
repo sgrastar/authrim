@@ -182,6 +182,45 @@ const ru: Translations = {
   'domain.zoneCheckSkipped': 'Проверка зоны пропущена, продолжение настройки...',
   'domain.continueWithoutZone': 'Продолжить без проверки зоны?',
   'domain.configureBinding': 'Настроить привязку пользовательского домена для Workers',
+  'domain.action.retryCheck': 'Проверить снова',
+  'domain.action.reloadPage': 'Перезагрузить страницу',
+  'domain.action.openCloudflareDashboard': 'Открыть панель Cloudflare',
+  'domain.prereq.reviewTitle': 'Проверка пользовательского домена требует уточнения',
+  'domain.prereq.reviewBody':
+    'Если вы планируете использовать пользовательский домен, повторите проверку после перезагрузки страницы или обновления входа в Cloudflare.',
+  'domain.diagnostic.zone_found.title': 'Зона Cloudflare готова',
+  'domain.diagnostic.zone_found.body': 'Зона "{{zone}}" доступна в вашем аккаунте Cloudflare.',
+  'domain.diagnostic.zone_found.next':
+    'Можно продолжать настройку привязки пользовательского домена.',
+  'domain.diagnostic.not_logged_in.title': 'Требуется вход в Cloudflare',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim не смог подтвердить вход в Cloudflare для этой проверки зоны.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Выполните `wrangler login` в терминале.\n2. Перезагрузите эту страницу.\n3. Повторно проверьте зону.',
+  'domain.diagnostic.token_unavailable.title': 'Не удалось загрузить токен Cloudflare',
+  'domain.diagnostic.token_unavailable.body':
+    'Похоже, вход Wrangler есть, но API-токен, нужный для доступа к зоне, пока недоступен.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Перезагрузите эту страницу и проверьте снова.\n2. Если ошибка останется, заново выполните `wrangler login`.\n3. После этого повторите проверку зоны.',
+  'domain.diagnostic.zone_read_forbidden.title': 'Доступ к списку зон ограничен',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'Текущий токен Cloudflare не может читать список зон. Существующие зоны могут продолжить работать, но автоматическая проверка и помощь с DNS будут ограничены.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Сначала проверьте снова.\n2. Если ошибка останется, заново выполните `wrangler login`.\n3. Убедитесь, что у токена есть разрешение Zone:Read.\n4. Если зона уже существует, можно продолжить вручную.',
+  'domain.diagnostic.zone_not_found.title': 'Зона не найдена в этом аккаунте',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare ответил, но зона "{{zone}}" не видна в текущем аккаунте.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Убедитесь, что зона существует в используемом аккаунте Cloudflare.\n2. При необходимости переключите аккаунт или откройте панель Cloudflare.\n3. Затем повторно проверьте зону.',
+  'domain.diagnostic.api_error.title': 'Проверка Cloudflare API завершилась ошибкой',
+  'domain.diagnostic.api_error.body': 'Cloudflare вернул неожиданный ответ при проверке этой зоны.',
+  'domain.diagnostic.api_error.next':
+    'Сначала повторите проверку. Если ошибка останется, перезагрузите страницу и попробуйте снова.',
+  'domain.diagnostic.network_error.title': 'Ошибка сетевой проверки Cloudflare',
+  'domain.diagnostic.network_error.body':
+    'Проверку зоны не удалось завершить, потому что Cloudflare или сеть ответили не так, как ожидалось.',
+  'domain.diagnostic.network_error.next':
+    'Сначала повторите проверку. Если ошибка останется, перезагрузите страницу и попробуйте снова.',
   'domain.issuerUrl': 'URL издателя: {{url}}',
   'domain.apiDomain': 'Домен API / издателя (например, auth.example.com)',
   'domain.loginUiDomain': 'Домен UI для входа (Enter для пропуска)',

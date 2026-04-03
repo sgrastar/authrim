@@ -184,6 +184,47 @@ const fr: Translations = {
   'domain.zoneCheckSkipped': 'Vérification de zone ignorée, poursuite de la configuration...',
   'domain.continueWithoutZone': 'Continuer sans vérification de zone ?',
   'domain.configureBinding': 'Configurer la liaison de domaine personnalisé pour Workers',
+  'domain.action.retryCheck': 'Vérifier à nouveau',
+  'domain.action.reloadPage': 'Recharger la page',
+  'domain.action.openCloudflareDashboard': 'Ouvrir le tableau de bord Cloudflare',
+  'domain.prereq.reviewTitle': 'La vérification du domaine personnalisé demande une revue',
+  'domain.prereq.reviewBody':
+    'Si vous comptez utiliser un domaine personnalisé, relancez la vérification après avoir rechargé la page ou rafraîchi la connexion Cloudflare.',
+  'domain.diagnostic.zone_found.title': 'La zone Cloudflare est prête',
+  'domain.diagnostic.zone_found.body':
+    'La zone "{{zone}}" est disponible dans votre compte Cloudflare.',
+  'domain.diagnostic.zone_found.next':
+    'Vous pouvez continuer avec la configuration du binding de domaine personnalisé.',
+  'domain.diagnostic.not_logged_in.title': 'Une connexion Cloudflare est nécessaire',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim n’a pas pu confirmer une connexion Cloudflare pour cette vérification de zone.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Exécutez `wrangler login` dans votre terminal.\n2. Rechargez cette page.\n3. Vérifiez à nouveau la zone.',
+  'domain.diagnostic.token_unavailable.title': 'Le jeton Cloudflare n’a pas pu être chargé',
+  'domain.diagnostic.token_unavailable.body':
+    'La connexion Wrangler semble présente, mais le jeton API nécessaire pour lire la zone n’est pas encore disponible.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Rechargez cette page puis vérifiez à nouveau.\n2. Si cela échoue encore, relancez `wrangler login`.\n3. Essayez ensuite de vérifier la zone de nouveau.',
+  'domain.diagnostic.zone_read_forbidden.title': 'L’accès à la liste des zones est limité',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'Le jeton Cloudflare actuel ne peut pas lire la liste des zones. Les zones existantes peuvent encore fonctionner, mais la vérification automatique et l’assistance DNS seront limitées.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Vérifiez de nouveau une première fois.\n2. Si cela échoue encore, relancez `wrangler login`.\n3. Vérifiez que le jeton possède la permission Zone:Read.\n4. Si la zone existe déjà, vous pouvez continuer manuellement.',
+  'domain.diagnostic.zone_not_found.title': 'La zone est introuvable dans ce compte',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare a répondu, mais la zone "{{zone}}" n’est pas visible dans le compte actuel.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Vérifiez que la zone existe dans le compte Cloudflare utilisé.\n2. Si nécessaire, changez de compte ou ouvrez le tableau de bord Cloudflare.\n3. Vérifiez ensuite la zone de nouveau.',
+  'domain.diagnostic.api_error.title': 'La vérification de l’API Cloudflare a échoué',
+  'domain.diagnostic.api_error.body':
+    'Cloudflare a renvoyé une réponse inattendue pendant la vérification de cette zone.',
+  'domain.diagnostic.api_error.next':
+    'Relancez la vérification. Si cela échoue encore, rechargez cette page puis réessayez.',
+  'domain.diagnostic.network_error.title': 'La vérification réseau vers Cloudflare a échoué',
+  'domain.diagnostic.network_error.body':
+    'La vérification de zone n’a pas pu se terminer, car Cloudflare ou le réseau n’a pas répondu comme prévu.',
+  'domain.diagnostic.network_error.next':
+    'Relancez la vérification. Si cela échoue encore, rechargez cette page puis réessayez.',
   'domain.issuerUrl': "URL de l'émetteur : {{url}}",
   'domain.apiDomain': 'Domaine API / Émetteur (ex : auth.exemple.com)',
   'domain.loginUiDomain': 'Domaine UI de connexion (Entrée pour ignorer)',

@@ -1336,6 +1336,43 @@ export function getHtmlTemplate(
       border-color: rgba(248, 113, 113, 0.24);
     }
 
+    .zone-diagnostic {
+      margin-top: 0.9rem;
+      margin-bottom: 0;
+    }
+
+    .zone-diagnostic-title {
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+      color: inherit;
+    }
+
+    .zone-diagnostic-body,
+    .zone-diagnostic-next {
+      color: inherit;
+      opacity: 0.92;
+    }
+
+    .zone-diagnostic-next {
+      margin-top: 0.45rem;
+      white-space: pre-line;
+    }
+
+    .zone-diagnostic-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 0.8rem;
+    }
+
+    .zone-diagnostic-actions .btn-secondary {
+      min-width: 0;
+    }
+
+    .domain-check-status {
+      margin-top: 0.75rem;
+    }
+
     .keys-saved-box {
       margin-top: 1rem;
       padding: 1rem 1.125rem;
@@ -2323,6 +2360,7 @@ export function getHtmlTemplate(
 
     const PREREQ_CAPABILITY_COPY = ${JSON.stringify(SETUP_CAPABILITY_COPY)};
     const CLOUDFLARE_DNS_RECORDS_DOCS = ${JSON.stringify(CLOUDFLARE_DNS_RECORDS_DOCS_URL)};
+    const CLOUDFLARE_DASHBOARD_URL = 'https://dash.cloudflare.com/';
 
     function getPrereqCapabilityCopy() {
       const locale = String(_currentLocale || 'en');
@@ -2428,7 +2466,118 @@ export function getHtmlTemplate(
       });
 
       wrapper.appendChild(list);
+
+      if (statuses.customDomain === 'review') {
+        wrapper.appendChild(createPrereqCustomDomainReviewAlert());
+      }
+
       container.appendChild(wrapper);
+    }
+
+    function createZoneActionButton(action, onRetry) {
+      if (action === 'run_wrangler_login' || action === 'check_cloudflare_permissions') {
+        return null;
+      }
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn-secondary';
+
+      if (action === 'retry_check') {
+        button.textContent = t('domain.action.retryCheck');
+        button.addEventListener('click', () => onRetry?.());
+        return button;
+      }
+
+      if (action === 'reload_page') {
+        button.textContent = t('domain.action.reloadPage');
+        button.addEventListener('click', () => window.location.reload());
+        return button;
+      }
+
+      if (action === 'open_cloudflare_dashboard') {
+        button.textContent = t('domain.action.openCloudflareDashboard');
+        button.addEventListener('click', () =>
+          window.open(CLOUDFLARE_DASHBOARD_URL, '_blank', 'noopener,noreferrer')
+        );
+        return button;
+      }
+
+      return null;
+    }
+
+    function createZoneDiagnosticAlert(result, params) {
+      const diagnostic = result?.diagnostic;
+      if (!diagnostic) {
+        return null;
+      }
+
+      const code = diagnostic.code;
+      const alertType =
+        diagnostic.severity === 'success'
+          ? 'success'
+          : diagnostic.severity === 'error'
+            ? 'error'
+            : 'warning';
+      const alert = document.createElement('div');
+      alert.className = 'alert alert-' + alertType + ' zone-diagnostic';
+
+      const title = document.createElement('div');
+      title.className = 'zone-diagnostic-title';
+      title.textContent = t('domain.diagnostic.' + code + '.title', params);
+      alert.appendChild(title);
+
+      const body = document.createElement('div');
+      body.className = 'zone-diagnostic-body';
+      body.textContent = t('domain.diagnostic.' + code + '.body', params);
+      alert.appendChild(body);
+
+      const nextText = t('domain.diagnostic.' + code + '.next', params);
+      if (nextText && nextText !== 'domain.diagnostic.' + code + '.next') {
+        const next = document.createElement('div');
+        next.className = 'zone-diagnostic-next';
+        next.textContent = nextText;
+        alert.appendChild(next);
+      }
+
+      const actionButtons = (diagnostic.actions || [])
+        .map((action) => createZoneActionButton(action, params.onRetry))
+        .filter(Boolean);
+
+      if (actionButtons.length > 0) {
+        const actions = document.createElement('div');
+        actions.className = 'zone-diagnostic-actions';
+        actionButtons.forEach((button) => actions.appendChild(button));
+        alert.appendChild(actions);
+      }
+
+      return alert;
+    }
+
+    function createPrereqCustomDomainReviewAlert() {
+      const alert = document.createElement('div');
+      alert.className = 'alert alert-warning zone-diagnostic';
+
+      const title = document.createElement('div');
+      title.className = 'zone-diagnostic-title';
+      title.textContent = t('domain.prereq.reviewTitle');
+      alert.appendChild(title);
+
+      const body = document.createElement('div');
+      body.className = 'zone-diagnostic-body';
+      body.textContent = t('domain.prereq.reviewBody');
+      alert.appendChild(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'zone-diagnostic-actions';
+      const retryButton = createZoneActionButton('retry_check', checkPrerequisites);
+      const reloadButton = createZoneActionButton('reload_page');
+
+      if (retryButton) actions.appendChild(retryButton);
+      if (reloadButton) actions.appendChild(reloadButton);
+      alert.appendChild(actions);
+
+      return alert;
     }
 
     /**
@@ -2769,11 +2918,11 @@ export function getHtmlTemplate(
           <small id="multi-tenant-hint" style="color: var(--text-muted); margin-left: 1.5rem;" data-i18n="web.form.multiTenantHint">
             Create tenant subdomains under your custom domain
           </small>
-          <div id="domain-check-row" style="display: none; margin-top: 0.5rem; align-items: center; gap: 0.5rem;">
+          <div id="domain-check-row" style="display: none; margin-top: 0.5rem;">
             <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkZoneButton">
               Check Zone
             </button>
-            <span id="domain-check-status" style="font-size: 0.85rem;"></span>
+            <div id="domain-check-status" class="domain-check-status" aria-live="polite"></div>
           </div>
           <label class="checkbox-item" id="custom-domain-binding-row" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
             <input type="checkbox" id="custom-domain-binding" checked>
@@ -4186,7 +4335,7 @@ export function getHtmlTemplate(
       document.getElementById('comp-vc').checked = false;
 
       document.getElementById('domain-check-row').style.display = 'none';
-      document.getElementById('domain-check-status').textContent = '';
+      document.getElementById('domain-check-status').replaceChildren();
       document.getElementById('custom-domain-binding-row').style.display = 'none';
       document.getElementById('custom-domain-binding').checked = true;
 
@@ -4618,7 +4767,7 @@ export function getHtmlTemplate(
       // Restore domain check UI if custom domain is set
       const loadedBaseDomain = document.getElementById('base-domain').value.trim();
       if (loadedBaseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(loadedBaseDomain)) {
-        document.getElementById('domain-check-row').style.display = 'flex';
+        document.getElementById('domain-check-row').style.display = 'block';
         // Auto-trigger zone check for loaded domain
         setTimeout(() => document.getElementById('check-domain-btn').click(), 300);
       }
@@ -4930,10 +5079,10 @@ export function getHtmlTemplate(
       const domainCheckRow = document.getElementById('domain-check-row');
       const baseDomain = document.getElementById('base-domain').value.trim();
       if (baseDomain && isValidCustomDomain(baseDomain)) {
-        domainCheckRow.style.display = 'flex';
+        domainCheckRow.style.display = 'block';
       } else {
         domainCheckRow.style.display = 'none';
-        document.getElementById('domain-check-status').textContent = '';
+        document.getElementById('domain-check-status').replaceChildren();
         document.getElementById('custom-domain-binding-row').style.display = 'none';
       }
     });
@@ -4951,8 +5100,7 @@ export function getHtmlTemplate(
 
       const statusEl = document.getElementById('domain-check-status');
       const bindingRow = document.getElementById('custom-domain-binding-row');
-      statusEl.textContent = t('domain.checkingZone', { domain });
-      statusEl.style.color = 'var(--text-muted)';
+      statusEl.replaceChildren(createAlert('info', t('domain.checkingZone', { domain })));
       domainZoneId = null;
 
       try {
@@ -4960,24 +5108,43 @@ export function getHtmlTemplate(
           method: 'POST',
           body: { domain },
         });
+        const zoneName = result.zone?.name || result.zoneName || domain;
+        const diagnosticAlert = createZoneDiagnosticAlert(result, {
+          domain,
+          zone: zoneName,
+          onRetry: () => document.getElementById('check-domain-btn').click(),
+        });
 
-        if (result.found) {
-          statusEl.textContent = '✓ ' + t('domain.zoneFound', { zone: result.zone.name, status: result.zone.status });
-          statusEl.style.color = 'var(--success, #22c55e)';
-          bindingRow.style.display = 'flex';
-          domainZoneId = result.zone.id;
-        } else {
-          const errorMsg = result.error
-            ? '⚠ ' + t('domain.zoneCheckFailed') + ': ' + result.error
-            : '⚠ ' + t('domain.zoneNotFound', { zone: domain });
-          statusEl.textContent = errorMsg;
-          statusEl.style.color = 'var(--warning, #d97706)';
-          bindingRow.style.display = 'none';
-          domainZoneId = null;
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
         }
+
+        bindingRow.style.display = result.diagnostic?.allowBinding ? 'flex' : 'none';
+        domainZoneId = result.found && result.zone ? result.zone.id : null;
       } catch (e) {
-        statusEl.textContent = '⚠ ' + t('domain.zoneCheckFailed');
-        statusEl.style.color = 'var(--warning, #d97706)';
+        const diagnosticAlert = createZoneDiagnosticAlert(
+          {
+            found: false,
+            zoneName: domain,
+            diagnostic: {
+              code: 'api_error',
+              severity: 'error',
+              allowBinding: false,
+              actions: ['retry_check', 'reload_page'],
+            },
+          },
+          {
+            domain,
+            zone: domain,
+            onRetry: () => document.getElementById('check-domain-btn').click(),
+          }
+        );
+
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
+        }
         bindingRow.style.display = 'none';
         domainZoneId = null;
       }

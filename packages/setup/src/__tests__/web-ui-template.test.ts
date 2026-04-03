@@ -57,6 +57,25 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('PREREQ_CAPABILITY_COPY');
     expect(html).toContain('"review":"Review"');
     expect(html).toContain('"review":"需确认"');
+    expect(html).toContain('createPrereqCustomDomainReviewAlert');
+    expect(html).toContain('domain.prereq.reviewTitle');
+    expect(html).toContain('domain.action.reloadPage');
+  });
+
+  it('renders structured zone diagnostics with action buttons', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('class="domain-check-status"');
+    expect(html).toContain('createZoneDiagnosticAlert');
+    expect(html).toContain('createZoneActionButton');
+    expect(html).toContain('Open Cloudflare Dashboard');
+    expect(html).toContain('Custom-domain checks need a quick review');
   });
 
   it('embeds manual wildcard DNS guidance for deploy warnings', () => {

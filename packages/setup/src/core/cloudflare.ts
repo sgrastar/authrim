@@ -486,10 +486,132 @@ export interface ZoneInfo {
   status: string;
 }
 
+export type ZoneCheckDiagnosticCode =
+  | 'zone_found'
+  | 'not_logged_in'
+  | 'token_unavailable'
+  | 'zone_read_forbidden'
+  | 'zone_not_found'
+  | 'api_error'
+  | 'network_error';
+
+export type ZoneCheckDiagnosticSeverity = 'success' | 'warning' | 'error';
+
+export type ZoneCheckAction =
+  | 'retry_check'
+  | 'reload_page'
+  | 'run_wrangler_login'
+  | 'check_cloudflare_permissions'
+  | 'open_cloudflare_dashboard';
+
+export interface ZoneCheckDiagnostic {
+  code: ZoneCheckDiagnosticCode;
+  severity: ZoneCheckDiagnosticSeverity;
+  allowBinding: boolean;
+  actions: ZoneCheckAction[];
+}
+
 export interface ZoneCheckResult {
   found: boolean;
   zone?: ZoneInfo;
+  zoneName?: string;
   error?: string;
+  diagnostic?: ZoneCheckDiagnostic;
+}
+
+function createZoneDiagnostic(
+  code: ZoneCheckDiagnosticCode,
+  overrides: Partial<ZoneCheckDiagnostic> = {}
+): ZoneCheckDiagnostic {
+  const defaults: Record<ZoneCheckDiagnosticCode, ZoneCheckDiagnostic> = {
+    zone_found: {
+      code: 'zone_found',
+      severity: 'success',
+      allowBinding: true,
+      actions: [],
+    },
+    not_logged_in: {
+      code: 'not_logged_in',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page', 'run_wrangler_login'],
+    },
+    token_unavailable: {
+      code: 'token_unavailable',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page', 'run_wrangler_login'],
+    },
+    zone_read_forbidden: {
+      code: 'zone_read_forbidden',
+      severity: 'warning',
+      allowBinding: true,
+      actions: ['retry_check', 'reload_page', 'run_wrangler_login', 'check_cloudflare_permissions'],
+    },
+    zone_not_found: {
+      code: 'zone_not_found',
+      severity: 'warning',
+      allowBinding: false,
+      actions: ['retry_check', 'open_cloudflare_dashboard'],
+    },
+    api_error: {
+      code: 'api_error',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page'],
+    },
+    network_error: {
+      code: 'network_error',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page'],
+    },
+  };
+
+  return {
+    ...defaults[code],
+    ...overrides,
+    actions: overrides.actions ?? defaults[code].actions,
+  };
+}
+
+function createZoneCheckResult(
+  code: ZoneCheckDiagnosticCode,
+  options: {
+    found?: boolean;
+    zone?: ZoneInfo;
+    zoneName?: string;
+    error?: string;
+  } = {}
+): ZoneCheckResult {
+  return {
+    found: options.found ?? code === 'zone_found',
+    zone: options.zone,
+    zoneName: options.zoneName,
+    error: options.error,
+    diagnostic: createZoneDiagnostic(code),
+  };
+}
+
+export function isZoneReadPermissionError(
+  errorOrResult?: string | ZoneCheckResult | ZoneCheckDiagnostic | null
+): boolean {
+  if (!errorOrResult) {
+    return false;
+  }
+  if (typeof errorOrResult === 'string') {
+    return errorOrResult.includes('zone:read');
+  }
+  if ('diagnostic' in errorOrResult) {
+    return (
+      errorOrResult.diagnostic?.code === 'zone_read_forbidden' ||
+      (errorOrResult.error ?? '').includes('zone:read')
+    );
+  }
+  if ('code' in errorOrResult) {
+    return errorOrResult.code === 'zone_read_forbidden';
+  }
+  return false;
 }
 
 /**
@@ -942,12 +1064,21 @@ export function extractZoneName(hostname: string): string {
  */
 export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> {
   try {
+    const zoneName = extractZoneName(domain);
     const tokenInfo = await getCloudflareApiToken();
     if (!tokenInfo) {
-      return { found: false, error: 'Not logged in to Cloudflare (run: wrangler login)' };
+      const auth = await checkAuth();
+      if (!auth.isLoggedIn) {
+        return createZoneCheckResult('not_logged_in', {
+          zoneName,
+          error: 'Not logged in to Cloudflare (run: wrangler login)',
+        });
+      }
+      return createZoneCheckResult('token_unavailable', {
+        zoneName,
+        error: 'Cloudflare API token is unavailable',
+      });
     }
-
-    const zoneName = extractZoneName(domain);
 
     const response = await fetch(
       `https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(zoneName)}`,
@@ -960,30 +1091,46 @@ export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> 
 
     if (!response.ok) {
       if (response.status === 403) {
-        return { found: false, error: 'Token lacks zone:read permission' };
+        return createZoneCheckResult('zone_read_forbidden', {
+          zoneName,
+          error: 'Token lacks zone:read permission',
+        });
       }
-      return { found: false, error: `Cloudflare API returned ${response.status}` };
+      return createZoneCheckResult('api_error', {
+        zoneName,
+        error: `Cloudflare API returned ${response.status}`,
+      });
     }
 
     const data = (await response.json()) as {
       success: boolean;
       result: Array<{ id: string; name: string; status: string }>;
+      errors?: CloudflareApiMessage[];
     };
 
-    if (!data.success || !data.result || data.result.length === 0) {
-      return { found: false };
+    if (!data.success) {
+      const apiMessage = data.errors?.find((item) => item.message)?.message;
+      return createZoneCheckResult('api_error', {
+        zoneName,
+        error: apiMessage || 'Cloudflare API returned an unsuccessful response',
+      });
+    }
+
+    if (!data.result || data.result.length === 0) {
+      return createZoneCheckResult('zone_not_found', { zoneName });
     }
 
     const zone = data.result[0];
-    return {
+    return createZoneCheckResult('zone_found', {
       found: true,
       zone: { id: zone.id, name: zone.name, status: zone.status },
-    };
+      zoneName,
+    });
   } catch (error) {
-    return {
-      found: false,
+    return createZoneCheckResult('network_error', {
+      zoneName: extractZoneName(domain),
       error: error instanceof Error ? error.message : 'Unknown error',
-    };
+    });
   }
 }
 
@@ -1047,17 +1194,26 @@ export async function ensureWildcardDnsRecord(
     throw new Error('Not logged in to Cloudflare (run: wrangler login)');
   }
 
+  const recordName = `*.${baseDomain}`;
+  const recordTarget = baseDomain;
+
   let resolvedZoneId = zoneId || undefined;
   if (!resolvedZoneId) {
     const zoneResult = await checkZoneExists(baseDomain);
     if (!zoneResult.found || !zoneResult.zone?.id) {
+      if (zoneResult.diagnostic?.code === 'zone_read_forbidden') {
+        return {
+          created: false,
+          updated: false,
+          name: recordName,
+          target: recordTarget,
+          verificationLimited: true,
+        };
+      }
       throw new Error(`Cloudflare zone not found for ${baseDomain}`);
     }
     resolvedZoneId = zoneResult.zone.id;
   }
-
-  const recordName = `*.${baseDomain}`;
-  const recordTarget = baseDomain;
 
   const recordResponse = await fetch(
     `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records?name=${encodeURIComponent(recordName)}`,

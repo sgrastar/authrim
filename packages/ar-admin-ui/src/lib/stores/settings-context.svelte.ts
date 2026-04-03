@@ -50,6 +50,7 @@ export type PermissionLevel = 'view' | 'edit' | 'none';
  * API base URL
  */
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+const FALLBACK_TENANT_ID = 'default';
 
 /**
  * Create settings context store
@@ -121,6 +122,17 @@ function createSettingsContextStore() {
 
 	return {
 		/**
+		 * Resolve the effective tenant ID for API calls.
+		 * In single-tenant mode we may temporarily have no loaded tenant list yet,
+		 * so fall back to 'default' instead of emitting empty tenant paths.
+		 */
+		resolveTenantId(candidate?: string | null): string {
+			return (
+				candidate?.trim() || state.tenantId || state.availableTenants[0]?.id || FALLBACK_TENANT_ID
+			);
+		},
+
+		/**
 		 * Get current state (readonly)
 		 */
 		get current(): SettingsContextState {
@@ -138,7 +150,7 @@ function createSettingsContextStore() {
 		 * Get current tenant ID
 		 */
 		get tenantId(): string {
-			return state.tenantId;
+			return this.resolveTenantId(state.tenantId);
 		},
 
 		/**
@@ -180,9 +192,10 @@ function createSettingsContextStore() {
 		 * Get scope context for API calls
 		 */
 		get scopeContext(): { level: SettingScopeLevel; tenantId?: string; clientId?: string } {
+			const resolvedTenantId = this.resolveTenantId(state.tenantId);
 			return {
 				level: state.currentLevel,
-				tenantId: state.currentLevel !== 'platform' ? state.tenantId : undefined,
+				tenantId: state.currentLevel !== 'platform' ? resolvedTenantId : undefined,
 				clientId: state.currentLevel === 'client' ? (state.clientId ?? undefined) : undefined
 			};
 		},
@@ -240,16 +253,18 @@ function createSettingsContextStore() {
 		 * Set tenant ID
 		 */
 		async setTenantId(tenantId: string): Promise<void> {
+			const resolvedTenantId = this.resolveTenantId(tenantId);
+
 			// Clear client selection and available clients immediately to prevent stale data
 			state.clientId = null;
 			state.availableClients = [];
 
-			state.tenantId = tenantId;
+			state.tenantId = resolvedTenantId;
 			state.error = null;
 
 			// Save to session storage
 			if (browser) {
-				sessionStorage.setItem('settings_tenant_id', tenantId);
+				sessionStorage.setItem('settings_tenant_id', resolvedTenantId);
 				sessionStorage.removeItem('settings_client_id');
 			}
 
@@ -296,18 +311,19 @@ function createSettingsContextStore() {
 						id: t.id,
 						name: t.name || t.id
 					}));
-					if (
-						!state.tenantId ||
-						!state.availableTenants.some((tenant) => tenant.id === state.tenantId)
-					) {
-						state.tenantId = state.availableTenants[0]?.id ?? '';
-					}
+					state.tenantId = this.resolveTenantId(
+						state.availableTenants.some((tenant) => tenant.id === state.tenantId)
+							? state.tenantId
+							: state.availableTenants[0]?.id
+					);
 				} else {
 					state.availableTenants = [];
+					state.tenantId = this.resolveTenantId(state.tenantId);
 				}
 			} catch (err) {
 				console.warn('Failed to load tenants:', err);
 				state.availableTenants = [];
+				state.tenantId = this.resolveTenantId(state.tenantId);
 			} finally {
 				state.isLoading = false;
 			}
@@ -317,18 +333,16 @@ function createSettingsContextStore() {
 		 * Load available clients for current tenant
 		 */
 		async loadClients(): Promise<void> {
-			if (!browser || !state.tenantId) return;
+			const tenantId = this.resolveTenantId(state.tenantId);
+			if (!browser || !tenantId) return;
 
 			state.isLoading = true;
 			state.error = null;
 
 			try {
-				const response = await fetch(
-					`${API_BASE_URL}/api/admin/tenants/${state.tenantId}/clients`,
-					{
-						credentials: 'include'
-					}
-				);
+				const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${tenantId}/clients`, {
+					credentials: 'include'
+				});
 
 				if (response.ok) {
 					const data = await response.json();
@@ -385,7 +399,7 @@ function createSettingsContextStore() {
 		 */
 		reset(): void {
 			state.currentLevel = 'tenant';
-			state.tenantId = state.availableTenants[0]?.id ?? '';
+			state.tenantId = this.resolveTenantId(state.availableTenants[0]?.id);
 			state.clientId = null;
 			state.error = null;
 

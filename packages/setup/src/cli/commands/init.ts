@@ -38,6 +38,7 @@ import {
   getWorkersSubdomain,
   checkZoneExists,
   extractZoneName,
+  type ZoneCheckResult,
 } from '../../core/cloudflare.js';
 import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
 import {
@@ -108,17 +109,33 @@ async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig
   try {
     const result = await checkZoneExists(domain);
     spinner.stop();
+    const diagnosticCode = result.diagnostic?.code;
+    const zoneName = extractZoneName(domain);
 
-    if (result.error) {
-      console.log(chalk.yellow(`  ⚠ ${t('domain.zoneCheckFailed')}: ${result.error}`));
-      console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
+    if (result.found && result.zone) {
+      console.log(
+        chalk.green(
+          `  ✓ ${t('domain.zoneFound', { zone: result.zone.name, status: result.zone.status })}`
+        )
+      );
+      domainConfig.zoneId = result.zone.id;
+      console.log('');
+
+      const bind = await confirm({ message: t('domain.configureBinding'), default: true });
+      domainConfig.customDomainBinding = bind;
       return;
     }
 
-    if (!result.found) {
-      const zoneName = extractZoneName(domain);
-      console.log(chalk.yellow(`  ⚠ ${t('domain.zoneNotFound', { zone: zoneName })}`));
-      console.log(chalk.gray(`    ${t('domain.zoneNotFoundHint')}`));
+    printCliZoneDiagnostic(result, { domain, zoneName });
+
+    if (result.diagnostic?.allowBinding) {
+      console.log('');
+      const bind = await confirm({ message: t('domain.configureBinding'), default: true });
+      domainConfig.customDomainBinding = bind;
+      return;
+    }
+
+    if (diagnosticCode === 'zone_not_found') {
       console.log('');
       const ok = await confirm({ message: t('domain.continueWithoutZone'), default: true });
       if (!ok) {
@@ -127,17 +144,7 @@ async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig
       return;
     }
 
-    // Zone found
-    console.log(
-      chalk.green(
-        `  ✓ ${t('domain.zoneFound', { zone: result.zone!.name, status: result.zone!.status })}`
-      )
-    );
-    domainConfig.zoneId = result.zone!.id;
-    console.log('');
-
-    const bind = await confirm({ message: t('domain.configureBinding'), default: true });
-    domainConfig.customDomainBinding = bind;
+    console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
   } catch (error) {
     spinner.stop();
     if (error instanceof Error && error.message === 'USER_CANCELLED_DOMAIN') {
@@ -146,6 +153,28 @@ async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig
     // Unexpected error - don't block setup
     console.log(chalk.yellow(`  ⚠ ${t('domain.zoneCheckFailed')}`));
     console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
+  }
+}
+
+function printCliZoneDiagnostic(
+  result: ZoneCheckResult,
+  params: { domain: string; zoneName: string }
+): void {
+  const code = result.diagnostic?.code || 'api_error';
+  const translatedParams = {
+    domain: params.domain,
+    zone: params.zoneName,
+  };
+  const title = t(`domain.diagnostic.${code}.title`, translatedParams);
+  const body = t(`domain.diagnostic.${code}.body`, translatedParams);
+  const next = t(`domain.diagnostic.${code}.next`, translatedParams);
+  const icon = result.diagnostic?.severity === 'error' ? '✖' : '⚠';
+  const color = result.diagnostic?.severity === 'error' ? chalk.red : chalk.yellow;
+
+  console.log(color(`  ${icon} ${title}`));
+  console.log(chalk.gray(`    ${body}`));
+  if (next && next !== `domain.diagnostic.${code}.next`) {
+    console.log(chalk.gray(`    ${next}`));
   }
 }
 
