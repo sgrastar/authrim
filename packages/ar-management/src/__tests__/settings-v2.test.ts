@@ -148,6 +148,28 @@ describe('Settings API v2', () => {
         expect(body.values['oauth.access_token_expiry']).toBe(7200);
         expect(body.sources['oauth.access_token_expiry']).toBe('kv');
       });
+
+      it('should return login-entry settings with default values', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('login-entry');
+        expect(body.values['login-entry.mode']).toBe('discovery_optional');
+        expect(body.values['login-entry.discovery_methods']).toBe(
+          '["email_domain","tenant_code","tenant_slug"]'
+        );
+        expect(body.values['login-entry.selection_policy']).toBe('select_if_multiple');
+        expect(body.values['login-entry.allow_manual_tenant_entry']).toBe(true);
+        expect(body.values['login-entry.remember_last_tenant']).toBe(true);
+      });
     });
 
     describe('PATCH /tenants/:tenantId/settings/:category', () => {
@@ -314,6 +336,76 @@ describe('Settings API v2', () => {
         expect(body.cleared).toContain('oauth.access_token_expiry');
         expect(body.disabled).toContain('oauth.state_required');
       });
+
+      it('should patch login-entry settings', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'login-entry.mode': 'tenant_only',
+                'login-entry.discovery_methods': '["tenant_slug"]',
+                'login-entry.selection_policy': 'manual_only',
+                'login-entry.allow_manual_tenant_entry': false,
+                'login-entry.remember_last_tenant': false,
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+
+        expect(body.applied).toContain('login-entry.mode');
+        expect(body.applied).toContain('login-entry.discovery_methods');
+        expect(body.applied).toContain('login-entry.selection_policy');
+        expect(body.applied).toContain('login-entry.allow_manual_tenant_entry');
+        expect(body.applied).toContain('login-entry.remember_last_tenant');
+      });
+
+      it('should reject unknown keys in login-entry settings', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: { 'login-entry.unknown_key': 'value' },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse & { rejected: Record<string, string> };
+        expect(body.error).toBe('validation_failed');
+        expect(body.rejected['login-entry.unknown_key']).toContain('Unknown');
+      });
     });
   });
 
@@ -474,6 +566,24 @@ describe('Settings API v2', () => {
         expect(typeof body.settings).toBe('object');
       });
 
+      it('should return login-entry metadata with five settings', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/settings/meta/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as ApiResponse & {
+          settings: Record<string, unknown>;
+        };
+
+        expect(body.category).toBe('login-entry');
+        expect(Object.keys(body.settings)).toHaveLength(5);
+      });
+
       it('should return 404 for unknown category', async () => {
         const { app, mockEnv } = createTestApp();
 
@@ -525,6 +635,7 @@ describe('Settings API v2', () => {
       'external-idp',
       'credentials',
       'federation',
+      'login-entry',
     ];
 
     // Platform-only categories (not available at tenant scope)
@@ -578,5 +689,41 @@ describe('Settings API v2', () => {
         expect(body.category).toBe(category);
       }
     );
+  });
+
+  describe('Single-tenant tenant guard', () => {
+    it('should allow login-entry settings for the default tenant', async () => {
+      const { app, mockEnv } = createTestApp({
+        env: {
+          BASE_DOMAIN: '',
+          DEFAULT_TENANT_ID: 'default',
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/tenants/default/settings/login-entry',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+    });
+
+    it('should reject login-entry settings for non-default tenant in single-tenant mode', async () => {
+      const { app, mockEnv } = createTestApp({
+        env: {
+          BASE_DOMAIN: '',
+          DEFAULT_TENANT_ID: 'default',
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/tenants/acme/settings/login-entry',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(404);
+    });
   });
 });

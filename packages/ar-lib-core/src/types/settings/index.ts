@@ -34,6 +34,7 @@ export * from './check-api-audit';
 export * from './dcr';
 export * from './login-ui';
 export * from './diagnostic-logging';
+export * from './login-entry';
 
 // Re-export SettingsManager types
 export type {
@@ -89,6 +90,7 @@ import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
 import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from './diagnostic-logging';
+import { LOGIN_ENTRY_CATEGORY_META } from './login-entry';
 
 // Export commonly used category metadata
 export { CLIENT_CATEGORY_META, OAUTH_CATEGORY_META };
@@ -138,6 +140,8 @@ export const ALL_CATEGORY_META = {
   'login-ui': LOGIN_UI_CATEGORY_META,
   // Diagnostic Logging
   'diagnostic-logging': DIAGNOSTIC_LOGGING_CATEGORY_META,
+  // Login Entry / Discovery
+  'login-entry': LOGIN_ENTRY_CATEGORY_META,
 } as const;
 
 /**
@@ -257,6 +261,9 @@ export const CATEGORY_SCOPE_CONFIG: Record<
 
   // Login UI Customization
   'login-ui': {
+    allowedScopes: ['tenant'],
+  },
+  'login-entry': {
     allowedScopes: ['tenant'],
   },
 

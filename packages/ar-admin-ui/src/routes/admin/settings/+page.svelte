@@ -38,6 +38,7 @@
 		assurance: ['tenant'],
 		dcr: ['tenant'], // Dynamic Client Registration (RFC 7591)
 		'login-ui': ['tenant'], // Login UI Customization
+		'login-entry': ['tenant'],
 		// Client-only
 		client: ['client']
 	};
@@ -79,7 +80,8 @@
 		// Dynamic Client Registration (RFC 7591)
 		dcr: { icon: '📝', color: '#059669' },
 		// Login UI Customization
-		'login-ui': { icon: '🎨', color: '#8b5cf6' }
+		'login-ui': { icon: '🎨', color: '#8b5cf6' },
+		'login-entry': { icon: '🧭', color: '#0f766e' }
 	};
 
 	// Check if category is platform-level (read-only)
