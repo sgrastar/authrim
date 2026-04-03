@@ -176,11 +176,7 @@
 					</select>
 				</div>
 			{:else}
-				<input
-					type="hidden"
-					name="mode"
-					value={getDefaultDiscoveryMode(interactiveMethods)}
-				/>
+				<input type="hidden" name="mode" value={getDefaultDiscoveryMode(interactiveMethods)} />
 			{/if}
 
 			<div class="form-group">
@@ -201,8 +197,8 @@
 		{#if candidates.length > 0}
 			<div class="candidate-list">
 				<h2>{$LL.discover_selectTenant()}</h2>
-					{#each candidates as candidate (candidate.tenant_id)}
-						<a class="tenant-option" href={candidate.login_url}>
+				{#each candidates as candidate (candidate.tenant_id)}
+					<a class="tenant-option" href={candidate.login_url}>
 						<div class="tenant-branding">
 							{#if candidate.logo_url}
 								<img src={candidate.logo_url} alt={candidate.display_name} />

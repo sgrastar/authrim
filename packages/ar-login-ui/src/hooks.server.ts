@@ -258,32 +258,16 @@ async function readBody(event: RequestEvent): Promise<string | undefined> {
 
 function buildProxyResponse(response: Response): Response {
 	const responseHeaders = new Headers();
-	const hopByHopHeaders = [
-		'connection',
-		'keep-alive',
-		'proxy-authenticate',
-		'proxy-authorization',
-		'te',
-		'trailers',
-		'transfer-encoding',
-		'upgrade'
-	];
-
 	response.headers.forEach((value, key) => {
-		const lowerKey = key.toLowerCase();
-		if (hopByHopHeaders.includes(lowerKey)) {
+		const lower = key.toLowerCase();
+		if (
+			lower === 'content-length' ||
+			lower === 'transfer-encoding' ||
+			lower === 'content-encoding'
+		) {
 			return;
 		}
-
-		if (lowerKey === 'set-cookie') {
-			const modifiedCookie = value
-				.split(';')
-				.filter((part) => !part.trim().toLowerCase().startsWith('domain='))
-				.join(';');
-			responseHeaders.append(key, modifiedCookie);
-		} else {
-			responseHeaders.append(key, value);
-		}
+		responseHeaders.set(key, value);
 	});
 
 	return new Response(response.body, {
@@ -293,199 +277,101 @@ function buildProxyResponse(response: Response): Response {
 	});
 }
 
-function handleProxyError(error: unknown): Response {
-	const errorType = error instanceof Error ? error.name : 'Unknown';
-	console.error(`API proxy error: ${errorType}`);
-
-	if (error instanceof Error && error.name === 'AbortError') {
-		return new Response(
-			JSON.stringify({
-				error: 'gateway_timeout',
-				error_description: 'Backend server did not respond in time'
-			}),
-			{
-				status: 504,
-				headers: { 'Content-Type': 'application/json' }
-			}
-		);
+const apiProxyHandle: Handle = async ({ event, resolve }) => {
+	const pathname = event.url.pathname;
+	if (!shouldProxyPath(pathname)) {
+		return resolve(event);
 	}
 
-	return new Response(
-		JSON.stringify({
-			error: 'bad_gateway',
-			error_description: 'Failed to connect to API server'
-		}),
-		{
-			status: 502,
-			headers: { 'Content-Type': 'application/json' }
-		}
-	);
-}
-
-const apiProxy: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
-
-	if (!shouldProxyPath(event.url.pathname)) {
-		return resolve(event);
-	}
-
-	const arRouter = platformEnv?.AR_ROUTER as ServiceBinding | undefined;
-	const proxyEnabled = arRouter !== undefined || isProxyEnabled(platformEnv);
-
-	if (!proxyEnabled) {
-		return resolve(event);
-	}
+	const apiBackendUrl = getApiBackendUrl(platformEnv);
+	const forwardedHost = getForwardedHost(event, platformEnv);
 
 	const body = await readBody(event);
 	if (body === '__TOO_LARGE__') {
-		return new Response(
-			JSON.stringify({
-				error: 'payload_too_large',
-				error_description: 'Request body exceeds maximum allowed size'
-			}),
-			{
-				status: 413,
-				headers: { 'Content-Type': 'application/json' }
-			}
-		);
+		return new Response('Request body too large', { status: 413 });
 	}
 
-	if (arRouter) {
-		// === Service Binding path (Cloudflare Pages production) ===
-		// AR_ROUTER binding routes internally — no workers.dev needed.
-		const apiPublicUrl = getApiPublicUrl(platformEnv) ?? 'https://api-internal';
-		const forwardedHost = getForwardedHost(event, platformEnv);
-		const targetUrl = `${apiPublicUrl}${event.url.pathname}${event.url.search}`;
-		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+	const upstreamUrl = new URL(event.url.pathname + event.url.search, apiBackendUrl);
+	const proxyHeaders = buildProxyHeaders(event, platformEnv, forwardedHost);
 
-		try {
-			const response = await Promise.race([
-				arRouter.fetch(
-					new Request(targetUrl, {
-						method: event.request.method,
-						headers,
-						body
-					})
-				),
-				new Promise<never>((_, reject) =>
-					setTimeout(
-						() => reject(Object.assign(new Error('Timeout'), { name: 'AbortError' })),
-						30000
-					)
-				)
-			]);
-			return buildProxyResponse(response);
-		} catch (error) {
-			return handleProxyError(error);
-		}
-	} else {
-		// === HTTP fetch path (local development / fallback) ===
-		const apiBackendUrl = getApiBackendUrl(platformEnv);
-		const targetUrl = `${apiBackendUrl}${event.url.pathname}${event.url.search}`;
-		const forwardedHost = getForwardedHost(event, platformEnv);
-		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+	const requestInit: RequestInit = {
+		method: event.request.method,
+		headers: proxyHeaders,
+		redirect: 'manual'
+	};
 
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-		try {
-			const response = await fetch(targetUrl, {
-				method: event.request.method,
-				headers,
-				body,
-				signal: controller.signal
-			});
-
-			clearTimeout(timeoutId);
-			return buildProxyResponse(response);
-		} catch (error) {
-			clearTimeout(timeoutId);
-			return handleProxyError(error);
-		}
+	if (body !== undefined) {
+		requestInit.body = body;
 	}
+
+	const apiBinding = (platformEnv?.API_SERVICE as ServiceBinding | undefined) ?? null;
+	const response = apiBinding
+		? await apiBinding.fetch(new Request(upstreamUrl.toString(), requestInit))
+		: await fetch(new Request(upstreamUrl.toString(), requestInit));
+
+	return buildProxyResponse(response);
 };
 
-/**
- * Security headers hook
- * Adds comprehensive security headers to all responses.
- */
-const securityHeaders: Handle = async ({ event, resolve }) => {
-	const response = await resolve(event);
+const securityHeadersHandle: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
+	const response = await resolve(event);
+	const csp = [
+		"default-src 'self'",
+		"script-src 'self' 'unsafe-inline'",
+		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+		"font-src 'self' https://fonts.gstatic.com data:",
+		buildConnectSrc(platformEnv),
+		"img-src 'self' data: https:",
+		"frame-ancestors 'none'"
+	].join('; ');
 
-	// Content Security Policy
-	// - 'unsafe-inline' required for SvelteKit style injection and inline scripts
-	// - connect-src includes API origin for cross-origin API calls
-	// - img-src allows HTTPS and data: URIs (QR codes, dynamic images)
-	response.headers.set(
-		'Content-Security-Policy',
-		[
-			"default-src 'self'",
-			"script-src 'self' 'unsafe-inline'",
-			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-			"img-src 'self' https: data:",
-			buildConnectSrc(platformEnv),
-			"font-src 'self' https://fonts.gstatic.com",
-			"frame-ancestors 'self'",
-			"base-uri 'self'",
-			"form-action 'self'"
-		].join('; ')
-	);
-
-	// Enforce HTTPS
-	response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-	// Prevent clickjacking (SAMEORIGIN to match CSP frame-ancestors 'self')
-	response.headers.set('X-Frame-Options', 'SAMEORIGIN');
-	// Prevent MIME sniffing
-	response.headers.set('X-Content-Type-Options', 'nosniff');
-	// Referrer policy
+	response.headers.set('Content-Security-Policy', csp);
 	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-	// Legacy XSS filter (for older browsers)
-	response.headers.set('X-XSS-Protection', '1; mode=block');
-	// Restrict browser features
-	response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-	// Cross-origin isolation
+	response.headers.set('X-Content-Type-Options', 'nosniff');
+	response.headers.set('X-Frame-Options', 'DENY');
 	response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
 	response.headers.set('Cross-Origin-Resource-Policy', 'same-origin');
-
+	response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+	response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 	return response;
 };
 
-/**
- * CSRF protection hook
- * Validates Origin or Referer header on state-changing requests (POST, PUT, DELETE, PATCH).
- * Falls back to Referer check when Origin header is absent.
- */
-const csrfProtection: Handle = async ({ event, resolve }) => {
-	const method = event.request.method;
+function isSafeMethod(method: string): boolean {
+	return method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+}
 
-	// Only check state-changing methods
-	if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
-		const origin = event.request.headers.get('origin');
-		const requestOrigin = event.url.origin;
+function sameOrigin(a: URL, b: URL): boolean {
+	return a.protocol === b.protocol && a.host === b.host;
+}
 
-		if (origin) {
-			// Primary: validate Origin header
-			if (origin !== requestOrigin) {
-				return new Response('Forbidden: CSRF check failed', { status: 403 });
+const csrfHandle: Handle = async ({ event, resolve }) => {
+	if (isSafeMethod(event.request.method)) {
+		return resolve(event);
+	}
+
+	if (event.url.pathname.startsWith('/api/')) {
+		return resolve(event);
+	}
+
+	const origin = event.request.headers.get('origin');
+	if (origin) {
+		try {
+			if (!sameOrigin(new URL(origin), event.url)) {
+				return new Response('Forbidden', { status: 403 });
 			}
-		} else {
-			// Fallback: validate Referer header when Origin is absent
-			const referer = event.request.headers.get('referer');
-			if (referer) {
-				try {
-					const refererOrigin = new URL(referer).origin;
-					if (refererOrigin !== requestOrigin) {
-						return new Response('Forbidden: CSRF check failed', { status: 403 });
-					}
-				} catch {
-					return new Response('Forbidden: CSRF check failed', { status: 403 });
+		} catch {
+			return new Response('Forbidden', { status: 403 });
+		}
+	} else {
+		const referer = event.request.headers.get('referer');
+		if (referer) {
+			try {
+				if (!sameOrigin(new URL(referer), event.url)) {
+					return new Response('Forbidden', { status: 403 });
 				}
-			} else {
-				// Neither Origin nor Referer present — reject.
-				// Login UI is browser-only; legitimate browser requests always send
-				// at least one of these headers on state-changing methods.
-				return new Response('Forbidden: CSRF check failed', { status: 403 });
+			} catch {
+				return new Response('Forbidden', { status: 403 });
 			}
 		}
 	}
@@ -493,33 +379,30 @@ const csrfProtection: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-/**
- * Locale detection hook
- * Sets preferred language from Accept-Language header if no cookie preference exists.
- */
-const localeDetection: Handle = async ({ event, resolve }) => {
-	// Only set locale preference if not already set via cookie
-	const cookieLocale = event.cookies.get('preferredLanguage');
-	if (!cookieLocale) {
-		const acceptLanguage = event.request.headers.get('accept-language') || '';
-		// Simple detection: check if Japanese is preferred
-		const preferJapanese = acceptLanguage.split(',').some((lang) => lang.trim().startsWith('ja'));
+const localeHandle: Handle = async ({ event, resolve }) => {
+	const supportedLocales = ['en', 'ja'];
+	const cookieLocale = event.cookies.get('lang');
+	if (cookieLocale && supportedLocales.includes(cookieLocale)) {
+		event.locals.locale = cookieLocale;
+		return resolve(event);
+	}
 
-		if (preferJapanese) {
-			// Set a transient cookie for the current session
-			// httpOnly must be false to match /api/set-language endpoint,
-			// otherwise the cookie cannot be overwritten by the language switcher
-			event.cookies.set('preferredLanguage', 'ja', {
-				path: '/',
-				httpOnly: false,
-				sameSite: 'lax',
-				secure: event.url.protocol === 'https:',
-				maxAge: 60 * 60 * 24 * 365 // 1 year
-			});
+	const acceptLanguage = event.request.headers.get('accept-language') || '';
+	const candidates = acceptLanguage
+		.split(',')
+		.map((part) => part.split(';')[0]?.trim().toLowerCase())
+		.filter(Boolean);
+
+	for (const candidate of candidates) {
+		const base = candidate.split('-')[0];
+		if (base && supportedLocales.includes(base)) {
+			event.locals.locale = base;
+			return resolve(event);
 		}
 	}
 
+	event.locals.locale = 'en';
 	return resolve(event);
 };
 
-export const handle = sequence(apiProxy, securityHeaders, csrfProtection, localeDetection);
+export const handle = sequence(apiProxyHandle, csrfHandle, localeHandle, securityHeadersHandle);
