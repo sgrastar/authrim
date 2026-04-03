@@ -45,16 +45,8 @@
 	const submittedMode = $derived(form?.mode);
 	const submittedValue = $derived(form?.value || '');
 
-	let selectedMode = $state('tenant_code');
-	let value = $state('');
-
-	$effect(() => {
-		selectedMode = submittedMode || getDefaultDiscoveryMode(interactiveMethods);
-	});
-
-	$effect(() => {
-		value = submittedValue;
-	});
+	let selectedMode = $derived(submittedMode || getDefaultDiscoveryMode(interactiveMethods));
+	let value = $derived(submittedValue);
 
 	const candidates = $derived(form?.candidates || []);
 	const errorMessage = $derived(form?.error || data.inviteError || '');
@@ -189,8 +181,8 @@
 		{#if candidates.length > 0}
 			<div class="candidate-list">
 				<h2>Select a tenant</h2>
-				{#each candidates as candidate}
-					<a class="tenant-option" href={candidate.login_url}>
+					{#each candidates as candidate (candidate.tenant_id)}
+						<a class="tenant-option" href={candidate.login_url}>
 						<div class="tenant-branding">
 							{#if candidate.logo_url}
 								<img src={candidate.logo_url} alt={candidate.display_name} />
