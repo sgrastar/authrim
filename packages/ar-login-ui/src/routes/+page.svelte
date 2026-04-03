@@ -84,7 +84,7 @@
 								{$LL.header_signUp()}
 							</Button>
 						</a>
-						<a href="/login">
+						<a href="/discover">
 							<Button variant="primary">
 								{$LL.header_login()}
 							</Button>
@@ -139,7 +139,7 @@
 				{:else}
 					<!-- Unauthenticated state -->
 					<div class="landing__cta">
-						<a href="/login" class="landing__cta-primary">
+						<a href="/discover" class="landing__cta-primary">
 							<span>{$LL.header_login()}</span>
 							<div class="i-heroicons-arrow-right h-4 w-4"></div>
 						</a>

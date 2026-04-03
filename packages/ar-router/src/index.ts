@@ -55,6 +55,8 @@ interface Env {
 
 // Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
 const LOGIN_UI_PATHS = [
+  '/discover',
+  '/invite',
   '/login',
   '/signup',
   '/consent',
@@ -147,6 +149,8 @@ app.use('*', async (c, next) => {
     // UI proxy paths - Pages handles its own headers
     path.startsWith('/setup') ||
     path.startsWith('/admin') ||
+    path.startsWith('/discover') ||
+    path.startsWith('/invite') ||
     path.startsWith('/login') ||
     path.startsWith('/signup') ||
     path.startsWith('/consent') ||
@@ -466,6 +470,10 @@ app.get('/api/auth/login-methods', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
+app.all('/api/auth/discovery', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
 
 /**
  * Authentication endpoints - Route to OP_AUTH worker
@@ -760,7 +768,7 @@ app.all('/api/admin-init-setup/*', async (c) => {
  * - /admin/* - Admin dashboard pages
  *
  * Login UI Proxy (ENABLE_LOGIN_UI_PROXY=true):
- * - /login, /signup, /consent, /device, /ciba, /reauth, /verify-email-code, /error
+ * - /discover, /invite, /login, /signup, /consent, /device, /ciba, /reauth, /verify-email-code, /error
  */
 
 // Admin UI proxy - /admin/*

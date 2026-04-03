@@ -88,6 +88,23 @@ function getConfiguredForwardedHost(platformEnv?: Record<string, unknown>): stri
 	return undefined;
 }
 
+function shouldUseRequestHostAsForwardedHost(platformEnv?: Record<string, unknown>): boolean {
+	const candidates = [
+		platformEnv?.PUBLIC_API_BASE_URL,
+		dynamicEnv.PUBLIC_API_BASE_URL,
+		import.meta.env.PUBLIC_API_BASE_URL,
+		typeof process !== 'undefined' ? process.env?.PUBLIC_API_BASE_URL : undefined
+	];
+
+	for (const candidate of candidates) {
+		if (getValidProxyUrl(candidate)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 function getApiPublicUrl(platformEnv?: Record<string, unknown>): string | undefined {
 	const candidates = [
 		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
@@ -189,6 +206,14 @@ function buildProxyHeaders(
 	headers.set('X-Forwarded-Proto', 'https');
 
 	return headers;
+}
+
+function getForwardedHost(event: RequestEvent, platformEnv?: Record<string, unknown>): string {
+	if (shouldUseRequestHostAsForwardedHost(platformEnv)) {
+		return event.url.host;
+	}
+
+	return getConfiguredForwardedHost(platformEnv) ?? event.url.host;
 }
 
 async function readBody(event: RequestEvent): Promise<string | undefined> {
@@ -307,7 +332,7 @@ const apiProxy: Handle = async ({ event, resolve }) => {
 		// === Service Binding path (Cloudflare Pages production) ===
 		// AR_ROUTER binding routes internally — no workers.dev needed.
 		const apiPublicUrl = getApiPublicUrl(platformEnv) ?? 'https://api-internal';
-		const forwardedHost = new URL(apiPublicUrl).host;
+		const forwardedHost = getForwardedHost(event, platformEnv);
 		const targetUrl = `${apiPublicUrl}${event.url.pathname}${event.url.search}`;
 		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
 
@@ -335,7 +360,7 @@ const apiProxy: Handle = async ({ event, resolve }) => {
 		// === HTTP fetch path (local development / fallback) ===
 		const apiBackendUrl = getApiBackendUrl(platformEnv);
 		const targetUrl = `${apiBackendUrl}${event.url.pathname}${event.url.search}`;
-		const forwardedHost = getConfiguredForwardedHost(platformEnv) ?? event.url.host;
+		const forwardedHost = getForwardedHost(event, platformEnv);
 		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
 
 		const controller = new AbortController();

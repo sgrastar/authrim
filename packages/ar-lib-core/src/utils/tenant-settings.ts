@@ -7,7 +7,12 @@
  * Replaces the previously hardcoded `settings:tenant:default:{category}` reads.
  */
 
-export type TenantSettingsCategory = 'tenant' | 'login-ui' | 'login-methods' | 'feature-flags';
+export type TenantSettingsCategory =
+  | 'tenant'
+  | 'login-ui'
+  | 'login-methods'
+  | 'feature-flags'
+  | 'login-entry';
 
 /**
  * Read a tenant settings object from KV.

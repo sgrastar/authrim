@@ -20,9 +20,11 @@
 	let creating = $state(false);
 	let createError = $state('');
 	let newId = $state('');
+	let newTenantCode = $state('');
 	let newName = $state('');
 	let newDescription = $state('');
 	let idValidationError = $state('');
+	let tenantCodeValidationError = $state('');
 
 	// Edit dialog
 	let showEditDialog = $state(false);
@@ -30,6 +32,7 @@
 	let editing = $state(false);
 	let editError = $state('');
 	let editName = $state('');
+	let editTenantCode = $state('');
 	let editDescription = $state('');
 	let editIsActive = $state(true);
 
@@ -65,6 +68,10 @@
 		idValidationError = validateTenantId(newId);
 	}
 
+	function handleTenantCodeInput() {
+		tenantCodeValidationError = newTenantCode ? validateTenantId(newTenantCode) : '';
+	}
+
 	// ==========================================================================
 	// Data Loading
 	// ==========================================================================
@@ -98,10 +105,12 @@
 	function openCreateDialog() {
 		if (singleTenantMode) return;
 		newId = '';
+		newTenantCode = '';
 		newName = '';
 		newDescription = '';
 		createError = '';
 		idValidationError = '';
+		tenantCodeValidationError = '';
 		showCreateDialog = true;
 	}
 
@@ -111,7 +120,8 @@
 
 	async function handleCreate() {
 		idValidationError = validateTenantId(newId);
-		if (idValidationError) return;
+		tenantCodeValidationError = newTenantCode ? validateTenantId(newTenantCode) : '';
+		if (idValidationError || tenantCodeValidationError) return;
 		if (!newName.trim()) {
 			createError = 'Name is required';
 			return;
@@ -123,6 +133,7 @@
 		try {
 			const created = await adminTenantsAPI.create({
 				id: newId,
+				tenant_code: newTenantCode.trim() || undefined,
 				name: newName.trim(),
 				description: newDescription.trim() || undefined
 			});
@@ -142,6 +153,7 @@
 	function openEditDialog(tenant: Tenant) {
 		editingTenant = tenant;
 		editName = tenant.name;
+		editTenantCode = tenant.tenant_code;
 		editDescription = tenant.description ?? '';
 		editIsActive = tenant.is_active;
 		editError = '';
@@ -160,6 +172,11 @@
 			editError = 'Name is required';
 			return;
 		}
+		const tenantCodeError = validateTenantId(editTenantCode);
+		if (tenantCodeError) {
+			editError = tenantCodeError.replace(/^ID /, 'Tenant code ');
+			return;
+		}
 		if (editActiveDisabled && editIsActive !== editingTenant.is_active) {
 			editError = 'The initial tenant must remain active in single-tenant mode.';
 			return;
@@ -171,6 +188,7 @@
 		try {
 			const updated = await adminTenantsAPI.update(editingTenant.id, {
 				name: editName.trim(),
+				tenant_code: editTenantCode.trim(),
 				description: editDescription.trim() || null,
 				is_active: editIsActive
 			});
@@ -307,6 +325,7 @@
 				<thead>
 					<tr>
 						<th>ID</th>
+						<th>Code</th>
 						<th>Name</th>
 						<th>Description</th>
 						<th>Status</th>
@@ -318,6 +337,7 @@
 					{#each tenants as tenant (tenant.id)}
 						<tr>
 							<td class="tenant-id">{tenant.id}</td>
+							<td class="tenant-id">{tenant.tenant_code}</td>
 							<td class="tenant-name">{tenant.name}</td>
 							<td class="tenant-description">{tenant.description ?? '—'}</td>
 							<td>
@@ -417,6 +437,27 @@
 				{/if}
 			</div>
 			<div class="form-group">
+				<label for="new-tenant-code" class="form-label">Tenant Code</label>
+				<input
+					id="new-tenant-code"
+					type="text"
+					class="form-input"
+					class:error={!!tenantCodeValidationError}
+					bind:value={newTenantCode}
+					oninput={handleTenantCodeInput}
+					placeholder="Defaults to Tenant ID when omitted"
+					maxlength="63"
+					autocomplete="off"
+				/>
+				{#if tenantCodeValidationError}
+					<p class="field-error">{tenantCodeValidationError.replace(/^ID /, 'Tenant code ')}</p>
+				{:else}
+					<p class="field-hint">
+						Optional manual entry code used by discovery. Lowercase letters, numbers, hyphens.
+					</p>
+				{/if}
+			</div>
+			<div class="form-group">
 				<label for="new-name" class="form-label">Name <span class="required">*</span></label>
 				<input
 					id="new-name"
@@ -446,7 +487,7 @@
 			<button
 				class="btn btn-primary"
 				onclick={handleCreate}
-				disabled={creating || !!idValidationError}
+				disabled={creating || !!idValidationError || !!tenantCodeValidationError}
 			>
 				{#if creating}
 					<i class="i-ph-circle-notch animate-spin"></i>
@@ -484,6 +525,23 @@
 				<p class="form-label">Tenant ID</p>
 				<div class="form-static" aria-label="Tenant ID">{editingTenant.id}</div>
 				<p class="field-hint">Tenant ID cannot be changed.</p>
+			</div>
+			<div class="form-group">
+				<label for="edit-tenant-code" class="form-label">
+					Tenant Code <span class="required">*</span>
+				</label>
+				<input
+					id="edit-tenant-code"
+					type="text"
+					class="form-input"
+					bind:value={editTenantCode}
+					placeholder="Discovery code"
+					maxlength="63"
+					autocomplete="off"
+				/>
+				<p class="field-hint">
+					Used for discovery/manual entry. Lowercase letters, numbers, hyphens.
+				</p>
 			</div>
 			<div class="form-group">
 				<label for="edit-name" class="form-label">Name <span class="required">*</span></label>

@@ -164,6 +164,7 @@ export const TENANT_TABLES_TO_DELETE = [
 
 interface TenantRow {
   id: string;
+  tenant_code: string;
   name: string;
   description: string | null;
   is_active: number;
@@ -183,6 +184,7 @@ function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
 function formatTenant(row: TenantRow) {
   return {
     id: row.id,
+    tenant_code: row.tenant_code,
     name: row.name,
     description: row.description,
     is_active: row.is_active === 1,
@@ -209,11 +211,29 @@ const CreateTenantSchema = z.object({
       'id must start and end with a lowercase letter or digit (hyphens allowed in between)'
     ),
   name: z.string().min(1).max(200),
+  tenant_code: z
+    .string()
+    .min(1)
+    .max(63)
+    .regex(
+      TENANT_ID_REGEX,
+      'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
+    )
+    .optional(),
   description: z.string().max(500).optional(),
 });
 
 const UpdateTenantSchema = z.object({
   name: z.string().min(1).max(200).optional(),
+  tenant_code: z
+    .string()
+    .min(1)
+    .max(63)
+    .regex(
+      TENANT_ID_REGEX,
+      'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
+    )
+    .optional(),
   description: z.string().max(500).nullable().optional(),
   is_active: z.boolean().optional(),
 });
@@ -536,6 +556,7 @@ async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId
       JSON.stringify({ 'login-ui.brand_name': tenantId })
     ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:login-methods`, JSON.stringify({})),
+    env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
   ]);
 }
 
@@ -570,8 +591,8 @@ export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
     const adapter = createAdapter(c);
     const singleTenantMode = isSingleTenantMode(c.env);
     const query = singleTenantMode
-      ? 'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ? ORDER BY is_default DESC, name ASC'
-      : 'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants ORDER BY is_default DESC, name ASC';
+      ? 'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ? ORDER BY is_default DESC, name ASC'
+      : 'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants ORDER BY is_default DESC, name ASC';
     const rows = await adapter.query<TenantRow>(
       query,
       singleTenantMode ? [getSingleTenantId(c.env)] : []
@@ -615,6 +636,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const { id, name, description } = parseResult.data;
+    const tenantCode = parseResult.data.tenant_code || id;
     const adapter = createAdapter(c);
 
     // Check id availability
@@ -628,16 +650,27 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    const existingTenantCode = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM tenants WHERE tenant_code = ?',
+      [tenantCode]
+    );
+
+    if (existingTenantCode) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'tenant_code', reason: 'Tenant code already exists' },
+      });
+    }
+
     const nowTs = Math.floor(Date.now() / 1000);
 
     await adapter.execute(
-      `INSERT INTO tenants (id, name, description, is_active, is_default, created_at, updated_at)
-       VALUES (?, ?, ?, 1, 0, ?, ?)`,
-      [id, name, description ?? null, nowTs, nowTs]
+      `INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
+      [id, tenantCode, name, description ?? null, nowTs, nowTs]
     );
 
     const created = await adapter.queryOne<TenantRow>(
-      'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -648,7 +681,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       await seedDefaultClaimsForTenant(id, adapter, getLogger(c), { throwOnError: true });
       // 2. Write TenantContract to KV
       await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
-      // 3. Seed per-tenant KV settings (allowed_origins, login-ui, login-methods)
+      // 3. Seed per-tenant KV settings (allowed_origins, login-ui, login-methods, login-entry)
       await seedTenantDefaultSettings(c, id);
       // 4. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
       await initTenantKeyManager(c.env.KEY_MANAGER, id);
@@ -666,6 +699,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
         c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-methods`),
+        c.env.SETTINGS?.delete(`settings:tenant:${id}:login-entry`),
         // KeyManager DO cleanup is not possible (no delete/reset RPC) — orphaned DO is harmless
       ]);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -674,6 +708,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     // Audit log written AFTER successful provisioning
     await createAuditLogFromContext(c, 'tenant.created', 'tenant', id, {
       name,
+      tenant_code: tenantCode,
       description: description ?? null,
     });
 
@@ -699,7 +734,7 @@ export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const adapter = createAdapter(c);
     const tenant = await adapter.queryOne<TenantRow>(
-      'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -747,7 +782,7 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     // Check tenant exists
     const existing = await adapter.queryOne<TenantRow>(
-      'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -778,6 +813,21 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
       fields.push('name = ?');
       values.push(updates.name);
     }
+    if (updates.tenant_code !== undefined) {
+      const collision = await adapter.queryOne<{ id: string }>(
+        'SELECT id FROM tenants WHERE tenant_code = ? AND id != ?',
+        [updates.tenant_code, id]
+      );
+
+      if (collision) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'tenant_code', reason: 'Tenant code already exists' },
+        });
+      }
+
+      fields.push('tenant_code = ?');
+      values.push(updates.tenant_code);
+    }
     if ('description' in updates) {
       fields.push('description = ?');
       values.push(updates.description ?? null);
@@ -804,7 +854,7 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const updated = await adapter.queryOne<TenantRow>(
-      'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -969,7 +1019,7 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
     ]);
 
     const updated = await adapter.queryOne<TenantRow>(
-      'SELECT id, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
