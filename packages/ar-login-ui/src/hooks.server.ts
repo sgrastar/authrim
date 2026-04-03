@@ -118,19 +118,6 @@ function getOriginalRequestHost(event: RequestEvent): string | undefined {
 	}
 }
 
-function getApiPublicUrl(platformEnv?: Record<string, unknown>): string | undefined {
-	const candidates = [
-		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
-		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
-		import.meta.env.PUBLIC_AUTHRIM_ISSUER
-	];
-	for (const candidate of candidates) {
-		const url = getValidProxyUrl(candidate);
-		if (url) return url;
-	}
-	return undefined;
-}
-
 function getApiBackendUrl(platformEnv?: Record<string, unknown>): string {
 	return getConfiguredApiBackendUrl(platformEnv) ?? 'http://localhost:8786';
 }
