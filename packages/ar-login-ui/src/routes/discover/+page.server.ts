@@ -38,6 +38,18 @@ type DiscoveryResponse =
 	| { result: 'manual_required'; methods: string[]; allow_manual_tenant_entry: boolean }
 	| { result: 'not_found'; code: string };
 
+type DiscoveryErrorCode =
+	| 'email_domain_not_found'
+	| 'tenant_code_not_found'
+	| 'tenant_slug_not_found'
+	| 'invitation_not_found'
+	| 'app_hint_not_found'
+	| 'not_found'
+	| 'value_required'
+	| 'manual_required'
+	| 'invitation_unresolved'
+	| 'resolve_failed';
+
 function readRememberedTenant(rawValue: string | undefined): DiscoveryCandidate | null {
 	if (!rawValue) return null;
 
@@ -119,23 +131,6 @@ function clearRememberedTenantCookie(cookies: Parameters<PageServerLoad>[0]['coo
 	});
 }
 
-function notFoundMessage(code: string): string {
-	switch (code) {
-		case 'email_domain_not_found':
-			return 'This email domain is not mapped to a tenant.';
-		case 'tenant_code_not_found':
-			return 'No tenant matched that tenant code.';
-		case 'tenant_slug_not_found':
-			return 'No tenant matched that tenant slug.';
-		case 'invitation_not_found':
-			return 'This invitation is invalid or has expired.';
-		case 'app_hint_not_found':
-			return 'No tenant matched that application hint.';
-		default:
-			return 'No tenant could be resolved.';
-	}
-}
-
 function defaultManualMode(
 	config: DiscoveryConfigResponse['config']
 ): 'tenant_code' | 'tenant_slug' {
@@ -187,10 +182,10 @@ export const load: PageServerLoad = async (event) => {
 			config,
 			rememberedCandidate,
 			inviteToken,
-			inviteError:
+			inviteErrorCode:
 				result.result === 'not_found'
-					? notFoundMessage(result.code)
-					: 'The invitation could not be resolved.'
+					? (result.code as DiscoveryErrorCode)
+					: ('invitation_unresolved' as const)
 		};
 	}
 
@@ -208,7 +203,7 @@ export const load: PageServerLoad = async (event) => {
 		config,
 		rememberedCandidate,
 		inviteToken,
-		inviteError: null
+		inviteErrorCode: null
 	};
 };
 
@@ -222,7 +217,7 @@ export const actions: Actions = {
 
 		if (!value) {
 			return fail(400, {
-				error: 'A value is required.',
+				errorCode: 'value_required' as const,
 				mode,
 				value
 			});
@@ -276,8 +271,7 @@ export const actions: Actions = {
 				return {
 					mode: defaultManualMode(config.config),
 					value,
-					error:
-						'Tenant could not be resolved automatically. Enter your tenant code or tenant slug to continue.',
+					errorCode: 'manual_required' as const,
 					candidates: [],
 					result: 'manual_required' as const
 				};
@@ -286,7 +280,7 @@ export const actions: Actions = {
 			return fail(404, {
 				mode,
 				value,
-				error: notFoundMessage(result.code),
+				errorCode: result.code as DiscoveryErrorCode,
 				candidates: [],
 				result: 'not_found' as const
 			});
@@ -298,7 +292,7 @@ export const actions: Actions = {
 			return fail(500, {
 				mode,
 				value,
-				error: error instanceof Error ? error.message : 'Failed to resolve tenant',
+				errorCode: 'resolve_failed' as const,
 				candidates: [],
 				result: 'not_found' as const
 			});

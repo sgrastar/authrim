@@ -755,8 +755,9 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
     try {
       const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
       await coreAdapter.execute(
-        `INSERT INTO sessions (id, user_id, expires_at, created_at, external_provider_id, external_provider_sub)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sessions (
+           id, user_id, expires_at, created_at, external_provider_id, external_provider_sub, tenant_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           sessionId,
           options.userId,
@@ -764,6 +765,7 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
           now,
           options.externalProviderId,
           options.externalProviderSub,
+          options.tenantId,
         ]
       );
     } catch (dbError) {

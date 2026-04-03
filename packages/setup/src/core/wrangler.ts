@@ -453,6 +453,7 @@ export function generateEnvVars(
   const multiTenantBaseDomain =
     config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
   const multiTenantEnabled = !!multiTenantBaseDomain;
+  const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
 
   // Determine issuer URL
   // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
@@ -467,7 +468,7 @@ export function generateEnvVars(
   }
   // UI_URL: when sameAsApi=true, UI is proxied through the API domain
   const apiUrlForUi = config.urls?.api?.custom || config.urls?.api?.auto || '';
-  const uiUrl = config.urls?.loginUi?.sameAsApi
+  const uiUrl = loginUiUsesApiDomain
     ? apiUrlForUi
     : config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl;
 
@@ -526,7 +527,7 @@ export function generateEnvVars(
     // Cookie SameSite configuration based on origin relationship
     // If UI is served from same domain as API (via proxy), use 'Lax' (more secure)
     // If UI is on different domain, use 'None' (required for cross-origin)
-    const loginUiSameOrigin = config.urls?.loginUi?.sameAsApi === true;
+    const loginUiSameOrigin = loginUiUsesApiDomain;
     vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
 
     // Admin UI URL and cookie configuration
@@ -607,7 +608,8 @@ export function generateEnvVars(
   }
 
   // ar-router: UI proxy configuration
-  // When sameAsApi=true, the router proxies /admin/* and /login/* to the Pages projects
+  // In multi-tenant mode, the login UI must also be reachable on issuer/tenant hosts so
+  // tenant-specific /login, /discover, and /signup URLs stay canonical and host-bound.
   if (component === 'ar-router') {
     const adminSameAsApi = config.urls?.adminUi?.sameAsApi === true;
     vars['ENABLE_ADMIN_UI_PROXY'] = adminSameAsApi ? 'true' : 'false';
@@ -618,9 +620,9 @@ export function generateEnvVars(
       }
     }
 
-    const loginSameAsApi = config.urls?.loginUi?.sameAsApi === true;
-    vars['ENABLE_LOGIN_UI_PROXY'] = loginSameAsApi ? 'true' : 'false';
-    if (loginSameAsApi) {
+    const loginProxyEnabled = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
+    vars['ENABLE_LOGIN_UI_PROXY'] = loginProxyEnabled ? 'true' : 'false';
+    if (loginProxyEnabled) {
       const loginPagesUrl = config.urls?.loginUi?.auto || config.urls?.loginUi?.custom || '';
       if (loginPagesUrl) {
         vars['AR_LOGIN_UI_URL'] = loginPagesUrl;

@@ -287,7 +287,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     // Find linked user (use DB_PII for linked identities)
     const adapter = new D1Adapter({ db: c.env.DB_PII });
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
-    const linkedIdentity = await linkedIdentityRepo.findByProviderUser('did', did);
+    const linkedIdentity = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
 
     if (!linkedIdentity) {
       // Publish DID authentication failure event (non-blocking)

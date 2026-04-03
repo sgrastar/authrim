@@ -27,13 +27,14 @@ export async function getLinkedIdentityById(env: Env, id: string): Promise<Linke
  */
 export async function findLinkedIdentity(
   env: Env,
+  tenantId: string,
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?',
-    [providerId, providerUserId]
+    'SELECT * FROM linked_identities WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?',
+    [tenantId, providerId, providerUserId]
   );
 
   if (!result) return null;
@@ -41,10 +42,30 @@ export async function findLinkedIdentity(
 }
 
 /**
- * Find all linked identities by provider and provider user ID
- * Used for backchannel logout to find all linked identities across tenants
+ * Find linked identities within a tenant by provider and provider user ID.
+ * Used for tenant-scoped backchannel logout.
  */
 export async function findLinkedIdentitiesByProviderSub(
+  env: Env,
+  tenantId: string,
+  providerId: string,
+  providerUserId: string
+): Promise<LinkedIdentity[]> {
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<DbLinkedIdentity>(
+    `SELECT * FROM linked_identities
+     WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?`,
+    [tenantId, providerId, providerUserId]
+  );
+
+  return result.map(mapDbToLinkedIdentity);
+}
+
+/**
+ * Find linked identities across tenants by provider and provider user ID.
+ * Explicit helper for global maintenance flows only.
+ */
+export async function findLinkedIdentitiesAcrossTenantsByProviderSub(
   env: Env,
   providerId: string,
   providerUserId: string
@@ -72,17 +93,18 @@ export async function listLinkedIdentities(env: Env, userId: string): Promise<Li
 }
 
 /**
- * Get linked identity for user and provider
+ * Get linked identity for user and provider within a tenant.
  */
 export async function getLinkedIdentityForUserAndProvider(
   env: Env,
+  tenantId: string,
   userId: string,
   providerId: string
 ): Promise<LinkedIdentity | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE user_id = ? AND provider_id = ?',
-    [userId, providerId]
+    'SELECT * FROM linked_identities WHERE tenant_id = ? AND user_id = ? AND provider_id = ?',
+    [tenantId, userId, providerId]
   );
 
   if (!result) return null;

@@ -184,6 +184,106 @@ type RootTranslation = {
 	 */
 	login_continueWith: RequiredParams<'provider'>
 	/**
+	 * T​e​n​a​n​t​ ​D​i​s​c​o​v​e​r​y
+	 */
+	discover_pageTitle: string
+	/**
+	 * T​e​n​a​n​t​ ​d​i​s​c​o​v​e​r​y
+	 */
+	discover_kicker: string
+	/**
+	 * F​i​n​d​ ​y​o​u​r​ ​t​e​n​a​n​t
+	 */
+	discover_title: string
+	/**
+	 * R​e​s​o​l​v​e​ ​t​h​e​ ​c​o​r​r​e​c​t​ ​t​e​n​a​n​t​ ​f​i​r​s​t​.​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​s​ ​a​r​e​ ​l​o​a​d​e​d​ ​a​f​t​e​r​ ​t​h​e​ ​t​e​n​a​n​t​ ​i​s​ ​c​o​n​f​i​r​m​e​d​.
+	 */
+	discover_subtitle: string
+	/**
+	 * T​h​i​s​ ​e​n​t​r​y​ ​p​o​i​n​t​ ​i​s​ ​d​i​s​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​U​s​e​ ​t​h​e​ ​t​e​n​a​n​t​-​s​p​e​c​i​f​i​c​ ​l​o​g​i​n​ ​U​R​L​ ​i​n​s​t​e​a​d​.
+	 */
+	discover_notice_disabled: string
+	/**
+	 * A​u​t​o​m​a​t​i​c​ ​t​e​n​a​n​t​ ​d​i​s​c​o​v​e​r​y​ ​i​s​ ​d​i​s​a​b​l​e​d​.​ ​E​n​t​e​r​ ​y​o​u​r​ ​t​e​n​a​n​t​ ​c​o​d​e​ ​o​r​ ​t​e​n​a​n​t​ ​s​l​u​g​ ​t​o​ ​c​o​n​t​i​n​u​e​.
+	 */
+	discover_notice_manualOnly: string
+	/**
+	 * R​e​c​e​n​t​ ​t​e​n​a​n​t
+	 */
+	discover_recentTenant: string
+	/**
+	 * D​i​s​c​o​v​e​r​y​ ​m​e​t​h​o​d
+	 */
+	discover_methodLabel: string
+	/**
+	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
+	 */
+	discover_method_email: string
+	/**
+	 * T​e​n​a​n​t​ ​c​o​d​e
+	 */
+	discover_method_tenantCode: string
+	/**
+	 * T​e​n​a​n​t​ ​s​l​u​g
+	 */
+	discover_method_tenantSlug: string
+	/**
+	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m
+	 */
+	discover_placeholder_email: string
+	/**
+	 * a​c​m​e
+	 */
+	discover_placeholder_tenantCode: string
+	/**
+	 * a​c​m​e​-​c​o​r​p
+	 */
+	discover_placeholder_tenantSlug: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​e​n​a​n​t
+	 */
+	discover_selectTenant: string
+	/**
+	 * T​h​i​s​ ​e​m​a​i​l​ ​d​o​m​a​i​n​ ​i​s​ ​n​o​t​ ​m​a​p​p​e​d​ ​t​o​ ​a​ ​t​e​n​a​n​t​.
+	 */
+	discover_error_emailDomainNotFound: string
+	/**
+	 * N​o​ ​t​e​n​a​n​t​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​t​e​n​a​n​t​ ​c​o​d​e​.
+	 */
+	discover_error_tenantCodeNotFound: string
+	/**
+	 * N​o​ ​t​e​n​a​n​t​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​t​e​n​a​n​t​ ​s​l​u​g​.
+	 */
+	discover_error_tenantSlugNotFound: string
+	/**
+	 * T​h​i​s​ ​i​n​v​i​t​a​t​i​o​n​ ​i​s​ ​i​n​v​a​l​i​d​ ​o​r​ ​h​a​s​ ​e​x​p​i​r​e​d​.
+	 */
+	discover_error_invitationNotFound: string
+	/**
+	 * N​o​ ​t​e​n​a​n​t​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​a​p​p​l​i​c​a​t​i​o​n​ ​h​i​n​t​.
+	 */
+	discover_error_appHintNotFound: string
+	/**
+	 * N​o​ ​t​e​n​a​n​t​ ​c​o​u​l​d​ ​b​e​ ​r​e​s​o​l​v​e​d​.
+	 */
+	discover_error_notFound: string
+	/**
+	 * A​ ​v​a​l​u​e​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	discover_error_valueRequired: string
+	/**
+	 * T​e​n​a​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​s​o​l​v​e​d​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.​ ​E​n​t​e​r​ ​y​o​u​r​ ​t​e​n​a​n​t​ ​c​o​d​e​ ​o​r​ ​t​e​n​a​n​t​ ​s​l​u​g​ ​t​o​ ​c​o​n​t​i​n​u​e​.
+	 */
+	discover_error_manualRequired: string
+	/**
+	 * T​h​e​ ​i​n​v​i​t​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​s​o​l​v​e​d​.
+	 */
+	discover_error_invitationUnresolved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​s​o​l​v​e​ ​t​e​n​a​n​t
+	 */
+	discover_error_resolveFailed: string
+	/**
 	 * S​i​g​n​ ​U​p
 	 */
 	header_signUp: string
@@ -1304,6 +1404,106 @@ export type TranslationFunctions = {
 	 * Continue with {provider}
 	 */
 	login_continueWith: (arg: { provider: string }) => LocalizedString
+	/**
+	 * Tenant Discovery
+	 */
+	discover_pageTitle: () => LocalizedString
+	/**
+	 * Tenant discovery
+	 */
+	discover_kicker: () => LocalizedString
+	/**
+	 * Find your tenant
+	 */
+	discover_title: () => LocalizedString
+	/**
+	 * Resolve the correct tenant first. Authentication methods are loaded after the tenant is confirmed.
+	 */
+	discover_subtitle: () => LocalizedString
+	/**
+	 * This entry point is disabled for this tenant. Use the tenant-specific login URL instead.
+	 */
+	discover_notice_disabled: () => LocalizedString
+	/**
+	 * Automatic tenant discovery is disabled. Enter your tenant code or tenant slug to continue.
+	 */
+	discover_notice_manualOnly: () => LocalizedString
+	/**
+	 * Recent tenant
+	 */
+	discover_recentTenant: () => LocalizedString
+	/**
+	 * Discovery method
+	 */
+	discover_methodLabel: () => LocalizedString
+	/**
+	 * Email address
+	 */
+	discover_method_email: () => LocalizedString
+	/**
+	 * Tenant code
+	 */
+	discover_method_tenantCode: () => LocalizedString
+	/**
+	 * Tenant slug
+	 */
+	discover_method_tenantSlug: () => LocalizedString
+	/**
+	 * you@example.com
+	 */
+	discover_placeholder_email: () => LocalizedString
+	/**
+	 * acme
+	 */
+	discover_placeholder_tenantCode: () => LocalizedString
+	/**
+	 * acme-corp
+	 */
+	discover_placeholder_tenantSlug: () => LocalizedString
+	/**
+	 * Select a tenant
+	 */
+	discover_selectTenant: () => LocalizedString
+	/**
+	 * This email domain is not mapped to a tenant.
+	 */
+	discover_error_emailDomainNotFound: () => LocalizedString
+	/**
+	 * No tenant matched that tenant code.
+	 */
+	discover_error_tenantCodeNotFound: () => LocalizedString
+	/**
+	 * No tenant matched that tenant slug.
+	 */
+	discover_error_tenantSlugNotFound: () => LocalizedString
+	/**
+	 * This invitation is invalid or has expired.
+	 */
+	discover_error_invitationNotFound: () => LocalizedString
+	/**
+	 * No tenant matched that application hint.
+	 */
+	discover_error_appHintNotFound: () => LocalizedString
+	/**
+	 * No tenant could be resolved.
+	 */
+	discover_error_notFound: () => LocalizedString
+	/**
+	 * A value is required.
+	 */
+	discover_error_valueRequired: () => LocalizedString
+	/**
+	 * Tenant could not be resolved automatically. Enter your tenant code or tenant slug to continue.
+	 */
+	discover_error_manualRequired: () => LocalizedString
+	/**
+	 * The invitation could not be resolved.
+	 */
+	discover_error_invitationUnresolved: () => LocalizedString
+	/**
+	 * Failed to resolve tenant
+	 */
+	discover_error_resolveFailed: () => LocalizedString
 	/**
 	 * Sign Up
 	 */

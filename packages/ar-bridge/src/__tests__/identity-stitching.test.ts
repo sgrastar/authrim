@@ -265,6 +265,12 @@ describe('Identity Stitching Service', () => {
         expect(result.isNewUser).toBe(false);
         expect(result.stitchedFromExisting).toBe(false);
         expect(result.linkedIdentityId).toBe('existing-linked-id');
+        expect(linkedIdentityStore.findLinkedIdentity).toHaveBeenCalledWith(
+          env,
+          'default',
+          'provider-123',
+          'google-user-123'
+        );
 
         expect(linkedIdentityStore.updateLinkedIdentity).toHaveBeenCalledWith(
           env,

@@ -47,6 +47,39 @@ const ja = {
 	login_orContinueWith: '他のアカウントでログイン',
 	login_continueWith: '{provider}でログイン',
 
+	discover_pageTitle: 'テナントの選択',
+	discover_kicker: 'テナントディスカバリー',
+	discover_title: '利用するテナントを選択',
+	discover_subtitle: '先にテナントを確定します。認証方法はテナント確定後に読み込まれます。',
+	discover_notice_disabled:
+		'このテナントでは共通入口が無効です。テナント固有のログインURLを利用してください。',
+	discover_notice_manualOnly:
+		'自動テナント判定は無効です。テナントコードまたはテナント slug を入力して続行してください。',
+	discover_recentTenant: '最近使用したテナント',
+	discover_methodLabel: 'テナントの特定方法',
+	discover_method_email: 'メールアドレス',
+	discover_method_tenantCode: 'テナントコード',
+	discover_method_tenantSlug: 'テナント slug',
+	discover_placeholder_email: 'you@example.com',
+	discover_placeholder_tenantCode: 'acme',
+	discover_placeholder_tenantSlug: 'acme-corp',
+	discover_selectTenant: 'テナントを選択',
+	discover_error_emailDomainNotFound:
+		'このメールドメインに対応するテナントが見つかりませんでした。',
+	discover_error_tenantCodeNotFound:
+		'入力されたテナントコードに一致するテナントが見つかりませんでした。',
+	discover_error_tenantSlugNotFound:
+		'入力されたテナント slug に一致するテナントが見つかりませんでした。',
+	discover_error_invitationNotFound: '招待リンクが無効か、期限切れです。',
+	discover_error_appHintNotFound:
+		'指定されたアプリケーションヒントに一致するテナントが見つかりませんでした。',
+	discover_error_notFound: 'テナントを特定できませんでした。',
+	discover_error_valueRequired: '入力が必要です。',
+	discover_error_manualRequired:
+		'自動でテナントを特定できませんでした。テナントコードまたはテナント slug を入力してください。',
+	discover_error_invitationUnresolved: '招待リンクを解決できませんでした。',
+	discover_error_resolveFailed: 'テナントの解決に失敗しました',
+
 	header_signUp: '新規登録',
 	header_login: 'ログイン',
 	header_logout: 'ログアウト',

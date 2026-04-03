@@ -43,6 +43,10 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.get('/api/auth/discovery', (c) => {
+    const tenantId = getTenantIdFromContext(c);
+    return c.json({ tenantId });
+  });
   return app;
 }
 
@@ -173,6 +177,26 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const app = buildApp(env);
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(200); // fail-open
+    });
+
+    it('allows discovery endpoint requests from a non-tenant common entry host', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+      const res = await app.request(
+        makeRequest('login.example.com', '/api/auth/discovery'),
+        undefined,
+        env as Env
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json<{ tenantId: string }>();
+      expect(body.tenantId).toBe('default');
     });
   });
 });
