@@ -6,6 +6,10 @@
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
+function resolveTenantId(tenantId?: string): string {
+	return tenantId?.trim() || 'default';
+}
+
 export interface TenantEndpoints {
 	well_known: {
 		openid_configuration: string;
@@ -80,10 +84,13 @@ export interface TenantInfo extends TenantEndpoints {
 	api_url: string;
 }
 
-export async function getTenantInfo(tenantId: string): Promise<TenantInfo> {
-	const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${tenantId}/info`, {
-		credentials: 'include'
-	});
+export async function getTenantInfo(tenantId?: string): Promise<TenantInfo> {
+	const response = await fetch(
+		`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(resolveTenantId(tenantId))}/info`,
+		{
+			credentials: 'include'
+		}
+	);
 
 	if (!response.ok) {
 		const err = await response.json().catch(() => ({ error: 'unknown_error' }));
