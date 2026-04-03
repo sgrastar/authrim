@@ -105,6 +105,19 @@ function shouldUseRequestHostAsForwardedHost(platformEnv?: Record<string, unknow
 	return true;
 }
 
+function getOriginalRequestHost(event: RequestEvent): string | undefined {
+	const originalHost = event.request.headers.get('x-authrim-original-host')?.trim();
+	if (!originalHost) {
+		return undefined;
+	}
+
+	try {
+		return new URL(`https://${originalHost}`).host;
+	} catch {
+		return undefined;
+	}
+}
+
 function getApiPublicUrl(platformEnv?: Record<string, unknown>): string | undefined {
 	const candidates = [
 		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
@@ -209,6 +222,15 @@ function buildProxyHeaders(
 }
 
 function getForwardedHost(event: RequestEvent, platformEnv?: Record<string, unknown>): string {
+	const originalHost = getOriginalRequestHost(event);
+	if (originalHost) {
+		return originalHost;
+	}
+
+	if (event.url.pathname === '/api/auth/discovery') {
+		return event.url.host;
+	}
+
 	if (shouldUseRequestHostAsForwardedHost(platformEnv)) {
 		return event.url.host;
 	}

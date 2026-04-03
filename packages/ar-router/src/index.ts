@@ -81,6 +81,7 @@ async function proxyToPages(request: Request, baseUrl: string, path: string): Pr
   targetUrl.search = new URL(request.url).search;
 
   const headers = new Headers(request.headers);
+  headers.set('X-Authrim-Original-Host', new URL(request.url).host);
   const targetOrigin = targetUrl.origin;
 
   // Rewrite Origin/Referer so SvelteKit CSRF check passes

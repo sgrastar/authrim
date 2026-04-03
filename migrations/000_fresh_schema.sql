@@ -570,7 +570,7 @@ CREATE TABLE "linked_identities" (
   linked_at INTEGER NOT NULL,
   last_login_at INTEGER,
   updated_at INTEGER NOT NULL,
-  UNIQUE(provider_id, provider_user_id),
+  UNIQUE(tenant_id, provider_id, provider_user_id),
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
   FOREIGN KEY (provider_id) REFERENCES upstream_providers(id) ON DELETE CASCADE
 );
@@ -1799,7 +1799,14 @@ CREATE INDEX idx_issued_credentials_user ON issued_credentials(tenant_id, user_i
 
 CREATE INDEX idx_linked_identities_provider ON linked_identities(provider_id);
 
+CREATE INDEX idx_linked_identities_provider_sub ON linked_identities(provider_id, provider_user_id);
+
+CREATE INDEX idx_linked_identities_tenant_provider_user
+    ON linked_identities(tenant_id, provider_id, provider_user_id);
+
 CREATE INDEX idx_linked_identities_user ON linked_identities(user_id);
+
+CREATE INDEX idx_linked_identities_tenant_user ON linked_identities(tenant_id, user_id);
 
 CREATE INDEX idx_membership_org ON subject_org_membership(org_id);
 

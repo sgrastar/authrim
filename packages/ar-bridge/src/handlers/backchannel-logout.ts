@@ -92,7 +92,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     const claims = await validateLogoutToken(c.env, provider, logoutToken);
 
     // 4. Find and invalidate sessions/tokens for the subject
-    const result = await invalidateUserSessions(c.env, provider.id, claims, log);
+    const result = await invalidateUserSessions(c.env, tenantId, provider.id, claims, log);
 
     log.info('Backchannel logout processed', {
       provider: provider.name,
@@ -195,6 +195,7 @@ async function validateLogoutToken(
  */
 async function invalidateUserSessions(
   env: Env,
+  tenantId: string,
   providerId: string,
   claims: LogoutTokenClaims,
   log: ReturnType<ReturnType<typeof getLogger>['module']>
@@ -204,7 +205,12 @@ async function invalidateUserSessions(
 
   // Find linked identities for this provider and subject
   if (claims.sub) {
-    const identities = await findLinkedIdentitiesByProviderSub(env, providerId, claims.sub);
+    const identities = await findLinkedIdentitiesByProviderSub(
+      env,
+      tenantId,
+      providerId,
+      claims.sub
+    );
 
     for (const identity of identities) {
       identitiesAffected++;
@@ -226,8 +232,9 @@ async function invalidateUserSessions(
       `SELECT id FROM sessions
        WHERE external_provider_id = ?
          AND external_provider_sub = ?
+         AND tenant_id = ?
          AND expires_at > ?`,
-      [providerId, claims.sub, Date.now()]
+      [providerId, claims.sub, tenantId, Date.now()]
     );
 
     for (const session of sessions) {
@@ -252,8 +259,9 @@ async function invalidateUserSessions(
       await coreAdapter.execute(
         `DELETE FROM sessions
          WHERE external_provider_id = ?
-           AND external_provider_sub = ?`,
-        [providerId, claims.sub]
+           AND external_provider_sub = ?
+           AND tenant_id = ?`,
+        [providerId, claims.sub, tenantId]
       );
     }
   }

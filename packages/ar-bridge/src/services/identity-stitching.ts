@@ -139,7 +139,7 @@ export async function handleIdentity(
   }
 
   // 2. Check for existing linked identity
-  const existingLink = await findLinkedIdentity(env, provider.id, userInfo.sub);
+  const existingLink = await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub);
   if (existingLink) {
     // Update tokens and last login
     await updateLinkedIdentity(env, existingLink.id, {

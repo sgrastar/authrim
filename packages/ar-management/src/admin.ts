@@ -1671,7 +1671,7 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
 
     // Delete linked identities (also PII)
-    await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(userId, piiAdapter);
+    await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(piiCtx.tenantId, userId, piiAdapter);
 
     // Delete subject identifiers (pairwise subs)
     await piiCtx.piiRepositories.identifier.deleteByUserId(userId, piiAdapter);

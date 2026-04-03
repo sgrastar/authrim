@@ -25,6 +25,10 @@ function expectedPrimaryTenantId(config: AuthrimConfig): string | undefined {
   );
 }
 
+function isMultiTenantConfigured(config: AuthrimConfig): boolean {
+  return config.tenant?.multiTenant === true && !!config.tenant.baseDomain;
+}
+
 // =============================================================================
 // deriveAllowedOrigins — 27 tests
 // =============================================================================
@@ -47,11 +51,16 @@ describe('generateEnvVars - ar-auth', () => {
     const config = buildAuthrimConfig(scenario) as AuthrimConfig;
     const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
     const expected = scenario.expected.arAuthEnvVars;
+    const effectiveApiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+    const expectedUiUrl = isMultiTenantConfigured(config) ? effectiveApiUrl : expected.UI_URL;
+    const expectedCookieSameSite = isMultiTenantConfigured(config)
+      ? 'Lax'
+      : expected.COOKIE_SAME_SITE;
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
-    expect(vars['UI_URL']).toBe(expected.UI_URL);
+    expect(vars['UI_URL']).toBe(expectedUiUrl);
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
-    expect(vars['COOKIE_SAME_SITE']).toBe(expected.COOKIE_SAME_SITE);
+    expect(vars['COOKIE_SAME_SITE']).toBe(expectedCookieSameSite);
     expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe(expected.ADMIN_COOKIE_SAME_SITE);
     expect(vars['DEFAULT_TENANT_ID']).toBe(expected.DEFAULT_TENANT_ID);
 
@@ -94,9 +103,13 @@ describe('generateEnvVars - ar-management', () => {
     const config = buildAuthrimConfig(scenario) as AuthrimConfig;
     const vars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
     const expected = scenario.expected.arManagementEnvVars;
+    const effectiveApiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+    const expectedUiUrl = isMultiTenantConfigured(config)
+      ? effectiveApiUrl
+      : scenario.expected.arAuthEnvVars.UI_URL;
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
-    expect(vars['UI_URL']).toBe(scenario.expected.arAuthEnvVars.UI_URL);
+    expect(vars['UI_URL']).toBe(expectedUiUrl);
     expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
     expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
     expect(vars['SAML_ENABLED']).toBe((config.components?.saml ?? false) ? 'true' : 'false');
@@ -167,10 +180,10 @@ describe('generateEnvVars - ar-router', () => {
 
     // UI proxy flags — always present on ar-router
     const adminSameAsApi = scenario.config.adminUiSameAsApi;
-    const loginSameAsApi = scenario.config.loginUiSameAsApi;
+    const loginProxyEnabled = scenario.config.loginUiSameAsApi || !!scenario.config.baseDomain;
 
     expect(vars['ENABLE_ADMIN_UI_PROXY']).toBe(adminSameAsApi ? 'true' : 'false');
-    expect(vars['ENABLE_LOGIN_UI_PROXY']).toBe(loginSameAsApi ? 'true' : 'false');
+    expect(vars['ENABLE_LOGIN_UI_PROXY']).toBe(loginProxyEnabled ? 'true' : 'false');
 
     // AR_ADMIN_UI_URL is set only when adminSameAsApi=true
     if (adminSameAsApi) {
@@ -181,7 +194,7 @@ describe('generateEnvVars - ar-router', () => {
     }
 
     // AR_LOGIN_UI_URL is set only when loginSameAsApi=true
-    if (loginSameAsApi) {
+    if (loginProxyEnabled) {
       const loginPagesUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
       expect(vars['AR_LOGIN_UI_URL']).toBe(loginPagesUrl ?? undefined);
     } else {
@@ -218,6 +231,93 @@ describe('sameAsApi produces UI_URL = API domain', () => {
       expect(vars['UI_URL']).toBe(apiUrl);
     }
   );
+});
+
+describe('multi-tenant login UI canonical routing', () => {
+  it('uses the API domain as UI_URL and enables login UI proxy even when loginUi.sameAsApi is false', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: 'https://test.authrim.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.example.com',
+          auto: 'https://test-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.example.com',
+          auto: 'https://test-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: true,
+        baseDomain: 'test.authrim.com',
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      cloudflare: {},
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const authVars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+    const routerVars = generateEnvVars('ar-router', config, WORKERS_SUBDOMAIN);
+
+    expect(authVars['UI_URL']).toBe('https://test.authrim.com');
+    expect(authVars['COOKIE_SAME_SITE']).toBe('Lax');
+    expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('true');
+    expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.pages.dev');
+  });
 });
 
 // =============================================================================

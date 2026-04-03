@@ -102,8 +102,10 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
     }
 
     // Check if already linked to this provider
+    const tenantId = getTenantIdFromContext(c);
     const existing = await getLinkedIdentityForUserAndProvider(
       c.env,
+      tenantId,
       session.userId,
       body.provider_id
     );
@@ -113,7 +115,7 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
 
     // Build URL to start linking flow
     const startUrl = new URL(
-      `${buildIssuerUrl(c.env, getTenantIdFromContext(c))}/auth/external/${body.provider_id}/start`
+      `${buildIssuerUrl(c.env, tenantId)}/auth/external/${body.provider_id}/start`
     );
     startUrl.searchParams.set('link', 'true');
     if (body.redirect_uri) {

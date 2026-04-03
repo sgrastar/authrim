@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getDefaultDiscoveryMode, getInteractiveDiscoveryMethods } from '$lib/discovery-ui';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface DiscoveryCandidate {
 		tenant_id: string;
@@ -24,13 +25,13 @@
 		};
 		rememberedCandidate: DiscoveryCandidate | null;
 		inviteToken?: string | null;
-		inviteError?: string | null;
+		inviteErrorCode?: string | null;
 	}
 
 	interface ActionData {
 		mode?: string;
 		value?: string;
-		error?: string;
+		errorCode?: string;
 		candidates?: DiscoveryCandidate[];
 		result?: 'multiple' | 'manual_required' | 'not_found';
 	}
@@ -49,35 +50,57 @@
 	let value = $derived(submittedValue);
 
 	const candidates = $derived(form?.candidates || []);
-	const errorMessage = $derived(form?.error || data.inviteError || '');
+	const errorCode = $derived(form?.errorCode || data.inviteErrorCode || '');
+	const errorMessage = $derived(errorCode ? getErrorMessage(errorCode) : '');
 
 	function modeLabel(mode: string): string {
 		switch (mode) {
 			case 'email':
-				return 'Email address';
+				return $LL.discover_method_email();
 			case 'tenant_code':
-				return 'Tenant code';
+				return $LL.discover_method_tenantCode();
 			case 'tenant_slug':
-				return 'Tenant slug';
-			case 'app_hint':
-				return 'Application hint';
+				return $LL.discover_method_tenantSlug();
 			default:
-				return 'Tenant';
+				return $LL.discover_method_tenantCode();
 		}
 	}
 
 	function placeholderFor(mode: string): string {
 		switch (mode) {
 			case 'email':
-				return 'you@example.com';
+				return $LL.discover_placeholder_email();
 			case 'tenant_code':
-				return 'acme';
+				return $LL.discover_placeholder_tenantCode();
 			case 'tenant_slug':
-				return 'acme-corp';
-			case 'app_hint':
-				return 'partner-portal';
+				return $LL.discover_placeholder_tenantSlug();
 			default:
 				return '';
+		}
+	}
+
+	function getErrorMessage(code: string): string {
+		switch (code) {
+			case 'email_domain_not_found':
+				return $LL.discover_error_emailDomainNotFound();
+			case 'tenant_code_not_found':
+				return $LL.discover_error_tenantCodeNotFound();
+			case 'tenant_slug_not_found':
+				return $LL.discover_error_tenantSlugNotFound();
+			case 'invitation_not_found':
+				return $LL.discover_error_invitationNotFound();
+			case 'app_hint_not_found':
+				return $LL.discover_error_appHintNotFound();
+			case 'value_required':
+				return $LL.discover_error_valueRequired();
+			case 'manual_required':
+				return $LL.discover_error_manualRequired();
+			case 'invitation_unresolved':
+				return $LL.discover_error_invitationUnresolved();
+			case 'resolve_failed':
+				return $LL.discover_error_resolveFailed();
+			default:
+				return $LL.discover_error_notFound();
 		}
 	}
 
@@ -87,29 +110,26 @@
 </script>
 
 <svelte:head>
-	<title>Tenant Discovery</title>
+	<title>{$LL.discover_pageTitle()}</title>
 </svelte:head>
 
 <div class="discover-page">
 	<div class="discover-card">
 		<div class="discover-header">
-			<p class="discover-kicker">Tenant discovery</p>
-			<h1>Find your tenant</h1>
-			<p>
-				Resolve the correct tenant first. Authentication methods are loaded after the tenant is
-				confirmed.
-			</p>
+			<p class="discover-kicker">{$LL.discover_kicker()}</p>
+			<h1>{$LL.discover_title()}</h1>
+			<p>{$LL.discover_subtitle()}</p>
 		</div>
 
 		{#if data.config.config.mode === 'tenant_only'}
 			<div class="notice">
-				This entry point is disabled for this tenant. Use the tenant-specific login URL instead.
+				{$LL.discover_notice_disabled()}
 			</div>
 		{/if}
 
 		{#if data.config.config.selection_policy === 'manual_only'}
 			<div class="notice">
-				Automatic tenant discovery is disabled. Enter your tenant code or tenant slug to continue.
+				{$LL.discover_notice_manualOnly()}
 			</div>
 		{/if}
 
@@ -119,7 +139,7 @@
 
 		{#if rememberedCandidate}
 			<div class="recent-tenant">
-				<p class="recent-label">Recent tenant</p>
+				<p class="recent-label">{$LL.discover_recentTenant()}</p>
 				<a class="tenant-option" href={rememberedCandidate.login_url}>
 					<div class="tenant-branding">
 						{#if rememberedCandidate.logo_url}
@@ -142,16 +162,16 @@
 
 			{#if interactiveMethods.length > 1}
 				<div class="form-group">
-					<label for="mode">Discovery method</label>
+					<label for="mode">{$LL.discover_methodLabel()}</label>
 					<select id="mode" name="mode" bind:value={selectedMode}>
 						{#if interactiveMethods.includes('email_domain')}
-							<option value="email">Email address</option>
+							<option value="email">{$LL.discover_method_email()}</option>
 						{/if}
 						{#if interactiveMethods.includes('tenant_code')}
-							<option value="tenant_code">Tenant code</option>
+							<option value="tenant_code">{$LL.discover_method_tenantCode()}</option>
 						{/if}
 						{#if interactiveMethods.includes('tenant_slug')}
-							<option value="tenant_slug">Tenant slug</option>
+							<option value="tenant_slug">{$LL.discover_method_tenantSlug()}</option>
 						{/if}
 					</select>
 				</div>
@@ -175,12 +195,12 @@
 				/>
 			</div>
 
-			<button type="submit" class="primary-button">Continue</button>
+			<button type="submit" class="primary-button">{$LL.common_continue()}</button>
 		</form>
 
 		{#if candidates.length > 0}
 			<div class="candidate-list">
-				<h2>Select a tenant</h2>
+				<h2>{$LL.discover_selectTenant()}</h2>
 					{#each candidates as candidate (candidate.tenant_id)}
 						<a class="tenant-option" href={candidate.login_url}>
 						<div class="tenant-branding">

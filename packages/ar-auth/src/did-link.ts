@@ -22,6 +22,7 @@ import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   getChallengeStoreByDID,
   getSessionStoreBySessionId,
+  getTenantIdFromContext,
   LinkedIdentityRepository,
   D1Adapter,
   resolveDID,
@@ -89,6 +90,8 @@ export async function didRegisterChallengeHandler(
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
+    const tenantId = getTenantIdFromContext(c);
+
     const body = await c.req.json<{ did: string }>();
     const { did } = body;
 
@@ -107,7 +110,7 @@ export async function didRegisterChallengeHandler(
     // Check if DID is already linked to another account
     const adapter = new D1Adapter({ db: c.env.DB_PII });
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
-    const existingLink = await linkedIdentityRepo.findByProviderUser('did', did);
+    const existingLink = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
 
     if (existingLink) {
       if (existingLink.user_id === userId) {
@@ -192,6 +195,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
   const log = getLogger(c).module('DID-LINK');
 
   try {
+    const tenantId = getTenantIdFromContext(c);
     const body = await c.req.json<{
       challenge_id: string;
       proof: string;
@@ -234,7 +238,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     // This prevents DoS via repeated verification attempts for already-linked DIDs
     const adapter = new D1Adapter({ db: c.env.DB_PII });
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
-    const existingLinkEarly = await linkedIdentityRepo.findByProviderUser('did', did);
+    const existingLinkEarly = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
     if (existingLinkEarly) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -319,6 +323,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     // The database should have a UNIQUE constraint on (provider_id, provider_user_id)
     try {
       await linkedIdentityRepo.createLinkedIdentity({
+        tenant_id: tenantId,
         user_id: challengeData.userId,
         provider_id: 'did',
         provider_user_id: did,
@@ -338,7 +343,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       ) {
         // Race condition: another process linked this DID
         // Check if it was linked to the same user (idempotent success)
-        const existingLink = await linkedIdentityRepo.findByProviderUser('did', did);
+        const existingLink = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
         if (existingLink && existingLink.user_id === challengeData.userId) {
           // Same user, treat as success (idempotent)
           return c.json({
@@ -378,9 +383,10 @@ export async function didListHandler(c: Context<{ Bindings: Env }>): Promise<Res
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
+    const tenantId = getTenantIdFromContext(c);
     const adapter = new D1Adapter({ db: c.env.DB_PII });
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
-    const identities = await linkedIdentityRepo.findByUserId(userId);
+    const identities = await linkedIdentityRepo.findByUserId(tenantId, userId);
 
     // Filter to only DID links
     const didLinks = identities
@@ -431,11 +437,12 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    const tenantId = getTenantIdFromContext(c);
     const adapter = new D1Adapter({ db: c.env.DB_PII });
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
 
     // Find the link
-    const link = await linkedIdentityRepo.findByProviderUser('did', did);
+    const link = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
     if (!link) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -446,7 +453,7 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     }
 
     // Delete the link
-    const deleted = await linkedIdentityRepo.unlink(userId, 'did');
+    const deleted = await linkedIdentityRepo.unlink(tenantId, userId, 'did');
 
     return c.json({
       success: deleted,

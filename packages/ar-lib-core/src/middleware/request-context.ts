@@ -74,9 +74,15 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
     let tenantId = tenantResult.tenantId;
+    const allowUnknownTenantForDiscovery = c.req.path === '/api/auth/discovery';
 
     // Handle tenant resolution failure in multi-tenant mode
-    if (!tenantResult.success && isMultiTenantEnabled(c.env) && requireTenant) {
+    if (
+      !tenantResult.success &&
+      isMultiTenantEnabled(c.env) &&
+      requireTenant &&
+      !allowUnknownTenantForDiscovery
+    ) {
       // Create logger for error logging
       const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
       errorLogger.warn('Tenant resolution failed', {

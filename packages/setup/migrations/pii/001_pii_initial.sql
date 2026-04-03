@@ -200,6 +200,9 @@ CREATE TABLE IF NOT EXISTS linked_identities (
   -- Primary key
   id TEXT PRIMARY KEY,
 
+  -- Multi-tenant support
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+
   -- User reference (logical FK to users_core.id)
   user_id TEXT NOT NULL,
 
@@ -227,13 +230,20 @@ CREATE TABLE IF NOT EXISTS linked_identities (
 -- Indexes for linked_identities
 -- =============================================================================
 
--- Unique constraint: one link per provider per provider_user_id
+-- Unique constraint: one link per tenant/provider/provider_user_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_linked_ids_provider
-  ON linked_identities(provider_id, provider_user_id);
+  ON linked_identities(tenant_id, provider_id, provider_user_id);
 
 -- User lookup (find all linked IdPs for a user)
 CREATE INDEX IF NOT EXISTS idx_linked_ids_user
   ON linked_identities(user_id);
+
+-- Tenant-scoped lookup for authentication/linking
+CREATE INDEX IF NOT EXISTS idx_linked_ids_tenant_user
+  ON linked_identities(tenant_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_linked_ids_provider_sub
+  ON linked_identities(provider_id, provider_user_id);
 
 -- Provider email lookup (for account matching)
 CREATE INDEX IF NOT EXISTS idx_linked_ids_email
