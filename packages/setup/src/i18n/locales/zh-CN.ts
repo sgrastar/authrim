@@ -915,6 +915,8 @@ const zhCN: Translations = {
   'web.preview.issuerUrl': '发行者 URL：',
   'web.preview.loginUi': '登录 UI：',
   'web.preview.adminUi': '管理 UI：',
+  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.adminAccess': 'Admin UI Access:',
 
   // Web UI Component Labels
   'web.comp.loginUi': '登录 UI',

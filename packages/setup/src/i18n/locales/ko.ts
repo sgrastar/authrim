@@ -930,6 +930,8 @@ const ko: Translations = {
   'web.preview.issuerUrl': '발급자 URL:',
   'web.preview.loginUi': '로그인 UI:',
   'web.preview.adminUi': '관리자 UI:',
+  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.adminAccess': 'Admin UI Access:',
 
   // Web UI Component Labels
   'web.comp.loginUi': '로그인 UI',

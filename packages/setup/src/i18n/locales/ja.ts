@@ -929,6 +929,8 @@ const ja: Translations = {
   'web.preview.issuerUrl': 'Issuer URL:',
   'web.preview.loginUi': 'ログインUI:',
   'web.preview.adminUi': '管理UI:',
+  'web.preview.pagesUrl': 'ログインUI (Pages):',
+  'web.preview.adminAccess': '管理UIアクセス先:',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'ログインUI',

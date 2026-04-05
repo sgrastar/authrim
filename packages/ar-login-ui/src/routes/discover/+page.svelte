@@ -18,7 +18,6 @@
 				discovery_methods: string[];
 				selection_policy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
 				allow_manual_tenant_entry: boolean;
-				host_policy: 'common_entry_only' | 'all_hosts';
 			};
 			is_common_entry_host: boolean;
 			single_tenant_mode: boolean;

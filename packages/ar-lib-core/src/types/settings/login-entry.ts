@@ -22,7 +22,6 @@ export interface LoginEntrySettings {
   'login-entry.allow_manual_tenant_entry': boolean;
   'login-entry.remember_last_tenant': boolean;
   'login-entry.redirect_default_login_to_discovery': boolean;
-  'login-entry.host_policy': 'common_entry_only' | 'all_hosts';
 }
 
 /**
@@ -81,16 +80,6 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
       'Redirect the common-entry /login page to /discover while keeping tenant-specific /login unchanged.',
     visibility: 'admin',
   },
-  'login-entry.host_policy': {
-    key: 'login-entry.host_policy',
-    type: 'enum',
-    default: 'common_entry_only',
-    label: 'Discovery Host Policy',
-    description:
-      'Controls whether built-in discovery is available only on the common entry host or on all tenant/vanity hosts.',
-    enum: ['common_entry_only', 'all_hosts'],
-    visibility: 'admin',
-  },
 };
 
 /**
@@ -113,5 +102,4 @@ export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.allow_manual_tenant_entry': true,
   'login-entry.remember_last_tenant': true,
   'login-entry.redirect_default_login_to_discovery': true,
-  'login-entry.host_policy': 'common_entry_only',
 };

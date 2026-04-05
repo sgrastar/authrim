@@ -948,6 +948,8 @@ const pt: Translations = {
   'web.preview.issuerUrl': 'URL do Emissor:',
   'web.preview.loginUi': 'UI de Login:',
   'web.preview.adminUi': 'UI de Admin:',
+  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.adminAccess': 'Admin UI Access:',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI de Login',

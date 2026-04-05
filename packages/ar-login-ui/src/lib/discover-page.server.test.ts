@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { actions, load } from '../routes/discover/+page.server';
+import { actions } from '../routes/discover/+page.server';
 
 function createCookies(initial: Record<string, string> = {}) {
 	const store = new Map<string, string>(Object.entries(initial));
@@ -22,61 +22,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('/discover page server', () => {
-	it('redirects tenant host discovery to /login when host_policy is common_entry_only', async () => {
-		const fetch = vi.fn(async () =>
-			jsonResponse({
-				config: {
-					tenant_id: 'acme',
-					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug', 'app_hint'],
-					selection_policy: 'select_if_multiple',
-					allow_manual_tenant_entry: true,
-					remember_last_tenant: true,
-					redirect_default_login_to_discovery: true,
-					host_policy: 'common_entry_only'
-				},
-				single_tenant_mode: false,
-				is_common_entry_host: false
-			})
-		);
-
-		await expect(
-			load({
-				fetch,
-				cookies: createCookies(),
-				url: new URL('https://acme.auth.example.com/discover')
-			} as never)
-		).rejects.toMatchObject({ status: 303, location: '/login' });
-	});
-
-	it('allows tenant host discovery when host_policy is all_hosts', async () => {
-		const fetch = vi.fn(async () =>
-			jsonResponse({
-				config: {
-					tenant_id: 'acme',
-					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
-					selection_policy: 'select_if_multiple',
-					allow_manual_tenant_entry: true,
-					remember_last_tenant: true,
-					redirect_default_login_to_discovery: true,
-					host_policy: 'all_hosts'
-				},
-				single_tenant_mode: false,
-				is_common_entry_host: false
-			})
-		);
-
-		const result = await load({
-			fetch,
-			cookies: createCookies(),
-			url: new URL('https://acme.auth.example.com/discover')
-		} as never);
-
-		expect(result).toBeDefined();
-		expect(result?.config.config.host_policy).toBe('all_hosts');
-	});
-
 	it('switches to manual tenant input when email discovery returns manual_required', async () => {
 		const fetch = vi
 			.fn()
@@ -89,8 +34,7 @@ describe('/discover page server', () => {
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
-						redirect_default_login_to_discovery: true,
-						host_policy: 'common_entry_only'
+						redirect_default_login_to_discovery: true
 					},
 					single_tenant_mode: false,
 					is_common_entry_host: true

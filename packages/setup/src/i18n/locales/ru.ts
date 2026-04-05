@@ -942,6 +942,8 @@ const ru: Translations = {
   'web.preview.issuerUrl': 'URL издателя:',
   'web.preview.loginUi': 'UI для входа:',
   'web.preview.adminUi': 'Панель администратора:',
+  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.adminAccess': 'Admin UI Access:',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI для входа',

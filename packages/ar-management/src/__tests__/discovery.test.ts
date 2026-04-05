@@ -101,7 +101,6 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     SETTINGS: createMockKV({
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
-        'login-entry.host_policy': 'common_entry_only',
       }),
       'settings:tenant:acme:login-ui': JSON.stringify({
         'login-ui.brand_name': 'Acme Brand',
@@ -150,12 +149,10 @@ describe('discovery API', () => {
       is_common_entry_host: boolean;
       config: {
         redirect_default_login_to_discovery: boolean;
-        host_policy: 'common_entry_only' | 'all_hosts';
       };
     };
     expect(body.is_common_entry_host).toBe(true);
     expect(body.config.redirect_default_login_to_discovery).toBe(true);
-    expect(body.config.host_policy).toBe('common_entry_only');
   });
 
   it('resolves a tenant by tenant_code with branding precedence', async () => {

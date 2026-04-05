@@ -914,6 +914,8 @@ const zhTW: Translations = {
   'web.preview.issuerUrl': '發行者 URL：',
   'web.preview.loginUi': '登入 UI：',
   'web.preview.adminUi': '管理 UI：',
+  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.adminAccess': 'Admin UI Access:',
 
   // Web UI Component Labels
   'web.comp.loginUi': '登入 UI',
