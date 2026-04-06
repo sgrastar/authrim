@@ -28,14 +28,14 @@ const mocked = vi.hoisted(() => {
 
   const state = {
     tenants: [
-      { id: 'default',  tenant_code: 'default',      name: 'Default Tenant', is_active: 1 },
-      { id: 'acme',     tenant_code: 'acme-code',     name: 'Acme Corp',      is_active: 1 },
-      { id: 'beta',     tenant_code: 'beta-code',     name: 'Beta Inc',       is_active: 1 },
-      { id: 'inactive', tenant_code: 'inactive-code', name: 'Gone Co',        is_active: 0 },
+      { id: 'default', tenant_code: 'default', name: 'Default Tenant', is_active: 1 },
+      { id: 'acme', tenant_code: 'acme-code', name: 'Acme Corp', is_active: 1 },
+      { id: 'beta', tenant_code: 'beta-code', name: 'Beta Inc', is_active: 1 },
+      { id: 'inactive', tenant_code: 'inactive-code', name: 'Gone Co', is_active: 0 },
     ],
     clients: [
-      { client_id: 'acme-app',     tenant_id: 'acme'     },
-      { client_id: 'beta-app',     tenant_id: 'beta'     },
+      { client_id: 'acme-app', tenant_id: 'acme' },
+      { client_id: 'beta-app', tenant_id: 'beta' },
       { client_id: 'inactive-app', tenant_id: 'inactive' },
     ],
     invitations: [
@@ -91,16 +91,14 @@ const mocked = vi.hoisted(() => {
     async queryOne<T>(query: string, params: unknown[]): Promise<T | null> {
       // Tenant lookup by tenant_code — is_active = 1 filter applied
       if (query.includes('FROM tenants WHERE tenant_code = ? AND is_active = 1')) {
-        return (state.tenants.find(
-          (t) => t.tenant_code === params[0] && t.is_active === 1
-        ) ?? null) as T | null;
+        return (state.tenants.find((t) => t.tenant_code === params[0] && t.is_active === 1) ??
+          null) as T | null;
       }
 
       // Tenant lookup by id — is_active = 1 filter applied
       if (query.includes('FROM tenants WHERE id = ? AND is_active = 1')) {
-        return (state.tenants.find(
-          (t) => t.id === params[0] && t.is_active === 1
-        ) ?? null) as T | null;
+        return (state.tenants.find((t) => t.id === params[0] && t.is_active === 1) ??
+          null) as T | null;
       }
 
       // OAuth client lookup for app_hint — no active constraint (client status managed separately)
@@ -112,9 +110,8 @@ const mocked = vi.hoisted(() => {
       if (query.includes('FROM tenant_invitations')) {
         const token = params[0];
         const now = Number(params[1]);
-        return (state.invitations.find(
-          (inv) => inv.token === token && inv.expires_at > now
-        ) ?? null) as T | null;
+        return (state.invitations.find((inv) => inv.token === token && inv.expires_at > now) ??
+          null) as T | null;
       }
 
       return null;
@@ -129,7 +126,8 @@ const mocked = vi.hoisted(() => {
 });
 
 vi.mock('@authrim/ar-lib-core', async () => {
-  const actual = await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+  const actual =
+    await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
     D1Adapter: mocked.FakeD1Adapter,
@@ -147,8 +145,12 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   const store = new Map<string, string>(Object.entries(data));
   return {
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
-    delete: vi.fn(async (key: string) => { store.delete(key); }),
+    put: vi.fn(async (key: string, value: string) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn(async (key: string) => {
+      store.delete(key);
+    }),
     list: vi.fn(),
     getWithMetadata: vi.fn(),
   } as unknown as KVNamespace;
@@ -241,7 +243,7 @@ describe('Discovery API: single-tenant mode (BASE_DOMAIN not set)', () => {
     );
 
     expect(res.status).toBe(200);
-    const body = await res.json() as { single_tenant_mode: boolean };
+    const body = (await res.json()) as { single_tenant_mode: boolean };
     expect(body.single_tenant_mode).toBe(true);
   });
 
@@ -254,7 +256,7 @@ describe('Discovery API: single-tenant mode (BASE_DOMAIN not set)', () => {
       env
     );
 
-    const body = await res.json() as {
+    const body = (await res.json()) as {
       default_candidate: { tenant_id: string; source: string } | undefined;
     };
     expect(body.default_candidate).toBeDefined();
@@ -271,7 +273,7 @@ describe('Discovery API: single-tenant mode (BASE_DOMAIN not set)', () => {
       env
     );
 
-    const body = await res.json() as { is_common_entry_host: boolean };
+    const body = (await res.json()) as { is_common_entry_host: boolean };
     expect(body.is_common_entry_host).toBe(false);
   });
 
@@ -280,7 +282,7 @@ describe('Discovery API: single-tenant mode (BASE_DOMAIN not set)', () => {
     const { app, env } = createDiscoveryApp({ BASE_DOMAIN: undefined });
 
     const res = await postDiscovery(app, env, { mode: 'email', value: 'user@acme.com' });
-    const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+    const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
     // isSingleTenantMode short-circuit fires before the email branch
     expect(body.result).toBe('resolved');
@@ -291,7 +293,7 @@ describe('Discovery API: single-tenant mode (BASE_DOMAIN not set)', () => {
     const { app, env } = createDiscoveryApp({ BASE_DOMAIN: undefined });
 
     const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'any-code' });
-    const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+    const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
     expect(body.result).toBe('resolved');
     expect(body.candidate.tenant_id).toBe('default');
@@ -301,7 +303,7 @@ describe('Discovery API: single-tenant mode (BASE_DOMAIN not set)', () => {
     const { app, env } = createDiscoveryApp({ BASE_DOMAIN: undefined });
 
     const res = await postDiscovery(app, env, { mode: 'tenant_slug', value: 'acme' });
-    const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+    const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
     expect(body.result).toBe('resolved');
     expect(body.candidate.tenant_id).toBe('default');
@@ -311,7 +313,7 @@ describe('Discovery API: single-tenant mode (BASE_DOMAIN not set)', () => {
     const { app, env } = createDiscoveryApp({ BASE_DOMAIN: undefined });
 
     const res = await postDiscovery(app, env, { mode: 'invite_token', value: 'valid-token' });
-    const body = await res.json() as {
+    const body = (await res.json()) as {
       result: string;
       candidate: { tenant_id: string };
       invited_email: string | null;
@@ -334,7 +336,7 @@ describe('Discovery API: multi-tenant GET response', () => {
       env
     );
 
-    const body = await res.json() as { single_tenant_mode: boolean };
+    const body = (await res.json()) as { single_tenant_mode: boolean };
     expect(body.single_tenant_mode).toBe(false);
   });
 
@@ -347,7 +349,7 @@ describe('Discovery API: multi-tenant GET response', () => {
       env
     );
 
-    const body = await res.json() as { default_candidate?: unknown };
+    const body = (await res.json()) as { default_candidate?: unknown };
     expect(body.default_candidate).toBeUndefined();
   });
 });
@@ -365,7 +367,7 @@ describe('Discovery API: host-based tenant context (is_common_entry_host)', () =
       env
     );
 
-    const body = await res.json() as { is_common_entry_host: boolean };
+    const body = (await res.json()) as { is_common_entry_host: boolean };
     expect(body.is_common_entry_host).toBe(true);
   });
 
@@ -381,7 +383,7 @@ describe('Discovery API: host-based tenant context (is_common_entry_host)', () =
       env
     );
 
-    const body = await res.json() as { is_common_entry_host: boolean };
+    const body = (await res.json()) as { is_common_entry_host: boolean };
     expect(body.is_common_entry_host).toBe(false);
   });
 
@@ -397,7 +399,7 @@ describe('Discovery API: host-based tenant context (is_common_entry_host)', () =
       env
     );
 
-    const body = await res.json() as {
+    const body = (await res.json()) as {
       config: { tenant_id: string; discovery_methods: string[] };
     };
     expect(body.config.tenant_id).toBe('acme');
@@ -411,7 +413,7 @@ describe('Discovery API: tenant_slug resolution', () => {
     const { app, env } = createDiscoveryApp();
 
     const res = await postDiscovery(app, env, { mode: 'tenant_slug', value: 'acme' });
-    const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+    const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
     expect(res.status).toBe(200);
     expect(body.result).toBe('resolved');
@@ -422,7 +424,7 @@ describe('Discovery API: tenant_slug resolution', () => {
     const { app, env } = createDiscoveryApp();
 
     const res = await postDiscovery(app, env, { mode: 'tenant_slug', value: 'nonexistent' });
-    const body = await res.json() as { result: string; code: string };
+    const body = (await res.json()) as { result: string; code: string };
 
     expect(body.result).toBe('not_found');
     expect(body.code).toBe('tenant_slug_not_found');
@@ -432,7 +434,7 @@ describe('Discovery API: tenant_slug resolution', () => {
     const { app, env } = createDiscoveryApp();
 
     const res = await postDiscovery(app, env, { mode: 'tenant_slug', value: 'inactive' });
-    const body = await res.json() as { result: string; code: string };
+    const body = (await res.json()) as { result: string; code: string };
 
     expect(body.result).toBe('not_found');
     expect(body.code).toBe('tenant_slug_not_found');
@@ -448,7 +450,7 @@ describe('Discovery API: tenant_slug resolution', () => {
     });
 
     const res = await postDiscovery(app, env, { mode: 'tenant_slug', value: 'acme' });
-    const body = await res.json() as { result: string };
+    const body = (await res.json()) as { result: string };
 
     expect(body.result).toBe('manual_required');
   });
@@ -465,7 +467,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'user@acme.com' });
-      const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+      const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
       expect(body.result).toBe('resolved');
       expect(body.candidate.tenant_id).toBe('acme');
@@ -479,7 +481,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'user@shared.com' });
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         result: string;
         candidates: Array<{ tenant_id: string }>;
       };
@@ -495,7 +497,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'user@unknown.com' });
-      const body = await res.json() as { result: string };
+      const body = (await res.json()) as { result: string };
 
       expect(body.result).toBe('manual_required');
     });
@@ -510,7 +512,7 @@ describe('Discovery API: data isolation', () => {
       });
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'user@acme.com' });
-      const body = await res.json() as { result: string };
+      const body = (await res.json()) as { result: string };
 
       expect(body.result).toBe('manual_required');
       expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
@@ -522,7 +524,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'acme-code' });
-      const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+      const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
       expect(body.result).toBe('resolved');
       expect(body.candidate.tenant_id).toBe('acme');
@@ -532,7 +534,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'beta-code' });
-      const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+      const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
       expect(body.result).toBe('resolved');
       expect(body.candidate.tenant_id).toBe('beta');
@@ -542,7 +544,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'inactive-code' });
-      const body = await res.json() as { result: string; code: string };
+      const body = (await res.json()) as { result: string; code: string };
 
       expect(body.result).toBe('not_found');
       expect(body.code).toBe('tenant_code_not_found');
@@ -552,7 +554,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'does-not-exist' });
-      const body = await res.json() as { result: string; code: string };
+      const body = (await res.json()) as { result: string; code: string };
 
       expect(body.result).toBe('not_found');
       expect(body.code).toBe('tenant_code_not_found');
@@ -568,7 +570,7 @@ describe('Discovery API: data isolation', () => {
       });
 
       const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'acme-code' });
-      const body = await res.json() as { result: string };
+      const body = (await res.json()) as { result: string };
 
       expect(body.result).toBe('manual_required');
     });
@@ -579,7 +581,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'app_hint', value: 'acme-app' });
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         result: string;
         candidate: { tenant_id: string; source: string };
       };
@@ -593,7 +595,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'app_hint', value: 'beta-app' });
-      const body = await res.json() as { result: string; candidate: { tenant_id: string } };
+      const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
 
       expect(body.result).toBe('resolved');
       expect(body.candidate.tenant_id).toBe('beta');
@@ -603,7 +605,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'app_hint', value: 'inactive-app' });
-      const body = await res.json() as { result: string; code: string };
+      const body = (await res.json()) as { result: string; code: string };
 
       // Client row is found, but getTenantRowById('inactive') returns null (is_active = 0)
       expect(body.result).toBe('not_found');
@@ -614,7 +616,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'app_hint', value: 'no-such-client' });
-      const body = await res.json() as { result: string; code: string };
+      const body = (await res.json()) as { result: string; code: string };
 
       expect(body.result).toBe('not_found');
       expect(body.code).toBe('app_hint_not_found');
@@ -626,7 +628,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'invite_token', value: 'expired-token' });
-      const body = await res.json() as { result: string; code: string };
+      const body = (await res.json()) as { result: string; code: string };
 
       expect(body.result).toBe('not_found');
       expect(body.code).toBe('invitation_not_found');
@@ -636,7 +638,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'invite_token', value: 'exhausted-token' });
-      const body = await res.json() as { result: string; code: string };
+      const body = (await res.json()) as { result: string; code: string };
 
       expect(body.result).toBe('not_found');
       expect(body.code).toBe('invitation_not_found');
@@ -646,7 +648,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'invite_token', value: 'inactive-token' });
-      const body = await res.json() as { result: string; code: string };
+      const body = (await res.json()) as { result: string; code: string };
 
       // Invitation is valid and non-expired, but getTenantRowById('inactive') returns null
       expect(body.result).toBe('not_found');
@@ -664,7 +666,7 @@ describe('Discovery API: resolved candidate structure', () => {
     const { app, env } = createDiscoveryApp();
 
     const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'acme-code' });
-    const body = await res.json() as { result: string; candidate: { login_url: string } };
+    const body = (await res.json()) as { result: string; candidate: { login_url: string } };
 
     expect(body.result).toBe('resolved');
     expect(body.candidate.login_url).toBe('https://acme.auth.example.com/login');
@@ -674,7 +676,7 @@ describe('Discovery API: resolved candidate structure', () => {
     const { app, env } = createDiscoveryApp();
 
     const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'acme-code' });
-    const body = await res.json() as { result: string; candidate: { display_name: string } };
+    const body = (await res.json()) as { result: string; candidate: { display_name: string } };
 
     expect(body.result).toBe('resolved');
     expect(body.candidate.display_name).toBe('Acme Brand');
@@ -685,7 +687,7 @@ describe('Discovery API: resolved candidate structure', () => {
     const { app, env } = createDiscoveryApp();
 
     const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'beta-code' });
-    const body = await res.json() as { result: string; candidate: { display_name: string } };
+    const body = (await res.json()) as { result: string; candidate: { display_name: string } };
 
     expect(body.result).toBe('resolved');
     expect(body.candidate.display_name).toBe('Beta Inc');
@@ -702,14 +704,15 @@ describe('Discovery API: settings-driven behaviour', () => {
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
-          'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
+          'login-entry.discovery_methods':
+            '["email_domain","tenant_code","tenant_slug","app_hint"]',
           'login-entry.allow_manual_tenant_entry': false,
         }),
       }),
     });
 
     const res = await postDiscovery(app, env, { mode: 'email', value: 'user@unknown.com' });
-    const body = await res.json() as { result: string; code: string };
+    const body = (await res.json()) as { result: string; code: string };
 
     expect(body.result).toBe('not_found');
     expect(body.code).toBe('email_domain_not_found');
@@ -723,7 +726,7 @@ describe('Discovery API: request validation', () => {
     const res = await postDiscovery(app, env, { mode: 'unknown_mode', value: 'test' });
 
     expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
+    const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_request');
   });
 
@@ -733,7 +736,7 @@ describe('Discovery API: request validation', () => {
     const res = await postDiscovery(app, env, { mode: 'tenant_code', value: '' });
 
     expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
+    const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_request');
   });
 
@@ -743,7 +746,7 @@ describe('Discovery API: request validation', () => {
     const res = await postDiscovery(app, env, { value: 'some-value' });
 
     expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
+    const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_request');
   });
 
@@ -756,7 +759,7 @@ describe('Discovery API: request validation', () => {
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
+    const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_request');
   });
 });
