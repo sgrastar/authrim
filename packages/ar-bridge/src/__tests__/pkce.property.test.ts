@@ -306,15 +306,18 @@ describe('PKCE Property Tests', () => {
         const nonce = generateNonce();
         const verifier = generateCodeVerifier();
 
-        // No single character should dominate (simple entropy check)
+        // No single character should dominate (simple entropy check).
+        // Threshold is 1/3 rather than 1/4 to account for statistical variance in
+        // short strings (22 chars for state/nonce). 1/4 produces ~4% false-failure
+        // rate over 100 × 3 strings; 1/3 reduces that to <0.02%.
         const checkEntropy = (s: string) => {
           const counts = new Map<string, number>();
           for (const c of s) {
             counts.set(c, (counts.get(c) || 0) + 1);
           }
-          // No character should appear more than 1/4 of the time
+          // No character should appear more than 1/3 of the time
           for (const count of counts.values()) {
-            expect(count).toBeLessThan(s.length / 4);
+            expect(count).toBeLessThan(s.length / 3);
           }
         };
 
