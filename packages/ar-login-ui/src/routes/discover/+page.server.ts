@@ -25,7 +25,6 @@ interface DiscoveryConfigResponse {
 		allow_manual_tenant_entry: boolean;
 		remember_last_tenant: boolean;
 		redirect_default_login_to_discovery: boolean;
-		host_policy: 'common_entry_only' | 'all_hosts';
 	};
 	single_tenant_mode: boolean;
 	is_common_entry_host: boolean;
@@ -152,17 +151,6 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (config.config.mode === 'tenant_only' && !inviteToken && !appHint) {
-		throw redirect(303, '/login');
-	}
-
-	const shouldRedirectCurrentHostToLogin =
-		!config.single_tenant_mode &&
-		!config.is_common_entry_host &&
-		config.config.host_policy === 'common_entry_only' &&
-		!inviteToken &&
-		!appHint;
-
-	if (shouldRedirectCurrentHostToLogin) {
 		throw redirect(303, '/login');
 	}
 

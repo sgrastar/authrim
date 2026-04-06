@@ -30,6 +30,30 @@ import { migrateCommand, migrateStatusCommand } from './cli/commands/migrate.js'
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
 
+// Handle Ctrl+C from @inquirer prompts gracefully.
+// @inquirer throws ExitPromptError on SIGINT inside prompt handlers.
+// Without these handlers the error surfaces as an unhandled rejection,
+// printing a stack trace and exiting with code 1.
+const isExitPromptError = (reason: unknown): boolean =>
+  reason instanceof Error && reason.name === 'ExitPromptError';
+
+process.on('unhandledRejection', (reason) => {
+  if (isExitPromptError(reason)) {
+    process.exit(0);
+  }
+  // Re-throw so Node.js prints the error and exits with failure
+  throw reason;
+});
+
+process.on('uncaughtException', (error) => {
+  if (isExitPromptError(error)) {
+    process.exit(0);
+  }
+  // Default handling for genuine errors
+  console.error(error);
+  process.exit(1);
+});
+
 const program = new Command();
 
 program

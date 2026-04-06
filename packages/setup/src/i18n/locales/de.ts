@@ -947,6 +947,8 @@ const de: Translations = {
   'web.preview.issuerUrl': 'Aussteller-URL:',
   'web.preview.loginUi': 'Login-UI:',
   'web.preview.adminUi': 'Admin-UI:',
+  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.adminAccess': 'Admin UI Access:',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'Login-UI',

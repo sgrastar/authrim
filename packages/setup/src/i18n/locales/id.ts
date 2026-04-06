@@ -939,6 +939,8 @@ const id: Translations = {
   'web.preview.issuerUrl': 'URL Issuer:',
   'web.preview.loginUi': 'UI Login:',
   'web.preview.adminUi': 'UI Admin:',
+  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.adminAccess': 'Admin UI Access:',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI Login',

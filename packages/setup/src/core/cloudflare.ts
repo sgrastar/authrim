@@ -8,6 +8,8 @@
 import { execa, type ExecaError } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
+import { tmpdir } from 'node:os';
+import { writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
   getKVNamespaceName,
@@ -1975,6 +1977,10 @@ export async function deleteKVNamespace(namespaceId: string): Promise<boolean> {
 
 /**
  * Put a value in KV
+ *
+ * NOTE: Values are written via a temporary file using --path instead of being
+ * passed as a positional CLI argument. This avoids a wrangler parsing bug where
+ * values starting with '-' (valid in base64url tokens) are misinterpreted as flags.
  */
 export async function kvPut(
   namespaceId: string,
@@ -1982,8 +1988,23 @@ export async function kvPut(
   value: string,
   options: { expirationTtl?: number } = {}
 ): Promise<boolean> {
+  const tmpFile = pathJoin(
+    tmpdir(),
+    `authrim-kv-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`
+  );
   try {
-    const args = ['kv', 'key', 'put', key, value, '--namespace-id', namespaceId, '--remote'];
+    await writeFile(tmpFile, value, 'utf-8');
+    const args = [
+      'kv',
+      'key',
+      'put',
+      key,
+      '--path',
+      tmpFile,
+      '--namespace-id',
+      namespaceId,
+      '--remote',
+    ];
     if (options.expirationTtl) {
       args.push('--expiration-ttl', options.expirationTtl.toString());
     }
@@ -1991,6 +2012,8 @@ export async function kvPut(
     return true;
   } catch {
     return false;
+  } finally {
+    await unlink(tmpFile).catch(() => {});
   }
 }
 

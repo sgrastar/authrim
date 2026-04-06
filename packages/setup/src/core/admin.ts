@@ -319,6 +319,9 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
     // Store the setup token with TTL (--remote ensures it goes to Cloudflare KV, not local)
     // Use --env to target the [env.{env}] section in wrangler.toml
     // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
+    // NOTE: Pass the token via --path (file) instead of as a positional argument.
+    // Tokens are base64url-encoded and can start with '-', which wrangler's CLI parser
+    // misinterprets as flags (e.g. '-EuHd...' → unknown flags E, u, H, d, ...).
     await execa(
       'npx',
       [
@@ -327,7 +330,8 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
         'key',
         'put',
         'setup:token',
-        setupToken,
+        '--path',
+        tokenPath,
         '--env',
         env,
         '--binding',

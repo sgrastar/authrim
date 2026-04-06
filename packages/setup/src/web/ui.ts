@@ -724,6 +724,57 @@ export function getHtmlTemplate(
       color: #fcd34d;
     }
 
+    .hint-box.error-hint {
+      background: rgba(220, 38, 38, 0.1);
+      color: #dc2626;
+      border-color: rgba(220, 38, 38, 0.35);
+    }
+
+    [data-theme="dark"] .hint-box.error-hint {
+      background: rgba(248, 113, 113, 0.12);
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.3);
+    }
+
+    .preview-tenant-block {
+      margin-top: 0.5rem;
+      margin-bottom: 0.5rem;
+      padding: 0.4rem 0.75rem;
+      border-left: 2px solid var(--primary);
+      border-radius: 0 4px 4px 0;
+      background: rgba(0, 0, 0, 0.03);
+    }
+
+    [data-theme="dark"] .preview-tenant-block {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .preview-tenant-name {
+      font-weight: 600;
+      font-size: 0.83rem;
+      margin-bottom: 0.25rem;
+      color: var(--text-primary);
+    }
+
+    .preview-tenant-row {
+      display: flex;
+      gap: 0.5rem;
+      font-size: 0.79rem;
+      margin-top: 0.15rem;
+      align-items: baseline;
+    }
+
+    .preview-tenant-label {
+      color: var(--text-muted);
+      flex-shrink: 0;
+      min-width: 5.5rem;
+    }
+
+    .preview-tenant-url {
+      color: var(--primary);
+      word-break: break-all;
+    }
+
     /* ========================================
        INFRASTRUCTURE INFO SECTION
        ======================================== */
@@ -3019,6 +3070,8 @@ export function getHtmlTemplate(
       <!-- 4. Preview Section (at the bottom) -->
       <div class="infra-section" id="config-preview">
         <h4>📋 <span data-i18n="web.section.configPreview">Configuration Preview</span></h4>
+
+        <!-- 共通行 (常時表示) -->
         <div class="infra-item">
           <span class="infra-label" data-i18n="web.preview.components">Components:</span>
           <span class="infra-value" id="preview-components">API, Login UI, Admin UI</span>
@@ -3027,15 +3080,44 @@ export function getHtmlTemplate(
           <span class="infra-label" data-i18n="web.preview.workers">Workers:</span>
           <span class="infra-value" id="preview-workers">{env}-ar-router, {env}-ar-auth, ...</span>
         </div>
-        <div class="infra-item">
+
+        <!-- シングルテナント用 Issuer 行 (multi-tenant=off 時のみ表示) -->
+        <div class="infra-item" id="preview-issuer-row">
           <span class="infra-label" data-i18n="web.preview.issuerUrl">Issuer URL:</span>
           <span class="infra-value" id="preview-issuer">https://{tenant}.{base-domain}</span>
         </div>
-        <div class="infra-item">
+
+        <!-- マルチテナント拡張プレビュー (multi-tenant=on 時のみ表示) -->
+        <div id="preview-multi-tenant-section" style="display:none;">
+          <!-- テナント別カード (JS で描画) -->
+          <div id="preview-mt-rows" aria-live="polite"></div>
+
+          <!-- Login UI Pages URL (実際の Pages deployment 先) -->
+          <div class="infra-item" id="preview-login-pages-row" style="margin-top: 0.25rem;">
+            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI (Pages):</span>
+            <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.pages.dev</span>
+          </div>
+
+          <!-- Admin UI アクセス先 -->
+          <div class="infra-item" id="preview-admin-access-row">
+            <span class="infra-label" data-i18n="web.preview.adminAccess">Admin UI Access:</span>
+            <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.pages.dev/admin</span>
+          </div>
+
+          <!-- 無効設定の警告 (条件に合致した時のみ表示) -->
+          <div id="preview-config-warning" class="hint-box error-hint" style="display:none; margin-top:0.75rem;" role="alert">
+            <strong id="preview-warning-title">⚠️ 設定上の問題</strong>
+            <div id="preview-warning-message" style="margin-top: 0.25rem;"></div>
+            <div id="preview-warning-action" style="margin-top: 0.5rem; font-weight: 600;"></div>
+          </div>
+        </div>
+
+        <!-- シングルテナント用 Login UI / Admin UI 行 (multi-tenant=off 時のみ表示) -->
+        <div class="infra-item" id="preview-login-row">
           <span class="infra-label" data-i18n="web.preview.loginUi">Login UI:</span>
           <span class="infra-value" id="preview-login">{env}-ar-login-ui.pages.dev</span>
         </div>
-        <div class="infra-item">
+        <div class="infra-item" id="preview-admin-row">
           <span class="infra-label" data-i18n="web.preview.adminUi">Admin UI:</span>
           <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.pages.dev</span>
         </div>
@@ -4744,7 +4826,6 @@ export function getHtmlTemplate(
       if (document.getElementById('primary-tenant')) {
         document.getElementById('primary-tenant').value = config.tenant?.primaryTenant || '';
       }
-
       updateBaseDomainUI();
 
       // Set component checkboxes
@@ -4966,6 +5047,118 @@ export function getHtmlTemplate(
         previewAdmin.style.color = '';
       }
       document.getElementById('admin-default').textContent = adminPagesDomain;
+
+      // === マルチテナント拡張プレビュー ===
+      const previewMtSection = document.getElementById('preview-multi-tenant-section');
+      const previewIssuerRow = document.getElementById('preview-issuer-row');
+      const previewLoginRow  = document.getElementById('preview-login-row');
+      const previewAdminRow  = document.getElementById('preview-admin-row');
+
+      if (multiTenantEnabled && baseDomain) {
+        // シングルテナント用行を非表示にしてマルチテナントセクションを表示
+        previewIssuerRow.style.display = 'none';
+        previewLoginRow.style.display  = 'none';
+        previewAdminRow.style.display  = 'none';
+        previewMtSection.style.display = '';
+
+        // 最初のテナントのベースURL
+        const firstBase = nakedDomain
+          ? 'https://' + baseDomain
+          : 'https://' + tenantName + '.' + baseDomain;
+        const otherBase = 'https://{tenantName}.' + baseDomain;
+
+        // テナントカードを描画 (createElement + textContent で XSS を防ぐ)
+        const mtRowsContainer = document.getElementById('preview-mt-rows');
+        mtRowsContainer.textContent = '';
+
+        const makeUrlRow = (label, url) => {
+          const row = document.createElement('div');
+          row.className = 'preview-tenant-row';
+          const lbl = document.createElement('span');
+          lbl.className = 'preview-tenant-label';
+          lbl.textContent = label;
+          const val = document.createElement('span');
+          val.className = 'preview-tenant-url';
+          val.textContent = url;
+          row.appendChild(lbl);
+          row.appendChild(val);
+          return row;
+        };
+
+        const makeBlock = (tenantLabel, baseUrl) => {
+          const block = document.createElement('div');
+          block.className = 'preview-tenant-block';
+          const name = document.createElement('div');
+          name.className = 'preview-tenant-name';
+          name.textContent = tenantLabel;
+          block.appendChild(name);
+          block.appendChild(makeUrlRow('Issuer:', baseUrl));
+          if (loginUiEnabled) {
+            block.appendChild(makeUrlRow('Login URL:', baseUrl + '/login'));
+          }
+          block.appendChild(makeUrlRow('Discovery:', baseUrl + '/api/auth/discovery'));
+          return block;
+        };
+
+        mtRowsContainer.appendChild(makeBlock(tenantName + ' (初期テナント)', firstBase));
+        mtRowsContainer.appendChild(makeBlock('他のテナント', otherBase));
+
+        // Login UI Pages URL (全テナント共通の Pages デプロイ先)
+        const loginPagesRow = document.getElementById('preview-login-pages-row');
+        if (loginUiEnabled) {
+          loginPagesRow.style.display = '';
+          document.getElementById('preview-login-pages').textContent =
+            'https://' + loginPagesDomain + '  (全テナント共通)';
+        } else {
+          loginPagesRow.style.display = 'none';
+        }
+
+        // Admin UI アクセス先
+        const adminAccessRow = document.getElementById('preview-admin-access-row');
+        const adminAccessEl  = document.getElementById('preview-admin-access');
+        if (adminUiEnabled) {
+          adminAccessRow.style.display = '';
+          const adminSameAsApi = adminDomain !== '' && adminDomain === baseDomain;
+          if (adminSameAsApi) {
+            adminAccessEl.textContent = firstBase + '/admin  (APIと同じドメイン経由でプロキシ)';
+          } else if (adminDomain) {
+            adminAccessEl.textContent = 'https://' + adminDomain + '/admin';
+          } else {
+            adminAccessEl.textContent = 'https://' + adminPagesDomain + '/admin';
+          }
+        } else {
+          adminAccessRow.style.display = 'none';
+        }
+
+        // 無効設定の検出と警告表示
+        // sameAsApi かつ nakedDomain=false → naked domainへのAPIコールが404になる
+        const loginSameAsApi = loginDomain !== '' && loginDomain === baseDomain;
+        const adminSameAsApi2 = adminDomain !== '' && adminDomain === baseDomain;
+        const hasConflict = (loginSameAsApi || adminSameAsApi2) && !nakedDomain;
+
+        const warningDiv = document.getElementById('preview-config-warning');
+        if (hasConflict) {
+          const conflictUI = loginSameAsApi ? 'ログインUI' : '管理UI';
+          warningDiv.style.display = '';
+          document.getElementById('preview-warning-message').textContent =
+            conflictUI + 'のカスタムドメインがAPIと同じ（' + baseDomain + '）ですが、' +
+            '「URLからテナント名を除外」が無効のため、' + baseDomain +
+            ' へのAPIリクエスト（/authorize, /api/auth/* 等）が 404 になり、ログインフローが機能しません。';
+          document.getElementById('preview-warning-action').textContent =
+            '対処方法: 「URLからテナント名を除外」を有効にし、最初のテナント（' + tenantName +
+            '）をプライマリテナントに設定する。または、' + conflictUI + 'のドメインをAPIとは別のドメイン（例: login.' +
+            baseDomain + '）に変更する。';
+        } else {
+          warningDiv.style.display = 'none';
+        }
+
+      } else {
+        // シングルテナントモード: 既存の行を表示
+        previewIssuerRow.style.display = '';
+        previewLoginRow.style.display  = '';
+        previewAdminRow.style.display  = '';
+        previewMtSection.style.display = 'none';
+      }
     }
 
     // Attach event listeners to all inputs

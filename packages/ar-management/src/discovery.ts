@@ -61,7 +61,6 @@ interface DiscoveryConfigResponse {
     allow_manual_tenant_entry: boolean;
     remember_last_tenant: boolean;
     redirect_default_login_to_discovery: boolean;
-    host_policy: LoginEntrySettings['login-entry.host_policy'];
   };
   single_tenant_mode: boolean;
   is_common_entry_host: boolean;
@@ -136,10 +135,6 @@ async function getDiscoverySettings(
     redirect_default_login_to_discovery:
       (stored?.['login-entry.redirect_default_login_to_discovery'] as boolean | undefined) ??
       LOGIN_ENTRY_DEFAULTS['login-entry.redirect_default_login_to_discovery'],
-    host_policy:
-      (stored?.['login-entry.host_policy'] as
-        | LoginEntrySettings['login-entry.host_policy']
-        | undefined) ?? LOGIN_ENTRY_DEFAULTS['login-entry.host_policy'],
   };
 }
 
