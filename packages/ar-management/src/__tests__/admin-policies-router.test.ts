@@ -18,6 +18,11 @@ const policyRepoMocks = vi.hoisted(() => ({
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
 
+  type MockContext = {
+    req: { header: (name: string) => string | undefined };
+    set: (key: string, value: unknown) => void;
+  };
+
   class MockD1Adapter {
     constructor(_options: unknown) {}
   }
@@ -43,7 +48,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     AdminPolicyRepository: MockAdminPolicyRepository,
     AdminAuditLogRepository: MockAdminAuditLogRepository,
     adminAuthMiddleware: () => {
-      return async (c: Parameters<Parameters<typeof actual.adminAuthMiddleware>[0]>[0], next: () => Promise<void>) => {
+      return async (c: MockContext, next: () => Promise<void>) => {
         c.set('adminAuth', {
           userId: 'admin_1',
           email: 'admin@example.com',

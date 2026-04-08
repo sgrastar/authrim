@@ -92,6 +92,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { ADMIN_PERMISSIONS, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import { adminRolesRouter } from '../routes/admin-management/admin-roles';
 
+type ErrorResponseBody = {
+  error_code?: string;
+  assigned_user_count?: number;
+};
+
 function createTestApp() {
   const app = new Hono<{ Bindings: Env }>();
   app.route('/api/admin/admin-roles', adminRolesRouter);
@@ -117,7 +122,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request('/api/admin/admin-roles/role_foreign', {}, env);
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(404);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -135,7 +140,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request('/api/admin/admin-roles/role_system', {}, env);
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(200);
     expect(body.assigned_user_count).toBe(1);
@@ -162,7 +167,7 @@ describe('adminRolesRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -190,7 +195,7 @@ describe('adminRolesRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -221,7 +226,7 @@ describe('adminRolesRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -248,7 +253,7 @@ describe('adminRolesRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);

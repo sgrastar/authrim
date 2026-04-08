@@ -10,7 +10,6 @@ import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discov
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 type DiscoveryMode = 'email' | 'tenant_code' | 'tenant_slug' | 'invite_token' | 'app_hint';
-type DiscoverySource = 'email_domain' | 'tenant_code' | 'tenant_slug' | 'invitation' | 'app_hint';
 
 type DiscoveryResponse =
 	| { result: 'resolved'; candidate: DiscoveryCandidate; invited_email?: string | null }

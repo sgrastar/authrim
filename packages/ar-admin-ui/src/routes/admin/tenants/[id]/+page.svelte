@@ -7,15 +7,9 @@
 		adminSettingsAPI,
 		scopedSettingsAPI,
 		type CategorySettings,
-		type CategoryMetaFull,
-		type UIPatch,
-		convertPatchesToAPIRequest,
-		isInternalSetting,
-		isPageManagedSetting,
-		SettingsConflictError
+		type CategoryMetaFull
 	} from '$lib/api/admin-settings';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
-	import { ToggleSwitch } from '$lib/components';
 
 	// ==========================================================================
 	// State
@@ -49,13 +43,9 @@
 	let settingsMeta = $state<CategoryMetaFull | null>(null);
 	let settings = $state<CategorySettings | null>(null);
 	let settingsLoading = $state(false);
-	let settingsSaving = $state(false);
 	let settingsError = $state('');
-	let settingsSuccess = $state('');
-	let pendingPatches = $state<UIPatch[]>([]);
 
 	const singleTenantMode = $derived(tenantStore.singleTenantMode);
-	const hasSettingsChanges = $derived(pendingPatches.length > 0);
 
 	// ==========================================================================
 	// Validation
@@ -223,60 +213,7 @@
 	// ==========================================================================
 
 	function getSettingValue(key: string): unknown {
-		const patch = pendingPatches.find((p) => p.key === key);
-		if (patch) {
-			if (patch.op === 'set') return patch.value;
-			if (patch.op === 'disable') return false;
-		}
 		return settings?.values[key];
-	}
-
-	function isLockedByEnv(key: string): boolean {
-		return settings?.sources[key] === 'env';
-	}
-
-	function handleSettingChange(key: string, value: unknown) {
-		pendingPatches = pendingPatches.filter((p) => p.key !== key);
-		const originalValue = settings?.values[key];
-		if (value !== originalValue) {
-			pendingPatches = [...pendingPatches, { op: 'set', key, value }];
-		}
-	}
-
-	function discardSettingsChanges() {
-		pendingPatches = [];
-	}
-
-	async function saveSettings() {
-		if (!settings || pendingPatches.length === 0) return;
-		settingsSaving = true;
-		settingsError = '';
-		settingsSuccess = '';
-		try {
-			const patchData = convertPatchesToAPIRequest(pendingPatches);
-			await scopedSettingsAPI.updateSettingsForScope(
-				'login-entry',
-				{ level: 'tenant', tenantId, clientId: undefined },
-				{
-					ifMatch: settings.version,
-					...patchData
-				}
-			);
-			pendingPatches = [];
-			settingsSuccess = 'Settings saved';
-			await loadSettings();
-			setTimeout(() => {
-				settingsSuccess = '';
-			}, 3000);
-		} catch (err) {
-			if (err instanceof SettingsConflictError) {
-				settingsError = 'Settings were modified by another user. Please reload.';
-			} else {
-				settingsError = err instanceof Error ? err.message : 'Failed to save settings';
-			}
-		} finally {
-			settingsSaving = false;
-		}
 	}
 </script>
 

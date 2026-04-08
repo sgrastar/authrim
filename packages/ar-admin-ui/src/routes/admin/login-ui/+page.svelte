@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { getTenantInfo } from '$lib/api/admin-info';
 	import {
 		adminSettingsAPI,
@@ -260,7 +261,7 @@
 	}
 
 	function normalizeTrustedOriginsInput(value: string): string[] {
-		const uniqueOrigins = new Set<string>();
+		const uniqueOrigins = new SvelteSet<string>();
 
 		for (const rawEntry of value.split(/[\n,]/)) {
 			const trimmed = rawEntry.trim();
@@ -597,7 +598,7 @@
 							class="settings-textarea"
 							rows="6"
 							disabled={!canEditTrustedOrigins}
-							placeholder={'https://first.multi-tenant.authrim.com\nhttps://*.example.com'}
+							placeholder="https://first.multi-tenant.authrim.com\nhttps://*.example.com"
 							value={trustedOriginsInput}
 							oninput={(e) => {
 								trustedOriginsInput = e.currentTarget.value;

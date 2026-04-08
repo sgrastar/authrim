@@ -1585,7 +1585,7 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminClientRegenerateSecretHandler(c);
-      const payload = await response.json();
+      const payload = (await response.json()) as { revoked_tokens: number };
 
       expect(response.status).toBe(200);
       expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
@@ -1630,7 +1630,7 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminClientRegenerateSecretHandler(c);
-      const payload = await response.json();
+      const payload = (await response.json()) as { revoked_tokens: number };
 
       expect(response.status).toBe(200);
       expect(payload.revoked_tokens).toBe(0);

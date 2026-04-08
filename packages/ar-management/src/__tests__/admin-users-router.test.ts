@@ -109,6 +109,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { ADMIN_PERMISSIONS, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import { adminUsersRouter } from '../routes/admin-management/admins';
 
+type ErrorResponseBody = {
+  error_code?: string;
+};
+
 function createTestApp() {
   const app = new Hono<{ Bindings: Env }>();
   app.route('/api/admin/admins', adminUsersRouter);
@@ -146,7 +150,7 @@ describe('adminUsersRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -171,7 +175,7 @@ describe('adminUsersRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -206,7 +210,7 @@ describe('adminUsersRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(404);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -240,7 +244,7 @@ describe('adminUsersRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -269,7 +273,7 @@ describe('adminUsersRouter', () => {
       },
       env
     );
-    const body = await response.json();
+    const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);

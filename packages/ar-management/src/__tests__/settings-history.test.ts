@@ -38,6 +38,16 @@ import {
   rollbackSettings,
 } from '../routes/settings-v2/history';
 
+type HistoryResponseBody = {
+  limit?: number;
+  offset?: number;
+  error?: string;
+  success?: boolean;
+  restoredFromVersion?: number;
+  currentVersion?: number;
+  diff?: unknown;
+};
+
 function createMockKV(data: Record<string, string> = {}) {
   const store = new Map<string, string>(Object.entries(data));
   return {
@@ -132,7 +142,7 @@ describe('Settings History Handlers', () => {
       });
 
       const response = await listSettingsHistory(c as never);
-      const body = await response.json();
+      const body = (await response.json()) as HistoryResponseBody;
 
       expect(mockHistoryManager.listVersions).toHaveBeenCalledWith('oauth', {
         limit: 100,
@@ -164,7 +174,7 @@ describe('Settings History Handlers', () => {
       });
 
       const response = await listSettingsHistory(c as never);
-      const body = await response.json();
+      const body = (await response.json()) as HistoryResponseBody;
 
       expect(response.status).toBe(403);
       expect(body.error).toBe('forbidden');
@@ -236,7 +246,7 @@ describe('Settings History Handlers', () => {
       });
 
       const response = await rollbackSettings(c as never);
-      const body = await response.json();
+      const body = (await response.json()) as HistoryResponseBody;
       const kv = c.env.KV as unknown as ReturnType<typeof createMockKV>;
 
       expect(response.status).toBe(200);
@@ -328,7 +338,7 @@ describe('Settings History Handlers', () => {
       });
 
       const response = await compareSettingsVersions(c as never);
-      const body = await response.json();
+      const body = (await response.json()) as HistoryResponseBody;
 
       expect(response.status).toBe(200);
       expect(vi.mocked(calculateChanges)).toHaveBeenCalledWith(
