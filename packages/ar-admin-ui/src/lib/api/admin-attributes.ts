@@ -8,7 +8,7 @@
  * - Attribute statistics
  */
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 // =============================================================================
 // Types
@@ -150,9 +150,8 @@ export const adminAttributesAPI = {
 		if (params?.include_expired) searchParams.set('include_expired', 'true');
 		if (params?.search) searchParams.set('search', params.search);
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/attributes?${searchParams}`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/attributes?${searchParams}`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -173,11 +172,10 @@ export const adminAttributesAPI = {
 		const searchParams = new URLSearchParams();
 		if (includeExpired) searchParams.set('include_expired', 'true');
 
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/attributes/users/${userId}?${searchParams}`,
 			{
-				method: 'GET',
-				credentials: 'include'
+				method: 'GET'
 			}
 		);
 
@@ -198,12 +196,9 @@ export const adminAttributesAPI = {
 		attribute_value: string;
 		expires_at?: number;
 	}): Promise<{ attribute: UserAttribute }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/attributes`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/attributes`, {
 			method: 'POST',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -225,12 +220,9 @@ export const adminAttributesAPI = {
 			expires_at?: number | null;
 		}
 	): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/attributes/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/attributes/${id}`, {
 			method: 'PUT',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -246,9 +238,8 @@ export const adminAttributesAPI = {
 	 * Delete an attribute
 	 */
 	async deleteAttribute(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/attributes/${id}`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/attributes/${id}`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {
@@ -278,11 +269,10 @@ export const adminAttributesAPI = {
 		if (params?.user_id) searchParams.set('user_id', params.user_id);
 		if (params?.result) searchParams.set('result', params.result);
 
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/attributes/verifications?${searchParams}`,
 			{
-				method: 'GET',
-				credentials: 'include'
+				method: 'GET'
 			}
 		);
 
@@ -302,9 +292,8 @@ export const adminAttributesAPI = {
 	 * Get attribute statistics
 	 */
 	async getStats(): Promise<AttributeStats> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/attributes/stats`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/attributes/stats`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -319,9 +308,8 @@ export const adminAttributesAPI = {
 	 * Get unique attribute names
 	 */
 	async getAttributeNames(): Promise<{ attribute_names: AttributeNameCount[] }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/attributes/names`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/attributes/names`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -336,9 +324,8 @@ export const adminAttributesAPI = {
 	 * Delete all expired attributes
 	 */
 	async deleteExpiredAttributes(): Promise<{ success: boolean; deleted_count: number }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/attributes/expired`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/attributes/expired`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {

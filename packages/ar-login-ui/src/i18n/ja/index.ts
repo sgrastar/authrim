@@ -64,6 +64,8 @@ const ja = {
 	discover_placeholder_tenantCode: 'acme',
 	discover_placeholder_tenantSlug: 'acme-corp',
 	discover_selectTenant: 'テナントを選択',
+	discover_error_emailNotFound:
+		'入力されたメールアドレスに一致するアカウントが見つかりませんでした。',
 	discover_error_emailDomainNotFound:
 		'このメールドメインに対応するテナントが見つかりませんでした。',
 	discover_error_tenantCodeNotFound:

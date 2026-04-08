@@ -23,11 +23,11 @@ import {
   verifyClientSecretHash,
   // Database adapter for user status check
   D1Adapter,
-  buildIssuerUrl,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
 import { getIntrospectionCacheConfig } from './routes/settings/introspection-cache';
+import { getRequestAwareIssuerUrl } from './request-issuer';
 
 // Introspection Response Cache
 // Key format: introspect_cache:{sha256(jti)}
@@ -110,7 +110,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // RFC 7662 Section 2.1: The authorization server first validates the client credentials
   // Fetch client to verify client_secret via Repository
   const tenantId = getTenantIdFromContext(c);
-  const issuerUrl = buildIssuerUrl(c.env, tenantId);
+  const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 

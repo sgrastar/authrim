@@ -3,6 +3,7 @@
 	import Alert from '$lib/components/Alert.svelte';
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	import { adminFetch } from '$lib/api/admin-request';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	type ExportFormat = 'json' | 'jsonl' | 'text';
@@ -213,9 +214,7 @@
 			const limit = 200;
 
 			while (true) {
-				const response = await fetch(`/api/admin/clients?page=${page}&limit=${limit}`, {
-					credentials: 'include'
-				});
+				const response = await adminFetch(`/api/admin/clients?page=${page}&limit=${limit}`);
 
 				if (!response.ok) {
 					const errorData = await response.json().catch(() => ({}));
@@ -548,8 +547,8 @@
 			params.append('exportMode', exportMode);
 			if (includeStats) params.append('includeStats', 'true');
 
-			const response = await fetch(`/api/admin/diagnostic-logging/export?${params.toString()}`, {
-				credentials: 'include'
+			const response = await adminFetch(`/api/admin/diagnostic-logging/export?${params.toString()}`, {
+				tenantId
 			});
 
 			if (!response.ok) {
@@ -609,12 +608,10 @@
 		testLoading = true;
 
 		try {
-			const response = await fetch('/api/admin/diagnostic-logging/test-connection', {
+			const response = await adminFetch('/api/admin/diagnostic-logging/test-connection', {
 				method: 'POST',
-				credentials: 'include',
-				headers: {
-					'Content-Type': 'application/json'
-				},
+				includeJsonContentType: true,
+				tenantId: testTenantId || settingsContext.tenantId,
 				body: JSON.stringify({
 					tenantId: testTenantId || settingsContext.tenantId,
 					r2BucketBinding,

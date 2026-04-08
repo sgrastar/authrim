@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminReBACAPI,
 		type RelationDefinition,
@@ -43,6 +44,7 @@
 	let definitionToDelete: RelationDefinition | null = $state(null);
 	let deleting = $state(false);
 	let deleteError = $state('');
+	let loadedTenantId = $state('');
 
 	$effect(() => {
 		const urlObjectType = $page.url.searchParams.get('object_type');
@@ -187,7 +189,17 @@
 		});
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		definitions = [];
+		error = '';
+		pagination.page = 1;
 		loadDefinitions();
 	});
 </script>

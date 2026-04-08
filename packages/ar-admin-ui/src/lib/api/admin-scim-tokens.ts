@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin SCIM Tokens API Client
  *
@@ -50,7 +51,7 @@ export const adminScimTokensAPI = {
 	 * List all SCIM tokens
 	 */
 	async list(): Promise<ScimTokenListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/scim-tokens`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/scim-tokens`, {
 			credentials: 'include'
 		});
 		if (!response.ok) {
@@ -67,7 +68,7 @@ export const adminScimTokensAPI = {
 	 * Save it securely as it cannot be retrieved later.
 	 */
 	async create(params?: CreateScimTokenInput): Promise<CreateScimTokenResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/scim-tokens`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/scim-tokens`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -84,7 +85,7 @@ export const adminScimTokensAPI = {
 	 * Revoke (delete) a SCIM token
 	 */
 	async revoke(tokenHash: string): Promise<{ message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/scim-tokens/${encodeURIComponent(tokenHash)}`,
 			{
 				method: 'DELETE',

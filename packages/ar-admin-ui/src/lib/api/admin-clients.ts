@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Clients API Client
  *
@@ -107,7 +108,7 @@ export const adminClientsAPI = {
 		if (params?.limit) searchParams.set('limit', String(params.limit));
 		if (params?.search) searchParams.set('search', params.search);
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/clients?${searchParams}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients?${searchParams}`, {
 			credentials: 'include'
 		});
 		if (!response.ok) {
@@ -121,7 +122,7 @@ export const adminClientsAPI = {
 	 * Get a single client by ID
 	 */
 	async get(clientId: string): Promise<Client> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(clientId)}`,
 			{ credentials: 'include' }
 		);
@@ -137,7 +138,7 @@ export const adminClientsAPI = {
 	 * Create a new OAuth client
 	 */
 	async create(data: CreateClientInput): Promise<Client> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/clients`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -155,7 +156,7 @@ export const adminClientsAPI = {
 	 * Update an existing client
 	 */
 	async update(clientId: string, data: UpdateClientInput): Promise<Client> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(clientId)}`,
 			{
 				method: 'PUT',
@@ -176,7 +177,7 @@ export const adminClientsAPI = {
 	 * Delete a client
 	 */
 	async delete(clientId: string): Promise<void> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(clientId)}`,
 			{
 				method: 'DELETE',
@@ -194,7 +195,7 @@ export const adminClientsAPI = {
 	 * Note: The new secret is only shown once in the response
 	 */
 	async regenerateSecret(clientId: string): Promise<{ client_secret: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(clientId)}/regenerate-secret`,
 			{
 				method: 'POST',
@@ -212,7 +213,7 @@ export const adminClientsAPI = {
 	 * Get client usage statistics
 	 */
 	async getUsage(clientId: string): Promise<ClientUsage> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(clientId)}/usage`,
 			{ credentials: 'include' }
 		);
@@ -228,7 +229,7 @@ export const adminClientsAPI = {
 	 * GET /api/admin/client-profile-presets
 	 */
 	async getPresets(): Promise<ClientProfilePresetsResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/client-profile-presets`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/client-profile-presets`, {
 			credentials: 'include'
 		});
 		if (!response.ok) {
@@ -243,7 +244,7 @@ export const adminClientsAPI = {
 	 * POST /api/admin/clients/:id/apply-preset
 	 */
 	async applyPreset(clientId: string, presetId: string): Promise<Client> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(clientId)}/apply-preset`,
 			{
 				method: 'POST',

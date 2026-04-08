@@ -6,7 +6,7 @@
  * - Managing organization domain mappings for JIT Provisioning
  */
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 // =============================================================================
 // Organization Types
@@ -183,9 +183,8 @@ export const adminOrganizationsAPI = {
 		if (params.is_active !== undefined) searchParams.set('is_active', params.is_active.toString());
 
 		const query = searchParams.toString();
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/organizations${query ? '?' + query : ''}`,
-			{ credentials: 'include' }
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/organizations${query ? '?' + query : ''}`
 		);
 
 		if (!response.ok) {
@@ -199,9 +198,8 @@ export const adminOrganizationsAPI = {
 	 * Get organization details by ID
 	 */
 	async getOrganization(id: string): Promise<Organization> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(id)}`,
-			{ credentials: 'include' }
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(id)}`
 		);
 
 		if (!response.ok) {
@@ -219,9 +217,8 @@ export const adminOrganizationsAPI = {
 	 * @param maxDepth - Maximum depth to traverse (default: 10)
 	 */
 	async getHierarchy(orgId: string, maxDepth: number = 10): Promise<OrganizationHierarchyResponse> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(orgId)}/hierarchy?max_depth=${maxDepth}`,
-			{ credentials: 'include' }
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(orgId)}/hierarchy?max_depth=${maxDepth}`
 		);
 
 		if (!response.ok) {
@@ -249,9 +246,8 @@ export const adminOrganizationsAPI = {
 		if (params.is_active !== undefined) searchParams.set('is_active', params.is_active.toString());
 
 		const query = searchParams.toString();
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/org-domain-mappings${query ? '?' + query : ''}`,
-			{ credentials: 'include' }
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/org-domain-mappings${query ? '?' + query : ''}`
 		);
 
 		if (!response.ok) {
@@ -267,9 +263,8 @@ export const adminOrganizationsAPI = {
 	 * Get a single domain mapping by ID
 	 */
 	async get(id: string): Promise<OrgDomainMapping> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/org-domain-mappings/${encodeURIComponent(id)}`,
-			{ credentials: 'include' }
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/org-domain-mappings/${encodeURIComponent(id)}`
 		);
 
 		if (!response.ok) {
@@ -283,9 +278,8 @@ export const adminOrganizationsAPI = {
 	 * Get domain mappings for a specific organization
 	 */
 	async listByOrganization(orgId: string): Promise<OrgDomainMappingListResponse> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(orgId)}/domain-mappings`,
-			{ credentials: 'include' }
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(orgId)}/domain-mappings`
 		);
 
 		if (!response.ok) {
@@ -301,10 +295,9 @@ export const adminOrganizationsAPI = {
 	 * Create a new domain mapping
 	 */
 	async create(data: CreateOrgDomainMappingRequest): Promise<OrgDomainMapping> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/org-domain-mappings`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/org-domain-mappings`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -322,12 +315,11 @@ export const adminOrganizationsAPI = {
 	 * Note: domain cannot be changed, create a new mapping instead
 	 */
 	async update(id: string, data: UpdateOrgDomainMappingRequest): Promise<OrgDomainMapping> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/org-domain-mappings/${encodeURIComponent(id)}`,
 			{
 				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				credentials: 'include',
+				includeJsonContentType: true,
 				body: JSON.stringify(data)
 			}
 		);
@@ -345,11 +337,10 @@ export const adminOrganizationsAPI = {
 	 * Delete a domain mapping
 	 */
 	async delete(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/org-domain-mappings/${encodeURIComponent(id)}`,
 			{
-				method: 'DELETE',
-				credentials: 'include'
+				method: 'DELETE'
 			}
 		);
 
@@ -367,10 +358,9 @@ export const adminOrganizationsAPI = {
 	 * Returns the TXT record details to add
 	 */
 	async startVerification(id: string): Promise<VerificationStatus> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/org-domain-mappings/verify`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/org-domain-mappings/verify`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify({ id })
 		});
 
@@ -387,10 +377,9 @@ export const adminOrganizationsAPI = {
 	 * Confirm DNS verification (checks if TXT record is present)
 	 */
 	async confirmVerification(id: string): Promise<VerificationStatus> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/org-domain-mappings/verify/confirm`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/org-domain-mappings/verify/confirm`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify({ id })
 		});
 

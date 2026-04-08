@@ -99,10 +99,14 @@ async function proxyToPages(request: Request, baseUrl: string, path: string): Pr
     }
   }
 
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD' && request.body !== null;
+
   const proxyRequest = new Request(targetUrl.toString(), {
     method: request.method,
     headers,
     body: request.body,
+    ...(hasBody ? { duplex: 'half' as const } : {}),
+    redirect: 'manual',
   });
 
   return fetch(proxyRequest);
@@ -296,6 +300,7 @@ app.use(
       '/device_authorization', // Device flow (client auth)
       '/device', // Device verification page (form submission, CSRF handled by device code)
       '/bc-authorize', // CIBA (client auth)
+      '/api/admin-init-setup', // Initial admin setup has its own CSRF token + origin validation
       '/vci', // OpenID4VCI endpoints (bearer/proof-based, not cookie CSRF)
       '/vp', // OpenID4VP endpoints (protocol callbacks)
       '/did', // DID resolution endpoints (read-only protocol API)

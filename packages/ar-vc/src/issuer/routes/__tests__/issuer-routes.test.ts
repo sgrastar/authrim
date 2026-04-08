@@ -141,11 +141,20 @@ const createMockContext = (
     ...overrides.env,
   };
 
+  const url = overrides.req?.url || 'https://authrim.com/vci/test';
+  const rawRequest = new Request(url, {
+    method: overrides.req?.method || 'GET',
+    headers: {
+      Host: new URL(url).host,
+    },
+  });
+
   return {
     env: defaultEnv,
     req: {
-      url: 'https://authrim.com/vci/test',
-      method: 'GET',
+      raw: rawRequest,
+      url,
+      method: overrides.req?.method || 'GET',
       param: vi.fn().mockReturnValue('test-id'),
       json: vi.fn().mockResolvedValue({}),
       header: vi.fn().mockReturnValue(undefined),
@@ -212,15 +221,16 @@ describe('Issuer Metadata Route', () => {
     expect(ageCred.claims).toHaveProperty('age_over_21');
   });
 
-  it('should use custom ISSUER_IDENTIFIER', async () => {
+  it('uses the request host as credential issuer even when ISSUER_IDENTIFIER is configured', async () => {
     const c = createMockContext({
       env: { ISSUER_IDENTIFIER: 'did:web:custom-issuer.com' },
+      req: { url: 'https://tenant1.example.com/.well-known/openid-credential-issuer' },
     });
 
     const response = await issuerMetadataRoute(c);
     const data = (await response.json()) as { credential_issuer: string };
 
-    expect(data.credential_issuer).toBe('did:web:custom-issuer.com');
+    expect(data.credential_issuer).toBe('did:web:tenant1.example.com');
   });
 });
 

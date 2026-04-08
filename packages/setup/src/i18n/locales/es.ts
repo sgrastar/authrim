@@ -952,8 +952,17 @@ const es: Translations = {
   'web.preview.issuerUrl': 'URL del Emisor:',
   'web.preview.loginUi': 'UI de Inicio de Sesión:',
   'web.preview.adminUi': 'UI de Admin:',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
-  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.pagesUrl': 'UI de Inicio de Sesión (Pages):',
+  'web.preview.tenantDiscover': 'Selección de Tenant (Entrada Común):',
+  'web.preview.adminAccess': 'Acceso a la UI de Admin:',
+  'web.preview.firstTenant': '{{name}} (Tenant Principal)',
+  'web.preview.otherTenants': 'Otros Tenants',
+  'web.preview.allTenantsShared': '(compartido por todos los tenants)',
+  'web.preview.viaApiProxy': '(proxied a través del mismo dominio de la API)',
+  'web.preview.conflictWarningMsg':
+    'El dominio personalizado de {{conflictUI}} es el mismo que el de la API ({{baseDomain}}). Como "Eliminar tenant de la URL" está deshabilitado, las solicitudes API a {{baseDomain}} (/authorize, /api/auth/*, etc.) devolverán 404 y el flujo de inicio de sesión fallará.',
+  'web.preview.conflictActionMsg':
+    'Solución: Habilite "Eliminar tenant de la URL" y configure el primer tenant ({{tenantName}}) como principal. O cambie el dominio de {{conflictUI}} a un dominio diferente al de la API (ej. login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI de Inicio de Sesión',
@@ -1063,7 +1072,7 @@ const es: Translations = {
   'web.envDetail.pagesProjects': 'Proyectos de Pages',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Actualizar Workers',
+  'web.envDetail.workerUpdate': 'Actualizar todos los Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Desplegado',
   'web.envDetail.localVersion': 'Local',
@@ -1072,7 +1081,7 @@ const es: Translations = {
   'web.envDetail.upToDate': 'Actual',
   'web.envDetail.notDeployed': 'No desplegado',
   'web.envDetail.updateOnlyChanged': 'Actualizar solo versiones cambiadas',
-  'web.envDetail.updateAllWorkers': 'Actualizar Workers',
+  'web.envDetail.updateAllWorkers': 'Actualizar todos los Workers',
   'web.envDetail.refreshVersions': 'Refrescar',
   'web.envDetail.updateProgress': 'Progreso de actualización:',
   'web.envDetail.updatesAvailable': '{{count}} actualización(es) disponible(s)',

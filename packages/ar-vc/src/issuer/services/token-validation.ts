@@ -5,7 +5,13 @@
  */
 
 import type { Env } from '../../types';
-import { decodeBase64Url, safeFetch, createLogger, getDefaultTenantId } from '@authrim/ar-lib-core';
+import {
+  decodeBase64Url,
+  safeFetch,
+  createLogger,
+  getDefaultTenantId,
+  buildIssuerUrl,
+} from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
 
 const log = createLogger().module('VCI-TOKEN');
@@ -56,12 +62,33 @@ interface VCIAccessTokenPayload {
   };
 }
 
+function resolveExpectedIssuerIdentifier(env: Env, expectedIssuerOverride?: string): string {
+  if (expectedIssuerOverride) {
+    return expectedIssuerOverride;
+  }
+
+  if (env.ISSUER_IDENTIFIER && !env.ISSUER_IDENTIFIER.startsWith('did:web:')) {
+    return env.ISSUER_IDENTIFIER;
+  }
+
+  try {
+    const issuerUrl = buildIssuerUrl(
+      env as unknown as Parameters<typeof buildIssuerUrl>[0],
+      getDefaultTenantId(env as { DEFAULT_TENANT_ID?: string })
+    );
+    return `did:web:${new URL(issuerUrl).hostname}`;
+  } catch {
+    return env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
+  }
+}
+
 /**
  * Validate a VCI access token
  */
 export async function validateVCIAccessToken(
   env: Env,
-  accessToken: string
+  accessToken: string,
+  expectedIssuerOverride?: string
 ): Promise<TokenValidationResult> {
   try {
     // Parse JWT without full verification (signature verification should use JWKS)
@@ -87,7 +114,7 @@ export async function validateVCIAccessToken(
     }
 
     // Validate issuer (should be our auth server)
-    const expectedIssuer = env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
+    const expectedIssuer = resolveExpectedIssuerIdentifier(env, expectedIssuerOverride);
     // Allow issuer to be URL or DID format
     if (!payload.iss || (!payload.iss.includes('authrim') && payload.iss !== expectedIssuer)) {
       return { valid: false, error: 'Invalid issuer' };
@@ -107,7 +134,13 @@ export async function validateVCIAccessToken(
     }
 
     // Verify signature using JWKS
-    const signatureValid = await verifyTokenSignature(env, accessToken, header, payload);
+    const signatureValid = await verifyTokenSignature(
+      env,
+      accessToken,
+      header,
+      payload,
+      expectedIssuer
+    );
     if (!signatureValid) {
       return { valid: false, error: 'Invalid signature' };
     }
@@ -140,11 +173,12 @@ async function verifyTokenSignature(
   env: Env,
   token: string,
   header: JWTHeader,
-  payload: VCIAccessTokenPayload
+  payload: VCIAccessTokenPayload,
+  expectedIssuerOverride?: string
 ): Promise<boolean> {
   try {
     // For self-issued tokens (iss = our identifier), use our own keys
-    const expectedIssuer = env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
+    const expectedIssuer = resolveExpectedIssuerIdentifier(env, expectedIssuerOverride);
 
     if (payload.iss === expectedIssuer || payload.iss.includes('authrim')) {
       // Get public key from KeyManager

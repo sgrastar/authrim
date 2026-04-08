@@ -16,6 +16,7 @@ import { loadLockFileAuto, saveLockFile, type AuthrimLock } from '../../core/loc
 import {
   deployAll,
   buildApiPackages,
+  DEFAULT_INTER_DEPLOY_DELAY_MS,
   type DeployOptions,
   type DeployResult,
 } from '../../core/deploy.js';
@@ -351,6 +352,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     rootDir: resolve(baseDir),
     maxRetries: 3,
     retryDelayMs: 5000,
+    interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
     onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
     onError: (component, error) => {
       console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));

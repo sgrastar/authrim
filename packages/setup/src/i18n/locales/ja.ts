@@ -930,7 +930,16 @@ const ja: Translations = {
   'web.preview.loginUi': 'ログインUI:',
   'web.preview.adminUi': '管理UI:',
   'web.preview.pagesUrl': 'ログインUI (Pages):',
+  'web.preview.tenantDiscover': 'テナント選択 (共通入り口):',
   'web.preview.adminAccess': '管理UIアクセス先:',
+  'web.preview.firstTenant': '{{name}} (初期テナント)',
+  'web.preview.otherTenants': '他のテナント',
+  'web.preview.allTenantsShared': '(全テナント共通)',
+  'web.preview.viaApiProxy': '(APIと同じドメイン経由でプロキシ)',
+  'web.preview.conflictWarningMsg':
+    '{{conflictUI}}のカスタムドメインがAPIと同じ（{{baseDomain}}）ですが、「URLからテナント名を除外」が無効のため、{{baseDomain}} へのAPIリクエスト（/authorize, /api/auth/* 等）が 404 になり、ログインフローが機能しません。',
+  'web.preview.conflictActionMsg':
+    '対処方法: 「URLからテナント名を除外」を有効にし、最初のテナント（{{tenantName}}）をプライマリテナントに設定する。または、{{conflictUI}}のドメインをAPIとは別のドメイン（例: login.{{baseDomain}}）に変更する。',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'ログインUI',
@@ -1035,7 +1044,7 @@ const ja: Translations = {
   'web.envDetail.pagesProjects': 'Pagesプロジェクト',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Workerを更新',
+  'web.envDetail.workerUpdate': '全てのWorkerを更新',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'デプロイ済み',
   'web.envDetail.localVersion': 'ローカル',
@@ -1044,7 +1053,7 @@ const ja: Translations = {
   'web.envDetail.upToDate': '最新',
   'web.envDetail.notDeployed': '未デプロイ',
   'web.envDetail.updateOnlyChanged': '変更されたもののみ更新',
-  'web.envDetail.updateAllWorkers': 'Workerを更新',
+  'web.envDetail.updateAllWorkers': '全てのWorkerを更新',
   'web.envDetail.refreshVersions': '更新',
   'web.envDetail.updateProgress': '更新状況:',
   'web.envDetail.updatesAvailable': '{{count}}件の更新があります',

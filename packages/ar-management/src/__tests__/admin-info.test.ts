@@ -119,6 +119,7 @@ describe('admin-info tenant base URL resolution', () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+      BASE_DOMAIN: 'auth.example.com',
       DB: {
         prepare: vi.fn().mockReturnValue({
           bind: vi.fn().mockReturnValue({
@@ -148,9 +149,85 @@ describe('admin-info tenant base URL resolution', () => {
     const body = (await response.json()) as {
       login_ui_url: string | null;
       global_login_ui_url: string | null;
+      discover_url: string | null;
     };
-    expect(body.login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev');
-    expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev');
+    expect(body.login_ui_url).toBe('https://default.auth.example.com/login');
+    expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev/login');
+    expect(body.discover_url).toBe('https://nodomain-ar-login-ui.pages.dev/discover');
+  });
+
+  it('uses naked-domain issuer login URL for the primary tenant', async () => {
+    const env = {
+      UI_URL: 'https://login.example.pages.dev',
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      NAKED_DOMAIN_AS_ISSUER: 'true',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn(),
+    } as any);
+
+    const body = (await response.json()) as { login_ui_url: string | null };
+    expect(body.login_ui_url).toBe('https://auth.example.com/login');
+  });
+
+  it('omits common-entry URLs in single-tenant mode', async () => {
+    const env = {
+      UI_URL: 'https://login.example.com',
+      ISSUER_URL: 'https://login.example.com',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn(),
+    } as any);
+
+    const body = (await response.json()) as {
+      login_ui_url: string | null;
+      global_login_ui_url: string | null;
+      discover_url: string | null;
+    };
+    expect(body.login_ui_url).toBe('https://login.example.com/login');
+    expect(body.global_login_ui_url).toBeNull();
+    expect(body.discover_url).toBeNull();
   });
 
   it('derives component availability from env flags', () => {

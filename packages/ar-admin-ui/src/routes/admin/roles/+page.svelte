@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminRolesAPI,
 		type Role,
@@ -27,6 +28,7 @@
 	let roleToDelete: Role | null = $state(null);
 	let deleting = $state(false);
 	let deleteError = $state('');
+	let loadedTenantId = $state('');
 
 	// Filtered roles
 	let filteredRoles = $derived.by(() => {
@@ -51,7 +53,14 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
 		loadRoles();
 	});
 

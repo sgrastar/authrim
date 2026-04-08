@@ -16,6 +16,13 @@ import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID, resolveTenantFromRequest } from '../utils/tenant-context';
 import { isMultiTenantEnabled, validateTenantExistsAsync } from '../utils/issuer';
+import { validateTenantRequestBinding } from '../utils/tenant-binding-policy';
+import {
+  classifyTenantRequestPath,
+  extractTenantScopedPathTenantId,
+  isAdminTenantHeaderRequired,
+  isValidTenantIdentifier,
+} from '../utils/tenant-request-policy';
 import { createLogger, type Logger } from '../utils/logger';
 
 /**
@@ -68,20 +75,62 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const requestId = crypto.randomUUID();
     const startTime = Date.now();
+    const requestClass = classifyTenantRequestPath(c.req.path);
+    const requestedTenantId = isAdminTenantHeaderRequired(c.req.path)
+      ? c.req.header('X-Tenant-Id')?.trim()
+      : undefined;
+
+    if (isAdminTenantHeaderRequired(c.req.path)) {
+      if (!requestedTenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'X-Tenant-Id header is required',
+          },
+          400
+        );
+      }
+
+      if (!isValidTenantIdentifier(requestedTenantId)) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'X-Tenant-Id header has an invalid format',
+          },
+          400
+        );
+      }
+
+      const pathTenantId = extractTenantScopedPathTenantId(c.req.path);
+      if (pathTenantId && pathTenantId !== requestedTenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'X-Tenant-Id must match the tenant path parameter',
+          },
+          400
+        );
+      }
+    }
 
     // Resolve tenant from Host header
     // Single-tenant mode: always returns default tenant
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
     let tenantId = tenantResult.tenantId;
-    const allowUnknownTenantForDiscovery = c.req.path === '/api/auth/discovery';
+    const allowUnknownTenant =
+      requestClass === 'discovery_ui' ||
+      requestClass === 'platform_admin' ||
+      requestClass === 'tenant_inventory_admin' ||
+      requestClass === 'health_or_internal';
 
     // Handle tenant resolution failure in multi-tenant mode
     if (
       !tenantResult.success &&
       isMultiTenantEnabled(c.env) &&
       requireTenant &&
-      !allowUnknownTenantForDiscovery
+      !allowUnknownTenant &&
+      requestClass !== 'tenant_scoped_admin'
     ) {
       // Create logger for error logging
       const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
@@ -114,14 +163,52 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       tenantId = c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
     }
 
+    if (requestClass === 'tenant_scoped_admin' && requestedTenantId) {
+      tenantId = requestedTenantId;
+    }
+
+    if (
+      requestClass === 'tenant_scoped_admin' &&
+      !isMultiTenantEnabled(c.env) &&
+      tenantId !== (c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID)
+    ) {
+      return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+    }
+
     // In multi-tenant mode, validate that the resolved tenant actually exists in D1.
     // Uses positive-only KV cache (300s TTL) to avoid per-request D1 queries.
     // Fail-open on D1 errors to prevent outages from blocking all requests.
-    if (isMultiTenantEnabled(c.env) && tenantResult.success && tenantId) {
+    const shouldValidateTenantExists =
+      isMultiTenantEnabled(c.env) &&
+      !!tenantId &&
+      (requestClass === 'tenant_scoped_admin' || tenantResult.success);
+
+    if (shouldValidateTenantExists) {
       const exists = await validateTenantExistsAsync(c.env.DB, c.env.AUTHRIM_CONFIG, tenantId);
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
         errorLogger.warn('Tenant existence check failed', {
+          tenantId,
+          host: c.req.header('Host'),
+          path: c.req.path,
+        });
+        return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+      }
+    }
+
+    const shouldValidateTenantBinding =
+      requestClass === 'public_protocol_or_rest' && !!tenantId && tenantResult.success;
+
+    if (shouldValidateTenantBinding) {
+      const bindingAllowed = await validateTenantRequestBinding(
+        c.req.raw,
+        c.env.AUTHRIM_CONFIG,
+        c.env,
+        tenantId
+      );
+      if (!bindingAllowed) {
+        const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
+        errorLogger.warn('Tenant host or identifier binding check failed', {
           tenantId,
           host: c.req.header('Host'),
           path: c.req.path,
@@ -211,5 +298,22 @@ export function getLogger(c: Context<{ Bindings: Env }>): Logger {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getTenantIdFromContext(c: Context<any, any, any>): string {
+  const requestPath =
+    c.req.path ||
+    (() => {
+      try {
+        return c.req.raw ? new URL(c.req.raw.url).pathname : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
+  if (isAdminTenantHeaderRequired(requestPath)) {
+    const requestedTenantId = c.req.header('X-Tenant-Id')?.trim();
+    if (requestedTenantId && isValidTenantIdentifier(requestedTenantId)) {
+      return requestedTenantId;
+    }
+  }
+
   return c.get('tenantId') || DEFAULT_TENANT_ID;
 }

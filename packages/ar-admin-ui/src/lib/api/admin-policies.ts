@@ -8,7 +8,7 @@
  * - View simulation history
  */
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 // =============================================================================
 // Types
@@ -215,9 +215,8 @@ export const adminPoliciesAPI = {
 		if (params?.enabled !== undefined) searchParams.set('enabled', String(params.enabled));
 		if (params?.search) searchParams.set('search', params.search);
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies?${searchParams}`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies?${searchParams}`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -232,9 +231,8 @@ export const adminPoliciesAPI = {
 	 * Get policy rule by ID
 	 */
 	async getPolicy(id: string): Promise<{ rule: PolicyRule }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies/${id}`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies/${id}`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -258,12 +256,9 @@ export const adminPoliciesAPI = {
 		conditions: PolicyCondition[];
 		enabled?: boolean;
 	}): Promise<{ success: boolean; rule_id: string }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies`, {
 			method: 'POST',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -291,12 +286,9 @@ export const adminPoliciesAPI = {
 			enabled?: boolean;
 		}
 	): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies/${id}`, {
 			method: 'PUT',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -312,9 +304,8 @@ export const adminPoliciesAPI = {
 	 * Delete policy rule
 	 */
 	async deletePolicy(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies/${id}`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies/${id}`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {
@@ -333,12 +324,9 @@ export const adminPoliciesAPI = {
 	 * Simulate policy evaluation
 	 */
 	async simulate(context: PolicyContext, saveHistory?: boolean): Promise<SimulationResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies/simulate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies/simulate`, {
 			method: 'POST',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify({ context, save_history: saveHistory })
 		});
 
@@ -361,9 +349,8 @@ export const adminPoliciesAPI = {
 		if (params?.page) searchParams.set('page', params.page.toString());
 		if (params?.limit) searchParams.set('limit', params.limit.toString());
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies/simulations?${searchParams}`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies/simulations?${searchParams}`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -385,9 +372,8 @@ export const adminPoliciesAPI = {
 		condition_types: ConditionTypeMetadata[];
 		categories: ConditionCategory[];
 	}> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/policies/condition-types`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies/condition-types`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {

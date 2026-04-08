@@ -30,19 +30,23 @@
 	// Initialize theme on mount
 	// Resolution order: localStorage → tenant (API) → system → default
 	onMount(async () => {
-		// Fetch tenant theme defaults (non-blocking for theme init)
-		try {
-			const { data: loginMethods } = await fetchLoginMethods();
-			if (loginMethods?.ui) {
-				themeStore.setTenantDefaults(loginMethods.ui.theme, loginMethods.ui.variant);
-				brandingStore.set(
-					loginMethods.ui.branding.brandName || '',
-					loginMethods.ui.branding.logoUrl || null
-				);
+		if (data.shouldLoadTenantBranding) {
+			// Fetch tenant theme defaults (non-blocking for theme init)
+			try {
+				const { data: loginMethods } = await fetchLoginMethods();
+				if (loginMethods?.ui) {
+					themeStore.setTenantDefaults(loginMethods.ui.theme, loginMethods.ui.variant);
+					brandingStore.set(
+						loginMethods.ui.branding.brandName || '',
+						loginMethods.ui.branding.logoUrl || null
+					);
+					document.documentElement.setAttribute('data-branding-loaded', '');
+				}
+			} catch {
+				// Theme defaults are optional, proceed with system/default
 				document.documentElement.setAttribute('data-branding-loaded', '');
 			}
-		} catch {
-			// Theme defaults are optional, proceed with system/default
+		} else {
 			document.documentElement.setAttribute('data-branding-loaded', '');
 		}
 

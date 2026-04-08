@@ -8,8 +8,7 @@
  * - Revoke all sessions for a user
  */
 
-// API Base URL - empty string for same-origin, or full URL for cross-origin
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 /**
  * Pagination info
@@ -102,9 +101,7 @@ export const adminSessionsAPI = {
 		const queryString = searchParams.toString();
 		const url = `${API_BASE_URL}/api/admin/sessions${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(url);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
@@ -119,9 +116,7 @@ export const adminSessionsAPI = {
 	 * GET /api/admin/sessions/:id
 	 */
 	async get(id: string): Promise<SessionDetailResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/sessions/${id}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/sessions/${id}`);
 
 		if (!response.ok) {
 			if (response.status === 404) {
@@ -139,9 +134,8 @@ export const adminSessionsAPI = {
 	 * DELETE /api/admin/sessions/:id
 	 */
 	async revoke(id: string): Promise<RevokeResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/sessions/${id}`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/sessions/${id}`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {
@@ -160,9 +154,8 @@ export const adminSessionsAPI = {
 	 * DELETE /api/admin/users/:id/sessions
 	 */
 	async revokeAllForUser(userId: string): Promise<RevokeResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/sessions`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${userId}/sessions`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {

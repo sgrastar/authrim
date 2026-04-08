@@ -15,11 +15,12 @@ import {
   D1Adapter,
   createErrorResponse,
   AR_ERROR_CODES,
-  buildIssuerUrl,
   getUIConfig,
   getLogger,
+  usesNakedDomainIssuer as usesNakedDomainIssuerCore,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from './single-tenant-guard';
+import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 type AdminInfoEnv = Env & {
   LOGIN_UI_ENABLED?: string;
@@ -79,6 +80,10 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
 
     const components = getComponentAvailability(c.env);
     const { loginUiUrl, adminUiUrl } = await getConfiguredUiUrls(c.env);
+    const singleTenantMode = !c.env.BASE_DOMAIN;
+    const tenantLoginUrl = `${issuer}/login`;
+    const globalLoginUiUrl = !singleTenantMode && loginUiUrl ? `${loginUiUrl}/login` : null;
+    const discoverUrl = !singleTenantMode && loginUiUrl ? `${loginUiUrl}/discover` : null;
 
     // API base URL — same origin as the management API (relative construction)
     // We infer from the issuer since the API runs on the same Worker
@@ -92,8 +97,9 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
       tenant_name: tenant.name,
       issuer,
       components,
-      login_ui_url: loginUiUrl,
-      global_login_ui_url: loginUiUrl,
+      login_ui_url: tenantLoginUrl,
+      global_login_ui_url: globalLoginUiUrl,
+      discover_url: discoverUrl,
       admin_ui_url: adminUiUrl,
       api_url: apiBaseUrl,
       ...endpoints,
@@ -189,20 +195,11 @@ function buildEndpoints(issuer: string, apiBaseUrl: string) {
  * Other tenants continue to use subdomain-based URLs.
  */
 export function buildTenantBaseUrl(env: Env, tenantId: string): string {
-  if (usesNakedDomainIssuer(env, tenantId) && env.BASE_DOMAIN) {
-    return `https://${env.BASE_DOMAIN}`;
-  }
-
-  return buildIssuerUrl(env, tenantId);
+  return getCanonicalTenantBaseUrl(env, tenantId);
 }
 
 export function usesNakedDomainIssuer(env: Env, tenantId: string): boolean {
-  if (env.NAKED_DOMAIN_AS_ISSUER !== 'true' || !env.BASE_DOMAIN) {
-    return false;
-  }
-
-  const nakedDomainTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID;
-  return tenantId === nakedDomainTenantId;
+  return usesNakedDomainIssuerCore(env, tenantId);
 }
 
 export async function getConfiguredUiUrls(env: AdminInfoEnv): Promise<{

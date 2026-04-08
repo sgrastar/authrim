@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Security API Client
  *
@@ -281,7 +282,7 @@ export const adminSecurityAPI = {
 
 		const url = `${API_BASE_URL}/api/admin/security/alerts${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -300,7 +301,7 @@ export const adminSecurityAPI = {
 	 * Acknowledge a security alert
 	 */
 	async acknowledgeAlert(alertId: string): Promise<SecurityAlert> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/security/alerts/${alertId}/acknowledge`,
 			{
 				method: 'POST',
@@ -340,7 +341,7 @@ export const adminSecurityAPI = {
 
 		const url = `${API_BASE_URL}/api/admin/security/suspicious-activities${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -377,7 +378,7 @@ export const adminSecurityAPI = {
 
 		const url = `${API_BASE_URL}/api/admin/security/threats${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -407,7 +408,7 @@ export const adminSecurityAPI = {
 			throw new Error('Private or reserved IP addresses are not allowed');
 		}
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/security/ip-reputation`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/security/ip-reputation`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {

@@ -18,6 +18,7 @@ import {
 import { validateVCIAccessToken } from '../services/token-validation';
 import { generateSecureNonce } from '../../utils/crypto';
 import { importPKCS8 } from 'jose';
+import { getRequestIssuerIdentifier } from '../../request-identifiers';
 
 interface DeferredCredentialRequest {
   transaction_id: string;
@@ -31,6 +32,7 @@ interface DeferredCredentialRequest {
 export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const log = getLogger(c as any).module('VC-ISSUER');
+  const requestIssuerIdentifier = getRequestIssuerIdentifier(c);
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
@@ -39,7 +41,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     }
 
     const accessToken = authHeader.substring(7);
-    const tokenResult = await validateVCIAccessToken(c.env, accessToken);
+    const tokenResult = await validateVCIAccessToken(c.env, accessToken, requestIssuerIdentifier);
 
     if (!tokenResult.valid) {
       return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
@@ -100,7 +102,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
 
     const sdjwtvc = await createSDJWTVC(
       claims,
-      c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com',
+      requestIssuerIdentifier,
       issuerKey.privateKey,
       'ES256',
       issuerKey.kid,

@@ -44,6 +44,12 @@ import {
 } from '../repositories/pii';
 import { MapRequestScopedCache } from './types';
 
+function getTenantIdFromHonoContext(c: HonoContext<{ Bindings: Env }>): string | undefined {
+  // Hono's generic context type does not know about middleware-injected values.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((c as any).get?.('tenantId') as string | undefined) || undefined;
+}
+
 /**
  * Create AuthContext from Hono Context
  *
@@ -59,12 +65,13 @@ import { MapRequestScopedCache } from './types';
  */
 export function createAuthContextFromHono(
   c: HonoContext<{ Bindings: Env }>,
-  tenantId: string = 'default'
+  tenantId?: string
 ): AuthContext {
+  const resolvedTenantId = tenantId || getTenantIdFromHonoContext(c) || 'default';
   const coreAdapter = createD1Adapter(c.env.DB, 'core');
 
   return {
-    tenantId,
+    tenantId: resolvedTenantId,
     repositories: {
       userCore: new UserCoreRepository(coreAdapter),
       client: new ClientRepository(coreAdapter),
@@ -95,11 +102,12 @@ export function createAuthContextFromHono(
  */
 export function createPIIContextFromHono(
   c: HonoContext<{ Bindings: Env }>,
-  tenantId: string = 'default'
+  tenantId?: string
 ): PIIContext {
   if (!c.env.DB_PII) {
     throw new Error('DB_PII is not configured. Cannot create PIIContext.');
   }
+  const resolvedTenantId = tenantId || getTenantIdFromHonoContext(c) || 'default';
 
   const coreAdapter = createD1Adapter(c.env.DB, 'core');
   const piiAdapter = createD1Adapter(c.env.DB_PII, 'pii');
@@ -108,7 +116,7 @@ export function createPIIContextFromHono(
   const partitionRouter = new PIIPartitionRouter(coreAdapter, piiAdapter, c.env.AUTHRIM_CONFIG);
 
   return {
-    tenantId,
+    tenantId: resolvedTenantId,
     repositories: {
       userCore: new UserCoreRepository(coreAdapter),
       client: new ClientRepository(coreAdapter),

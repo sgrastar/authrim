@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Info / Metadata API Client
  *
@@ -80,15 +81,17 @@ export interface TenantInfo extends TenantEndpoints {
 	};
 	login_ui_url: string | null;
 	global_login_ui_url: string | null;
+	discover_url: string | null;
 	admin_ui_url: string | null;
 	api_url: string;
 }
 
 export async function getTenantInfo(tenantId?: string): Promise<TenantInfo> {
-	const response = await fetch(
+	const response = await adminFetch(
 		`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(resolveTenantId(tenantId))}/info`,
 		{
-			credentials: 'include'
+			credentials: 'include',
+			skipTenantHeader: true
 		}
 	);
 

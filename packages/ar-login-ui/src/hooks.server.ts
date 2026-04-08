@@ -11,6 +11,7 @@
 import { env as dynamicEnv } from '$env/dynamic/public';
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
+import { REMEMBERED_TENANT_COOKIE, getRememberedTenantHost } from '$lib/discovery-session';
 
 interface ServiceBinding {
 	fetch(request: Request): Promise<Response>;
@@ -118,6 +119,14 @@ function getOriginalRequestHost(event: RequestEvent): string | undefined {
 	}
 }
 
+function getRememberedTenantRequestHost(event: RequestEvent): string | undefined {
+	if (event.url.pathname === '/api/auth/discovery') {
+		return undefined;
+	}
+
+	return getRememberedTenantHost(event.cookies.get(REMEMBERED_TENANT_COOKIE));
+}
+
 function getApiBackendUrl(platformEnv?: Record<string, unknown>): string {
 	return getConfiguredApiBackendUrl(platformEnv) ?? 'http://localhost:8786';
 }
@@ -214,6 +223,11 @@ function getForwardedHost(event: RequestEvent, platformEnv?: Record<string, unkn
 		return originalHost;
 	}
 
+	const rememberedTenantHost = getRememberedTenantRequestHost(event);
+	if (rememberedTenantHost) {
+		return rememberedTenantHost;
+	}
+
 	if (event.url.pathname === '/api/auth/discovery') {
 		return event.url.host;
 	}
@@ -292,7 +306,10 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 		requestInit.body = body;
 	}
 
-	const apiBinding = (platformEnv?.API_SERVICE as ServiceBinding | undefined) ?? null;
+	const apiBinding =
+		((platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
+			(platformEnv?.API_SERVICE as ServiceBinding | undefined)) ??
+		null;
 	const response = apiBinding
 		? await apiBinding.fetch(new Request(upstreamUrl.toString(), requestInit))
 		: await fetch(new Request(upstreamUrl.toString(), requestInit));

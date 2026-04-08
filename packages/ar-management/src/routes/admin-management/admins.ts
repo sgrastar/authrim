@@ -557,6 +557,11 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    // Prevent cross-tenant role assignment while still allowing shared system roles.
+    if (role.tenant_id !== tenantId && !role.is_system) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
     // Check hierarchy - can only assign roles with lower hierarchy level
     if (
       authContext.hierarchyLevel !== undefined &&

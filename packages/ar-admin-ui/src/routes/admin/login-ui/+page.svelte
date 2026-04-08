@@ -29,6 +29,12 @@
 	let saving = $state(false);
 	let error = $state('');
 	let successMessage = $state('');
+	let tenantSettings = $state<CategorySettings | null>(null);
+	let trustedOriginsInput = $state('');
+	let initialTrustedOriginsInput = $state('');
+	let trustedOriginsError = $state('');
+	let trustedOriginsSuccessMessage = $state('');
+	let trustedOriginsSaving = $state(false);
 	let uiConfigError = $state('');
 	let uiConfigSuccessMessage = $state('');
 	let uiConfigSaving = $state(false);
@@ -65,15 +71,18 @@
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
 	let canEditGlobalUiConfig = $derived(canEdit);
 	let canEditLoginUiSettings = $derived(canEdit && loginUiAvailable && loginUiConfigured);
+	let canEditTrustedOrigins = $derived(canEdit);
 	let currentLevel = $derived(settingsContext.currentLevel);
 
 	// Derived: Check if there are unsaved changes
 	const hasChanges = $derived(pendingPatches.length > 0);
+	const hasTrustedOriginsChanges = $derived(trustedOriginsInput !== initialTrustedOriginsInput);
 	const hasUiConfigChanges = $derived(
 		initialUiConfigForm
 			? JSON.stringify(uiConfigForm) !== JSON.stringify(initialUiConfigForm)
 			: false
 	);
+	const trustedOriginsDraft = $derived.by(() => parseTrustedOriginsDraft(trustedOriginsInput));
 
 	// Load data on mount
 	onMount(async () => {
@@ -97,17 +106,27 @@
 	async function loadData() {
 		loading = true;
 		error = '';
+		trustedOriginsError = '';
 		uiConfigError = '';
 		pendingPatches = [];
 
 		try {
 			const tenantInfo = await getTenantInfo(scopeContext.tenantId ?? settingsContext.tenantId);
 			const uiConfigResult = await adminUiConfigAPI.get();
+			const tenantSettingsResult = await adminSettingsAPI.getSettings(
+				'tenant',
+				scopeContext.tenantId ?? settingsContext.tenantId
+			);
 			const nextUiConfigForm: UIConfigForm = {
 				baseUrl: uiConfigResult.config.baseUrl ?? '',
 				paths: { ...uiConfigResult.config.paths }
 			};
 			uiConfig = uiConfigResult;
+			tenantSettings = tenantSettingsResult;
+			trustedOriginsInput = formatOriginsForEditor(
+				tenantSettingsResult.values['tenant.allowed_origins']
+			);
+			initialTrustedOriginsInput = trustedOriginsInput;
 			uiConfigForm = nextUiConfigForm;
 			initialUiConfigForm = {
 				baseUrl: nextUiConfigForm.baseUrl,
@@ -192,6 +211,135 @@
 			paths: { ...initialUiConfigForm.paths }
 		};
 		uiConfigError = '';
+	}
+
+	function formatOriginsForEditor(value: unknown): string {
+		if (typeof value !== 'string' || !value.trim()) return '';
+		return value
+			.split(',')
+			.map((origin) => origin.trim())
+			.filter((origin) => origin.length > 0)
+			.join('\n');
+	}
+
+	function isLocalHost(hostname: string): boolean {
+		return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+	}
+
+	function normalizeTrustedOriginEntry(value: string): string {
+		const trimmed = value.trim().replace(/\/$/, '');
+		if (!trimmed) {
+			throw new Error('Origin cannot be empty.');
+		}
+
+		if (trimmed.includes('*')) {
+			if (!/^https?:\/\/[^/?#]+$/i.test(trimmed)) {
+				throw new Error(
+					`Invalid wildcard origin "${value}". Use a host-only pattern such as https://*.example.com.`
+				);
+			}
+			return trimmed;
+		}
+
+		let parsed: URL;
+		try {
+			parsed = new URL(trimmed);
+		} catch {
+			throw new Error(`Invalid origin "${value}".`);
+		}
+
+		if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalHost(parsed.hostname))) {
+			throw new Error(`Origin "${value}" must use HTTPS, except for localhost.`);
+		}
+
+		if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
+			throw new Error(`Origin "${value}" must not include a path, query, or fragment.`);
+		}
+
+		return parsed.origin;
+	}
+
+	function normalizeTrustedOriginsInput(value: string): string[] {
+		const uniqueOrigins = new Set<string>();
+
+		for (const rawEntry of value.split(/[\n,]/)) {
+			const trimmed = rawEntry.trim();
+			if (!trimmed) continue;
+			uniqueOrigins.add(normalizeTrustedOriginEntry(trimmed));
+		}
+
+		return Array.from(uniqueOrigins);
+	}
+
+	function parseTrustedOriginsDraft(value: string): { origins: string[]; error: string } {
+		try {
+			return {
+				origins: normalizeTrustedOriginsInput(value),
+				error: ''
+			};
+		} catch (err) {
+			return {
+				origins: [],
+				error: err instanceof Error ? err.message : 'Invalid trusted origins.'
+			};
+		}
+	}
+
+	function discardTrustedOriginsChanges() {
+		trustedOriginsInput = initialTrustedOriginsInput;
+		trustedOriginsError = '';
+	}
+
+	async function saveTrustedOrigins() {
+		if (!tenantSettings) return;
+		if (!canEditTrustedOrigins) {
+			trustedOriginsError = 'You do not have permission to edit trusted origins.';
+			return;
+		}
+
+		const parsed = parseTrustedOriginsDraft(trustedOriginsInput);
+		if (parsed.error) {
+			trustedOriginsError = parsed.error;
+			return;
+		}
+
+		trustedOriginsSaving = true;
+		trustedOriginsError = '';
+		trustedOriginsSuccessMessage = '';
+
+		try {
+			const request =
+				parsed.origins.length > 0
+					? {
+							ifMatch: tenantSettings.version,
+							set: { 'tenant.allowed_origins': parsed.origins.join(',') }
+						}
+					: {
+							ifMatch: tenantSettings.version,
+							clear: ['tenant.allowed_origins']
+						};
+
+			await adminSettingsAPI.updateSettings(
+				'tenant',
+				request,
+				scopeContext.tenantId ?? settingsContext.tenantId
+			);
+
+			trustedOriginsSuccessMessage = 'Trusted origins updated.';
+			await loadData();
+			setTimeout(() => {
+				trustedOriginsSuccessMessage = '';
+			}, 3000);
+		} catch (err) {
+			if (err instanceof SettingsConflictError) {
+				trustedOriginsError = 'Trusted origins were modified by another user. Please reload and try again.';
+			} else {
+				trustedOriginsError =
+					err instanceof Error ? err.message : 'Failed to update trusted origins.';
+			}
+		} finally {
+			trustedOriginsSaving = false;
+		}
 	}
 
 	async function saveUiConfig() {
@@ -312,6 +460,14 @@
 		<div class="alert alert-success">{uiConfigSuccessMessage}</div>
 	{/if}
 
+	{#if trustedOriginsError}
+		<div class="alert alert-error">{trustedOriginsError}</div>
+	{/if}
+
+	{#if trustedOriginsSuccessMessage}
+		<div class="alert alert-success">{trustedOriginsSuccessMessage}</div>
+	{/if}
+
 	{#if !loading && uiConfig}
 		<div class="settings-form-card">
 			<div class="ui-config-header">
@@ -401,6 +557,93 @@
 					class="btn btn-primary"
 				>
 					{uiConfigSaving ? 'Saving...' : 'Save Global UI Configuration'}
+				</button>
+			</div>
+		</div>
+	{/if}
+
+	{#if !loading && tenantSettings}
+		<div class="settings-form-card">
+			<div class="ui-config-header">
+				<div>
+					<h2 class="section-title">Trusted Origins</h2>
+					<p class="section-description">
+						Tenant-wide origins allowed to call browser-based auth endpoints such as passkey
+						registration and direct auth. Enter one origin or wildcard pattern per line.
+					</p>
+				</div>
+				<span class="config-source-badge">Tenant Setting</span>
+			</div>
+
+			<div class="setting-item" class:modified={hasTrustedOriginsChanges}>
+				<div class="setting-item-content trusted-origins-content">
+					<div class="setting-info">
+						<div class="setting-label-row">
+							<label for="trusted-origins" class="setting-label">Allowed Browser Origins</label>
+							{#if hasTrustedOriginsChanges}
+								<span class="setting-modified">Modified</span>
+							{/if}
+						</div>
+						<p class="setting-description">
+							This is the tenant-wide source of truth for WebAuthn and browser-side direct auth.
+							Client pages can still add redirect URI origins as shortcuts, but they write back to
+							this same setting.
+						</p>
+					</div>
+
+					<div class="setting-control">
+						<textarea
+							id="trusted-origins"
+							class="settings-textarea"
+							rows="6"
+							disabled={!canEditTrustedOrigins}
+							placeholder={'https://first.multi-tenant.authrim.com\nhttps://*.example.com'}
+							value={trustedOriginsInput}
+							oninput={(e) => {
+								trustedOriginsInput = e.currentTarget.value;
+							}}
+						></textarea>
+						<p class="settings-range-hint">
+							Use host-only origins. Paths are not allowed. `http://localhost` is allowed for local
+							development.
+						</p>
+						{#if trustedOriginsDraft.error}
+							<p class="trusted-origins-validation">{trustedOriginsDraft.error}</p>
+						{/if}
+					</div>
+				</div>
+			</div>
+
+			{#if trustedOriginsDraft.origins.length > 0}
+				<div class="trusted-origins-preview">
+					<p class="trusted-origins-preview-label">Normalized entries</p>
+					<div class="trusted-origins-list">
+						{#each trustedOriginsDraft.origins as origin (origin)}
+							<span class="trusted-origin-chip">{origin}</span>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+			<div class="settings-actions">
+				<button
+					onclick={discardTrustedOriginsChanges}
+					disabled={!hasTrustedOriginsChanges || trustedOriginsSaving || !canEditTrustedOrigins}
+					class="btn btn-secondary"
+				>
+					Discard Changes
+				</button>
+				<button
+					onclick={saveTrustedOrigins}
+					disabled={
+						!hasTrustedOriginsChanges ||
+						trustedOriginsSaving ||
+						!canEditTrustedOrigins ||
+						Boolean(trustedOriginsDraft.error)
+					}
+					class="btn btn-primary"
+				>
+					{trustedOriginsSaving ? 'Saving...' : 'Save Trusted Origins'}
 				</button>
 			</div>
 		</div>
@@ -613,6 +856,73 @@
 		font-size: 12px;
 		font-weight: 600;
 		text-transform: uppercase;
+	}
+
+	.trusted-origins-content {
+		align-items: flex-start;
+	}
+
+	.settings-textarea {
+		width: 100%;
+		min-height: 140px;
+		padding: 12px 14px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--surface);
+		color: var(--text-primary);
+		font: inherit;
+		line-height: 1.5;
+		resize: vertical;
+	}
+
+	.settings-textarea:focus {
+		outline: none;
+		border-color: var(--primary);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
+	}
+
+	.settings-textarea:disabled {
+		background: var(--surface-secondary);
+		color: var(--text-muted);
+		cursor: not-allowed;
+	}
+
+	.trusted-origins-validation {
+		margin: 8px 0 0;
+		font-size: 13px;
+		color: var(--danger);
+	}
+
+	.trusted-origins-preview {
+		margin-top: 16px;
+		padding-top: 16px;
+		border-top: 1px solid var(--border-color);
+	}
+
+	.trusted-origins-preview-label {
+		margin: 0 0 10px;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.trusted-origins-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.trusted-origin-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 6px 10px;
+		border-radius: 999px;
+		background: var(--surface-secondary);
+		border: 1px solid var(--border-color);
+		color: var(--text-primary);
+		font-size: 13px;
 	}
 
 	.coming-soon-section {

@@ -117,15 +117,37 @@
 				{:else}
 					{@render urlRow('Built-in Login UI', 'Not deployed', 'login_ui_deployment')}
 				{/if}
+				{#if info.login_ui_url}
+					{@render urlRow(
+						'Login URL (this tenant)',
+						info.login_ui_url,
+						'login_ui_url',
+						info.login_ui_url
+					)}
+				{:else}
+					{@render urlRow('Login URL (this tenant)', 'Not configured', 'login_ui_url_status')}
+				{/if}
 				{#if info.global_login_ui_url}
 					{@render urlRow(
-						'Global Login UI URL',
+						'Global Login URL (common entry)',
 						info.global_login_ui_url,
 						'global_login_ui_url',
 						info.global_login_ui_url
 					)}
 				{:else}
-					{@render urlRow('Global Login UI URL', 'Not configured', 'global_login_ui_url_status')}
+					{@render urlRow(
+						'Global Login URL (common entry)',
+						'Not configured',
+						'global_login_ui_url_status'
+					)}
+				{/if}
+				{#if info.discover_url}
+					{@render urlRow(
+						'Tenant Discovery URL',
+						info.discover_url,
+						'discover_url',
+						info.discover_url
+					)}
 				{/if}
 				{#if info.components.admin_ui && info.admin_ui_url}
 					{@render urlRow('Admin UI URL', info.admin_ui_url, 'admin_ui_url', info.admin_ui_url)}

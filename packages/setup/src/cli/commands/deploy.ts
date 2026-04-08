@@ -31,20 +31,27 @@ import {
   deployAllPages,
   updateLockWithDeployments,
   buildApiPackages,
+  DEFAULT_INTER_DEPLOY_DELAY_MS,
   type DeployOptions,
 } from '../../core/deploy.js';
 import {
   isWranglerInstalled,
   checkAuth,
   runMigrationsForEnvironment,
+  ensureInitialAdminRolesInD1,
+  ensureInitialTenantInD1,
   getWorkersSubdomain,
   ensureWildcardDnsForMultiTenant,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
 import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
-import { ensureLoginUiClient } from '../../core/login-ui-client.js';
+import {
+  ensureLoginUiClient,
+  shouldReportLoginUiClientWarning,
+} from '../../core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
+import { resolveIssuerUrl } from '../../core/url-config.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 import {
@@ -674,6 +681,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     dryRun: options.dryRun,
     maxRetries: 3,
     retryDelayMs: 5000,
+    interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
     onProgress: (msg) => console.log(msg),
     onError: (component, error) => {
       console.error(chalk.red(`Error in ${component}: ${error.message}`));
@@ -744,7 +752,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         } else {
           console.log(chalk.green(`  ✓ Login UI client created: ${loginUiClientId}`));
         }
-      } else {
+      } else if (shouldReportLoginUiClientWarning(clientResult.error)) {
         console.log(chalk.yellow(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`));
       }
     }
@@ -809,6 +817,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Run D1 database migrations (unless skipped or dry-run)
   let migrationsSuccess = true;
+  let initialTenantSuccess = true;
+  let initialAdminRolesSuccess = true;
   if (
     !options.skipMigrations &&
     !options.dryRun &&
@@ -824,11 +834,41 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         migrationsSpinner.text = msg;
       });
 
-      if (migrationsResult.success) {
-        migrationsSpinner.succeed(
-          `Migrations completed - core: ${migrationsResult.core.appliedCount}, pii: ${migrationsResult.pii.appliedCount}, admin: ${migrationsResult.admin.appliedCount} applied`
-        );
-      } else {
+        if (migrationsResult.success) {
+          migrationsSpinner.succeed(
+            `Migrations completed - core: ${migrationsResult.core.appliedCount}, pii: ${migrationsResult.pii.appliedCount}, admin: ${migrationsResult.admin.appliedCount} applied`
+          );
+
+        const bootstrapSpinner = ora('Ensuring initial tenant exists...').start();
+        const bootstrapResult = await ensureInitialTenantInD1(env, config, (msg) => {
+          bootstrapSpinner.text = msg;
+        });
+
+          if (bootstrapResult.success) {
+            bootstrapSpinner.succeed(`Initial tenant ready: ${config.tenant.name}`);
+          } else {
+          bootstrapSpinner.fail('Initial tenant bootstrap failed');
+          if (bootstrapResult.error) {
+            console.log(chalk.red(`  ${bootstrapResult.error}`));
+          }
+          initialTenantSuccess = false;
+          }
+
+          const adminRolesSpinner = ora('Ensuring initial admin roles exist...').start();
+          const adminRolesResult = await ensureInitialAdminRolesInD1(env, config, (msg) => {
+            adminRolesSpinner.text = msg;
+          });
+
+          if (adminRolesResult.success) {
+            adminRolesSpinner.succeed(`Initial admin roles ready: ${config.tenant.name}`);
+          } else {
+            adminRolesSpinner.fail('Initial admin role bootstrap failed');
+            if (adminRolesResult.error) {
+              console.log(chalk.red(`  ${adminRolesResult.error}`));
+            }
+            initialAdminRolesSuccess = false;
+          }
+        } else {
         migrationsSpinner.warn('Some migrations failed');
         if (migrationsResult.core.error) {
           console.log(chalk.yellow(`  Core: ${migrationsResult.core.error}`));
@@ -851,10 +891,18 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   // Final summary
   console.log(chalk.bold('\n━━━ Deployment Complete ━━━\n'));
 
-  if (summary.failedCount === 0 && migrationsSuccess) {
+  if (summary.failedCount === 0 && migrationsSuccess && initialTenantSuccess && initialAdminRolesSuccess) {
     console.log(chalk.green('✅ All components deployed and migrations applied!\n'));
   } else if (summary.failedCount === 0 && !migrationsSuccess) {
     console.log(chalk.yellow('⚠️  All components deployed, but some migrations failed.\n'));
+  } else if (summary.failedCount === 0 && !initialTenantSuccess) {
+    console.log(
+      chalk.yellow('⚠️  All components deployed, but initial tenant bootstrap failed.\n')
+    );
+  } else if (summary.failedCount === 0 && !initialAdminRolesSuccess) {
+    console.log(
+      chalk.yellow('⚠️  All components deployed, but initial admin role bootstrap failed.\n')
+    );
   } else {
     console.log(
       chalk.yellow(`⚠️  ${summary.successCount}/${summary.totalComponents} components deployed\n`)
@@ -878,7 +926,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Initial admin setup (only if all components deployed successfully)
   if (!options.dryRun && summary.failedCount === 0) {
-    const baseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+    const baseUrl = resolveIssuerUrl(config, { env });
 
     if (baseUrl) {
       const setupSpinner = ora('Setting up initial admin...').start();

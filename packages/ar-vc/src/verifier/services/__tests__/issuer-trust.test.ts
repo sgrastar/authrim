@@ -9,6 +9,11 @@ import { checkIssuerTrust, checkSelfIssuance } from '../issuer-trust';
 import type { Env } from '../../../types';
 import type { TrustedIssuerRepository, TrustedIssuerRecord } from '@authrim/ar-lib-core';
 
+type TenantAwareEnv = Env & {
+  BASE_DOMAIN?: string;
+  DEFAULT_TENANT_ID?: string;
+};
+
 // Create mock repository
 const createMockRepo = (
   dbResult?: Partial<TrustedIssuerRecord> | null
@@ -46,7 +51,7 @@ const createMockRepo = (
 };
 
 // Mock environment for checkSelfIssuance
-const createMockEnv = (): Env => ({
+const createMockEnv = (): TenantAwareEnv => ({
   DB: {} as D1Database,
   AUTHRIM_CONFIG: {} as KVNamespace,
   VP_REQUEST_STORE: {} as DurableObjectNamespace,
@@ -156,6 +161,17 @@ describe('checkSelfIssuance', () => {
 
     // Default is 'did:web:authrim.com'
     const result = await checkSelfIssuance(env, 'did:web:authrim.com', 'tenant-1');
+
+    expect(result).toBe(false);
+  });
+
+  it('derives the self identifier from the tenant issuer host when available', async () => {
+    const env = createMockEnv();
+    env.BASE_DOMAIN = 'example.com';
+    env.DEFAULT_TENANT_ID = 'default';
+    env.VERIFIER_IDENTIFIER = 'did:web:static.example.com';
+
+    const result = await checkSelfIssuance(env, 'did:web:tenant-1.example.com', 'tenant-1');
 
     expect(result).toBe(false);
   });

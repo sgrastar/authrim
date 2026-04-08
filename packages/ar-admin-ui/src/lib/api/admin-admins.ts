@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Users Management API Client
  *
@@ -128,7 +129,7 @@ export const adminAdminsAPI = {
 		const queryString = searchParams.toString();
 		const url = `${API_BASE_URL}/api/admin/admins${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -145,7 +146,7 @@ export const adminAdminsAPI = {
 	 * GET /api/admin/admins/:id
 	 */
 	async get(id: string): Promise<AdminUserDetail> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
 			credentials: 'include'
 		});
 
@@ -165,7 +166,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins
 	 */
 	async create(data: CreateAdminUserInput): Promise<AdminUser> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -185,7 +186,7 @@ export const adminAdminsAPI = {
 	 * PATCH /api/admin/admins/:id
 	 */
 	async update(id: string, data: UpdateAdminUserInput): Promise<AdminUser> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -205,7 +206,7 @@ export const adminAdminsAPI = {
 	 * DELETE /api/admin/admins/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});
@@ -223,7 +224,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/suspend
 	 */
 	async suspend(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/suspend`,
 			{
 				method: 'POST',
@@ -244,7 +245,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/activate
 	 */
 	async activate(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/activate`,
 			{
 				method: 'POST',
@@ -265,7 +266,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/unlock
 	 */
 	async unlock(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/unlock`,
 			{
 				method: 'POST',
@@ -286,7 +287,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/roles
 	 */
 	async assignRole(id: string, data: AssignRoleInput): Promise<{ id: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/roles`,
 			{
 				method: 'POST',
@@ -309,7 +310,7 @@ export const adminAdminsAPI = {
 	 * DELETE /api/admin/admins/:id/roles/:roleId
 	 */
 	async removeRole(id: string, roleId: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`,
 			{
 				method: 'DELETE',

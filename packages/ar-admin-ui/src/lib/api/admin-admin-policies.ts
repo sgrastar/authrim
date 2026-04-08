@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Policies API Client (for Admin Operators)
  *
@@ -146,7 +147,7 @@ export const adminAdminPoliciesAPI = {
 		if (params?.offset) queryParams.set('offset', params.offset.toString());
 
 		const url = `${API_BASE_URL}/api/admin/admin-policies${queryParams.toString() ? `?${queryParams}` : ''}`;
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -163,7 +164,7 @@ export const adminAdminPoliciesAPI = {
 	 * GET /api/admin/admin-policies/:id
 	 */
 	async getPolicy(id: string): Promise<AdminPolicy> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-policies/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-policies/${id}`, {
 			credentials: 'include'
 		});
 
@@ -180,7 +181,7 @@ export const adminAdminPoliciesAPI = {
 	 * POST /api/admin/admin-policies
 	 */
 	async createPolicy(input: AdminPolicyCreateInput): Promise<AdminPolicy> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-policies`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-policies`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -202,7 +203,7 @@ export const adminAdminPoliciesAPI = {
 	 * PATCH /api/admin/admin-policies/:id
 	 */
 	async updatePolicy(id: string, input: AdminPolicyUpdateInput): Promise<AdminPolicy> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-policies/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-policies/${id}`, {
 			method: 'PATCH',
 			headers: {
 				'Content-Type': 'application/json'
@@ -224,7 +225,7 @@ export const adminAdminPoliciesAPI = {
 	 * POST /api/admin/admin-policies/:id/activate
 	 */
 	async activatePolicy(id: string): Promise<AdminPolicy> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-policies/${id}/activate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-policies/${id}/activate`, {
 			method: 'POST',
 			credentials: 'include'
 		});
@@ -242,7 +243,7 @@ export const adminAdminPoliciesAPI = {
 	 * POST /api/admin/admin-policies/:id/deactivate
 	 */
 	async deactivatePolicy(id: string): Promise<AdminPolicy> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-policies/${id}/deactivate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-policies/${id}/deactivate`, {
 			method: 'POST',
 			credentials: 'include'
 		});
@@ -260,7 +261,7 @@ export const adminAdminPoliciesAPI = {
 	 * DELETE /api/admin/admin-policies/:id
 	 */
 	async deletePolicy(id: string): Promise<void> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-policies/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-policies/${id}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});
@@ -276,7 +277,7 @@ export const adminAdminPoliciesAPI = {
 	 * POST /api/admin/admin-policies/simulate
 	 */
 	async simulatePolicy(input: PolicySimulationInput): Promise<PolicySimulationResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-policies/simulate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-policies/simulate`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'

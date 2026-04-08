@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Statistics API Client
  *
@@ -60,7 +61,7 @@ export const adminStatsAPI = {
 	 * GET /api/admin/stats
 	 */
 	async getDashboardStats(): Promise<DashboardStats> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/stats`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/stats`, {
 			credentials: 'include',
 			headers: buildHeaders()
 		});

@@ -11,7 +11,7 @@
  * Routes:
  * - GET/PATCH /api/admin/tenants/:tenantId/settings/:category
  * - GET/PATCH /api/admin/clients/:clientId/settings
- * - GET /api/admin/platform/settings/:category (read-only)
+ * - GET/PATCH /api/admin/platform/settings/:category
  * - GET /api/admin/settings/meta/:category
  * - POST /api/admin/settings/migrate (v1 → v2 migration)
  * - GET /api/admin/settings/migrate/status
@@ -97,6 +97,11 @@ function checkRolePermission(
 function isCategoryAllowedAtScope(category: CategoryName, scopeLevel: SettingScopeLevel): boolean {
   const scopeConfig = CATEGORY_SCOPE_CONFIG[category];
   return scopeConfig?.allowedScopes.includes(scopeLevel) ?? false;
+}
+
+function isCategoryWritableAtScope(category: CategoryName, scopeLevel: SettingScopeLevel): boolean {
+  const scopedMeta = getScopedCategoryMeta(category);
+  return scopedMeta.scopePermissions[scopeLevel].editRoles.length > 0;
 }
 
 /**
@@ -271,7 +276,7 @@ settingsV2.use('/clients/:clientId/settings', async (c, next) => {
   })(c as unknown as RateLimitContext, next);
 });
 
-// Platform settings - lenient (read-only)
+// Platform settings - lenient
 settingsV2.use('/platform/settings/:category', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
@@ -750,7 +755,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
 
 /**
  * GET /api/admin/platform/settings/:category
- * Get platform settings (read-only)
+ * Get platform settings
  */
 settingsV2.get('/platform/settings/:category', async (c) => {
   const category = c.req.param('category')! as CategoryName;
@@ -793,19 +798,98 @@ settingsV2.get('/platform/settings/:category', async (c) => {
 });
 
 /**
- * PUT/PATCH/DELETE /api/admin/platform/settings/:category
- * Platform settings are read-only - return 405
+ * PATCH /api/admin/platform/settings/:category
+ * Partial update settings for a platform category
  */
-settingsV2.put('/platform/settings/:category', (c) => {
-  return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+settingsV2.patch('/platform/settings/:category', (c) => {
+  return (async () => {
+    const category = c.req.param('category')! as CategoryName;
+
+    if (!ALL_CATEGORY_META[category]) {
+      return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+    }
+
+    if (!isCategoryAllowedAtScope(category, 'platform')) {
+      return errorResponse(
+        c,
+        'bad_request',
+        `Category "${category}" is not available at platform scope`,
+        400
+      );
+    }
+
+    if (!isCategoryWritableAtScope(category, 'platform')) {
+      return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+    }
+
+    const adminAuth = c.get('adminAuth');
+    const userRoles = adminAuth?.roles || [];
+
+    if (!checkRolePermission(userRoles, category, 'platform', 'edit')) {
+      return errorResponse(c, 'forbidden', 'Insufficient permissions to edit platform settings', 403);
+    }
+
+    const manager = getSettingsManager(c.env);
+    const scope: SettingScope = { type: 'platform' };
+
+    try {
+      const rawBody = await c.req.json();
+      const body = parsePatchRequest(rawBody);
+
+      if (!body.ifMatch) {
+        return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+      }
+
+      const actor = adminAuth?.userId ?? 'unknown';
+      const result = await manager.patch(category, scope, body, actor);
+      const hasRejections = Object.keys(result.rejected).length > 0;
+      const hasApplied =
+        result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+      if (!hasApplied && hasRejections) {
+        return c.json(
+          {
+            error: 'validation_failed',
+            message: 'All changes were rejected',
+            ...result,
+          },
+          400
+        );
+      }
+
+      return c.json(result);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+      }
+      if (error instanceof ConflictError) {
+        return c.json(
+          {
+            error: 'conflict',
+            message: error.message,
+            currentVersion: error.currentVersion,
+          },
+          409
+        );
+      }
+      if (error instanceof Error && error.message.includes('Unknown category')) {
+        return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+      }
+      throw error;
+    }
+  })();
 });
 
-settingsV2.patch('/platform/settings/:category', (c) => {
-  return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+/**
+ * PUT/DELETE /api/admin/platform/settings/:category
+ * Not supported
+ */
+settingsV2.put('/platform/settings/:category', (c) => {
+  return errorResponse(c, 'method_not_allowed', 'Platform settings do not support PUT', 405);
 });
 
 settingsV2.delete('/platform/settings/:category', (c) => {
-  return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+  return errorResponse(c, 'method_not_allowed', 'Platform settings do not support DELETE', 405);
 });
 
 // =============================================================================

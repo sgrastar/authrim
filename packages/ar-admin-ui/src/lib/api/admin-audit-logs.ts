@@ -6,8 +6,7 @@
  * - Get audit log details
  */
 
-// API Base URL - empty string for same-origin, or full URL for cross-origin
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 /**
  * Pagination info
@@ -140,9 +139,7 @@ export const adminAuditLogsAPI = {
 		const queryString = searchParams.toString();
 		const url = `${API_BASE_URL}/api/admin/audit-logs${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(url);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
@@ -159,9 +156,7 @@ export const adminAuditLogsAPI = {
 	 * Note: Backend returns the entry object directly (not wrapped in { entry: ... })
 	 */
 	async get(id: string): Promise<AuditLogEntry> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/audit-logs/${id}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/audit-logs/${id}`);
 
 		if (!response.ok) {
 			if (response.status === 404) {

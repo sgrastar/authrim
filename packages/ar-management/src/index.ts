@@ -290,6 +290,7 @@ import {
   cancelTenantInvitationHandler,
 } from './admin-tenant-invitations';
 import { requireSupportedTenantParam } from './single-tenant-guard';
+import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getLoginMethodsHandler } from './login-methods';
 import { getDiscoveryConfigHandler, postDiscoveryHandler } from './discovery';
@@ -676,6 +677,7 @@ app.use('*', async (c, next) => {
       'DPoP',
       'If-Match',
       'If-None-Match',
+      'X-Tenant-Id',
       'X-Diagnostic-Session-Id',
       'X-Session-Id',
     ],
@@ -758,6 +760,8 @@ app.use('/revoke/batch', async (c, next) => {
 
 // Health check endpoints - rate limited with lenient profile
 // These are public endpoints that should be protected from abuse
+app.use('/api/admin/*', adminTenantPolicyMiddleware);
+
 app.use('/api/health', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({

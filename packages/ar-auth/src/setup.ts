@@ -412,6 +412,8 @@ setupApp.get('/api/admin-init-setup/status', async (c) => {
  */
 setupApp.post('/api/admin-init-setup/initialize', async (c) => {
   let lockAcquired = false;
+  let createdUserId: string | null = null;
+  let rollbackTenantId = getTenantIdFromContext(c);
 
   try {
     const body = await c.req.json<{
@@ -557,6 +559,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Create user in database
     const tenantId = getTenantIdFromContext(c);
+    rollbackTenantId = tenantId;
     const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
 
     // Use DB_ADMIN when available (new Admin/EndUser separation architecture)
@@ -573,6 +576,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
         // email_verified is set to true during setup
         // MFA can be configured later
       });
+      createdUserId = userId;
 
       // Set email as verified for initial admin
       await adminUserRepo.setEmailVerified(userId);
@@ -590,6 +594,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
         pii_partition: tenantId,
         pii_status: 'pending',
       });
+      createdUserId = userId;
 
       // Create user in users_pii if PII DB is available
       if (c.env.DB_PII) {
@@ -658,6 +663,10 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       admin_ui_setup_url: adminUiSetupUrl,
     });
   } catch (error) {
+    if (createdUserId) {
+      await rollbackUserCreation(c, createdUserId, rollbackTenantId);
+    }
+
     // Release lock on error
     if (lockAcquired) {
       await releaseSetupLock(c.env);

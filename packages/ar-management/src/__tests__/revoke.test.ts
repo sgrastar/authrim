@@ -473,6 +473,55 @@ describe('Token Revocation Endpoint', () => {
       );
     });
 
+    it('should prefer the request host for private_key_jwt validation when present', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('tenant1');
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'client-123',
+          client_assertion: 'assertion.jwt',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        },
+        env: {
+          BASE_DOMAIN: 'oidc.example.com',
+        },
+      });
+      c.req.raw = new Request('https://tenant1.customer.example/revoke', {
+        method: 'POST',
+        headers: {
+          Host: 'tenant1.customer.example',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        jti: 'token-jti-123',
+        client_id: 'client-123',
+        aud: 'https://tenant1.customer.example',
+        iss: 'https://tenant1.customer.example',
+        sub: 'user-123',
+        rtv: 1,
+      });
+
+      const clientMetadata = {
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      };
+      mockClientRepository.findByClientId.mockResolvedValue(clientMetadata);
+
+      await revokeHandler(c);
+
+      expect(mockValidateClientAssertion).toHaveBeenCalledWith(
+        'assertion.jwt',
+        'https://tenant1.customer.example/revoke',
+        clientMetadata
+      );
+    });
+
     it('should return 401 for invalid Basic auth header format', async () => {
       const c = createMockContext({
         headers: {

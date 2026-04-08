@@ -382,10 +382,8 @@ export class SettingsManager {
       throw new Error(`Unknown category: ${category}`);
     }
 
-    // Platform settings are read-only
-    if (scope.type === 'platform') {
-      throw new Error('Platform settings are read-only');
-    }
+    // Platform writeability is enforced by the API layer. The manager only applies
+    // scoped patch semantics once the caller has authorized the scope/category pair.
 
     // Load current KV data directly from KV (skip cache to prevent TOCTOU race conditions)
     // This ensures we always read the latest KV data for version checking

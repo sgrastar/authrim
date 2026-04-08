@@ -27,7 +27,8 @@ describe('wildcard DNS manual action guidance', () => {
     expect(text).toContain('Manual wildcard DNS setup is required');
     expect(text).toContain('1. Open DNS management for authrim.com');
     expect(text).toContain('Type: CNAME');
-    expect(text).toContain('After that, rerun deploy.');
+    expect(text).toContain('After that, run deploy.');
+    expect(text).not.toContain('Automatic wildcard DNS setup for tenant subdomains');
   });
 
   it('localizes the title for non-English supported locales', () => {

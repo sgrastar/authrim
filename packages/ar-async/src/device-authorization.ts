@@ -16,7 +16,7 @@ import {
   AR_ERROR_CODES,
   // UI Configuration
   getUIConfig,
-  buildIssuerUrl,
+  buildRequestIssuerUrl,
   getDefaultTenantId,
   getTenantIdFromContext,
   getLogger,
@@ -123,7 +123,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       verificationBaseUrl = `${uiConfig.baseUrl}${devicePath}`;
     } else {
       // No external UI - use issuer URL (conformance mode or default)
-      const issuer = buildIssuerUrl(c.env, tenantId);
+      const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
       verificationBaseUrl = `${issuer}/device`;
     }
 

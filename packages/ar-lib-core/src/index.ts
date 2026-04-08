@@ -72,6 +72,8 @@ export * from './utils/session-state';
 export * from './utils/session-helper';
 export * from './utils/authcode-helper';
 export * from './utils/tenant-context';
+export * from './utils/tenant-request-policy';
+export * from './utils/tenant-binding-policy';
 export * from './utils/token-introspection';
 export * from './utils/validation';
 export * from './utils/logout-validation';

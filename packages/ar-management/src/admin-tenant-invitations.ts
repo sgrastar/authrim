@@ -17,12 +17,12 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
-  buildIssuerUrl,
   getLogger,
   getPluginContext,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
+import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 // =============================================================================
 // Constants
@@ -160,7 +160,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       ]
     );
 
-    const inviteUrl = `${buildIssuerUrl(c.env, tenantId)}/discover?invite_token=${token}`;
+    const inviteUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/discover?invite_token=${token}`;
 
     // Conditionally send email if invited_email is specified and email plugin is available
     let emailSent = false;

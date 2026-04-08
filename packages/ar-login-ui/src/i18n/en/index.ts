@@ -65,6 +65,7 @@ const en = {
 	discover_placeholder_tenantCode: 'acme',
 	discover_placeholder_tenantSlug: 'acme-corp',
 	discover_selectTenant: 'Select a tenant',
+	discover_error_emailNotFound: 'No account matched that email address.',
 	discover_error_emailDomainNotFound: 'This email domain is not mapped to a tenant.',
 	discover_error_tenantCodeNotFound: 'No tenant matched that tenant code.',
 	discover_error_tenantSlugNotFound: 'No tenant matched that tenant slug.',

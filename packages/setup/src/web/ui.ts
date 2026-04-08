@@ -1330,6 +1330,9 @@ export function getHtmlTemplate(
       font-weight: 700;
       color: var(--text);
       margin-bottom: 0.15rem;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
     }
 
     .prereq-capability-desc {
@@ -1366,6 +1369,56 @@ export function getHtmlTemplate(
       background: rgba(220, 38, 38, 0.1);
       color: var(--error);
       border: 1px solid rgba(220, 38, 38, 0.22);
+    }
+
+    .prereq-capability-hint {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.1rem;
+      height: 1.1rem;
+      border-radius: 50%;
+      font-size: 0.68rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: default;
+      flex: 0 0 auto;
+      background: rgba(120, 120, 120, 0.12);
+      color: var(--text-muted);
+      border: 1px solid rgba(120, 120, 120, 0.3);
+      user-select: none;
+    }
+
+    .prereq-capability-hint::before {
+      content: attr(data-tip);
+      position: absolute;
+      top: calc(100% + 0.4rem);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--card-bg);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      font-weight: 400;
+      line-height: 1.4;
+      white-space: nowrap;
+      padding: 0.4rem 0.65rem;
+      border-radius: 8px;
+      border: 1px solid var(--border-light);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 10;
+    }
+
+    .prereq-capability-hint:hover::before {
+      opacity: 1;
+    }
+
+    [data-theme="dark"] .prereq-capability-hint::before {
+      background: var(--bg);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.4);
     }
 
     [data-theme="dark"] .prereq-capability-item {
@@ -2500,19 +2553,34 @@ export function getHtmlTemplate(
         const name = document.createElement('div');
         name.className = 'prereq-capability-name';
         name.textContent = item.label;
+
+        if (item.status === 'ok') {
+          const hint = document.createElement('span');
+          hint.className = 'prereq-capability-hint';
+          hint.textContent = '?';
+          hint.setAttribute('data-tip', item.description);
+          name.appendChild(hint);
+        }
+
         body.appendChild(name);
 
-        const desc = document.createElement('div');
-        desc.className = 'prereq-capability-desc';
-        desc.textContent = item.description;
-        body.appendChild(desc);
+        if (item.status !== 'ok') {
+          const desc = document.createElement('div');
+          desc.className = 'prereq-capability-desc';
+          desc.textContent = item.description;
+          body.appendChild(desc);
+        }
+
+        const right = document.createElement('div');
+        right.style.cssText = 'display:flex; align-items:center; gap:0.4rem; flex:0 0 auto;';
 
         const pill = document.createElement('span');
         pill.className = 'prereq-capability-pill ' + item.status;
         pill.textContent = item.badgeLabel;
+        right.appendChild(pill);
 
         row.appendChild(body);
-        row.appendChild(pill);
+        row.appendChild(right);
         list.appendChild(row);
       });
 
@@ -2962,23 +3030,23 @@ export function getHtmlTemplate(
           <label for="base-domain" data-i18n="web.form.baseDomain">Base Domain (API Domain)</label>
           <input type="text" id="base-domain" placeholder="oidc.example.com" data-i18n-placeholder="web.form.baseDomainPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.baseDomainHint">Custom domain for Authrim. Leave empty to use workers.dev</small>
-          <label class="checkbox-item" id="multi-tenant-label" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; opacity: 0.5;">
-            <input type="checkbox" id="enable-multi-tenant" disabled>
-            <span data-i18n="web.form.multiTenantEnable">Enable multi-tenant mode</span>
-          </label>
-          <small id="multi-tenant-hint" style="color: var(--text-muted); margin-left: 1.5rem;" data-i18n="web.form.multiTenantHint">
-            Create tenant subdomains under your custom domain
-          </small>
           <div id="domain-check-row" style="display: none; margin-top: 0.5rem;">
             <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkZoneButton">
               Check Zone
             </button>
             <div id="domain-check-status" class="domain-check-status" aria-live="polite"></div>
           </div>
-          <label class="checkbox-item" id="custom-domain-binding-row" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+          <label class="checkbox-item" id="custom-domain-binding-row" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.75rem;">
             <input type="checkbox" id="custom-domain-binding" checked>
             <span data-i18n="domain.configureBinding">Configure custom domain binding for Workers</span>
           </label>
+          <label class="checkbox-item" id="multi-tenant-label" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; opacity: 0.5;">
+            <input type="checkbox" id="enable-multi-tenant" disabled>
+            <span data-i18n="web.form.multiTenantEnable">Enable multi-tenant mode</span>
+          </label>
+          <small id="multi-tenant-hint" style="color: var(--text-muted); margin-left: 1.5rem;" data-i18n="web.form.multiTenantHint">
+            Create tenant subdomains under your custom domain
+          </small>
           <label class="checkbox-item" id="naked-domain-label" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
             <input type="checkbox" id="naked-domain">
             <span data-i18n="web.form.nakedDomain">Exclude tenant name from URL</span>
@@ -3096,6 +3164,12 @@ export function getHtmlTemplate(
           <div class="infra-item" id="preview-login-pages-row" style="margin-top: 0.25rem;">
             <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI (Pages):</span>
             <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.pages.dev</span>
+          </div>
+
+          <!-- テナント選択 共通入り口 -->
+          <div class="infra-item" id="preview-tenant-discover-row" style="margin-top: 0.25rem;">
+            <span class="infra-label" data-i18n="web.preview.tenantDiscover">テナント選択 (共通入り口):</span>
+            <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.pages.dev/discover</span>
           </div>
 
           <!-- Admin UI アクセス先 -->
@@ -3578,7 +3652,7 @@ export function getHtmlTemplate(
         <!-- Worker Update Section -->
         <div class="resource-section" id="worker-update-section" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
           <div class="resource-section-title">
-            🔄 <span data-i18n="web.envDetail.workerUpdate">Update Workers</span>
+            🔄 <span data-i18n="web.envDetail.workerUpdate">Update All Workers</span>
           </div>
 
           <!-- Version comparison table -->
@@ -3611,7 +3685,7 @@ export function getHtmlTemplate(
           <!-- Action buttons -->
           <div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
             <button class="btn-primary" id="btn-update-workers" disabled>
-              🚀 <span data-i18n="web.envDetail.updateAllWorkers">Update Workers</span>
+              🚀 <span data-i18n="web.envDetail.updateAllWorkers">Update All Workers</span>
             </button>
             <button class="btn-secondary" id="btn-refresh-versions">
               🔄 <span data-i18n="web.envDetail.refreshVersions">Refresh</span>
@@ -3982,7 +4056,6 @@ export function getHtmlTemplate(
       );
       const lines = [
         copy.title,
-        summary,
         copy.timing,
         '',
         ...steps.map((step, index) => (index + 1) + '. ' + step),
@@ -3990,6 +4063,10 @@ export function getHtmlTemplate(
         copy.retryHint,
         copy.continueHint,
       ];
+
+      if (summary) {
+        lines.splice(1, 0, summary);
+      }
 
       if (includeConfirmSuffix) {
         lines.push('', copy.confirmSuffix);
@@ -4095,7 +4172,9 @@ export function getHtmlTemplate(
       );
 
       document.getElementById('deploy-manual-wildcard-title').textContent = copy.title;
-      document.getElementById('deploy-manual-wildcard-summary').textContent = summary;
+      const summaryEl = document.getElementById('deploy-manual-wildcard-summary');
+      summaryEl.textContent = summary;
+      summaryEl.style.display = summary ? '' : 'none';
       document.getElementById('deploy-manual-wildcard-timing').textContent = copy.timing;
       document.getElementById('deploy-manual-wildcard-retry').textContent = copy.retryHint;
 
@@ -4212,7 +4291,8 @@ export function getHtmlTemplate(
           const percent = Math.min(Math.round((current / total) * 100), 100);
           progressText.textContent = percent + '% complete';
         } else {
-          progressText.textContent = current + ' / ' + total + ' resources';
+          const displayCurrent = Math.min(current, total);
+          progressText.textContent = displayCurrent + ' / ' + total + ' resources';
         }
       }
       if (currentTaskEl && currentTask) {
@@ -5096,21 +5176,28 @@ export function getHtmlTemplate(
           if (loginUiEnabled) {
             block.appendChild(makeUrlRow('Login URL:', baseUrl + '/login'));
           }
-          block.appendChild(makeUrlRow('Discovery:', baseUrl + '/api/auth/discovery'));
+          block.appendChild(makeUrlRow('OIDC Discovery:', baseUrl + '/.well-known/openid-configuration'));
           return block;
         };
 
-        mtRowsContainer.appendChild(makeBlock(tenantName + ' (初期テナント)', firstBase));
-        mtRowsContainer.appendChild(makeBlock('他のテナント', otherBase));
+        mtRowsContainer.appendChild(makeBlock(t('web.preview.firstTenant', { name: tenantName }), firstBase));
+        mtRowsContainer.appendChild(makeBlock(t('web.preview.otherTenants'), otherBase));
 
         // Login UI Pages URL (全テナント共通の Pages デプロイ先)
         const loginPagesRow = document.getElementById('preview-login-pages-row');
+        const tenantDiscoverRow = document.getElementById('preview-tenant-discover-row');
         if (loginUiEnabled) {
           loginPagesRow.style.display = '';
           document.getElementById('preview-login-pages').textContent =
-            'https://' + loginPagesDomain + '  (全テナント共通)';
+            'https://' + loginPagesDomain + '  ' + t('web.preview.allTenantsShared');
+          // テナント選択画面: カスタムドメインが設定されていればそちらを優先
+          const loginUiBase = loginDomain ? loginDomain : loginPagesDomain;
+          tenantDiscoverRow.style.display = '';
+          document.getElementById('preview-tenant-discover').textContent =
+            'https://' + loginUiBase + '/discover';
         } else {
           loginPagesRow.style.display = 'none';
+          tenantDiscoverRow.style.display = 'none';
         }
 
         // Admin UI アクセス先
@@ -5120,7 +5207,7 @@ export function getHtmlTemplate(
           adminAccessRow.style.display = '';
           const adminSameAsApi = adminDomain !== '' && adminDomain === baseDomain;
           if (adminSameAsApi) {
-            adminAccessEl.textContent = firstBase + '/admin  (APIと同じドメイン経由でプロキシ)';
+            adminAccessEl.textContent = firstBase + '/admin  ' + t('web.preview.viaApiProxy');
           } else if (adminDomain) {
             adminAccessEl.textContent = 'https://' + adminDomain + '/admin';
           } else {
@@ -5138,16 +5225,12 @@ export function getHtmlTemplate(
 
         const warningDiv = document.getElementById('preview-config-warning');
         if (hasConflict) {
-          const conflictUI = loginSameAsApi ? 'ログインUI' : '管理UI';
+          const conflictUI = loginSameAsApi ? t('web.comp.loginUi') : t('web.comp.adminUi');
           warningDiv.style.display = '';
           document.getElementById('preview-warning-message').textContent =
-            conflictUI + 'のカスタムドメインがAPIと同じ（' + baseDomain + '）ですが、' +
-            '「URLからテナント名を除外」が無効のため、' + baseDomain +
-            ' へのAPIリクエスト（/authorize, /api/auth/* 等）が 404 になり、ログインフローが機能しません。';
+            t('web.preview.conflictWarningMsg', { conflictUI, baseDomain });
           document.getElementById('preview-warning-action').textContent =
-            '対処方法: 「URLからテナント名を除外」を有効にし、最初のテナント（' + tenantName +
-            '）をプライマリテナントに設定する。または、' + conflictUI + 'のドメインをAPIとは別のドメイン（例: login.' +
-            baseDomain + '）に変更する。';
+            t('web.preview.conflictActionMsg', { conflictUI, tenantName, baseDomain });
         } else {
           warningDiv.style.display = 'none';
         }
@@ -5734,7 +5817,8 @@ export function getHtmlTemplate(
               // Count completed items (lines with checkmark)
               if (msg.includes('✓') || msg.includes('✅')) {
                 provisionCompleted++;
-                updateProgressUI('provision', provisionCompleted, totalResources, taskInfo || ('Completed ' + provisionCompleted + ' items'));
+                const displayCompleted = Math.min(provisionCompleted, totalResources);
+                updateProgressUI('provision', provisionCompleted, totalResources, taskInfo || ('Completed ' + displayCompleted + ' / ' + totalResources + ' items'));
               }
             });
             lastProgressLength = statusResult.progress.length;
@@ -5793,6 +5877,9 @@ export function getHtmlTemplate(
           if (result.savedPaths) {
             output.textContent += '📁 Config: ' + result.savedPaths.config + '\\n';
             output.textContent += '📁 Lock:   ' + result.savedPaths.lock + '\\n';
+            if (result.savedPaths.log) {
+              output.textContent += '📝 Log:    ' + result.savedPaths.log + '\\n';
+            }
           }
           scrollToBottom(log);
           status.textContent = t('web.status.complete');
@@ -5811,6 +5898,9 @@ export function getHtmlTemplate(
           btn.disabled = false;
           btnGotoDeploy.classList.remove('hidden');
         } else {
+          if (result.logPath) {
+            output.textContent += '\\n📝 Log: ' + result.logPath + '\\n';
+          }
           throw new Error(result.error);
         }
       } catch (error) {
@@ -5860,14 +5950,6 @@ export function getHtmlTemplate(
       const output = document.getElementById('deploy-output');
       const progressUI = document.getElementById('deploy-progress-ui');
       const readyText = document.getElementById('deploy-ready-text');
-
-      if (shouldPromptManualWildcardDnsBeforeDeploy()) {
-        const baseDomain = getManualWildcardDnsBaseDomain();
-        const confirmed = confirm(buildWildcardDnsManualMessage(baseDomain, true));
-        if (!confirmed) {
-          return;
-        }
-      }
 
       btn.disabled = true;
       btn.classList.add('hidden');
@@ -5943,6 +6025,9 @@ export function getHtmlTemplate(
           // Final progress update
           updateProgressUI('deploy', 100, 100, '✓ Deployment complete!');
           output.textContent += '\\n✓ Deployment complete!\\n';
+          if (result.logPath) {
+            output.textContent += '📝 Log: ' + result.logPath + '\\n';
+          }
           scrollToBottom(log);
 
           // Complete admin setup to get setup URL
@@ -6018,6 +6103,9 @@ export function getHtmlTemplate(
           });
         } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
           output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
+          if (result.logPath) {
+            output.textContent += '\\n📝 Log: ' + result.logPath + '\\n';
+          }
           scrollToBottom(log);
           status.textContent = t('web.status.error');
           status.className = 'status-badge status-warning';
@@ -6025,6 +6113,9 @@ export function getHtmlTemplate(
           btn.classList.remove('hidden');
           return;
         } else {
+          if (result.logPath) {
+            output.textContent += '\\n📝 Log: ' + result.logPath + '\\n';
+          }
           throw new Error(result.error || 'Deployment failed');
         }
       } catch (error) {
@@ -6041,44 +6132,30 @@ export function getHtmlTemplate(
     function showComplete(result) {
       const urlsEl = document.getElementById('urls');
       const env = config.env;
-
-      // Generate correct URLs with account subdomain
-      const workersDomain = workersSubdomain
-        ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
-        : env + '-ar-router.workers.dev';
-      // Note: Pages uses {project}.pages.dev format (no account subdomain, unlike Workers)
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
-
-      // Build API URL
-      // Note: Tenant subdomain only works with custom domains, NOT workers.dev
-      let apiUrl;
-      if (config.apiDomain) {
-        if (config.tenant?.multiTenant && config.tenant.name && !config.tenant.nakedDomain) {
-          apiUrl = 'https://' + config.tenant.name + '.' + config.apiDomain;
-        } else {
-          apiUrl = 'https://' + config.apiDomain;
-        }
-      } else {
-        // Workers.dev - no tenant prefix (wildcard subdomains not supported)
-        apiUrl = 'https://' + workersDomain;
-      }
-      const loginUiEnabled = config.components?.loginUi !== false;
-      const loginUrl = loginUiEnabled
-        ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain)
-        : null;
-      const adminUrl = (config.adminUiDomain ? 'https://' + config.adminUiDomain : 'https://' + adminPagesDomain) + '/admin';
+      const completeEnv = {
+        env,
+        pages: [
+          ...(config.components?.loginUi === false ? [] : [{ name: env + '-ar-login-ui' }]),
+          ...(config.components?.adminUi === false ? [] : [{ name: env + '-ar-admin-ui' }]),
+        ],
+      };
+      const completeUrls = buildEnvDetailUrls(completeEnv, config);
+      const labelMap = {
+        Issuer: 'API (Issuer):',
+        'OIDC Discovery': 'Discovery:',
+        'Tenant Discovery': 'Tenant Discovery:',
+        'Login UI': 'Login UI:',
+        'Admin UI': 'Admin UI:',
+      };
 
       // Clear and rebuild URLs section safely
       urlsEl.textContent = '';
 
-      // API URL with OIDC Discovery link
-      urlsEl.appendChild(createUrlItem('API (Issuer):', apiUrl, apiUrl));
-      const discoveryUrl = apiUrl + '/.well-known/openid-configuration';
-      urlsEl.appendChild(createUrlItem('Discovery:', discoveryUrl, discoveryUrl));
-
-      urlsEl.appendChild(createUrlItem('Login UI:', loginUrl || t('web.status.notDeployed'), loginUrl || undefined));
-      urlsEl.appendChild(createUrlItem('Admin UI:', adminUrl, adminUrl));
+      for (const item of completeUrls) {
+        urlsEl.appendChild(
+          createUrlItem(labelMap[item.label] || (item.label + ':'), item.value, item.href)
+        );
+      }
 
       // Show custom domain propagation note when any custom domain is set
       if (config.apiDomain || config.loginUiDomain || config.adminUiDomain) {
@@ -6679,6 +6756,16 @@ export function getHtmlTemplate(
       return value.endsWith('/') ? value.slice(0, -1) : value;
     }
 
+    function isMultiTenantConfigured(config) {
+      return !!(
+        config &&
+        config.tenant &&
+        config.tenant.multiTenant === true &&
+        config.tenant.baseDomain &&
+        String(config.tenant.baseDomain).trim()
+      );
+    }
+
     function createEnvDetailUrlRow(label, value, description, href) {
       const row = document.createElement('div');
       row.style.cssText = 'display: flex; flex-direction: column; gap: 0.35rem; padding: 0.875rem 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;';
@@ -6730,45 +6817,66 @@ export function getHtmlTemplate(
       return (env.pages || []).some((page) => page && page.name === projectName);
     }
 
-    function buildEnvDetailUrls(env, config) {
+    function resolveEnvDetailIssuerUrl(env, config) {
       const envName = env.env;
       const workersDomain = workersSubdomain
         ? envName + '-ar-router.' + workersSubdomain + '.workers.dev'
         : envName + '-ar-router.workers.dev';
       const fallbackIssuer = 'https://' + workersDomain;
 
-      const tenant = config?.tenant || {};
-      const tenantName = tenant.name || 'default';
-      const baseDomain = tenant.multiTenant ? tenant.baseDomain : undefined;
-      const nakedDomain = tenant.nakedDomain === true;
-
-      let issuerUrl = fallbackIssuer;
-      if (baseDomain) {
-        issuerUrl = nakedDomain
+      if (isMultiTenantConfigured(config)) {
+        const tenantName = (config.tenant.name || 'default').trim();
+        const baseDomain = String(config.tenant.baseDomain).trim();
+        return config.tenant.nakedDomain === true
           ? 'https://' + baseDomain
           : 'https://' + tenantName + '.' + baseDomain;
-      } else if (config?.urls?.api?.custom) {
-        issuerUrl = stripTrailingSlash(config.urls.api.custom);
       }
 
+      const apiUrl = config?.urls?.api?.custom || config?.urls?.api?.auto;
+      return apiUrl ? stripTrailingSlash(apiUrl) : fallbackIssuer;
+    }
+
+    function resolveEnvDetailSharedLoginBase(env, config) {
+      const envName = env.env;
+      return stripTrailingSlash(
+        config?.urls?.loginUi?.custom || config?.urls?.loginUi?.auto || ('https://' + envName + '-ar-login-ui.pages.dev')
+      );
+    }
+
+    function buildEnvDetailUrls(env, config) {
+      const envName = env.env;
       const loginProjectName = envName + '-ar-login-ui';
       const adminProjectName = envName + '-ar-admin-ui';
       const loginUiDeployed = hasPagesProject(env, loginProjectName);
       const adminUiDeployed = hasPagesProject(env, adminProjectName);
-
-      const loginBaseUrl = loginUiDeployed
-        ? stripTrailingSlash(
-            config?.urls?.loginUi?.custom || 'https://' + envName + '-ar-login-ui.pages.dev'
-          )
+      const multiTenantConfigured = isMultiTenantConfigured(config);
+      const issuerUrl = resolveEnvDetailIssuerUrl(env, config);
+      const discoveryUrl = issuerUrl + '/.well-known/openid-configuration';
+      const loginSharedBaseUrl = resolveEnvDetailSharedLoginBase(env, config);
+      const loginEntryUrl = loginUiDeployed
+        ? (
+            multiTenantConfigured || config?.urls?.loginUi?.sameAsApi === true
+              ? issuerUrl
+              : loginSharedBaseUrl
+          ) + '/login'
         : null;
-      const adminBaseUrl = adminUiDeployed
-        ? stripTrailingSlash(
-            config?.urls?.adminUi?.custom || 'https://' + envName + '-ar-admin-ui.pages.dev'
-          )
+      const tenantDiscoverUrl = multiTenantConfigured && loginUiDeployed
+        ? loginSharedBaseUrl + '/discover'
+        : null;
+      const adminEntryUrl = adminUiDeployed
+        ? (
+            config?.urls?.adminUi?.sameAsApi === true
+              ? issuerUrl
+              : stripTrailingSlash(
+                  config?.urls?.adminUi?.custom ||
+                    config?.urls?.adminUi?.auto ||
+                    ('https://' + envName + '-ar-admin-ui.pages.dev')
+                )
+          ) + '/admin/info'
         : null;
       const notDeployed = t('web.envDetail.notDeployed') || 'Not Deployed';
 
-      return [
+      const urls = [
         {
           label: 'Issuer',
           value: issuerUrl,
@@ -6776,18 +6884,37 @@ export function getHtmlTemplate(
           description: 'Canonical OIDC issuer URL',
         },
         {
+          label: 'OIDC Discovery',
+          value: discoveryUrl,
+          href: discoveryUrl,
+          description: 'OpenID Provider metadata endpoint',
+        },
+        {
           label: 'Login UI',
-          value: loginBaseUrl ? loginBaseUrl + '/login' : notDeployed,
-          href: loginBaseUrl ? loginBaseUrl + '/login' : null,
-          description: 'Login screen entry point',
+          value: loginEntryUrl || notDeployed,
+          href: loginEntryUrl,
+          description: multiTenantConfigured
+            ? 'Tenant login entry point'
+            : 'Login screen entry point',
         },
         {
           label: 'Admin UI',
-          value: adminBaseUrl ? adminBaseUrl + '/admin/info' : notDeployed,
-          href: adminBaseUrl ? adminBaseUrl + '/admin/info' : null,
+          value: adminEntryUrl || notDeployed,
+          href: adminEntryUrl,
           description: 'Admin console entry point',
         },
       ];
+
+      if (tenantDiscoverUrl) {
+        urls.splice(2, 0, {
+          label: 'Tenant Discovery',
+          value: tenantDiscoverUrl,
+          href: tenantDiscoverUrl,
+          description: 'Shared login entry point for tenant selection',
+        });
+      }
+
+      return urls;
     }
 
     async function renderEnvDetailUrls(env) {
@@ -6838,6 +6965,24 @@ export function getHtmlTemplate(
       document.getElementById('ui-update-log') && (document.getElementById('ui-update-log').textContent = '');
     }
 
+    function updateWorkerUpdateButtonState() {
+      const updateButton = document.getElementById('btn-update-workers');
+      const onlyChangedCheckbox = document.getElementById('update-only-changed');
+
+      if (!updateButton || !onlyChangedCheckbox) {
+        return;
+      }
+
+      if (workerVersionComparison.length === 0) {
+        updateButton.disabled = true;
+        return;
+      }
+
+      const onlyChanged = onlyChangedCheckbox.checked;
+      const hasUpdates = workerVersionComparison.some((item) => item.needsUpdate);
+      updateButton.disabled = onlyChanged ? !hasUpdates : false;
+    }
+
     // Load and compare worker versions
     async function loadWorkerVersionComparison(envName) {
       currentEnvForUpdate = envName;
@@ -6856,9 +7001,7 @@ export function getHtmlTemplate(
             ? (t('web.envDetail.updatesAvailable', { count: summary.needsUpdate }) || summary.needsUpdate + ' update(s) available')
             : (t('web.envDetail.allUpToDate') || 'All up to date');
           document.getElementById('update-summary').textContent = summaryText;
-
-          // Enable button if there are updates
-          document.getElementById('btn-update-workers').disabled = summary.needsUpdate === 0;
+          updateWorkerUpdateButtonState();
         } else {
           tbody.textContent = '';
           const errorRow = document.createElement('tr');
@@ -7022,9 +7165,9 @@ export function getHtmlTemplate(
       } catch (error) {
         addLog('❌ Error: ' + error.message);
       } finally {
-        btn.disabled = false;
+        updateWorkerUpdateButtonState();
         const btnSpan2 = btn.querySelector('span');
-        if (btnSpan2) btnSpan2.textContent = t('web.envDetail.updateAllWorkers') || 'Update Workers';
+        if (btnSpan2) btnSpan2.textContent = t('web.envDetail.updateAllWorkers') || 'Update All Workers';
       }
     }
 
@@ -7137,6 +7280,9 @@ export function getHtmlTemplate(
 
     // Event listeners for Worker Update
     document.getElementById('btn-update-workers')?.addEventListener('click', startWorkerUpdate);
+    document.getElementById('update-only-changed')?.addEventListener('change', () => {
+      updateWorkerUpdateButtonState();
+    });
     document.getElementById('btn-refresh-versions')?.addEventListener('click', () => {
       if (currentEnvForUpdate) {
         resetWorkerUpdateUI();

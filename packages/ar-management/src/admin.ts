@@ -16,7 +16,6 @@ import {
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
-  buildIssuerUrl,
   createPIIContextFromHono,
   createAuthContextFromHono,
   generateId,
@@ -57,6 +56,7 @@ import {
   getClient,
 } from '@authrim/ar-lib-core';
 import type { UserCore, UserPII } from '@authrim/ar-lib-core';
+import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 // =============================================================================
 // Image Type Detection (Magic Bytes)
@@ -826,9 +826,10 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
+    const tenantId = getTenantIdFromContext(c);
 
     // Create AuthContext first, then elevate to PIIContext if PII DB is available
-    const authCtx = createAuthContextFromHono(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Query Core DB for user_core data via Repository
     const userCore = await authCtx.repositories.userCore.findById(userId);
@@ -846,7 +847,7 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     // Query PII DB for user_pii data via Repository (if DB_PII is configured)
     let userPII: UserPII | null = null;
     if (c.env.DB_PII) {
-      const piiCtx = createPIIContextFromHono(c);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
       userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
     }
@@ -1133,6 +1134,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
+    const tenantId = getTenantIdFromContext(c);
     const body = await c.req.json<{
       name?: string;
       given_name?: string;
@@ -1148,7 +1150,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       [key: string]: string | boolean | number | null | undefined;
     }>();
 
-    const authCtx = createAuthContextFromHono(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Check if user exists in Core DB via Repository
     const userCore = await authCtx.repositories.userCore.findById(userId);
@@ -1219,7 +1221,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     // Update PII DB if there are PII field updates and DB_PII is available
     if (Object.keys(piiUpdateData).length > 0 && c.env.DB_PII) {
-      const piiCtx = createPIIContextFromHono(c);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
       await piiCtx.piiRepositories.userPII.updatePII(userId, piiUpdateData, piiAdapter);
     }
@@ -1232,7 +1234,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     let updatedPII: UserPII | null = null;
     if (c.env.DB_PII && updatedCore) {
-      const piiCtx = createPIIContextFromHono(c);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiAdapter = piiCtx.getPiiAdapter(updatedCore.pii_partition);
       updatedPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
     }
@@ -2785,7 +2787,7 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
     });
 
     // Construct avatar URL (will use Cloudflare Image Resizing)
-    const avatarUrl = `${buildIssuerUrl(c.env, tenantId)}/${filePath}`;
+    const avatarUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/${filePath}`;
 
     // Update user's picture field in PII DB via Repository
     if (c.env.DB_PII) {

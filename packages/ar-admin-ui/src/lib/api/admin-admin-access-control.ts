@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Access Control Hub API Client (for Admin Operators)
  *
@@ -59,7 +60,7 @@ export const adminAdminAccessControlAPI = {
 	 * GET /api/admin/admin-access-control/stats
 	 */
 	async getStats(): Promise<AdminAccessControlStats> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-access-control/stats`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-access-control/stats`, {
 			credentials: 'include'
 		});
 

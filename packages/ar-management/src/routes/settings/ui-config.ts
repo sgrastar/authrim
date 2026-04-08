@@ -50,9 +50,9 @@ import {
   parseAllowedOriginsEnv,
   logUIConfigChange,
   logUIConfigValidationFailure,
-  buildIssuerUrl,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
+import { getCanonicalTenantBaseUrl } from '../../request-issuer';
 
 /**
  * Get admin auth context from request
@@ -122,7 +122,7 @@ export async function updateUIConfigHandler(c: Context<{ Bindings: Env }>) {
     if (body.baseUrl !== null && body.baseUrl !== '') {
       // Security validation: HTTPS + Domain whitelist
       const allowedOrigins = parseAllowedOriginsEnv(c.env.ALLOWED_ORIGINS);
-      const issuerUrl = buildIssuerUrl(c.env, getTenantIdFromContext(c));
+      const issuerUrl = getCanonicalTenantBaseUrl(c.env, getTenantIdFromContext(c));
       const validation = validateUIBaseUrl(body.baseUrl, issuerUrl, allowedOrigins);
 
       if (!validation.valid) {

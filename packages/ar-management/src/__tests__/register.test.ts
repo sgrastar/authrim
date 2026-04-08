@@ -230,6 +230,35 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.scope).toBe('openid profile email');
     });
 
+    it('uses the request host for registration_client_uri in multi-tenant mode', async () => {
+      const localApp = new Hono<{ Bindings: Env }>();
+      localApp.use('*', async (c, next) => {
+        (c as any).set('tenantId', 'tenant1');
+        await next();
+      });
+      localApp.post('/register', registerHandler);
+
+      const response = await localApp.fetch(
+        new Request('https://tenant1.example.com/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+          }),
+        }),
+        {
+          ...mockEnv,
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'tenant1',
+        } as Env
+      );
+
+      const json = (await response.json()) as RegistrationResponse;
+      expect(json.registration_client_uri).toMatch(/^https:\/\/tenant1\.example\.com\/clients\//);
+    });
+
     it('should store client metadata in D1 database', async () => {
       const mockDB = createMockDB();
       const localMockEnv = createMockEnv({ db: mockDB });

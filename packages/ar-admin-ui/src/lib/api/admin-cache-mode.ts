@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Cache Mode API Client
  *
@@ -119,7 +120,7 @@ export const adminCacheModeAPI = {
 	 * GET /api/admin/settings/cache-mode
 	 */
 	async getPlatformCacheMode(): Promise<PlatformCacheModeResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/cache-mode`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/cache-mode`, {
 			credentials: 'include',
 			headers: buildHeaders()
 		});
@@ -137,7 +138,7 @@ export const adminCacheModeAPI = {
 	 * POST /api/admin/settings/cache-mode
 	 */
 	async setPlatformCacheMode(mode: CacheMode): Promise<SetCacheModeResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/cache-mode`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/cache-mode`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: buildHeaders(),
@@ -157,7 +158,7 @@ export const adminCacheModeAPI = {
 	 * GET /api/admin/settings/cache-mode/info
 	 */
 	async getCacheModeInfo(): Promise<CacheModeInfoResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/cache-mode/info`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/cache-mode/info`, {
 			credentials: 'include',
 			headers: buildHeaders()
 		});
@@ -175,7 +176,7 @@ export const adminCacheModeAPI = {
 	 * GET /api/admin/clients/:clientId/cache-mode
 	 */
 	async getClientCacheMode(clientId: string): Promise<ClientCacheModeResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/clients/${clientId}/cache-mode`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients/${clientId}/cache-mode`, {
 			credentials: 'include',
 			headers: buildHeaders()
 		});
@@ -199,7 +200,7 @@ export const adminCacheModeAPI = {
 		clientId: string,
 		mode: CacheMode | null
 	): Promise<SetCacheModeResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/clients/${clientId}/cache-mode`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients/${clientId}/cache-mode`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: buildHeaders(),

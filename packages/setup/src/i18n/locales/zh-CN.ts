@@ -915,8 +915,17 @@ const zhCN: Translations = {
   'web.preview.issuerUrl': '发行者 URL：',
   'web.preview.loginUi': '登录 UI：',
   'web.preview.adminUi': '管理 UI：',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
-  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.pagesUrl': '登录 UI (Pages)：',
+  'web.preview.tenantDiscover': '租户选择（公共入口）：',
+  'web.preview.adminAccess': '管理 UI 访问地址：',
+  'web.preview.firstTenant': '{{name}}（主租户）',
+  'web.preview.otherTenants': '其他租户',
+  'web.preview.allTenantsShared': '（所有租户共用）',
+  'web.preview.viaApiProxy': '（通过 API 同域代理）',
+  'web.preview.conflictWarningMsg':
+    '{{conflictUI}} 的自定义域名与 API 相同（{{baseDomain}}），由于"从 URL 中移除租户名"已禁用，对 {{baseDomain}} 的 API 请求（/authorize、/api/auth/* 等）将返回 404，导致登录流程无法运行。',
+  'web.preview.conflictActionMsg':
+    '解决方法：启用"从 URL 中移除租户名"并将首个租户（{{tenantName}}）设为主租户。或将 {{conflictUI}} 的域名更改为与 API 不同的域名（例如 login.{{baseDomain}}）。',
 
   // Web UI Component Labels
   'web.comp.loginUi': '登录 UI',
@@ -1016,7 +1025,7 @@ const zhCN: Translations = {
   'web.envDetail.pagesProjects': 'Pages 项目',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': '更新 Workers',
+  'web.envDetail.workerUpdate': '更新所有 Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': '已部署',
   'web.envDetail.localVersion': '本地',
@@ -1025,7 +1034,7 @@ const zhCN: Translations = {
   'web.envDetail.upToDate': '最新',
   'web.envDetail.notDeployed': '未部署',
   'web.envDetail.updateOnlyChanged': '仅更新已更改的版本',
-  'web.envDetail.updateAllWorkers': '更新 Workers',
+  'web.envDetail.updateAllWorkers': '更新所有 Workers',
   'web.envDetail.refreshVersions': '刷新',
   'web.envDetail.updateProgress': '更新进度：',
   'web.envDetail.updatesAvailable': '{{count}} 个更新可用',

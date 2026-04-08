@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Authentication API Client
  *
@@ -101,7 +102,7 @@ export const adminAuthAPI = {
 		options: PublicKeyCredentialRequestOptionsJSON;
 		challengeId: string;
 	}> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/auth/passkey/options`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/options`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -130,7 +131,7 @@ export const adminAuthAPI = {
 		challengeId: string,
 		credential: AuthenticationResponseJSON
 	): Promise<LoginResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/auth/passkey/verify`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/verify`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -158,7 +159,7 @@ export const adminAuthAPI = {
 	 * - throws AuthError with 'forbidden' code if session exists but no admin role
 	 */
 	async checkSession(): Promise<SessionStatus | null> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/sessions/me`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/sessions/me`, {
 			credentials: 'include',
 			headers: buildHeaders()
 		});
@@ -190,7 +191,7 @@ export const adminAuthAPI = {
 	 * POST /api/admin/logout
 	 */
 	async logout(): Promise<void> {
-		await fetch(`${API_BASE_URL}/api/admin/logout`, {
+		await adminFetch(`${API_BASE_URL}/api/admin/logout`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: buildHeaders()

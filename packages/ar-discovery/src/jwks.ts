@@ -74,6 +74,7 @@ function fallbackToEnvKey(c: Context<{ Bindings: Env }>, log: Logger) {
     return c.json(
       {
         error: 'server_error',
+        message: 'Failed to generate JWKS',
         error_description: 'Failed to generate JWKS',
       },
       500

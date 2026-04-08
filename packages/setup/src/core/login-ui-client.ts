@@ -42,6 +42,11 @@ export interface LoginUiClientResult {
   error?: string;
 }
 
+export function shouldReportLoginUiClientWarning(error?: string | null): boolean {
+  const normalized = String(error || '').trim().toLowerCase();
+  return normalized.length > 0 && !normalized.includes('fetch failed');
+}
+
 interface AdminClientListResponse {
   clients: Array<{
     client_id: string;

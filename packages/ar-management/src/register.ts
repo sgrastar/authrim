@@ -24,7 +24,6 @@ import {
   createPIIContextFromHono,
   getDefaultTenantId,
   getTenantIdFromContext,
-  buildIssuerUrl,
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -45,6 +44,7 @@ import {
   // Write-Through cache for client metadata
   putClient,
 } from '@authrim/ar-lib-core';
+import { getRequestAwareIssuerUrl } from './request-issuer';
 
 /**
  * Validate sector_identifier_uri content (OIDC Core 8.1)
@@ -982,7 +982,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const clientId = generateClientId();
     const clientSecret = generateClientSecret();
     const issuedAt = Math.floor(Date.now() / 1000);
-    const issuerUrl = buildIssuerUrl(c.env, tenantId);
+    const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
 
     // Set defaults for optional fields
     const tokenEndpointAuthMethod = request.token_endpoint_auth_method || 'client_secret_basic';

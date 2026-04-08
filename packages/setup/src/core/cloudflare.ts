@@ -1359,8 +1359,8 @@ export async function ensureWildcardDnsForMultiTenant(
   } else if (result.updated) {
     onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
   } else if (result.verificationLimited) {
-    onProgress?.(
-      `⚠ Wildcard DNS could not be verified via API permissions. Continuing under the assumption that ${result.name} -> ${result.target} was created manually.`
+    throw new Error(
+      `Token lacks zone:read or dns:edit permission to verify/create wildcard DNS record for ${result.name}`
     );
   } else {
     onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
@@ -1687,6 +1687,199 @@ export async function runD1Migrations(
   }
 
   return { success: true, appliedCount, skippedCount };
+}
+
+function sqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Build idempotent SQL that guarantees the configured initial tenant exists.
+ *
+ * Fresh databases currently start with a hard-coded `default` row. When setup
+ * configures a different initial tenant ID, that row must be renamed or a new
+ * tenant must be inserted so host-based tenant resolution succeeds.
+ */
+export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const tenantCode = tenantId;
+  const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
+
+  const tenantIdSql = sqlString(tenantId);
+  const tenantCodeSql = sqlString(tenantCode);
+  const displayNameSql = sqlString(displayName);
+
+  // Note: D1's HTTP API (used by `wrangler d1 execute --command`) does not support
+  // explicit BEGIN TRANSACTION / COMMIT statements. Each statement runs as its own
+  // implicit transaction, which is safe here because this bootstrap runs once during
+  // deployment with no concurrent writes.
+  return `
+UPDATE tenants
+SET id = ${tenantIdSql},
+    tenant_code = ${tenantCodeSql},
+    name = ${displayNameSql},
+    is_active = 1,
+    updated_at = unixepoch()
+WHERE id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND (SELECT COUNT(*) FROM tenants) = 1;
+
+INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
+SELECT ${tenantIdSql}, ${tenantCodeSql}, ${displayNameSql}, NULL, 1,
+       CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
+       unixepoch(), unixepoch()
+WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
+
+UPDATE tenants
+SET tenant_code = ${tenantCodeSql},
+    name = ${displayNameSql},
+    is_active = 1,
+    updated_at = unixepoch()
+WHERE id = ${tenantIdSql};
+`.trim();
+}
+
+/**
+ * Build idempotent SQL that guarantees built-in admin roles exist for the
+ * configured initial tenant in DB_ADMIN.
+ *
+ * Admin migrations currently seed system roles only for tenant `default`.
+ * Multi-tenant deployments need tenant-scoped copies so initial admin setup can
+ * assign `super_admin` without failing.
+ */
+export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const tenantIdSql = sqlString(tenantId);
+
+  return `
+INSERT INTO admin_roles (
+  id,
+  tenant_id,
+  name,
+  display_name,
+  description,
+  permissions_json,
+  hierarchy_level,
+  role_type,
+  is_system,
+  created_at,
+  updated_at,
+  inherits_from
+)
+SELECT
+  id || '__' || ${tenantIdSql},
+  ${tenantIdSql},
+  name,
+  display_name,
+  description,
+  permissions_json,
+  hierarchy_level,
+  role_type,
+  is_system,
+  unixepoch() * 1000,
+  unixepoch() * 1000,
+  inherits_from
+FROM admin_roles
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM admin_roles existing
+    WHERE existing.tenant_id = ${tenantIdSql}
+      AND existing.name = admin_roles.name
+  );
+`.trim();
+}
+
+export interface InitialTenantBootstrapResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface InitialAdminRolesBootstrapResult {
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Ensure the configured initial tenant exists in the core D1 database.
+ *
+ * This runs after migrations so host-based tenant validation can find the
+ * configured tenant immediately after deployment.
+ */
+export async function ensureInitialTenantInD1(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<InitialTenantBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'core-db');
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const sql = buildInitialTenantBootstrapSql(config);
+
+  try {
+    onProgress?.(`🔧 Ensuring initial tenant exists in ${dbName} (${tenantId})...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    // wrangler uses reject:false so errors appear in output rather than thrown
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Initial tenant bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+    onProgress?.(`  ✅ Initial tenant ready: ${tenantId}`);
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Initial tenant bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Ensure built-in admin roles exist for the configured initial tenant.
+ */
+export async function ensureInitialAdminRolesInD1(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<InitialAdminRolesBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const sql = buildInitialAdminRolesBootstrapSql(config);
+
+  try {
+    onProgress?.(`🔧 Ensuring admin roles exist in ${dbName} (${tenantId})...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Admin role bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+    onProgress?.(`  ✅ Admin roles ready: ${tenantId}`);
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Admin role bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
 }
 
 /**

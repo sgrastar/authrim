@@ -249,6 +249,7 @@ function createMockContext(options: {
   method?: string;
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
+  url?: string;
   db?: D1Database;
   dbPII?: D1Database;
   challengeStore?: ReturnType<typeof createMockChallengeStore>;
@@ -278,6 +279,17 @@ function createMockContext(options: {
   const c = {
     req: {
       method: options.method || 'POST',
+      url:
+        options.url ??
+        (() => {
+          const host = options.headers?.host ?? 'example.com';
+          const isLocalhost =
+            host.startsWith('localhost') ||
+            host.startsWith('127.0.0.1') ||
+            host.startsWith('::1');
+          const protocol = isLocalhost ? 'http' : 'https';
+          return `${protocol}://${host}/api/auth/passkeys/test`;
+        })(),
       json: vi.fn().mockResolvedValue(options.body ?? {}),
       header: vi.fn().mockImplementation((name: string) => {
         return options.headers?.[name.toLowerCase()] ?? null;
@@ -453,6 +465,30 @@ describe('Passkey Handlers', () => {
       expect(body.error).toBe('access_denied');
     });
 
+    it('should allow same-origin requests even when not listed in allowed origins', async () => {
+      const c = createMockContext({
+        body: { email: 'tenant-user@example.com' },
+        headers: {
+          host: 'first.multi-tenant.authrim.com',
+          origin: 'https://first.multi-tenant.authrim.com',
+        },
+      });
+
+      c.env.ALLOWED_ORIGINS = 'https://admin.multi-tenant.authrim.com';
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            challenge: expect.any(String),
+          }),
+          userId: expect.any(String),
+        })
+      );
+    });
+
     it('should generate registration options for new user', async () => {
       // Setup: No existing user found via Repository
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
@@ -601,6 +637,30 @@ describe('Passkey Handlers', () => {
       expect(response.status).toBe(403);
       const body = (await response.json()) as { error: string };
       expect(body.error).toBe('access_denied');
+    });
+
+    it('should allow same-origin login requests even when not listed in allowed origins', async () => {
+      const c = createMockContext({
+        body: {},
+        headers: {
+          host: 'first.multi-tenant.authrim.com',
+          origin: 'https://first.multi-tenant.authrim.com',
+        },
+      });
+
+      c.env.ALLOWED_ORIGINS = 'https://admin.multi-tenant.authrim.com';
+
+      const response = await passkeyLoginOptionsHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            challenge: expect.any(String),
+          }),
+          challengeId: expect.any(String),
+        })
+      );
     });
 
     it('should include user credentials when email provided', async () => {

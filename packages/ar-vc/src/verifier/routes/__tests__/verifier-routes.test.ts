@@ -71,11 +71,20 @@ const createMockContext = (
     ...overrides.env,
   };
 
+  const url = overrides.req?.url || 'https://authrim.com/vp/test';
+  const rawRequest = new Request(url, {
+    method: overrides.req?.method || 'GET',
+    headers: {
+      Host: new URL(url).host,
+    },
+  });
+
   return {
     env: defaultEnv,
     req: {
-      url: 'https://authrim.com/vp/test',
-      method: 'GET',
+      raw: rawRequest,
+      url,
+      method: overrides.req?.method || 'GET',
       param: vi.fn().mockReturnValue('test-id'),
       json: vi.fn().mockResolvedValue({}),
       header: vi.fn().mockReturnValue(undefined),
@@ -111,15 +120,16 @@ describe('Verifier Metadata Route', () => {
     expect(data.dcql_supported).toBe(true);
   });
 
-  it('should use custom VERIFIER_IDENTIFIER', async () => {
+  it('uses the request host as verifier identifier even when VERIFIER_IDENTIFIER is configured', async () => {
     const c = createMockContext({
       env: { VERIFIER_IDENTIFIER: 'did:web:custom-verifier.com' },
+      req: { url: 'https://tenant1.example.com/.well-known/openid-credential-verifier' },
     });
 
     const response = await verifierMetadataRoute(c);
     const data = (await response.json()) as { verifier_identifier: string };
 
-    expect(data.verifier_identifier).toBe('did:web:custom-verifier.com');
+    expect(data.verifier_identifier).toBe('did:web:tenant1.example.com');
   });
 });
 

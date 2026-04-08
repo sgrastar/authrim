@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildPagesUiBuildEnv, deployWorker } from '../core/deploy.js';
+import { execa } from 'execa';
+import { buildPagesUiBuildEnv, deployAll, deployWorker } from '../core/deploy.js';
+
+vi.mock('execa', () => ({
+  execa: vi.fn(),
+}));
 
 const tempDirs: string[] = [];
 
@@ -12,7 +17,26 @@ function createTempRoot(): string {
   return dir;
 }
 
+function createWorkerPackage(rootDir: string, component: string, version: string): void {
+  const packageDir = join(rootDir, 'packages', component);
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(join(packageDir, 'wrangler.toml'), `name = "test-${component}"\n`);
+  writeFileSync(
+    join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: `@authrim/${component}`,
+      version,
+    })
+  );
+}
+
+beforeEach(() => {
+  vi.mocked(execa).mockReset();
+  vi.mocked(execa).mockResolvedValue({} as Awaited<ReturnType<typeof execa>>);
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -93,5 +117,28 @@ describe('deployWorker', () => {
     expect(result.version).toBe('9.9.9');
     expect(progressMessages).toContain('[1/3] Deploying test-ar-auth...');
     expect(progressMessages).toContain('  [DRY RUN] Would deploy ar-auth with --env test');
+  });
+});
+
+describe('deployAll', () => {
+  it('waits between successful worker deployments when a delay is configured', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    createWorkerPackage(rootDir, 'ar-token', '1.0.0');
+
+    const progressMessages: string[] = [];
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        interDeploymentDelayMs: 100,
+        onProgress: (message) => progressMessages.push(message),
+      },
+      ['ar-auth', 'ar-token']
+    );
+
+    expect(summary.successCount).toBe(2);
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(2);
+    expect(progressMessages).toContain('  ⏳ Waiting 0.1s before deploying the next worker...');
   });
 });

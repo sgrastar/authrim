@@ -18,6 +18,7 @@
 	import OrganizationSelectDialog from '$lib/components/OrganizationSelectDialog.svelte';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { sanitizeText, isValidUUID } from '$lib/utils';
 
 	let user: User | null = $state(null);
@@ -81,6 +82,7 @@
 	let showWithdrawModal = $state(false);
 	let statementToWithdraw = $state<{ id: string; version: string } | null>(null);
 	let withdrawLoading = $state(false);
+	let loadedTenantId = $state('');
 
 	const userId = $derived($page.params.id ?? '');
 
@@ -115,10 +117,30 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		user = null;
+		error = '';
+		actionError = '';
+		rolesError = '';
+		consentError = '';
+		consentRecords = [];
+		consentHistory = [];
+		showHistoryModal = false;
+		showWithdrawModal = false;
+		statementToWithdraw = null;
 		loadUser();
 		loadUserRoles();
 		loadAvailableRoles();
+		if (activeTab === 'consents') {
+			loadConsentRecords();
+		}
 	});
 
 	// Role management functions

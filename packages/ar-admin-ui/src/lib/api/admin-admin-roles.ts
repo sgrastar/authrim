@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Roles Management API Client
  *
@@ -92,7 +93,7 @@ export const adminAdminRolesAPI = {
 		const queryString = params.toString();
 		const url = `${API_BASE_URL}/api/admin/admin-roles${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -109,7 +110,7 @@ export const adminAdminRolesAPI = {
 	 * GET /api/admin/admin-roles/:id
 	 */
 	async get(id: string): Promise<AdminRoleDetail> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}`,
 			{
 				credentials: 'include'
@@ -132,7 +133,7 @@ export const adminAdminRolesAPI = {
 	 * POST /api/admin/admin-roles
 	 */
 	async create(data: CreateAdminRoleInput): Promise<AdminRole> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-roles`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-roles`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -152,7 +153,7 @@ export const adminAdminRolesAPI = {
 	 * PATCH /api/admin/admin-roles/:id
 	 */
 	async update(id: string, data: UpdateAdminRoleInput): Promise<AdminRole> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}`,
 			{
 				method: 'PATCH',
@@ -175,7 +176,7 @@ export const adminAdminRolesAPI = {
 	 * DELETE /api/admin/admin-roles/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}`,
 			{
 				method: 'DELETE',
@@ -196,7 +197,7 @@ export const adminAdminRolesAPI = {
 	 * GET /api/admin/admin-roles/permissions/list
 	 */
 	async listPermissions(): Promise<AdminPermissionListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-roles/permissions/list`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-roles/permissions/list`, {
 			credentials: 'include'
 		});
 

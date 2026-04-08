@@ -23,6 +23,7 @@ import {
   getLogger,
   createLogger,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuerUrl, getRequestVerifierIdentifier } from '../../request-identifiers';
 
 const standaloneLog = createLogger().module('VC-ATTR-VERIFY');
 import { verifyVPToken } from '../services/vp-verifier';
@@ -71,7 +72,7 @@ export async function initiateAttributeVerification(
     }
 
     // Validate access token and get user info
-    const userInfo = await validateAccessToken(c.env, authHeader.substring(7));
+    const userInfo = await validateAccessToken(c, authHeader.substring(7));
     if (!userInfo) {
       return c.json({ error: 'invalid_token', error_description: 'Invalid access token' }, 401);
     }
@@ -97,7 +98,7 @@ export async function initiateAttributeVerification(
 
     const vpRequest: VPRequestState = {
       id: requestId,
-      clientId: c.env.VERIFIER_IDENTIFIER || 'did:web:authrim.com',
+      clientId: getRequestVerifierIdentifier(c),
       tenantId: userInfo.tenantId,
       nonce,
       status: 'pending',
@@ -315,7 +316,7 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
       return c.json({ error: 'invalid_token', error_description: 'Missing access token' }, 401);
     }
 
-    const userInfo = await validateAccessToken(c.env, authHeader.substring(7));
+    const userInfo = await validateAccessToken(c, authHeader.substring(7));
     if (!userInfo) {
       return c.json({ error: 'invalid_token', error_description: 'Invalid access token' }, 401);
     }
@@ -353,7 +354,7 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
  * same deployment. External tokens should be validated via the /introspect endpoint.
  */
 async function validateAccessToken(
-  env: Env,
+  c: Context<{ Bindings: Env }>,
   token: string
 ): Promise<{ userId: string; tenantId: string } | null> {
   try {
@@ -393,7 +394,7 @@ async function validateAccessToken(
     }
 
     // Audience check (RFC 7519 Section 4.1.3)
-    const expectedAudience = env.VERIFIER_IDENTIFIER || 'did:web:authrim.com';
+    const expectedAudience = getRequestVerifierIdentifier(c);
     if (payload.aud) {
       const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
       if (!audiences.includes(expectedAudience) && !audiences.includes('authrim')) {
@@ -520,6 +521,5 @@ function buildAuthorizationRequestUrl(
  * Get base URL from request
  */
 function getBaseUrl(c: Context<{ Bindings: Env }>): string {
-  const url = new URL(c.req.url);
-  return `${url.protocol}//${url.host}`;
+  return getRequestIssuerUrl(c);
 }

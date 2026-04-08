@@ -2,10 +2,12 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let entry: AuditLogEntry | null = $state(null);
 	let loading = $state(true);
 	let error = $state('');
+	let loadedTenantId = $state('');
 
 	const entryId = $derived($page.params.id ?? '');
 
@@ -29,7 +31,16 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		entry = null;
+		error = '';
 		loadEntry();
 	});
 

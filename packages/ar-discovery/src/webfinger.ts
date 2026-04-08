@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { buildIssuerUrl, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import { buildRequestIssuerUrl, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
 interface WebFingerResponse {
   subject: string;
@@ -18,7 +18,7 @@ interface WebFingerResponse {
  */
 export async function webfingerHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
-  const issuer = buildIssuerUrl(c.env, tenantId);
+  const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
   const resource = c.req.query('resource') || issuer;
 
   const response: WebFingerResponse = {

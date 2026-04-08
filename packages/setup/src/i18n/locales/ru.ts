@@ -942,8 +942,17 @@ const ru: Translations = {
   'web.preview.issuerUrl': 'URL издателя:',
   'web.preview.loginUi': 'UI для входа:',
   'web.preview.adminUi': 'Панель администратора:',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
-  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.pagesUrl': 'UI для входа (Pages):',
+  'web.preview.tenantDiscover': 'Выбор тенанта (общий вход):',
+  'web.preview.adminAccess': 'Доступ к панели администратора:',
+  'web.preview.firstTenant': '{{name}} (основной тенант)',
+  'web.preview.otherTenants': 'Другие тенанты',
+  'web.preview.allTenantsShared': '(общий для всех тенантов)',
+  'web.preview.viaApiProxy': '(проксируется через тот же домен API)',
+  'web.preview.conflictWarningMsg':
+    'Пользовательский домен {{conflictUI}} совпадает с доменом API ({{baseDomain}}). Поскольку "Удалить тенант из URL" отключено, API-запросы к {{baseDomain}} (/authorize, /api/auth/*, и т.д.) будут возвращать 404 и процесс входа не будет работать.',
+  'web.preview.conflictActionMsg':
+    'Решение: включите "Удалить тенант из URL" и установите первого тенанта ({{tenantName}}) как основного. Или измените домен {{conflictUI}} на домен, отличный от API (например, login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI для входа',
@@ -1051,7 +1060,7 @@ const ru: Translations = {
   'web.envDetail.pagesProjects': 'Проекты Pages',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Обновить Workers',
+  'web.envDetail.workerUpdate': 'Обновить все Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Развёрнутый',
   'web.envDetail.localVersion': 'Локальный',
@@ -1060,7 +1069,7 @@ const ru: Translations = {
   'web.envDetail.upToDate': 'Актуально',
   'web.envDetail.notDeployed': 'Не развёрнут',
   'web.envDetail.updateOnlyChanged': 'Обновить только изменённые версии',
-  'web.envDetail.updateAllWorkers': 'Обновить Workers',
+  'web.envDetail.updateAllWorkers': 'Обновить все Workers',
   'web.envDetail.refreshVersions': 'Обновить',
   'web.envDetail.updateProgress': 'Прогресс обновления:',
   'web.envDetail.updatesAvailable': '{{count}} обновление(й) доступно',

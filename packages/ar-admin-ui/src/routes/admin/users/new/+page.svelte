@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { adminUsersAPI, type CreateUserInput } from '$lib/api/admin-users';
 	import { ToggleSwitch } from '$lib/components';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let saving = $state(false);
 	let error = $state('');
@@ -40,6 +42,10 @@
 			saving = false;
 		}
 	}
+
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
 </script>
 
 <svelte:head>

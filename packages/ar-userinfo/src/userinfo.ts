@@ -9,6 +9,7 @@ import {
   getClientPublicKey,
   validateJWEOptions,
   createOAuthConfigManager,
+  buildRequestIssuerUrl,
   getLogger,
   getTenantIdFromContext,
   type JWEAlgorithm,
@@ -82,6 +83,7 @@ async function getSigningKeyFromKeyManager(
  */
 export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('USERINFO');
+  const requestIssuer = buildRequestIssuerUrl(c.req.raw, c.env, getTenantIdFromContext(c));
 
   // Perform comprehensive token validation (including DPoP if present)
   const introspection = await introspectTokenFromContext(c);
@@ -410,7 +412,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       const signedUserInfo = await new SignJWT(userClaims)
         .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
         .setIssuedAt()
-        .setIssuer(c.env.ISSUER_URL)
+        .setIssuer(requestIssuer)
         .setAudience(client_id)
         .sign(privateKey);
 
@@ -457,7 +459,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       const signedUserInfo = await new SignJWT(userClaims)
         .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
         .setIssuedAt()
-        .setIssuer(c.env.ISSUER_URL)
+        .setIssuer(requestIssuer)
         .setAudience(client_id)
         .sign(privateKey);
 

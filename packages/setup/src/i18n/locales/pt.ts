@@ -948,8 +948,17 @@ const pt: Translations = {
   'web.preview.issuerUrl': 'URL do Emissor:',
   'web.preview.loginUi': 'UI de Login:',
   'web.preview.adminUi': 'UI de Admin:',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
-  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.pagesUrl': 'UI de Login (Pages):',
+  'web.preview.tenantDiscover': 'Seleção de Tenant (Entrada Comum):',
+  'web.preview.adminAccess': 'Acesso à UI de Admin:',
+  'web.preview.firstTenant': '{{name}} (Tenant Principal)',
+  'web.preview.otherTenants': 'Outros Tenants',
+  'web.preview.allTenantsShared': '(compartilhado por todos os tenants)',
+  'web.preview.viaApiProxy': '(proxied pelo mesmo domínio da API)',
+  'web.preview.conflictWarningMsg':
+    'O domínio personalizado de {{conflictUI}} é o mesmo que o da API ({{baseDomain}}). Como "Remover tenant da URL" está desabilitado, requisições à API em {{baseDomain}} (/authorize, /api/auth/*, etc.) retornarão 404 e o fluxo de login falhará.',
+  'web.preview.conflictActionMsg':
+    'Solução: Habilite "Remover tenant da URL" e defina o primeiro tenant ({{tenantName}}) como principal. Ou altere o domínio de {{conflictUI}} para um domínio diferente da API (ex. login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI de Login',
@@ -1058,7 +1067,7 @@ const pt: Translations = {
   'web.envDetail.pagesProjects': 'Projetos Pages',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Atualizar Workers',
+  'web.envDetail.workerUpdate': 'Atualizar todos os Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Implantado',
   'web.envDetail.localVersion': 'Local',
@@ -1067,7 +1076,7 @@ const pt: Translations = {
   'web.envDetail.upToDate': 'Atual',
   'web.envDetail.notDeployed': 'Não implantado',
   'web.envDetail.updateOnlyChanged': 'Atualizar apenas versões alteradas',
-  'web.envDetail.updateAllWorkers': 'Atualizar Workers',
+  'web.envDetail.updateAllWorkers': 'Atualizar todos os Workers',
   'web.envDetail.refreshVersions': 'Atualizar',
   'web.envDetail.updateProgress': 'Progresso da atualização:',
   'web.envDetail.updatesAvailable': '{{count}} atualização(ões) disponível(is)',

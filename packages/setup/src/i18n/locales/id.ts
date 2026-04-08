@@ -939,8 +939,17 @@ const id: Translations = {
   'web.preview.issuerUrl': 'URL Issuer:',
   'web.preview.loginUi': 'UI Login:',
   'web.preview.adminUi': 'UI Admin:',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
-  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.pagesUrl': 'UI Login (Pages):',
+  'web.preview.tenantDiscover': 'Pilihan Tenant (Pintu Masuk Umum):',
+  'web.preview.adminAccess': 'Akses UI Admin:',
+  'web.preview.firstTenant': '{{name}} (Tenant Utama)',
+  'web.preview.otherTenants': 'Tenant Lainnya',
+  'web.preview.allTenantsShared': '(dibagi oleh semua tenant)',
+  'web.preview.viaApiProxy': '(diproksikan melalui domain API yang sama)',
+  'web.preview.conflictWarningMsg':
+    'Domain kustom {{conflictUI}} sama dengan domain API ({{baseDomain}}). Karena "Hapus tenant dari URL" dinonaktifkan, permintaan API ke {{baseDomain}} (/authorize, /api/auth/*, dll.) akan mengembalikan 404 dan alur login tidak akan berfungsi.',
+  'web.preview.conflictActionMsg':
+    'Solusi: Aktifkan "Hapus tenant dari URL" dan tetapkan tenant pertama ({{tenantName}}) sebagai utama. Atau ubah domain {{conflictUI}} ke domain yang berbeda dari API (mis. login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI Login',
@@ -1049,7 +1058,7 @@ const id: Translations = {
   'web.envDetail.pagesProjects': 'Proyek Pages',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Perbarui Workers',
+  'web.envDetail.workerUpdate': 'Perbarui semua Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Terdeploy',
   'web.envDetail.localVersion': 'Lokal',
@@ -1058,7 +1067,7 @@ const id: Translations = {
   'web.envDetail.upToDate': 'Terkini',
   'web.envDetail.notDeployed': 'Belum terdeploy',
   'web.envDetail.updateOnlyChanged': 'Perbarui hanya versi yang berubah',
-  'web.envDetail.updateAllWorkers': 'Perbarui Workers',
+  'web.envDetail.updateAllWorkers': 'Perbarui semua Workers',
   'web.envDetail.refreshVersions': 'Segarkan',
   'web.envDetail.updateProgress': 'Progres pembaruan:',
   'web.envDetail.updatesAvailable': '{{count}} pembaruan tersedia',

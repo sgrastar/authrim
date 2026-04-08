@@ -7,7 +7,7 @@
  * - Get statistics and timeline data
  */
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 // =============================================================================
 // Types
@@ -114,9 +114,8 @@ export const adminAccessTraceAPI = {
 		if (params?.page) searchParams.set('page', params.page.toString());
 		if (params?.limit) searchParams.set('limit', params.limit.toString());
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/access-trace?${searchParams}`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/access-trace?${searchParams}`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -131,9 +130,8 @@ export const adminAccessTraceAPI = {
 	 * Get access trace entry by ID
 	 */
 	async getEntry(id: string): Promise<{ entry: AccessTraceEntry }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/access-trace/${id}`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/access-trace/${id}`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -151,10 +149,12 @@ export const adminAccessTraceAPI = {
 		const searchParams = new URLSearchParams();
 		if (period) searchParams.set('period', period);
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/access-trace/stats?${searchParams}`, {
-			method: 'GET',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/access-trace/stats?${searchParams}`,
+			{
+				method: 'GET'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -175,13 +175,9 @@ export const adminAccessTraceAPI = {
 		if (period) searchParams.set('period', period);
 		if (granularity) searchParams.set('granularity', granularity);
 
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/access-trace/timeline?${searchParams}`,
-			{
-				method: 'GET',
-				credentials: 'include'
-			}
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/access-trace/timeline?${searchParams}`, {
+			method: 'GET'
+		});
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

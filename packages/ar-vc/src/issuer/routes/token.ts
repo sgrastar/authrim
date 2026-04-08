@@ -14,6 +14,7 @@ import { createErrorResponse, AR_ERROR_CODES, getLogger, type Logger } from '@au
 import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
 import { generateSecureNonce } from '../../utils/crypto';
 import { SignJWT, importJWK } from 'jose';
+import { getRequestIssuerIdentifier } from '../../request-identifiers';
 
 /**
  * Grant type for pre-authorized code
@@ -54,7 +55,8 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
     return await handlePreAuthorizedCodeGrant(
       c,
       log,
-      formData as unknown as Record<string, string>
+      formData as unknown as Record<string, string>,
+      getRequestIssuerIdentifier(c)
     );
   } catch (error) {
     log.error('VCI token request failed', {}, error as Error);
@@ -70,7 +72,8 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
 async function handlePreAuthorizedCodeGrant(
   c: Context<{ Bindings: Env }>,
   log: Logger,
-  formData: Record<string, string>
+  formData: Record<string, string>,
+  issuerIdentifier: string
 ): Promise<Response> {
   // Extract pre-authorized_code (required)
   const preAuthorizedCode = formData['pre-authorized_code'];
@@ -106,7 +109,7 @@ async function handlePreAuthorizedCodeGrant(
   }
 
   // Generate access token
-  const accessToken = await generateVCIAccessToken(c.env, offerInfo);
+  const accessToken = await generateVCIAccessToken(c.env, offerInfo, issuerIdentifier);
 
   // Generate c_nonce
   const cNonce = await generateSecureNonce();
@@ -247,7 +250,8 @@ async function generateVCIAccessToken(
     tenantId: string;
     credentialConfigurationId: string;
     claims: Record<string, unknown>;
-  }
+  },
+  issuer: string
 ): Promise<string> {
   // Get signing key from KeyManager
   const doId = env.KEY_MANAGER.idFromName('issuer-keys');
@@ -280,7 +284,6 @@ async function generateVCIAccessToken(
 
   const privateKey = await importJWK(privateKeyData.privateKeyJwk, 'ES256');
 
-  const issuer = env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
   const now = Math.floor(Date.now() / 1000);
 
   const token = await new SignJWT({
