@@ -7,7 +7,7 @@
  * - Permission check simulation
  */
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 // =============================================================================
 // Types
@@ -200,11 +200,10 @@ export const adminReBACAPI = {
 		if (params?.search) searchParams.set('search', params.search);
 		if (params?.is_active !== undefined) searchParams.set('is_active', params.is_active.toString());
 
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/rebac/relation-definitions?${searchParams}`,
 			{
-				method: 'GET',
-				credentials: 'include'
+				method: 'GET'
 			}
 		);
 
@@ -220,10 +219,12 @@ export const adminReBACAPI = {
 	 * Get a specific relation definition
 	 */
 	async getDefinition(id: string): Promise<RelationDefinitionDetailResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`, {
-			method: 'GET',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`,
+			{
+				method: 'GET'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -244,12 +245,9 @@ export const adminReBACAPI = {
 		priority?: number;
 		is_active?: boolean;
 	}): Promise<RelationDefinitionDetailResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/relation-definitions`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/relation-definitions`, {
 			method: 'POST',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -273,14 +271,14 @@ export const adminReBACAPI = {
 			is_active?: boolean;
 		}
 	): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`, {
-			method: 'PUT',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`,
+			{
+				method: 'PUT',
+				includeJsonContentType: true,
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -294,10 +292,12 @@ export const adminReBACAPI = {
 	 * Delete a relation definition
 	 */
 	async deleteDefinition(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`, {
-			method: 'DELETE',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`,
+			{
+				method: 'DELETE'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -332,9 +332,8 @@ export const adminReBACAPI = {
 		if (params?.to_id) searchParams.set('to_id', params.to_id);
 		if (params?.relationship_type) searchParams.set('relationship_type', params.relationship_type);
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/tuples?${searchParams}`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/tuples?${searchParams}`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {
@@ -358,12 +357,9 @@ export const adminReBACAPI = {
 		expires_at?: number;
 		metadata?: Record<string, unknown>;
 	}): Promise<{ tuple: RelationshipTuple }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/tuples`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/tuples`, {
 			method: 'POST',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -379,9 +375,8 @@ export const adminReBACAPI = {
 	 * Delete a relationship tuple
 	 */
 	async deleteTuple(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/tuples/${id}`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/tuples/${id}`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {
@@ -411,12 +406,9 @@ export const adminReBACAPI = {
 			object_type?: string;
 		}>;
 	}): Promise<PermissionCheckResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/check`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/check`, {
 			method: 'POST',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -436,9 +428,8 @@ export const adminReBACAPI = {
 	 * List object types with their definition counts
 	 */
 	async listObjectTypes(): Promise<ObjectTypesListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/rebac/object-types`, {
-			method: 'GET',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/object-types`, {
+			method: 'GET'
 		});
 
 		if (!response.ok) {

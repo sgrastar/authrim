@@ -5,7 +5,14 @@
  */
 
 import type { Env } from '../../types';
-import { importECPublicKey, safeFetch, resolveDID, createLogger } from '@authrim/ar-lib-core';
+import {
+  importECPublicKey,
+  safeFetch,
+  resolveDID,
+  createLogger,
+  buildIssuerUrl,
+  getDefaultTenantId,
+} from '@authrim/ar-lib-core';
 import type { TrustedIssuerRepository, TrustedIssuerRecord } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import { importJWK } from 'jose';
@@ -201,9 +208,27 @@ async function getKeyFromDid(env: Env, did: string): Promise<CryptoKey> {
 export async function checkSelfIssuance(
   env: Env,
   issuerDid: string,
-  _tenantId: string
+  tenantId: string
 ): Promise<boolean> {
-  const authrimDid = env.VERIFIER_IDENTIFIER || 'did:web:authrim.com';
+  const configuredIdentifier = env.VERIFIER_IDENTIFIER;
+  let authrimDid = configuredIdentifier || 'did:web:authrim.com';
+
+  if (
+    !configuredIdentifier ||
+    configuredIdentifier.startsWith('did:web:') ||
+    configuredIdentifier.startsWith('https://') ||
+    configuredIdentifier.startsWith('http://')
+  ) {
+    try {
+      const issuerUrl = buildIssuerUrl(
+        env as unknown as Parameters<typeof buildIssuerUrl>[0],
+        tenantId || getDefaultTenantId(env as { DEFAULT_TENANT_ID?: string })
+      );
+      authrimDid = `did:web:${new URL(issuerUrl).hostname}`;
+    } catch {
+      authrimDid = configuredIdentifier || 'did:web:authrim.com';
+    }
+  }
 
   if (issuerDid === authrimDid) {
     log.warn('Rejected self-issued credential', {});

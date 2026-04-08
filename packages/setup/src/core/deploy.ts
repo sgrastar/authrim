@@ -58,6 +58,7 @@ export interface DeployOptions {
   dryRun?: boolean;
   maxRetries?: number;
   retryDelayMs?: number;
+  interDeploymentDelayMs?: number;
   onProgress?: (message: string) => void;
   onError?: (component: string, error: Error) => void;
 }
@@ -91,6 +92,8 @@ export interface BuildResult {
   success: boolean;
   error?: string;
 }
+
+export const DEFAULT_INTER_DEPLOY_DELAY_MS = 10_000;
 
 const UI_BUILD_ENV_KEYS = [
   'PUBLIC_API_BASE_URL',
@@ -370,12 +373,14 @@ export async function deployAll(
   options: DeployOptions,
   enabledComponents?: WorkerComponent[]
 ): Promise<DeploymentSummary> {
-  const { onProgress, onError } = options;
+  const { onProgress, onError, interDeploymentDelayMs = 0 } = options;
   const startedAt = new Date().toISOString();
   const startTime = Date.now();
 
   const levels = getDeploymentLevels(enabledComponents);
   const allResults: DeployResult[] = [];
+  const totalPlannedComponents = levels.reduce((count, level) => count + level.length, 0);
+  let processedComponents = 0;
 
   onProgress?.('Starting Authrim deployment...\n');
   onProgress?.(`Environment: ${options.env}`);
@@ -390,6 +395,7 @@ export async function deployAll(
     for (const component of level) {
       const result = await deployWorker(component, options);
       allResults.push(result);
+      processedComponents++;
 
       if (!result.success) {
         onError?.(component, new Error(result.error));
@@ -399,6 +405,20 @@ export async function deployAll(
           onProgress?.(`\n⚠️  Critical component ${component} failed. Stopping deployment.`);
           break;
         }
+      }
+
+      if (
+        result.success &&
+        !options.dryRun &&
+        interDeploymentDelayMs > 0 &&
+        processedComponents < totalPlannedComponents
+      ) {
+        const waitSeconds =
+          interDeploymentDelayMs % 1000 === 0
+            ? String(interDeploymentDelayMs / 1000)
+            : (interDeploymentDelayMs / 1000).toFixed(1);
+        onProgress?.(`  ⏳ Waiting ${waitSeconds}s before deploying the next worker...`);
+        await new Promise((resolve) => setTimeout(resolve, interDeploymentDelayMs));
       }
     }
   }

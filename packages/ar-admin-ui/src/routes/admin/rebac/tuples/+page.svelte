@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { adminReBACAPI, type RelationshipTuple, formatTupleString } from '$lib/api/admin-rebac';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	// State
 	let tuples: RelationshipTuple[] = $state([]);
@@ -40,6 +41,7 @@
 	let tupleToDelete: RelationshipTuple | null = $state(null);
 	let deleting = $state(false);
 	let deleteError = $state('');
+	let loadedTenantId = $state('');
 
 	async function loadTuples() {
 		loading = true;
@@ -179,7 +181,17 @@
 		return tuple.expires_at < Date.now();
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		tuples = [];
+		error = '';
+		pagination.page = 1;
 		loadTuples();
 	});
 </script>

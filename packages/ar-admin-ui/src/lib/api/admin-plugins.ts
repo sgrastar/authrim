@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Plugins API Client
  *
@@ -175,9 +176,12 @@ export const adminPluginsAPI = {
 		if (params.trustLevel) searchParams.set('trustLevel', params.trustLevel);
 
 		const query = searchParams.toString();
-		const response = await fetch(`${API_BASE_URL}/api/admin/plugins${query ? '?' + query : ''}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins${query ? '?' + query : ''}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -190,9 +194,12 @@ export const adminPluginsAPI = {
 	 * Get plugin details including configuration
 	 */
 	async get(id: string): Promise<PluginDetailResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -205,7 +212,7 @@ export const adminPluginsAPI = {
 	 * Get plugin configuration
 	 */
 	async getConfig(id: string): Promise<Record<string, unknown>> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/config`,
 			{ credentials: 'include' }
 		);
@@ -226,7 +233,7 @@ export const adminPluginsAPI = {
 		id: string,
 		config: Record<string, unknown>
 	): Promise<Record<string, unknown>> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/config`,
 			{
 				method: 'PUT',
@@ -249,7 +256,7 @@ export const adminPluginsAPI = {
 	 * Enable a plugin
 	 */
 	async enable(id: string): Promise<PluginStatus> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/enable`,
 			{
 				method: 'PUT',
@@ -268,7 +275,7 @@ export const adminPluginsAPI = {
 	 * Disable a plugin
 	 */
 	async disable(id: string): Promise<PluginStatus> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/disable`,
 			{
 				method: 'PUT',
@@ -287,7 +294,7 @@ export const adminPluginsAPI = {
 	 * Check plugin health
 	 */
 	async checkHealth(id: string): Promise<PluginHealthResponse> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/health`,
 			{ credentials: 'include' }
 		);
@@ -303,7 +310,7 @@ export const adminPluginsAPI = {
 	 * Get plugin JSON Schema for UI form generation
 	 */
 	async getSchema(id: string): Promise<Record<string, unknown>> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/schema`,
 			{ credentials: 'include' }
 		);

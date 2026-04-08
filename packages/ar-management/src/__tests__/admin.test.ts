@@ -59,6 +59,7 @@ import {
   adminClientCreateHandler,
   adminClientUpdateHandler,
   adminClientDeleteHandler,
+  adminClientRegenerateSecretHandler,
 } from '../admin';
 
 // Helper to create mock D1Database
@@ -85,11 +86,16 @@ function createMockDB(options: {
 }
 
 // Mock KV namespace for cache invalidation
-function createMockKVNamespace() {
+function createMockKVNamespace(initialData: Record<string, string> = {}) {
+  const store = new Map<string, string>(Object.entries(initialData));
   return {
-    get: vi.fn().mockResolvedValue(null),
-    put: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn(async (key: string) => store.get(key) ?? null),
+    put: vi.fn(async (key: string, value: string) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn(async (key: string) => {
+      store.delete(key);
+    }),
     list: vi.fn().mockResolvedValue({ keys: [] }),
   };
 }
@@ -102,6 +108,9 @@ function createMockContext(options: {
   body?: Record<string, unknown>;
   db?: D1Database;
   dbPII?: D1Database;
+  headers?: Record<string, string>;
+  jsonError?: Error;
+  envOverrides?: Partial<Env>;
 }) {
   const mockDB =
     options.db ??
@@ -119,28 +128,60 @@ function createMockContext(options: {
     });
 
   // Store context values (simulating Hono's context store)
-  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+  const contextStore = new Map<string, unknown>([
+    ['tenantId', 'default'],
+    [
+      'adminAuth',
+      {
+        userId: 'admin-user',
+        email: 'admin@example.com',
+        sessionId: 'session-123',
+        roles: ['system_admin'],
+        permissions: [],
+      },
+    ],
+  ]);
+  const normalizedHeaders = new Map(
+    Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
+  );
+  const responseHeaders = new Map<string, string>();
 
   const c = {
     req: {
       method: options.method || 'GET',
       query: (name: string) => options.query?.[name],
       param: (name: string) => options.params?.[name],
-      json: vi.fn().mockResolvedValue(options.body ?? {}),
+      json: options.jsonError
+        ? vi.fn().mockRejectedValue(options.jsonError)
+        : vi.fn().mockResolvedValue(options.body ?? {}),
       parseBody: vi.fn().mockResolvedValue(options.body ?? {}),
+      header: vi.fn((name: string) => normalizedHeaders.get(name.toLowerCase())),
     },
     env: {
       DB: mockDB,
       DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
       ISSUER_URL: 'https://op.example.com',
       CLIENTS_CACHE: createMockKVNamespace(),
+      SETTINGS: createMockKVNamespace(),
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    header: vi.fn((name: string, value: string) => {
+      responseHeaders.set(name, value);
+    }),
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
+    executionCtx: {
+      waitUntil: vi.fn(),
+    },
     _mockDB: mockDB,
     _mockDBPII: mockDBPII, // For test assertions
+    _responseHeaders: responseHeaders,
   } as any;
+
+  c.env = {
+    ...c.env,
+    ...options.envOverrides,
+  };
 
   return c;
 }
@@ -1196,6 +1237,47 @@ describe('Admin API Handlers', () => {
         201
       );
     });
+
+    it('should reject invalid redirect_uris', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Broken Redirect Client',
+          redirect_uris: ['not-a-valid-uri'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Invalid redirect_uri: not-a-valid-uri',
+        }),
+        400
+      );
+    });
+
+    it('should reject invalid allowed_redirect_origins', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Origin Validation Client',
+          redirect_uris: ['https://example.com/callback'],
+          allowed_redirect_origins: ['https://example.com/path'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('Invalid allowed_redirect_origins'),
+        }),
+        400
+      );
+    });
   });
 
   describe('adminClientUpdateHandler', () => {
@@ -1274,6 +1356,103 @@ describe('Admin API Handlers', () => {
         404
       );
     });
+
+    it('should reject malformed character-array grant types', async () => {
+      const clientId = 'client-malformed-grants';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          grant_types: ['a', 'u', 't', 'h'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('grant_types appears malformed'),
+        }),
+        400
+      );
+    });
+
+    it('should reject invalid redirect_uris during update', async () => {
+      const clientId = 'client-invalid-redirect-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          redirect_uris: ['still-not-a-uri'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'redirect_uris must contain valid URI strings',
+        }),
+        400
+      );
+    });
+
+    it('should return a no-op response when no updates are provided', async () => {
+      const clientId = 'client-no-op';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {},
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'No changes to update',
+      });
+    });
   });
 
   describe('adminClientDeleteHandler', () => {
@@ -1320,6 +1499,142 @@ describe('Admin API Handlers', () => {
         }),
         404
       );
+    });
+  });
+
+  describe('adminClientRegenerateSecretHandler', () => {
+    it('should reject grace periods outside the supported range', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'client-123' },
+        body: { grace_period_hours: 0 },
+      });
+
+      const response = await adminClientRegenerateSecretHandler(c);
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual(
+        expect.objectContaining({
+          error: 'invalid_request',
+        })
+      );
+    });
+
+    it('should return 404 when the client belongs to another tenant', async () => {
+      const mockClientCache = createMockKVNamespace({
+        'tenant:default:client:client-foreign': JSON.stringify({
+          client_id: 'client-foreign',
+          tenant_id: 'tenant-foreign',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+        }),
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'client-foreign' },
+        envOverrides: {
+          CLIENTS_CACHE: mockClientCache as unknown as Env['CLIENTS_CACHE'],
+        },
+      });
+
+      const response = await adminClientRegenerateSecretHandler(c);
+      const body = await response.json();
+
+      expect(response.status).toBe(404);
+      expect(body).toEqual(
+        expect.objectContaining({
+          error: 'invalid_request',
+        })
+      );
+    });
+
+    it('should rotate the secret, revoke tokens, and disable caching', async () => {
+      const mockDB = createMockDB({
+        runResult: {
+          success: true,
+          meta: {
+            changes: 3,
+            duration: 1,
+          },
+        } as unknown as { success: boolean },
+      });
+      const mockClientCache = createMockKVNamespace({
+        'tenant:default:client:client-rotate': JSON.stringify({
+          client_id: 'client-rotate',
+          tenant_id: 'default',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+        }),
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'client-rotate' },
+        body: {
+          revoke_existing_tokens: true,
+          grace_period_hours: 24,
+        },
+        db: mockDB,
+        envOverrides: {
+          CLIENTS_CACHE: mockClientCache as unknown as Env['CLIENTS_CACHE'],
+        },
+      });
+
+      const response = await adminClientRegenerateSecretHandler(c);
+      const payload = (await response.json()) as { revoked_tokens: number };
+
+      expect(response.status).toBe(200);
+      expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
+      expect(mockClientCache.delete).toHaveBeenCalledWith(expect.stringContaining('client-rotate'));
+      expect(payload).toEqual(
+        expect.objectContaining({
+          client_id: 'client-rotate',
+          client_secret: expect.stringMatching(/^[a-f0-9]{64}$/),
+          revoked_tokens: 3,
+        })
+      );
+    });
+
+    it('should tolerate invalid JSON bodies and use default options', async () => {
+      const mockDB = createMockDB({
+        runResult: {
+          success: true,
+          meta: {
+            changes: 0,
+            duration: 1,
+          },
+        } as unknown as { success: boolean },
+      });
+      const mockClientCache = createMockKVNamespace({
+        'tenant:default:client:client-defaults': JSON.stringify({
+          client_id: 'client-defaults',
+          tenant_id: 'default',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+        }),
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'client-defaults' },
+        db: mockDB,
+        jsonError: new SyntaxError('Unexpected token'),
+        envOverrides: {
+          CLIENTS_CACHE: mockClientCache as unknown as Env['CLIENTS_CACHE'],
+        },
+      });
+
+      const response = await adminClientRegenerateSecretHandler(c);
+      const payload = (await response.json()) as { revoked_tokens: number };
+
+      expect(response.status).toBe(200);
+      expect(payload.revoked_tokens).toBe(0);
+      expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
     });
   });
 });

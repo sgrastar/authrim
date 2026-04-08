@@ -3,7 +3,7 @@ import type { Env, OIDCProviderMetadata, LogoutConfig, TenantProfile } from '@au
 import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
-  buildIssuerUrl,
+  buildRequestIssuerUrl,
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
   getTenantIdFromContext,
@@ -78,7 +78,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const asyncEnabled = (c.env as Env & { ASYNC_ENABLED?: string }).ASYNC_ENABLED !== 'false';
 
   // Build issuer URL for this tenant.
-  const issuer = buildIssuerUrl(c.env, tenantId);
+  const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
 
   // Load dynamic configuration from SETTINGS KV
   let oidcConfig: OIDCConfig = {};

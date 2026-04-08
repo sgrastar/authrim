@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Webhooks API Client
  *
@@ -182,9 +183,12 @@ export const adminWebhooksAPI = {
 			searchParams.set('activeOnly', params.activeOnly.toString());
 
 		const query = searchParams.toString();
-		const response = await fetch(`${API_BASE_URL}/api/admin/webhooks${query ? '?' + query : ''}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks${query ? '?' + query : ''}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -197,9 +201,12 @@ export const adminWebhooksAPI = {
 	 * Get a single webhook by ID
 	 */
 	async get(id: string): Promise<Webhook> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -212,7 +219,7 @@ export const adminWebhooksAPI = {
 	 * Create a new webhook
 	 */
 	async create(data: CreateWebhookRequest): Promise<Webhook> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/webhooks`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/webhooks`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -230,12 +237,15 @@ export const adminWebhooksAPI = {
 	 * Update an existing webhook
 	 */
 	async update(id: string, data: UpdateWebhookRequest): Promise<Webhook> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`, {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`,
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -248,10 +258,13 @@ export const adminWebhooksAPI = {
 	 * Delete a webhook
 	 */
 	async delete(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`,
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -264,7 +277,7 @@ export const adminWebhooksAPI = {
 	 * Send a test webhook delivery
 	 */
 	async test(id: string): Promise<WebhookTestResult> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}/test`,
 			{
 				method: 'POST',
@@ -294,7 +307,7 @@ export const adminWebhooksAPI = {
 		if (params.to) searchParams.set('to', params.to);
 
 		const query = searchParams.toString();
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}/deliveries${query ? '?' + query : ''}`,
 			{ credentials: 'include' }
 		);
@@ -312,7 +325,7 @@ export const adminWebhooksAPI = {
 	 * Replay a failed delivery
 	 */
 	async replayDelivery(id: string, deliveryId: string): Promise<WebhookReplayResult> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}/replay`,
 			{
 				method: 'POST',

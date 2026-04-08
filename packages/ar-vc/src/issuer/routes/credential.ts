@@ -24,6 +24,7 @@ import {
 import { generateSecureNonce } from '../../utils/crypto';
 import { importPKCS8 } from 'jose';
 import { validateVCIAccessToken, validateProofOfPossession } from '../services/token-validation';
+import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
 
 interface CredentialRequest {
   format: string;
@@ -117,6 +118,8 @@ function validateCredentialResponse(response: CredentialResponse): void {
 export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const log = getLogger(c as any).module('VC-ISSUER');
+  const requestIssuerIdentifier = getRequestIssuerIdentifier(c);
+  const requestIssuerUrl = getRequestIssuerUrl(c);
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
@@ -127,7 +130,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const accessToken = authHeader.substring(7);
 
     // Validate access token and extract user/credential info
-    const tokenResult = await validateVCIAccessToken(c.env, accessToken);
+    const tokenResult = await validateVCIAccessToken(c.env, accessToken, requestIssuerIdentifier);
 
     if (!tokenResult.valid) {
       return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
@@ -150,7 +153,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Get expected c_nonce from KV (stored during token request)
     const expectedNonce = await c.env.AUTHRIM_CONFIG.get(`cnonce:${tokenResult.userId}`);
-    const expectedAudience = c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
+    const expectedAudience = requestIssuerIdentifier;
 
     // Verify proof of possession if provided
     let holderBinding = tokenResult.holderBinding;
@@ -235,20 +238,12 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       'revocation'
     );
 
-    // Build issuer URL for credentialStatus reference
-    // SECURITY: Never trust Host header - always use configured ISSUER_IDENTIFIER
-    const issuerUrl = c.env.ISSUER_IDENTIFIER;
-    if (!issuerUrl) {
-      log.error('ISSUER_IDENTIFIER is not configured');
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-
     // Add credentialStatus claim (W3C VC compatible format)
     const credentialStatus = {
       type: 'BitstringStatusListEntry',
       statusPurpose: 'revocation',
       statusListIndex: index,
-      statusListCredential: `${issuerUrl}/vci/status/${listId}`,
+      statusListCredential: `${requestIssuerUrl}/vci/status/${listId}`,
     };
 
     // Create SD-JWT VC with credentialStatus
@@ -260,7 +255,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     const sdjwtvc = await createSDJWTVC(
       { ...claims, credentialStatus },
-      c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com',
+      requestIssuerIdentifier,
       issuerKey.privateKey,
       'ES256',
       issuerKey.kid,

@@ -25,6 +25,14 @@
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 
+export interface IssuerEnvLike {
+  ISSUER_URL?: string;
+  BASE_DOMAIN?: string;
+  NAKED_DOMAIN_AS_ISSUER?: string;
+  PRIMARY_TENANT_ID?: string;
+  DEFAULT_TENANT_ID?: string;
+}
+
 /**
  * Validate that a tenant exists and is active using D1 + KV positive cache.
  *
@@ -89,21 +97,21 @@ export interface HostValidationResult {
 /**
  * Get the effective default tenant ID for the current environment.
  */
-export function getDefaultTenantId(env: Partial<Env>): string {
+export function getDefaultTenantId(env: Partial<IssuerEnvLike>): string {
   return env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
 }
 
 /**
  * Get the tenant ID that should own the naked domain when BASE_DOMAIN is used.
  */
-export function getPrimaryTenantId(env: Partial<Env>): string {
+export function getPrimaryTenantId(env: Partial<IssuerEnvLike>): string {
   return env.PRIMARY_TENANT_ID || getDefaultTenantId(env);
 }
 
 /**
  * Returns true when the provided tenant should use the naked BASE_DOMAIN as its canonical issuer.
  */
-export function usesNakedDomainIssuer(env: Partial<Env>, tenantId?: string): boolean {
+export function usesNakedDomainIssuer(env: Partial<IssuerEnvLike>, tenantId?: string): boolean {
   if (env.NAKED_DOMAIN_AS_ISSUER !== 'true' || !env.BASE_DOMAIN) {
     return false;
   }
@@ -130,7 +138,7 @@ export function usesNakedDomainIssuer(env: Partial<Env>, tenantId?: string): boo
  * // Legacy fallback (ISSUER_URL set, no BASE_DOMAIN)
  * buildIssuerUrl(env)               // => 'https://auth.example.com' (ISSUER_URL)
  */
-export function buildIssuerUrl(env: Env, tenantSubdomain?: string): string {
+export function buildIssuerUrl(env: IssuerEnvLike, tenantSubdomain?: string): string {
   // Multi-tenant mode: construct from subdomain + BASE_DOMAIN
   if (env.BASE_DOMAIN) {
     const sub = tenantSubdomain || getDefaultTenantId(env);
@@ -143,7 +151,97 @@ export function buildIssuerUrl(env: Env, tenantSubdomain?: string): string {
   }
 
   // Legacy single-tenant mode: use configured ISSUER_URL
-  return env.ISSUER_URL;
+  return env.ISSUER_URL || '';
+}
+
+function normalizeHostCandidate(candidate: string | null | undefined): string | null {
+  const value = candidate?.split(',')[0]?.trim();
+  if (!value) {
+    return null;
+  }
+
+  const host = value.toLowerCase();
+  return isValidHostFormat(host) ? host : null;
+}
+
+export function getRequestHost(request?: Request | null): string | null {
+  if (!request) {
+    return null;
+  }
+
+  return (
+    normalizeHostCandidate(request.headers.get('Host')) ||
+    normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host')) ||
+    normalizeHostCandidate(request.headers.get('X-Forwarded-Host')) ||
+    (() => {
+      try {
+        return normalizeHostCandidate(new URL(request.url).host);
+      } catch {
+        return null;
+      }
+    })()
+  );
+}
+
+export function buildRequestIssuerUrl(
+  request: Request | null | undefined,
+  env: Partial<IssuerEnvLike>,
+  tenantId?: string
+): string {
+  const explicitHost =
+    request &&
+    (normalizeHostCandidate(request.headers.get('Host')) ||
+      normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host')) ||
+      normalizeHostCandidate(request.headers.get('X-Forwarded-Host')));
+  const requestHost = getRequestHost(request);
+  const requestHostname = requestHost?.split(':')[0];
+  const shouldIgnoreImplicitLocalhost =
+    !explicitHost &&
+    !!requestHostname &&
+    ['localhost', '127.0.0.1', '::1'].includes(requestHostname) &&
+    (!!env.BASE_DOMAIN || !!env.ISSUER_URL);
+
+  if (!env.BASE_DOMAIN) {
+    if (env.ISSUER_URL) {
+      return env.ISSUER_URL;
+    }
+
+    if (requestHost && !shouldIgnoreImplicitLocalhost) {
+      return `https://${requestHost.split(':')[0]}`;
+    }
+
+    return buildIssuerUrl(env, tenantId);
+  }
+
+  if (requestHost && !shouldIgnoreImplicitLocalhost) {
+    return `https://${requestHost.split(':')[0]}`;
+  }
+
+  return buildIssuerUrl(env, tenantId);
+}
+
+export function buildRequestIdentifier(
+  request: Request | null | undefined,
+  env: Partial<IssuerEnvLike>,
+  tenantId: string | undefined,
+  configuredIdentifier?: string
+): string {
+  const issuerUrl = buildRequestIssuerUrl(request, env, tenantId);
+  const hostname = new URL(issuerUrl).hostname;
+
+  if (!configuredIdentifier) {
+    return `did:web:${hostname}`;
+  }
+
+  if (configuredIdentifier.startsWith('https://') || configuredIdentifier.startsWith('http://')) {
+    return issuerUrl;
+  }
+
+  if (configuredIdentifier.startsWith('did:web:')) {
+    return `did:web:${hostname}`;
+  }
+
+  return configuredIdentifier;
 }
 
 /**

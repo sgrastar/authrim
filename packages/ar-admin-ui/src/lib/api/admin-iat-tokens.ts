@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin IAT (Initial Access Tokens) API Client
  *
@@ -53,7 +54,7 @@ export const adminIatTokensAPI = {
 	 * List all IAT tokens
 	 */
 	async list(): Promise<IatTokenListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/iat-tokens`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/iat-tokens`, {
 			credentials: 'include'
 		});
 		if (!response.ok) {
@@ -70,7 +71,7 @@ export const adminIatTokensAPI = {
 	 * Save it securely as it cannot be retrieved later.
 	 */
 	async create(params?: CreateIatTokenInput): Promise<CreateIatTokenResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/iat-tokens`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/iat-tokens`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -87,7 +88,7 @@ export const adminIatTokensAPI = {
 	 * Revoke (delete) an IAT token
 	 */
 	async revoke(tokenHash: string): Promise<{ message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/iat-tokens/${encodeURIComponent(tokenHash)}`,
 			{
 				method: 'DELETE',

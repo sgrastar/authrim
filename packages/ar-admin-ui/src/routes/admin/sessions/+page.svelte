@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminSessionsAPI,
 		type Session,
@@ -27,6 +28,7 @@
 
 	// Debounce timer for user ID search
 	let searchTimeout: ReturnType<typeof setTimeout>;
+	let loadedTenantId = $state('');
 
 	async function loadSessions() {
 		loading = true;
@@ -56,7 +58,15 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		currentPage = 1;
 		loadSessions();
 	});
 

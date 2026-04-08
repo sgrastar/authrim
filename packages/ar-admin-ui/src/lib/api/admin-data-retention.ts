@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Data Retention API Client
  *
@@ -116,7 +117,7 @@ export const adminDataRetentionAPI = {
 	 * Get data retention status and statistics
 	 */
 	async getStatus(): Promise<DataRetentionStatus> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/data-retention/status`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/data-retention/status`, {
 			credentials: 'include'
 		});
 
@@ -184,7 +185,7 @@ export const adminDataRetentionAPI = {
 		}
 
 		const url = `${API_BASE_URL}/api/admin/data-retention/estimate${params.toString() ? '?' + params.toString() : ''}`;
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -226,7 +227,7 @@ export const adminDataRetentionAPI = {
 	async listCategories(): Promise<{
 		categories: { category: string; retention_days: number; updated_at: string }[];
 	}> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/data-retention/categories`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/data-retention/categories`, {
 			credentials: 'include'
 		});
 
@@ -247,7 +248,7 @@ export const adminDataRetentionAPI = {
 		category: string,
 		retentionDays: number
 	): Promise<{ category: string; retention_days: number; updated_at: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/data-retention/categories/${encodeURIComponent(category)}`,
 			{
 				method: 'PUT',
@@ -271,7 +272,7 @@ export const adminDataRetentionAPI = {
 	 * Trigger manual cleanup for specified categories or all categories
 	 */
 	async runCleanup(categories?: string[], idempotencyKey?: string): Promise<CleanupRun> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/data-retention/cleanup`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/data-retention/cleanup`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -305,7 +306,7 @@ export const adminDataRetentionAPI = {
 	 * Get status of a cleanup run
 	 */
 	async getCleanupStatus(runId: string): Promise<CleanupRun> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/data-retention/cleanup/${encodeURIComponent(runId)}`,
 			{
 				credentials: 'include'

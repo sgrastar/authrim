@@ -29,6 +29,7 @@ import {
   TENANT_POLICY_PRESETS,
   type TenantContract,
   buildContractKey,
+  buildIssuerUrl,
   usesNakedDomainIssuer,
 } from '@authrim/ar-lib-core';
 
@@ -545,16 +546,37 @@ function buildDefaultTenantContract(tenantId: string): TenantContract {
 async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId: string) {
   const env = c.env;
   const allowedOrigins = buildDefaultAllowedOrigins(tenantId, env);
+  const allowedIdentifiers = (() => {
+    try {
+      const issuerUrl = buildIssuerUrl(env, tenantId);
+      const host = new URL(issuerUrl).hostname;
+      return `${issuerUrl},did:web:${host}`;
+    } catch {
+      return '';
+    }
+  })();
+  const allowedDomain = (() => {
+    try {
+      return new URL(buildIssuerUrl(env, tenantId)).hostname;
+    } catch {
+      return '';
+    }
+  })();
 
   await Promise.all([
     env.AUTHRIM_CONFIG?.put(
       `settings:tenant:${tenantId}:tenant`,
-      JSON.stringify({ 'tenant.allowed_origins': allowedOrigins })
+      JSON.stringify({
+        'tenant.allowed_origins': allowedOrigins,
+        'tenant.allowed_domains': allowedDomain,
+        'tenant.allowed_identifiers': allowedIdentifiers,
+      })
     ),
     env.SETTINGS?.put(
       `settings:tenant:${tenantId}:login-ui`,
       JSON.stringify({ 'login-ui.brand_name': tenantId })
     ),
+    env.SETTINGS?.put(`settings:tenant:${tenantId}:tenant-discovery-ui`, JSON.stringify({})),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:login-methods`, JSON.stringify({})),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
   ]);
@@ -681,7 +703,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       await seedDefaultClaimsForTenant(id, adapter, getLogger(c), { throwOnError: true });
       // 2. Write TenantContract to KV
       await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
-      // 3. Seed per-tenant KV settings (allowed_origins, login-ui, login-methods, login-entry)
+      // 3. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui, login-methods, login-entry)
       await seedTenantDefaultSettings(c, id);
       // 4. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
       await initTenantKeyManager(c.env.KEY_MANAGER, id);
@@ -698,6 +720,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
         c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
         c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
+        c.env.SETTINGS?.delete(`settings:tenant:${id}:tenant-discovery-ui`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-methods`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-entry`),
         // KeyManager DO cleanup is not possible (no delete/reset RPC) — orphaned DO is harmless

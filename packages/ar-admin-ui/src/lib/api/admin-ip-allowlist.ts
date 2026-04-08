@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin IP Allowlist Management API Client
  *
@@ -75,7 +76,7 @@ export const adminIpAllowlistAPI = {
 		const queryString = params.toString();
 		const url = `${API_BASE_URL}/api/admin/ip-allowlist${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -92,7 +93,7 @@ export const adminIpAllowlistAPI = {
 	 * GET /api/admin/ip-allowlist/:id
 	 */
 	async get(id: string): Promise<IpAllowlistEntry> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/ip-allowlist/${encodeURIComponent(id)}`,
 			{
 				credentials: 'include'
@@ -115,7 +116,7 @@ export const adminIpAllowlistAPI = {
 	 * POST /api/admin/ip-allowlist
 	 */
 	async create(data: CreateIpAllowlistInput): Promise<IpAllowlistEntry> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/ip-allowlist`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/ip-allowlist`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -135,7 +136,7 @@ export const adminIpAllowlistAPI = {
 	 * PATCH /api/admin/ip-allowlist/:id
 	 */
 	async update(id: string, data: UpdateIpAllowlistInput): Promise<IpAllowlistEntry> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/ip-allowlist/${encodeURIComponent(id)}`,
 			{
 				method: 'PATCH',
@@ -158,7 +159,7 @@ export const adminIpAllowlistAPI = {
 	 * DELETE /api/admin/ip-allowlist/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/ip-allowlist/${encodeURIComponent(id)}`,
 			{
 				method: 'DELETE',
@@ -179,7 +180,7 @@ export const adminIpAllowlistAPI = {
 	 * POST /api/admin/ip-allowlist/:id/enable
 	 */
 	async enable(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/ip-allowlist/${encodeURIComponent(id)}/enable`,
 			{
 				method: 'POST',
@@ -200,7 +201,7 @@ export const adminIpAllowlistAPI = {
 	 * POST /api/admin/ip-allowlist/:id/disable
 	 */
 	async disable(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/ip-allowlist/${encodeURIComponent(id)}/disable`,
 			{
 				method: 'POST',
@@ -221,7 +222,7 @@ export const adminIpAllowlistAPI = {
 	 * POST /api/admin/ip-allowlist/check
 	 */
 	async checkIp(ip: string): Promise<IpCheckResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/ip-allowlist/check`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/ip-allowlist/check`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',

@@ -5,13 +5,14 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 
 /**
  * GET /ciba/test
  * Simple test page for CIBA flow
  */
 export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
-  const issuerUrl = c.env.ISSUER_URL || 'http://localhost:8787';
+  const issuerUrl = getRequestIssuer(c);
 
   const html = `
 <!DOCTYPE html>

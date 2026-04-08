@@ -113,6 +113,7 @@ import {
   type IdJagConfig,
   DEFAULT_ID_JAG_CONFIG,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 
 // ===== RFC 6750 Compliant Error Response Helpers =====
 // RFC 6750 Section 3: WWW-Authenticate header MUST be included in 401 responses
@@ -890,7 +891,7 @@ async function handleAuthorizationCodeGrant(
     // private_key_jwt or client_secret_jwt authentication
     const assertionValidation = await validateClientAssertion(
       client_assertion,
-      `${c.env.ISSUER_URL}/token`,
+      `${getRequestIssuer(c)}/token`,
       clientMetadata as unknown as import('@authrim/ar-lib-core').ClientMetadata
     );
 
@@ -1087,9 +1088,9 @@ async function handleAuthorizationCodeGrant(
     // Phase 8.2: Custom Claims (dynamic via [key: string]: unknown)
     [key: string]: unknown;
   } = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: authCodeData.sub,
-    aud: c.env.ISSUER_URL, // For MVP, access token audience is the issuer
+    aud: getRequestIssuer(c), // For MVP, access token audience is the issuer
     scope: authCodeData.scope,
     client_id: client_id,
     // Phase 1 RBAC: Add RBAC claims to access token
@@ -1291,7 +1292,7 @@ async function handleAuthorizationCodeGrant(
   // Note: ds_hash is included when Native SSO is enabled (OIDC Native SSO 1.0)
   const idTokenClaims = {
     ...idTokenCustomClaims, // Custom claims (first, so standard claims override on collision)
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: authCodeData.sub,
     aud: client_id,
     nonce: authCodeData.nonce,
@@ -1411,7 +1412,7 @@ async function handleAuthorizationCodeGrant(
 
   try {
     const refreshTokenClaims = {
-      iss: c.env.ISSUER_URL,
+      iss: getRequestIssuer(c),
       sub: authCodeData.sub,
       aud: client_id,
       scope: authCodeData.scope,
@@ -1754,7 +1755,7 @@ async function handleRefreshTokenGrant(
     // private_key_jwt or client_secret_jwt authentication
     const assertionValidation = await validateClientAssertion(
       client_assertion,
-      `${c.env.ISSUER_URL}/token`,
+      `${getRequestIssuer(c)}/token`,
       typedClient
     );
 
@@ -1837,7 +1838,7 @@ async function handleRefreshTokenGrant(
 
   // Verify refresh token signature
   try {
-    await verifyToken(refreshTokenValue, publicKey, c.env.ISSUER_URL, {
+    await verifyToken(refreshTokenValue, publicKey, getRequestIssuer(c), {
       audience: client_id,
     });
   } catch (error) {
@@ -1981,9 +1982,9 @@ async function handleRefreshTokenGrant(
       authrim_permissions?: string[];
       [key: string]: unknown;
     } = {
-      iss: c.env.ISSUER_URL,
+      iss: getRequestIssuer(c),
       sub: refreshTokenData.sub,
-      aud: c.env.ISSUER_URL,
+      aud: getRequestIssuer(c),
       scope: grantedScope,
       client_id: client_id,
       // Phase 2 RBAC: Add RBAC claims to access token
@@ -2023,7 +2024,7 @@ async function handleRefreshTokenGrant(
   try {
     const atHash = await calculateAtHash(accessToken);
     const idTokenClaims = {
-      iss: c.env.ISSUER_URL,
+      iss: getRequestIssuer(c),
       sub: refreshTokenData.sub,
       aud: client_id,
       at_hash: atHash,
@@ -2104,7 +2105,7 @@ async function handleRefreshTokenGrant(
 
       // Create JWT with new version (rtv claim)
       const refreshTokenClaims = {
-        iss: c.env.ISSUER_URL,
+        iss: getRequestIssuer(c),
         sub: refreshTokenData.sub,
         aud: client_id,
         scope: grantedScope,
@@ -2298,7 +2299,11 @@ async function handleJWTBearerGrant(
   }
 
   // Validate JWT assertion
-  const validation = await validateJWTBearerAssertion(assertion, c.env.ISSUER_URL, trustedIssuers);
+  const validation = await validateJWTBearerAssertion(
+    assertion,
+    getRequestIssuer(c),
+    trustedIssuers
+  );
 
   if (!validation.valid || !validation.claims) {
     return c.json(
@@ -2360,9 +2365,9 @@ async function handleJWTBearerGrant(
   // Generate Access Token
   // For JWT Bearer flow, the subject (sub) comes from the assertion
   const accessTokenClaims = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: claims.sub, // Subject from JWT assertion
-    aud: c.env.ISSUER_URL,
+    aud: getRequestIssuer(c),
     scope: grantedScope,
     client_id: claims.iss, // Issuer acts as client_id for service accounts
   };
@@ -2671,7 +2676,7 @@ async function handleDeviceCodeGrant(
 
   // Generate ID Token
   const idTokenClaims = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: metadata.sub,
     aud: client_id,
     nonce: undefined, // Device flow doesn't use nonce
@@ -2709,9 +2714,9 @@ async function handleDeviceCodeGrant(
     authrim_permissions?: string[];
     [key: string]: unknown;
   } = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: metadata.sub,
-    aud: c.env.ISSUER_URL,
+    aud: getRequestIssuer(c),
     scope: metadata.scope,
     client_id,
     // Phase 2 RBAC: Add RBAC claims to access token
@@ -3109,7 +3114,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   // Validate DPoP proof if provided
   if (dpopProof) {
     const { validateDPoPProof: validateDPoP } = await import('@authrim/ar-lib-core');
-    const dpopValidation = await validateDPoP(dpopProof, 'POST', c.env.ISSUER_URL + '/token');
+    const dpopValidation = await validateDPoP(dpopProof, 'POST', getRequestIssuer(c) + '/token');
 
     if (dpopValidation.valid && dpopValidation.jkt) {
       dpopJkt = dpopValidation.jkt;
@@ -3168,9 +3173,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     authrim_permissions?: string[];
     [key: string]: unknown;
   } = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: metadata.sub!,
-    aud: c.env.ISSUER_URL,
+    aud: getRequestIssuer(c),
     scope: metadata.scope,
     client_id: metadata.client_id,
     ...(dpopJkt && { cnf: { jkt: dpopJkt } }),
@@ -3198,7 +3203,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   // Create ID token with at_hash
   const idTokenClaims = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: metadata.sub!,
     aud: metadata.client_id,
     ...(metadata.nonce && { nonce: metadata.nonce }),
@@ -3255,9 +3260,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   );
 
   const refreshTokenClaims = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: metadata.sub!,
-    aud: c.env.ISSUER_URL,
+    aud: getRequestIssuer(c),
     client_id: metadata.client_id,
     scope: metadata.scope,
   };
@@ -3674,7 +3679,7 @@ async function handleTokenExchangeGrant(
   ) {
     const assertionValidation = await validateClientAssertion(
       client_assertion,
-      `${c.env.ISSUER_URL}/token`,
+      `${getRequestIssuer(c)}/token`,
       typedClient
     );
     if (!assertionValidation.valid) {
@@ -3894,7 +3899,7 @@ async function handleTokenExchangeGrant(
   if (!isIdJagTokenRequest && publicKey) {
     try {
       // Verify signature and issuer only; audience is validated in the authorization check below
-      await verifyToken(subject_token, publicKey, c.env.ISSUER_URL, {
+      await verifyToken(subject_token, publicKey, getRequestIssuer(c), {
         skipAudienceCheck: true, // We validate audience ourselves in Token Exchange
       });
     } catch (error) {
@@ -4040,7 +4045,7 @@ async function handleTokenExchangeGrant(
     targetAudiences = resources;
     audienceSource = 'resource_param';
   } else {
-    targetAudiences = [c.env.ISSUER_URL];
+    targetAudiences = [getRequestIssuer(c)];
     audienceSource = 'default';
   }
 
@@ -4122,7 +4127,7 @@ async function handleTokenExchangeGrant(
           actorTokenKid
         );
         // Verify signature and issuer only; audience is validated below
-        await verifyToken(actor_token, actorPublicKey, c.env.ISSUER_URL, {
+        await verifyToken(actor_token, actorPublicKey, getRequestIssuer(c), {
           skipAudienceCheck: true, // We validate audience ourselves after this
         });
       } catch (error) {
@@ -4181,7 +4186,7 @@ async function handleTokenExchangeGrant(
       }
 
       const isActorAudValid =
-        actorAudArray.includes(client_id!) || actorAudArray.includes(c.env.ISSUER_URL);
+        actorAudArray.includes(client_id!) || actorAudArray.includes(getRequestIssuer(c));
 
       if (!isActorAudValid) {
         return c.json(
@@ -4273,7 +4278,7 @@ async function handleTokenExchangeGrant(
     : expiresIn;
 
   const accessTokenClaims: Record<string, unknown> = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: subjectSub,
     aud: audClaim,
     scope: grantedScope,
@@ -4601,7 +4606,7 @@ async function handleNativeSSOTokenExchange(
       getTenantIdFromContext(c),
       idTokenKid
     );
-    await verifyToken(idToken, publicKey, c.env.ISSUER_URL, {
+    await verifyToken(idToken, publicKey, getRequestIssuer(c), {
       skipAudienceCheck: true, // We validate audience ourselves
     });
   } catch (error) {
@@ -4677,7 +4682,8 @@ async function handleNativeSSOTokenExchange(
   const idTokenAudArray = Array.isArray(idTokenAud) ? idTokenAud : idTokenAud ? [idTokenAud] : [];
   const idTokenClientId = idTokenPayload.client_id as string | undefined;
   const originalClientId =
-    idTokenClientId || (idTokenAudArray[0] !== c.env.ISSUER_URL ? idTokenAudArray[0] : undefined);
+    idTokenClientId ||
+    (idTokenAudArray[0] !== getRequestIssuer(c) ? idTokenAudArray[0] : undefined);
 
   const isSameClient = originalClientId === clientId || idTokenAudArray.includes(clientId);
 
@@ -4800,9 +4806,9 @@ async function handleNativeSSOTokenExchange(
 
   // Build access token claims
   const accessTokenClaims: Record<string, unknown> = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: idTokenSub,
-    aud: c.env.ISSUER_URL,
+    aud: getRequestIssuer(c),
     scope: grantedScope,
     client_id: clientId,
     // Include session_id if available from device_secret
@@ -4855,7 +4861,7 @@ async function handleNativeSSOTokenExchange(
   const authTime = idTokenPayload.auth_time as number | undefined;
   const acr = idTokenPayload.acr as string | undefined;
   const newIdTokenClaims: Record<string, unknown> = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: idTokenSub,
     aud: clientId,
     at_hash: newAtHash,
@@ -5072,7 +5078,7 @@ async function handleClientCredentialsGrant(
   ) {
     const assertionValidation = await validateClientAssertion(
       client_assertion,
-      `${c.env.ISSUER_URL}/token`,
+      `${getRequestIssuer(c)}/token`,
       typedClient
     );
     if (!assertionValidation.valid) {
@@ -5128,7 +5134,7 @@ async function handleClientCredentialsGrant(
   const grantedScope = grantedScopes.join(' ');
 
   // 5. Audience determination
-  const targetAudience = requestedAudience || typedClient.default_audience || c.env.ISSUER_URL;
+  const targetAudience = requestedAudience || typedClient.default_audience || getRequestIssuer(c);
 
   // 6. Generate access token
   let privateKey: CryptoKey;
@@ -5175,7 +5181,7 @@ async function handleClientCredentialsGrant(
   // Build access token claims
   // For M2M, subject is the client itself with "client:" prefix for namespace separation
   const accessTokenClaims: Record<string, unknown> = {
-    iss: c.env.ISSUER_URL,
+    iss: getRequestIssuer(c),
     sub: `client:${client_id}`, // Namespace separation from user subjects
     aud: targetAudience,
     scope: grantedScope,

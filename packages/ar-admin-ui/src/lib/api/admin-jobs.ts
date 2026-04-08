@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Jobs API Client
  *
@@ -166,7 +167,7 @@ export const adminJobsAPI = {
 
 		const url = `${API_BASE_URL}/api/admin/jobs${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -185,7 +186,7 @@ export const adminJobsAPI = {
 	 * Get job status
 	 */
 	async get(jobId: string): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/${jobId}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/${jobId}`, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -204,7 +205,7 @@ export const adminJobsAPI = {
 	 * Get job result
 	 */
 	async getResult(jobId: string): Promise<JobResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/${jobId}/result`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/${jobId}/result`, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -223,7 +224,7 @@ export const adminJobsAPI = {
 	 * Get presigned upload URL for user import
 	 */
 	async getUploadUrl(filename: string): Promise<UploadUrlResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/users/import/upload-url`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/import/upload-url`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -243,7 +244,7 @@ export const adminJobsAPI = {
 	 * Create user import job
 	 */
 	async createUserImport(params: { file_key: string; options?: UserImportOptions }): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/users/import`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/import`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -266,7 +267,7 @@ export const adminJobsAPI = {
 		operations: BulkUpdateOperation[];
 		dry_run?: boolean;
 	}): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/users/bulk-update`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/bulk-update`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -294,7 +295,7 @@ export const adminJobsAPI = {
 			client_ids?: string[];
 		};
 	}): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/reports/generate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/reports/generate`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -320,7 +321,7 @@ export const adminJobsAPI = {
 			user_ids: string[];
 		}
 	): Promise<Job> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/jobs/organizations/${organizationId}/bulk-members`,
 			{
 				method: 'POST',

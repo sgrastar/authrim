@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminReBACAPI,
 		type ObjectTypeSummary,
@@ -27,6 +28,7 @@
 	let checkResult: PermissionCheckResult | null = $state(null);
 	let checking = $state(false);
 	let checkError = $state('');
+	let loadedTenantId = $state('');
 
 	async function loadObjectTypes() {
 		loading = true;
@@ -112,7 +114,16 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		checkResult = null;
+		checkError = '';
 		loadRebacStatus();
 		loadObjectTypes();
 	});

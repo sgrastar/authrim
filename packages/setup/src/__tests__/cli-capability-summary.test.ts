@@ -62,7 +62,7 @@ describe('buildCliCapabilityRows', () => {
       label: 'カスタムドメイン',
       status: 'ng',
     });
-    expect(summary.rows[1]?.description).toContain('Cloudflare Zone が見つからない');
+    expect(summary.rows[1]?.description).toContain('Cloudflare Zone が見つかりません');
   });
 
   it('localizes the review label for supported non-English locales', () => {

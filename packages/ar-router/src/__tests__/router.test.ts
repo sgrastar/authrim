@@ -10,7 +10,7 @@
  * 6. Health check endpoint
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import app from '../index';
 
 // Mock fetcher that tracks which service binding was called
@@ -41,6 +41,10 @@ describe('Router Worker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockEnv = createMockEnv();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('Health Check', () => {
@@ -500,6 +504,117 @@ describe('Router Worker', () => {
 
       const forwardedRequest = mockEnv.OP_USERINFO.fetch.mock.calls[0][0];
       expect(forwardedRequest.headers.get('Authorization')).toBe('Bearer test-token');
+    });
+
+    it('should allow POST from tenant subdomain origin in multi-tenant mode', async () => {
+      const mtEnv = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'acme',
+      };
+      const req = new Request('https://acme.example.com/login', {
+        method: 'POST',
+        headers: {
+          Host: 'acme.example.com',
+          Origin: 'https://acme.example.com',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'email=user%40example.com',
+      });
+
+      const res = await app.fetch(req, mtEnv);
+
+      // Should NOT return 403 csrf_validation_failed
+      expect(res.status).not.toBe(403);
+    });
+
+    it('should block POST from a foreign origin in multi-tenant mode', async () => {
+      const mtEnv = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'acme',
+      };
+      const req = new Request('https://acme.example.com/login', {
+        method: 'POST',
+        headers: {
+          Host: 'acme.example.com',
+          Origin: 'https://evil.attacker.com',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'email=user%40example.com',
+      });
+
+      const res = await app.fetch(req, mtEnv);
+      const body = (await res.json()) as { error: string };
+
+      expect(res.status).toBe(403);
+      expect(body.error).toBe('csrf_validation_failed');
+    });
+
+    it('should bypass router CSRF for initial admin setup API and forward the request', async () => {
+      const envWithOrigins = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://login.example.com',
+      };
+      const req = new Request('https://example.com/api/admin-init-setup/initialize', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://example.com',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          setup_token: 'token',
+          email: 'admin@example.com',
+          csrf_token: 'csrf',
+        }),
+      });
+
+      const res = await app.fetch(req, envWithOrigins);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      const forwardedRequest = mockEnv.OP_AUTH.fetch.mock.calls[0][0];
+      expect(new URL(forwardedRequest.url).pathname).toBe('/api/admin-init-setup/initialize');
+    });
+
+    it('should proxy login-ui redirects without following them server-side', async () => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(null, {
+          status: 303,
+          headers: {
+            Location: 'https://first.example.com/login',
+          },
+        })
+      );
+
+      const envWithLoginUi = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://example-login.pages.dev',
+      };
+
+      const req = new Request('https://example.com/discover?/resolve', {
+        method: 'POST',
+        headers: {
+          Host: 'example.com',
+          Origin: 'https://example.com',
+          Referer: 'https://example.com/discover',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'mode=tenant_code&value=first',
+      });
+
+      const res = await app.fetch(req, envWithLoginUi);
+
+      expect(res.status).toBe(303);
+      expect(res.headers.get('Location')).toBe('https://first.example.com/login');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const proxiedRequest = fetchMock.mock.calls[0]?.[0];
+      expect(proxiedRequest).toBeInstanceOf(Request);
+      expect((proxiedRequest as Request).redirect).toBe('manual');
     });
   });
 });

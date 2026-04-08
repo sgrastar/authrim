@@ -24,9 +24,9 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
-  buildIssuerUrl,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
+import { getRequestAwareIssuerUrl } from './request-issuer';
 
 /**
  * Token Revocation Endpoint Handler
@@ -91,7 +91,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // RFC 7009 Section 2.1: The authorization server first validates the client credentials
   // Fetch client to verify client_secret via Repository
   const tenantId = getTenantIdFromContext(c);
-  const issuerUrl = buildIssuerUrl(c.env, tenantId);
+  const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
@@ -467,7 +467,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   // Fetch and verify client
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const issuerUrl = buildIssuerUrl(c.env, tenantId);
+  const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
   const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
   if (!clientRecord) {

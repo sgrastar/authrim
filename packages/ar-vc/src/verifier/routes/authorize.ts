@@ -15,6 +15,7 @@ import type { Env, VPRequestState } from '../../types';
 import { generateSecureNonce } from '../../utils/crypto';
 import { getVPRequestStoreForNewRequest } from '../../utils/vp-request-sharding';
 import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /** Supported client_id_scheme values per OID4VP */
 type ClientIdScheme = 'pre-registered' | 'did' | 'redirect_uri';
@@ -151,7 +152,7 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
     const expiresAt = now + expirySeconds * 1000;
 
     // Build response URI
-    const baseUrl = new URL(c.req.url).origin;
+    const baseUrl = getRequestIssuerUrl(c);
     const responseUri = body.response_uri || `${baseUrl}/vp/response`;
 
     // Get region-sharded DO stub and request ID

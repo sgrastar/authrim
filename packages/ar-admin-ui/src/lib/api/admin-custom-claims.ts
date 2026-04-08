@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Custom Claims Schema API Client
  *
@@ -181,7 +182,7 @@ export const adminCustomClaimsAPI = {
 		if (params?.is_system) searchParams.set('is_system', params.is_system);
 		if (params?.operation_status) searchParams.set('operation_status', params.operation_status);
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims?${searchParams}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims?${searchParams}`, {
 			method: 'GET',
 			credentials: 'include'
 		});
@@ -198,7 +199,7 @@ export const adminCustomClaimsAPI = {
 	 * Create a new custom claim schema
 	 */
 	async createSchema(data: CustomClaimSchemaInput): Promise<{ schema: CustomClaimSchema }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: { 'Content-Type': 'application/json' },
@@ -217,7 +218,7 @@ export const adminCustomClaimsAPI = {
 	 * Get reserved OIDC claim names
 	 */
 	async getReservedNames(): Promise<{ reserved_names: string[] }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims/reserved-names`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/reserved-names`, {
 			method: 'GET',
 			credentials: 'include'
 		});
@@ -233,7 +234,7 @@ export const adminCustomClaimsAPI = {
 	 * Get statistics
 	 */
 	async getStats(): Promise<CustomClaimStats> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims/stats`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/stats`, {
 			method: 'GET',
 			credentials: 'include'
 		});
@@ -249,7 +250,7 @@ export const adminCustomClaimsAPI = {
 	 * Get a single schema with user count
 	 */
 	async getSchema(id: string): Promise<CustomClaimGetResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/${id}`, {
 			method: 'GET',
 			credentials: 'include'
 		});
@@ -269,7 +270,7 @@ export const adminCustomClaimsAPI = {
 		id: string,
 		data: CustomClaimSchemaInput
 	): Promise<{ schema: CustomClaimSchema }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/${id}`, {
 			method: 'PUT',
 			credentials: 'include',
 			headers: { 'Content-Type': 'application/json' },
@@ -288,7 +289,7 @@ export const adminCustomClaimsAPI = {
 	 * Delete a schema (2-phase cascade)
 	 */
 	async deleteSchema(id: string): Promise<{ success: boolean; deleted_id: string }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/${id}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});
@@ -305,7 +306,7 @@ export const adminCustomClaimsAPI = {
 	 * Rename field_key (2-phase)
 	 */
 	async renameSchema(id: string, newFieldKey: string): Promise<RenameResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims/${id}/rename`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/${id}/rename`, {
 			method: 'PATCH',
 			credentials: 'include',
 			headers: { 'Content-Type': 'application/json' },
@@ -326,7 +327,7 @@ export const adminCustomClaimsAPI = {
 	async retryOperation(
 		id: string
 	): Promise<{ success: boolean; action: string; schema?: CustomClaimSchema }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/custom-claims/${id}/retry`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/${id}/retry`, {
 			method: 'POST',
 			credentials: 'include'
 		});

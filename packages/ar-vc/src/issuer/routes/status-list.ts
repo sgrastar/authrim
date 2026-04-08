@@ -15,6 +15,7 @@ import type { Context } from 'hono';
 import type { JWK } from 'jose';
 import type { Env } from '../../types';
 import { getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /**
  * Status List Credential response format
@@ -235,16 +236,7 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
     });
   }
 
-  // Determine issuer URL from environment
-  // SECURITY: Never trust Host header - always use configured ISSUER_IDENTIFIER
-  const issuerUrl = c.env.ISSUER_IDENTIFIER;
-  if (!issuerUrl) {
-    log.error('ISSUER_IDENTIFIER is not configured');
-    return c.json(
-      { error: 'temporarily_unavailable', error_description: 'Service temporarily unavailable' },
-      503
-    );
-  }
+  const issuerUrl = getRequestIssuerUrl(c);
 
   try {
     // Generate JWT credential

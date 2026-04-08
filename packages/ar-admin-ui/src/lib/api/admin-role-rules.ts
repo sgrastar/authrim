@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Role Assignment Rules API Client
  *
@@ -187,7 +188,7 @@ export const adminRoleRulesAPI = {
 		if (params.role_id) searchParams.set('role_id', params.role_id);
 
 		const query = searchParams.toString();
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/role-assignment-rules${query ? '?' + query : ''}`,
 			{ credentials: 'include' }
 		);
@@ -205,7 +206,7 @@ export const adminRoleRulesAPI = {
 	 * Get a single rule by ID
 	 */
 	async get(id: string): Promise<RoleAssignmentRule> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/role-assignment-rules/${encodeURIComponent(id)}`,
 			{ credentials: 'include' }
 		);
@@ -223,7 +224,7 @@ export const adminRoleRulesAPI = {
 	 * Create a new role assignment rule
 	 */
 	async create(data: CreateRoleAssignmentRuleRequest): Promise<RoleAssignmentRule> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/role-assignment-rules`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/role-assignment-rules`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -243,7 +244,7 @@ export const adminRoleRulesAPI = {
 	 * Update an existing rule
 	 */
 	async update(id: string, data: UpdateRoleAssignmentRuleRequest): Promise<RoleAssignmentRule> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/role-assignment-rules/${encodeURIComponent(id)}`,
 			{
 				method: 'PUT',
@@ -266,7 +267,7 @@ export const adminRoleRulesAPI = {
 	 * Delete a rule
 	 */
 	async delete(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/role-assignment-rules/${encodeURIComponent(id)}`,
 			{
 				method: 'DELETE',
@@ -287,7 +288,7 @@ export const adminRoleRulesAPI = {
 	 * Test a single rule against a context
 	 */
 	async testRule(id: string, context: RuleEvaluationContext): Promise<RuleTestResult> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/role-assignment-rules/${encodeURIComponent(id)}/test`,
 			{
 				method: 'POST',
@@ -308,7 +309,7 @@ export const adminRoleRulesAPI = {
 	 * Evaluate all rules against a context
 	 */
 	async evaluateRules(context: RuleEvaluationContext): Promise<RuleEvaluationResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/role-assignment-rules/evaluate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/role-assignment-rules/evaluate`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',

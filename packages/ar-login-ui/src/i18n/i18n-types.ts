@@ -244,6 +244,10 @@ type RootTranslation = {
 	 */
 	discover_selectTenant: string
 	/**
+	 * N​o​ ​a​c​c​o​u​n​t​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​.
+	 */
+	discover_error_emailNotFound: string
+	/**
 	 * T​h​i​s​ ​e​m​a​i​l​ ​d​o​m​a​i​n​ ​i​s​ ​n​o​t​ ​m​a​p​p​e​d​ ​t​o​ ​a​ ​t​e​n​a​n​t​.
 	 */
 	discover_error_emailDomainNotFound: string
@@ -1464,6 +1468,10 @@ export type TranslationFunctions = {
 	 * Select a tenant
 	 */
 	discover_selectTenant: () => LocalizedString
+	/**
+	 * No account matched that email address.
+	 */
+	discover_error_emailNotFound: () => LocalizedString
 	/**
 	 * This email domain is not mapped to a tenant.
 	 */

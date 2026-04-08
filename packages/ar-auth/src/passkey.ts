@@ -95,6 +95,58 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 
+function normalizeOrigin(origin: string): string {
+  return origin.replace(/\/$/, '');
+}
+
+function isLocalHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+/**
+ * Allow explicitly configured origins and the current request origin.
+ *
+ * Same-origin WebAuthn requests should not require duplicating the tenant host
+ * in tenant.allowed_origins, especially in multi-tenant subdomain deployments.
+ */
+function isAllowedPasskeyRequestOrigin(
+  c: Context<{ Bindings: Env }>,
+  originHeader: string | undefined,
+  allowedOrigins: string[]
+): boolean {
+  if (!originHeader) {
+    return false;
+  }
+
+  const normalizedOrigin = normalizeOrigin(originHeader);
+  if (isAllowedOrigin(normalizedOrigin, allowedOrigins)) {
+    return true;
+  }
+
+  try {
+    if (normalizeOrigin(new URL(c.req.url).origin) === normalizedOrigin) {
+      return true;
+    }
+  } catch {
+    // Ignore malformed or unavailable request URL and fall back to Host header.
+  }
+
+  const host = c.req.header('host');
+  if (!host) {
+    return false;
+  }
+
+  const normalizedHost = host.trim().toLowerCase();
+  const candidates = new Set<string>([`https://${normalizedHost}`]);
+
+  const hostnameOnly = normalizedHost.split(':')[0];
+  if (isLocalHost(hostnameOnly)) {
+    candidates.add(`http://${normalizedHost}`);
+  }
+
+  return candidates.has(normalizedOrigin);
+}
+
 // RP (Relying Party) configuration
 const RP_NAME = 'Authrim';
 
@@ -162,7 +214,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -380,7 +432,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -543,7 +595,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -725,7 +777,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // Reject unauthorized origins
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 

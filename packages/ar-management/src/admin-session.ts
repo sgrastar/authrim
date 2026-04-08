@@ -14,7 +14,6 @@ import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
-  buildIssuerUrl,
   parseAllowedOrigins,
   isAllowedOrigin,
   getLogger,
@@ -30,6 +29,7 @@ import {
   // Cookie Configuration
   getAdminCookieSameSite,
 } from '@authrim/ar-lib-core';
+import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 /**
  * Check current admin session status
@@ -180,7 +180,7 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Skipping this check when headers are absent would allow CSRF attacks.
     const origin = c.req.header('Origin');
     const allowedOriginsEnv =
-      c.env.ALLOWED_ORIGINS || buildIssuerUrl(c.env, getTenantIdFromContext(c));
+      c.env.ALLOWED_ORIGINS || getCanonicalTenantBaseUrl(c.env, getTenantIdFromContext(c));
     const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
 
     if (origin) {

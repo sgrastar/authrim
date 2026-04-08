@@ -1,3 +1,5 @@
+import { adminFetch } from '$lib/api/admin-request';
+
 /**
  * Admin Tenants API Client
  *
@@ -59,8 +61,8 @@ export const adminTenantsAPI = {
 	 * List all tenants
 	 */
 	async list(): Promise<TenantListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -74,9 +76,12 @@ export const adminTenantsAPI = {
 	 * Get a single tenant by ID
 	 */
 	async get(id: string): Promise<Tenant> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				skipTenantHeader: true
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -89,10 +94,10 @@ export const adminTenantsAPI = {
 	 * Create a new tenant
 	 */
 	async create(data: CreateTenantRequest): Promise<Tenant> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
+			skipTenantHeader: true,
 			body: JSON.stringify(data)
 		});
 
@@ -108,12 +113,15 @@ export const adminTenantsAPI = {
 	 * Note: id and is_default cannot be changed via this endpoint
 	 */
 	async update(id: string, data: UpdateTenantRequest): Promise<Tenant> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				method: 'PATCH',
+				includeJsonContentType: true,
+				skipTenantHeader: true,
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -129,10 +137,13 @@ export const adminTenantsAPI = {
 	 * The 'default' tenant cannot be deleted.
 	 */
 	async delete(id: string): Promise<TenantDeleteResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				method: 'DELETE',
+				skipTenantHeader: true
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -145,11 +156,11 @@ export const adminTenantsAPI = {
 	 * Set a tenant as the default tenant
 	 */
 	async setDefault(id: string): Promise<Tenant> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/set-default`,
 			{
 				method: 'POST',
-				credentials: 'include'
+				skipTenantHeader: true
 			}
 		);
 

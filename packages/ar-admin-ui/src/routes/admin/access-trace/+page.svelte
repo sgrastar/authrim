@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { Modal } from '$lib/components';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminAccessTraceAPI,
 		type AccessTraceEntry,
@@ -37,6 +39,10 @@
 	// Detail view
 	let selectedEntry = $state<AccessTraceEntry | null>(null);
 	let showDetailDialog = $state(false);
+
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
 
 	// =============================================================================
 	// Data Loading
@@ -101,7 +107,7 @@
 	// Load on mount and when filters change
 	$effect(() => {
 		// Track dependencies by using them in a condition
-		const _deps = [selectedPeriod, filterDecision, currentPage];
+		const _deps = [settingsContext.tenantId, selectedPeriod, filterDecision, currentPage];
 		if (_deps) {
 			loadData();
 		}

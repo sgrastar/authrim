@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin ABAC API Client (for Admin Operators)
  *
@@ -115,7 +116,7 @@ export const adminAdminAbacAPI = {
 		if (params?.offset) queryParams.set('offset', params.offset.toString());
 
 		const url = `${API_BASE_URL}/api/admin/admin-attributes${queryParams.toString() ? `?${queryParams}` : ''}`;
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -132,7 +133,7 @@ export const adminAdminAbacAPI = {
 	 * GET /api/admin/admin-attributes/:id
 	 */
 	async getAttribute(id: string): Promise<AdminAttribute> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-attributes/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-attributes/${id}`, {
 			credentials: 'include'
 		});
 
@@ -149,7 +150,7 @@ export const adminAdminAbacAPI = {
 	 * POST /api/admin/admin-attributes
 	 */
 	async createAttribute(input: AdminAttributeCreateInput): Promise<AdminAttribute> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-attributes`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-attributes`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -171,7 +172,7 @@ export const adminAdminAbacAPI = {
 	 * PATCH /api/admin/admin-attributes/:id
 	 */
 	async updateAttribute(id: string, input: AdminAttributeUpdateInput): Promise<AdminAttribute> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-attributes/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-attributes/${id}`, {
 			method: 'PATCH',
 			headers: {
 				'Content-Type': 'application/json'
@@ -193,7 +194,7 @@ export const adminAdminAbacAPI = {
 	 * DELETE /api/admin/admin-attributes/:id
 	 */
 	async deleteAttribute(id: string): Promise<void> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-attributes/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-attributes/${id}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});
@@ -209,7 +210,7 @@ export const adminAdminAbacAPI = {
 	 * GET /api/admin/admins/:userId/attributes
 	 */
 	async getAttributesByUser(userId: string): Promise<ListResponse<AdminAttributeValue>> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${userId}/attributes`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${userId}/attributes`, {
 			credentials: 'include'
 		});
 
@@ -230,7 +231,7 @@ export const adminAdminAbacAPI = {
 		attributeId: string,
 		input: AdminAttributeValueSetInput
 	): Promise<AdminAttributeValue> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${userId}/attributes/${attributeId}`,
 			{
 				method: 'PUT',
@@ -260,7 +261,7 @@ export const adminAdminAbacAPI = {
 		valueIndex?: number
 	): Promise<void> {
 		const queryParams = valueIndex !== undefined ? `?value_index=${valueIndex}` : '';
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${userId}/attributes/${attributeId}${queryParams}`,
 			{
 				method: 'DELETE',

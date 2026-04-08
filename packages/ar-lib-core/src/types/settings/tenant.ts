@@ -21,6 +21,8 @@ export interface TenantSettings {
 
   // CORS Settings
   'tenant.allowed_origins': string;
+  'tenant.allowed_domains': string;
+  'tenant.allowed_identifiers': string;
 
   // Branding
   'tenant.name': string;
@@ -89,6 +91,24 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     label: 'Allowed Origins (CORS)',
     description:
       'Comma-separated list of allowed origins for Direct Auth API. Supports wildcards (e.g., https://*.pages.dev). If not set, all origins are allowed without credentials.',
+    visibility: 'admin',
+  },
+  'tenant.allowed_domains': {
+    key: 'tenant.allowed_domains',
+    type: 'string',
+    default: '',
+    label: 'Allowed Domains',
+    description:
+      'Comma-separated list of exact request hosts allowed for this tenant. Empty keeps the canonical issuer host only.',
+    visibility: 'admin',
+  },
+  'tenant.allowed_identifiers': {
+    key: 'tenant.allowed_identifiers',
+    type: 'string',
+    default: '',
+    label: 'Allowed Identifiers',
+    description:
+      'Comma-separated list of exact issuer/verifier identifiers allowed for this tenant. Empty disables additional identifier restrictions.',
     visibility: 'admin',
   },
 
@@ -198,6 +218,8 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.user_id_format': 'nanoid',
   // CORS Settings
   'tenant.allowed_origins': '',
+  'tenant.allowed_domains': '',
+  'tenant.allowed_identifiers': '',
   // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',

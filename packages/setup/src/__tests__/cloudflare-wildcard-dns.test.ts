@@ -288,7 +288,7 @@ describe('ensureWildcardDnsForMultiTenant', () => {
     );
   });
 
-  it('warns and continues when wildcard DNS cannot be verified through the API', async () => {
+  it('fails when wildcard DNS cannot be verified through the API', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
     fetchMock
@@ -296,29 +296,30 @@ describe('ensureWildcardDnsForMultiTenant', () => {
       .mockResolvedValueOnce(jsonResponse({ success: false }, 403));
     const onProgress = vi.fn();
 
-    await cloudflare.ensureWildcardDnsForMultiTenant(
-      {
-        tenant: {
-          multiTenant: true,
-          baseDomain: 'test.example.com',
-        },
-        urls: {
-          api: {
-            zoneId: 'zone-123',
+    await expect(
+      cloudflare.ensureWildcardDnsForMultiTenant(
+        {
+          tenant: {
+            multiTenant: true,
+            baseDomain: 'test.example.com',
+          },
+          urls: {
+            api: {
+              zoneId: 'zone-123',
+            },
           },
         },
-      },
-      onProgress
+        onProgress
+      )
+    ).rejects.toThrow(
+      'Token lacks zone:read or dns:edit permission to verify/create wildcard DNS record for *.test.example.com'
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenCalledTimes(1);
     expect(onProgress).toHaveBeenNthCalledWith(
       1,
       'Ensuring wildcard DNS for *.test.example.com...'
-    );
-    expect(onProgress).toHaveBeenNthCalledWith(
-      2,
-      '⚠ Wildcard DNS could not be verified via API permissions. Continuing under the assumption that *.test.example.com -> test.example.com was created manually.'
     );
   });
 });

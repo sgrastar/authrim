@@ -20,6 +20,7 @@
 		userName?: string;
 		userPicture?: string | null;
 		lastLoginAt?: number | null;
+		hideTenantSelector?: boolean;
 	}
 
 	let {
@@ -31,7 +32,8 @@
 		userEmail,
 		userName,
 		userPicture,
-		lastLoginAt
+		lastLoginAt,
+		hideTenantSelector = false
 	}: Props = $props();
 
 	// User dropdown state
@@ -104,7 +106,7 @@
 	</div>
 
 	<div class="header-right">
-		{#if tenants.length > 1}
+		{#if tenants.length > 1 && !hideTenantSelector}
 			<div class="header-tenant-selector">
 				<span class="tenant-selector-label">Tenant:</span>
 				<select

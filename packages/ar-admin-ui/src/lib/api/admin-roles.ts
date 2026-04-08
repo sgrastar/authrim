@@ -5,7 +5,7 @@
  * Supports system, builtin, and custom roles with permission management.
  */
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 /**
  * Role type classification
@@ -361,9 +361,7 @@ export const adminRolesAPI = {
 	 * List all roles
 	 */
 	async list(): Promise<RolesListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/roles`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/roles`);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -376,9 +374,7 @@ export const adminRolesAPI = {
 	 * Get role details by ID
 	 */
 	async get(id: string): Promise<RoleDetailResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/roles/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/roles/${encodeURIComponent(id)}`);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -405,10 +401,9 @@ export const adminRolesAPI = {
 	 * Create a new custom role
 	 */
 	async create(data: CreateRoleRequest): Promise<Role> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/roles`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/roles`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -423,10 +418,9 @@ export const adminRolesAPI = {
 	 * Update an existing custom role
 	 */
 	async update(id: string, data: UpdateRoleRequest): Promise<Role> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/roles/${encodeURIComponent(id)}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/roles/${encodeURIComponent(id)}`, {
 			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -441,9 +435,8 @@ export const adminRolesAPI = {
 	 * Delete a custom role
 	 */
 	async delete(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/roles/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/roles/${encodeURIComponent(id)}`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {
@@ -457,11 +450,8 @@ export const adminRolesAPI = {
 	 * Get user's role assignments
 	 */
 	async getUserRoles(userId: string): Promise<UserRolesResponse> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/roles`,
-			{
-				credentials: 'include'
-			}
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/roles`
 		);
 
 		if (!response.ok) {
@@ -475,12 +465,11 @@ export const adminRolesAPI = {
 	 * Assign a role to a user
 	 */
 	async assignRole(userId: string, data: AssignRoleRequest): Promise<{ success: boolean }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/roles`,
 			{
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				credentials: 'include',
+				includeJsonContentType: true,
 				body: JSON.stringify(data)
 			}
 		);
@@ -496,11 +485,10 @@ export const adminRolesAPI = {
 	 * Remove a role assignment from a user
 	 */
 	async removeRole(userId: string, assignmentId: string): Promise<{ success: boolean }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/roles/${encodeURIComponent(assignmentId)}`,
 			{
-				method: 'DELETE',
-				credentials: 'include'
+				method: 'DELETE'
 			}
 		);
 
@@ -515,11 +503,8 @@ export const adminRolesAPI = {
 	 * Get effective permissions for a user
 	 */
 	async getUserEffectivePermissions(userId: string): Promise<{ permissions: string[] }> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/effective-permissions`,
-			{
-				credentials: 'include'
-			}
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/effective-permissions`
 		);
 
 		if (!response.ok) {
@@ -544,11 +529,9 @@ export const adminRolesAPI = {
 			limit: String(limit)
 		});
 
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/roles/${encodeURIComponent(roleId)}/assignments?${params}`,
-			{
-				credentials: 'include'
-			}
+			{}
 		);
 
 		if (!response.ok) {

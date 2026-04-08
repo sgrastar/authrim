@@ -4,13 +4,16 @@ import type { Env, LoginEntrySettings } from '@authrim/ar-lib-core';
 import {
   D1Adapter,
   LOGIN_ENTRY_DEFAULTS,
-  buildIssuerUrl,
+  LOGIN_UI_DEFAULTS,
+  TENANT_DISCOVERY_UI_DEFAULTS,
   getDefaultTenantId,
   getTenantIdFromContext,
   resolveTenantCandidatesFromEmailDomain,
+  usesNakedDomainIssuer,
 } from '@authrim/ar-lib-core';
 import { getLogger } from '@authrim/ar-lib-core';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
+import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 const DISCOVERY_METHODS = ['email_domain', 'tenant_code', 'tenant_slug', 'invitation', 'app_hint'];
 const DISCOVERY_REQUEST_SCHEMA = z.object({
@@ -57,10 +60,21 @@ interface DiscoveryConfigResponse {
     tenant_id: string;
     mode: LoginEntrySettings['login-entry.mode'];
     discovery_methods: string[];
+    email_resolution_policy: LoginEntrySettings['login-entry.email_resolution_policy'];
     selection_policy: LoginEntrySettings['login-entry.selection_policy'];
     allow_manual_tenant_entry: boolean;
     remember_last_tenant: boolean;
     redirect_default_login_to_discovery: boolean;
+  };
+  ui: {
+    theme: string;
+    variant: string;
+    brand_name: string;
+    logo_url: string | null;
+    page_title: string;
+    kicker_text: string;
+    title_text: string;
+    subtitle_text: string;
   };
   single_tenant_mode: boolean;
   is_common_entry_host: boolean;
@@ -72,7 +86,28 @@ interface ClientLookupRow {
   tenant_id: string;
 }
 
+interface ExactEmailUserRow {
+  id: string;
+  tenant_id: string;
+}
+
+interface ActiveUserTenantRow {
+  id: string;
+  tenant_id: string;
+}
+
 type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][number];
+type DiscoveryUIConfig = DiscoveryConfigResponse['ui'];
+
+const DISCOVERY_UI_THEME_OPTIONS = ['light', 'dark'] as const;
+const DISCOVERY_UI_VARIANT_OPTIONS = [
+  'beige',
+  'blue-gray',
+  'green',
+  'brown',
+  'navy',
+  'slate',
+] as const;
 
 async function readSettingsRecord(
   kv: KVNamespace | undefined,
@@ -113,15 +148,21 @@ async function getDiscoverySettings(
 ): Promise<DiscoveryConfigResponse['config']> {
   const kvKey = `settings:tenant:${tenantId}:login-entry`;
   const stored = await readSettingsRecord(env.SETTINGS, kvKey);
+  const emailResolutionPolicy =
+    (stored?.['login-entry.email_resolution_policy'] as
+      | LoginEntrySettings['login-entry.email_resolution_policy']
+      | undefined) ?? LOGIN_ENTRY_DEFAULTS['login-entry.email_resolution_policy'];
+  const discoveryMethods = normalizeDiscoveryMethods(
+    stored?.['login-entry.discovery_methods'] as string | undefined
+  ).filter((method) => emailResolutionPolicy !== 'disabled' || method !== 'email_domain');
 
   return {
     tenant_id: tenantId,
     mode:
       (stored?.['login-entry.mode'] as LoginEntrySettings['login-entry.mode'] | undefined) ??
       LOGIN_ENTRY_DEFAULTS['login-entry.mode'],
-    discovery_methods: normalizeDiscoveryMethods(
-      stored?.['login-entry.discovery_methods'] as string | undefined
-    ),
+    discovery_methods: discoveryMethods,
+    email_resolution_policy: emailResolutionPolicy,
     selection_policy:
       (stored?.['login-entry.selection_policy'] as
         | LoginEntrySettings['login-entry.selection_policy']
@@ -135,6 +176,167 @@ async function getDiscoverySettings(
     redirect_default_login_to_discovery:
       (stored?.['login-entry.redirect_default_login_to_discovery'] as boolean | undefined) ??
       LOGIN_ENTRY_DEFAULTS['login-entry.redirect_default_login_to_discovery'],
+  };
+}
+
+function readSettingString(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readSettingBoolean(record: Record<string, unknown> | null, key: string): boolean | null {
+  const value = record?.[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function normalizeThemeValue(value: string | null): string | null {
+  return value &&
+    DISCOVERY_UI_THEME_OPTIONS.includes(value as (typeof DISCOVERY_UI_THEME_OPTIONS)[number])
+    ? value
+    : null;
+}
+
+function normalizeVariantValue(value: string | null): string | null {
+  return value &&
+    DISCOVERY_UI_VARIANT_OPTIONS.includes(value as (typeof DISCOVERY_UI_VARIANT_OPTIONS)[number])
+    ? value
+    : null;
+}
+
+async function getDiscoveryUiSettingsRecord(
+  env: Env,
+  scope: { type: 'platform' } | { type: 'tenant'; id: string }
+): Promise<Record<string, unknown> | null> {
+  const key =
+    scope.type === 'platform'
+      ? 'settings:platform:tenant-discovery-ui'
+      : `settings:tenant:${scope.id}:tenant-discovery-ui`;
+  return readSettingsRecord(env.SETTINGS, key);
+}
+
+async function getLoginUiSettingsRecord(
+  env: Env,
+  tenantId: string
+): Promise<Record<string, unknown> | null> {
+  return readSettingsRecord(env.SETTINGS, `settings:tenant:${tenantId}:login-ui`);
+}
+
+function resolveDiscoveryText(
+  tenantSettings: Record<string, unknown> | null,
+  platformSettings: Record<string, unknown> | null,
+  key:
+    | 'tenant-discovery-ui.page_title'
+    | 'tenant-discovery-ui.kicker_text'
+    | 'tenant-discovery-ui.title_text'
+    | 'tenant-discovery-ui.subtitle_text'
+): string {
+  return readSettingString(tenantSettings, key) ?? readSettingString(platformSettings, key) ?? '';
+}
+
+function resolveDiscoveryVisualSetting(
+  tenantSettings: Record<string, unknown> | null,
+  platformSettings: Record<string, unknown> | null,
+  loginUiSettings: Record<string, unknown> | null,
+  options: {
+    tenantKey: string;
+    loginUiKey: keyof typeof LOGIN_UI_DEFAULTS;
+    defaultValue: string;
+    normalize?: (value: string | null) => string | null;
+    allowNull?: boolean;
+  }
+): string | null {
+  const normalize = options.normalize ?? ((value: string | null) => value);
+  const tenantValue = normalize(readSettingString(tenantSettings, options.tenantKey));
+  if (tenantValue) {
+    return tenantValue;
+  }
+
+  const platformValue = normalize(readSettingString(platformSettings, options.tenantKey));
+  if (platformValue) {
+    return platformValue;
+  }
+
+  const inheritFromLoginUi =
+    readSettingBoolean(tenantSettings, 'tenant-discovery-ui.inherit_from_login_ui') ??
+    readSettingBoolean(platformSettings, 'tenant-discovery-ui.inherit_from_login_ui') ??
+    TENANT_DISCOVERY_UI_DEFAULTS['tenant-discovery-ui.inherit_from_login_ui'];
+
+  if (inheritFromLoginUi && loginUiSettings) {
+    const loginUiValue = normalize(readSettingString(loginUiSettings, options.loginUiKey));
+    if (loginUiValue) {
+      return loginUiValue;
+    }
+  }
+
+  if (options.allowNull) {
+    return options.defaultValue || null;
+  }
+
+  return options.defaultValue;
+}
+
+async function getDiscoveryUiConfig(
+  env: Env,
+  tenantId: string | null,
+  isCommonEntryHost: boolean
+): Promise<DiscoveryUIConfig> {
+  const [platformSettings, tenantSettings, loginUiSettings] = await Promise.all([
+    getDiscoveryUiSettingsRecord(env, { type: 'platform' }),
+    tenantId && !isCommonEntryHost
+      ? getDiscoveryUiSettingsRecord(env, { type: 'tenant', id: tenantId })
+      : Promise.resolve(null),
+    tenantId && !isCommonEntryHost
+      ? getLoginUiSettingsRecord(env, tenantId)
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    theme:
+      resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
+        tenantKey: 'tenant-discovery-ui.theme',
+        loginUiKey: 'login-ui.theme',
+        defaultValue: LOGIN_UI_DEFAULTS['login-ui.theme'],
+        normalize: normalizeThemeValue,
+      }) ?? LOGIN_UI_DEFAULTS['login-ui.theme'],
+    variant:
+      resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
+        tenantKey: 'tenant-discovery-ui.variant',
+        loginUiKey: 'login-ui.variant',
+        defaultValue: LOGIN_UI_DEFAULTS['login-ui.variant'],
+        normalize: normalizeVariantValue,
+      }) ?? LOGIN_UI_DEFAULTS['login-ui.variant'],
+    brand_name:
+      resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
+        tenantKey: 'tenant-discovery-ui.brand_name',
+        loginUiKey: 'login-ui.brand_name',
+        defaultValue: LOGIN_UI_DEFAULTS['login-ui.brand_name'],
+      }) ?? LOGIN_UI_DEFAULTS['login-ui.brand_name'],
+    logo_url: resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
+      tenantKey: 'tenant-discovery-ui.logo_url',
+      loginUiKey: 'login-ui.logo_url',
+      defaultValue: '',
+      allowNull: true,
+    }),
+    page_title: resolveDiscoveryText(
+      tenantSettings,
+      platformSettings,
+      'tenant-discovery-ui.page_title'
+    ),
+    kicker_text: resolveDiscoveryText(
+      tenantSettings,
+      platformSettings,
+      'tenant-discovery-ui.kicker_text'
+    ),
+    title_text: resolveDiscoveryText(
+      tenantSettings,
+      platformSettings,
+      'tenant-discovery-ui.title_text'
+    ),
+    subtitle_text: resolveDiscoveryText(
+      tenantSettings,
+      platformSettings,
+      'tenant-discovery-ui.subtitle_text'
+    ),
   };
 }
 
@@ -155,6 +357,48 @@ async function getTenantRowByTenantCode(
     'SELECT id, tenant_code, name, is_active FROM tenants WHERE tenant_code = ? AND is_active = 1',
     [tenantCode]
   );
+}
+
+async function getTenantRowsByExactEmail(env: Env, email: string): Promise<TenantLookupRow[]> {
+  if (!env.DB_PII) {
+    return [];
+  }
+
+  const piiAdapter = new D1Adapter({ db: env.DB_PII });
+  const coreAdapter = new D1Adapter({ db: env.DB });
+
+  try {
+    const piiUsers = await piiAdapter.query<ExactEmailUserRow>(
+      'SELECT id, tenant_id FROM users_pii WHERE email = ?',
+      [email]
+    );
+    if (piiUsers.length === 0) {
+      return [];
+    }
+
+    const activeUsers = await Promise.all(
+      piiUsers.map((user) =>
+        coreAdapter.queryOne<ActiveUserTenantRow>(
+          'SELECT id, tenant_id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+          [user.id, user.tenant_id]
+        )
+      )
+    );
+
+    const activeTenantIds = [
+      ...new Set(activeUsers.flatMap((user) => (user ? [user.tenant_id] : []))),
+    ];
+    if (activeTenantIds.length === 0) {
+      return [];
+    }
+
+    const tenants = await Promise.all(
+      activeTenantIds.map((tenantId) => getTenantRowById(env, tenantId))
+    );
+    return tenants.filter((tenant): tenant is TenantLookupRow => tenant !== null);
+  } catch {
+    return [];
+  }
 }
 
 async function getClientRowByClientId(env: Env, clientId: string): Promise<ClientLookupRow | null> {
@@ -209,7 +453,7 @@ async function buildCandidate(
     tenant_code: tenant.tenant_code,
     display_name: branding.display_name,
     logo_url: branding.logo_url,
-    login_url: `${buildIssuerUrl(env, tenant.id)}/login`,
+    login_url: `${getCanonicalTenantBaseUrl(env, tenant.id)}/login`,
     source,
   };
 }
@@ -240,8 +484,26 @@ async function getSingleTenantCandidate(env: Env): Promise<DiscoveryCandidate | 
 
 async function resolveEmailDiscovery(
   env: Env,
-  email: string
+  email: string,
+  policy: LoginEntrySettings['login-entry.email_resolution_policy']
 ): Promise<Exclude<DiscoveryResponse, { result: 'not_found' | 'manual_required' }> | null> {
+  const exactEmailTenants = await getTenantRowsByExactEmail(env, email);
+  if (exactEmailTenants.length > 0) {
+    const exactEmailCandidates = await Promise.all(
+      exactEmailTenants.map((tenant) => buildCandidate(env, tenant, 'email_domain'))
+    );
+
+    if (exactEmailCandidates.length === 1) {
+      return { result: 'resolved', candidate: exactEmailCandidates[0] };
+    }
+
+    return { result: 'multiple', candidates: exactEmailCandidates };
+  }
+
+  if (policy !== 'exact_email_then_domain') {
+    return null;
+  }
+
   const candidates = await resolveTenantCandidatesFromEmailDomain(env.DB, email, env);
   if (candidates.length === 0) {
     return null;
@@ -313,13 +575,20 @@ async function resolveDiscoveryRequest(
 
   switch (mode) {
     case 'email': {
-      if (!settings.discovery_methods.includes('email_domain')) {
+      if (
+        !settings.discovery_methods.includes('email_domain') ||
+        settings.email_resolution_policy === 'disabled'
+      ) {
         return buildManualRequiredResponse(settings);
       }
 
-      const resolved = await resolveEmailDiscovery(env, value);
+      const resolved = await resolveEmailDiscovery(env, value, settings.email_resolution_policy);
       if (resolved) {
         return resolved;
+      }
+
+      if (settings.email_resolution_policy === 'exact_email_only') {
+        return buildNotFoundResponse('email_not_found');
       }
 
       return settings.allow_manual_tenant_entry
@@ -396,6 +665,7 @@ function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
     return false;
   }
 
+  const tenantId = getTenantIdFromContext(c) || getDefaultTenantId(c.env);
   const host = (c.req.header('X-Forwarded-Host') || c.req.header('Host') || '')
     .split(':')[0]
     .toLowerCase();
@@ -404,10 +674,20 @@ function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
   }
 
   if (host === c.env.BASE_DOMAIN) {
-    return true;
+    return !usesNakedDomainIssuer(c.env, tenantId);
   }
 
-  return !host.endsWith(`.${c.env.BASE_DOMAIN}`);
+  if (host.endsWith(`.${c.env.BASE_DOMAIN}`)) {
+    return false;
+  }
+
+  // Custom tenant domains should not be treated as common-entry hosts when
+  // upstream middleware has already resolved them to a concrete tenant.
+  if (tenantId && tenantId !== getDefaultTenantId(c.env)) {
+    return false;
+  }
+
+  return true;
 }
 
 export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
@@ -418,11 +698,18 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
     const config = await getDiscoverySettings(c.env, tenantId);
     const singleTenantMode = isSingleTenantMode(c.env);
     const defaultCandidate = singleTenantMode ? await getSingleTenantCandidate(c.env) : undefined;
+    const commonEntryHost = isCommonEntryHost(c);
+    const ui = await getDiscoveryUiConfig(
+      c.env,
+      commonEntryHost ? null : tenantId,
+      commonEntryHost
+    );
 
     return c.json({
       config,
+      ui,
       single_tenant_mode: singleTenantMode,
-      is_common_entry_host: isCommonEntryHost(c),
+      is_common_entry_host: commonEntryHost,
       default_candidate: defaultCandidate ?? undefined,
     } satisfies DiscoveryConfigResponse);
   } catch (error) {

@@ -6,6 +6,7 @@
  */
 
 import { browser } from '$app/environment';
+import { adminFetch } from '$lib/api/admin-request';
 import { adminAuth } from './admin-auth.svelte';
 
 /**
@@ -77,6 +78,7 @@ function createSettingsContextStore() {
 			super_admin: { platform: 'edit', tenant: 'edit', client: 'edit' },
 			superadmin: { platform: 'edit', tenant: 'edit', client: 'edit' },
 			system_admin: { platform: 'edit', tenant: 'edit', client: 'edit' },
+			admin: { platform: 'view', tenant: 'edit', client: 'edit' },
 			// Distributor admin can view platform, edit tenant/client
 			distributor_admin: { platform: 'view', tenant: 'edit', client: 'edit' },
 			// Org admin can only view tenant, edit client
@@ -301,8 +303,8 @@ function createSettingsContextStore() {
 			state.error = null;
 
 			try {
-				const response = await fetch(`${API_BASE_URL}/api/admin/tenants`, {
-					credentials: 'include'
+				const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants`, {
+					skipTenantHeader: true
 				});
 
 				if (response.ok) {
@@ -340,8 +342,8 @@ function createSettingsContextStore() {
 			state.error = null;
 
 			try {
-				const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${tenantId}/clients`, {
-					credentials: 'include'
+				const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants/${tenantId}/clients`, {
+					tenantId
 				});
 
 				if (response.ok) {

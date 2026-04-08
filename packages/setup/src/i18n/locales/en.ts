@@ -938,7 +938,16 @@ const en: Translations = {
   'web.preview.loginUi': 'Login UI:',
   'web.preview.adminUi': 'Admin UI:',
   'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.tenantDiscover': 'Tenant Selection (Common Entry):',
   'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.firstTenant': '{{name}} (Primary Tenant)',
+  'web.preview.otherTenants': 'Other Tenants',
+  'web.preview.allTenantsShared': '(shared by all tenants)',
+  'web.preview.viaApiProxy': '(proxied via same API domain)',
+  'web.preview.conflictWarningMsg':
+    'The {{conflictUI}} custom domain is the same as the API domain ({{baseDomain}}). Since "Remove tenant from URL" is disabled, API requests to {{baseDomain}} (/authorize, /api/auth/*, etc.) will 404 and the login flow will break.',
+  'web.preview.conflictActionMsg':
+    'Fix: Enable "Remove tenant from URL" and set the first tenant ({{tenantName}}) as primary. Or change the {{conflictUI}} domain to a different domain (e.g. login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'Login UI',
@@ -1045,7 +1054,7 @@ const en: Translations = {
   'web.envDetail.pagesProjects': 'Pages Projects',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Update Workers',
+  'web.envDetail.workerUpdate': 'Update All Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Deployed',
   'web.envDetail.localVersion': 'Local',
@@ -1054,7 +1063,7 @@ const en: Translations = {
   'web.envDetail.upToDate': 'Current',
   'web.envDetail.notDeployed': 'Not Deployed',
   'web.envDetail.updateOnlyChanged': 'Update only changed versions',
-  'web.envDetail.updateAllWorkers': 'Update Workers',
+  'web.envDetail.updateAllWorkers': 'Update All Workers',
   'web.envDetail.refreshVersions': 'Refresh',
   'web.envDetail.updateProgress': 'Update Progress:',
   'web.envDetail.updatesAvailable': '{{count}} update(s) available',

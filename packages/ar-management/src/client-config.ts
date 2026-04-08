@@ -32,8 +32,8 @@ import {
   // Cache key builder
   buildKVKey,
   getTenantIdFromContext,
-  buildIssuerUrl,
 } from '@authrim/ar-lib-core';
+import { getRequestAwareIssuerUrl } from './request-issuer';
 
 /**
  * Validate URI for security (HTTPS required, no fragments, no dangerous schemes)
@@ -389,7 +389,7 @@ function buildClientResponse(
 export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const issuerUrl = buildIssuerUrl(c.env, tenantId);
+    const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
 
     // Validate registration_access_token
     const clientId = await validateRegistrationAccessToken(c);
@@ -455,7 +455,7 @@ export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Pro
 export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const issuerUrl = buildIssuerUrl(c.env, tenantId);
+    const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
 
     // Validate registration_access_token
     const clientId = await validateRegistrationAccessToken(c);

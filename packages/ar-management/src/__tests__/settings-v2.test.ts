@@ -46,7 +46,18 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
 }
 
 // Create test app with settings-v2 routes
-function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string> } = {}) {
+function createTestApp(
+  options: {
+    kv?: KVNamespace;
+    env?: Record<string, string>;
+    adminAuth?: {
+      userId: string;
+      authMethod: 'bearer' | 'session';
+      roles: string[];
+      org_id?: string;
+    };
+  } = {}
+) {
   const mockKV = options.kv ?? createMockKV();
 
   const app = new Hono<{
@@ -63,11 +74,14 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
 
   // Mock admin auth middleware - set adminAuth with system_admin role
   app.use('*', async (c, next) => {
-    c.set('adminAuth', {
-      userId: 'test_admin',
-      authMethod: 'bearer',
-      roles: ['system_admin'], // system_admin has access to all settings
-    });
+    c.set(
+      'adminAuth',
+      options.adminAuth ?? {
+        userId: 'test_admin',
+        authMethod: 'bearer',
+        roles: ['system_admin'], // system_admin has access to all settings
+      }
+    );
     await next();
   });
 
@@ -166,10 +180,28 @@ describe('Settings API v2', () => {
         expect(body.values['login-entry.discovery_methods']).toBe(
           '["email_domain","tenant_code","tenant_slug"]'
         );
+        expect(body.values['login-entry.email_resolution_policy']).toBe('exact_email_then_domain');
         expect(body.values['login-entry.selection_policy']).toBe('select_if_multiple');
         expect(body.values['login-entry.allow_manual_tenant_entry']).toBe(true);
         expect(body.values['login-entry.remember_last_tenant']).toBe(true);
         expect(body.values['login-entry.redirect_default_login_to_discovery']).toBe(true);
+      });
+
+      it('should return tenant-discovery-ui settings for tenant scope', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant-discovery-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('tenant-discovery-ui');
+        expect(body.values['tenant-discovery-ui.inherit_from_login_ui']).toBe(true);
+        expect(body.values['tenant-discovery-ui.theme']).toBe('');
       });
     });
 
@@ -359,6 +391,7 @@ describe('Settings API v2', () => {
               set: {
                 'login-entry.mode': 'tenant_only',
                 'login-entry.discovery_methods': '["tenant_slug"]',
+                'login-entry.email_resolution_policy': 'disabled',
                 'login-entry.selection_policy': 'manual_only',
                 'login-entry.allow_manual_tenant_entry': false,
                 'login-entry.remember_last_tenant': false,
@@ -374,10 +407,44 @@ describe('Settings API v2', () => {
 
         expect(body.applied).toContain('login-entry.mode');
         expect(body.applied).toContain('login-entry.discovery_methods');
+        expect(body.applied).toContain('login-entry.email_resolution_policy');
         expect(body.applied).toContain('login-entry.selection_policy');
         expect(body.applied).toContain('login-entry.allow_manual_tenant_entry');
         expect(body.applied).toContain('login-entry.remember_last_tenant');
         expect(body.applied).toContain('login-entry.redirect_default_login_to_discovery');
+      });
+
+      it('should patch tenant-discovery-ui settings for tenant scope', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant-discovery-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant-discovery-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'tenant-discovery-ui.theme': 'dark',
+                'tenant-discovery-ui.title_text': 'Find your workspace',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+        expect(body.applied).toContain('tenant-discovery-ui.theme');
+        expect(body.applied).toContain('tenant-discovery-ui.title_text');
       });
 
       it('should reject unknown keys in login-entry settings', async () => {
@@ -409,6 +476,34 @@ describe('Settings API v2', () => {
         expect(body.error).toBe('validation_failed');
         expect(body.rejected['login-entry.unknown_key']).toContain('Unknown');
       });
+
+      it('should reject tenant edits for viewer role', async () => {
+        const { app, mockEnv } = createTestApp({
+          adminAuth: {
+            userId: 'viewer_1',
+            authMethod: 'bearer',
+            roles: ['viewer'],
+            org_id: 'tenant_123',
+          },
+        });
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/oauth',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: 'sha256:test-version',
+              set: { 'oauth.access_token_expiry': 1800 },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(403);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('forbidden');
+      });
     });
   });
 
@@ -433,6 +528,31 @@ describe('Settings API v2', () => {
         expect(body.category).toBe('client');
         expect(body.scope).toEqual({ type: 'client', id: 'client_abc' });
         expect(body.values).toBeDefined();
+      });
+
+      it('should reject access to clients in another tenant', async () => {
+        const mockKV = createMockKV({
+          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'tenant_other' }),
+        });
+        const { app, mockEnv } = createTestApp({
+          kv: mockKV,
+          adminAuth: {
+            userId: 'org_admin_1',
+            authMethod: 'bearer',
+            roles: ['org_admin'],
+            org_id: 'tenant_123',
+          },
+        });
+
+        const res = await app.request(
+          '/api/admin/clients/client_abc/settings',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(403);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('forbidden');
       });
     });
 
@@ -477,7 +597,7 @@ describe('Settings API v2', () => {
     });
   });
 
-  describe('Platform Settings (Read-Only)', () => {
+  describe('Platform Settings', () => {
     describe('GET /platform/settings/:category', () => {
       it('should return platform settings', async () => {
         const { app, mockEnv } = createTestApp();
@@ -497,7 +617,7 @@ describe('Settings API v2', () => {
     });
 
     describe('PATCH /platform/settings/:category', () => {
-      it('should return 405 Method Not Allowed', async () => {
+      it('should return 405 Method Not Allowed for read-only categories', async () => {
         const { app, mockEnv } = createTestApp();
 
         const res = await app.request(
@@ -516,6 +636,39 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(405);
         const body = (await res.json()) as ApiResponse;
         expect(body.error).toBe('method_not_allowed');
+      });
+
+      it('should patch writable platform categories', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/platform/settings/tenant-discovery-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/platform/settings/tenant-discovery-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'tenant-discovery-ui.brand_name': 'Shared Discovery',
+                'tenant-discovery-ui.theme': 'dark',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+        expect(body.applied).toContain('tenant-discovery-ui.brand_name');
+        expect(body.applied).toContain('tenant-discovery-ui.theme');
       });
     });
 
@@ -584,7 +737,7 @@ describe('Settings API v2', () => {
         };
 
         expect(body.category).toBe('login-entry');
-        expect(Object.keys(body.settings)).toHaveLength(6);
+        expect(Object.keys(body.settings)).toHaveLength(7);
       });
 
       it('should return 404 for unknown category', async () => {
@@ -727,6 +880,29 @@ describe('Settings API v2', () => {
       );
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('Authorization Boundaries', () => {
+    it('should reject tenant settings access across tenant boundaries', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: {
+          userId: 'org_admin_1',
+          authMethod: 'bearer',
+          roles: ['org_admin'],
+          org_id: 'tenant_123',
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/tenants/tenant_other/settings/oauth',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as ApiResponse;
+      expect(body.error).toBe('forbidden');
     });
   });
 });

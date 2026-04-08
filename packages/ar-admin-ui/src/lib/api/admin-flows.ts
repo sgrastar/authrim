@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Flows API Client
  *
@@ -657,7 +658,7 @@ export const adminFlowsAPI = {
 
 		const url = `${API_BASE_URL}/api/admin/flows${params.toString() ? '?' + params.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -673,7 +674,7 @@ export const adminFlowsAPI = {
 	 * Get flow by ID
 	 */
 	async get(id: string): Promise<FlowDetailResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
 			credentials: 'include'
 		});
 
@@ -689,7 +690,7 @@ export const adminFlowsAPI = {
 	 * Create a new flow
 	 */
 	async create(data: CreateFlowRequest): Promise<{ success: boolean; flow_id: string }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/flows`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -708,7 +709,7 @@ export const adminFlowsAPI = {
 	 * Update an existing flow
 	 */
 	async update(id: string, data: UpdateFlowRequest): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -727,7 +728,7 @@ export const adminFlowsAPI = {
 	 * Delete a flow
 	 */
 	async delete(id: string): Promise<{ success: boolean }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});
@@ -747,12 +748,15 @@ export const adminFlowsAPI = {
 		id: string,
 		data: CopyFlowRequest = {}
 	): Promise<{ success: boolean; flow_id: string }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/copy`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/copy`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -766,7 +770,7 @@ export const adminFlowsAPI = {
 	 * Validate a flow definition
 	 */
 	async validate(id: string, graphDefinition: GraphDefinition): Promise<ValidationResult> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/validate`,
 			{
 				method: 'POST',
@@ -788,7 +792,7 @@ export const adminFlowsAPI = {
 	 * Compile a flow definition to CompiledPlan
 	 */
 	async compile(id: string): Promise<{ success: boolean; compiled_plan: Record<string, unknown> }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/compile`,
 			{
 				method: 'POST',
@@ -809,7 +813,7 @@ export const adminFlowsAPI = {
 	 * Get node type metadata for Flow Designer
 	 */
 	async getNodeTypes(): Promise<NodeTypesResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/flows/node-types`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/node-types`, {
 			credentials: 'include'
 		});
 

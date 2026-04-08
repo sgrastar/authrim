@@ -930,8 +930,17 @@ const ko: Translations = {
   'web.preview.issuerUrl': '발급자 URL:',
   'web.preview.loginUi': '로그인 UI:',
   'web.preview.adminUi': '관리자 UI:',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
-  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.pagesUrl': '로그인 UI (Pages):',
+  'web.preview.tenantDiscover': '테넌트 선택 (공통 입구):',
+  'web.preview.adminAccess': '관리자 UI 접속:',
+  'web.preview.firstTenant': '{{name}} (기본 테넌트)',
+  'web.preview.otherTenants': '다른 테넌트',
+  'web.preview.allTenantsShared': '(모든 테넌트 공통)',
+  'web.preview.viaApiProxy': '(API와 동일 도메인 경유 프록시)',
+  'web.preview.conflictWarningMsg':
+    '{{conflictUI}}의 커스텀 도메인이 API와 동일합니다（{{baseDomain}}）. "URL에서 테넌트 제거"가 비활성화되어 있어 {{baseDomain}}으로의 API 요청（/authorize, /api/auth/* 등）이 404를 반환하고 로그인 흐름이 작동하지 않습니다.',
+  'web.preview.conflictActionMsg':
+    '해결 방법: "URL에서 테넌트 제거"를 활성화하고 첫 번째 테넌트（{{tenantName}}）를 기본 테넌트로 설정하세요. 또는 {{conflictUI}}의 도메인을 API와 다른 도메인으로 변경하세요（예: login.{{baseDomain}}）.',
 
   // Web UI Component Labels
   'web.comp.loginUi': '로그인 UI',
@@ -1036,7 +1045,7 @@ const ko: Translations = {
   'web.envDetail.pagesProjects': 'Pages 프로젝트',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Workers 업데이트',
+  'web.envDetail.workerUpdate': '모든 Workers 업데이트',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': '배포됨',
   'web.envDetail.localVersion': '로컬',
@@ -1045,7 +1054,7 @@ const ko: Translations = {
   'web.envDetail.upToDate': '최신',
   'web.envDetail.notDeployed': '미배포',
   'web.envDetail.updateOnlyChanged': '변경된 버전만 업데이트',
-  'web.envDetail.updateAllWorkers': 'Workers 업데이트',
+  'web.envDetail.updateAllWorkers': '모든 Workers 업데이트',
   'web.envDetail.refreshVersions': '새로고침',
   'web.envDetail.updateProgress': '업데이트 진행:',
   'web.envDetail.updatesAvailable': '{{count}}개 업데이트 가능',

@@ -491,6 +491,54 @@ describe('Token Introspection Endpoint', () => {
       );
     });
 
+    it('should prefer the request host for private_key_jwt validation when present', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('tenant1');
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'client-123',
+          client_assertion: 'assertion.jwt',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        },
+        env: {
+          BASE_DOMAIN: 'oidc.example.com',
+        },
+      });
+      c.req.raw = new Request('https://tenant1.customer.example/introspect', {
+        method: 'POST',
+        headers: {
+          Host: 'tenant1.customer.example',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        ...sampleTokenPayload,
+        aud: 'https://tenant1.customer.example',
+        iss: 'https://tenant1.customer.example',
+      });
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+
+      const clientMetadata = {
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      };
+      mockClientRepository.findByClientId.mockResolvedValue(clientMetadata);
+
+      await introspectHandler(c);
+
+      expect(mockValidateClientAssertion).toHaveBeenCalledWith(
+        'assertion.jwt',
+        'https://tenant1.customer.example/introspect',
+        clientMetadata
+      );
+    });
+
     it('should return 401 for invalid Basic auth header format', async () => {
       const c = createMockContext({
         headers: {

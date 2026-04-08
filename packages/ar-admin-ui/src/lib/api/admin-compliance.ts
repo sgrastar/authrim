@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Compliance API Client
  *
@@ -528,7 +529,7 @@ export const adminComplianceAPI = {
 	 * Get comprehensive compliance status
 	 */
 	async getStatus(): Promise<ComplianceStatus> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/compliance/status`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/compliance/status`, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -560,7 +561,7 @@ export const adminComplianceAPI = {
 
 		const url = `${API_BASE_URL}/api/admin/compliance/access-reviews${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -596,7 +597,7 @@ export const adminComplianceAPI = {
 		scope_target?: string;
 		due_date?: string;
 	}): Promise<AccessReview> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/compliance/access-reviews`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/compliance/access-reviews`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -629,7 +630,7 @@ export const adminComplianceAPI = {
 
 		const url = `${API_BASE_URL}/api/admin/compliance/reports${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -660,7 +661,7 @@ export const adminComplianceAPI = {
 	 * Get data retention status
 	 */
 	async getDataRetentionStatus(): Promise<DataRetentionStatus> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/data-retention/status`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/data-retention/status`, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {

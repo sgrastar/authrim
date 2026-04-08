@@ -7,6 +7,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getLogger } from '@authrim/ar-lib-core';
+import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
 
 interface DIDDocument {
   '@context': string[];
@@ -38,8 +39,8 @@ interface Service {
 export async function didDocumentRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const log = getLogger(c as any).module('VC');
-  const issuerDid = c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
-  const baseUrl = new URL(c.req.url).origin;
+  const issuerDid = getRequestIssuerIdentifier(c);
+  const baseUrl = getRequestIssuerUrl(c);
 
   // Get public key from KeyManager
   let publicKeyJwk: Record<string, unknown> | undefined;

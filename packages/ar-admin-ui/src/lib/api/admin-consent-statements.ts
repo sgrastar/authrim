@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Consent Statements API Client
  *
@@ -116,7 +117,7 @@ export interface ConsentItemHistory {
 // ---------------------------------------------------------------------------
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
-	const response = await fetch(`${API_BASE_URL}${path}`, {
+	const response = await adminFetch(`${API_BASE_URL}${path}`, {
 		credentials: 'include',
 		...options,
 		headers: {

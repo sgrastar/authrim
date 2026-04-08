@@ -79,6 +79,29 @@ describe('Discovery Handler', () => {
       expect(metadata.jwks_uri).toBe('https://custom.example.com/.well-known/jwks.json');
     });
 
+    it('uses the request host as issuer in multi-tenant mode', async () => {
+      const env = {
+        ...createMockEnv(),
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'tenant1',
+      } as Env;
+      const localApp = new Hono<{ Bindings: Env }>();
+      localApp.use('*', async (c, next) => {
+        (c as any).set('tenantId', 'tenant1');
+        await next();
+      });
+      localApp.get('/.well-known/openid-configuration', discoveryHandler);
+
+      const response = await localApp.fetch(
+        new Request('https://tenant1.example.com/.well-known/openid-configuration'),
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.issuer).toBe('https://tenant1.example.com');
+      expect(metadata.token_endpoint).toBe('https://tenant1.example.com/token');
+    });
+
     it('should return correct response types', async () => {
       const env = createMockEnv();
       const response = await app.request(

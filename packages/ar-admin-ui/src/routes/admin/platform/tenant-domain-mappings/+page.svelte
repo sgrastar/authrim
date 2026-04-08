@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
 
 	// ==========================================================================
 	// Types
@@ -51,16 +52,11 @@
 	// API
 	// ==========================================================================
 
-	const API_BASE = '';
-
 	async function apiFetch(path: string, options?: Parameters<typeof fetch>[1]) {
-		const response = await fetch(`${API_BASE}${path}`, {
-			credentials: 'include',
+		const response = await adminFetch(`${API_BASE_URL}${path}`, {
 			...options,
-			headers: {
-				'Content-Type': 'application/json',
-				...(options?.headers ?? {})
-			}
+			includeJsonContentType: true,
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {

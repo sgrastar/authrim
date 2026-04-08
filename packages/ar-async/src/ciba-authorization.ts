@@ -26,6 +26,7 @@ import {
   publishEvent,
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
 
 function resolveTenantId(c: Context<{ Bindings: Env }>): string {
   return typeof (c as { get?: unknown }).get === 'function'
@@ -42,6 +43,7 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
 export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
   const tenantId = resolveTenantId(c);
+  const requestIssuer = getRequestIssuer(c);
 
   try {
     // Parse request body
@@ -132,7 +134,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       // Get JWKS for signature verification (this server's keys)
       const { keys: jwksKeys } = await getJwksWithCache(c.env, tenantId);
       const idTokenValidation = await validateCIBAIdTokenHint(id_token_hint, {
-        issuerUrl: c.env.ISSUER_URL,
+        issuerUrl: requestIssuer,
         jwks: { keys: jwksKeys },
       });
 
@@ -153,7 +155,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       // Currently we validate without signature verification for third-party tokens
       // In production, implement dynamic JWKS fetching based on the token's issuer
       const loginHintTokenValidation = await validateCIBALoginHintToken(login_hint_token, {
-        audience: c.env.ISSUER_URL,
+        audience: requestIssuer,
         // Note: Third-party JWKS not yet implemented
         // jwks would need to be fetched from the third-party issuer's jwks_uri
       });

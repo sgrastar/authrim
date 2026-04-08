@@ -914,8 +914,17 @@ const zhTW: Translations = {
   'web.preview.issuerUrl': '發行者 URL：',
   'web.preview.loginUi': '登入 UI：',
   'web.preview.adminUi': '管理 UI：',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
-  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.pagesUrl': '登入 UI (Pages)：',
+  'web.preview.tenantDiscover': '租戶選擇（公共入口）：',
+  'web.preview.adminAccess': '管理 UI 存取位址：',
+  'web.preview.firstTenant': '{{name}}（主租戶）',
+  'web.preview.otherTenants': '其他租戶',
+  'web.preview.allTenantsShared': '（所有租戶共用）',
+  'web.preview.viaApiProxy': '（透過 API 同網域代理）',
+  'web.preview.conflictWarningMsg':
+    '{{conflictUI}} 的自訂網域與 API 相同（{{baseDomain}}），由於「從 URL 中移除租戶名稱」已停用，對 {{baseDomain}} 的 API 請求（/authorize、/api/auth/* 等）將返回 404，導致登入流程無法正常運作。',
+  'web.preview.conflictActionMsg':
+    '解決方法：啟用「從 URL 中移除租戶名稱」並將第一個租戶（{{tenantName}}）設為主租戶。或將 {{conflictUI}} 的網域更改為與 API 不同的網域（例如 login.{{baseDomain}}）。',
 
   // Web UI Component Labels
   'web.comp.loginUi': '登入 UI',
@@ -1015,7 +1024,7 @@ const zhTW: Translations = {
   'web.envDetail.pagesProjects': 'Pages 專案',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': '更新 Workers',
+  'web.envDetail.workerUpdate': '更新所有 Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': '已部署',
   'web.envDetail.localVersion': '本機',
@@ -1024,7 +1033,7 @@ const zhTW: Translations = {
   'web.envDetail.upToDate': '最新',
   'web.envDetail.notDeployed': '未部署',
   'web.envDetail.updateOnlyChanged': '僅更新已變更的版本',
-  'web.envDetail.updateAllWorkers': '更新 Workers',
+  'web.envDetail.updateAllWorkers': '更新所有 Workers',
   'web.envDetail.refreshVersions': '重新整理',
   'web.envDetail.updateProgress': '更新進度：',
   'web.envDetail.updatesAvailable': '{{count}} 個更新可用',

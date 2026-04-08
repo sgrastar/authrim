@@ -5,8 +5,7 @@
  * - Aggregated statistics for RBAC, ABAC, ReBAC, and Policies
  */
 
-// API Base URL - empty string for same-origin, or full URL for cross-origin
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 /**
  * RBAC statistics
@@ -59,9 +58,7 @@ export const adminAccessControlAPI = {
 	 * GET /api/admin/access-control/stats
 	 */
 	async getStats(): Promise<AccessControlStats> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/access-control/stats`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/access-control/stats`);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

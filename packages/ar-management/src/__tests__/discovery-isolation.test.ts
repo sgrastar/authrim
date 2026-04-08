@@ -33,6 +33,12 @@ const mocked = vi.hoisted(() => {
       { id: 'beta', tenant_code: 'beta-code', name: 'Beta Inc', is_active: 1 },
       { id: 'inactive', tenant_code: 'inactive-code', name: 'Gone Co', is_active: 0 },
     ],
+    users: [
+      { id: 'user-1', tenant_id: 'acme', email: 'user@gmail.com', is_active: 1 },
+      { id: 'user-2', tenant_id: 'acme', email: 'shared@gmail.com', is_active: 1 },
+      { id: 'user-3', tenant_id: 'beta', email: 'shared@gmail.com', is_active: 1 },
+      { id: 'user-4', tenant_id: 'inactive', email: 'inactive@gmail.com', is_active: 1 },
+    ],
     clients: [
       { client_id: 'acme-app', tenant_id: 'acme' },
       { client_id: 'beta-app', tenant_id: 'beta' },
@@ -88,7 +94,23 @@ const mocked = vi.hoisted(() => {
   class FakeD1Adapter {
     constructor(_options: { db: unknown }) {}
 
+    async query<T>(query: string, params: unknown[]): Promise<T[]> {
+      if (query.includes('FROM users_pii WHERE email = ?')) {
+        const email = String(params[0] ?? '');
+        return state.users
+          .filter((user) => user.email === email && user.is_active === 1)
+          .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
+      }
+
+      return [];
+    }
+
     async queryOne<T>(query: string, params: unknown[]): Promise<T | null> {
+      if (query.includes('FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1')) {
+        return (state.users.find(
+          (user) => user.id === params[0] && user.tenant_id === params[1] && user.is_active === 1
+        ) ?? null) as T | null;
+      }
       // Tenant lookup by tenant_code — is_active = 1 filter applied
       if (query.includes('FROM tenants WHERE tenant_code = ? AND is_active = 1')) {
         return (state.tenants.find((t) => t.tenant_code === params[0] && t.is_active === 1) ??
@@ -177,7 +199,12 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
 
   const env = {
     DB: {},
+    DB_PII: {},
     SETTINGS: createMockKV({
+      'settings:platform:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.brand_name': 'Shared Discovery',
+        'tenant-discovery-ui.theme': 'dark',
+      }),
       // Default tenant: all discovery methods enabled
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
@@ -185,6 +212,9 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
       // Acme tenant branding (login-ui.brand_name takes precedence over tenant name)
       'settings:tenant:acme:login-ui': JSON.stringify({
         'login-ui.brand_name': 'Acme Brand',
+      }),
+      'settings:tenant:acme:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.title_text': 'Find Acme',
       }),
       // Acme tenant login-entry: app_hint excluded (used by tenant-subdomain context tests)
       'settings:tenant:acme:login-entry': JSON.stringify({
@@ -371,6 +401,28 @@ describe('Discovery API: host-based tenant context (is_common_entry_host)', () =
     expect(body.is_common_entry_host).toBe(true);
   });
 
+  it('returns is_common_entry_host: false when Host equals BASE_DOMAIN in naked-domain issuer mode', async () => {
+    const { app, env } = createDiscoveryApp(
+      {
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        PRIMARY_TENANT_ID: 'default',
+      },
+      'default'
+    );
+
+    const res = await app.request(
+      'https://auth.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'auth.example.com' },
+      },
+      env
+    );
+
+    const body = (await res.json()) as { is_common_entry_host: boolean };
+    expect(body.is_common_entry_host).toBe(false);
+  });
+
   it('returns is_common_entry_host: false when Host is a tenant subdomain', async () => {
     const { app, env } = createDiscoveryApp({}, 'acme');
 
@@ -379,6 +431,22 @@ describe('Discovery API: host-based tenant context (is_common_entry_host)', () =
       {
         method: 'GET',
         headers: { 'X-Forwarded-Host': 'acme.auth.example.com' },
+      },
+      env
+    );
+
+    const body = (await res.json()) as { is_common_entry_host: boolean };
+    expect(body.is_common_entry_host).toBe(false);
+  });
+
+  it('returns is_common_entry_host: false for custom tenant domains when tenant context is resolved', async () => {
+    const { app, env } = createDiscoveryApp({}, 'acme');
+
+    const res = await app.request(
+      'https://login.acme.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'login.acme.example.com' },
       },
       env
     );
@@ -405,6 +473,26 @@ describe('Discovery API: host-based tenant context (is_common_entry_host)', () =
     expect(body.config.tenant_id).toBe('acme');
     // acme's login-entry settings exclude app_hint
     expect(body.config.discovery_methods).not.toContain('app_hint');
+  });
+
+  it("GET from a tenant subdomain applies that tenant's discovery UI override", async () => {
+    const { app, env } = createDiscoveryApp({}, 'acme');
+
+    const res = await app.request(
+      'https://acme.auth.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'acme.auth.example.com' },
+      },
+      env
+    );
+
+    const body = (await res.json()) as {
+      ui: { title_text: string; brand_name: string; theme: string };
+    };
+    expect(body.ui.title_text).toBe('Find Acme');
+    expect(body.ui.brand_name).toBe('Shared Discovery');
+    expect(body.ui.theme).toBe('dark');
   });
 });
 
@@ -462,6 +550,34 @@ describe('Discovery API: data isolation', () => {
   });
 
   describe('email domain isolation', () => {
+    it('resolves a unique exact email match even when the domain itself is shared', async () => {
+      mocked.discoveryCandidatesMock.mockResolvedValue([
+        { tenant_id: 'acme', priority: 20 },
+        { tenant_id: 'beta', priority: 10 },
+      ]);
+      const { app, env } = createDiscoveryApp();
+
+      const res = await postDiscovery(app, env, { mode: 'email', value: 'user@gmail.com' });
+      const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
+
+      expect(body.result).toBe('resolved');
+      expect(body.candidate.tenant_id).toBe('acme');
+    });
+
+    it('returns multiple candidates when the exact email exists in multiple active tenants', async () => {
+      mocked.discoveryCandidatesMock.mockResolvedValue([]);
+      const { app, env } = createDiscoveryApp();
+
+      const res = await postDiscovery(app, env, { mode: 'email', value: 'shared@gmail.com' });
+      const body = (await res.json()) as {
+        result: string;
+        candidates: Array<{ tenant_id: string }>;
+      };
+
+      expect(body.result).toBe('multiple');
+      expect(body.candidates.map((candidate) => candidate.tenant_id)).toEqual(['acme', 'beta']);
+    });
+
     it('resolves to acme only when the domain maps exclusively to acme', async () => {
       mocked.discoveryCandidatesMock.mockResolvedValue([{ tenant_id: 'acme', priority: 10 }]);
       const { app, env } = createDiscoveryApp();

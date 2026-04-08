@@ -60,6 +60,8 @@ export interface CsrfProtectionOptions {
  * Default function to resolve allowed origins from environment
  */
 async function defaultResolveAllowedOrigins(c: Context<{ Bindings: Env }>): Promise<string[]> {
+  const origins: string[] = [];
+
   // 1. Try KV (tenant-aware settings) for dynamic configuration
   const tenantSettings = await getTenantSettings(
     c.env.AUTHRIM_CONFIG,
@@ -69,16 +71,40 @@ async function defaultResolveAllowedOrigins(c: Context<{ Bindings: Env }>): Prom
   if (tenantSettings) {
     const kvValue = tenantSettings['tenant.allowed_origins'];
     if (typeof kvValue === 'string' && kvValue.length > 0) {
-      const kvOrigins = parseAllowedOrigins(kvValue);
-      const envOrigins = c.env.ALLOWED_ORIGINS ? parseAllowedOrigins(c.env.ALLOWED_ORIGINS) : [];
-      const issuerOrigins = c.env.ISSUER_URL ? parseAllowedOrigins(c.env.ISSUER_URL) : [];
-      return [...new Set([...kvOrigins, ...envOrigins, ...issuerOrigins])];
+      origins.push(...parseAllowedOrigins(kvValue));
     }
   }
 
-  // 2. Fallback to environment variables
-  const originsStr = c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
-  return originsStr ? parseAllowedOrigins(originsStr) : [];
+  // 2. Environment variable fallbacks
+  if (c.env.ALLOWED_ORIGINS) origins.push(...parseAllowedOrigins(c.env.ALLOWED_ORIGINS));
+  if (c.env.ISSUER_URL) origins.push(...parseAllowedOrigins(c.env.ISSUER_URL));
+
+  // 3. Multi-tenant mode: derive allowed origin from the request URL's hostname.
+  // The router worker does not run requestContextMiddleware so the tenant cannot
+  // be read from Hono context. Using the URL hostname (rather than the Host header)
+  // is more reliable across runtimes and test environments, and matches the same
+  // subdomain-extraction logic as validateHostHeader in issuer.ts.
+  if (c.env.BASE_DOMAIN) {
+    try {
+      const hostname = new URL(c.req.url).hostname.toLowerCase();
+      const baseDomain = c.env.BASE_DOMAIN;
+
+      if (hostname === baseDomain) {
+        // Naked domain: allow the base domain itself as an origin
+        origins.push(`https://${baseDomain}`);
+      } else if (hostname.endsWith(`.${baseDomain}`)) {
+        const subdomain = hostname.slice(0, -(baseDomain.length + 1));
+        // Only single-level subdomains (e.g. first.authrim.com, not a.b.authrim.com)
+        if (subdomain && !subdomain.includes('.')) {
+          origins.push(`https://${subdomain}.${baseDomain}`);
+        }
+      }
+    } catch {
+      // Malformed URL — skip multi-tenant origin resolution
+    }
+  }
+
+  return [...new Set(origins)];
 }
 
 /**

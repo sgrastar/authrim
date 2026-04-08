@@ -1,35 +1,15 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-
-const REMEMBERED_TENANT_COOKIE = 'authrim_last_tenant';
+import {
+	fetchDiscoveryConfig,
+	getDiscoveryRequestHeaders,
+	type DiscoveryCandidate,
+	type DiscoveryConfigResponse
+} from '../../lib/discovery-entry';
+import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discovery-session';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 type DiscoveryMode = 'email' | 'tenant_code' | 'tenant_slug' | 'invite_token' | 'app_hint';
-type DiscoverySource = 'email_domain' | 'tenant_code' | 'tenant_slug' | 'invitation' | 'app_hint';
-
-interface DiscoveryCandidate {
-	tenant_id: string;
-	tenant_code: string;
-	display_name: string;
-	logo_url?: string | null;
-	login_url: string;
-	source: DiscoverySource;
-}
-
-interface DiscoveryConfigResponse {
-	config: {
-		tenant_id: string;
-		mode: 'tenant_only' | 'discovery_optional' | 'discovery_required';
-		discovery_methods: string[];
-		selection_policy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
-		allow_manual_tenant_entry: boolean;
-		remember_last_tenant: boolean;
-		redirect_default_login_to_discovery: boolean;
-	};
-	single_tenant_mode: boolean;
-	is_common_entry_host: boolean;
-	default_candidate?: DiscoveryCandidate;
-}
 
 type DiscoveryResponse =
 	| { result: 'resolved'; candidate: DiscoveryCandidate; invited_email?: string | null }
@@ -38,6 +18,7 @@ type DiscoveryResponse =
 	| { result: 'not_found'; code: string };
 
 type DiscoveryErrorCode =
+	| 'email_not_found'
 	| 'email_domain_not_found'
 	| 'tenant_code_not_found'
 	| 'tenant_slug_not_found'
@@ -48,26 +29,6 @@ type DiscoveryErrorCode =
 	| 'manual_required'
 	| 'invitation_unresolved'
 	| 'resolve_failed';
-
-function readRememberedTenant(rawValue: string | undefined): DiscoveryCandidate | null {
-	if (!rawValue) return null;
-
-	try {
-		const parsed = JSON.parse(rawValue) as DiscoveryCandidate;
-		if (
-			typeof parsed?.tenant_id === 'string' &&
-			typeof parsed?.tenant_code === 'string' &&
-			typeof parsed?.display_name === 'string' &&
-			typeof parsed?.login_url === 'string'
-		) {
-			return parsed;
-		}
-	} catch {
-		// Ignore invalid cookies
-	}
-
-	return null;
-}
 
 function buildSignupUrl(
 	candidate: DiscoveryCandidate,
@@ -84,22 +45,18 @@ function buildSignupUrl(
 	return signupUrl.toString();
 }
 
-async function fetchDiscoveryConfig(fetchFn: typeof fetch): Promise<DiscoveryConfigResponse> {
-	const response = await fetchFn('/api/auth/discovery');
-	if (!response.ok) {
-		throw new Error('Failed to load discovery config');
-	}
-	return (await response.json()) as DiscoveryConfigResponse;
-}
-
 async function resolveDiscovery(
 	fetchFn: typeof fetch,
 	mode: DiscoveryMode,
-	value: string
+	value: string,
+	headers?: HeadersInit
 ): Promise<DiscoveryResponse> {
+	const requestHeaders = new Headers(headers);
+	requestHeaders.set('Content-Type', 'application/json');
+
 	const response = await fetchFn('/api/auth/discovery', {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
+		headers: requestHeaders,
 		body: JSON.stringify({ mode, value })
 	});
 
@@ -141,7 +98,8 @@ function defaultManualMode(
 }
 
 export const load: PageServerLoad = async (event) => {
-	const config = await fetchDiscoveryConfig(event.fetch);
+	const discoveryHeaders = getDiscoveryRequestHeaders(event);
+	const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders);
 	const rememberedCandidate = readRememberedTenant(event.cookies.get(REMEMBERED_TENANT_COOKIE));
 	const inviteToken = event.url.searchParams.get('invite_token');
 	const appHint = event.url.searchParams.get('app_hint');
@@ -150,12 +108,26 @@ export const load: PageServerLoad = async (event) => {
 		throw redirect(303, config.default_candidate.login_url);
 	}
 
-	if (config.config.mode === 'tenant_only' && !inviteToken && !appHint) {
+	if (
+		config.config.mode === 'tenant_only' &&
+		!config.is_common_entry_host &&
+		!inviteToken &&
+		!appHint
+	) {
+		throw redirect(303, '/login');
+	}
+
+	if (!config.single_tenant_mode && !config.is_common_entry_host && !inviteToken && !appHint) {
 		throw redirect(303, '/login');
 	}
 
 	if (inviteToken) {
-		const result = await resolveDiscovery(event.fetch, 'invite_token', inviteToken);
+		const result = await resolveDiscovery(
+			event.fetch,
+			'invite_token',
+			inviteToken,
+			discoveryHeaders
+		);
 		if (result.result === 'resolved') {
 			if (config.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
@@ -178,7 +150,7 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (appHint) {
-		const result = await resolveDiscovery(event.fetch, 'app_hint', appHint);
+		const result = await resolveDiscovery(event.fetch, 'app_hint', appHint, discoveryHeaders);
 		if (result.result === 'resolved') {
 			if (config.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
@@ -197,11 +169,16 @@ export const load: PageServerLoad = async (event) => {
 
 export const actions: Actions = {
 	resolve: async (event) => {
-		const config = await fetchDiscoveryConfig(event.fetch);
+		const discoveryHeaders = getDiscoveryRequestHeaders(event);
+		const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders);
 		const formData = await event.request.formData();
 		const mode = String(formData.get('mode') || '') as DiscoveryMode;
 		const value = String(formData.get('value') || '').trim();
 		const inviteToken = String(formData.get('invite_token') || '').trim();
+
+		if (!config.single_tenant_mode && !config.is_common_entry_host && !inviteToken) {
+			throw redirect(303, '/login');
+		}
 
 		if (!value) {
 			return fail(400, {
@@ -212,7 +189,7 @@ export const actions: Actions = {
 		}
 
 		try {
-			const result = await resolveDiscovery(event.fetch, mode, value);
+			const result = await resolveDiscovery(event.fetch, mode, value, discoveryHeaders);
 
 			if (result.result === 'resolved') {
 				if (config.config.remember_last_tenant) {
@@ -230,6 +207,10 @@ export const actions: Actions = {
 							result.invited_email || undefined
 						)
 					);
+				}
+
+				if (config.is_common_entry_host) {
+					throw redirect(303, result.candidate.login_url);
 				}
 
 				if (config.config.selection_policy === 'always_select') {

@@ -9,6 +9,7 @@
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { adminFetch } from '$lib/api/admin-request';
 import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 function resolveTenantId(tenantId?: string): string {
@@ -202,8 +203,8 @@ export const adminSettingsAPI = {
 	 * GET /api/admin/settings/meta
 	 */
 	async getCategories(): Promise<{ categories: CategoryMeta[] }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/meta`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/meta`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -219,8 +220,8 @@ export const adminSettingsAPI = {
 	 * GET /api/admin/settings/meta/:category
 	 */
 	async getMeta(category: string): Promise<CategoryMetaFull> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/meta/${category}`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/meta/${category}`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -240,11 +241,9 @@ export const adminSettingsAPI = {
 	 */
 	async getSettings(category: string, tenantId?: string): Promise<CategorySettings> {
 		const resolvedTenantId = resolveTenantId(tenantId);
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${resolvedTenantId}/settings/${category}`,
-			{
-				credentials: 'include'
-			}
+			{}
 		);
 
 		if (!response.ok) {
@@ -263,8 +262,8 @@ export const adminSettingsAPI = {
 	 * GET /api/admin/platform/settings/:category
 	 */
 	async getPlatformSettings(category: string): Promise<CategorySettings> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/platform/settings/${category}`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/platform/settings/${category}`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -273,6 +272,48 @@ export const adminSettingsAPI = {
 			}
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
 			throw new Error(error.message || error.error || 'Failed to fetch platform settings');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Update platform settings (optimistic locking)
+	 * PATCH /api/admin/platform/settings/:category
+	 */
+	async updatePlatformSettings(
+		category: string,
+		request: SettingsPatchRequest
+	): Promise<SettingsPatchResult> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/platform/settings/${category}`, {
+			method: 'PATCH',
+			includeJsonContentType: true,
+			skipTenantHeader: true,
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+
+			if (response.status === 409) {
+				if (!error.currentVersion) {
+					throw new Error('Version conflict detected. Please refresh the page and try again.');
+				}
+				throw new SettingsConflictError(
+					error.message || 'Settings were updated by someone else',
+					error.currentVersion
+				);
+			}
+
+			if (response.status === 400) {
+				throw new Error(error.message || 'Validation failed');
+			}
+
+			if (response.status === 403 || response.status === 405) {
+				throw new Error(error.message || 'Settings are read-only');
+			}
+
+			throw new Error(error.message || error.error || 'Failed to update platform settings');
 		}
 
 		return response.json();
@@ -288,14 +329,11 @@ export const adminSettingsAPI = {
 		tenantId?: string
 	): Promise<SettingsPatchResult> {
 		const resolvedTenantId = resolveTenantId(tenantId);
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${resolvedTenantId}/settings/${category}`,
 			{
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				credentials: 'include',
+				includeJsonContentType: true,
 				body: JSON.stringify(request)
 			}
 		);
@@ -335,8 +373,8 @@ export const adminSettingsAPI = {
 
 export const adminUiConfigAPI = {
 	async get(): Promise<UIConfigResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -351,12 +389,9 @@ export const adminUiConfigAPI = {
 		baseUrl: string | null;
 		paths: Partial<UIPathConfig>;
 	}): Promise<UIConfigResponse['config']> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
 			method: 'PUT',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify(request)
 		});
 
@@ -412,6 +447,7 @@ export const CATEGORY_NAMES = [
 	'login-ui',
 	// Login Entry / Discovery
 	'login-entry',
+	'tenant-discovery-ui',
 	// Platform settings (read-only)
 	'infrastructure',
 	'encryption'
@@ -530,8 +566,8 @@ export const scopedSettingsAPI = {
 				break;
 		}
 
-		const response = await fetch(`${url}?${params}`, {
-			credentials: 'include'
+		const response = await adminFetch(`${url}?${params}`, {
+			skipTenantHeader: scope.level === 'platform'
 		});
 
 		if (!response.ok) {
@@ -566,8 +602,8 @@ export const scopedSettingsAPI = {
 	 * Get category scope information with user permissions
 	 */
 	async getCategoryScopeInfo(category: string): Promise<CategoryScopeInfo> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/meta/${category}/scope`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/meta/${category}/scope`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -586,11 +622,9 @@ export const scopedSettingsAPI = {
 	 * GET /api/admin/clients/:clientId/settings/:category
 	 */
 	async getClientSettings(clientId: string, category: string): Promise<CategorySettings> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${clientId}/settings/${category}`,
-			{
-				credentials: 'include'
-			}
+			{}
 		);
 
 		if (!response.ok) {
@@ -613,14 +647,11 @@ export const scopedSettingsAPI = {
 		category: string,
 		request: SettingsPatchRequest
 	): Promise<SettingsPatchResult> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${clientId}/settings/${category}`,
 			{
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				credentials: 'include',
+				includeJsonContentType: true,
 				body: JSON.stringify(request)
 			}
 		);
@@ -681,7 +712,7 @@ export const scopedSettingsAPI = {
 	): Promise<SettingsPatchResult> {
 		switch (scope.level) {
 			case 'platform':
-				throw new Error('Platform settings are read-only');
+				return adminSettingsAPI.updatePlatformSettings(category, request);
 			case 'tenant':
 				return adminSettingsAPI.updateSettings(category, request, resolveTenantId(scope.tenantId));
 			case 'client':

@@ -78,7 +78,10 @@
 			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
-		branding: [{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' }],
+		branding: [
+			{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' },
+			{ path: '/admin/tenant-discovery', label: 'Tenant Discovery', icon: 'i-ph-signpost' }
+		],
 		configuration: [
 			{ path: '/admin/info', label: 'Info', icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: 'Settings', icon: 'i-ph-gear' },
@@ -206,8 +209,35 @@
 
 		// Load tenant list into the shared store for the header selector
 		await tenantStore.load();
-		selectedTenantId = tenantStore.defaultTenantId;
+		await settingsContext.initialize();
+		selectedTenantId = settingsContext.tenantId || tenantStore.defaultTenantId;
 	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (tenantId && tenantId !== selectedTenantId) {
+			selectedTenantId = tenantId;
+		}
+	});
+
+	// Paths that belong to the PLATFORM section (tenant selector should be hidden)
+	const PLATFORM_PATHS = [
+		'/admin/tenants',
+		'/admin/security',
+		'/admin/compliance',
+		'/admin/scale',
+		'/admin/jobs',
+		'/admin/admins',
+		'/admin/admin-access-control',
+		'/admin/admin-rbac',
+		'/admin/admin-abac',
+		'/admin/admin-rebac',
+		'/admin/admin-policies',
+		'/admin/ip-allowlist',
+		'/admin/admin-audit'
+	];
+
+	const isPlatformPage = $derived(PLATFORM_PATHS.some((p) => $page.url.pathname.startsWith(p)));
 
 	async function handleTenantChange(tenantId: string) {
 		selectedTenantId = tenantId;
@@ -391,6 +421,7 @@
 				userEmail={adminAuth.user?.email}
 				userName={adminAuth.user?.name}
 				lastLoginAt={adminAuth.user?.lastLoginAt}
+				hideTenantSelector={isPlatformPage}
 			/>
 
 			<div class="page-content">

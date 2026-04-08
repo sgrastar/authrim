@@ -1,14 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import type { PageServerLoad } from './$types';
-
-interface DiscoveryConfigResponse {
-	config: {
-		mode: 'tenant_only' | 'discovery_optional' | 'discovery_required';
-		redirect_default_login_to_discovery: boolean;
-	};
-	single_tenant_mode: boolean;
-	is_common_entry_host: boolean;
-}
+import type { Actions, PageServerLoad } from './$types';
+import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../../lib/discovery-entry';
 
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');
@@ -16,22 +8,21 @@ export const load: PageServerLoad = async (event) => {
 		return {};
 	}
 
-	const response = await event.fetch('/api/auth/discovery');
-	if (!response.ok) {
+	const discoveryHeaders = getDiscoveryRequestHeaders(event);
+	const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(() => null);
+	if (!config) {
 		return {};
 	}
 
-	const config = (await response.json()) as DiscoveryConfigResponse;
-	const shouldRedirect =
-		!config.single_tenant_mode &&
-		config.is_common_entry_host &&
-		config.config.mode !== 'tenant_only' &&
-		(config.config.mode === 'discovery_required' ||
-			config.config.redirect_default_login_to_discovery);
-
-	if (shouldRedirect) {
+	if (!config.single_tenant_mode && config.is_common_entry_host) {
 		throw redirect(303, '/discover');
 	}
 
 	return {};
+};
+
+export const actions: Actions = {
+	resolve: async () => {
+		throw redirect(303, '/discover');
+	}
 };

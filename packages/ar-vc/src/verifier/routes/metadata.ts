@@ -7,6 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, VerifierMetadata } from '../../types';
+import { getRequestVerifierIdentifier } from '../../request-identifiers';
 
 /**
  * GET /.well-known/openid-credential-verifier
@@ -14,7 +15,7 @@ import type { Env, VerifierMetadata } from '../../types';
  * Returns the Verifier's metadata including supported formats and algorithms.
  */
 export async function verifierMetadataRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const verifierIdentifier = c.env.VERIFIER_IDENTIFIER || 'did:web:authrim.com';
+  const verifierIdentifier = getRequestVerifierIdentifier(c);
 
   const metadata: VerifierMetadata = {
     verifier_identifier: verifierIdentifier,

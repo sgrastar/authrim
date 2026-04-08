@@ -201,6 +201,58 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 
+function normalizeOrigin(origin: string): string {
+  return origin.replace(/\/$/, '');
+}
+
+function isLocalHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+/**
+ * Allow explicitly configured origins and the current request origin.
+ *
+ * This keeps same-origin passkey flows working on tenant subdomains even when
+ * tenant.allowed_origins has not been populated with the tenant host yet.
+ */
+function isAllowedPasskeyRequestOrigin(
+  c: Context<{ Bindings: Env }>,
+  originHeader: string | undefined,
+  allowedOrigins: string[]
+): boolean {
+  if (!originHeader) {
+    return false;
+  }
+
+  const normalizedOrigin = normalizeOrigin(originHeader);
+  if (isAllowedOrigin(normalizedOrigin, allowedOrigins)) {
+    return true;
+  }
+
+  try {
+    if (normalizeOrigin(new URL(c.req.url).origin) === normalizedOrigin) {
+      return true;
+    }
+  } catch {
+    // Ignore malformed or unavailable request URL and fall back to Host header.
+  }
+
+  const host = c.req.header('host');
+  if (!host) {
+    return false;
+  }
+
+  const normalizedHost = host.trim().toLowerCase();
+  const candidates = new Set<string>([`https://${normalizedHost}`]);
+
+  const hostnameOnly = normalizedHost.split(':')[0];
+  if (isLocalHost(hostnameOnly)) {
+    candidates.add(`http://${normalizedHost}`);
+  }
+
+  return candidates.has(normalizedOrigin);
+}
+
 /**
  * Normalize any credential identifier to an unpadded base64url string.
  */
@@ -471,7 +523,7 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
     const originHeader = c.req.header('origin');
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -772,7 +824,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const originHeader = c.req.header('origin');
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -1990,7 +2042,7 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     const originHeader = c.req.header('origin');
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 

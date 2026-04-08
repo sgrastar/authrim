@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildInitialAdminSetupUrl,
   buildUrlsConfig,
   ensureHttps,
   getPagesDevUrl,
   getWorkersDevUrl,
+  resolveAdminUiEntryUrl,
+  resolveIssuerUrl,
+  resolveLoginUiEntryUrl,
+  resolveTenantDiscoverUrl,
+  validateDomainRoutingConfig,
 } from '../core/url-config.js';
+import type { AuthrimConfig } from '../core/config.js';
 
 describe('url-config helpers', () => {
   it('adds https to bare domains and preserves explicit schemes', () => {
@@ -73,5 +80,127 @@ describe('url-config helpers', () => {
     expect(urls.api.zoneId).toBe('existing-zone');
     expect(urls.loginUi.sameAsApi).toBe(false);
     expect(urls.adminUi.sameAsApi).toBe(true);
+  });
+
+  it('resolves issuer and setup URLs to the initial tenant subdomain in multi-tenant mode', () => {
+    const config = {
+      tenant: {
+        name: 'first',
+        multiTenant: true,
+        baseDomain: 'multi-tenant.authrim.com',
+        nakedDomain: false,
+      },
+      urls: {
+        api: {
+          custom: 'https://multi-tenant.authrim.com',
+          auto: 'https://mt-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://mt-ar-login-ui.pages.dev',
+          auto: 'https://mt-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://mt-ar-admin-ui.pages.dev',
+          auto: 'https://mt-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+    } as Partial<AuthrimConfig>;
+
+    expect(resolveIssuerUrl(config, { env: 'mt' })).toBe('https://first.multi-tenant.authrim.com');
+    expect(buildInitialAdminSetupUrl(resolveIssuerUrl(config, { env: 'mt' }), 'token-123')).toBe(
+      'https://first.multi-tenant.authrim.com/admin-init-setup?token=token-123'
+    );
+    expect(resolveLoginUiEntryUrl(config, { env: 'mt' })).toBe(
+      'https://first.multi-tenant.authrim.com/login'
+    );
+    expect(resolveTenantDiscoverUrl(config, { env: 'mt' })).toBe(
+      'https://mt-ar-login-ui.pages.dev/discover'
+    );
+    expect(resolveAdminUiEntryUrl(config, { env: 'mt' })).toBe(
+      'https://mt-ar-admin-ui.pages.dev/admin/info'
+    );
+  });
+
+  it('resolves issuer to the naked domain when configured', () => {
+    const config = {
+      tenant: {
+        name: 'first',
+        multiTenant: true,
+        baseDomain: 'multi-tenant.authrim.com',
+        nakedDomain: true,
+      },
+      urls: {
+        api: {
+          custom: 'https://multi-tenant.authrim.com',
+          auto: 'https://mt-ar-router.example.workers.dev',
+        },
+      },
+    } as Partial<AuthrimConfig>;
+
+    expect(resolveIssuerUrl(config, { env: 'mt' })).toBe('https://multi-tenant.authrim.com');
+  });
+
+  it('keeps single-tenant URLs on the configured custom domain', () => {
+    const config = {
+      tenant: {
+        name: 'default',
+        multiTenant: false,
+      },
+      urls: {
+        api: {
+          custom: 'https://auth.example.com',
+          auto: 'https://prod-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.example.com',
+          auto: 'https://prod-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.example.com',
+          auto: 'https://prod-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+    } as Partial<AuthrimConfig>;
+
+    expect(resolveIssuerUrl(config, { env: 'prod' })).toBe('https://auth.example.com');
+    expect(resolveLoginUiEntryUrl(config, { env: 'prod' })).toBe('https://login.example.com/login');
+    expect(resolveTenantDiscoverUrl(config, { env: 'prod' })).toBeNull();
+    expect(resolveAdminUiEntryUrl(config, { env: 'prod' })).toBe(
+      'https://admin.example.com/admin/info'
+    );
+  });
+
+  it('rejects UI domains that collide with the API domain in multi-tenant subdomain mode', () => {
+    expect(
+      validateDomainRoutingConfig({
+        apiDomain: 'oidc.example.com',
+        loginUiDomain: 'oidc.example.com',
+        adminUiDomain: 'admin.example.com',
+        multiTenant: true,
+        nakedDomain: false,
+      })
+    ).toEqual([
+      {
+        field: 'loginUiDomain',
+        message:
+          'UI custom domain cannot match the API domain in multi-tenant mode unless naked domain is enabled.',
+      },
+    ]);
+  });
+
+  it('allows same-origin UI domains when naked-domain routing is enabled', () => {
+    expect(
+      validateDomainRoutingConfig({
+        apiDomain: 'oidc.example.com',
+        loginUiDomain: 'oidc.example.com',
+        adminUiDomain: 'oidc.example.com',
+        multiTenant: true,
+        nakedDomain: true,
+      })
+    ).toEqual([]);
   });
 });
