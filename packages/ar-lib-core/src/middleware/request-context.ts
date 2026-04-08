@@ -197,7 +197,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     }
 
     const shouldValidateTenantBinding =
-      requestClass === 'public_protocol_or_rest' && !!tenantId && tenantResult.success;
+      isMultiTenantEnabled(c.env) &&
+      requestClass === 'public_protocol_or_rest' &&
+      !!tenantId &&
+      tenantResult.success;
 
     if (shouldValidateTenantBinding) {
       const bindingAllowed = await validateTenantRequestBinding(
