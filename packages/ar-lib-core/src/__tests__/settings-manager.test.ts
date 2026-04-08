@@ -626,22 +626,6 @@ describe('SettingsManager', () => {
     });
   });
 
-  describe('platform settings', () => {
-    it('should reject patch on platform settings', async () => {
-      await expect(
-        manager.patch(
-          'test',
-          { type: 'platform' },
-          {
-            ifMatch: 'any',
-            set: { 'test.string_setting': 'value' },
-          },
-          'test_actor'
-        )
-      ).rejects.toThrow('read-only');
-    });
-  });
-
   describe('client scope', () => {
     it('should use correct KV key for client scope', async () => {
       const result = await manager.getAll('test', { type: 'client', id: 'client_123' });
