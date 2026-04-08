@@ -49,8 +49,7 @@ const mocked = vi.hoisted(() => {
     async queryOne<T>(query: string, params: unknown[]): Promise<T | null> {
       if (query.includes('FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1')) {
         return (state.users.find(
-          (user) =>
-            user.id === params[0] && user.tenant_id === params[1] && user.is_active === 1
+          (user) => user.id === params[0] && user.tenant_id === params[1] && user.is_active === 1
         ) ?? null) as T | null;
       }
       if (query.includes('FROM tenants WHERE tenant_code = ?')) {

@@ -60,7 +60,11 @@ function normalizeDomainInput(value: string | null | undefined): string | null {
     return null;
   }
 
-  const normalized = value.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
+  const normalized = value
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
   return normalized || null;
 }
 

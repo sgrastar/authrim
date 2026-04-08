@@ -85,9 +85,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         c.set('adminAuth', {
           userId: c.req.header('x-test-user-id') ?? 'admin_1',
           email: 'admin@example.com',
-          permissions: (c.req.header('x-test-permissions') ?? '')
-            .split(',')
-            .filter(Boolean),
+          permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
           roles: (c.req.header('x-test-roles') ?? 'admin').split(',').filter(Boolean),
           hierarchyLevel: c.req.header('x-test-hierarchy-level')
             ? Number(c.req.header('x-test-hierarchy-level'))
@@ -98,10 +96,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
     getTenantIdFromContext: vi.fn((c: { get: (key: string) => unknown }) => c.get('tenantId')),
     createErrorResponse: vi.fn(
-      (
-        c: { json: (body: unknown, status?: number) => Response },
-        errorCode: string
-      ) => c.json({ error: 'error', error_code: errorCode }, statusByCode[errorCode] ?? 500)
+      (c: { json: (body: unknown, status?: number) => Response }, errorCode: string) =>
+        c.json({ error: 'error', error_code: errorCode }, statusByCode[errorCode] ?? 500)
     ),
   };
 });

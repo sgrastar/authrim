@@ -181,8 +181,7 @@ function buildDomainRoutingValidationResult(config: AuthrimConfig) {
   });
 
   return conflicts.map((conflict) => ({
-    path:
-      conflict.field === 'loginUiDomain' ? 'urls.loginUi.custom' : 'urls.adminUi.custom',
+    path: conflict.field === 'loginUiDomain' ? 'urls.loginUi.custom' : 'urls.adminUi.custom',
     message: conflict.message,
   }));
 }
@@ -1292,9 +1291,8 @@ export function createApiRoutes(): Hono {
               ? join(foundKeys.path, 'admin_api_secret.txt')
               : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
 
-            const { ensureLoginUiClient, shouldReportLoginUiClientWarning } = await import(
-              '../core/login-ui-client.js'
-            );
+            const { ensureLoginUiClient, shouldReportLoginUiClientWarning } =
+              await import('../core/login-ui-client.js');
             const clientResult = await ensureLoginUiClient({
               apiBaseUrl,
               loginUiUrl,
@@ -1431,11 +1429,7 @@ export function createApiRoutes(): Hono {
           if (migrationsResult.success) {
             addProgress('✅ Database migrations completed successfully');
             addProgress(`🔧 Ensuring initial tenant exists (${bootstrapConfig.tenant.name})...`);
-            initialTenantResult = await ensureInitialTenantInD1(
-              env,
-              bootstrapConfig,
-              addProgress
-            );
+            initialTenantResult = await ensureInitialTenantInD1(env, bootstrapConfig, addProgress);
             if (initialTenantResult.success) {
               addProgress(`✅ Initial tenant ready: ${bootstrapConfig.tenant.name}`);
             } else {
@@ -1444,7 +1438,9 @@ export function createApiRoutes(): Hono {
               );
             }
 
-            addProgress(`🔧 Ensuring initial admin roles exist (${bootstrapConfig.tenant.name})...`);
+            addProgress(
+              `🔧 Ensuring initial admin roles exist (${bootstrapConfig.tenant.name})...`
+            );
             initialAdminRolesResult = await ensureInitialAdminRolesInD1(
               env,
               bootstrapConfig,
@@ -1710,7 +1706,9 @@ export function createApiRoutes(): Hono {
                 ? (resolved.paths as EnvironmentPaths).config
                 : (resolved.paths as LegacyPaths).config;
             if (existsSync(configPath)) {
-              const cfg = AuthrimConfigSchema.parse(JSON.parse(await readFile(configPath, 'utf-8')));
+              const cfg = AuthrimConfigSchema.parse(
+                JSON.parse(await readFile(configPath, 'utf-8'))
+              );
               resolvedBaseUrl = resolveIssuerUrl(cfg, { env: envName });
             }
           } catch {
@@ -2267,9 +2265,8 @@ export function createApiRoutes(): Hono {
                 ? join(foundKeys.path, 'admin_api_secret.txt')
                 : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
 
-              const { ensureLoginUiClient, shouldReportLoginUiClientWarning } = await import(
-                '../core/login-ui-client.js'
-              );
+              const { ensureLoginUiClient, shouldReportLoginUiClientWarning } =
+                await import('../core/login-ui-client.js');
               const clientResult = await ensureLoginUiClient({
                 apiBaseUrl,
                 loginUiUrl,

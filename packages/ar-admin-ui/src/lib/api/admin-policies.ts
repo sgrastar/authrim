@@ -349,9 +349,12 @@ export const adminPoliciesAPI = {
 		if (params?.page) searchParams.set('page', params.page.toString());
 		if (params?.limit) searchParams.set('limit', params.limit.toString());
 
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/policies/simulations?${searchParams}`, {
-			method: 'GET'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/policies/simulations?${searchParams}`,
+			{
+				method: 'GET'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

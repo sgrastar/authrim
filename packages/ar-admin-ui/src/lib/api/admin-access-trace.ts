@@ -175,9 +175,12 @@ export const adminAccessTraceAPI = {
 		if (period) searchParams.set('period', period);
 		if (granularity) searchParams.set('granularity', granularity);
 
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/access-trace/timeline?${searchParams}`, {
-			method: 'GET'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/access-trace/timeline?${searchParams}`,
+			{
+				method: 'GET'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

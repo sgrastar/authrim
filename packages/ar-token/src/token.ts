@@ -2299,7 +2299,11 @@ async function handleJWTBearerGrant(
   }
 
   // Validate JWT assertion
-  const validation = await validateJWTBearerAssertion(assertion, getRequestIssuer(c), trustedIssuers);
+  const validation = await validateJWTBearerAssertion(
+    assertion,
+    getRequestIssuer(c),
+    trustedIssuers
+  );
 
   if (!validation.valid || !validation.claims) {
     return c.json(
@@ -4678,7 +4682,8 @@ async function handleNativeSSOTokenExchange(
   const idTokenAudArray = Array.isArray(idTokenAud) ? idTokenAud : idTokenAud ? [idTokenAud] : [];
   const idTokenClientId = idTokenPayload.client_id as string | undefined;
   const originalClientId =
-    idTokenClientId || (idTokenAudArray[0] !== getRequestIssuer(c) ? idTokenAudArray[0] : undefined);
+    idTokenClientId ||
+    (idTokenAudArray[0] !== getRequestIssuer(c) ? idTokenAudArray[0] : undefined);
 
   const isSameClient = originalClientId === clientId || idTokenAudArray.includes(clientId);
 

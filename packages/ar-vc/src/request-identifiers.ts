@@ -1,5 +1,9 @@
 import type { Context } from 'hono';
-import { buildRequestIdentifier, buildRequestIssuerUrl, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import {
+  buildRequestIdentifier,
+  buildRequestIssuerUrl,
+  getTenantIdFromContext,
+} from '@authrim/ar-lib-core';
 import type { Env } from './types';
 
 type RequestIssuerEnv = Parameters<typeof buildRequestIssuerUrl>[1];

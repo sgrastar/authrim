@@ -76,9 +76,12 @@ export const adminTenantsAPI = {
 	 * Get a single tenant by ID
 	 */
 	async get(id: string): Promise<Tenant> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			skipTenantHeader: true
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				skipTenantHeader: true
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -110,12 +113,15 @@ export const adminTenantsAPI = {
 	 * Note: id and is_default cannot be changed via this endpoint
 	 */
 	async update(id: string, data: UpdateTenantRequest): Promise<Tenant> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			includeJsonContentType: true,
-			skipTenantHeader: true,
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				method: 'PATCH',
+				includeJsonContentType: true,
+				skipTenantHeader: true,
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -131,10 +137,13 @@ export const adminTenantsAPI = {
 	 * The 'default' tenant cannot be deleted.
 	 */
 	async delete(id: string): Promise<TenantDeleteResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			skipTenantHeader: true
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				method: 'DELETE',
+				skipTenantHeader: true
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

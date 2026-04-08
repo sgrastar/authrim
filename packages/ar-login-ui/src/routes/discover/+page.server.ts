@@ -122,7 +122,12 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (inviteToken) {
-		const result = await resolveDiscovery(event.fetch, 'invite_token', inviteToken, discoveryHeaders);
+		const result = await resolveDiscovery(
+			event.fetch,
+			'invite_token',
+			inviteToken,
+			discoveryHeaders
+		);
 		if (result.result === 'resolved') {
 			if (config.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);

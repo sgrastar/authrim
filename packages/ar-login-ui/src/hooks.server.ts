@@ -307,8 +307,8 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	}
 
 	const apiBinding =
-		((platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
-			(platformEnv?.API_SERVICE as ServiceBinding | undefined)) ??
+		(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
+		(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
 		null;
 	const response = apiBinding
 		? await apiBinding.fetch(new Request(upstreamUrl.toString(), requestInit))

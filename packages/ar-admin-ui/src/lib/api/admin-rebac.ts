@@ -271,11 +271,14 @@ export const adminReBACAPI = {
 			is_active?: boolean;
 		}
 	): Promise<{ success: boolean }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`, {
-			method: 'PUT',
-			includeJsonContentType: true,
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`,
+			{
+				method: 'PUT',
+				includeJsonContentType: true,
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -289,9 +292,12 @@ export const adminReBACAPI = {
 	 * Delete a relation definition
 	 */
 	async deleteDefinition(id: string): Promise<{ success: boolean }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`, {
-			method: 'DELETE'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/rebac/relation-definitions/${id}`,
+			{
+				method: 'DELETE'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

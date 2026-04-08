@@ -146,9 +146,12 @@ export const adminAdminsAPI = {
 	 * GET /api/admin/admins/:id
 	 */
 	async get(id: string): Promise<AdminUserDetail> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			if (response.status === 404) {
@@ -186,12 +189,15 @@ export const adminAdminsAPI = {
 	 * PATCH /api/admin/admins/:id
 	 */
 	async update(id: string, data: UpdateAdminUserInput): Promise<AdminUser> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`,
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -206,10 +212,13 @@ export const adminAdminsAPI = {
 	 * DELETE /api/admin/admins/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`,
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

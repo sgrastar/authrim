@@ -377,11 +377,14 @@ export const adminOrganizationsAPI = {
 	 * Confirm DNS verification (checks if TXT record is present)
 	 */
 	async confirmVerification(id: string): Promise<VerificationStatus> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/org-domain-mappings/verify/confirm`, {
-			method: 'POST',
-			includeJsonContentType: true,
-			body: JSON.stringify({ id })
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/org-domain-mappings/verify/confirm`,
+			{
+				method: 'POST',
+				includeJsonContentType: true,
+				body: JSON.stringify({ id })
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

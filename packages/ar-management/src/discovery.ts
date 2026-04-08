@@ -190,7 +190,8 @@ function readSettingBoolean(record: Record<string, unknown> | null, key: string)
 }
 
 function normalizeThemeValue(value: string | null): string | null {
-  return value && DISCOVERY_UI_THEME_OPTIONS.includes(value as (typeof DISCOVERY_UI_THEME_OPTIONS)[number])
+  return value &&
+    DISCOVERY_UI_THEME_OPTIONS.includes(value as (typeof DISCOVERY_UI_THEME_OPTIONS)[number])
     ? value
     : null;
 }
@@ -284,7 +285,9 @@ async function getDiscoveryUiConfig(
     tenantId && !isCommonEntryHost
       ? getDiscoveryUiSettingsRecord(env, { type: 'tenant', id: tenantId })
       : Promise.resolve(null),
-    tenantId && !isCommonEntryHost ? getLoginUiSettingsRecord(env, tenantId) : Promise.resolve(null),
+    tenantId && !isCommonEntryHost
+      ? getLoginUiSettingsRecord(env, tenantId)
+      : Promise.resolve(null),
   ]);
 
   return {
@@ -356,10 +359,7 @@ async function getTenantRowByTenantCode(
   );
 }
 
-async function getTenantRowsByExactEmail(
-  env: Env,
-  email: string
-): Promise<TenantLookupRow[]> {
+async function getTenantRowsByExactEmail(env: Env, email: string): Promise<TenantLookupRow[]> {
   if (!env.DB_PII) {
     return [];
   }
@@ -385,12 +385,16 @@ async function getTenantRowsByExactEmail(
       )
     );
 
-    const activeTenantIds = [...new Set(activeUsers.flatMap((user) => (user ? [user.tenant_id] : [])))];
+    const activeTenantIds = [
+      ...new Set(activeUsers.flatMap((user) => (user ? [user.tenant_id] : []))),
+    ];
     if (activeTenantIds.length === 0) {
       return [];
     }
 
-    const tenants = await Promise.all(activeTenantIds.map((tenantId) => getTenantRowById(env, tenantId)));
+    const tenants = await Promise.all(
+      activeTenantIds.map((tenantId) => getTenantRowById(env, tenantId))
+    );
     return tenants.filter((tenant): tenant is TenantLookupRow => tenant !== null);
   } catch {
     return [];
@@ -695,7 +699,11 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
     const singleTenantMode = isSingleTenantMode(c.env);
     const defaultCandidate = singleTenantMode ? await getSingleTenantCandidate(c.env) : undefined;
     const commonEntryHost = isCommonEntryHost(c);
-    const ui = await getDiscoveryUiConfig(c.env, commonEntryHost ? null : tenantId, commonEntryHost);
+    const ui = await getDiscoveryUiConfig(
+      c.env,
+      commonEntryHost ? null : tenantId,
+      commonEntryHost
+    );
 
     return c.json({
       config,

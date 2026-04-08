@@ -748,12 +748,15 @@ export const adminFlowsAPI = {
 		id: string,
 		data: CopyFlowRequest = {}
 	): Promise<{ success: boolean; flow_id: string }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/copy`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/copy`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

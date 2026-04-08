@@ -284,9 +284,7 @@ function createMockContext(options: {
         (() => {
           const host = options.headers?.host ?? 'example.com';
           const isLocalhost =
-            host.startsWith('localhost') ||
-            host.startsWith('127.0.0.1') ||
-            host.startsWith('::1');
+            host.startsWith('localhost') || host.startsWith('127.0.0.1') || host.startsWith('::1');
           const protocol = isLocalhost ? 'http' : 'https';
           return `${protocol}://${host}/api/auth/passkeys/test`;
         })(),

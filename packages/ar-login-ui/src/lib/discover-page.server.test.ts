@@ -223,7 +223,8 @@ describe('/discover page server', () => {
 			} as never)
 		).rejects.toMatchObject({
 			status: 303,
-			location: 'https://first.multi-tenant.authrim.com/signup?invite_token=invite-123&tenant=First+Tenant&email=user%40example.com'
+			location:
+				'https://first.multi-tenant.authrim.com/signup?invite_token=invite-123&tenant=First+Tenant&email=user%40example.com'
 		});
 	});
 });

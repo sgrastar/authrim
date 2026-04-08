@@ -317,6 +317,9 @@ describe('ensureWildcardDnsForMultiTenant', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(onProgress).toHaveBeenCalledTimes(1);
-    expect(onProgress).toHaveBeenNthCalledWith(1, 'Ensuring wildcard DNS for *.test.example.com...');
+    expect(onProgress).toHaveBeenNthCalledWith(
+      1,
+      'Ensuring wildcard DNS for *.test.example.com...'
+    );
   });
 });

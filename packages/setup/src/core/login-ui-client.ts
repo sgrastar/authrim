@@ -43,7 +43,9 @@ export interface LoginUiClientResult {
 }
 
 export function shouldReportLoginUiClientWarning(error?: string | null): boolean {
-  const normalized = String(error || '').trim().toLowerCase();
+  const normalized = String(error || '')
+    .trim()
+    .toLowerCase();
   return normalized.length > 0 && !normalized.includes('fetch failed');
 }
 

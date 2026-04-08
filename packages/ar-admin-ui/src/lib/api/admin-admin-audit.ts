@@ -192,9 +192,12 @@ export const adminAdminAuditAPI = {
 	 * GET /api/admin/admin-audit-log/resource-types/list
 	 */
 	async listResourceTypes(): Promise<ResourceTypesListResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-audit-log/resource-types/list`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admin-audit-log/resource-types/list`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

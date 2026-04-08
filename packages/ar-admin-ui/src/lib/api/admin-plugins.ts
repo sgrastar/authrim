@@ -176,9 +176,12 @@ export const adminPluginsAPI = {
 		if (params.trustLevel) searchParams.set('trustLevel', params.trustLevel);
 
 		const query = searchParams.toString();
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/plugins${query ? '?' + query : ''}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins${query ? '?' + query : ''}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -191,9 +194,12 @@ export const adminPluginsAPI = {
 	 * Get plugin details including configuration
 	 */
 	async get(id: string): Promise<PluginDetailResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

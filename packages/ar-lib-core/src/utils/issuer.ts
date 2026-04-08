@@ -111,10 +111,7 @@ export function getPrimaryTenantId(env: Partial<IssuerEnvLike>): string {
 /**
  * Returns true when the provided tenant should use the naked BASE_DOMAIN as its canonical issuer.
  */
-export function usesNakedDomainIssuer(
-  env: Partial<IssuerEnvLike>,
-  tenantId?: string
-): boolean {
+export function usesNakedDomainIssuer(env: Partial<IssuerEnvLike>, tenantId?: string): boolean {
   if (env.NAKED_DOMAIN_AS_ISSUER !== 'true' || !env.BASE_DOMAIN) {
     return false;
   }
@@ -236,10 +233,7 @@ export function buildRequestIdentifier(
     return `did:web:${hostname}`;
   }
 
-  if (
-    configuredIdentifier.startsWith('https://') ||
-    configuredIdentifier.startsWith('http://')
-  ) {
+  if (configuredIdentifier.startsWith('https://') || configuredIdentifier.startsWith('http://')) {
     return issuerUrl;
   }
 

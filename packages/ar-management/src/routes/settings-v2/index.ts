@@ -826,7 +826,12 @@ settingsV2.patch('/platform/settings/:category', (c) => {
     const userRoles = adminAuth?.roles || [];
 
     if (!checkRolePermission(userRoles, category, 'platform', 'edit')) {
-      return errorResponse(c, 'forbidden', 'Insufficient permissions to edit platform settings', 403);
+      return errorResponse(
+        c,
+        'forbidden',
+        'Insufficient permissions to edit platform settings',
+        403
+      );
     }
 
     const manager = getSettingsManager(c.env);

@@ -271,7 +271,12 @@ describe('requestContextMiddleware – tenant existence check', () => {
     it('allows platform admin requests without X-Tenant-Id', async () => {
       const db = createMockDB({ tenantRow: null });
       const kv = createMockKV({ cachedValue: null });
-      const env: TestEnv = { BASE_DOMAIN, DEFAULT_TENANT_ID: 'default', DB: db, AUTHRIM_CONFIG: kv };
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
       const app = buildApp(env);
 
       const res = await app.request(
@@ -287,7 +292,12 @@ describe('requestContextMiddleware – tenant existence check', () => {
     it('requires X-Tenant-Id for tenant-scoped admin requests', async () => {
       const db = createMockDB({ tenantRow: { id: 'default' } });
       const kv = createMockKV({ cachedValue: null });
-      const env: TestEnv = { BASE_DOMAIN, DEFAULT_TENANT_ID: 'default', DB: db, AUTHRIM_CONFIG: kv };
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
       const app = buildApp(env);
 
       const res = await app.request(
@@ -304,7 +314,12 @@ describe('requestContextMiddleware – tenant existence check', () => {
     it('rejects invalid X-Tenant-Id format for tenant-scoped admin requests', async () => {
       const db = createMockDB({ tenantRow: { id: 'default' } });
       const kv = createMockKV({ cachedValue: null });
-      const env: TestEnv = { BASE_DOMAIN, DEFAULT_TENANT_ID: 'default', DB: db, AUTHRIM_CONFIG: kv };
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
       const app = buildApp(env);
 
       const res = await app.request(
@@ -319,7 +334,12 @@ describe('requestContextMiddleware – tenant existence check', () => {
     it('rejects mismatched X-Tenant-Id for explicit tenant-scoped admin paths', async () => {
       const db = createMockDB({ tenantRow: { id: 'acme' } });
       const kv = createMockKV({ cachedValue: null });
-      const env: TestEnv = { BASE_DOMAIN, DEFAULT_TENANT_ID: 'default', DB: db, AUTHRIM_CONFIG: kv };
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
       const app = buildApp(env);
 
       const res = await app.request(

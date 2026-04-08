@@ -299,12 +299,15 @@ export const adminExternalProvidersAPI = {
 	 * @returns OpenID Configuration object
 	 */
 	async discoverOidcConfig(url: string): Promise<OidcDiscoveryResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/external-providers/discover-oidc`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify({ url })
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/external-providers/discover-oidc`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify({ url })
+			}
+		);
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error || error.message || 'Failed to discover OIDC configuration');

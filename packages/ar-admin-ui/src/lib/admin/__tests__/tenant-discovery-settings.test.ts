@@ -7,9 +7,9 @@ import {
 
 describe('tenant discovery settings helpers', () => {
 	it('treats email resolution as disabled when email discovery is not enabled', () => {
-		expect(resolveEmailResolutionPolicy('["tenant_code","tenant_slug"]', 'exact_email_then_domain')).toBe(
-			'disabled'
-		);
+		expect(
+			resolveEmailResolutionPolicy('["tenant_code","tenant_slug"]', 'exact_email_then_domain')
+		).toBe('disabled');
 	});
 
 	it('keeps stored email policy when email discovery is enabled', () => {

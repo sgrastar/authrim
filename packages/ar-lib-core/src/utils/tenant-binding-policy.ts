@@ -105,11 +105,7 @@ export async function getTenantBindingPolicy(
   }
 
   const allowedHosts =
-    configuredHosts.size > 0
-      ? [...configuredHosts]
-      : canonicalHost
-        ? [canonicalHost]
-        : [];
+    configuredHosts.size > 0 ? [...configuredHosts] : canonicalHost ? [canonicalHost] : [];
   const allowedIdentifiers =
     configuredIdentifiers.size > 0 ? [...configuredIdentifiers] : [...defaultIdentifiers];
 
@@ -156,5 +152,7 @@ export async function validateTenantRequestBinding(
     );
   }
 
-  return [...identifierCandidates].some((candidate) => policy.allowedIdentifiers.includes(candidate));
+  return [...identifierCandidates].some((candidate) =>
+    policy.allowedIdentifiers.includes(candidate)
+  );
 }

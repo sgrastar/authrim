@@ -834,41 +834,41 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         migrationsSpinner.text = msg;
       });
 
-        if (migrationsResult.success) {
-          migrationsSpinner.succeed(
-            `Migrations completed - core: ${migrationsResult.core.appliedCount}, pii: ${migrationsResult.pii.appliedCount}, admin: ${migrationsResult.admin.appliedCount} applied`
-          );
+      if (migrationsResult.success) {
+        migrationsSpinner.succeed(
+          `Migrations completed - core: ${migrationsResult.core.appliedCount}, pii: ${migrationsResult.pii.appliedCount}, admin: ${migrationsResult.admin.appliedCount} applied`
+        );
 
         const bootstrapSpinner = ora('Ensuring initial tenant exists...').start();
         const bootstrapResult = await ensureInitialTenantInD1(env, config, (msg) => {
           bootstrapSpinner.text = msg;
         });
 
-          if (bootstrapResult.success) {
-            bootstrapSpinner.succeed(`Initial tenant ready: ${config.tenant.name}`);
-          } else {
+        if (bootstrapResult.success) {
+          bootstrapSpinner.succeed(`Initial tenant ready: ${config.tenant.name}`);
+        } else {
           bootstrapSpinner.fail('Initial tenant bootstrap failed');
           if (bootstrapResult.error) {
             console.log(chalk.red(`  ${bootstrapResult.error}`));
           }
           initialTenantSuccess = false;
-          }
+        }
 
-          const adminRolesSpinner = ora('Ensuring initial admin roles exist...').start();
-          const adminRolesResult = await ensureInitialAdminRolesInD1(env, config, (msg) => {
-            adminRolesSpinner.text = msg;
-          });
+        const adminRolesSpinner = ora('Ensuring initial admin roles exist...').start();
+        const adminRolesResult = await ensureInitialAdminRolesInD1(env, config, (msg) => {
+          adminRolesSpinner.text = msg;
+        });
 
-          if (adminRolesResult.success) {
-            adminRolesSpinner.succeed(`Initial admin roles ready: ${config.tenant.name}`);
-          } else {
-            adminRolesSpinner.fail('Initial admin role bootstrap failed');
-            if (adminRolesResult.error) {
-              console.log(chalk.red(`  ${adminRolesResult.error}`));
-            }
-            initialAdminRolesSuccess = false;
-          }
+        if (adminRolesResult.success) {
+          adminRolesSpinner.succeed(`Initial admin roles ready: ${config.tenant.name}`);
         } else {
+          adminRolesSpinner.fail('Initial admin role bootstrap failed');
+          if (adminRolesResult.error) {
+            console.log(chalk.red(`  ${adminRolesResult.error}`));
+          }
+          initialAdminRolesSuccess = false;
+        }
+      } else {
         migrationsSpinner.warn('Some migrations failed');
         if (migrationsResult.core.error) {
           console.log(chalk.yellow(`  Core: ${migrationsResult.core.error}`));
@@ -891,7 +891,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   // Final summary
   console.log(chalk.bold('\n━━━ Deployment Complete ━━━\n'));
 
-  if (summary.failedCount === 0 && migrationsSuccess && initialTenantSuccess && initialAdminRolesSuccess) {
+  if (
+    summary.failedCount === 0 &&
+    migrationsSuccess &&
+    initialTenantSuccess &&
+    initialAdminRolesSuccess
+  ) {
     console.log(chalk.green('✅ All components deployed and migrations applied!\n'));
   } else if (summary.failedCount === 0 && !migrationsSuccess) {
     console.log(chalk.yellow('⚠️  All components deployed, but some migrations failed.\n'));

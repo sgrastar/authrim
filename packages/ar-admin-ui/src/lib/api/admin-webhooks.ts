@@ -183,9 +183,12 @@ export const adminWebhooksAPI = {
 			searchParams.set('activeOnly', params.activeOnly.toString());
 
 		const query = searchParams.toString();
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/webhooks${query ? '?' + query : ''}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks${query ? '?' + query : ''}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -198,9 +201,12 @@ export const adminWebhooksAPI = {
 	 * Get a single webhook by ID
 	 */
 	async get(id: string): Promise<Webhook> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -231,12 +237,15 @@ export const adminWebhooksAPI = {
 	 * Update an existing webhook
 	 */
 	async update(id: string, data: UpdateWebhookRequest): Promise<Webhook> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`, {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`,
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -249,10 +258,13 @@ export const adminWebhooksAPI = {
 	 * Delete a webhook
 	 */
 	async delete(id: string): Promise<{ success: boolean }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}`,
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

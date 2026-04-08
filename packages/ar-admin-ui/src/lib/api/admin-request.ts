@@ -51,8 +51,13 @@ export async function adminFetch(
 		skipTenantHeader?: boolean;
 	} = {}
 ): Promise<Response> {
-	const { tenantId, includeJsonContentType = false, skipTenantHeader = false, headers, ...rest } =
-		options;
+	const {
+		tenantId,
+		includeJsonContentType = false,
+		skipTenantHeader = false,
+		headers,
+		...rest
+	} = options;
 
 	return fetch(input, {
 		...rest,

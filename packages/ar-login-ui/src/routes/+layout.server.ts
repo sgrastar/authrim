@@ -7,10 +7,14 @@ export const load: LayoutServerLoad = async (event) => {
 	const preferredLanguage = event.cookies.get('preferredLanguage') || 'en';
 	const rememberedTenant = readRememberedTenant(event.cookies.get(REMEMBERED_TENANT_COOKIE));
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);
-	const discoveryConfig = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(() => null);
+	const discoveryConfig = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(
+		() => null
+	);
 	const shouldLoadTenantBranding =
 		rememberedTenant !== null ||
-		(discoveryConfig ? discoveryConfig.single_tenant_mode || !discoveryConfig.is_common_entry_host : true);
+		(discoveryConfig
+			? discoveryConfig.single_tenant_mode || !discoveryConfig.is_common_entry_host
+			: true);
 
 	return {
 		preferredLanguage,

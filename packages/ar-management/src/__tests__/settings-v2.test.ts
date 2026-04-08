@@ -46,16 +46,18 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
 }
 
 // Create test app with settings-v2 routes
-function createTestApp(options: {
-  kv?: KVNamespace;
-  env?: Record<string, string>;
-  adminAuth?: {
-    userId: string;
-    authMethod: 'bearer' | 'session';
-    roles: string[];
-    org_id?: string;
-  };
-} = {}) {
+function createTestApp(
+  options: {
+    kv?: KVNamespace;
+    env?: Record<string, string>;
+    adminAuth?: {
+      userId: string;
+      authMethod: 'bearer' | 'session';
+      roles: string[];
+      org_id?: string;
+    };
+  } = {}
+) {
   const mockKV = options.kv ?? createMockKV();
 
   const app = new Hono<{
@@ -178,9 +180,7 @@ describe('Settings API v2', () => {
         expect(body.values['login-entry.discovery_methods']).toBe(
           '["email_domain","tenant_code","tenant_slug"]'
         );
-        expect(body.values['login-entry.email_resolution_policy']).toBe(
-          'exact_email_then_domain'
-        );
+        expect(body.values['login-entry.email_resolution_policy']).toBe('exact_email_then_domain');
         expect(body.values['login-entry.selection_policy']).toBe('select_if_multiple');
         expect(body.values['login-entry.allow_manual_tenant_entry']).toBe(true);
         expect(body.values['login-entry.remember_last_tenant']).toBe(true);

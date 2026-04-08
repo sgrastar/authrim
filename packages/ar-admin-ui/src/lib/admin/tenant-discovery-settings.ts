@@ -1,7 +1,4 @@
-export type EmailResolutionPolicy =
-	| 'exact_email_then_domain'
-	| 'exact_email_only'
-	| 'disabled';
+export type EmailResolutionPolicy = 'exact_email_then_domain' | 'exact_email_only' | 'disabled';
 
 export interface DiscoveryMethodFormState {
 	emailResolutionPolicy: EmailResolutionPolicy;
@@ -36,7 +33,10 @@ export function resolveEmailResolutionPolicy(
 		return 'disabled';
 	}
 
-	if (typeof storedPolicy === 'string' && VALID_POLICIES.includes(storedPolicy as EmailResolutionPolicy)) {
+	if (
+		typeof storedPolicy === 'string' &&
+		VALID_POLICIES.includes(storedPolicy as EmailResolutionPolicy)
+	) {
 		return storedPolicy as EmailResolutionPolicy;
 	}
 

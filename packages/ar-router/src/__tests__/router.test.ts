@@ -578,16 +578,14 @@ describe('Router Worker', () => {
     });
 
     it('should proxy login-ui redirects without following them server-side', async () => {
-      const fetchMock = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce(
-          new Response(null, {
-            status: 303,
-            headers: {
-              Location: 'https://first.example.com/login',
-            },
-          })
-        );
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(null, {
+          status: 303,
+          headers: {
+            Location: 'https://first.example.com/login',
+          },
+        })
+      );
 
       const envWithLoginUi = {
         ...mockEnv,
