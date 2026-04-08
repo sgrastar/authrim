@@ -118,7 +118,7 @@ describe('/discover page server', () => {
 		expect(requestHeaders.get('content-type')).toBe('application/json');
 	});
 
-	it('redirects common-entry discovery success back to same-host /login', async () => {
+	it('redirects common-entry discovery success to tenant login_url', async () => {
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(
@@ -167,13 +167,13 @@ describe('/discover page server', () => {
 			} as never)
 		).rejects.toMatchObject({
 			status: 303,
-			location: '/login'
+			location: 'https://first.multi-tenant.authrim.com/login'
 		});
 
 		expect(cookies.set).toHaveBeenCalled();
 	});
 
-	it('redirects common-entry invitation discovery success back to same-host /signup', async () => {
+	it('redirects common-entry invitation discovery success to tenant signup url', async () => {
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(
@@ -223,7 +223,7 @@ describe('/discover page server', () => {
 			} as never)
 		).rejects.toMatchObject({
 			status: 303,
-			location: '/signup?invite_token=invite-123&tenant=First+Tenant&email=user%40example.com'
+			location: 'https://first.multi-tenant.authrim.com/signup?invite_token=invite-123&tenant=First+Tenant&email=user%40example.com'
 		});
 	});
 });
