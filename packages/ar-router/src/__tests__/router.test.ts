@@ -263,6 +263,15 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /api/auth/discovery/grant/verify to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/auth/discovery/grant/verify', {
+          method: 'POST',
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route POST /introspect to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/introspect', { method: 'POST' });
         await app.fetch(req, mockEnv);

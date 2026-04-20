@@ -1000,9 +1000,19 @@ const id: Translations = {
     'Digunakan untuk mengirim OTP email dan verifikasi alamat email. Anda dapat mengkonfigurasi ini nanti jika Anda mau.',
   'web.email.configureLater': 'Konfigurasikan nanti',
   'web.email.configureLaterHint': 'Lewati untuk sekarang dan konfigurasikan nanti.',
+  'web.email.configureCloudflare': 'Konfigurasikan Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Menggunakan binding native Workers Email Service. Memerlukan paket Workers Paid dan Cloudflare DNS.',
   'web.email.configureResend': 'Konfigurasikan Resend',
   'web.email.configureResendHint':
     'Siapkan pengiriman email dengan Resend (disarankan untuk produksi).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Persyaratan',
+  'web.email.cloudflareRequirementPaid': 'Paket Workers Paid wajib',
+  'web.email.cloudflareRequirementDns':
+    'Cloudflare DNS / onboarding domain wajib',
+  'web.email.cloudflareRequirementManual':
+    'Penyiapan domain di dashboard Cloudflare masih harus dilakukan secara manual',
   'web.email.resendSetup': 'Konfigurasi Resend',
   'web.email.beforeBegin': 'Sebelum Anda mulai:',
   'web.email.step1': 'Buat akun Resend di',
@@ -1010,10 +1020,18 @@ const id: Translations = {
   'web.email.step3': 'Buat API key di',
   'web.email.resendApiKey': 'API Key Resend',
   'web.email.resendApiKeyHint': 'API key Anda dimulai dengan "re_"',
+  'web.email.resendApiKeyMissing': 'Silakan masukkan API key Resend Anda',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API key tidak dimulai dengan "re_". Ini mungkin bukan API key Resend yang valid. Tetap lanjutkan?',
   'web.email.fromEmailAddress': 'Alamat Email Pengirim',
+  'web.email.cloudflareFromHint':
+    'Harus berasal dari domain yang sudah di-onboard ke Cloudflare Email Service',
   'web.email.fromEmailHint': 'Harus dari domain yang terverifikasi di akun Resend Anda',
+  'web.email.fromEmailMissing': 'Silakan masukkan alamat email pengirim',
+  'web.email.fromEmailInvalid': 'Silakan masukkan alamat email yang valid',
   'web.email.fromDisplayName': 'Nama Tampilan Pengirim (opsional)',
   'web.email.fromDisplayHint': 'Ditampilkan sebagai nama pengirim di klien email',
+  'web.email.saveConfigFailed': 'Gagal menyimpan konfigurasi email',
   'web.email.domainVerificationTitle': 'Verifikasi Domain Diperlukan',
   'web.email.domainVerificationDesc':
     'Sebelum domain Anda diverifikasi, email hanya dapat dikirim dari onboarding@resend.dev (untuk pengujian).',

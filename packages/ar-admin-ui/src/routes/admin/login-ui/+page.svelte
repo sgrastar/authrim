@@ -71,7 +71,7 @@
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
 	let canEditGlobalUiConfig = $derived(canEdit);
-	let canEditLoginUiSettings = $derived(canEdit && loginUiAvailable && loginUiConfigured);
+	let canEditLoginUiSettings = $derived(canEdit);
 	let canEditTrustedOrigins = $derived(canEdit);
 	let currentLevel = $derived(settingsContext.currentLevel);
 
@@ -449,7 +449,6 @@
 	{:else if !loginUiConfigured && !loading}
 		<div class="alert alert-warning">
 			{loginUiStatusMessage}
-			Customization settings remain read-only until the global UI URL is configured.
 		</div>
 	{/if}
 
@@ -470,8 +469,8 @@
 	{/if}
 
 	{#if !loading && uiConfig}
-		<div class="settings-form-card">
-			<div class="ui-config-header">
+		<section class="panel">
+			<div class="section-header">
 				<div>
 					<h2 class="section-title">Global UI Configuration</h2>
 					<p class="section-description">
@@ -481,60 +480,32 @@
 				<span class="config-source-badge">Source: {uiConfig.source}</span>
 			</div>
 
-			<div class="setting-item" class:modified={hasUiConfigChanges}>
-				<div class="setting-item-content">
-					<div class="setting-info">
-						<div class="setting-label-row">
-							<label for="ui-config-base-url" class="setting-label">Global UI Base URL</label>
-							{#if hasUiConfigChanges}
-								<span class="setting-modified">Modified</span>
-							{/if}
-						</div>
-						<p class="setting-description">
-							Base URL for the shared Login UI deployment. Must use HTTPS except localhost.
-						</p>
-					</div>
-
-					<div class="setting-control">
-						<input
-							type="url"
-							id="ui-config-base-url"
-							value={uiConfigForm.baseUrl}
-							disabled={!canEditGlobalUiConfig}
-							placeholder="https://single-ar-login-ui.pages.dev"
-							oninput={(e) => {
-								uiConfigForm = {
-									...uiConfigForm,
-									baseUrl: e.currentTarget.value
-								};
-							}}
-							class="settings-input"
-						/>
-					</div>
-				</div>
-			</div>
-
-			{#each Object.entries(uiConfig.metadata) as [key, metaItem] (key)}
+			<div class="settings-form-card">
 				<div class="setting-item" class:modified={hasUiConfigChanges}>
 					<div class="setting-item-content">
 						<div class="setting-info">
-							<label for={`ui-path-${key}`} class="setting-label">{metaItem.label}</label>
-							<p class="setting-description">{metaItem.description}</p>
+							<div class="setting-label-row">
+								<label for="ui-config-base-url" class="setting-label">Global UI Base URL</label>
+								{#if hasUiConfigChanges}
+									<span class="setting-modified">Modified</span>
+								{/if}
+							</div>
+							<p class="setting-description">
+								Base URL for the shared Login UI deployment. Must use HTTPS except localhost.
+							</p>
 						</div>
 
 						<div class="setting-control">
 							<input
-								type="text"
-								id={`ui-path-${key}`}
-								value={uiConfigForm.paths[key as UIPathKey]}
+								type="url"
+								id="ui-config-base-url"
+								value={uiConfigForm.baseUrl}
 								disabled={!canEditGlobalUiConfig}
+								placeholder="https://single-ar-login-ui.pages.dev"
 								oninput={(e) => {
 									uiConfigForm = {
 										...uiConfigForm,
-										paths: {
-											...uiConfigForm.paths,
-											[key]: e.currentTarget.value
-										}
+										baseUrl: e.currentTarget.value
 									};
 								}}
 								class="settings-input"
@@ -542,9 +513,39 @@
 						</div>
 					</div>
 				</div>
-			{/each}
 
-			<div class="settings-actions">
+				{#each Object.entries(uiConfig.metadata) as [key, metaItem] (key)}
+					<div class="setting-item" class:modified={hasUiConfigChanges}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<label for={`ui-path-${key}`} class="setting-label">{metaItem.label}</label>
+								<p class="setting-description">{metaItem.description}</p>
+							</div>
+
+							<div class="setting-control">
+								<input
+									type="text"
+									id={`ui-path-${key}`}
+									value={uiConfigForm.paths[key as UIPathKey]}
+									disabled={!canEditGlobalUiConfig}
+									oninput={(e) => {
+										uiConfigForm = {
+											...uiConfigForm,
+											paths: {
+												...uiConfigForm.paths,
+												[key]: e.currentTarget.value
+											}
+										};
+									}}
+									class="settings-input"
+								/>
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			<div class="form-actions">
 				<button
 					onclick={discardUiConfigChanges}
 					disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
@@ -560,12 +561,12 @@
 					{uiConfigSaving ? 'Saving...' : 'Save Global UI Configuration'}
 				</button>
 			</div>
-		</div>
+		</section>
 	{/if}
 
 	{#if !loading && tenantSettings}
-		<div class="settings-form-card">
-			<div class="ui-config-header">
+		<section class="panel">
+			<div class="section-header">
 				<div>
 					<h2 class="section-title">Trusted Origins</h2>
 					<p class="section-description">
@@ -576,43 +577,36 @@
 				<span class="config-source-badge">Tenant Setting</span>
 			</div>
 
-			<div class="setting-item" class:modified={hasTrustedOriginsChanges}>
-				<div class="setting-item-content trusted-origins-content">
-					<div class="setting-info">
-						<div class="setting-label-row">
-							<label for="trusted-origins" class="setting-label">Allowed Browser Origins</label>
-							{#if hasTrustedOriginsChanges}
-								<span class="setting-modified">Modified</span>
-							{/if}
-						</div>
-						<p class="setting-description">
-							This is the tenant-wide source of truth for WebAuthn and browser-side direct auth.
-							Client pages can still add redirect URI origins as shortcuts, but they write back to
-							this same setting.
-						</p>
-					</div>
-
-					<div class="setting-control">
-						<textarea
-							id="trusted-origins"
-							class="settings-textarea"
-							rows="6"
-							disabled={!canEditTrustedOrigins}
-							placeholder="https://first.multi-tenant.authrim.com\nhttps://*.example.com"
-							value={trustedOriginsInput}
-							oninput={(e) => {
-								trustedOriginsInput = e.currentTarget.value;
-							}}
-						></textarea>
-						<p class="settings-range-hint">
-							Use host-only origins. Paths are not allowed. `http://localhost` is allowed for local
-							development.
-						</p>
-						{#if trustedOriginsDraft.error}
-							<p class="trusted-origins-validation">{trustedOriginsDraft.error}</p>
-						{/if}
-					</div>
+			<div class="textarea-setting" class:modified={hasTrustedOriginsChanges}>
+				<div class="setting-label-row">
+					<label for="trusted-origins" class="setting-label">Allowed Browser Origins</label>
+					{#if hasTrustedOriginsChanges}
+						<span class="setting-modified">Modified</span>
+					{/if}
 				</div>
+				<p class="setting-description">
+					This is the tenant-wide source of truth for WebAuthn and browser-side direct auth.
+					Client pages can still add redirect URI origins as shortcuts, but they write back to
+					this same setting.
+				</p>
+				<textarea
+					id="trusted-origins"
+					class="settings-textarea"
+					rows="6"
+					disabled={!canEditTrustedOrigins}
+					placeholder="https://first.multi-tenant.authrim.com\nhttps://*.example.com"
+					value={trustedOriginsInput}
+					oninput={(e) => {
+						trustedOriginsInput = e.currentTarget.value;
+					}}
+				></textarea>
+				<p class="settings-range-hint">
+					Use host-only origins. Paths are not allowed. `http://localhost` is allowed for local
+					development.
+				</p>
+				{#if trustedOriginsDraft.error}
+					<p class="trusted-origins-validation">{trustedOriginsDraft.error}</p>
+				{/if}
 			</div>
 
 			{#if trustedOriginsDraft.origins.length > 0}
@@ -626,7 +620,7 @@
 				</div>
 			{/if}
 
-			<div class="settings-actions">
+			<div class="form-actions">
 				<button
 					onclick={discardTrustedOriginsChanges}
 					disabled={!hasTrustedOriginsChanges || trustedOriginsSaving || !canEditTrustedOrigins}
@@ -647,7 +641,7 @@
 					{trustedOriginsSaving ? 'Saving...' : 'Save Trusted Origins'}
 				</button>
 			</div>
-		</div>
+		</section>
 	{/if}
 
 	<!-- Error message -->
@@ -827,14 +821,6 @@
 </div>
 
 <style>
-	.ui-config-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		gap: 16px;
-		margin-bottom: 20px;
-	}
-
 	.section-title {
 		font-size: 18px;
 		font-weight: 600;
@@ -850,26 +836,43 @@
 	.config-source-badge {
 		display: inline-flex;
 		align-items: center;
-		padding: 4px 10px;
-		border-radius: 999px;
-		background: var(--surface-secondary);
+		padding: 3px 10px;
+		border-radius: 6px;
+		background: var(--bg-subtle);
+		border: 1px solid var(--border);
 		color: var(--text-secondary);
-		font-size: 12px;
+		font-size: 11px;
 		font-weight: 600;
 		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
 	}
 
-	.trusted-origins-content {
-		align-items: flex-start;
+	.form-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 16px;
+	}
+
+	.textarea-setting {
+		margin-top: 4px;
+	}
+
+	.textarea-setting.modified {
+		background: color-mix(in srgb, var(--warning) 5%, transparent);
+		border-radius: var(--radius-sm);
+		padding: 8px;
+		margin: -8px;
 	}
 
 	.settings-textarea {
 		width: 100%;
 		min-height: 140px;
 		padding: 12px 14px;
-		border: 1px solid var(--border-color);
+		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: var(--surface);
+		background: var(--bg-card);
 		color: var(--text-primary);
 		font: inherit;
 		line-height: 1.5;
@@ -883,7 +886,7 @@
 	}
 
 	.settings-textarea:disabled {
-		background: var(--surface-secondary);
+		background: var(--bg-subtle);
 		color: var(--text-muted);
 		cursor: not-allowed;
 	}
@@ -897,7 +900,7 @@
 	.trusted-origins-preview {
 		margin-top: 16px;
 		padding-top: 16px;
-		border-top: 1px solid var(--border-color);
+		border-top: 1px solid var(--border);
 	}
 
 	.trusted-origins-preview-label {
@@ -920,8 +923,8 @@
 		align-items: center;
 		padding: 6px 10px;
 		border-radius: 999px;
-		background: var(--surface-secondary);
-		border: 1px solid var(--border-color);
+		background: var(--bg-subtle);
+		border: 1px solid var(--border);
 		color: var(--text-primary);
 		font-size: 13px;
 	}
@@ -929,9 +932,9 @@
 	.coming-soon-section {
 		margin-top: 32px;
 		padding: 20px;
-		background: var(--surface-secondary);
+		background: var(--bg-subtle);
 		border-radius: 8px;
-		border: 1px dashed var(--border-color);
+		border: 1px dashed var(--border);
 	}
 
 	.coming-soon-title {
@@ -958,9 +961,9 @@
 		flex-direction: column;
 		gap: 2px;
 		padding: 12px;
-		background: var(--surface);
+		background: var(--bg-card);
 		border-radius: 6px;
-		border: 1px solid var(--border-color);
+		border: 1px solid var(--border);
 	}
 
 	.coming-soon-label {

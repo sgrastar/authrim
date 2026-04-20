@@ -50,7 +50,23 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.post('/api/auth/discovery/grant', (c) => {
+    const tenantId = getTenantIdFromContext(c);
+    return c.json({ tenantId });
+  });
   app.get('/api/admin/platform/tenant-domain-mappings', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.get('/api/admin/settings/ui-config', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/auth/passkey/options', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.get('/api/admin/sessions/me', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/logout', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
   app.get('/api/admin/tenants', (c) => {
@@ -133,7 +149,9 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const app = buildApp(env);
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(200);
-      expect(db.prepare).not.toHaveBeenCalled(); // no D1 query
+      expect(db.prepare).not.toHaveBeenCalledWith(
+        'SELECT id FROM tenants WHERE id = ? AND is_active = 1'
+      );
     });
 
     it('returns 200 for naked domain → PRIMARY_TENANT (if it exists)', async () => {
@@ -212,6 +230,88 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
       expect(body.tenantId).toBe('default');
+    });
+
+    it('allows discovery grant endpoint requests from a non-tenant common entry host', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+      const res = await app.request(
+        new Request('https://login.example.com/api/auth/discovery/grant', {
+          method: 'POST',
+          headers: { Host: 'login.example.com', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenant_id: 'sample' }),
+        }),
+        undefined,
+        env as Env
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json<{ tenantId: string }>();
+      expect(body.tenantId).toBe('default');
+    });
+
+    it('allows admin login and session endpoints from a non-tenant admin host without X-Tenant-Id', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const loginRes = await app.request(
+        new Request('https://admin.pages.dev/api/admin/auth/passkey/options', {
+          method: 'POST',
+          headers: { Host: 'admin.pages.dev' },
+        }),
+        undefined,
+        env as Env
+      );
+      const sessionRes = await app.request(
+        makeRequest('admin.pages.dev', '/api/admin/sessions/me'),
+        undefined,
+        env as Env
+      );
+      const logoutRes = await app.request(
+        new Request('https://admin.pages.dev/api/admin/logout', {
+          method: 'POST',
+          headers: { Host: 'admin.pages.dev' },
+        }),
+        undefined,
+        env as Env
+      );
+
+      expect(loginRes.status).toBe(200);
+      expect(sessionRes.status).toBe(200);
+      expect(logoutRes.status).toBe(200);
+    });
+
+    it('allows global admin settings endpoints from a non-tenant admin host without X-Tenant-Id', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest('admin.pages.dev', '/api/admin/settings/ui-config'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
     });
 
     it('rejects protocol requests when the request host is not in tenant.allowed_domains', async () => {

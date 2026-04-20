@@ -448,6 +448,16 @@ adminRolesRouter.get('/permissions/list', async (c) => {
     { key: ADMIN_PERMISSIONS.CLIENTS_DELETE, description: 'Delete OAuth clients' },
     { key: ADMIN_PERMISSIONS.SETTINGS_READ, description: 'View system settings' },
     { key: ADMIN_PERMISSIONS.SETTINGS_WRITE, description: 'Update system settings' },
+    { key: ADMIN_PERMISSIONS.TENANT_DOMAINS_READ, description: 'View tenant vanity domains' },
+    {
+      key: ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE,
+      description: 'Create and update tenant vanity domains',
+    },
+    { key: ADMIN_PERMISSIONS.TENANT_DOMAINS_DELETE, description: 'Delete tenant vanity domains' },
+    {
+      key: ADMIN_PERMISSIONS.TENANT_DOMAINS_ALL,
+      description: 'Full tenant vanity domain management',
+    },
     { key: ADMIN_PERMISSIONS.SECURITY_READ, description: 'View security settings' },
     { key: ADMIN_PERMISSIONS.SECURITY_WRITE, description: 'Update security settings' },
     { key: ADMIN_PERMISSIONS.AUDIT_READ, description: 'View end user audit logs' },

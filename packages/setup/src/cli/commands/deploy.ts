@@ -108,6 +108,9 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
     { file: 'rp_token_encryption_key.txt', name: 'RP_TOKEN_ENCRYPTION_KEY' },
     { file: 'admin_api_secret.txt', name: 'ADMIN_API_SECRET' },
     { file: 'key_manager_secret.txt', name: 'KEY_MANAGER_SECRET' },
+    { file: 'cloudflare_api_token.txt', name: 'CLOUDFLARE_API_TOKEN' },
+    { file: 'resend_api_key.txt', name: 'RESEND_API_KEY' },
+    { file: 'email_from.txt', name: 'EMAIL_FROM' },
   ];
 
   for (const { file, name } of secretFiles) {

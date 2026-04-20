@@ -556,6 +556,22 @@ export function getHtmlTemplate(
       margin-bottom: 1.25rem;
     }
 
+    .inline-field {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .inline-field input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .inline-field button {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
     label {
       display: block;
       font-family: var(--font-sans);
@@ -2159,8 +2175,12 @@ export function getHtmlTemplate(
       const copyByLocale = {
         ja: {
           initialTenantLabel: '最初のテナントID',
+          singleTenantLabel: 'テナントID',
+          randomTenantButtonLabel: 'ランダムで決める',
           initialTenantHintGeneric:
-            '最初に作成するテナント識別子です。URLに使わない場合でも内部設定に使います。',
+            '最初に作成するテナント識別子です。1〜63文字で、先頭は小文字の英字、使用できるのは小文字英字・数字・ハイフンです。URLに使わない場合でも内部設定に使います。',
+          singleTenantHintGeneric:
+            'テナント識別子です。1〜63文字で、先頭は小文字の英字、使用できるのは小文字英字・数字・ハイフンです。URLに使わない場合でも内部設定に使います。',
           initialTenantHintSubdomain: (_tenantName, baseDomain, url) =>
             '最初のテナントは ' + url + ' を使います。',
           primaryTenantLabel: 'URLにテナント名を含めないテナント',
@@ -2427,8 +2447,12 @@ export function getHtmlTemplate(
         },
         en: {
           initialTenantLabel: 'Initial Tenant ID',
+          singleTenantLabel: 'Tenant ID',
+          randomTenantButtonLabel: 'Generate Random',
           initialTenantHintGeneric:
-            'Identifier for the first tenant you create. It is kept even when the URL does not expose a tenant segment.',
+            'Identifier for the first tenant you create. Use 1-63 characters, start with a lowercase letter, and use only lowercase letters, digits, and hyphens. It is kept even when the URL does not expose a tenant segment.',
+          singleTenantHintGeneric:
+            'Tenant identifier. Use 1-63 characters, start with a lowercase letter, and use only lowercase letters, digits, and hyphens. It is kept even when the URL does not expose a tenant segment.',
           initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
             'The first tenant will use ' + url + '.',
           primaryTenantLabel: 'Tenant that uses the naked URL',
@@ -2899,7 +2923,7 @@ export function getHtmlTemplate(
             <li data-i18n="web.mode.quickDomain">Optional custom domain</li>
             <li data-i18n="web.mode.quickDefault">Default components</li>
           </ul>
-          <span class="mode-badge" data-i18n="web.mode.recommended">Recommended</span>
+          <!--<span class="mode-badge" data-i18n="web.mode.recommended">Recommended</span>-->
         </div>
 
         <div class="mode-card" id="mode-custom">
@@ -3071,11 +3095,14 @@ export function getHtmlTemplate(
           </div>
         </div>
 
-        <!-- Initial Tenant (hidden when naked domain is checked or using workers.dev) -->
+        <!-- Tenant (hidden when naked domain is checked) -->
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
             <label for="tenant-name" id="tenant-id-label">Initial Tenant ID</label>
-            <input type="text" id="tenant-name" placeholder="default" value="default" disabled readonly data-i18n-placeholder="web.form.tenantIdPlaceholder">
+            <div class="inline-field">
+              <input type="text" id="tenant-name" placeholder="default" value="default" data-i18n-placeholder="web.form.tenantIdPlaceholder">
+              <button type="button" id="tenant-name-random" class="btn-secondary">Generate Random</button>
+            </div>
             <small id="tenant-id-hint" style="color: var(--text-muted)">Identifier for the first tenant you create.</small>
             <small id="tenant-workers-note" style="color: #6b7280; display: none;" data-i18n="web.form.tenantIdWorkerNote">
               (Tenant ID is used internally. URL subdomain requires custom domain.)
@@ -3351,14 +3378,47 @@ export function getHtmlTemplate(
             <small style="color: var(--text-muted);" data-i18n="web.email.configureLaterHint">Skip for now and configure later.</small>
           </span>
         </label>
+	        <label class="radio-item" style="padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.5rem;">
+	          <input type="radio" name="email-setup-choice" value="cloudflare">
+	          <span style="display: flex; flex-direction: column; gap: 0.25rem;">
+	            <strong data-i18n="web.email.configureCloudflare">Configure Cloudflare Email Service</strong>
+	            <small style="color: var(--text-muted);" data-i18n="web.email.configureCloudflareHint">Use the native Workers Email Service binding. Requires a Workers Paid plan and Cloudflare DNS.</small>
+	          </span>
+	        </label>
         <label class="radio-item" style="padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.5rem;">
-          <input type="radio" name="email-setup-choice" value="configure">
+          <input type="radio" name="email-setup-choice" value="resend">
           <span style="display: flex; flex-direction: column; gap: 0.25rem;">
             <strong data-i18n="web.email.configureResend">Configure Resend</strong>
             <small style="color: var(--text-muted);" data-i18n="web.email.configureResendHint">Set up email sending with Resend (recommended for production).</small>
           </span>
         </label>
       </div>
+
+	      <!-- Cloudflare Configuration Form (hidden by default) -->
+	      <div id="cloudflare-config-form" class="hidden" style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem;">
+	        <h3 style="margin: 0 0 1rem 0; font-size: 1rem;">☁️ <span data-i18n="web.email.cloudflareSetup">Cloudflare Email Service</span></h3>
+
+	        <div class="alert alert-warning" style="margin-bottom: 1rem;">
+	          <strong data-i18n="web.email.cloudflareRequirements">Requirements</strong>
+	          <ul style="margin: 0.5rem 0 0 1rem; padding: 0;">
+	            <li data-i18n="web.email.cloudflareRequirementPaid">Workers Paid Plan is required</li>
+	            <li data-i18n="web.email.cloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li>
+	            <li data-i18n="web.email.cloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li>
+	          </ul>
+	        </div>
+
+	        <div class="form-group">
+	          <label for="cloudflare-from-address" data-i18n="web.email.fromEmailAddress">From Email Address</label>
+	          <input type="email" id="cloudflare-from-address" placeholder="noreply@yourdomain.com" autocomplete="off">
+	          <small style="color: var(--text-muted);" data-i18n="web.email.cloudflareFromHint">Must be from a domain onboarded to Cloudflare Email Service</small>
+	        </div>
+
+	        <div class="form-group">
+	          <label for="cloudflare-from-name" data-i18n="web.email.fromDisplayName">From Display Name (optional)</label>
+	          <input type="text" id="cloudflare-from-name" placeholder="Authrim" autocomplete="off">
+	          <small style="color: var(--text-muted);" data-i18n="web.email.fromDisplayHint">Displayed as the sender name in email clients</small>
+	        </div>
+	      </div>
 
       <!-- Resend Configuration Form (hidden by default) -->
       <div id="resend-config-form" class="hidden" style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem;">
@@ -4529,7 +4589,10 @@ export function getHtmlTemplate(
       document.querySelectorAll('input[name="email-setup-choice"]').forEach((input) => {
         input.checked = input.value === 'later';
       });
+      document.getElementById('cloudflare-config-form').classList.add('hidden');
       document.getElementById('resend-config-form').classList.add('hidden');
+      document.getElementById('cloudflare-from-address').value = '';
+      document.getElementById('cloudflare-from-name').value = '';
       document.getElementById('resend-api-key').value = '';
       document.getElementById('email-from-address').value = '';
       document.getElementById('email-from-name').value = '';
@@ -4981,14 +5044,31 @@ export function getHtmlTemplate(
       });
     }
 
+    function generateRandomTenantIdInBrowser() {
+      const alphabet = 'abcdefghjkmnpqrstuvwxyz';
+      const bytes = new Uint8Array(12);
+      globalThis.crypto.getRandomValues(bytes);
+      let body = '';
+      for (let i = 0; i < bytes.length; i += 1) {
+        body += alphabet[bytes[i] % alphabet.length];
+      }
+      return body;
+    }
+
     function refreshApiDomainUi() {
       const state = getCurrentApiDomainUiState();
       const copy = getApiDomainUiCopy();
       const baseDomain = document.getElementById('base-domain').value.trim();
       const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
       const primaryTenant = document.getElementById('primary-tenant').value.trim() || tenantName;
+      const singleTenantMode = !state.multiTenantEnabled;
 
-      document.getElementById('tenant-id-label').textContent = copy.initialTenantLabel;
+      document.getElementById('tenant-id-label').textContent =
+        singleTenantMode
+          ? copy.singleTenantLabel || copy.initialTenantLabel
+          : copy.initialTenantLabel;
+      document.getElementById('tenant-name-random').textContent =
+        copy.randomTenantButtonLabel || 'Generate Random';
       document.getElementById('primary-tenant-label').textContent = copy.primaryTenantLabel;
       document.getElementById('tenant-url-examples-title').textContent = copy.examplesTitle;
       document.getElementById('tenant-url-examples-header-label').textContent =
@@ -5011,7 +5091,10 @@ export function getHtmlTemplate(
           'https://' + tenantName + '.' + baseDomain
         );
       } else {
-        document.getElementById('tenant-id-hint').textContent = copy.initialTenantHintGeneric;
+        document.getElementById('tenant-id-hint').textContent =
+          singleTenantMode
+            ? copy.singleTenantHintGeneric || copy.initialTenantHintGeneric
+            : copy.initialTenantHintGeneric;
       }
 
       document.getElementById('primary-tenant-hint').textContent = copy.primaryTenantHint(
@@ -5253,6 +5336,16 @@ export function getHtmlTemplate(
       }
     });
 
+    document.getElementById('tenant-name-random').addEventListener('click', () => {
+      const tenantNameInput = document.getElementById('tenant-name');
+      if (tenantNameInput.disabled) {
+        return;
+      }
+
+      tenantNameInput.value = generateRandomTenantIdInBrowser();
+      updatePreview();
+    });
+
     // Validate environment name on blur
     const envInput = document.getElementById('env');
     const envError = document.getElementById('env-error');
@@ -5292,6 +5385,7 @@ export function getHtmlTemplate(
       const tenantWorkersNote = document.getElementById('tenant-workers-note');
       const tenantFields = document.getElementById('tenant-fields');
       const tenantNameInput = document.getElementById('tenant-name');
+      const tenantNameRandomButton = document.getElementById('tenant-name-random');
       const primaryTenantRow = document.getElementById('primary-tenant-row');
       const primaryTenantInput = document.getElementById('primary-tenant');
 
@@ -5307,9 +5401,6 @@ export function getHtmlTemplate(
         nakedDomainCheckbox.disabled = true;
         nakedDomainCheckbox.checked = false;
         nakedDomainLabel.style.opacity = '0.5';
-        tenantNameInput.value = 'default';
-        tenantNameInput.disabled = true;
-        tenantNameInput.readOnly = true;
         primaryTenantInput.value = '';
       }
 
@@ -5330,15 +5421,14 @@ export function getHtmlTemplate(
       tenantFields.style.display = domainUiState.showTenantFields ? 'block' : 'none';
       primaryTenantRow.style.display = domainUiState.showPrimaryTenantRow ? 'block' : 'none';
 
-      if (domainUiState.showTenantFields && domainUiState.multiTenantEnabled) {
+      if (domainUiState.showTenantFields) {
         tenantNameInput.disabled = false;
         tenantNameInput.readOnly = false;
-      } else if (domainUiState.showWorkersDevNote) {
-        tenantNameInput.disabled = true;
-        tenantNameInput.readOnly = true;
+        tenantNameRandomButton.disabled = false;
       } else {
         tenantNameInput.disabled = true;
         tenantNameInput.readOnly = true;
+        tenantNameRandomButton.disabled = true;
       }
 
       document.getElementById('base-domain').placeholder = domainUiState.baseDomainPlaceholder;
@@ -5625,11 +5715,17 @@ export function getHtmlTemplate(
     // Toggle resend config form visibility
     document.querySelectorAll('input[name="email-setup-choice"]').forEach(radio => {
       radio.addEventListener('change', () => {
+        const cloudflareForm = document.getElementById('cloudflare-config-form');
         const resendForm = document.getElementById('resend-config-form');
         const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
-        if (choice === 'configure') {
+        if (choice === 'cloudflare') {
+          cloudflareForm.classList.remove('hidden');
+          resendForm.classList.add('hidden');
+        } else if (choice === 'resend') {
+          cloudflareForm.classList.add('hidden');
           resendForm.classList.remove('hidden');
         } else {
+          cloudflareForm.classList.add('hidden');
           resendForm.classList.add('hidden');
         }
       });
@@ -5644,32 +5740,37 @@ export function getHtmlTemplate(
       const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
       const btn = document.getElementById('btn-continue-email');
 
-      if (choice === 'configure') {
+      if (choice === 'cloudflare' || choice === 'resend') {
         // Validate and store email configuration
+        const isCloudflare = choice === 'cloudflare';
         const apiKey = document.getElementById('resend-api-key').value.trim();
-        const fromAddress = document.getElementById('email-from-address').value.trim();
-        const fromName = document.getElementById('email-from-name').value.trim();
+        const fromAddress = isCloudflare
+          ? document.getElementById('cloudflare-from-address').value.trim()
+          : document.getElementById('email-from-address').value.trim();
+        const fromName = isCloudflare
+          ? document.getElementById('cloudflare-from-name').value.trim()
+          : document.getElementById('email-from-name').value.trim();
 
-        // Validate API key format
-        if (!apiKey) {
-          alert('Please enter your Resend API key');
-          return;
-        }
-        if (!apiKey.startsWith('re_')) {
-          if (!confirm('API key does not start with "re_". This may not be a valid Resend API key. Continue anyway?')) {
-            return;
-          }
-        }
+	        // Validate API key format
+	        if (!isCloudflare && !apiKey) {
+	          alert(t('web.email.resendApiKeyMissing'));
+	          return;
+	        }
+	        if (!isCloudflare && !apiKey.startsWith('re_')) {
+	          if (!confirm(t('web.email.resendApiKeyConfirmInvalid'))) {
+	            return;
+	          }
+	        }
 
-        // Validate email address
-        if (!fromAddress) {
-          alert('Please enter a From email address');
-          return;
-        }
-        if (!fromAddress.includes('@')) {
-          alert('Please enter a valid email address');
-          return;
-        }
+	        // Validate email address
+	        if (!fromAddress) {
+	          alert(t('web.email.fromEmailMissing'));
+	          return;
+	        }
+	        if (!fromAddress.includes('@')) {
+	          alert(t('web.email.fromEmailInvalid'));
+	          return;
+	        }
 
         // Save email configuration to server
         btn.disabled = true;
@@ -5680,29 +5781,29 @@ export function getHtmlTemplate(
             method: 'POST',
             body: {
               env: config.env,
-              provider: 'resend',
-              apiKey: apiKey,
+              provider: isCloudflare ? 'cloudflare' : 'resend',
+              apiKey: isCloudflare ? undefined : apiKey,
               fromAddress: fromAddress,
               fromName: fromName || undefined,
             },
-          });
+	          });
 
-          if (!result.success) {
-            throw new Error(result.error || 'Failed to save email configuration');
-          }
+	          if (!result.success) {
+	            throw new Error(result.error || t('web.email.saveConfigFailed'));
+	          }
 
           // Store email configuration (without apiKey for config file)
           config.email = {
-            provider: 'resend',
+            provider: isCloudflare ? 'cloudflare' : 'resend',
             fromAddress: fromAddress,
             fromName: fromName || undefined,
             configured: true,
           };
-        } catch (error) {
-          alert('Failed to save email configuration: ' + error.message);
-          btn.disabled = false;
-          btn.textContent = t('web.btn.continue');
-          return;
+	        } catch (error) {
+	          alert(t('web.email.saveConfigFailed') + ': ' + error.message);
+	          btn.disabled = false;
+	          btn.textContent = t('web.btn.continue');
+	          return;
         }
 
         btn.disabled = false;
@@ -6498,7 +6599,7 @@ export function getHtmlTemplate(
             provider: config.email?.provider || 'none',
             fromAddress: config.email?.fromAddress || undefined,
             fromName: config.email?.fromName || undefined,
-            configured: config.email?.provider === 'resend' && config.email?.apiKey ? true : false,
+            configured: config.email?.provider && config.email?.provider !== 'none' ? true : false,
           },
         },
       };

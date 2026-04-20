@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import {
 	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
+	issueDiscoveryGrant,
 	type DiscoveryCandidate,
 	type DiscoveryConfigResponse
 } from '../../lib/discovery-entry';
@@ -29,6 +30,18 @@ type DiscoveryErrorCode =
 	| 'manual_required'
 	| 'invitation_unresolved'
 	| 'resolve_failed';
+
+function readDiscoveryGrantContext(formData: FormData | URLSearchParams) {
+	const expectedTenantId = String(formData.get('expected_tenant_id') || '').trim();
+	const returnTo = String(formData.get('return_to') || '').trim();
+	const loginHint = String(formData.get('login_hint') || '').trim();
+
+	return {
+		expectedTenantId: expectedTenantId || null,
+		returnTo: returnTo || null,
+		loginHint: loginHint || null
+	};
+}
 
 function buildSignupUrl(
 	candidate: DiscoveryCandidate,
@@ -87,6 +100,17 @@ function clearRememberedTenantCookie(cookies: Parameters<PageServerLoad>[0]['coo
 	});
 }
 
+function buildCommonDiscoverUrlWithParams(sourceUrl: URL, commonDiscoverUrl: string): string {
+	const target = new URL(commonDiscoverUrl);
+	for (const key of ['invite_token', 'app_hint', 'expected_tenant_id', 'return_to', 'login_hint']) {
+		const value = sourceUrl.searchParams.get(key);
+		if (value) {
+			target.searchParams.set(key, value);
+		}
+	}
+	return target.toString();
+}
+
 function defaultManualMode(
 	config: DiscoveryConfigResponse['config']
 ): 'tenant_code' | 'tenant_slug' {
@@ -97,15 +121,67 @@ function defaultManualMode(
 	return 'tenant_slug';
 }
 
+async function redirectResolvedCandidate(
+	event: Parameters<Actions['resolve']>[0],
+	config: DiscoveryConfigResponse,
+	candidate: DiscoveryCandidate,
+	options?: {
+		expectedTenantId?: string | null;
+		returnTo?: string | null;
+		loginHint?: string | null;
+	}
+) {
+	if (config.is_common_entry_host) {
+		const grant = await issueDiscoveryGrant(
+			event.fetch,
+			{
+				tenant_id: candidate.tenant_id,
+				expected_tenant_id: options?.expectedTenantId || undefined,
+				return_to: options?.returnTo || undefined,
+				login_hint: options?.loginHint || undefined
+			},
+			getDiscoveryRequestHeaders(event)
+		);
+		throw redirect(303, grant.login_url);
+	}
+
+	throw redirect(303, candidate.login_url);
+}
+
 export const load: PageServerLoad = async (event) => {
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);
 	const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders);
 	const rememberedCandidate = readRememberedTenant(event.cookies.get(REMEMBERED_TENANT_COOKIE));
 	const inviteToken = event.url.searchParams.get('invite_token');
 	const appHint = event.url.searchParams.get('app_hint');
+	const discoveryGrantContext = readDiscoveryGrantContext(event.url.searchParams);
+
+	if (
+		!config.single_tenant_mode &&
+		!config.is_common_entry_host &&
+		config.config.redirect_tenant_discover_to_common_entry &&
+		config.common_discover_url
+	) {
+		throw redirect(303, buildCommonDiscoverUrlWithParams(event.url, config.common_discover_url));
+	}
 
 	if (config.single_tenant_mode && config.default_candidate && !inviteToken) {
 		throw redirect(303, config.default_candidate.login_url);
+	}
+
+	if (
+		config.is_common_entry_host &&
+		config.config.skip_discovery_if_only_one_tenant &&
+		config.single_active_tenant_candidate &&
+		!inviteToken &&
+		!appHint
+	) {
+		await redirectResolvedCandidate(
+			event as never,
+			config,
+			config.single_active_tenant_candidate,
+			discoveryGrantContext
+		);
 	}
 
 	if (
@@ -142,6 +218,7 @@ export const load: PageServerLoad = async (event) => {
 			config,
 			rememberedCandidate,
 			inviteToken,
+			...discoveryGrantContext,
 			inviteErrorCode:
 				result.result === 'not_found'
 					? (result.code as DiscoveryErrorCode)
@@ -163,6 +240,7 @@ export const load: PageServerLoad = async (event) => {
 		config,
 		rememberedCandidate,
 		inviteToken,
+		...discoveryGrantContext,
 		inviteErrorCode: null
 	};
 };
@@ -175,6 +253,7 @@ export const actions: Actions = {
 		const mode = String(formData.get('mode') || '') as DiscoveryMode;
 		const value = String(formData.get('value') || '').trim();
 		const inviteToken = String(formData.get('invite_token') || '').trim();
+		const { expectedTenantId, returnTo, loginHint } = readDiscoveryGrantContext(formData);
 
 		if (!config.single_tenant_mode && !config.is_common_entry_host && !inviteToken) {
 			throw redirect(303, '/login');
@@ -209,14 +288,18 @@ export const actions: Actions = {
 					);
 				}
 
-				if (config.is_common_entry_host) {
-					throw redirect(303, result.candidate.login_url);
-				}
+				await redirectResolvedCandidate(event, config, result.candidate, {
+					expectedTenantId,
+					returnTo,
+					loginHint:
+						loginHint || (mode === 'email' && value ? value : null)
+				});
 
 				if (config.config.selection_policy === 'always_select') {
 					return {
 						mode,
 						value,
+						loginHint: mode === 'email' ? value : loginHint || '',
 						error: '',
 						candidates: [result.candidate],
 						result: 'multiple' as const
@@ -230,6 +313,7 @@ export const actions: Actions = {
 				return {
 					mode,
 					value,
+					loginHint: mode === 'email' ? value : loginHint || '',
 					error: '',
 					candidates: result.candidates,
 					result: 'multiple' as const

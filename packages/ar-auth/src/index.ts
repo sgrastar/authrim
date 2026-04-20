@@ -28,7 +28,7 @@ import {
   getTenantIdFromContext,
   getTenantSettings,
 } from '@authrim/ar-lib-core';
-import { resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { getRequestIssuer } from './issuer';
 
 // Import handlers
@@ -94,10 +94,26 @@ app.use(
   })
 );
 
-// Plugin Context - provides access to notifiers, idp handlers, authenticators
-// Plugins are loaded lazily on first request and cached per Worker lifecycle
-// Configuration resolved: KV → env → configSchema defaults
-const loadPlugins = createPluginLoader([{ plugin: resendEmailPlugin }]);
+// Plugin Context - provides access to notifiers, idp handlers, authenticators.
+// Bootstrap config comes from Worker env, but tenant/global KV overrides remain authoritative.
+const loadPlugins = createPluginLoader([
+  {
+    plugin: cloudflareEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => ({
+      ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
+      ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
+    }),
+  },
+  {
+    plugin: resendEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => ({
+      ...(env.RESEND_API_KEY ? { apiKey: env.RESEND_API_KEY } : {}),
+      ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
+    }),
+  },
+]);
 app.use('*', pluginContextMiddleware({ loadPlugins }));
 
 // Enhanced security headers

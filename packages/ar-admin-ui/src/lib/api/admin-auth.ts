@@ -104,6 +104,7 @@ export const adminAuthAPI = {
 	}> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/options`, {
 			method: 'POST',
+			skipTenantHeader: true,
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
 			body: JSON.stringify({})
@@ -133,6 +134,7 @@ export const adminAuthAPI = {
 	): Promise<LoginResult> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/verify`, {
 			method: 'POST',
+			skipTenantHeader: true,
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
 			body: JSON.stringify({ challengeId, credential })
@@ -160,6 +162,7 @@ export const adminAuthAPI = {
 	 */
 	async checkSession(): Promise<SessionStatus | null> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/sessions/me`, {
+			skipTenantHeader: true,
 			credentials: 'include',
 			headers: buildHeaders()
 		});
@@ -193,6 +196,7 @@ export const adminAuthAPI = {
 	async logout(): Promise<void> {
 		await adminFetch(`${API_BASE_URL}/api/admin/logout`, {
 			method: 'POST',
+			skipTenantHeader: true,
 			credentials: 'include',
 			headers: buildHeaders()
 		});

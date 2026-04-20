@@ -1,4 +1,5 @@
 import type { Env } from '../types/env';
+import { getPrimaryTenantVanityDomain } from '../services/tenant-vanity-domain-resolver';
 import {
   buildIssuerUrl,
   buildRequestIdentifier,
@@ -102,6 +103,13 @@ export async function getTenantBindingPolicy(
     if (normalized) {
       configuredIdentifiers.add(normalized);
     }
+  }
+
+  const primaryVanityDomain = await getPrimaryTenantVanityDomain(env, tenantId);
+  if (primaryVanityDomain) {
+    configuredHosts.add(primaryVanityDomain.hostname);
+    configuredIdentifiers.add(`https://${primaryVanityDomain.hostname}`);
+    configuredIdentifiers.add(`did:web:${primaryVanityDomain.hostname}`);
   }
 
   const allowedHosts =

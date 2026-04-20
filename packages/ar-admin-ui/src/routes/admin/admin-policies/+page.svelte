@@ -195,6 +195,13 @@
 		}
 	}
 
+	function closeOnBackdropKeydown(event: KeyboardEvent, close: () => void) {
+		if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			close();
+		}
+	}
+
 	onMount(() => {
 		loadPolicies();
 	});
@@ -397,12 +404,20 @@
 </div>
 
 <!-- Create Dialog (simplified for space) -->
-{#if showCreateDialog}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		on:click={() => (showCreateDialog = false)}
-	>
-		<div class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto" on:click|stopPropagation>
+	{#if showCreateDialog}
+		<div
+			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+			role="button"
+			tabindex="0"
+			aria-label="Close create policy dialog"
+			on:click|self={() => (showCreateDialog = false)}
+			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
+		>
+			<div
+				class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
+				role="dialog"
+				aria-modal="true"
+			>
 			<h2 class="text-xl font-semibold mb-4">Create Policy</h2>
 			{#if createError}
 				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
@@ -471,12 +486,21 @@
 {/if}
 
 <!-- Simulation Dialog (simplified) -->
-{#if showSimulationDialog}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		on:click={() => (showSimulationDialog = false)}
-	>
-		<div class="bg-white rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto" on:click|stopPropagation>
+	{#if showSimulationDialog}
+		<div
+			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+			role="button"
+			tabindex="0"
+			aria-label="Close policy simulation dialog"
+			on:click|self={() => (showSimulationDialog = false)}
+			on:keydown={(event) =>
+				closeOnBackdropKeydown(event, () => (showSimulationDialog = false))}
+		>
+			<div
+				class="bg-white rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto"
+				role="dialog"
+				aria-modal="true"
+			>
 			<h2 class="text-xl font-semibold mb-4">Policy Simulation</h2>
 			<p class="text-sm text-gray-600 mb-4">Test policy evaluation with custom user context</p>
 			{#if simulationError}

@@ -62,6 +62,7 @@ import {
 } from '../../core/source.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
 import { buildUrlsConfig, getPagesDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
+import { generateRandomTenantId, isValidTenantId } from '../../core/tenant-id.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 
 // =============================================================================
@@ -74,6 +75,43 @@ interface ZoneDomainConfig {
 }
 
 let cliCapabilitySummaryShown = false;
+
+async function promptCloudflareCustomHostnameToken(): Promise<string | null> {
+  console.log('');
+  console.log(chalk.blue('━━━ Cloudflare Custom Hostnames ━━━'));
+  console.log(
+    chalk.gray('Use Cloudflare Custom Hostnames to automate tenant vanity domain setup.')
+  );
+  console.log(chalk.gray('Authrim will not store this token in D1, KV, or config files.'));
+  console.log('');
+
+  const enableAutomation = await confirm({
+    message: 'Enable Cloudflare Custom Hostnames automation?',
+    default: false,
+  });
+  if (!enableAutomation) return null;
+
+  const token = await password({
+    message: 'Cloudflare API token for Custom Hostnames:',
+    mask: '*',
+    validate: (value) => {
+      if (!value.trim()) return 'Cloudflare API token is required';
+      return true;
+    },
+  });
+  return token.trim();
+}
+
+async function saveCloudflareCustomHostnameToken(env: string, token: string | null): Promise<void> {
+  if (!token) return;
+
+  const keysDir = getExternalKeysDir(env, process.cwd());
+  await mkdir(keysDir, { recursive: true, mode: 0o700 });
+  const tokenPath = join(keysDir, 'cloudflare_api_token.txt');
+  await writeFile(tokenPath, token);
+  await import('node:fs/promises').then((fs) => fs.chmod(tokenPath, 0o600));
+  console.log(chalk.gray('☁️  Cloudflare Custom Hostnames token staged for Worker secret upload.'));
+}
 
 async function showCliCapabilitySummaryOnce(options?: {
   installed?: boolean;
@@ -1387,7 +1425,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   });
 
   let emailConfig: {
-    provider: 'resend' | 'none';
+    provider: 'cloudflare' | 'resend' | 'none';
     fromAddress?: string;
     fromName?: string;
     apiKey?: string;
@@ -1395,22 +1433,41 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
 
   if (configureEmail) {
     console.log('');
-    console.log(chalk.gray(t('email.resendDesc')));
-    console.log(chalk.gray(t('email.apiKeyHint')));
-    console.log(chalk.gray(t('email.domainHint')));
-    console.log('');
+    const provider = (await select({
+      message: t('email.title'),
+      choices: [
+        { value: 'cloudflare', name: 'Cloudflare Email Service' },
+        { value: 'resend', name: t('email.resendOption') },
+        { value: 'none', name: t('email.skipOption') },
+      ],
+      default: 'cloudflare',
+    })) as 'cloudflare' | 'resend' | 'none';
 
-    const resendApiKey = await password({
-      message: t('email.apiKeyPrompt'),
-      mask: '*',
-      validate: (value) => {
-        if (!value.trim()) return t('email.apiKeyRequired');
-        if (!value.startsWith('re_')) {
-          return t('email.apiKeyWarning');
-        }
-        return true;
-      },
-    });
+    let resendApiKey: string | undefined;
+
+    if (provider === 'cloudflare') {
+      console.log(chalk.gray('Workers Paid Plan required'));
+      console.log(chalk.gray('Cloudflare DNS/domain onboarding required'));
+      console.log(chalk.gray('Domain setup in the Cloudflare dashboard is still manual'));
+      console.log('');
+    } else if (provider === 'resend') {
+      console.log(chalk.gray(t('email.resendDesc')));
+      console.log(chalk.gray(t('email.apiKeyHint')));
+      console.log(chalk.gray(t('email.domainHint')));
+      console.log('');
+
+      resendApiKey = await password({
+        message: t('email.apiKeyPrompt'),
+        mask: '*',
+        validate: (value) => {
+          if (!value.trim()) return t('email.apiKeyRequired');
+          if (!value.startsWith('re_')) {
+            return t('email.apiKeyWarning');
+          }
+          return true;
+        },
+      });
+    }
 
     const fromAddress = await input({
       message: t('email.fromAddressPrompt'),
@@ -1427,16 +1484,20 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     });
 
     emailConfig = {
-      provider: 'resend',
+      provider,
       fromAddress,
       fromName: fromName || undefined,
       apiKey: resendApiKey,
     };
 
-    console.log('');
-    console.log(chalk.yellow('⚠️  ' + t('email.domainVerificationRequired')));
-    console.log(chalk.gray('   ' + t('email.seeDocumentation')));
+    if (provider === 'resend') {
+      console.log('');
+      console.log(chalk.yellow('⚠️  ' + t('email.domainVerificationRequired')));
+      console.log(chalk.gray('   ' + t('email.seeDocumentation')));
+    }
   }
+
+  const cloudflareCustomHostnameToken = await promptCloudflareCustomHostnameToken();
 
   // Create configuration
   const config = createDefaultConfig(envPrefix);
@@ -1450,7 +1511,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
       provider: emailConfig.provider,
       fromAddress: emailConfig.fromAddress,
       fromName: emailConfig.fromName,
-      configured: emailConfig.provider === 'resend',
+      configured: emailConfig.provider !== 'none',
     },
   };
   config.urls = buildUrlsConfig({
@@ -1483,7 +1544,14 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   );
   console.log('');
   console.log(chalk.bold('Email:'));
-  if (emailConfig.provider === 'resend') {
+  if (emailConfig.provider === 'cloudflare') {
+    console.log(`  Provider:      ${chalk.cyan('Cloudflare Email Service')}`);
+    console.log(`  Requirements:  ${chalk.yellow('Workers Paid Plan + Cloudflare DNS')}`);
+    console.log(`  From Address:  ${chalk.cyan(emailConfig.fromAddress)}`);
+    if (emailConfig.fromName) {
+      console.log(`  From Name:     ${chalk.cyan(emailConfig.fromName)}`);
+    }
+  } else if (emailConfig.provider === 'resend') {
     console.log(`  Provider:      ${chalk.cyan('Resend')}`);
     console.log(`  From Address:  ${chalk.cyan(emailConfig.fromAddress)}`);
     if (emailConfig.fromName) {
@@ -1505,14 +1573,11 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   }
 
   // Save email secrets if configured
-  if (emailConfig.provider === 'resend' && emailConfig.apiKey) {
+  if (emailConfig.provider !== 'none' && emailConfig.fromAddress) {
     // Save to external keys directory: {cwd}/.authrim-keys/{env}/
     const keysDir = getExternalKeysDir(envPrefix, process.cwd());
     await import('node:fs/promises').then(async (fs) => {
       await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
-      const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
-      await fs.writeFile(resendApiKeyPath, emailConfig.apiKey!.trim());
-      await fs.chmod(resendApiKeyPath, 0o600);
       const emailFromPath = join(keysDir, 'email_from.txt');
       await fs.writeFile(emailFromPath, emailConfig.fromAddress!.trim());
       await fs.chmod(emailFromPath, 0o600);
@@ -1521,9 +1586,15 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
         await fs.writeFile(emailFromNamePath, emailConfig.fromName.trim());
         await fs.chmod(emailFromNamePath, 0o600);
       }
+      if (emailConfig.provider === 'resend' && emailConfig.apiKey) {
+        const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
+        await fs.writeFile(resendApiKeyPath, emailConfig.apiKey.trim());
+        await fs.chmod(resendApiKeyPath, 0o600);
+      }
     });
-    console.log(chalk.gray(`📧 Email secrets saved to ${keysDir}/`));
+    console.log(chalk.gray(`📧 Email bootstrap settings saved to ${keysDir}/`));
   }
+  await saveCloudflareCustomHostnameToken(envPrefix, cloudflareCustomHostnameToken);
 
   // Run setup
   await executeSetup(config, cfApiToken, options.keep);
@@ -1685,19 +1756,37 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   // API domain is the base domain
   apiDomain = baseDomain || null;
 
-  if (baseDomain) {
+  console.log(
+    chalk.gray(
+      '  Tenant ID rules: 1-63 chars, must start with a lowercase letter, and may contain only lowercase letters, numbers, and hyphens.'
+    )
+  );
+  console.log(
+    chalk.gray(
+      '  Tip: A random tenant ID helps avoid exposing a customer or business name in the issuer URL. Generated IDs use readable lowercase letters only.'
+    )
+  );
+
+  const suggestedTenantId = generateRandomTenantId();
+  const useRandomTenantId = await confirm({
+    message: `Generate a random tenant ID? (${suggestedTenantId})`,
+    default: !!baseDomain,
+  });
+
+  if (useRandomTenantId) {
+    tenantName = suggestedTenantId;
+    console.log(chalk.green(`  ✓ Tenant ID: ${tenantName}`));
+  } else {
     tenantName = await input({
       message: t('tenant.defaultTenantPrompt'),
-      default: 'default',
+      default: baseDomain ? 'default' : tenantName || 'default',
       validate: (value) => {
-        if (!/^[a-z][a-z0-9-]*$/.test(value)) {
+        if (!isValidTenantId(value)) {
           return t('tenant.defaultTenantValidation');
         }
         return true;
       },
     });
-  } else {
-    tenantName = 'default';
   }
 
   tenantDisplayName = await input({
@@ -1719,7 +1808,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
           if (!value) {
             return true;
           }
-          if (!/^[a-z][a-z0-9-]*$/.test(value)) {
+          if (!isValidTenantId(value)) {
             return 'Tenant ID must start with a letter and contain only lowercase letters, numbers, and hyphens';
           }
           return true;
@@ -1812,40 +1901,58 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   const emailProviderChoice = await select({
     message: t('email.title'),
     choices: [
-      { value: 'none', name: t('email.skipOption') },
+      { value: 'cloudflare', name: 'Cloudflare Email Service' },
       { value: 'resend', name: t('email.resendOption') },
+      { value: 'none', name: t('email.skipOption') },
       { value: 'sendgrid', name: 'SendGrid (coming soon)', disabled: true },
       { value: 'ses', name: t('email.sesOption') + ' (coming soon)', disabled: true },
     ],
-    default: 'none',
+    default: 'cloudflare',
   });
 
   // Email configuration details
   let emailConfigNormal: {
-    provider: 'resend' | 'none';
+    provider: 'cloudflare' | 'resend' | 'none';
     fromAddress?: string;
     fromName?: string;
     apiKey?: string;
   } = { provider: 'none' };
 
-  if (emailProviderChoice === 'resend') {
+  if (emailProviderChoice === 'cloudflare' || emailProviderChoice === 'resend') {
     console.log('');
-    console.log(chalk.blue('━━━ ' + t('email.resendOption') + ' ━━━'));
-    console.log(chalk.gray(t('email.apiKeyHint')));
-    console.log(chalk.gray(t('email.domainHint')));
+    console.log(
+      chalk.blue(
+        '━━━ ' +
+          (emailProviderChoice === 'cloudflare'
+            ? 'Cloudflare Email Service'
+            : t('email.resendOption')) +
+          ' ━━━'
+      )
+    );
+    if (emailProviderChoice === 'cloudflare') {
+      console.log(chalk.gray('Workers Paid Plan required'));
+      console.log(chalk.gray('Cloudflare DNS/domain onboarding required'));
+      console.log(chalk.gray('Domain setup in the Cloudflare dashboard is still manual'));
+    } else {
+      console.log(chalk.gray(t('email.apiKeyHint')));
+      console.log(chalk.gray(t('email.domainHint')));
+    }
     console.log('');
 
-    const resendApiKey = await password({
-      message: t('email.apiKeyPrompt'),
-      mask: '*',
-      validate: (value) => {
-        if (!value.trim()) return t('email.apiKeyRequired');
-        if (!value.startsWith('re_')) {
-          return t('email.apiKeyWarning');
-        }
-        return true;
-      },
-    });
+    const resendApiKey =
+      emailProviderChoice === 'resend'
+        ? await password({
+            message: t('email.apiKeyPrompt'),
+            mask: '*',
+            validate: (value) => {
+              if (!value.trim()) return t('email.apiKeyRequired');
+              if (!value.startsWith('re_')) {
+                return t('email.apiKeyWarning');
+              }
+              return true;
+            },
+          })
+        : undefined;
 
     const fromAddress = await input({
       message: t('email.fromAddressPrompt'),
@@ -1862,16 +1969,20 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     });
 
     emailConfigNormal = {
-      provider: 'resend',
+      provider: emailProviderChoice,
       fromAddress,
       fromName: fromName || undefined,
       apiKey: resendApiKey,
     };
 
-    console.log('');
-    console.log(chalk.yellow('⚠️  ' + t('email.domainVerificationRequired')));
-    console.log(chalk.gray('   ' + t('email.seeDocumentation')));
+    if (emailProviderChoice === 'resend') {
+      console.log('');
+      console.log(chalk.yellow('⚠️  ' + t('email.domainVerificationRequired')));
+      console.log(chalk.gray('   ' + t('email.seeDocumentation')));
+    }
   }
+
+  const cloudflareCustomHostnameToken = await promptCloudflareCustomHostnameToken();
 
   // Step 7: Advanced OIDC settings
   const configureOidc = await confirm({
@@ -2114,7 +2225,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
       provider: emailConfigNormal.provider,
       fromAddress: emailConfigNormal.fromAddress,
       fromName: emailConfigNormal.fromName,
-      configured: emailConfigNormal.provider === 'resend',
+      configured: emailConfigNormal.provider !== 'none',
     },
   };
   config.security = {
@@ -2190,7 +2301,14 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(`  R2:            ${enableR2 ? chalk.green('Enabled') : chalk.gray('Disabled')}`);
   console.log('');
   console.log(chalk.bold('Email:'));
-  if (emailConfigNormal.provider === 'resend') {
+  if (emailConfigNormal.provider === 'cloudflare') {
+    console.log(`  Provider:      ${chalk.cyan('Cloudflare Email Service')}`);
+    console.log(`  Requirements:  ${chalk.yellow('Workers Paid Plan + Cloudflare DNS')}`);
+    console.log(`  From Address:  ${chalk.cyan(emailConfigNormal.fromAddress)}`);
+    if (emailConfigNormal.fromName) {
+      console.log(`  From Name:     ${chalk.cyan(emailConfigNormal.fromName)}`);
+    }
+  } else if (emailConfigNormal.provider === 'resend') {
     console.log(`  Provider:      ${chalk.cyan('Resend')}`);
     console.log(`  From Address:  ${chalk.cyan(emailConfigNormal.fromAddress)}`);
     if (emailConfigNormal.fromName) {
@@ -2238,14 +2356,11 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   }
 
   // Save email secrets if configured
-  if (emailConfigNormal.provider === 'resend' && emailConfigNormal.apiKey) {
+  if (emailConfigNormal.provider !== 'none' && emailConfigNormal.fromAddress) {
     // Save to external keys directory: {cwd}/.authrim-keys/{env}/
     const keysDir = getExternalKeysDir(envPrefix, process.cwd());
     await import('node:fs/promises').then(async (fs) => {
       await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
-      const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
-      await fs.writeFile(resendApiKeyPath, emailConfigNormal.apiKey!.trim());
-      await fs.chmod(resendApiKeyPath, 0o600);
       const emailFromPath = join(keysDir, 'email_from.txt');
       await fs.writeFile(emailFromPath, emailConfigNormal.fromAddress!.trim());
       await fs.chmod(emailFromPath, 0o600);
@@ -2254,9 +2369,15 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
         await fs.writeFile(emailFromNamePath, emailConfigNormal.fromName.trim());
         await fs.chmod(emailFromNamePath, 0o600);
       }
+      if (emailConfigNormal.provider === 'resend' && emailConfigNormal.apiKey) {
+        const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
+        await fs.writeFile(resendApiKeyPath, emailConfigNormal.apiKey.trim());
+        await fs.chmod(resendApiKeyPath, 0o600);
+      }
     });
-    console.log(chalk.gray(`📧 Email secrets saved to ${keysDir}/`));
+    console.log(chalk.gray(`📧 Email bootstrap settings saved to ${keysDir}/`));
   }
+  await saveCloudflareCustomHostnameToken(envPrefix, cloudflareCustomHostnameToken);
 
   await executeSetup(config, cfApiToken, options.keep);
 }
@@ -3088,8 +3209,9 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   const emailProvider = await select({
     message: 'Select email provider',
     choices: [
-      { value: 'none', name: 'None (email disabled)' },
+      { value: 'cloudflare', name: 'Cloudflare Email Service' },
       { value: 'resend', name: 'Resend' },
+      { value: 'none', name: 'None (email disabled)' },
       { value: 'sendgrid', name: 'SendGrid' },
       { value: 'ses', name: 'AWS SES' },
     ],
@@ -3099,7 +3221,7 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   config.features.queue = { enabled: queueEnabled };
   config.features.r2 = { enabled: r2Enabled };
   config.features.email = {
-    provider: emailProvider as 'none' | 'resend' | 'sendgrid' | 'ses',
+    provider: emailProvider as 'none' | 'cloudflare' | 'resend' | 'sendgrid' | 'ses',
     configured: config.features.email?.configured || false,
     fromAddress: config.features.email?.fromAddress,
     fromName: config.features.email?.fromName,

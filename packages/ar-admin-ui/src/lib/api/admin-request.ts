@@ -9,9 +9,21 @@ function getSessionId(): string | null {
 	return null;
 }
 
+function getPersistedTenantId(): string | null {
+	if (typeof sessionStorage !== 'undefined') {
+		const tenantId = sessionStorage.getItem('settings_tenant_id')?.trim();
+		return tenantId || null;
+	}
+	return null;
+}
+
 function resolveTenantId(candidate?: string): string | null {
 	const resolved =
-		candidate?.trim() || settingsContext.tenantId || settingsContext.availableTenants[0]?.id || '';
+		candidate?.trim() ||
+		getPersistedTenantId() ||
+		settingsContext.current.tenantId?.trim() ||
+		settingsContext.availableTenants[0]?.id ||
+		'';
 
 	return resolved || null;
 }

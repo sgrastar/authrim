@@ -1002,9 +1002,19 @@ const ru: Translations = {
     'Используется для отправки OTP по email и подтверждения адреса. Можете настроить позже.',
   'web.email.configureLater': 'Настроить позже',
   'web.email.configureLaterHint': 'Пропустить сейчас и настроить позже.',
+  'web.email.configureCloudflare': 'Настроить Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Использует нативный binding Workers Email Service. Требуется тариф Workers Paid и Cloudflare DNS.',
   'web.email.configureResend': 'Настроить Resend',
   'web.email.configureResendHint':
     'Настроить отправку email через Resend (рекомендуется для продакшна).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Требования',
+  'web.email.cloudflareRequirementPaid': 'Требуется тариф Workers Paid',
+  'web.email.cloudflareRequirementDns':
+    'Требуется Cloudflare DNS / онбординг домена',
+  'web.email.cloudflareRequirementManual':
+    'Настройка домена в панели Cloudflare по-прежнему выполняется вручную',
   'web.email.resendSetup': 'Конфигурация Resend',
   'web.email.beforeBegin': 'Перед началом:',
   'web.email.step1': 'Создайте аккаунт Resend на',
@@ -1012,10 +1022,18 @@ const ru: Translations = {
   'web.email.step3': 'Создайте API-ключ на',
   'web.email.resendApiKey': 'API-ключ Resend',
   'web.email.resendApiKeyHint': 'Ваш API-ключ начинается с "re_"',
+  'web.email.resendApiKeyMissing': 'Введите API-ключ Resend',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API-ключ не начинается с "re_". Возможно, это недействительный API-ключ Resend. Всё равно продолжить?',
   'web.email.fromEmailAddress': 'Адрес отправителя email',
+  'web.email.cloudflareFromHint':
+    'Должен относиться к домену, подключённому к Cloudflare Email Service',
   'web.email.fromEmailHint': 'Должен быть с подтверждённого домена в вашем аккаунте Resend',
+  'web.email.fromEmailMissing': 'Введите адрес отправителя email',
+  'web.email.fromEmailInvalid': 'Введите корректный email-адрес',
   'web.email.fromDisplayName': 'Отображаемое имя отправителя (необязательно)',
   'web.email.fromDisplayHint': 'Отображается как имя отправителя в почтовых клиентах',
+  'web.email.saveConfigFailed': 'Не удалось сохранить настройки email',
   'web.email.domainVerificationTitle': 'Требуется верификация домена',
   'web.email.domainVerificationDesc':
     'До верификации домена письма можно отправлять только с onboarding@resend.dev (для тестирования).',

@@ -294,6 +294,7 @@ describe('ensureWildcardDnsForMultiTenant', () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
       .mockResolvedValueOnce(jsonResponse({ success: false }, 403));
+    const verifyPublicDns = vi.fn().mockResolvedValue(false);
     const onProgress = vi.fn();
 
     await expect(
@@ -309,7 +310,8 @@ describe('ensureWildcardDnsForMultiTenant', () => {
             },
           },
         },
-        onProgress
+        onProgress,
+        verifyPublicDns
       )
     ).rejects.toThrow(
       'Token lacks zone:read or dns:edit permission to verify/create wildcard DNS record for *.test.example.com'
@@ -320,6 +322,42 @@ describe('ensureWildcardDnsForMultiTenant', () => {
     expect(onProgress).toHaveBeenNthCalledWith(
       1,
       'Ensuring wildcard DNS for *.test.example.com...'
+    );
+  });
+
+  it('continues when wildcard DNS already resolves publicly', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
+      .mockResolvedValueOnce(jsonResponse({ success: false }, 403));
+    const verifyPublicDns = vi.fn().mockResolvedValue(true);
+    const onProgress = vi.fn();
+
+    await cloudflare.ensureWildcardDnsForMultiTenant(
+      {
+        tenant: {
+          multiTenant: true,
+          baseDomain: 'test.example.com',
+        },
+        urls: {
+          api: {
+            zoneId: 'zone-123',
+          },
+        },
+      },
+      onProgress,
+      verifyPublicDns
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenNthCalledWith(
+      1,
+      'Ensuring wildcard DNS for *.test.example.com...'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(
+      2,
+      '✓ Wildcard DNS resolves publicly: *.test.example.com -> test.example.com'
     );
   });
 });

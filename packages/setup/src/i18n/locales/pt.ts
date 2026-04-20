@@ -1009,9 +1009,19 @@ const pt: Translations = {
     'Usado para enviar OTP por email e verificação de endereço de email. Você pode configurar isso depois se preferir.',
   'web.email.configureLater': 'Configurar depois',
   'web.email.configureLaterHint': 'Pular por agora e configurar depois.',
+  'web.email.configureCloudflare': 'Configurar Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Usa o binding nativo do Workers Email Service. Requer um plano Workers Paid e Cloudflare DNS.',
   'web.email.configureResend': 'Configurar Resend',
   'web.email.configureResendHint':
     'Configurar envio de email com Resend (recomendado para produção).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Requisitos',
+  'web.email.cloudflareRequirementPaid': 'É necessário um plano Workers Paid',
+  'web.email.cloudflareRequirementDns':
+    'Cloudflare DNS / onboarding de domínio é necessário',
+  'web.email.cloudflareRequirementManual':
+    'A configuração do domínio no painel da Cloudflare ainda é manual',
   'web.email.resendSetup': 'Configuração do Resend',
   'web.email.beforeBegin': 'Antes de começar:',
   'web.email.step1': 'Crie uma conta no Resend em',
@@ -1019,10 +1029,18 @@ const pt: Translations = {
   'web.email.step3': 'Crie uma chave API em',
   'web.email.resendApiKey': 'Chave API do Resend',
   'web.email.resendApiKeyHint': 'Sua chave API começa com "re_"',
+  'web.email.resendApiKeyMissing': 'Por favor, informe sua chave API do Resend',
+  'web.email.resendApiKeyConfirmInvalid':
+    'A chave API não começa com "re_". Talvez ela não seja uma chave API válida do Resend. Deseja continuar mesmo assim?',
   'web.email.fromEmailAddress': 'Endereço de Email do Remetente',
+  'web.email.cloudflareFromHint':
+    'Deve ser de um domínio integrado ao Cloudflare Email Service',
   'web.email.fromEmailHint': 'Deve ser de um domínio verificado na sua conta Resend',
+  'web.email.fromEmailMissing': 'Por favor, informe um endereço de email do remetente',
+  'web.email.fromEmailInvalid': 'Por favor, informe um endereço de email válido',
   'web.email.fromDisplayName': 'Nome de Exibição do Remetente (opcional)',
   'web.email.fromDisplayHint': 'Exibido como o nome do remetente em clientes de email',
+  'web.email.saveConfigFailed': 'Falha ao salvar a configuração de email',
   'web.email.domainVerificationTitle': 'Verificação de Domínio Necessária',
   'web.email.domainVerificationDesc':
     'Antes do seu domínio ser verificado, emails só podem ser enviados de onboarding@resend.dev (para testes).',

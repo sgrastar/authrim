@@ -47,6 +47,12 @@ export interface WranglerConfig {
     producers?: Array<{ queue: string; binding: string }>;
   };
   services?: Array<{ binding: string; service: string }>;
+  send_email?: Array<{
+    name: string;
+    destination_address?: string;
+    allowed_destination_addresses?: string[];
+    allowed_sender_addresses?: string[];
+  }>;
 }
 
 // =============================================================================
@@ -367,6 +373,13 @@ export function generateWranglerConfig(
     }
   }
 
+  if (
+    config.features.email?.provider === 'cloudflare' &&
+    (component === 'ar-auth' || component === 'ar-management')
+  ) {
+    wranglerConfig.send_email = [{ name: 'EMAIL' }];
+  }
+
   // Service Bindings for ar-router (required for routing to other workers)
   if (component === 'ar-router') {
     // Core services (always required)
@@ -519,6 +532,12 @@ export function generateEnvVars(
     vars['UI_URL'] = uiUrl;
     vars['LOGIN_UI_ENABLED'] = config.components.loginUi ? 'true' : 'false';
     vars['ADMIN_UI_ENABLED'] = config.components.adminUi ? 'true' : 'false';
+    if (config.features.email?.fromAddress) {
+      vars['EMAIL_FROM'] = config.features.email.fromAddress;
+    }
+    if (config.features.email?.fromName) {
+      vars['EMAIL_FROM_NAME'] = config.features.email.fromName;
+    }
   }
 
   if (component === 'ar-auth') {
@@ -706,6 +725,36 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
  */
 export function toToml(config: WranglerConfig, envName?: string): string {
   const lines: string[] = [];
+  const appendSendEmailBindings = (prefix?: string) => {
+    if (!config.send_email || config.send_email.length === 0) {
+      return;
+    }
+
+    lines.push('# Email Service Bindings');
+    for (const binding of config.send_email) {
+      const tableName = prefix ? `[[${prefix}.send_email]]` : '[[send_email]]';
+      lines.push(tableName);
+      lines.push(`name = "${binding.name}"`);
+      if (binding.destination_address) {
+        lines.push(`destination_address = "${binding.destination_address}"`);
+      }
+      if (binding.allowed_destination_addresses?.length) {
+        lines.push(
+          `allowed_destination_addresses = [${binding.allowed_destination_addresses
+            .map((value) => `"${value}"`)
+            .join(', ')}]`
+        );
+      }
+      if (binding.allowed_sender_addresses?.length) {
+        lines.push(
+          `allowed_sender_addresses = [${binding.allowed_sender_addresses
+            .map((value) => `"${value}"`)
+            .join(', ')}]`
+        );
+      }
+      lines.push('');
+    }
+  };
 
   if (envName) {
     // =========================================================================
@@ -836,6 +885,8 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         lines.push('');
       }
     }
+
+    appendSendEmailBindings(`env.${envName}`);
 
     // Routes
     if (config.routes && config.routes.length > 0) {
@@ -991,6 +1042,8 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         lines.push('');
       }
     }
+
+    appendSendEmailBindings();
   }
 
   return lines.join('\n');

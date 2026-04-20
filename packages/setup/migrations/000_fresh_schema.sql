@@ -45,6 +45,34 @@ CREATE UNIQUE INDEX idx_tdm_domain_hash ON tenant_domain_mappings(domain_hash)
 CREATE INDEX idx_tdm_tenant ON tenant_domain_mappings(tenant_id);
 CREATE INDEX idx_tdm_verified ON tenant_domain_mappings(verified, is_active, priority DESC);
 
+-- Canonical per-tenant custom hostnames (Cloudflare Custom Hostnames)
+CREATE TABLE tenant_vanity_domains (
+  id                             TEXT PRIMARY KEY,
+  tenant_id                      TEXT NOT NULL,
+  hostname                       TEXT NOT NULL,
+  is_active                      INTEGER NOT NULL DEFAULT 1,
+  is_primary                     INTEGER NOT NULL DEFAULT 0,
+  status                         TEXT NOT NULL DEFAULT 'pending',
+  cloudflare_zone_id             TEXT,
+  cloudflare_custom_hostname_id  TEXT,
+  ssl_status                     TEXT,
+  ownership_status               TEXT,
+  validation_method              TEXT,
+  validation_records_json        TEXT,
+  last_sync_at                   INTEGER,
+  created_by                     TEXT,
+  created_at                     INTEGER NOT NULL,
+  updated_at                     INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+
+CREATE UNIQUE INDEX idx_tvd_hostname_active ON tenant_vanity_domains(hostname)
+  WHERE is_active = 1;
+CREATE UNIQUE INDEX idx_tvd_primary_active ON tenant_vanity_domains(tenant_id)
+  WHERE is_primary = 1 AND is_active = 1;
+CREATE INDEX idx_tvd_tenant ON tenant_vanity_domains(tenant_id);
+CREATE INDEX idx_tvd_status ON tenant_vanity_domains(status, is_active);
+
 CREATE TABLE access_review_items (
   id TEXT PRIMARY KEY,
   review_id TEXT NOT NULL REFERENCES access_reviews(id) ON DELETE CASCADE,

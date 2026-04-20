@@ -300,6 +300,7 @@ app.use(
       '/device_authorization', // Device flow (client auth)
       '/device', // Device verification page (form submission, CSRF handled by device code)
       '/bc-authorize', // CIBA (client auth)
+      '/api/auth/discovery', // Public discovery + discovery-grant endpoints used by Login UI server-side fetches
       '/api/admin-init-setup', // Initial admin setup has its own CSRF token + origin validation
       '/vci', // OpenID4VCI endpoints (bearer/proof-based, not cookie CSRF)
       '/vp', // OpenID4VP endpoints (protocol callbacks)
@@ -477,6 +478,10 @@ app.get('/api/auth/login-methods', async (c) => {
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 app.all('/api/auth/discovery', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+app.all('/api/auth/discovery/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });

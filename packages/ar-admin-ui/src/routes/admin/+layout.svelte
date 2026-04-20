@@ -24,6 +24,8 @@
 
 	// Mobile menu state
 	let mobileMenuOpen = $state(false);
+	let adminContextReady = $state(false);
+	let adminContextPromise: Promise<void> | null = null;
 
 	// Close mobile menu on navigation
 	$effect(() => {
@@ -85,13 +87,17 @@
 		configuration: [
 			{ path: '/admin/info', label: 'Info', icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: 'Settings', icon: 'i-ph-gear' },
+			{ path: '/admin/email-settings', label: 'Email Settings', icon: 'i-ph-envelope-simple' },
 			{ path: '/admin/plugins', label: 'Plugins', icon: 'i-ph-puzzle-piece' }
 		]
 	};
 
 	// PLATFORM section - system administration
 	const navPlatform = {
-		tenantManagement: [{ path: '/admin/tenants', label: 'Tenants', icon: 'i-ph-buildings' }],
+		tenantManagement: [
+			{ path: '/admin/tenants', label: 'Tenants', icon: 'i-ph-buildings' },
+			{ path: '/admin/tenant-vanity-domains', label: 'Vanity Domains', icon: 'i-ph-globe' }
+		],
 		security: [
 			{ path: '/admin/security', label: 'Security', icon: 'i-ph-lock-key' },
 			{ path: '/admin/compliance', label: 'Compliance', icon: 'i-ph-certificate' }
@@ -121,7 +127,7 @@
 	};
 
 	// All nav items flattened for breadcrumb lookup
-	const allNavItems = [
+	const allNavItems = $derived([
 		// End User
 		...navEndUser.identity,
 		{
@@ -158,7 +164,7 @@
 			icon: 'i-ph-arrow-right'
 		})),
 		...navPlatform.adminOthers
-	];
+	]);
 
 	// Check if nav item is active
 	function isActive(path: string, exact: boolean = false): boolean {
@@ -207,16 +213,54 @@
 			return;
 		}
 
-		// Load tenant list into the shared store for the header selector
-		await tenantStore.load();
-		await settingsContext.initialize();
-		selectedTenantId = settingsContext.tenantId || tenantStore.defaultTenantId;
+		await ensureAdminContextReady();
 	});
 
 	$effect(() => {
 		const tenantId = settingsContext.tenantId;
 		if (tenantId && tenantId !== selectedTenantId) {
 			selectedTenantId = tenantId;
+		}
+	});
+
+	async function ensureAdminContextReady() {
+		if (adminContextReady) {
+			return;
+		}
+
+		if (adminContextPromise) {
+			await adminContextPromise;
+			return;
+		}
+
+		adminContextPromise = (async () => {
+			adminContextReady = false;
+			try {
+				// Load tenant list and settings context before rendering child pages.
+				// This avoids first-render requests being sent without X-Tenant-Id.
+				await tenantStore.load();
+				await settingsContext.initialize();
+				selectedTenantId = settingsContext.tenantId || tenantStore.defaultTenantId;
+			} finally {
+				adminContextReady = true;
+				adminContextPromise = null;
+			}
+		})();
+
+		await adminContextPromise;
+	}
+
+	$effect(() => {
+		const isOnLoginPage = $page.url.pathname === '/admin/login';
+		const isAuthenticated = adminAuth.isAuthenticated;
+
+		if (isOnLoginPage) {
+			adminContextReady = false;
+			return;
+		}
+
+		if (isAuthenticated && !adminContextReady) {
+			void ensureAdminContextReady();
 		}
 	});
 
@@ -259,6 +303,13 @@
 			<i class="i-ph-circle-notch animate-spin w-8 h-8"></i>
 		</div>
 		<p>Loading...</p>
+	</div>
+{:else if adminAuth.isAuthenticated && !adminContextReady}
+	<div class="loading-container">
+		<div class="loading-spinner">
+			<i class="i-ph-circle-notch animate-spin w-8 h-8"></i>
+		</div>
+		<p>Loading tenant context...</p>
 	</div>
 {:else if adminAuth.isAuthenticated}
 	<!-- Authenticated - layout with floating sidebar -->

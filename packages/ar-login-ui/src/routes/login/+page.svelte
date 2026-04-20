@@ -24,6 +24,9 @@
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
 	let externalIdpLoading = $state<string | null>(null);
+	const authActionLoading = $derived(
+		passkeyLoading || emailCodeLoading || externalIdpLoading !== null
+	);
 
 	// Login methods (from API)
 	let methodsLoading = $state(true);
@@ -145,6 +148,10 @@
 
 		// Fetch login methods + challenge data in parallel
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
+		const urlLoginHint = $page.url.searchParams.get('login_hint');
+		if (urlLoginHint) {
+			email = urlLoginHint;
+		}
 
 		const tasks: Promise<void>[] = [loadLoginMethods()];
 		if (urlChallengeId) {
@@ -206,7 +213,7 @@
 	}
 
 	async function handlePasskeyLogin() {
-		if (passkeyLoading) return;
+		if (authActionLoading) return;
 		error = '';
 		passkeyLoading = true;
 
@@ -246,7 +253,7 @@
 	}
 
 	async function handleEmailCodeSend() {
-		if (emailCodeLoading) return;
+		if (authActionLoading) return;
 		error = '';
 
 		if (!email.trim()) {
@@ -274,6 +281,7 @@
 	}
 
 	async function handleExternalLogin(providerId: string) {
+		if (authActionLoading) return;
 		externalIdpLoading = providerId;
 		try {
 			const redirectUri = `${window.location.origin}/callback`;
@@ -504,7 +512,7 @@
 						variant="primary"
 						class="w-full mb-4"
 						loading={passkeyLoading}
-						disabled={emailCodeLoading}
+						disabled={emailCodeLoading || externalIdpLoading !== null}
 						onclick={handlePasskeyLogin}
 					>
 						<div class="i-heroicons-key h-5 w-5"></div>
@@ -530,6 +538,7 @@
 							bind:value={email}
 							onkeypress={handleKeyPress}
 							autocomplete="email"
+							disabled={authActionLoading}
 							required
 						/>
 					</div>

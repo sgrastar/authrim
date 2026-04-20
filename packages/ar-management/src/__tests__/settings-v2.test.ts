@@ -185,6 +185,9 @@ describe('Settings API v2', () => {
         expect(body.values['login-entry.allow_manual_tenant_entry']).toBe(true);
         expect(body.values['login-entry.remember_last_tenant']).toBe(true);
         expect(body.values['login-entry.redirect_default_login_to_discovery']).toBe(true);
+        expect(body.values['login-entry.require_common_discovery_before_login']).toBe(true);
+        expect(body.values['login-entry.skip_discovery_if_only_one_tenant']).toBe(false);
+        expect(body.values['login-entry.redirect_tenant_discover_to_common_entry']).toBe(true);
       });
 
       it('should return tenant-discovery-ui settings for tenant scope', async () => {
@@ -396,6 +399,9 @@ describe('Settings API v2', () => {
                 'login-entry.allow_manual_tenant_entry': false,
                 'login-entry.remember_last_tenant': false,
                 'login-entry.redirect_default_login_to_discovery': false,
+                'login-entry.require_common_discovery_before_login': false,
+                'login-entry.skip_discovery_if_only_one_tenant': true,
+                'login-entry.redirect_tenant_discover_to_common_entry': false,
               },
             }),
           },
@@ -412,6 +418,9 @@ describe('Settings API v2', () => {
         expect(body.applied).toContain('login-entry.allow_manual_tenant_entry');
         expect(body.applied).toContain('login-entry.remember_last_tenant');
         expect(body.applied).toContain('login-entry.redirect_default_login_to_discovery');
+        expect(body.applied).toContain('login-entry.require_common_discovery_before_login');
+        expect(body.applied).toContain('login-entry.skip_discovery_if_only_one_tenant');
+        expect(body.applied).toContain('login-entry.redirect_tenant_discover_to_common_entry');
       });
 
       it('should patch tenant-discovery-ui settings for tenant scope', async () => {
@@ -614,6 +623,27 @@ describe('Settings API v2', () => {
         expect(body.category).toBe('infrastructure');
         expect(body.scope).toEqual({ type: 'platform' });
       });
+
+      it('should return login-entry settings for platform scope', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/platform/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('login-entry');
+        expect(body.scope).toEqual({ type: 'platform' });
+        expect(body.values['login-entry.discovery_methods']).toBe(
+          '["email_domain","tenant_code","tenant_slug"]'
+        );
+        expect(body.values['login-entry.require_common_discovery_before_login']).toBe(true);
+        expect(body.values['login-entry.skip_discovery_if_only_one_tenant']).toBe(false);
+      });
     });
 
     describe('PATCH /platform/settings/:category', () => {
@@ -670,6 +700,43 @@ describe('Settings API v2', () => {
         expect(body.applied).toContain('tenant-discovery-ui.brand_name');
         expect(body.applied).toContain('tenant-discovery-ui.theme');
       });
+
+      it('should patch platform login-entry settings', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/platform/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/platform/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'login-entry.discovery_methods': '["tenant_code"]',
+                'login-entry.email_resolution_policy': 'disabled',
+                'login-entry.require_common_discovery_before_login': false,
+                'login-entry.skip_discovery_if_only_one_tenant': true,
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+        expect(body.applied).toContain('login-entry.discovery_methods');
+        expect(body.applied).toContain('login-entry.email_resolution_policy');
+        expect(body.applied).toContain('login-entry.require_common_discovery_before_login');
+        expect(body.applied).toContain('login-entry.skip_discovery_if_only_one_tenant');
+      });
     });
 
     describe('PUT /platform/settings/:category', () => {
@@ -722,7 +789,7 @@ describe('Settings API v2', () => {
         expect(typeof body.settings).toBe('object');
       });
 
-      it('should return login-entry metadata with seven settings', async () => {
+      it('should return login-entry metadata with ten settings', async () => {
         const { app, mockEnv } = createTestApp();
 
         const res = await app.request(
@@ -737,7 +804,7 @@ describe('Settings API v2', () => {
         };
 
         expect(body.category).toBe('login-entry');
-        expect(Object.keys(body.settings)).toHaveLength(7);
+        expect(Object.keys(body.settings)).toHaveLength(10);
       });
 
       it('should return 404 for unknown category', async () => {

@@ -1,0 +1,15 @@
+case_id,entry,host_client_condition,session_condition,expect
+OIDC-001,/authorize,client belongs to current tenant,no session,Challenge is created for current tenant issuer.
+OIDC-002,/authorize,client belongs to different tenant,no session,"Rejects with invalid_client; no cross-tenant challenge."
+OIDC-003,/authorize,unknown client,no session,Rejects before challenge creation.
+OIDC-004,/authorize,redirect URI registered for current tenant,no session,Accepted and challenge login URL generated.
+OIDC-005,/authorize,redirect URI registered under different tenant only,no session,Rejected.
+OIDC-006,/authorize,naked-domain primary tenant,no session,Issuer is naked base domain.
+OIDC-007,/authorize,non-primary tenant under naked-domain topology,no session,Issuer stays tenant subdomain.
+OIDC-008,/authorize,vanity host,no session,Works only if host-to-tenant mapping exists and binding allows host.
+OIDC-009,/login?challenge_id=...,challenge belongs to same tenant,no session,"Renders challenge login, bypassing common discovery requirement."
+OIDC-010,/login?challenge_id=...,challenge belongs to different tenant,no session,"TODO: reject before treating challenge_id as a discovery bypass."
+OIDC-011,/authorize,same tenant client,existing same-tenant session,Continues according to prompt/consent rules.
+OIDC-012,/authorize,same tenant client,existing different-tenant session,Must not reuse session across tenants.
+OIDC-013,/authorize?prompt=login,same tenant client,existing same-tenant session,Forces login.
+OIDC-014,/authorize,consent required,same tenant session,Shows consent or follows consent flow.

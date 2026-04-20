@@ -8,18 +8,34 @@ import {
   TENANT_DISCOVERY_UI_DEFAULTS,
   getDefaultTenantId,
   getTenantIdFromContext,
+  getUIConfig,
   resolveTenantCandidatesFromEmailDomain,
   usesNakedDomainIssuer,
+  validateTenantRequestBinding,
 } from '@authrim/ar-lib-core';
 import { getLogger } from '@authrim/ar-lib-core';
+import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
-import { getCanonicalTenantBaseUrl } from './request-issuer';
+import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
 
 const DISCOVERY_METHODS = ['email_domain', 'tenant_code', 'tenant_slug', 'invitation', 'app_hint'];
 const DISCOVERY_REQUEST_SCHEMA = z.object({
   mode: z.enum(['email', 'tenant_code', 'tenant_slug', 'invite_token', 'app_hint']),
   value: z.string().min(1).max(2048),
 });
+const DISCOVERY_GRANT_CREATE_SCHEMA = z.object({
+  tenant_id: z.string().min(1).max(255),
+  expected_tenant_id: z.string().min(1).max(255).optional(),
+  return_to: z.string().url().max(2048).optional(),
+  login_hint: z.string().min(1).max(320).optional(),
+});
+const DISCOVERY_GRANT_VERIFY_SCHEMA = z.object({
+  grant: z.string().min(1).max(8192),
+  current_url: z.string().url().max(2048),
+});
+const DISCOVERY_GRANT_ISSUER = 'authrim:discovery-grant';
+const DISCOVERY_GRANT_AUDIENCE = 'authrim:tenant-login';
+const DISCOVERY_GRANT_TTL_SECONDS = 300;
 
 type DiscoverySource = 'email_domain' | 'tenant_code' | 'tenant_slug' | 'invitation' | 'app_hint';
 
@@ -65,6 +81,9 @@ interface DiscoveryConfigResponse {
     allow_manual_tenant_entry: boolean;
     remember_last_tenant: boolean;
     redirect_default_login_to_discovery: boolean;
+    require_common_discovery_before_login: boolean;
+    skip_discovery_if_only_one_tenant: boolean;
+    redirect_tenant_discover_to_common_entry: boolean;
   };
   ui: {
     theme: string;
@@ -78,6 +97,8 @@ interface DiscoveryConfigResponse {
   };
   single_tenant_mode: boolean;
   is_common_entry_host: boolean;
+  common_discover_url: string | null;
+  single_active_tenant_candidate?: DiscoveryCandidate;
   default_candidate?: DiscoveryCandidate;
 }
 
@@ -144,9 +165,12 @@ function normalizeDiscoveryMethods(raw: string | undefined): DiscoveryMethod[] {
 
 async function getDiscoverySettings(
   env: Env,
-  tenantId: string
+  scope: { type: 'platform' } | { type: 'tenant'; id: string }
 ): Promise<DiscoveryConfigResponse['config']> {
-  const kvKey = `settings:tenant:${tenantId}:login-entry`;
+  const kvKey =
+    scope.type === 'platform'
+      ? 'settings:platform:login-entry'
+      : `settings:tenant:${scope.id}:login-entry`;
   const stored = await readSettingsRecord(env.SETTINGS, kvKey);
   const emailResolutionPolicy =
     (stored?.['login-entry.email_resolution_policy'] as
@@ -157,7 +181,7 @@ async function getDiscoverySettings(
   ).filter((method) => emailResolutionPolicy !== 'disabled' || method !== 'email_domain');
 
   return {
-    tenant_id: tenantId,
+    tenant_id: scope.type === 'tenant' ? scope.id : getDefaultTenantId(env),
     mode:
       (stored?.['login-entry.mode'] as LoginEntrySettings['login-entry.mode'] | undefined) ??
       LOGIN_ENTRY_DEFAULTS['login-entry.mode'],
@@ -176,7 +200,152 @@ async function getDiscoverySettings(
     redirect_default_login_to_discovery:
       (stored?.['login-entry.redirect_default_login_to_discovery'] as boolean | undefined) ??
       LOGIN_ENTRY_DEFAULTS['login-entry.redirect_default_login_to_discovery'],
+    require_common_discovery_before_login:
+      (stored?.['login-entry.require_common_discovery_before_login'] as boolean | undefined) ??
+      LOGIN_ENTRY_DEFAULTS['login-entry.require_common_discovery_before_login'],
+    skip_discovery_if_only_one_tenant:
+      (stored?.['login-entry.skip_discovery_if_only_one_tenant'] as boolean | undefined) ??
+      LOGIN_ENTRY_DEFAULTS['login-entry.skip_discovery_if_only_one_tenant'],
+    redirect_tenant_discover_to_common_entry:
+      (stored?.['login-entry.redirect_tenant_discover_to_common_entry'] as boolean | undefined) ??
+      LOGIN_ENTRY_DEFAULTS['login-entry.redirect_tenant_discover_to_common_entry'],
   };
+}
+
+function getRequestHostHeader(c: Context<{ Bindings: Env }>): string {
+  return (
+    c.req.header('X-Authrim-Original-Host') ||
+    c.req.header('X-Forwarded-Host') ||
+    c.req.header('Host') ||
+    ''
+  )
+    .split(',')[0]
+    .split(':')[0]
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeAbsoluteUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function buildLoginUrlWithGrant(loginUrl: string, grant: string): string {
+  const url = new URL(loginUrl);
+  url.searchParams.set('discovery_grant', grant);
+  return url.toString();
+}
+
+async function getCommonDiscoverUrl(env: Env): Promise<string | null> {
+  const uiConfig = await getUIConfig(env).catch(() => null);
+  if (uiConfig?.baseUrl) {
+    return new URL('/discover', uiConfig.baseUrl).toString();
+  }
+
+  if (env.BASE_DOMAIN) {
+    return `https://${env.BASE_DOMAIN}/discover`;
+  }
+
+  return null;
+}
+
+function getDiscoveryGrantSecret(env: Env): string | null {
+  return env.KEY_MANAGER_SECRET || env.ADMIN_API_SECRET || env.OTP_HMAC_SECRET || null;
+}
+
+async function getDiscoveryGrantKey(env: Env): Promise<Uint8Array> {
+  const secret = getDiscoveryGrantSecret(env);
+  if (!secret) {
+    throw new Error('Discovery grant secret is not configured');
+  }
+
+  return new TextEncoder().encode(`authrim.discovery_grant.v1:${secret}`);
+}
+
+async function issueDiscoveryGrant(env: Env, tenantId: string, targetUrl: string): Promise<string> {
+  const key = await getDiscoveryGrantKey(env);
+
+  return await new SignJWT({
+    tenant_id: tenantId,
+    target_url: targetUrl,
+  })
+    .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setIssuer(DISCOVERY_GRANT_ISSUER)
+    .setAudience(DISCOVERY_GRANT_AUDIENCE)
+    .setSubject(tenantId)
+    .setIssuedAt()
+    .setExpirationTime(`${DISCOVERY_GRANT_TTL_SECONDS}s`)
+    .sign(key);
+}
+
+async function resolveGrantTargetLoginUrl(
+  env: Env,
+  tenantId: string,
+  options: {
+    returnTo?: string;
+    expectedTenantId?: string;
+    loginHint?: string;
+  }
+): Promise<string> {
+  const fallback = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}/login`;
+  if (!options.returnTo || !options.expectedTenantId || options.expectedTenantId !== tenantId) {
+    return appendLoginHint(fallback, options.loginHint);
+  }
+
+  let parsedReturnTo: URL;
+  try {
+    parsedReturnTo = new URL(options.returnTo);
+  } catch {
+    return fallback;
+  }
+
+  const uiConfig = await getUIConfig(env).catch(() => null);
+  const expectedLoginPath = uiConfig?.paths.login || '/login';
+  if (parsedReturnTo.pathname !== expectedLoginPath) {
+    return appendLoginHint(fallback, options.loginHint);
+  }
+
+  const bindingAllowed = await validateTenantRequestBinding(
+    new Request(parsedReturnTo.toString()),
+    env.AUTHRIM_CONFIG,
+    env,
+    tenantId
+  );
+
+  return appendLoginHint(bindingAllowed ? parsedReturnTo.toString() : fallback, options.loginHint);
+}
+
+function appendLoginHint(url: string, loginHint?: string): string {
+  if (!loginHint) {
+    return url;
+  }
+
+  const nextUrl = new URL(url);
+  nextUrl.searchParams.set('login_hint', loginHint);
+  return nextUrl.toString();
+}
+
+async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandidate | null> {
+  const adapter = new D1Adapter({ db: env.DB });
+  const tenants = await adapter.query<TenantLookupRow>(
+    `SELECT id, tenant_code, name, is_active
+     FROM tenants
+     WHERE is_active = 1
+     ORDER BY id ASC
+     LIMIT 2`,
+    []
+  );
+
+  if (tenants.length !== 1) {
+    return null;
+  }
+
+  return await buildCandidate(env, tenants[0], 'tenant_slug');
 }
 
 function readSettingString(record: Record<string, unknown> | null, key: string): string | null {
@@ -453,7 +622,7 @@ async function buildCandidate(
     tenant_code: tenant.tenant_code,
     display_name: branding.display_name,
     logo_url: branding.logo_url,
-    login_url: `${getCanonicalTenantBaseUrl(env, tenant.id)}/login`,
+    login_url: `${await getCanonicalTenantBaseUrlAsync(env, tenant.id)}/login`,
     source,
   };
 }
@@ -656,8 +825,15 @@ async function resolveDiscoveryRequest(
   }
 }
 
-function getDiscoverySettingsTenantId(c: Context<{ Bindings: Env }>): string {
-  return getTenantIdFromContext(c) || getDefaultTenantId(c.env);
+function getDiscoverySettingsScope(
+  c: Context<{ Bindings: Env }>,
+  commonEntryHost: boolean
+): { type: 'platform' } | { type: 'tenant'; id: string } {
+  if (commonEntryHost) {
+    return { type: 'platform' };
+  }
+
+  return { type: 'tenant', id: getTenantIdFromContext(c) || getDefaultTenantId(c.env) };
 }
 
 function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
@@ -666,9 +842,7 @@ function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
   }
 
   const tenantId = getTenantIdFromContext(c) || getDefaultTenantId(c.env);
-  const host = (c.req.header('X-Forwarded-Host') || c.req.header('Host') || '')
-    .split(':')[0]
-    .toLowerCase();
+  const host = getRequestHostHeader(c);
   if (!host) {
     return false;
   }
@@ -694,11 +868,18 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DISCOVERY');
 
   try {
-    const tenantId = getDiscoverySettingsTenantId(c);
-    const config = await getDiscoverySettings(c.env, tenantId);
+    const commonEntryHost = isCommonEntryHost(c);
+    const settingsScope = getDiscoverySettingsScope(c, commonEntryHost);
+    const config = await getDiscoverySettings(c.env, settingsScope);
     const singleTenantMode = isSingleTenantMode(c.env);
     const defaultCandidate = singleTenantMode ? await getSingleTenantCandidate(c.env) : undefined;
-    const commonEntryHost = isCommonEntryHost(c);
+    const singleActiveTenantCandidate =
+      !singleTenantMode && commonEntryHost && config.skip_discovery_if_only_one_tenant
+        ? await getSingleActiveTenantCandidate(c.env)
+        : undefined;
+    const commonDiscoverUrl = await getCommonDiscoverUrl(c.env);
+    const tenantId =
+      settingsScope.type === 'tenant' ? settingsScope.id : getDefaultTenantId(c.env);
     const ui = await getDiscoveryUiConfig(
       c.env,
       commonEntryHost ? null : tenantId,
@@ -710,6 +891,8 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
       ui,
       single_tenant_mode: singleTenantMode,
       is_common_entry_host: commonEntryHost,
+      common_discover_url: commonDiscoverUrl,
+      single_active_tenant_candidate: singleActiveTenantCandidate ?? undefined,
       default_candidate: defaultCandidate ?? undefined,
     } satisfies DiscoveryConfigResponse);
   } catch (error) {
@@ -735,8 +918,9 @@ export async function postDiscoveryHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const tenantId = getDiscoverySettingsTenantId(c);
-    const settings = await getDiscoverySettings(c.env, tenantId);
+    const commonEntryHost = isCommonEntryHost(c);
+    const settingsScope = getDiscoverySettingsScope(c, commonEntryHost);
+    const settings = await getDiscoverySettings(c.env, settingsScope);
     const result = await resolveDiscoveryRequest(
       c.env,
       settings,
@@ -748,5 +932,102 @@ export async function postDiscoveryHandler(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     log.error('Failed to resolve discovery request', { error: String(error) });
     return c.json({ error: 'server_error', message: 'Failed to resolve discovery request' }, 500);
+  }
+}
+
+export async function postDiscoveryGrantHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DISCOVERY');
+
+  try {
+    const body = await c.req.json<unknown>();
+    const parsed = DISCOVERY_GRANT_CREATE_SCHEMA.safeParse(body);
+
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          message: parsed.error.issues.map((issue) => issue.message).join(', '),
+        },
+        400
+      );
+    }
+
+    const tenant = await getTenantRowById(c.env, parsed.data.tenant_id);
+    if (!tenant) {
+      return c.json({ error: 'not_found', message: 'Tenant not found' }, 404);
+    }
+
+    const targetUrl = await resolveGrantTargetLoginUrl(c.env, tenant.id, {
+      returnTo: parsed.data.return_to,
+      expectedTenantId: parsed.data.expected_tenant_id,
+      loginHint: parsed.data.login_hint,
+    });
+    const grant = await issueDiscoveryGrant(c.env, tenant.id, targetUrl);
+
+    return c.json({
+      grant,
+      login_url: buildLoginUrlWithGrant(targetUrl, grant),
+    });
+  } catch (error) {
+    log.error('Failed to issue discovery grant', { error: String(error) });
+    return c.json({ error: 'server_error', message: 'Failed to issue discovery grant' }, 500);
+  }
+}
+
+export async function postDiscoveryGrantVerifyHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DISCOVERY');
+
+  try {
+    const body = await c.req.json<unknown>();
+    const parsed = DISCOVERY_GRANT_VERIFY_SCHEMA.safeParse(body);
+
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          message: parsed.error.issues.map((issue) => issue.message).join(', '),
+        },
+        400
+      );
+    }
+
+    const key = await getDiscoveryGrantKey(c.env);
+    const { payload } = await jwtVerify(parsed.data.grant, key, {
+      issuer: DISCOVERY_GRANT_ISSUER,
+      audience: DISCOVERY_GRANT_AUDIENCE,
+    });
+
+    const tenantId = typeof payload.tenant_id === 'string' ? payload.tenant_id : null;
+    const targetUrl = typeof payload.target_url === 'string' ? payload.target_url : null;
+    const normalizedCurrentUrl = normalizeAbsoluteUrl(parsed.data.current_url);
+    const normalizedTargetUrl = targetUrl ? normalizeAbsoluteUrl(targetUrl) : null;
+    const currentHost = new URL(parsed.data.current_url).host.toLowerCase();
+    const requestHost = getRequestHostHeader(c);
+
+    if (!tenantId || !normalizedCurrentUrl || !normalizedTargetUrl) {
+      return c.json({ error: 'invalid_grant', message: 'Invalid discovery grant' }, 400);
+    }
+
+    if (requestHost && currentHost !== requestHost) {
+      return c.json({ error: 'invalid_grant', message: 'Invalid discovery grant' }, 400);
+    }
+
+    if (normalizedCurrentUrl !== normalizedTargetUrl) {
+      return c.json({ error: 'invalid_grant', message: 'Invalid discovery grant' }, 400);
+    }
+
+    const currentTenantId = getTenantIdFromContext(c) || getDefaultTenantId(c.env);
+    if (currentTenantId && currentTenantId !== tenantId) {
+      return c.json({ error: 'invalid_grant', message: 'Invalid discovery grant' }, 400);
+    }
+
+    return c.json({
+      valid: true,
+      tenant_id: tenantId,
+      target_url: normalizedTargetUrl,
+    });
+  } catch (error) {
+    log.warn('Failed to verify discovery grant', { error: String(error) });
+    return c.json({ error: 'invalid_grant', message: 'Invalid discovery grant' }, 400);
   }
 }

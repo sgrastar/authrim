@@ -6,6 +6,7 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -1344,7 +1345,8 @@ export async function ensureWildcardDnsRecord(
 
 export async function ensureWildcardDnsForMultiTenant(
   cfg: Partial<AuthrimConfig> | null | undefined,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  verifyPublicDns: (baseDomain: string) => Promise<boolean> = verifyWildcardDnsPublicResolution
 ): Promise<void> {
   const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
   if (!baseDomain) {
@@ -1359,12 +1361,39 @@ export async function ensureWildcardDnsForMultiTenant(
   } else if (result.updated) {
     onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
   } else if (result.verificationLimited) {
+    if (await verifyPublicDns(baseDomain)) {
+      onProgress?.(`✓ Wildcard DNS resolves publicly: ${result.name} -> ${result.target}`);
+      return;
+    }
     throw new Error(
       `Token lacks zone:read or dns:edit permission to verify/create wildcard DNS record for ${result.name}`
     );
   } else {
     onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
   }
+}
+
+export async function verifyWildcardDnsPublicResolution(baseDomain: string): Promise<boolean> {
+  const hostname = `authrim-wildcard-check-${Date.now()}.${baseDomain}`;
+
+  const attempts = [
+    () => resolveCname(hostname),
+    () => resolve4(hostname),
+    () => resolve6(hostname),
+  ] as const;
+
+  for (const attempt of attempts) {
+    try {
+      const records = await attempt();
+      if (records.length > 0) {
+        return true;
+      }
+    } catch {
+      // Try the next record type.
+    }
+  }
+
+  return false;
 }
 
 // =============================================================================

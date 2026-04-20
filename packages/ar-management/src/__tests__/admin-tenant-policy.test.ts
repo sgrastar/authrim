@@ -31,6 +31,13 @@ function buildApp(env: Partial<Env>) {
   app.get('/api/admin/platform/tenant-domain-mappings', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c) })
   );
+  app.get('/api/admin/settings/ui-config', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.put('/api/admin/settings/ui-config', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.post('/api/admin/auth/passkey/options', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c) })
+  );
+  app.get('/api/admin/sessions/me', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.post('/api/admin/logout', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/tenants', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/users', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/tenants/:tenantId/settings/oauth', (c) =>
@@ -66,6 +73,28 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(res.status).toBe(200);
   });
 
+  it('allows global admin settings endpoints without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const getRes = await app.request(makeRequest('/api/admin/settings/ui-config'), undefined, env);
+    const putRes = await app.request(
+      new Request('https://admin.pages.dev/api/admin/settings/ui-config', {
+        method: 'PUT',
+        headers: { Host: 'admin.pages.dev' },
+      }),
+      undefined,
+      env
+    );
+
+    expect(getRes.status).toBe(200);
+    expect(putRes.status).toBe(200);
+  });
+
   it('allows tenant inventory endpoints without X-Tenant-Id', async () => {
     const { app, env } = buildApp({
       BASE_DOMAIN: 'auth.example.com',
@@ -77,6 +106,48 @@ describe('adminTenantPolicyMiddleware', () => {
     const res = await app.request(makeRequest('/api/admin/tenants'), undefined, env);
 
     expect(res.status).toBe(200);
+  });
+
+  it('allows admin login endpoints without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const res = await app.request(
+      new Request('https://admin.pages.dev/api/admin/auth/passkey/options', {
+        method: 'POST',
+        headers: { Host: 'admin.pages.dev' },
+      }),
+      undefined,
+      env
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it('allows admin session status and logout endpoints without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const sessionRes = await app.request(makeRequest('/api/admin/sessions/me'), undefined, env);
+    const logoutRes = await app.request(
+      new Request('https://admin.pages.dev/api/admin/logout', {
+        method: 'POST',
+        headers: { Host: 'admin.pages.dev' },
+      }),
+      undefined,
+      env
+    );
+
+    expect(sessionRes.status).toBe(200);
+    expect(logoutRes.status).toBe(200);
   });
 
   it('returns 400 when tenant-scoped admin endpoints omit X-Tenant-Id', async () => {

@@ -267,7 +267,7 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant'],
   },
   'login-entry': {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['platform', 'tenant'],
   },
   'tenant-discovery-ui': {
     allowedScopes: ['platform', 'tenant'],

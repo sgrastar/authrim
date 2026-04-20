@@ -25,7 +25,13 @@
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger, createLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  createLogger,
+  invalidatePluginRuntimeCaches,
+} from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
   validateExternalUrl,
@@ -609,6 +615,10 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
 
   // Save to KV
   await kv.put(configKey, JSON.stringify(configToStore));
+  invalidatePluginRuntimeCaches(
+    c.env,
+    body.tenant_id ? { tenantId: body.tenant_id, pluginId } : { pluginId }
+  );
 
   // Log the change (with masked values for audit)
   log.info(
@@ -664,6 +674,7 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
     : `plugins:enabled:${pluginId}`;
 
   await kv.put(enableKey, 'true');
+  invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
 
   log.info(
     'Plugin enabled',
@@ -715,6 +726,7 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
     : `plugins:enabled:${pluginId}`;
 
   await kv.put(enableKey, 'false');
+  invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
 
   log.info(
     'Plugin disabled',

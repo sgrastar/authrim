@@ -526,6 +526,12 @@ export const ADMIN_PERMISSIONS = {
   SETTINGS_WRITE: 'admin:settings:write',
   SETTINGS_ALL: 'admin:settings:*',
 
+  // Tenant vanity domain management
+  TENANT_DOMAINS_READ: 'admin:tenant_domains:read',
+  TENANT_DOMAINS_WRITE: 'admin:tenant_domains:write',
+  TENANT_DOMAINS_DELETE: 'admin:tenant_domains:delete',
+  TENANT_DOMAINS_ALL: 'admin:tenant_domains:*',
+
   // Audit log (EndUser audit)
   AUDIT_READ: 'admin:audit:read',
   AUDIT_ALL: 'admin:audit:*',

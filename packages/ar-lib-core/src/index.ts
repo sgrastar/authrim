@@ -228,6 +228,7 @@ export * from './vc/status-list-manager';
 export * from './services/rule-evaluator';
 export * from './services/org-domain-resolver';
 export * from './services/tenant-domain-resolver';
+export * from './services/tenant-vanity-domain-resolver';
 export * from './services/token-claim-evaluator';
 export * from './services/unified-check-service';
 export * from './services/check-audit-service';

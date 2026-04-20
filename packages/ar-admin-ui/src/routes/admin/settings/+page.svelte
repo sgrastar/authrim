@@ -38,7 +38,7 @@
 		assurance: ['tenant'],
 		dcr: ['tenant'], // Dynamic Client Registration (RFC 7591)
 		'login-ui': ['tenant'], // Login UI Customization
-		'login-entry': ['tenant'],
+		'login-entry': ['platform', 'tenant'],
 		// Client-only
 		client: ['client']
 	};

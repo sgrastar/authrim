@@ -230,6 +230,45 @@ describe('admin-info tenant base URL resolution', () => {
     expect(body.discover_url).toBeNull();
   });
 
+  it('uses the configured Login UI URL in single-tenant mode when it differs from issuer', async () => {
+    const env = {
+      UI_URL: 'https://single-ar-login-ui.pages.dev',
+      ISSUER_URL: 'https://single-ar-router.sgrastar.workers.dev',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn(),
+    } as any);
+
+    const body = (await response.json()) as {
+      login_ui_url: string | null;
+      global_login_ui_url: string | null;
+      discover_url: string | null;
+    };
+    expect(body.login_ui_url).toBe('https://single-ar-login-ui.pages.dev/login');
+    expect(body.global_login_ui_url).toBeNull();
+    expect(body.discover_url).toBeNull();
+  });
+
   it('derives component availability from env flags', () => {
     const env = {
       LOGIN_UI_ENABLED: 'false',

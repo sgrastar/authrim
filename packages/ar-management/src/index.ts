@@ -12,6 +12,7 @@ import {
   adminAuthMiddleware,
   requestContextMiddleware,
   pluginContextMiddleware,
+  createPluginLoader,
   idempotencyMiddleware,
   D1Adapter,
   type DatabaseAdapter,
@@ -33,6 +34,7 @@ import {
   getTenantIdFromContext,
   getTenantSettings,
 } from '@authrim/ar-lib-core';
+import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 
 // Import handlers
 import { registerHandler } from './register';
@@ -285,6 +287,23 @@ import {
   confirmTenantDomainVerificationHandler,
 } from './admin-tenant-domain-mappings';
 import {
+  createPlatformTenantVanityDomainHandler,
+  createTenantVanityDomainHandler,
+  deletePlatformTenantVanityDomainHandler,
+  deleteTenantVanityDomainHandler,
+  getPlatformTenantVanityDomainHandler,
+  getTenantVanityDomainHandler,
+  listPlatformTenantVanityDomainsHandler,
+  listTenantVanityDomainsHandler,
+  setPrimaryPlatformTenantVanityDomainHandler,
+  setPrimaryTenantVanityDomainHandler,
+  syncPlatformTenantVanityDomainHandler,
+  syncTenantVanityDomainHandler,
+  updateTenantVanityDomainHandler,
+  verifyPlatformTenantVanityDomainHandler,
+  verifyTenantVanityDomainHandler,
+} from './admin-tenant-vanity-domains';
+import {
   createTenantInvitationHandler,
   listTenantInvitationsHandler,
   cancelTenantInvitationHandler,
@@ -293,7 +312,12 @@ import { requireSupportedTenantParam } from './single-tenant-guard';
 import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getLoginMethodsHandler } from './login-methods';
-import { getDiscoveryConfigHandler, postDiscoveryHandler } from './discovery';
+import {
+  getDiscoveryConfigHandler,
+  postDiscoveryGrantHandler,
+  postDiscoveryGrantVerifyHandler,
+  postDiscoveryHandler,
+} from './discovery';
 import {
   dataExportRequestHandler,
   dataExportStatusHandler,
@@ -585,14 +609,37 @@ import {
   getCleanupRunStatus,
   listRetentionCategories,
 } from './routes/settings/data-retention';
+import {
+  getTenantEmailSettingsHandler,
+  updateTenantEmailSettingsHandler,
+} from './routes/email-settings';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
 
+const loadPlugins = createPluginLoader([
+  {
+    plugin: cloudflareEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => ({
+      ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
+      ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
+    }),
+  },
+  {
+    plugin: resendEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => ({
+      ...(env.RESEND_API_KEY ? { apiKey: env.RESEND_API_KEY } : {}),
+      ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
+    }),
+  },
+]);
+
 // Middleware
 app.use('*', logger());
 app.use('*', requestContextMiddleware());
-app.use('*', pluginContextMiddleware());
+app.use('*', pluginContextMiddleware({ loadPlugins }));
 
 // Enhanced security headers
 app.use(
@@ -814,8 +861,24 @@ app.use('/api/auth/discovery', async (c, next) => {
     endpoints: ['/api/auth/discovery'],
   })(c, next);
 });
+app.use('/api/auth/discovery/grant', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/discovery/grant'],
+  })(c, next);
+});
+app.use('/api/auth/discovery/grant/verify', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/discovery/grant/verify'],
+  })(c, next);
+});
 app.get('/api/auth/discovery', getDiscoveryConfigHandler);
 app.post('/api/auth/discovery', postDiscoveryHandler);
+app.post('/api/auth/discovery/grant', postDiscoveryGrantHandler);
+app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
 // Dynamic Client Registration endpoint - RFC 7591
 app.post('/register', registerHandler);
@@ -1006,6 +1069,8 @@ app.post('/api/admin/settings/validate', adminSettingsValidateHandler);
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
 app.use('/api/admin/tenants/:id', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:id/*', requireSupportedTenantParam('id'));
+app.use('/api/admin/tenants/:tenantId', requireSupportedTenantParam('tenantId'));
+app.use('/api/admin/tenants/:tenantId/*', requireSupportedTenantParam('tenantId'));
 app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
@@ -1022,6 +1087,8 @@ app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
 app.post('/api/admin/tenants/:id/invitations', createTenantInvitationHandler);
 app.get('/api/admin/tenants/:id/invitations', listTenantInvitationsHandler);
 app.delete('/api/admin/tenants/:id/invitations/:inv_id', cancelTenantInvitationHandler);
+app.get('/api/admin/tenants/:tenantId/email-settings', getTenantEmailSettingsHandler);
+app.patch('/api/admin/tenants/:tenantId/email-settings', updateTenantEmailSettingsHandler);
 
 // Platform Tenant Domain Mappings API (system_admin only)
 // - GET    /api/admin/platform/tenant-domain-mappings        - List mappings
@@ -1066,6 +1133,38 @@ app.delete(
   '/api/admin/platform/tenant-domain-mappings/:id',
   requireSystemAdmin,
   deleteTenantDomainMappingHandler
+);
+
+// Tenant Vanity Domains API
+// Tenant-scoped endpoints require admin:tenant_domains:* permission. Platform endpoints are
+// system-admin only and operate across tenants.
+app.get('/api/admin/tenant-vanity-domains', listTenantVanityDomainsHandler);
+app.post('/api/admin/tenant-vanity-domains', createTenantVanityDomainHandler);
+app.get('/api/admin/tenant-vanity-domains/:id', getTenantVanityDomainHandler);
+app.patch('/api/admin/tenant-vanity-domains/:id', updateTenantVanityDomainHandler);
+app.post('/api/admin/tenant-vanity-domains/:id/primary', setPrimaryTenantVanityDomainHandler);
+app.post('/api/admin/tenant-vanity-domains/:id/sync', syncTenantVanityDomainHandler);
+app.post('/api/admin/tenant-vanity-domains/:id/verify', verifyTenantVanityDomainHandler);
+app.delete('/api/admin/tenant-vanity-domains/:id', deleteTenantVanityDomainHandler);
+
+app.get('/api/admin/platform/tenant-vanity-domains', listPlatformTenantVanityDomainsHandler);
+app.post('/api/admin/platform/tenant-vanity-domains', createPlatformTenantVanityDomainHandler);
+app.get('/api/admin/platform/tenant-vanity-domains/:id', getPlatformTenantVanityDomainHandler);
+app.post(
+  '/api/admin/platform/tenant-vanity-domains/:id/primary',
+  setPrimaryPlatformTenantVanityDomainHandler
+);
+app.post(
+  '/api/admin/platform/tenant-vanity-domains/:id/sync',
+  syncPlatformTenantVanityDomainHandler
+);
+app.post(
+  '/api/admin/platform/tenant-vanity-domains/:id/verify',
+  verifyPlatformTenantVanityDomainHandler
+);
+app.delete(
+  '/api/admin/platform/tenant-vanity-domains/:id',
+  deletePlatformTenantVanityDomainHandler
 );
 
 // =============================================================================

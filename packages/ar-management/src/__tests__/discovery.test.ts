@@ -42,6 +42,9 @@ const mocked = vi.hoisted(() => {
           .filter((user) => user.email === email && user.is_active === 1)
           .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
       }
+      if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
+        return state.tenants.filter((tenant) => tenant.is_active === 1).slice(0, 2) as T[];
+      }
 
       return [];
     }
@@ -91,7 +94,12 @@ vi.mock('@authrim/ar-lib-core', async () => {
   };
 });
 
-import { getDiscoveryConfigHandler, postDiscoveryHandler } from '../discovery';
+import {
+  getDiscoveryConfigHandler,
+  postDiscoveryGrantHandler,
+  postDiscoveryGrantVerifyHandler,
+  postDiscoveryHandler,
+} from '../discovery';
 
 function createMockKV(data: Record<string, string> = {}): KVNamespace {
   const store = new Map<string, string>(Object.entries(data));
@@ -111,11 +119,29 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
 function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
-    (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+    const host = (
+      c.req.header('X-Authrim-Original-Host') ||
+      c.req.header('X-Forwarded-Host') ||
+      c.req.header('Host') ||
+      ''
+    )
+      .split(':')[0]
+      .toLowerCase();
+    const tenantId =
+      host === 'login.acme.example.com'
+        ? 'acme'
+        : host.startsWith('beta.')
+          ? 'beta'
+          : host.startsWith('acme.')
+            ? 'acme'
+            : 'default';
+    (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', tenantId);
     await next();
   });
   app.get('/api/auth/discovery', getDiscoveryConfigHandler);
   app.post('/api/auth/discovery', postDiscoveryHandler);
+  app.post('/api/auth/discovery/grant', postDiscoveryGrantHandler);
+  app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
   const env = {
     DB: {},
@@ -145,6 +171,8 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     AUTHRIM_CONFIG: createMockKV({
       'settings:tenant:acme:tenant': JSON.stringify({
         'tenant.logo_uri': 'https://cdn.example.com/acme-tenant.png',
+        'tenant.allowed_domains': 'login.acme.example.com',
+        'tenant.allowed_identifiers': 'https://login.acme.example.com',
       }),
       'settings:tenant:beta:tenant': JSON.stringify({
         'tenant.logo_uri': 'https://cdn.example.com/beta-tenant.png',
@@ -153,6 +181,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     BASE_DOMAIN: 'auth.example.com',
     DEFAULT_TENANT_ID: 'default',
     ISSUER_URL: 'https://default.auth.example.com',
+    KEY_MANAGER_SECRET: 'test-discovery-grant-secret',
     ...envOverrides,
   } as unknown as Env;
 
@@ -179,8 +208,11 @@ describe('discovery API', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       is_common_entry_host: boolean;
+      common_discover_url: string | null;
       config: {
         redirect_default_login_to_discovery: boolean;
+        require_common_discovery_before_login: boolean;
+        skip_discovery_if_only_one_tenant: boolean;
       };
       ui: {
         brand_name: string;
@@ -189,10 +221,47 @@ describe('discovery API', () => {
       };
     };
     expect(body.is_common_entry_host).toBe(true);
+    expect(body.common_discover_url).toBe('https://auth.example.com/discover');
     expect(body.config.redirect_default_login_to_discovery).toBe(true);
+    expect(body.config.require_common_discovery_before_login).toBe(true);
+    expect(body.config.skip_discovery_if_only_one_tenant).toBe(false);
     expect(body.ui.brand_name).toBe('Shared Discovery');
     expect(body.ui.theme).toBe('dark');
     expect(body.ui.title_text).toBe('Find your workspace');
+  });
+
+  it('uses platform login-entry settings for the common entry host', async () => {
+    const kv = createMockKV({
+      'settings:platform:login-entry': JSON.stringify({
+        'login-entry.discovery_methods': '["tenant_code"]',
+        'login-entry.email_resolution_policy': 'disabled',
+        'login-entry.selection_policy': 'manual_only',
+      }),
+    });
+    const { app, env } = createDiscoveryApp({ SETTINGS: kv });
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'login.example.com' },
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      is_common_entry_host: boolean;
+      config: {
+        discovery_methods: string[];
+        email_resolution_policy: string;
+        selection_policy: string;
+      };
+    };
+    expect(body.is_common_entry_host).toBe(true);
+    expect(body.config.discovery_methods).toEqual(['tenant_code']);
+    expect(body.config.email_resolution_policy).toBe('disabled');
+    expect(body.config.selection_policy).toBe('manual_only');
   });
 
   it('resolves a tenant by tenant_code with branding precedence', async () => {
@@ -330,10 +399,13 @@ describe('discovery API', () => {
     });
 
     const response = await app.request(
-      'https://login.example.com/api/auth/discovery',
+      'https://default.auth.example.com/api/auth/discovery',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Host': 'default.auth.example.com',
+        },
         body: JSON.stringify({ mode: 'email', value: 'user@example.com' }),
       },
       env
@@ -357,10 +429,10 @@ describe('discovery API', () => {
     });
 
     const response = await app.request(
-      'https://login.example.com/api/auth/discovery',
+      'https://default.auth.example.com/api/auth/discovery',
       {
         method: 'GET',
-        headers: { 'X-Forwarded-Host': 'login.example.com' },
+        headers: { 'X-Forwarded-Host': 'default.auth.example.com' },
       },
       env
     );
@@ -374,10 +446,13 @@ describe('discovery API', () => {
     const { app, env } = createDiscoveryApp();
 
     const response = await app.request(
-      'https://login.example.com/api/auth/discovery',
+      'https://default.auth.example.com/api/auth/discovery',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Host': 'default.auth.example.com',
+        },
         body: JSON.stringify({ mode: 'app_hint', value: 'acme-web' }),
       },
       env
@@ -435,5 +510,116 @@ describe('discovery API', () => {
     const body = (await response.json()) as { result: 'not_found'; code: string };
     expect(body.result).toBe('not_found');
     expect(body.code).toBe('app_hint_not_found');
+  });
+
+  it('issues a discovery grant for the canonical tenant login URL', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { grant: string; login_url: string };
+    expect(body.grant).toBeTruthy();
+    expect(body.login_url).toMatch(/^https:\/\/acme\.auth\.example\.com\/login\?discovery_grant=/);
+  });
+
+  it('carries login_hint into the discovery grant target URL', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+          login_hint: 'user@example.com',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { login_url: string };
+    expect(body.login_url).toContain('login_hint=user%40example.com');
+  });
+
+  it('reuses the original tenant login URL when return_to matches the resolved tenant binding', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+          expected_tenant_id: 'acme',
+          return_to: 'https://login.acme.example.com/login',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { login_url: string };
+    expect(body.login_url).toMatch(
+      /^https:\/\/login\.acme\.example\.com\/login\?discovery_grant=/
+    );
+  });
+
+  it('verifies a discovery grant only for the bound tenant login URL', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const createResponse = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+          expected_tenant_id: 'acme',
+          return_to: 'https://login.acme.example.com/login',
+        }),
+      },
+      env
+    );
+    const created = (await createResponse.json()) as { grant: string };
+
+    const verifyResponse = await app.request(
+      'https://login.acme.example.com/api/auth/discovery/grant/verify',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Authrim-Original-Host': 'login.acme.example.com',
+        },
+        body: JSON.stringify({
+          grant: created.grant,
+          current_url: 'https://login.acme.example.com/login',
+        }),
+      },
+      { ...env, AUTHRIM_CONFIG: env.AUTHRIM_CONFIG } as Env
+    );
+
+    expect(verifyResponse.status).toBe(200);
+    const body = (await verifyResponse.json()) as {
+      valid: boolean;
+      tenant_id: string;
+      target_url: string;
+    };
+    expect(body.valid).toBe(true);
+    expect(body.tenant_id).toBe('acme');
+    expect(body.target_url).toBe('https://login.acme.example.com/login');
   });
 });

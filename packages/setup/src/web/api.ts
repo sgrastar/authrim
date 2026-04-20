@@ -654,8 +654,8 @@ export function createApiRoutes(): Hono {
   // Save email provider configuration (with lock)
   const EmailConfigSchema = z.object({
     env: z.string().min(1).max(32),
-    provider: z.enum(['resend', 'sendgrid', 'ses']),
-    apiKey: z.string().min(1),
+    provider: z.enum(['cloudflare', 'resend', 'sendgrid', 'ses']),
+    apiKey: z.string().optional(),
     fromAddress: z.string().email(),
     fromName: z.string().optional(),
   });
@@ -681,7 +681,17 @@ export function createApiRoutes(): Hono {
         const { env, provider, apiKey, fromAddress, fromName } = parseResult.data;
 
         // Validate Resend API key format
-        if (provider === 'resend' && !apiKey.startsWith('re_')) {
+        if (provider === 'resend' && !apiKey) {
+          return c.json(
+            {
+              success: false,
+              error: 'Resend API key is required when Resend is selected',
+            },
+            400
+          );
+        }
+
+        if (provider === 'resend' && apiKey && !apiKey.startsWith('re_')) {
           // Warning but not an error - just log it
           addProgress('Warning: Resend API key should start with "re_"');
         }
@@ -695,10 +705,11 @@ export function createApiRoutes(): Hono {
         // Ensure directory exists with restrictive permissions
         await mkdir(keysDir, { recursive: true, mode: 0o700 });
 
-        // Save API key with restrictive permissions
-        await writeFile(envPaths.keyFiles.resendApiKey, apiKey.trim());
-        await chmod(envPaths.keyFiles.resendApiKey, 0o600);
-        addProgress(`Saved ${provider} API key to ${envPaths.keyFiles.resendApiKey}`);
+        if (provider === 'resend' && apiKey) {
+          await writeFile(envPaths.keyFiles.resendApiKey, apiKey.trim());
+          await chmod(envPaths.keyFiles.resendApiKey, 0o600);
+          addProgress(`Saved ${provider} API key to ${envPaths.keyFiles.resendApiKey}`);
+        }
 
         // Save from address with restrictive permissions
         await writeFile(envPaths.keyFiles.emailFrom, fromAddress.trim());
@@ -1117,6 +1128,7 @@ export function createApiRoutes(): Hono {
             { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
             { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
             { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
+            { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
             // Email provider secrets (optional)
             { file: join(keysDir, 'resend_api_key.txt'), name: 'RESEND_API_KEY' },
             { file: join(keysDir, 'email_from.txt'), name: 'EMAIL_FROM' },

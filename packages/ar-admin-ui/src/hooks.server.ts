@@ -167,7 +167,7 @@ function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefine
 	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
 }
 
-function buildProxyHeaders(
+export function buildProxyHeaders(
 	event: RequestEvent,
 	platformEnv: Record<string, unknown> | undefined,
 	forwardedHost: string
@@ -185,6 +185,7 @@ function buildProxyHeaders(
 		'x-request-id',
 		'x-correlation-id',
 		'x-session-id',
+		'x-tenant-id',
 		'x-diagnostic-session-id'
 	];
 

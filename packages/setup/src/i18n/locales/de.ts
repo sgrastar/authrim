@@ -1009,9 +1009,19 @@ const de: Translations = {
     'Wird für E-Mail-OTP und E-Mail-Adressverifizierung verwendet. Sie können dies später konfigurieren, wenn Sie möchten.',
   'web.email.configureLater': 'Später konfigurieren',
   'web.email.configureLaterHint': 'Jetzt überspringen und später konfigurieren.',
+  'web.email.configureCloudflare': 'Cloudflare Email Service konfigurieren',
+  'web.email.configureCloudflareHint':
+    'Verwendet die native Workers-Email-Service-Bindung. Erfordert einen Workers-Paid-Plan und Cloudflare DNS.',
   'web.email.configureResend': 'Resend konfigurieren',
   'web.email.configureResendHint':
     'E-Mail-Versand mit Resend einrichten (für Produktion empfohlen).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Voraussetzungen',
+  'web.email.cloudflareRequirementPaid': 'Ein Workers-Paid-Plan ist erforderlich',
+  'web.email.cloudflareRequirementDns':
+    'Cloudflare-DNS bzw. Domain-Onboarding ist erforderlich',
+  'web.email.cloudflareRequirementManual':
+    'Die Domain-Einrichtung im Cloudflare-Dashboard ist weiterhin manuell',
   'web.email.resendSetup': 'Resend-Konfiguration',
   'web.email.beforeBegin': 'Bevor Sie beginnen:',
   'web.email.step1': 'Erstellen Sie ein Resend-Konto unter',
@@ -1019,10 +1029,18 @@ const de: Translations = {
   'web.email.step3': 'Erstellen Sie einen API-Schlüssel unter',
   'web.email.resendApiKey': 'Resend API-Schlüssel',
   'web.email.resendApiKeyHint': 'Ihr API-Schlüssel beginnt mit "re_"',
+  'web.email.resendApiKeyMissing': 'Bitte geben Sie Ihren Resend-API-Schlüssel ein',
+  'web.email.resendApiKeyConfirmInvalid':
+    'Der API-Schlüssel beginnt nicht mit "re_". Möglicherweise ist dies kein gültiger Resend-API-Schlüssel. Trotzdem fortfahren?',
   'web.email.fromEmailAddress': 'Absender-E-Mail-Adresse',
+  'web.email.cloudflareFromHint':
+    'Muss von einer Domain stammen, die bei Cloudflare Email Service onboarded wurde',
   'web.email.fromEmailHint': 'Muss von einer verifizierten Domain in Ihrem Resend-Konto sein',
+  'web.email.fromEmailMissing': 'Bitte geben Sie eine Absender-E-Mail-Adresse ein',
+  'web.email.fromEmailInvalid': 'Bitte geben Sie eine gültige E-Mail-Adresse ein',
   'web.email.fromDisplayName': 'Absender-Anzeigename (optional)',
   'web.email.fromDisplayHint': 'Wird als Absendername in E-Mail-Clients angezeigt',
+  'web.email.saveConfigFailed': 'E-Mail-Konfiguration konnte nicht gespeichert werden',
   'web.email.domainVerificationTitle': 'Domain-Verifizierung erforderlich',
   'web.email.domainVerificationDesc':
     'Bevor Ihre Domain verifiziert ist, können E-Mails nur von onboarding@resend.dev gesendet werden (zum Testen).',

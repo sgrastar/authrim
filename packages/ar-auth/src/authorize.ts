@@ -1378,7 +1378,22 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
-  const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
+  const requestTenantId = getTenantIdFromContext(c);
+  const clientTenantId =
+    typeof clientMetadata.tenant_id === 'string' && clientMetadata.tenant_id.length > 0
+      ? clientMetadata.tenant_id
+      : null;
+  if (clientTenantId && requestTenantId !== 'default' && clientTenantId !== requestTenantId) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'client_id is invalid for this tenant',
+      },
+      400
+    );
+  }
+
+  const tenantId = clientTenantId || requestTenantId;
   const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
   const profileAllowedResponseTypes = filterResponseTypesByProfile(
     ['code', 'id_token', 'id_token token', 'code id_token', 'code token', 'code id_token token'],
@@ -2576,6 +2591,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         policy_uri: clientMetadata?.policy_uri,
         tos_uri: clientMetadata?.tos_uri,
         client_uri: clientMetadata?.client_uri,
+        tenant_id: tenantId,
+        issuer: getRequestIssuer(c),
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
         cancel_uri: validatedCancelUri,

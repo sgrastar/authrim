@@ -210,8 +210,8 @@ export const R2FeatureSchema = z.object({
 });
 
 export const EmailFeatureSchema = z.object({
-  /** Email provider (resend, sendgrid, ses, or none) */
-  provider: z.enum(['none', 'resend', 'sendgrid', 'ses']).default('none'),
+  /** Email provider (cloudflare, resend, sendgrid, ses, or none) */
+  provider: z.enum(['none', 'cloudflare', 'resend', 'sendgrid', 'ses']).default('none'),
   /** Sender email address (e.g., "noreply@yourdomain.com") */
   fromAddress: z.string().email().optional(),
   /** Sender display name (e.g., "Authrim") */

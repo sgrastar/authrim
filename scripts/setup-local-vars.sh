@@ -140,28 +140,52 @@ ALLOW_HTTP_REDIRECT="true"
 UI_BASE_URL="http://localhost:5173"
 
 # Optional: Email configuration
-# To enable email, set RESEND_API_KEY below and update EMAIL_FROM
+# Cloudflare Email Service: set EMAIL_FROM (and optionally EMAIL_FROM_NAME)
+# Resend: set RESEND_API_KEY and EMAIL_FROM
 # If not set, magic links will return URLs instead
 # RESEND_API_KEY=""
 # EMAIL_FROM="noreply@yourdomain.com"
+# EMAIL_FROM_NAME="Authrim"
 EOF
 
 echo -e "${GREEN}✅ Base .dev.vars file created${NC}"
 echo "   Location: .dev.vars"
 echo ""
 
-# Ask if user wants to add Resend configuration
+# Ask if user wants to add email configuration
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📧 Email Configuration (Optional)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "Authrim can send magic link emails via Resend."
-echo "Do you have a Resend API key? (y/N): " | tr -d '\n'
-read -n 1 -r
-echo
+echo "Authrim can send magic link emails via Cloudflare Email Service or Resend."
+echo "  1) Cloudflare Email Service"
+echo "  2) Resend"
+echo "  3) Skip"
+read -p "Select provider (1-3): " -r provider_choice
 echo ""
 
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ "$provider_choice" == "1" ]]; then
+    echo "Cloudflare prerequisites: Workers Paid Plan + Cloudflare DNS + dashboard onboarding"
+    read -p "Email From address (default: noreply@yourdomain.com): " EMAIL_FROM_INPUT
+    EMAIL_FROM=${EMAIL_FROM_INPUT:-"noreply@yourdomain.com"}
+    read -p "Email From display name (optional): " EMAIL_FROM_NAME
+
+    cat >> .dev.vars << EOF
+
+# Email configuration
+EMAIL_FROM="$EMAIL_FROM"
+EOF
+
+    if [ -n "$EMAIL_FROM_NAME" ]; then
+        cat >> .dev.vars << EOF
+EMAIL_FROM_NAME="$EMAIL_FROM_NAME"
+EOF
+    fi
+
+    echo -e "${GREEN}✅ Email configuration added:${NC}"
+    echo "   • Provider: Cloudflare Email Service"
+    echo "   • Email From: $EMAIL_FROM"
+elif [[ "$provider_choice" == "2" ]]; then
     read -p "Enter Resend API Key: " RESEND_API_KEY
     echo ""
 

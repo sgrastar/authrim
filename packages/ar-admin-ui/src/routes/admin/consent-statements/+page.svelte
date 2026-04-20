@@ -297,6 +297,13 @@
 		}
 	}
 
+	function closeOnBackdropKeydown(event: KeyboardEvent, close: () => void) {
+		if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			close();
+		}
+	}
+
 	async function deleteVersion(versionId: string) {
 		if (!selectedStatementId) return;
 		if (!confirm('Delete this draft version?')) return;
@@ -846,11 +853,23 @@
 			{/if}
 		</div>
 
-		<!-- Activate Confirmation Modal -->
-		{#if showActivateConfirm}
-			<div class="admin-modal-overlay" onclick={() => (showActivateConfirm = false)}>
-				<div class="admin-modal" onclick={(e) => e.stopPropagation()}>
-					<h3 class="admin-modal__title">Activate Version</h3>
+			<!-- Activate Confirmation Modal -->
+			{#if showActivateConfirm}
+				<div
+					class="admin-modal-overlay"
+					role="button"
+					tabindex="0"
+					aria-label="Close activate version dialog"
+					onclick={(event) => {
+						if (event.target === event.currentTarget) {
+							showActivateConfirm = false;
+						}
+					}}
+					onkeydown={(event) =>
+						closeOnBackdropKeydown(event, () => (showActivateConfirm = false))}
+				>
+					<div class="admin-modal" role="dialog" aria-modal="true">
+						<h3 class="admin-modal__title">Activate Version</h3>
 					<p class="admin-modal__text">
 						Activating this version may require existing users to re-consent.
 						This action has legal implications. Are you sure?

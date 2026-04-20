@@ -31,15 +31,18 @@ describe('discover resolution', () => {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
 						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
-						selection_policy: 'select_if_multiple',
-						allow_manual_tenant_entry: true,
-						remember_last_tenant: true,
-						redirect_default_login_to_discovery: true
-					},
-					single_tenant_mode: false,
-					is_common_entry_host: true
-				})
-			)
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: true,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		)
 			.mockResolvedValueOnce(
 				jsonResponse({
 					result: 'resolved',
@@ -50,6 +53,12 @@ describe('discover resolution', () => {
 						login_url: 'https://first.multi-tenant.authrim.com/login',
 						source: 'tenant_code'
 					}
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					grant: 'grant-token',
+					login_url: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
 				})
 			);
 
@@ -71,7 +80,7 @@ describe('discover resolution', () => {
 			} as never)
 		).rejects.toMatchObject({
 			status: 303,
-			location: 'https://first.multi-tenant.authrim.com/login'
+			location: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
 		});
 
 		expect(cookies.set).toHaveBeenCalled();
@@ -86,15 +95,18 @@ describe('discover resolution', () => {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
 						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
-						selection_policy: 'always_select',
-						allow_manual_tenant_entry: true,
-						remember_last_tenant: true,
-						redirect_default_login_to_discovery: true
-					},
-					single_tenant_mode: false,
-					is_common_entry_host: true
-				})
-			)
+					selection_policy: 'always_select',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: true,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		)
 			.mockResolvedValueOnce(
 				jsonResponse({
 					result: 'resolved',
@@ -105,6 +117,12 @@ describe('discover resolution', () => {
 						login_url: 'https://first.multi-tenant.authrim.com/login',
 						source: 'tenant_code'
 					}
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					grant: 'grant-token',
+					login_url: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
 				})
 			);
 
@@ -123,7 +141,7 @@ describe('discover resolution', () => {
 			} as never)
 		).rejects.toMatchObject({
 			status: 303,
-			location: 'https://first.multi-tenant.authrim.com/login'
+			location: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
 		});
 	});
 
@@ -136,15 +154,18 @@ describe('discover resolution', () => {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
 						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
-						selection_policy: 'select_if_multiple',
-						allow_manual_tenant_entry: true,
-						remember_last_tenant: true,
-						redirect_default_login_to_discovery: true
-					},
-					single_tenant_mode: false,
-					is_common_entry_host: true
-				})
-			)
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: true,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		)
 			.mockResolvedValueOnce(
 				jsonResponse({
 					result: 'resolved',

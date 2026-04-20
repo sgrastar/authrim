@@ -331,6 +331,16 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 		]
 	},
 	{
+		category: 'Tenant Domains',
+		description: 'Manage tenant vanity domains',
+		permissions: [
+			{ key: 'admin:tenant_domains:read', description: 'View tenant vanity domains' },
+			{ key: 'admin:tenant_domains:write', description: 'Create and update tenant vanity domains' },
+			{ key: 'admin:tenant_domains:delete', description: 'Delete tenant vanity domains' },
+			{ key: 'admin:tenant_domains:*', description: 'Full tenant vanity domain management' }
+		]
+	},
+	{
 		category: 'Security',
 		description: 'Manage security settings',
 		permissions: [

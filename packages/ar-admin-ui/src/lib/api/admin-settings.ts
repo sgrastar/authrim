@@ -392,6 +392,7 @@ export const adminUiConfigAPI = {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
 			method: 'PUT',
 			includeJsonContentType: true,
+			skipTenantHeader: true,
 			body: JSON.stringify(request)
 		});
 

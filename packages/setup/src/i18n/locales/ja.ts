@@ -988,8 +988,17 @@ const ja: Translations = {
     'メールOTPとメールアドレス確認の送信に使用します。後で設定することも可能です。',
   'web.email.configureLater': '後で設定',
   'web.email.configureLaterHint': '今はスキップして後で設定。',
+  'web.email.configureCloudflare': 'Cloudflare Email Serviceを設定',
+  'web.email.configureCloudflareHint':
+    'Workers ネイティブの Email Service binding を使います。Workers Paid Plan と Cloudflare DNS が必要です。',
   'web.email.configureResend': 'Resendを設定',
   'web.email.configureResendHint': 'Resendでメール送信を設定（本番環境推奨）。',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': '要件',
+  'web.email.cloudflareRequirementPaid': 'Workers Paid Plan が必要です',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / ドメインのオンボーディングが必要です',
+  'web.email.cloudflareRequirementManual':
+    'Cloudflare ダッシュボードでのドメイン設定は引き続き手動です',
   'web.email.resendSetup': 'Resend設定',
   'web.email.beforeBegin': '開始前に:',
   'web.email.step1': 'Resendアカウントを作成:',
@@ -997,10 +1006,18 @@ const ja: Translations = {
   'web.email.step3': 'APIキーを作成:',
   'web.email.resendApiKey': 'Resend APIキー',
   'web.email.resendApiKeyHint': 'APIキーは "re_" で始まります',
+  'web.email.resendApiKeyMissing': 'Resend APIキーを入力してください',
+  'web.email.resendApiKeyConfirmInvalid':
+    'APIキーが "re_" で始まっていません。有効な Resend APIキーではない可能性があります。このまま続行しますか？',
   'web.email.fromEmailAddress': '送信元メールアドレス',
+  'web.email.cloudflareFromHint':
+    'Cloudflare Email Service にオンボード済みのドメインのアドレスである必要があります',
   'web.email.fromEmailHint': 'Resendアカウントで認証されたドメインのアドレスを使用',
+  'web.email.fromEmailMissing': '送信元メールアドレスを入力してください',
+  'web.email.fromEmailInvalid': '有効なメールアドレスを入力してください',
   'web.email.fromDisplayName': '送信者表示名（オプション）',
   'web.email.fromDisplayHint': 'メールクライアントに表示される送信者名',
+  'web.email.saveConfigFailed': 'メール設定の保存に失敗しました',
   'web.email.domainVerificationTitle': 'ドメイン認証が必要',
   'web.email.domainVerificationDesc':
     'ドメインが認証されるまで、メールは onboarding@resend.dev からのみ送信可能（テスト用）。',

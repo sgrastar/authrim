@@ -989,8 +989,17 @@ const ko: Translations = {
     '메일 OTP 및 이메일 주소 인증 발송에 사용됩니다. 원하시면 나중에 구성할 수 있습니다.',
   'web.email.configureLater': '나중에 구성',
   'web.email.configureLaterHint': '지금은 건너뛰고 나중에 구성합니다.',
+  'web.email.configureCloudflare': 'Cloudflare Email Service 구성',
+  'web.email.configureCloudflareHint':
+    'Workers의 기본 Email Service 바인딩을 사용합니다. Workers Paid 플랜과 Cloudflare DNS가 필요합니다.',
   'web.email.configureResend': 'Resend 구성',
   'web.email.configureResendHint': 'Resend로 이메일 발송 설정 (프로덕션 권장).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': '요구 사항',
+  'web.email.cloudflareRequirementPaid': 'Workers Paid 플랜이 필요합니다',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / 도메인 온보딩이 필요합니다',
+  'web.email.cloudflareRequirementManual':
+    'Cloudflare 대시보드에서의 도메인 설정은 여전히 수동입니다',
   'web.email.resendSetup': 'Resend 구성',
   'web.email.beforeBegin': '시작하기 전에:',
   'web.email.step1': '다음에서 Resend 계정 생성',
@@ -998,10 +1007,18 @@ const ko: Translations = {
   'web.email.step3': '다음에서 API 키 생성',
   'web.email.resendApiKey': 'Resend API 키',
   'web.email.resendApiKeyHint': 'API 키는 "re_"로 시작합니다',
+  'web.email.resendApiKeyMissing': 'Resend API 키를 입력해 주세요',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API 키가 "re_"로 시작하지 않습니다. 유효한 Resend API 키가 아닐 수 있습니다. 그래도 계속하시겠습니까?',
   'web.email.fromEmailAddress': '발신 이메일 주소',
+  'web.email.cloudflareFromHint':
+    'Cloudflare Email Service에 온보딩된 도메인의 주소여야 합니다',
   'web.email.fromEmailHint': 'Resend 계정에서 인증된 도메인이어야 합니다',
+  'web.email.fromEmailMissing': '발신 이메일 주소를 입력해 주세요',
+  'web.email.fromEmailInvalid': '유효한 이메일 주소를 입력해 주세요',
   'web.email.fromDisplayName': '발신자 표시 이름 (선택 사항)',
   'web.email.fromDisplayHint': '이메일 클라이언트에서 발신자 이름으로 표시됩니다',
+  'web.email.saveConfigFailed': '이메일 구성 저장에 실패했습니다',
   'web.email.domainVerificationTitle': '도메인 인증 필요',
   'web.email.domainVerificationDesc':
     '도메인이 인증되기 전에는 onboarding@resend.dev (테스트용)에서만 이메일을 보낼 수 있습니다.',

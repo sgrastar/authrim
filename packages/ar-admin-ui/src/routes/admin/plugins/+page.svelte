@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import {
 		adminPluginsAPI,
 		type PluginWithStatus,
@@ -61,6 +62,14 @@
 
 			const response = await adminPluginsAPI.list(params);
 			plugins = response.plugins;
+
+			const pluginId = $page.url.searchParams.get('plugin');
+			if (pluginId) {
+				const selected = response.plugins.find((plugin) => plugin.id === pluginId);
+				if (selected) {
+					await openDetailDialog(selected);
+				}
+			}
 		} catch (err) {
 			console.error('Failed to load plugins:', err);
 			error = 'Failed to load plugins';

@@ -81,7 +81,11 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     const components = getComponentAvailability(c.env);
     const { loginUiUrl, adminUiUrl } = await getConfiguredUiUrls(c.env);
     const singleTenantMode = !c.env.BASE_DOMAIN;
-    const tenantLoginUrl = `${issuer}/login`;
+    const tenantLoginUrl = buildTenantLoginUrl({
+      issuer,
+      loginUiUrl,
+      singleTenantMode,
+    });
     const globalLoginUiUrl = !singleTenantMode && loginUiUrl ? `${loginUiUrl}/login` : null;
     const discoverUrl = !singleTenantMode && loginUiUrl ? `${loginUiUrl}/discover` : null;
 
@@ -108,6 +112,27 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     log.error('Failed to get tenant info', { tenantId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+function buildTenantLoginUrl(options: {
+  issuer: string;
+  loginUiUrl: string | null;
+  singleTenantMode: boolean;
+}): string {
+  const { issuer, loginUiUrl, singleTenantMode } = options;
+  if (!singleTenantMode || !loginUiUrl) {
+    return `${issuer}/login`;
+  }
+
+  const normalizedIssuer = stripTrailingSlash(issuer);
+  const normalizedLoginUiUrl = stripTrailingSlash(loginUiUrl);
+  const baseUrl =
+    normalizedLoginUiUrl === normalizedIssuer ? normalizedIssuer : normalizedLoginUiUrl;
+  return `${baseUrl}/login`;
 }
 
 /**

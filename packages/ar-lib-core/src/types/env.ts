@@ -7,6 +7,20 @@ import type { RateLimiterCounter } from '../durable-objects/RateLimiterCounter';
 import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 
+export interface EmailServiceBinding {
+  send(message: {
+    to: string | string[];
+    from: string | { email: string; name: string };
+    subject: string;
+    html?: string;
+    text?: string;
+    cc?: string | string[];
+    bcc?: string | string[];
+    replyTo?: string | { email: string; name: string };
+    headers?: Record<string, string>;
+  }): Promise<{ messageId?: string }>;
+}
+
 /**
  * Cloudflare Workers Environment Bindings
  *
@@ -79,6 +93,7 @@ export interface Env {
 
   // Service Bindings (Worker-to-Worker communication)
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
+  EMAIL?: EmailServiceBinding; // Cloudflare Email Service send_email binding
 
   // ============================================================
   // Environment Variables - Token/Auth Expiry (unit: seconds)
@@ -257,12 +272,14 @@ export interface Env {
   KEY_MANAGER_SECRET?: string; // Admin secret for Durable Objects management
   ADMIN_API_SECRET?: string; // Admin API authentication secret (Bearer token)
   EMAIL_DOMAIN_HASH_SECRET?: string; // HMAC secret for email domain blind index
+  CLOUDFLARE_API_TOKEN?: string; // Cloudflare Custom Hostnames automation token
 
   // ============================================================
   // Email Configuration
   // ============================================================
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  EMAIL_FROM_NAME?: string;
 
   // ============================================================
   // URL Configuration
