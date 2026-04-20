@@ -48,6 +48,7 @@ import {
   updatePluginConfigHandler,
   enablePluginHandler,
   disablePluginHandler,
+  sendPluginTestEmailHandler,
   getPluginHealthHandler,
   getPluginSchemaHandler,
   registerPlugin,
@@ -86,6 +87,8 @@ function createMockContext(options: {
   query?: Record<string, string>;
   body?: Record<string, unknown>;
   kv?: KVNamespace;
+  headers?: Record<string, string>;
+  envOverrides?: Record<string, unknown>;
   adminAuth?: { userId?: string; authMethod?: string };
 }) {
   const mockKV =
@@ -107,12 +110,13 @@ function createMockContext(options: {
       param: vi.fn().mockImplementation((name: string) => options.params?.[name]),
       query: vi.fn().mockImplementation((name: string) => options.query?.[name]),
       json: vi.fn().mockResolvedValue(options.body ?? {}),
-      header: vi.fn().mockReturnValue(null),
+      header: vi.fn().mockImplementation((name: string) => options.headers?.[name] ?? null),
       path: '/api/admin/plugins',
     },
     env: {
       SETTINGS: mockKV,
       ISSUER_URL: 'https://op.example.com',
+      ...options.envOverrides,
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     get: vi.fn((key: string) => contextStore.get(key)),
@@ -285,6 +289,44 @@ describe('Plugin Admin API - List Plugins', () => {
       );
     });
 
+    it('should resolve setup bootstrap config for builtin email plugins', async () => {
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:schema:notifier-cloudflare': JSON.stringify({
+            type: 'object',
+            required: ['defaultFrom'],
+          }),
+        },
+      });
+
+      const c = createMockContext({
+        kv,
+        envOverrides: {
+          EMAIL_FROM: 'noreply@example.com',
+        },
+      });
+
+      await listPluginsHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plugins: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'notifier-cloudflare',
+              configSource: 'env',
+              configured: true,
+              missingRequiredFields: [],
+            }),
+          ]),
+        })
+      );
+    });
+
     it('should include last health check if available', async () => {
       const registry = {
         'healthy-plugin': createPluginEntry({ id: 'healthy-plugin' }),
@@ -447,6 +489,47 @@ describe('Plugin Admin API - Get Plugin', () => {
       const response = (c.json as any).mock.calls[0][0];
       expect(response.config.apiKey).toContain('****');
       expect(response.config.endpoint).toBe('https://api.example.com');
+    });
+
+    it('should include setup bootstrap values in plugin details', async () => {
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:schema:notifier-cloudflare': JSON.stringify({
+            type: 'object',
+            required: ['defaultFrom'],
+          }),
+        },
+      });
+
+      const c = createMockContext({
+        params: { id: 'notifier-cloudflare' },
+        kv,
+        envOverrides: {
+          EMAIL_FROM: 'noreply@example.com',
+          EMAIL_FROM_NAME: 'Authrim',
+        },
+      });
+
+      await getPluginHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: expect.objectContaining({
+            configSource: 'env',
+            configured: true,
+            missingRequiredFields: [],
+          }),
+          config: expect.objectContaining({
+            defaultFrom: 'noreply@example.com',
+            fromName: 'Authrim',
+          }),
+        })
+      );
     });
 
     it('should include schema if available', async () => {
@@ -698,6 +781,49 @@ describe('Plugin Admin API - Update Plugin Config', () => {
           pluginId: 'test-plugin',
         })
       );
+    });
+
+    it('should preserve masked secret values when saving other fields', async () => {
+      let savedConfig = '';
+      const registry = {
+        'notifier-resend': createPluginEntry({ id: 'notifier-resend' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:config:notifier-resend': JSON.stringify({
+            apiKey: 're_live_12345678',
+            defaultFrom: 'noreply@example.com',
+          }),
+        },
+        putCallback: (key, value) => {
+          if (key === 'plugins:config:notifier-resend') {
+            savedConfig = value;
+          }
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'notifier-resend' },
+        body: {
+          config: {
+            apiKey: 're_l****5678',
+            defaultFrom: 'updated@example.com',
+          },
+        },
+        kv,
+      });
+
+      const response = (await updatePluginConfigHandler(c)) as Response;
+      const { body } = await getResponseData(response);
+
+      expect(body.config.apiKey).toContain('****');
+      expect(JSON.parse(savedConfig)).toMatchObject({
+        _encrypted: ['apiKey'],
+        defaultFrom: 'updated@example.com',
+      });
     });
 
     it('should return 404 for non-existent plugin', async () => {
@@ -1095,6 +1221,69 @@ describe('Plugin Admin API - Enable/Disable', () => {
       expect(kv.put).toHaveBeenCalledWith(
         'plugins:enabled:test-plugin:tenant:special-tenant',
         'true'
+      );
+    });
+  });
+});
+
+// =============================================================================
+// Test Email Tests
+// =============================================================================
+
+describe('Plugin Admin API - Test Email', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('POST /api/admin/plugins/:id/test-email', () => {
+    it('should send a test email with the selected builtin provider', async () => {
+      const emailSend = vi.fn().mockResolvedValue({ messageId: 'cf-msg-1' });
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:schema:notifier-cloudflare': JSON.stringify({
+            type: 'object',
+            required: ['defaultFrom'],
+          }),
+          'plugins:config:notifier-cloudflare': JSON.stringify({
+            defaultFrom: 'noreply@example.com',
+          }),
+        },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'notifier-cloudflare' },
+        kv,
+        body: {
+          to: 'user@example.com',
+        },
+        envOverrides: {
+          EMAIL: {
+            send: emailSend,
+          },
+        },
+      });
+
+      const response = (await sendPluginTestEmailHandler(c)) as Response;
+      const { body, status } = await getResponseData(response);
+
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        pluginId: 'notifier-cloudflare',
+        to: 'user@example.com',
+        messageId: 'cf-msg-1',
+      });
+      expect(emailSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'user@example.com',
+          subject: 'Authrim test email',
+        })
       );
     });
   });

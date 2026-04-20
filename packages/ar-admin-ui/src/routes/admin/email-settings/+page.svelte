@@ -105,11 +105,11 @@
 </svelte:head>
 
 <div class="page">
-	<div class="page-header">
-		<div>
-			<h1>Email Settings</h1>
-			<p>Choose the tenant-wide delivery order for enabled email providers.</p>
-		</div>
+		<div class="page-header">
+			<div>
+				<h1>Email Settings</h1>
+				<p>Choose the tenant-wide delivery order for enabled and configured email providers.</p>
+			</div>
 		<button class="save-button" onclick={saveSettings} disabled={saving || loading || !tenantId}>
 			{saving ? 'Saving...' : 'Save Order'}
 		</button>
@@ -143,15 +143,18 @@
 			<div class="panel-header">
 				<div>
 					<h2>Provider Priority</h2>
-					<p>Enabled providers are tried in this order until delivery succeeds.</p>
+					<p>Configured providers are tried in this order until delivery succeeds.</p>
 				</div>
 				<a class="plugin-link" href="/admin/plugins">Open Plugins Page</a>
 			</div>
 
 			{#if providers.length === 0}
 				<div class="empty-state">
-					<p>No email providers are enabled for this tenant.</p>
-					<p>Enable Cloudflare Email Service or Resend on the Plugins page first.</p>
+					<p>No configured email providers are available for this tenant.</p>
+					<p>
+						Disabled providers and plugins missing required settings are hidden here. Enable and
+						configure Cloudflare Email Service or Resend on the Plugins page first.
+					</p>
 				</div>
 			{:else}
 				<div class="provider-list">
@@ -169,6 +172,12 @@
 									</a>
 								</div>
 								<div class="provider-id">{provider.id}</div>
+								<div class="provider-meta">
+									<span class="provider-meta-badge">Configured via {provider.configSource}</span>
+									{#if provider.defaultFrom}
+										<span class="provider-meta-text">From: {provider.defaultFrom}</span>
+									{/if}
+								</div>
 							</div>
 							<div class="provider-actions">
 								<button onclick={() => moveProvider(index, -1)} disabled={index === 0}>
@@ -279,6 +288,29 @@
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.875rem;
 		color: #475569;
+	}
+
+	.provider-meta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 0.75rem;
+		margin-top: 0.625rem;
+		font-size: 0.875rem;
+		color: var(--text-secondary, #4b5563);
+	}
+
+	.provider-meta-badge {
+		display: inline-flex;
+		align-items: center;
+		border-radius: 999px;
+		padding: 0.2rem 0.65rem;
+		background: #e2e8f0;
+		color: #1e293b;
+		font-weight: 600;
+	}
+
+	.provider-meta-text {
+		font-family: var(--font-mono, monospace);
 	}
 
 	.provider-actions {

@@ -5,6 +5,10 @@ export interface EmailProviderEntry {
 	name: string;
 	description: string;
 	category: string;
+	configSource: 'kv' | 'env' | 'default';
+	configured: boolean;
+	missingRequiredFields: string[];
+	defaultFrom?: string;
 }
 
 export interface TenantEmailSettings {

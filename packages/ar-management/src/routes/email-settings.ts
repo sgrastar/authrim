@@ -8,6 +8,7 @@ import {
   putTenantEmailSettings,
 } from '@authrim/ar-lib-core';
 import { needsBuiltinRegistration, registerBuiltinPlugins } from '@authrim/ar-lib-plugin';
+import { getResolvedPluginConfigState } from './settings/plugins';
 
 interface PluginRegistryEntry {
   id: string;
@@ -117,11 +118,23 @@ async function listEmailProviders(env: Env, tenantId: string) {
       continue;
     }
 
+    const configState = await getResolvedPluginConfigState(kv, env, entry.id, tenantId);
+    if (!configState.configured) {
+      continue;
+    }
+
     providers.push({
       id: entry.id,
       name: entry.meta?.name ?? entry.id,
       description: entry.meta?.description ?? '',
       category: entry.meta?.category ?? 'notification',
+      configSource: configState.source,
+      configured: configState.configured,
+      missingRequiredFields: configState.missingRequiredFields,
+      defaultFrom:
+        typeof configState.config.defaultFrom === 'string'
+          ? configState.config.defaultFrom
+          : undefined,
     });
   }
 

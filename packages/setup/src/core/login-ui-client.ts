@@ -29,6 +29,10 @@ export interface LoginUiClientConfig {
   adminApiSecretPath: string;
   /** Progress callback */
   onProgress?: (message: string) => void;
+  /** Retry delay override for tests/debugging */
+  retryDelayMs?: number;
+  /** Retry count override for tests/debugging */
+  maxRetries?: number;
 }
 
 export interface LoginUiClientResult {
@@ -47,6 +51,42 @@ export function shouldReportLoginUiClientWarning(error?: string | null): boolean
     .trim()
     .toLowerCase();
   return normalized.length > 0 && !normalized.includes('fetch failed');
+}
+
+const LOGIN_UI_CLIENT_MAX_RETRIES = 8;
+const LOGIN_UI_CLIENT_RETRY_BASE_DELAY_MS = 2000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getRetryDelayMs(attempt: number): number {
+  return Math.min(LOGIN_UI_CLIENT_RETRY_BASE_DELAY_MS * attempt, 10000);
+}
+
+function isRetryableLoginUiClientError(error?: string | null): boolean {
+  const normalized = String(error || '')
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) return false;
+
+  return (
+    normalized.includes('fetch failed') ||
+    normalized.includes('workers_dev_script_not_found') ||
+    normalized.includes('error 1042') ||
+    normalized.includes('no workers script was found') ||
+    normalized.includes('timed out') ||
+    normalized.includes('timeout') ||
+    normalized.includes('temporarily unavailable') ||
+    normalized.includes('bad gateway') ||
+    normalized.includes('service unavailable') ||
+    normalized.includes('gateway timeout') ||
+    normalized.includes('connection reset') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('eai_again')
+  );
 }
 
 interface AdminClientListResponse {
@@ -135,7 +175,8 @@ async function findExistingClient(
   );
 
   if (!response.ok) {
-    return null;
+    const errorBody = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Failed to check Login UI client (${response.status}): ${errorBody}`);
   }
 
   const data = (await response.json()) as AdminClientListResponse;
@@ -230,43 +271,73 @@ async function createClient(
 export async function ensureLoginUiClient(
   config: LoginUiClientConfig
 ): Promise<LoginUiClientResult> {
-  const { apiBaseUrl, loginUiUrl, adminApiSecretPath, onProgress } = config;
+  const {
+    apiBaseUrl,
+    loginUiUrl,
+    adminApiSecretPath,
+    onProgress,
+    retryDelayMs = LOGIN_UI_CLIENT_RETRY_BASE_DELAY_MS,
+    maxRetries = LOGIN_UI_CLIENT_MAX_RETRIES,
+  } = config;
 
   try {
     // Read admin secret
     onProgress?.('Reading admin API secret...');
     const adminSecret = await readAdminApiSecret(adminApiSecretPath);
 
-    // Check for existing client
-    onProgress?.('Checking for existing Login UI client...');
-    const existingClient = await findExistingClient(apiBaseUrl, adminSecret);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        onProgress?.('Checking for existing Login UI client...');
+        const existingClient = await findExistingClient(apiBaseUrl, adminSecret);
 
-    if (existingClient) {
-      if (existingClient.needsMigration) {
-        onProgress?.(`Migrating Login UI client to public client: ${existingClient.clientId}`);
-        await updateClientToPublic(apiBaseUrl, adminSecret, existingClient.clientId);
+        if (existingClient) {
+          if (existingClient.needsMigration) {
+            onProgress?.(`Migrating Login UI client to public client: ${existingClient.clientId}`);
+            await updateClientToPublic(apiBaseUrl, adminSecret, existingClient.clientId);
+            onProgress?.(
+              'Login UI client migrated to public client (token_endpoint_auth_method=none, require_pkce=true)'
+            );
+          } else {
+            onProgress?.(`Login UI client already exists: ${existingClient.clientId}`);
+          }
+          return {
+            success: true,
+            clientId: existingClient.clientId,
+            alreadyExists: true,
+          };
+        }
+
+        onProgress?.('Creating Login UI OAuth client...');
+        const clientId = await createClient(apiBaseUrl, adminSecret, loginUiUrl);
+
+        onProgress?.(`Login UI client created: ${clientId}`);
+        return {
+          success: true,
+          clientId,
+          alreadyExists: false,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const shouldRetry = attempt < maxRetries && isRetryableLoginUiClientError(message);
+
+        if (!shouldRetry) {
+          return {
+            success: false,
+            error: message,
+          };
+        }
+
+        const delayMs = Math.min(retryDelayMs * attempt, 10000);
         onProgress?.(
-          'Login UI client migrated to public client (token_endpoint_auth_method=none, require_pkce=true)'
+          `Login UI client request hit a temporary router readiness error. Retrying in ${Math.ceil(delayMs / 1000)}s...`
         );
-      } else {
-        onProgress?.(`Login UI client already exists: ${existingClient.clientId}`);
+        await sleep(delayMs);
       }
-      return {
-        success: true,
-        clientId: existingClient.clientId,
-        alreadyExists: true,
-      };
     }
 
-    // Create new client
-    onProgress?.('Creating Login UI OAuth client...');
-    const clientId = await createClient(apiBaseUrl, adminSecret, loginUiUrl);
-
-    onProgress?.(`Login UI client created: ${clientId}`);
     return {
-      success: true,
-      clientId,
-      alreadyExists: false,
+      success: false,
+      error: 'Login UI client creation timed out while waiting for the router to become reachable',
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

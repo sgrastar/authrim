@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminPluginsAPI,
 		type PluginWithStatus,
@@ -13,6 +14,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	let successMessage = $state('');
+	let lastLoadedTenantId = $state('');
 
 	// Filter state
 	let filterCategory = $state('');
@@ -27,10 +29,17 @@
 	let loadingConfig = $state(false);
 	let savingConfig = $state(false);
 	let isEditMode = $state(false);
+	let testEmailAddress = $state('');
+	let sendingTestEmail = $state(false);
+	let testEmailMessage = $state('');
 
 	// Health check state
 	let healthStatus: Record<string, PluginHealthResponse> = $state({});
 	let checkingHealth: Record<string, boolean> = $state({});
+
+	function getSelectedTenantId(): string | undefined {
+		return settingsContext.tenantId || undefined;
+	}
 
 	// JSON Schema type definition
 	interface JSONSchemaProperty {
@@ -54,9 +63,12 @@
 	async function loadPlugins() {
 		loading = true;
 		error = '';
+		lastLoadedTenantId = getSelectedTenantId() ?? '';
 
 		try {
-			const params: { category?: string; enabled?: boolean } = {};
+			const params: { category?: string; enabled?: boolean; tenantId?: string } = {
+				tenantId: getSelectedTenantId()
+			};
 			if (filterCategory) params.category = filterCategory;
 			if (filterEnabled !== undefined) params.enabled = filterEnabled;
 
@@ -82,13 +94,20 @@
 		loadPlugins();
 	});
 
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (tenantId && tenantId !== lastLoadedTenantId) {
+			void loadPlugins();
+		}
+	});
+
 	async function toggleEnabled(plugin: PluginWithStatus, event: Event) {
 		event.stopPropagation();
 		try {
 			if (plugin.enabled) {
-				await adminPluginsAPI.disable(plugin.id);
+				await adminPluginsAPI.disable(plugin.id, getSelectedTenantId());
 			} else {
-				await adminPluginsAPI.enable(plugin.id);
+				await adminPluginsAPI.enable(plugin.id, getSelectedTenantId());
 			}
 			await loadPlugins();
 		} catch (err) {
@@ -101,7 +120,7 @@
 		checkingHealth = { ...checkingHealth, [plugin.id]: true };
 
 		try {
-			const result = await adminPluginsAPI.checkHealth(plugin.id);
+			const result = await adminPluginsAPI.checkHealth(plugin.id, getSelectedTenantId());
 			healthStatus = { ...healthStatus, [plugin.id]: result };
 		} catch (err) {
 			healthStatus = {
@@ -130,11 +149,17 @@
 		try {
 			// Load config and schema in parallel
 			const [detail, schemaResponse] = await Promise.all([
-				adminPluginsAPI.get(plugin.id),
+				adminPluginsAPI.get(plugin.id, getSelectedTenantId()),
 				adminPluginsAPI.getSchema(plugin.id).catch(() => null)
 			]);
+			selectedPlugin = {
+				...detail.plugin,
+				...detail.status
+			};
 			pluginConfig = detail.config;
 			editedConfig = { ...detail.config };
+			testEmailAddress = '';
+			testEmailMessage = '';
 
 			// Schema is wrapped in { pluginId, version, schema, meta }
 			if (schemaResponse && typeof schemaResponse === 'object' && 'schema' in schemaResponse) {
@@ -157,6 +182,8 @@
 		pluginSchema = null;
 		editedConfig = {};
 		isEditMode = false;
+		testEmailAddress = '';
+		testEmailMessage = '';
 	}
 
 	function startEditing() {
@@ -180,8 +207,18 @@
 		successMessage = '';
 
 		try {
-			await adminPluginsAPI.updateConfig(selectedPlugin.id, { config: editedConfig });
-			pluginConfig = { ...editedConfig };
+			await adminPluginsAPI.updateConfig(
+				selectedPlugin.id,
+				{ config: editedConfig },
+				getSelectedTenantId()
+			);
+			const refreshed = await adminPluginsAPI.get(selectedPlugin.id, getSelectedTenantId());
+			selectedPlugin = {
+				...refreshed.plugin,
+				...refreshed.status
+			};
+			pluginConfig = { ...refreshed.config };
+			editedConfig = { ...refreshed.config };
 			isEditMode = false;
 			successMessage = 'Configuration saved successfully';
 
@@ -199,6 +236,33 @@
 
 	function updateConfigValue(key: string, value: unknown) {
 		editedConfig = { ...editedConfig, [key]: value };
+	}
+
+	async function sendTestEmail() {
+		if (!selectedPlugin || !testEmailAddress.trim()) {
+			error = 'Enter a recipient email address';
+			return;
+		}
+
+		sendingTestEmail = true;
+		error = '';
+		successMessage = '';
+		testEmailMessage = '';
+
+		try {
+			const result = await adminPluginsAPI.sendTestEmail(selectedPlugin.id, {
+				to: testEmailAddress.trim(),
+				config: editedConfig,
+				tenantId: getSelectedTenantId()
+			});
+			testEmailMessage = result.messageId
+				? `Test email sent (${result.messageId})`
+				: 'Test email sent';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to send test email';
+		} finally {
+			sendingTestEmail = false;
+		}
 	}
 
 	function getInputType(prop: JSONSchemaProperty): string {
@@ -401,6 +465,9 @@
 							{plugin.source.type}
 						</span>
 						<span class="plugin-meta-item">v{plugin.version}</span>
+						<span class="plugin-meta-item">
+							{plugin.configured ? `configured via ${plugin.configSource}` : 'needs configuration'}
+						</span>
 						{#if plugin.meta?.category}
 							<span class="badge-category">{plugin.meta.category}</span>
 						{/if}
@@ -492,6 +559,16 @@
 			<div class="plugin-info-label">Status</div>
 			<div class="plugin-info-value">
 				{selectedPlugin?.enabled ? '✓ Enabled' : '○ Disabled'}
+				<div class="plugin-info-subvalue">
+					{selectedPlugin?.configured
+						? `Configured via ${selectedPlugin.configSource}`
+						: 'Missing required configuration'}
+				</div>
+				{#if selectedPlugin && !selectedPlugin.configured && selectedPlugin.missingRequiredFields.length > 0}
+					<div class="plugin-info-subvalue">
+						Required: {selectedPlugin.missingRequiredFields.join(', ')}
+					</div>
+				{/if}
 			</div>
 		</div>
 	</div>
@@ -640,6 +717,42 @@
 			<pre class="plugin-config-json">{JSON.stringify(pluginConfig, null, 2)}</pre>
 		{/if}
 	</div>
+
+	{#if selectedPlugin?.capabilities.includes('notifier.email')}
+		<div class="plugin-section">
+			<div class="plugin-config-header">
+				<div class="plugin-config-title">Send Test Email</div>
+			</div>
+			<div class="plugin-config-field">
+				<label class="plugin-config-label" for="plugin-test-email">Recipient Email</label>
+				<input
+					id="plugin-test-email"
+					type="email"
+					class="plugin-config-input"
+					bind:value={testEmailAddress}
+					placeholder="you@example.com"
+				/>
+				<div class="plugin-config-hint">
+					Uses the current tenant-scoped plugin settings. Unsaved edits in this dialog are included.
+				</div>
+			</div>
+			<div class="plugin-test-actions">
+				<button
+					class="btn btn-primary btn-sm"
+					onclick={sendTestEmail}
+					disabled={sendingTestEmail || !selectedPlugin?.enabled}
+				>
+					{sendingTestEmail ? 'Sending...' : 'Send Test Email'}
+				</button>
+				{#if !selectedPlugin?.enabled}
+					<span class="text-muted">Enable the plugin before sending a test email.</span>
+				{/if}
+			</div>
+			{#if testEmailMessage}
+				<div class="alert alert-success">✓ {testEmailMessage}</div>
+			{/if}
+		</div>
+	{/if}
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeDetailDialog}>Close</button>

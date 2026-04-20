@@ -34,7 +34,11 @@ import {
   getTenantIdFromContext,
   getTenantSettings,
 } from '@authrim/ar-lib-core';
-import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import {
+  cloudflareEmailPlugin,
+  resendEmailPlugin,
+} from '@authrim/ar-lib-plugin';
+import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 
 // Import handlers
 import { registerHandler } from './register';
@@ -547,6 +551,7 @@ import {
   updatePluginConfigHandler,
   enablePluginHandler,
   disablePluginHandler,
+  sendPluginTestEmailHandler,
   getPluginHealthHandler,
   getPluginSchemaHandler,
   ensureBuiltinPluginsRegistered,
@@ -621,18 +626,12 @@ const loadPlugins = createPluginLoader([
   {
     plugin: cloudflareEmailPlugin,
     skipIfConfigEmpty: true,
-    envConfigResolver: (env) => ({
-      ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
-      ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
-    }),
+    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, cloudflareEmailPlugin.id),
   },
   {
     plugin: resendEmailPlugin,
     skipIfConfigEmpty: true,
-    envConfigResolver: (env) => ({
-      ...(env.RESEND_API_KEY ? { apiKey: env.RESEND_API_KEY } : {}),
-      ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
-    }),
+    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
   },
 ]);
 
@@ -1849,6 +1848,7 @@ app.get('/api/admin/plugins/:id', getPluginHandler);
 // Plugin configuration
 app.get('/api/admin/plugins/:id/config', getPluginConfigHandler);
 app.put('/api/admin/plugins/:id/config', updatePluginConfigHandler);
+app.post('/api/admin/plugins/:id/test-email', sendPluginTestEmailHandler);
 
 // Plugin enable/disable
 app.put('/api/admin/plugins/:id/enable', enablePluginHandler);

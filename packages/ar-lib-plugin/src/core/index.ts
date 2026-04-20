@@ -118,6 +118,7 @@ export {
   registerBuiltinPlugins,
   needsBuiltinRegistration,
   getBuiltinPlugins,
+  resolveBuiltinPluginBootstrapConfig,
   type PluginRegistryEntry,
   type RegisterBuiltinOptions,
 } from './builtin-registry';

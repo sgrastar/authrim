@@ -80,6 +80,21 @@ describe('tenant email settings API', () => {
           },
         },
       }),
+      'plugins:schema:notifier-cloudflare': JSON.stringify({
+        type: 'object',
+        required: ['defaultFrom'],
+      }),
+      'plugins:schema:notifier-resend': JSON.stringify({
+        type: 'object',
+        required: ['apiKey', 'defaultFrom'],
+      }),
+      'plugins:config:notifier-cloudflare': JSON.stringify({
+        defaultFrom: 'cloudflare@example.com',
+      }),
+      'plugins:config:notifier-resend': JSON.stringify({
+        apiKey: 're_live_1234',
+        defaultFrom: 'resend@example.com',
+      }),
     });
     const configKv = createMockKV({
       'settings:tenant:tenant-a:email-settings': JSON.stringify({
@@ -116,6 +131,21 @@ describe('tenant email settings API', () => {
           capabilities: ['notifier.email'],
         },
       }),
+      'plugins:schema:notifier-cloudflare': JSON.stringify({
+        type: 'object',
+        required: ['defaultFrom'],
+      }),
+      'plugins:schema:notifier-resend': JSON.stringify({
+        type: 'object',
+        required: ['apiKey', 'defaultFrom'],
+      }),
+      'plugins:config:notifier-cloudflare': JSON.stringify({
+        defaultFrom: 'cloudflare@example.com',
+      }),
+      'plugins:config:notifier-resend': JSON.stringify({
+        apiKey: 're_live_1234',
+        defaultFrom: 'resend@example.com',
+      }),
     });
     const configKv = createMockKV({
       'settings:tenant:tenant-a:email-settings': JSON.stringify({
@@ -145,5 +175,59 @@ describe('tenant email settings API', () => {
         providerOrder: ['notifier-cloudflare', 'notifier-resend'],
       })
     );
+  });
+
+  it('filters out disabled or unconfigured providers', async () => {
+    const settingsKv = createMockKV({
+      'plugins:registry': JSON.stringify({
+        'notifier-cloudflare': {
+          id: 'notifier-cloudflare',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+          meta: {
+            name: 'Cloudflare Email Service',
+            description: 'Cloudflare',
+            category: 'notification',
+          },
+        },
+        'notifier-resend': {
+          id: 'notifier-resend',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+          meta: {
+            name: 'Resend Email',
+            description: 'Resend',
+            category: 'notification',
+          },
+        },
+      }),
+      'plugins:schema:notifier-cloudflare': JSON.stringify({
+        type: 'object',
+        required: ['defaultFrom'],
+      }),
+      'plugins:schema:notifier-resend': JSON.stringify({
+        type: 'object',
+        required: ['apiKey', 'defaultFrom'],
+      }),
+      'plugins:config:notifier-cloudflare': JSON.stringify({
+        defaultFrom: 'cloudflare@example.com',
+      }),
+      'plugins:enabled:notifier-resend:tenant:tenant-a': 'false',
+    });
+    const configKv = createMockKV({});
+    const c = createMockContext({ settingsKv, configKv });
+
+    const response = (await getTenantEmailSettingsHandler(c)) as Response;
+    const body = (await response.json()) as {
+      providers: Array<{ id: string; defaultFrom?: string; configSource: string }>;
+    };
+
+    expect(body.providers).toEqual([
+      expect.objectContaining({
+        id: 'notifier-cloudflare',
+        defaultFrom: 'cloudflare@example.com',
+        configSource: 'kv',
+      }),
+    ]);
   });
 });
