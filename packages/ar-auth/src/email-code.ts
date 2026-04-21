@@ -52,6 +52,10 @@ import {
   verifyEmailCodeHash,
   hashEmail,
 } from './utils/email-code-utils';
+import {
+  persistRegistrationFieldValues,
+  validateRegistrationFieldSubmission,
+} from './registration-field-utils';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
@@ -115,9 +119,10 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       const body = await c.req.json<{
         email: string;
         name?: string;
+        custom_fields?: Record<string, unknown>;
       }>();
 
-      const { email, name } = body;
+      const { email, name, custom_fields } = body;
 
       if (!email) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -146,9 +151,20 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
+      const tenantId = getTenantIdFromContext(c);
+      const customFieldValidation = await validateRegistrationFieldSubmission(
+        c.env.DB,
+        tenantId,
+        custom_fields
+      );
+      if (!customFieldValidation.ok) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+          variables: { field: 'custom_fields', reason: customFieldValidation.error },
+        });
+      }
+
       // Check if user exists, if not create a new user via Repository
       // PII/Non-PII DB separation: email lookup uses PII DB, user creation uses both DBs
-      const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       let user: { id: string; email: string; name: string | null } | null = null;
 
@@ -259,6 +275,9 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           otp_session_id: otpSessionId,
           issued_at: issuedAt,
           purpose: 'login',
+          ...(Object.keys(customFieldValidation.values).length > 0
+            ? { custom_fields: customFieldValidation.values }
+            : {}),
         },
       });
 
@@ -390,6 +409,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           otp_session_id: string;
           issued_at: number;
           purpose: string;
+          custom_fields?: Record<string, unknown>;
         };
       };
 
@@ -509,6 +529,24 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       };
 
       const now = Date.now();
+      const customFields = challengeData.metadata?.custom_fields;
+      if (customFields) {
+        try {
+          await persistRegistrationFieldValues(
+            c.env.DB,
+            tenantId,
+            challengeData.userId,
+            customFields,
+            Math.floor(now / 1000)
+          );
+        } catch (persistError) {
+          log.warn(
+            'Failed to persist registration field values',
+            { action: 'registration_fields_persist' },
+            persistError as Error
+          );
+        }
+      }
 
       // Check for existing anonymous session (for upgrade flow)
       // If the user is upgrading from anonymous, update the existing session

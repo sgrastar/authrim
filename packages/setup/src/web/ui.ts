@@ -3700,6 +3700,64 @@ export function getHtmlTemplate(
         </div>
       </div>
 
+      <div class="resource-section" id="env-email-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          📧 <span data-i18n="web.envDetail.emailSettings">Email Settings</span>
+        </div>
+        <p style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;" data-i18n="web.envDetail.emailDesc">
+          Enable Cloudflare Email Service later for this environment. This updates .authrim, regenerates wrangler bindings, uploads email secrets, and redeploys ar-auth and ar-management.
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-top: 1rem;">
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentProvider">Current Provider</div>
+            <div id="env-email-provider" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentStatus">Status</div>
+            <div id="env-email-status" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentFrom">From Address</div>
+            <div id="env-email-from" style="margin-top: 0.35rem; font-weight: 600; word-break: break-word;">-</div>
+          </div>
+        </div>
+
+        <div class="alert alert-warning" style="margin-top: 1rem;">
+          <strong data-i18n="web.envDetail.emailCloudflareRequirements">Requirements</strong>
+          <ul style="margin: 0.5rem 0 0 1.25rem;">
+            <li data-i18n="web.envDetail.emailCloudflareRequirementPaid">Workers Paid Plan is required</li>
+            <li data-i18n="web.envDetail.emailCloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li>
+            <li data-i18n="web.envDetail.emailCloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li>
+          </ul>
+        </div>
+
+        <div style="margin-top: 1rem; display: grid; gap: 1rem;">
+          <div>
+            <label for="env-email-from-address" style="display: block; margin-bottom: 0.5rem; font-weight: 600;" data-i18n="web.envDetail.emailFromAddress">From Email Address</label>
+            <input type="email" id="env-email-from-address" placeholder="noreply@yourdomain.com" autocomplete="off">
+            <div style="margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCloudflareFromHint">
+              Must be from a domain onboarded to Cloudflare Email Service.
+            </div>
+          </div>
+          <div>
+            <label for="env-email-from-name" style="display: block; margin-bottom: 0.5rem; font-weight: 600;" data-i18n="web.envDetail.emailFromName">From Display Name (optional)</label>
+            <input type="text" id="env-email-from-name" placeholder="Authrim" autocomplete="off">
+          </div>
+        </div>
+
+        <div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
+          <button class="btn-primary" id="btn-enable-cloudflare-email">
+            ☁️ <span data-i18n="web.envDetail.emailEnableCloudflare">Enable Cloudflare Email Service</span>
+          </button>
+        </div>
+
+        <div id="env-email-progress" class="hidden" style="margin-top: 1rem;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;" data-i18n="web.envDetail.emailProgress">Email Setup Progress:</div>
+          <div id="env-email-log" class="progress-log" style="max-height: 240px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+        </div>
+      </div>
+
       <div id="detail-resources">
         <!-- Workers -->
         <div class="resource-section">
@@ -4071,6 +4129,7 @@ export function getHtmlTemplate(
     // Environment management state
     let detectedEnvironments = [];
     let selectedEnvForDetail = null;
+    let selectedEnvDetailConfig = null;
     let selectedEnvForDelete = null;
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
@@ -6803,9 +6862,21 @@ export function getHtmlTemplate(
     // Show environment details
     function showEnvDetail(env) {
       selectedEnvForDetail = env;
+      selectedEnvDetailConfig = null;
 
       document.getElementById('detail-env-name').textContent = env.env;
       renderEnvDetailUrls(env);
+      loadEnvEmailStatus(env.env);
+      document.getElementById('env-email-progress').classList.add('hidden');
+      document.getElementById('env-email-log').textContent = '';
+      document.getElementById('btn-enable-cloudflare-email').disabled = false;
+      const enableCloudflareBtnSpan = document
+        .getElementById('btn-enable-cloudflare-email')
+        ?.querySelector('span');
+      if (enableCloudflareBtnSpan) {
+        enableCloudflareBtnSpan.textContent =
+          t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
+      }
 
       // Render resource lists with loading state
       renderResourceList('detail-workers-list', 'detail-workers-count', env.workers, 'name', 'worker');
@@ -7035,6 +7106,137 @@ export function getHtmlTemplate(
       const urls = buildEnvDetailUrls(env, config);
       for (const item of urls) {
         listEl.appendChild(createEnvDetailUrlRow(item.label, item.value, item.description, item.href));
+      }
+    }
+
+    function renderEnvEmailStatus(configResponse) {
+      const providerEl = document.getElementById('env-email-provider');
+      const statusEl = document.getElementById('env-email-status');
+      const fromEl = document.getElementById('env-email-from');
+      const fromAddressInput = document.getElementById('env-email-from-address');
+      const fromNameInput = document.getElementById('env-email-from-name');
+      const emailConfig = configResponse?.config?.features?.email || null;
+      const provider = emailConfig?.provider || 'none';
+      const configured = emailConfig?.configured === true;
+      const fromAddress = emailConfig?.fromAddress || '';
+      const fromName = emailConfig?.fromName || '';
+
+      selectedEnvDetailConfig = configResponse?.config || null;
+
+      providerEl.textContent =
+        provider === 'none'
+          ? (t('web.envDetail.emailProviderNone') || 'Not configured')
+          : provider;
+      statusEl.textContent = configured
+        ? (t('web.envDetail.emailConfigured') || 'Configured')
+        : (t('web.envDetail.emailNotConfigured') || 'Not configured');
+      fromEl.textContent = fromAddress || '—';
+
+      fromAddressInput.value = fromAddress;
+      fromNameInput.value = fromName;
+    }
+
+    async function loadEnvEmailStatus(envName) {
+      try {
+        const configResponse = await api('/config?env=' + encodeURIComponent(envName));
+        if (configResponse.exists && configResponse.config) {
+          renderEnvEmailStatus(configResponse);
+          return;
+        }
+      } catch (error) {
+        console.warn('Failed to load env email config:', error);
+      }
+
+      renderEnvEmailStatus(null);
+    }
+
+    async function enableCloudflareEmailForEnv() {
+      if (!selectedEnvForDetail) {
+        alert('No environment selected');
+        return;
+      }
+
+      const btn = document.getElementById('btn-enable-cloudflare-email');
+      const btnSpan = btn.querySelector('span');
+      const progressDiv = document.getElementById('env-email-progress');
+      const logDiv = document.getElementById('env-email-log');
+      const fromAddress = document.getElementById('env-email-from-address').value.trim();
+      const fromName = document.getElementById('env-email-from-name').value.trim();
+      const currentProvider = selectedEnvDetailConfig?.features?.email?.provider;
+
+      if (!fromAddress) {
+        alert(t('web.envDetail.emailFromMissing') || 'Please enter a From email address.');
+        return;
+      }
+
+      const emailInput = document.getElementById('env-email-from-address');
+      if (emailInput && !emailInput.checkValidity()) {
+        alert(t('web.envDetail.emailFromInvalid') || 'Please enter a valid email address.');
+        return;
+      }
+
+      if (
+        currentProvider &&
+        currentProvider !== 'none' &&
+        currentProvider !== 'cloudflare' &&
+        !confirm(
+          t('web.envDetail.emailSwitchProviderConfirm') ||
+            'This environment already has another email provider configured. Switch it to Cloudflare Email Service?'
+        )
+      ) {
+        return;
+      }
+
+      btn.disabled = true;
+      if (btnSpan) {
+        btnSpan.textContent = t('web.envDetail.emailDeploying') || 'Applying...';
+      }
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      try {
+        addLog(t('web.envDetail.emailStarting') || 'Starting Cloudflare Email setup...');
+        const response = await api('/env/email/cloudflare/enable', {
+          method: 'POST',
+          body: {
+            env: selectedEnvForDetail.env,
+            fromAddress,
+            fromName,
+          },
+        });
+
+        if (response.progress && Array.isArray(response.progress)) {
+          for (const msg of response.progress) {
+            addLog(msg);
+          }
+        }
+
+        if (!response.success) {
+          addLog('');
+          addLog('❌ ' + (response.error || (t('web.envDetail.emailUpdateFailed') || 'Failed')));
+          return;
+        }
+
+        addLog('');
+        addLog('✅ ' + (t('web.envDetail.emailUpdatedSuccess') || 'Cloudflare Email enabled.'));
+        await loadEnvEmailStatus(selectedEnvForDetail.env);
+        resetWorkerUpdateUI();
+        await loadWorkerVersionComparison(selectedEnvForDetail.env);
+      } catch (error) {
+        addLog('❌ ' + error.message);
+      } finally {
+        btn.disabled = false;
+        if (btnSpan) {
+          btnSpan.textContent =
+            t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
+        }
       }
     }
 
@@ -7394,6 +7596,7 @@ export function getHtmlTemplate(
     // Event listeners for UI Update
     document.getElementById('btn-update-admin-ui')?.addEventListener('click', () => updateUIComponent('ar-admin-ui'));
     document.getElementById('btn-update-login-ui')?.addEventListener('click', () => updateUIComponent('ar-login-ui'));
+    document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
 
     // ===========================================
     // Admin Setup Functions

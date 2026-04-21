@@ -527,7 +527,12 @@ export const passkeyAPI = {
 	/**
 	 * Get registration options for Passkey
 	 */
-	async getRegisterOptions(data: { email: string; name?: string; userId?: string }) {
+	async getRegisterOptions(data: {
+		email: string;
+		name?: string;
+		userId?: string;
+		custom_fields?: Record<string, unknown>;
+	}) {
 		return apiFetch<{ options: unknown; userId: string }>('/api/auth/passkeys/register/options', {
 			method: 'POST',
 			body: JSON.stringify(data)
@@ -584,7 +589,7 @@ export const emailCodeAPI = {
 	/**
 	 * Send verification code to email
 	 */
-	async send(data: { email: string; name?: string }) {
+	async send(data: { email: string; name?: string; custom_fields?: Record<string, unknown> }) {
 		return apiFetch<{ success: boolean; message: string; messageId?: string; code?: string }>(
 			'/api/auth/email-codes/send',
 			{

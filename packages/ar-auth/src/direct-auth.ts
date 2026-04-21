@@ -90,6 +90,10 @@ import {
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import { getPluginContext } from '@authrim/ar-lib-core';
 import { importPKCS8 } from 'jose';
+import {
+  persistRegistrationFieldValues,
+  validateRegistrationFieldSubmission,
+} from './registration-field-utils';
 
 // ===== Constants =====
 
@@ -1279,6 +1283,17 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       }
     }
 
+    const customFieldValidation = await validateRegistrationFieldSubmission(
+      c.env.DB,
+      tenantId,
+      custom_fields
+    );
+    if (!customFieldValidation.ok) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: 'custom_fields', reason: customFieldValidation.error },
+      });
+    }
+
     const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
@@ -1368,7 +1383,9 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             }
           : {}),
         // Custom registration fields (validated and saved after email verification)
-        ...(custom_fields ? { custom_fields } : {}),
+        ...(Object.keys(customFieldValidation.values).length > 0
+          ? { custom_fields: customFieldValidation.values }
+          : {}),
       },
     });
 
@@ -1609,76 +1626,22 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Save custom registration fields if present
-    const customFields = challengeData.metadata?.custom_fields as
-      | Record<string, unknown>
-      | undefined;
+    const customFields = challengeData.metadata?.custom_fields as Record<string, unknown> | undefined;
     if (customFields && c.env.DB) {
-      const schemaRows = await c.env.DB.prepare(
-        `SELECT field_key, field_type, validation_rules
-         FROM custom_claim_schemas
-         WHERE tenant_id = ? AND show_on_registration = 1 AND is_active = 1`
-      )
-        .bind(tenantId)
-        .all<{ field_key: string; field_type: string; validation_rules: string | null }>();
-      const schemaMap = new Map((schemaRows.results ?? []).map((r) => [r.field_key, r]));
-      const fieldNow = Math.floor(now / 1000);
-
-      for (const [key, value] of Object.entries(customFields)) {
-        const schema = schemaMap.get(key);
-        if (!schema) continue; // unknown field — reject
-
-        const strVal = String(value);
-
-        // Apply validation_rules if present
-        if (schema.validation_rules) {
-          try {
-            const rules = JSON.parse(schema.validation_rules) as Record<string, unknown>;
-            if (schema.field_type === 'number') {
-              const numVal = Number(strVal);
-              if (isNaN(numVal)) continue;
-              if (rules.min !== undefined && numVal < (rules.min as number)) continue;
-              if (rules.max !== undefined && numVal > (rules.max as number)) continue;
-            } else if (schema.field_type === 'enum') {
-              const enumVals = rules.enum_values as string[] | undefined;
-              if (enumVals && !enumVals.includes(strVal)) continue;
-            } else {
-              // string / date
-              if (rules.min_length !== undefined && strVal.length < (rules.min_length as number))
-                continue;
-              if (rules.max_length !== undefined && strVal.length > (rules.max_length as number))
-                continue;
-              if (rules.pattern) {
-                try {
-                  if (!new RegExp(rules.pattern as string).test(strVal)) continue;
-                } catch {
-                  /* invalid regex — skip pattern check */
-                }
-              }
-            }
-          } catch {
-            /* malformed validation_rules JSON — skip validation */
-          }
-        }
-
-        try {
-          await c.env.DB.prepare(
-            `INSERT INTO user_custom_fields (id, user_id, tenant_id, field_key, field_value, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(user_id, tenant_id, field_key) DO UPDATE SET field_value=excluded.field_value, updated_at=excluded.updated_at`
-          )
-            .bind(
-              crypto.randomUUID(),
-              challengeData.userId,
-              tenantId,
-              key,
-              strVal,
-              fieldNow,
-              fieldNow
-            )
-            .run();
-        } catch {
-          // Non-fatal
-        }
+      try {
+        await persistRegistrationFieldValues(
+          c.env.DB,
+          tenantId,
+          challengeData.userId,
+          customFields,
+          Math.floor(now / 1000)
+        );
+      } catch (persistError) {
+        log.warn(
+          'Failed to persist registration field values',
+          { action: 'registration_fields_persist' },
+          persistError as Error
+        );
       }
     }
 

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { generateRoutes, generateWranglerConfig, toToml } from '../core/wrangler.js';
+import {
+  buildResourceIdsFromLock,
+  generateRoutes,
+  generateWranglerConfig,
+  toToml,
+} from '../core/wrangler.js';
 import type { AuthrimConfig } from '../core/config.js';
+import type { AuthrimLock } from '../core/lock.js';
 
 describe('generateRoutes', () => {
   it('adds Cloudflare Email Service bindings only to ar-auth and ar-management', () => {
@@ -140,6 +146,42 @@ describe('generateRoutes', () => {
 
     expect((toml.match(/\[\[send_email\]\]/g) ?? [])).toHaveLength(1);
     expect(toml).not.toContain('env.undefined.send_email');
+  });
+
+  it('builds resource ids from the lock file for full wrangler regeneration', () => {
+    const lock = {
+      version: '1.0.0',
+      createdAt: '2026-04-21T00:00:00.000Z',
+      updatedAt: '2026-04-21T00:00:00.000Z',
+      env: 'single',
+      d1: {
+        DB: { id: 'd1-core', name: 'single-core' },
+      },
+      kv: {
+        SETTINGS: { id: 'kv-settings', name: 'single-settings', previewId: 'preview-settings' },
+      },
+      queues: {
+        AUDIT_QUEUE: { id: 'queue-audit', name: 'single-audit' },
+      },
+      r2: {
+        DIAGNOSTIC_LOGS: { name: 'single-logs' },
+      },
+    } satisfies AuthrimLock;
+
+    expect(buildResourceIdsFromLock(lock)).toEqual({
+      d1: {
+        DB: { id: 'd1-core', name: 'single-core' },
+      },
+      kv: {
+        SETTINGS: { id: 'kv-settings', name: 'single-settings' },
+      },
+      queues: {
+        AUDIT_QUEUE: { id: 'queue-audit', name: 'single-audit' },
+      },
+      r2: {
+        DIAGNOSTIC_LOGS: { name: 'single-logs' },
+      },
+    });
   });
 
   it('routes admin setup and admin auth endpoints to ar-auth', () => {

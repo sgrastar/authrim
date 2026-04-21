@@ -29,6 +29,7 @@
 	}
 	let registrationFields = $state<RegistrationField[]>([]);
 	let customFieldValues = $state<Record<string, string>>({});
+	let customFieldErrors = $state<Record<string, string>>({});
 	let error = $state('');
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
@@ -125,9 +126,10 @@
 			if (res.ok) {
 				const data = (await res.json()) as { fields: RegistrationField[] };
 				registrationFields = data.fields ?? [];
-				// Initialize values
+				customFieldValues = {};
+				customFieldErrors = {};
 				for (const f of registrationFields) {
-					customFieldValues[f.field_key] = '';
+					customFieldValues[f.field_key] = f.field_type === 'boolean' ? 'false' : '';
 				}
 			}
 		} catch {
@@ -140,6 +142,45 @@
 	// ---------------------------------------------------------------------------
 	function validateEmail(value: string): boolean {
 		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+	}
+
+	function getFieldLabel(field: RegistrationField): string {
+		return field.required ? `${field.display_label} *` : field.display_label;
+	}
+
+	function getEnumOptions(field: RegistrationField): string[] {
+		const enumValues = field.validation_rules?.enum_values;
+		if (!Array.isArray(enumValues)) {
+			return [];
+		}
+
+		return enumValues.filter((value): value is string => typeof value === 'string');
+	}
+
+	function setCustomFieldValue(fieldKey: string, value: string) {
+		customFieldValues[fieldKey] = value;
+		if (customFieldErrors[fieldKey]) {
+			customFieldErrors[fieldKey] = '';
+		}
+	}
+
+	function validateCustomFields(): boolean {
+		customFieldErrors = {};
+
+		for (const field of registrationFields) {
+			const value = customFieldValues[field.field_key] ?? '';
+			if (field.required && value.trim() === '') {
+				customFieldErrors[field.field_key] = `${field.display_label} is required`;
+			}
+		}
+
+		return Object.values(customFieldErrors).every((value) => !value);
+	}
+
+	function getSubmittedCustomFields(): Record<string, string> {
+		return Object.fromEntries(
+			Object.entries(customFieldValues).filter(([, value]) => value !== '')
+		);
 	}
 
 	function validateForm(): boolean {
@@ -158,6 +199,9 @@
 			emailError = $LL.login_errorEmailInvalid();
 			return false;
 		}
+		if (!validateCustomFields()) {
+			return false;
+		}
 		return true;
 	}
 
@@ -171,7 +215,8 @@
 		try {
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
 				email,
-				name
+				name,
+				custom_fields: getSubmittedCustomFields()
 			});
 
 			if (optionsError) {
@@ -219,6 +264,12 @@
 				}
 			}
 
+			try {
+				sessionStorage.removeItem('signup_custom_fields');
+			} catch {
+				// Non-fatal
+			}
+
 			window.location.href = '/';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
@@ -235,17 +286,24 @@
 		emailCodeLoading = true;
 
 		try {
-			const { error: apiError } = await emailCodeAPI.send({ email, name });
+			const submittedCustomFields = getSubmittedCustomFields();
+			const { error: apiError } = await emailCodeAPI.send({
+				email,
+				name,
+				custom_fields: submittedCustomFields
+			});
 			if (apiError) {
 				throw new Error(apiError.error_description || 'Failed to send verification code');
 			}
 			// Persist custom field values for post-verification saving
-			if (Object.keys(customFieldValues).length > 0) {
+			if (Object.keys(submittedCustomFields).length > 0) {
 				try {
-					sessionStorage.setItem('signup_custom_fields', JSON.stringify(customFieldValues));
+					sessionStorage.setItem('signup_custom_fields', JSON.stringify(submittedCustomFields));
 				} catch {
 					// Non-fatal
 				}
+			} else {
+				sessionStorage.removeItem('signup_custom_fields');
 			}
 			let verifyQs = `email=${encodeURIComponent(email)}`;
 			if (inviteToken) verifyQs += `&invite_token=${encodeURIComponent(inviteToken)}`;
@@ -419,31 +477,70 @@
 										type="checkbox"
 										checked={customFieldValues[field.field_key] === 'true'}
 										onchange={(e) => {
-											customFieldValues[field.field_key] = (
-												e.currentTarget as HTMLInputElement
-											).checked
-												? 'true'
-												: 'false';
+											setCustomFieldValue(
+												field.field_key,
+												(e.currentTarget as HTMLInputElement).checked ? 'true' : 'false'
+											);
 										}}
 									/>
 									<span style="font-size: 0.875rem; color: var(--text);"
-										>{field.display_label}{field.required ? ' *' : ''}</span
+										>{getFieldLabel(field)}</span
 									>
 								</label>
+								{#if customFieldErrors[field.field_key]}
+									<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
+								{/if}
+							{:else if field.field_type === 'enum'}
+								<div class="form-group">
+									<label class="form-label" for={`signup-${field.field_key}`}>{getFieldLabel(field)}</label>
+									<select
+										id={`signup-${field.field_key}`}
+										class="custom-field-select"
+										class:has-error={!!customFieldErrors[field.field_key]}
+										value={customFieldValues[field.field_key]}
+										onchange={(e) =>
+											setCustomFieldValue(
+												field.field_key,
+												(e.currentTarget as HTMLSelectElement).value
+											)}
+									>
+										<option value="">{field.placeholder ?? 'Select an option'}</option>
+										{#each getEnumOptions(field) as option (option)}
+											<option value={option}>{option}</option>
+										{/each}
+									</select>
+									{#if customFieldErrors[field.field_key]}
+										<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
+									{/if}
+								</div>
+							{:else if field.field_type === 'date'}
+								<Input
+									label={getFieldLabel(field)}
+									type="date"
+									placeholder={field.placeholder ?? ''}
+									bind:value={customFieldValues[field.field_key]}
+									error={customFieldErrors[field.field_key]}
+									oninput={() => setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+									required={field.required}
+								/>
 							{:else if field.field_type === 'number'}
 								<Input
-									label="{field.display_label}{field.required ? ' *' : ''}"
+									label={getFieldLabel(field)}
 									type="number"
 									placeholder={field.placeholder ?? ''}
 									bind:value={customFieldValues[field.field_key]}
+									error={customFieldErrors[field.field_key]}
+									oninput={() => setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
 									required={field.required}
 								/>
 							{:else}
 								<Input
-									label="{field.display_label}{field.required ? ' *' : ''}"
+									label={getFieldLabel(field)}
 									type="text"
 									placeholder={field.placeholder ?? ''}
 									bind:value={customFieldValues[field.field_key]}
+									error={customFieldErrors[field.field_key]}
+									oninput={() => setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
 									required={field.required}
 								/>
 							{/if}
@@ -538,3 +635,48 @@
 		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>
+
+<style>
+	.form-group {
+		width: 100%;
+	}
+
+	.form-label {
+		display: block;
+		font-family: var(--font-display);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		margin-bottom: 8px;
+	}
+
+	.custom-field-select {
+		width: 100%;
+		padding: 12px 16px;
+		background: var(--bg-glass);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		font-size: 0.9375rem;
+		font-family: var(--font-body);
+		color: var(--text-primary);
+		transition: all var(--transition-fast);
+		backdrop-filter: var(--blur-sm);
+		-webkit-backdrop-filter: var(--blur-sm);
+	}
+
+	.custom-field-select.has-error {
+		border-color: var(--danger);
+	}
+
+	.custom-field-select:focus {
+		outline: none;
+		border-color: var(--primary);
+		box-shadow: 0 0 0 4px var(--primary-light);
+	}
+
+	.custom-field-error {
+		font-size: 0.8125rem;
+		color: var(--danger);
+		margin-top: 6px;
+	}
+</style>

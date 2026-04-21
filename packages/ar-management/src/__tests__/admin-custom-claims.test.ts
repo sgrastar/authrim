@@ -523,6 +523,32 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(400);
     });
+
+    it('should clear registration_required when signup visibility is disabled on create', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([createSchemaRow({ id: 'test-id-123' })]);
+      mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          field_key: 'employee_id',
+          display_label: 'Employee ID',
+          field_type: 'string',
+          is_pii: false,
+          show_on_registration: false,
+          registration_required: true,
+        },
+      });
+
+      const res = await adminCustomClaimCreateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(201);
+      expect(mockDbExecute.mock.calls[0][1][22]).toBe(0);
+      expect(mockDbExecute.mock.calls[0][1][23]).toBe(0);
+    });
   });
 
   // ===========================================================================
@@ -741,6 +767,31 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(400);
+    });
+
+    it('should clear registration_required when signup visibility is disabled on update', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([createSchemaRow({ show_on_registration: 1, registration_required: 1 })])
+        .mockResolvedValueOnce([
+          createSchemaRow({ show_on_registration: 0, registration_required: 0 }),
+        ]);
+      mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: {
+          show_on_registration: false,
+          registration_required: true,
+        },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(mockDbExecute.mock.calls[0][0]).toContain('registration_required = ?');
+      expect(mockDbExecute.mock.calls[0][1]).toContain(0);
     });
   });
 

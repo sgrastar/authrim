@@ -1068,6 +1068,35 @@ const en: Translations = {
   'web.envDetail.queues': 'Queues',
   'web.envDetail.r2Buckets': 'R2 Buckets',
   'web.envDetail.pagesProjects': 'Pages Projects',
+  'web.envDetail.emailSettings': 'Email Settings',
+  'web.envDetail.emailDesc':
+    'Enable Cloudflare Email Service later for this environment. This updates .authrim, regenerates wrangler bindings, uploads email secrets, and redeploys ar-auth and ar-management.',
+  'web.envDetail.emailCurrentProvider': 'Current Provider',
+  'web.envDetail.emailCurrentStatus': 'Status',
+  'web.envDetail.emailCurrentFrom': 'From Address',
+  'web.envDetail.emailConfigured': 'Configured',
+  'web.envDetail.emailNotConfigured': 'Not configured',
+  'web.envDetail.emailProviderNone': 'Not configured',
+  'web.envDetail.emailCloudflareRequirements': 'Requirements',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan is required',
+  'web.envDetail.emailCloudflareRequirementDns':
+    'Cloudflare DNS/domain onboarding is required',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Domain setup in the Cloudflare dashboard is still manual',
+  'web.envDetail.emailCloudflareFromHint':
+    'Must be from a domain onboarded to Cloudflare Email Service.',
+  'web.envDetail.emailFromAddress': 'From Email Address',
+  'web.envDetail.emailFromName': 'From Display Name (optional)',
+  'web.envDetail.emailEnableCloudflare': 'Enable Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Applying...',
+  'web.envDetail.emailProgress': 'Email Setup Progress:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email enabled.',
+  'web.envDetail.emailUpdateFailed': 'Failed to enable Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Please enter a From email address.',
+  'web.envDetail.emailFromInvalid': 'Please enter a valid email address.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'This environment already has another email provider configured. Switch it to Cloudflare Email Service?',
+  'web.envDetail.emailStarting': 'Starting Cloudflare Email setup...',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Update All Workers',

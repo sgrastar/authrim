@@ -1059,6 +1059,35 @@ const ja: Translations = {
   'web.envDetail.queues': 'Queues',
   'web.envDetail.r2Buckets': 'R2バケット',
   'web.envDetail.pagesProjects': 'Pagesプロジェクト',
+  'web.envDetail.emailSettings': 'メール設定',
+  'web.envDetail.emailDesc':
+    '.authrim を更新し、wrangler binding を再生成し、メール用 secret をアップロードして、ar-auth と ar-management を再デプロイします。',
+  'web.envDetail.emailCurrentProvider': '現在のプロバイダー',
+  'web.envDetail.emailCurrentStatus': '状態',
+  'web.envDetail.emailCurrentFrom': '送信元アドレス',
+  'web.envDetail.emailConfigured': '設定済み',
+  'web.envDetail.emailNotConfigured': '未設定',
+  'web.envDetail.emailProviderNone': '未設定',
+  'web.envDetail.emailCloudflareRequirements': '要件',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan が必要です',
+  'web.envDetail.emailCloudflareRequirementDns':
+    'Cloudflare DNS / ドメインのオンボーディングが必要です',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Cloudflare ダッシュボードでのドメイン設定は引き続き手動です',
+  'web.envDetail.emailCloudflareFromHint':
+    'Cloudflare Email Service にオンボード済みのドメインのアドレスである必要があります。',
+  'web.envDetail.emailFromAddress': '送信元メールアドレス',
+  'web.envDetail.emailFromName': '送信者表示名（オプション）',
+  'web.envDetail.emailEnableCloudflare': 'Cloudflare Email Service を有効化',
+  'web.envDetail.emailDeploying': '反映中...',
+  'web.envDetail.emailProgress': 'メール設定の進行状況:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email を有効化しました。',
+  'web.envDetail.emailUpdateFailed': 'Cloudflare Email の有効化に失敗しました。',
+  'web.envDetail.emailFromMissing': '送信元メールアドレスを入力してください。',
+  'web.envDetail.emailFromInvalid': '有効なメールアドレスを入力してください。',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'この環境には別のメールプロバイダー設定があります。Cloudflare Email Service に切り替えますか？',
+  'web.envDetail.emailStarting': 'Cloudflare Email 設定を開始しています...',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '全てのWorkerを更新',

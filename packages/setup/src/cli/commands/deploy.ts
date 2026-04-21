@@ -44,7 +44,12 @@ import {
   ensureWildcardDnsForMultiTenant,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
-import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
+import {
+  generateWranglerConfig,
+  toToml,
+  buildResourceIdsFromLock,
+  type ResourceIds,
+} from '../../core/wrangler.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
 import {
   ensureLoginUiClient,
@@ -53,6 +58,7 @@ import {
 import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { resolveIssuerUrl } from '../../core/url-config.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
+import { saveMasterWranglerConfigs } from '../../core/wrangler-sync.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 import {
   formatWildcardDnsManualAction,
@@ -111,6 +117,7 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
     { file: 'cloudflare_api_token.txt', name: 'CLOUDFLARE_API_TOKEN' },
     { file: 'resend_api_key.txt', name: 'RESEND_API_KEY' },
     { file: 'email_from.txt', name: 'EMAIL_FROM' },
+    { file: 'email_from_name.txt', name: 'EMAIL_FROM_NAME' },
   ];
 
   for (const { file, name } of secretFiles) {
@@ -417,8 +424,33 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   console.log('');
 
+  // Refresh generated wrangler configs from the current config/lock before deployment.
+  // This prevents stale bindings such as send_email from surviving across setup upgrades.
+  if (structureType === 'new' && lock) {
+    const resourceIds = buildResourceIdsFromLock(lock);
+    const masterSpinner = ora('Refreshing generated wrangler configs...').start();
+    const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+      baseDir,
+      env,
+      dryRun: options.dryRun,
+      onProgress: (msg) => {
+        masterSpinner.text = msg;
+      },
+    });
+
+    if (!masterResult.success) {
+      masterSpinner.fail('Failed to refresh generated wrangler configs');
+      for (const error of masterResult.errors) {
+        console.log(chalk.red(`  • ${error}`));
+      }
+      process.exit(1);
+    }
+
+    masterSpinner.succeed(`Refreshed ${masterResult.files.length} generated wrangler config(s)`);
+  }
+
   // Check wrangler.toml sync status (only for new structure)
-  if (structureType === 'new' && !options.component) {
+  if (structureType === 'new') {
     const packagesDir = join(rootDir, 'packages');
 
     if (existsSync(packagesDir)) {

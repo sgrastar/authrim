@@ -762,16 +762,26 @@ describe('Passkey Handlers', () => {
     });
 
     it('should verify registration and create session on success', async () => {
-      const challengeStore = createMockChallengeStore();
       const sessionStore = createMockSessionStore();
+      const db = createMockDB({
+        allResults: [
+          {
+            field_key: 'department',
+            display_label: 'Department',
+            field_type: 'string',
+            registration_required: 0,
+            validation_rules: null,
+          },
+        ],
+      });
 
-      // Pre-store a challenge (will be consumed via /challenge/consume)
-      challengeStore._challenges.set('passkey_reg:user-123', {
-        id: 'passkey_reg:user-123',
-        type: 'passkey_registration',
-        userId: 'user-123',
+      mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValueOnce({
         challenge: 'mock-challenge-base64',
-        email: 'test@example.com',
+        metadata: {
+          custom_fields: {
+            department: 'Platform',
+          },
+        },
       });
 
       // Setup: User found after registration via Repository
@@ -802,8 +812,8 @@ describe('Passkey Handlers', () => {
           },
         },
         headers: { origin: 'https://example.com' },
-        challengeStore,
         sessionStore,
+        db,
       });
 
       await passkeyRegisterVerifyHandler(c);
@@ -816,6 +826,7 @@ describe('Passkey Handlers', () => {
           public_key: expect.any(String),
         })
       );
+      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO user_custom_fields'));
     });
   });
 

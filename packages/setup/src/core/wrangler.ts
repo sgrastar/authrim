@@ -6,6 +6,7 @@
  */
 
 import type { AuthrimConfig } from './config.js';
+import type { AuthrimLock } from './lock.js';
 import { extractZoneName } from './cloudflare.js';
 import {
   getWorkerName,
@@ -25,6 +26,26 @@ export interface ResourceIds {
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
   r2?: Record<string, { name: string }>;
+}
+
+export function buildResourceIdsFromLock(lock: AuthrimLock): ResourceIds {
+  return {
+    d1: Object.fromEntries(
+      Object.entries(lock.d1 || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
+    ),
+    kv: Object.fromEntries(
+      Object.entries(lock.kv || {}).map(([key, value]) => [
+        key,
+        { id: value.id, name: value.name },
+      ])
+    ),
+    queues: lock.queues
+      ? Object.fromEntries(
+          Object.entries(lock.queues).map(([key, value]) => [key, { id: value.id, name: value.name }])
+        )
+      : undefined,
+    r2: lock.r2 ? Object.fromEntries(Object.entries(lock.r2)) : undefined,
+  };
 }
 
 export interface WranglerConfig {

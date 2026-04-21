@@ -19,6 +19,24 @@
 	let canResend = $state(false);
 	let intervalId: number | null = null;
 
+	function getStoredCustomFields(): Record<string, unknown> | undefined {
+		try {
+			const raw = sessionStorage.getItem('signup_custom_fields');
+			if (!raw) {
+				return undefined;
+			}
+
+			const parsed = JSON.parse(raw);
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				return undefined;
+			}
+
+			return parsed as Record<string, unknown>;
+		} catch {
+			return undefined;
+		}
+	}
+
 	// Melt UI Pin Input - 6 digits
 	const {
 		elements: { root, input, hiddenInput },
@@ -111,6 +129,11 @@
 
 			// Success
 			success = $LL.emailCode_success();
+			try {
+				sessionStorage.removeItem('signup_custom_fields');
+			} catch {
+				// Non-fatal
+			}
 
 			// Store session and update auth store
 			if (data?.sessionId) {
@@ -151,7 +174,10 @@
 		error = '';
 
 		try {
-			const { error: apiError } = await emailCodeAPI.send({ email });
+			const { error: apiError } = await emailCodeAPI.send({
+				email,
+				custom_fields: getStoredCustomFields()
+			});
 
 			if (apiError) {
 				throw new Error(apiError.error_description || 'Failed to resend code');

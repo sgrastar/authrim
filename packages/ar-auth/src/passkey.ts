@@ -38,6 +38,10 @@ import {
   AdminSessionRepository,
   D1Adapter,
 } from '@authrim/ar-lib-core';
+import {
+  persistRegistrationFieldValues,
+  validateRegistrationFieldSubmission,
+} from './registration-field-utils';
 
 // ===== Module-level Logger for Helper Functions =====
 const moduleLogger = createLogger().module('PASSKEY');
@@ -199,9 +203,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       email: string;
       userId?: string;
       name?: string;
+      custom_fields?: Record<string, unknown>;
     }>();
 
-    const { email, userId, name } = body;
+    const { email, userId, name, custom_fields } = body;
 
     if (!email) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -223,9 +228,20 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const rpID = originUrl.hostname;
     const origin = originHeader;
 
+    const tenantId = getTenantIdFromContext(c);
+    const customFieldValidation = await validateRegistrationFieldSubmission(
+      c.env.DB,
+      tenantId,
+      custom_fields
+    );
+    if (!customFieldValidation.ok) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: 'custom_fields', reason: customFieldValidation.error },
+      });
+    }
+
     // Check if user exists via Repository pattern
     // PII/Non-PII DB separation: email lookup uses PII DB, ID lookup uses Core DB
-    const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
@@ -373,6 +389,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       challenge: options.challenge,
       ttl: 300, // 5 minutes
       email,
+      metadata:
+        Object.keys(customFieldValidation.values).length > 0
+          ? { custom_fields: customFieldValidation.values }
+          : undefined,
     });
 
     return c.json({
@@ -415,14 +435,18 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     // Use userId-based sharding (UUID, no PII) - must match the shard used during options generation
     const challengeStore = await getChallengeStoreByUserId(c.env, userId);
 
-    let challenge: string;
+    let challengeData: {
+      challenge: string;
+      metadata?: {
+        custom_fields?: Record<string, unknown>;
+      };
+    };
     try {
-      const challengeData = (await challengeStore.consumeChallengeRpc({
+      challengeData = (await challengeStore.consumeChallengeRpc({
         id: `passkey_reg:${userId}`,
         type: 'passkey_registration',
         // No challenge value needed - DO will return it
-      })) as { challenge: string };
-      challenge = challengeData.challenge;
+      })) as typeof challengeData;
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
@@ -446,7 +470,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     try {
       verification = await verifyRegistrationResponse({
         response: credential,
-        expectedChallenge: challenge,
+        expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
       });
@@ -545,6 +569,25 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
           email: piiResult.email,
           name: piiResult.name || null,
         };
+      }
+    }
+
+    const customFields = challengeData.metadata?.custom_fields;
+    if (customFields) {
+      try {
+        await persistRegistrationFieldValues(
+          c.env.DB,
+          tenantId,
+          userId,
+          customFields,
+          Math.floor(now / 1000)
+        );
+      } catch (persistError) {
+        log.warn(
+          'Failed to persist registration field values',
+          { action: 'registration_fields_persist' },
+          persistError as Error
+        );
       }
     }
 
