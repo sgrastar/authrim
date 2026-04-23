@@ -24,6 +24,16 @@ import { handleSPSLO } from '../sp/slo';
 import { handleSPMetadata } from '../sp/metadata';
 import { handleIdPMetadata } from '../idp/metadata';
 
+const { mockValidateCustomClaimWrite, mockPersistCustomClaimWrite, mockSyncUserLifecycleState } =
+  vi.hoisted(() => ({
+    mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
+    mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
+    mockSyncUserLifecycleState: vi.fn().mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
+    }),
+  }));
+
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
 vi.mock('../admin/providers', () => ({
@@ -56,6 +66,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }),
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    validateCustomClaimWrite: mockValidateCustomClaimWrite,
+    persistCustomClaimWrite: mockPersistCustomClaimWrite,
+    syncUserLifecycleState: mockSyncUserLifecycleState,
     // Mock getSessionStoreForNewSession to avoid crypto dependency issues in tests
     getSessionStoreForNewSession: vi.fn().mockResolvedValue({
       stub: {
@@ -79,6 +92,7 @@ function createMockSAMLResponse(
     notOnOrAfter?: string;
     audience?: string;
     inResponseTo?: string;
+    attributes?: Array<{ name: string; value: string; friendlyName?: string }>;
   } = {}
 ): string {
   const {
@@ -90,6 +104,7 @@ function createMockSAMLResponse(
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
     audience = 'https://auth.example.com/saml/sp',
     inResponseTo = undefined,
+    attributes = [],
   } = options;
 
   // SubjectConfirmation NotOnOrAfter for bearer assertion (same as Conditions NotOnOrAfter)
@@ -128,6 +143,21 @@ function createMockSAMLResponse(
         <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef>
       </saml:AuthnContext>
     </saml:AuthnStatement>
+    ${
+      attributes.length > 0
+        ? `<saml:AttributeStatement>
+${attributes
+  .map(
+    (attribute) => `      <saml:Attribute Name="${attribute.name}"${
+      attribute.friendlyName ? ` FriendlyName="${attribute.friendlyName}"` : ''
+    }>
+        <saml:AttributeValue>${attribute.value}</saml:AttributeValue>
+      </saml:Attribute>`
+  )
+  .join('\n')}
+    </saml:AttributeStatement>`
+        : ''
+    }
   </saml:Assertion>
 </samlp:Response>`;
 
@@ -201,6 +231,12 @@ describe('SAML Integration', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
+    mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
+    mockSyncUserLifecycleState.mockReset().mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
+    });
     mockUsers = new Map();
 
     // Seed test user
@@ -488,6 +524,105 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(302);
       // Without RelayState, should redirect to UI_URL
       expect(res.headers.get('Location')).toBe('https://ui.example.com/');
+    });
+
+    it('should reject JIT provisioning when required custom claims are missing', async () => {
+      mockValidateCustomClaimWrite.mockResolvedValueOnce({
+        ok: false,
+        error: 'Department is required',
+        missingRequiredFields: [
+          {
+            fieldKey: 'department',
+            label: 'Department',
+            fieldType: 'string',
+          },
+        ],
+      });
+
+      mockEnv.DB_PII = {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('SELECT id FROM users_pii WHERE')) {
+              return null;
+            }
+            return null;
+          }),
+          run: vi.fn().mockResolvedValue({ success: true }),
+        })),
+      } as any;
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'new-user@example.com',
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockValidateCustomClaimWrite).toHaveBeenCalled();
+      const body = (await res.json()) as {
+        error: string;
+        error_description?: string;
+        missing_required_fields?: Array<{
+          field_key: string;
+          label: string;
+          field_type: string;
+        }>;
+      };
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('invalid');
+      expect(body.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
+
+    it('should map SAML attributes into custom claims during JIT provisioning', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+          department: 'custom_claims.department',
+        },
+      });
+
+      mockEnv.DB_PII = {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('SELECT id FROM users_pii WHERE')) {
+              return null;
+            }
+            return null;
+          }),
+          run: vi.fn().mockResolvedValue({ success: true }),
+        })),
+      } as any;
+
+      await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'new-user@example.com',
+          attributes: [{ name: 'department', value: 'Engineering' }],
+        })
+      );
+
+      expect(mockValidateCustomClaimWrite).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'default',
+          submitted: {
+            department: 'Engineering',
+          },
+        })
+      );
+      expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
+      expect(mockSyncUserLifecycleState).toHaveBeenCalled();
     });
   });
 

@@ -38,6 +38,11 @@ export interface UpstreamProvider {
   tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
 
   // Configuration
+  // Keys normally target standard OIDC claims (sub, email, name, picture, ...).
+  // When JIT provisioning is enabled, targets may also use:
+  // - custom_claims.<field_key>
+  // - custom_fields.<field_key>
+  // to populate Authrim custom claims from upstream provider claims.
   attributeMapping: Record<string, string>;
   autoLinkEmail: boolean;
   jitProvisioning: boolean;
@@ -342,6 +347,12 @@ export const ExternalIdPErrorCode = {
    * Maps to OIDC error: access_denied
    */
   POLICY_ACCESS_DENIED: 'policy_access_denied',
+
+  /**
+   * Automatic account creation failed because required custom claims are missing.
+   * This is distinct from generic policy denial so future incomplete-user flows can branch on it.
+   */
+  REQUIRED_CUSTOM_CLAIMS_MISSING: 'required_custom_claims_missing',
 
   /**
    * User interaction required by policy rule.

@@ -3,6 +3,10 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, externalIdpAPI } from '$lib/api/client';
+	import {
+		fetchRegistrationFields,
+		type RegistrationField
+	} from '$lib/api/registration-fields';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
 	import { fetchLoginMethods, type SocialProvider } from '$lib/api/login-methods';
@@ -18,15 +22,6 @@
 	let inviteToken = $state('');
 	let inviteTenantName = $state('');
 
-	// Registration fields (custom)
-	interface RegistrationField {
-		field_key: string;
-		display_label: string;
-		field_type: string;
-		required: boolean;
-		placeholder: string | null;
-		validation_rules: Record<string, unknown> | null;
-	}
 	let registrationFields = $state<RegistrationField[]>([]);
 	let customFieldValues = $state<Record<string, string>>({});
 	let customFieldErrors = $state<Record<string, string>>({});
@@ -121,19 +116,11 @@
 	}
 
 	async function loadRegistrationFields() {
-		try {
-			const res = await fetch('/api/v1/registration-fields');
-			if (res.ok) {
-				const data = (await res.json()) as { fields: RegistrationField[] };
-				registrationFields = data.fields ?? [];
-				customFieldValues = {};
-				customFieldErrors = {};
-				for (const f of registrationFields) {
-					customFieldValues[f.field_key] = f.field_type === 'boolean' ? 'false' : '';
-				}
-			}
-		} catch {
-			// Non-fatal: proceed without custom fields
+		registrationFields = await fetchRegistrationFields();
+		customFieldValues = {};
+		customFieldErrors = {};
+		for (const f of registrationFields) {
+			customFieldValues[f.field_key] = f.field_type === 'boolean' ? 'false' : '';
 		}
 	}
 

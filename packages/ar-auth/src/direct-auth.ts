@@ -1291,6 +1291,15 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     if (!customFieldValidation.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: { field: 'custom_fields', reason: customFieldValidation.error },
+        extensions: customFieldValidation.missingRequiredFields
+          ? {
+              missing_required_fields: customFieldValidation.missingRequiredFields.map((field) => ({
+                field_key: field.fieldKey,
+                label: field.label,
+                field_type: field.fieldType,
+              })),
+            }
+          : undefined,
       });
     }
 
@@ -1631,10 +1640,10 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       try {
         await persistRegistrationFieldValues(
           c.env.DB,
+          c.env.DB_PII ?? null,
           tenantId,
           challengeData.userId,
-          customFields,
-          Math.floor(now / 1000)
+          customFields
         );
       } catch (persistError) {
         log.warn(

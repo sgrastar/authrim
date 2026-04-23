@@ -1,11 +1,14 @@
-import { D1Adapter } from '@authrim/ar-lib-core';
+import type {
+  DatabaseSource,
+  RegistrationFieldSchemaRow,
+  ValidatedCustomClaimWriteResult,
+} from '@authrim/ar-lib-core';
+import { listRegistrationFieldSchemas, persistCustomClaimWrite } from '@authrim/ar-lib-core';
 
-interface RegistrationFieldSchemaRow {
-  field_key: string;
-  display_label: string;
-  field_type: string;
-  registration_required: number;
-  validation_rules: string | null;
+interface MissingRequiredRegistrationField {
+  fieldKey: string;
+  label: string;
+  fieldType: string;
 }
 
 type ValidationResult =
@@ -17,24 +20,21 @@ type ValidationResult =
   | {
       ok: false;
       error: string;
+      missingRequiredFields?: MissingRequiredRegistrationField[];
     };
-
-async function listRegistrationFieldSchemas(
-  db: D1Database,
-  tenantId: string
-): Promise<RegistrationFieldSchemaRow[]> {
-  const adapter = new D1Adapter({ db });
-  return adapter.query<RegistrationFieldSchemaRow>(
-    `SELECT field_key, display_label, field_type, registration_required, validation_rules
-     FROM custom_claim_schemas
-     WHERE tenant_id = ? AND show_on_registration = 1 AND is_active = 1
-     ORDER BY registration_order ASC, display_order ASC`,
-    [tenantId]
-  );
-}
 
 function getRequiredFieldError(label: string): string {
   return `${label} is required`;
+}
+
+function toMissingRequiredRegistrationField(
+  schema: RegistrationFieldSchemaRow
+): MissingRequiredRegistrationField {
+  return {
+    fieldKey: schema.field_key,
+    label: schema.display_label || schema.field_key,
+    fieldType: schema.field_type,
+  };
 }
 
 function isBlank(value: unknown): boolean {
@@ -42,7 +42,7 @@ function isBlank(value: unknown): boolean {
 }
 
 export async function validateRegistrationFieldSubmission(
-  db: D1Database,
+  db: DatabaseSource,
   tenantId: string,
   submitted: Record<string, unknown> | undefined
 ): Promise<ValidationResult> {
@@ -51,14 +51,24 @@ export async function validateRegistrationFieldSubmission(
     submitted && typeof submitted === 'object' && !Array.isArray(submitted) ? submitted : {};
   const values: Record<string, string> = {};
 
+  const missingRequiredFields = schemas
+    .filter((schema) => schema.registration_required === 1)
+    .filter((schema) => isBlank(input[schema.field_key]))
+    .map(toMissingRequiredRegistrationField);
+
+  if (missingRequiredFields.length > 0) {
+    return {
+      ok: false,
+      error: getRequiredFieldError(missingRequiredFields[0].label),
+      missingRequiredFields,
+    };
+  }
+
   for (const schema of schemas) {
     const rawValue = input[schema.field_key];
     const label = schema.display_label || schema.field_key;
 
     if (isBlank(rawValue)) {
-      if (schema.registration_required === 1) {
-        return { ok: false, error: getRequiredFieldError(label) };
-      }
       continue;
     }
 
@@ -170,11 +180,11 @@ export async function validateRegistrationFieldSubmission(
 }
 
 export async function persistRegistrationFieldValues(
-  db: D1Database,
+  db: DatabaseSource,
+  dbPii: DatabaseSource | null | undefined,
   tenantId: string,
   userId: string,
-  values: Record<string, unknown> | undefined,
-  nowSeconds = Math.floor(Date.now() / 1000)
+  values: Record<string, unknown> | undefined
 ): Promise<void> {
   if (!values || typeof values !== 'object') {
     return;
@@ -185,28 +195,60 @@ export async function persistRegistrationFieldValues(
     return;
   }
 
-  const schemaKeys = new Set(schemas.map((schema) => schema.field_key));
+  const schemaMap = new Map(schemas.map((schema) => [schema.field_key, schema] as const));
+  const nonPiiValues: Record<string, string> = {};
+  const piiValues: Record<string, string> = {};
 
   for (const [fieldKey, fieldValue] of Object.entries(values)) {
-    if (!schemaKeys.has(fieldKey)) {
+    const schema = schemaMap.get(fieldKey);
+    if (!schema) {
       continue;
     }
 
-    await db
-      .prepare(
-        `INSERT INTO user_custom_fields (id, user_id, tenant_id, field_key, field_value, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, tenant_id, field_key) DO UPDATE SET field_value = excluded.field_value, updated_at = excluded.updated_at`
-      )
-      .bind(
-        crypto.randomUUID(),
-        userId,
-        tenantId,
-        fieldKey,
-        String(fieldValue),
-        nowSeconds,
-        nowSeconds
-      )
-      .run();
+    if (schema.is_pii === 1) {
+      piiValues[fieldKey] = String(fieldValue);
+    } else {
+      nonPiiValues[fieldKey] = String(fieldValue);
+    }
   }
+
+  const validation: ValidatedCustomClaimWriteResult = {
+    ok: true,
+    schemas: schemas.map((schema) => ({
+      ...schema,
+      tenant_id: tenantId,
+      id: `${tenantId}:${schema.field_key}`,
+      is_required: 0,
+      is_active: 1,
+      include_in_id_token: 0,
+      include_in_userinfo: 0,
+      include_in_introspection: 0,
+      required_scopes: null,
+      scope_mode: 'any',
+      is_searchable: 0,
+      is_exportable: 0,
+      is_vc_claim: 0,
+      claim_namespace: null,
+      description: null,
+      display_order: 0,
+      schema_version: 1,
+      operation_status: 'active',
+      operation_detail: null,
+      created_by: null,
+      created_at: 0,
+      updated_at: 0,
+    })),
+    nonPiiValues,
+    piiValues,
+    nonPiiKeysToDelete: [],
+    piiKeysToDelete: [],
+  };
+
+  await persistCustomClaimWrite({
+    db,
+    dbPii,
+    tenantId,
+    userId,
+    validation,
+  });
 }

@@ -126,6 +126,9 @@ export interface ErrorDescriptor {
 
   /** Retry-After header value in seconds (for rate limiting) */
   retryAfter?: number;
+
+  /** Additional machine-readable fields for clients/UI integration */
+  extensions?: Record<string, unknown>;
 }
 
 /**
@@ -243,6 +246,9 @@ export interface ErrorFactoryOptions {
 
   /** Custom message variables for placeholder replacement */
   variables?: Record<string, string | number>;
+
+  /** Additional machine-readable fields for clients/UI integration */
+  extensions?: Record<string, unknown>;
 }
 
 /**

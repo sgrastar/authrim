@@ -32,9 +32,15 @@ export type {
   PIIStatus,
   PIIClass,
 } from './adapter';
+export type { DatabaseSource } from './adapter-source';
 
 // Utilities
 export { escapeLikePattern } from './adapter';
+export {
+  ensureDatabaseAdapter,
+  ensureOptionalDatabaseAdapter,
+  isDatabaseAdapter,
+} from './adapter-source';
 
 // Adapters
 export { D1Adapter, createD1Adapter, type D1AdapterConfig } from './adapters';

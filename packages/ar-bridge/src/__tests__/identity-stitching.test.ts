@@ -6,7 +6,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { UpstreamProvider, UserInfo, TokenResponse } from '../types';
 
 // Create hoisted mocks that can be configured in tests
-const { mockCoreQueryOne, mockCoreExecute, mockPiiQueryOne, MockD1Adapter, sqlTracker } =
+const {
+  mockCoreQueryOne,
+  mockCoreExecute,
+  mockPiiQueryOne,
+  mockValidateCustomClaimWrite,
+  mockPersistCustomClaimWrite,
+  mockSyncUserLifecycleState,
+  MockD1Adapter,
+  sqlTracker,
+} =
   vi.hoisted(() => {
     // Storage for tracking SQL calls - differentiate between DB and DB_PII
     const tracker = {
@@ -24,6 +33,12 @@ const { mockCoreQueryOne, mockCoreExecute, mockPiiQueryOne, MockD1Adapter, sqlTr
 
     // Mock functions for PII DB (env.DB_PII)
     const piiQueryOneMock = vi.fn().mockResolvedValue(null);
+    const validateCustomClaimWriteMock = vi.fn().mockResolvedValue({ ok: true });
+    const persistCustomClaimWriteMock = vi.fn().mockResolvedValue(undefined);
+    const syncUserLifecycleStateMock = vi.fn().mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
+    });
 
     // Create a class that wraps the mock functions and tracks calls
     // The class determines binding type from the db option's _isPii marker
@@ -57,6 +72,9 @@ const { mockCoreQueryOne, mockCoreExecute, mockPiiQueryOne, MockD1Adapter, sqlTr
       mockCoreQueryOne: coreQueryOneMock,
       mockCoreExecute: coreExecuteMock,
       mockPiiQueryOne: piiQueryOneMock,
+      mockValidateCustomClaimWrite: validateCustomClaimWriteMock,
+      mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
+      mockSyncUserLifecycleState: syncUserLifecycleStateMock,
       MockD1Adapter: D1AdapterClass,
       sqlTracker: tracker,
     };
@@ -96,6 +114,9 @@ vi.mock('@authrim/ar-lib-core', () => ({
     default_role_id: 'role_end_user',
     allow_unverified_domain_mappings: false,
   },
+  validateCustomClaimWrite: mockValidateCustomClaimWrite,
+  persistCustomClaimWrite: mockPersistCustomClaimWrite,
+  syncUserLifecycleState: mockSyncUserLifecycleState,
 }));
 
 // Mock the linked identity store
@@ -169,6 +190,12 @@ describe('Identity Stitching Service', () => {
     mockCoreQueryOne.mockReset().mockResolvedValue(null);
     mockCoreExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
     mockPiiQueryOne.mockReset().mockResolvedValue(null);
+    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
+    mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
+    mockSyncUserLifecycleState.mockReset().mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
+    });
   });
 
   describe('getStitchingConfig', () => {
@@ -452,6 +479,86 @@ describe('Identity Stitching Service', () => {
         });
 
         expect(result.isNewUser).toBe(true);
+      });
+
+      it('should reject JIT provisioning when required custom claims are missing', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+        mockValidateCustomClaimWrite.mockResolvedValueOnce({
+          ok: false,
+          error: 'Department is required',
+          missingRequiredFields: [
+            {
+              fieldKey: 'department',
+              label: 'Department',
+              fieldType: 'string',
+            },
+          ],
+        });
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+          })
+        ).rejects.toMatchObject({
+          code: 'required_custom_claims_missing',
+          details: expect.objectContaining({
+            validationError: 'Department is required',
+            missingRequiredFields: [
+              {
+                fieldKey: 'department',
+                label: 'Department',
+                fieldType: 'string',
+              },
+            ],
+          }),
+        });
+      });
+
+      it('should map provider claims into custom claims during JIT provisioning', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
+
+        const providerWithCustomMapping: UpstreamProvider = {
+          ...mockProvider,
+          attributeMapping: {
+            sub: 'sub',
+            email: 'email',
+            'custom_claims.department': 'profile.department',
+            'custom_fields.employee_number': 'profile.employee_number',
+          },
+        };
+
+        const mappedUserInfo: UserInfo = {
+          ...mockUserInfo,
+          profile: {
+            department: 'Engineering',
+            employee_number: 'E-100',
+          },
+        };
+
+        await handleIdentity(env as never, {
+          provider: providerWithCustomMapping,
+          userInfo: mappedUserInfo,
+          tokens: mockTokens,
+        });
+
+        expect(mockValidateCustomClaimWrite).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tenantId: 'default',
+            submitted: {
+              department: 'Engineering',
+              employee_number: 'E-100',
+            },
+          })
+        );
+        expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
+        expect(mockSyncUserLifecycleState).toHaveBeenCalled();
       });
     });
 

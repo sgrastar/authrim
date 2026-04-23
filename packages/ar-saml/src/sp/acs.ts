@@ -19,6 +19,9 @@ import {
   buildIssuerUrl,
   getLogger,
   createLogger,
+  validateCustomClaimWrite,
+  persistCustomClaimWrite,
+  syncUserLifecycleState,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -219,6 +222,21 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     });
   } catch (error) {
     log.error('ACS Error', {}, error as Error);
+
+    if (error instanceof SamlProvisioningError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: 'custom_claims', reason: error.message },
+        extensions: error.missingRequiredFields
+          ? {
+              missing_required_fields: error.missingRequiredFields.map((field) => ({
+                field_key: field.fieldKey,
+                label: field.label,
+                field_type: field.fieldType,
+              })),
+            }
+          : undefined,
+      });
+    }
 
     // Publish SAML authentication failure event (non-blocking)
     const failureTenantId = getTenantIdFromContext(c);
@@ -702,6 +720,21 @@ interface UserInfo {
   name?: string;
   nameId: string;
   attributes: Record<string, string[]>;
+  customClaims: Record<string, unknown>;
+}
+
+class SamlProvisioningError extends Error {
+  constructor(
+    message: string,
+    public readonly missingRequiredFields?: Array<{
+      fieldKey: string;
+      label: string;
+      fieldType: string;
+    }>
+  ) {
+    super(message);
+    this.name = 'SamlProvisioningError';
+  }
 }
 
 /**
@@ -711,6 +744,7 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
   const userInfo: UserInfo = {
     nameId: assertion.subject.nameId,
     attributes: {},
+    customClaims: {},
   };
 
   // Build attributes map
@@ -731,6 +765,13 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
         userInfo.email = values[0];
       } else if (oidcClaim === 'name') {
         userInfo.name = values[0];
+      } else if (oidcClaim.startsWith('custom_claims.') || oidcClaim.startsWith('custom_fields.')) {
+        const fieldKey = oidcClaim.includes('.')
+          ? oidcClaim.slice(oidcClaim.indexOf('.') + 1)
+          : '';
+        if (fieldKey) {
+          userInfo.customClaims[fieldKey] = values[0];
+        }
       }
     }
   }
@@ -774,6 +815,21 @@ async function findOrCreateUser(
     }
   }
 
+  const customClaimValidation = await validateCustomClaimWrite({
+    db: env.DB,
+    dbPii: env.DB_PII ?? null,
+    tenantId,
+    submitted: userInfo.customClaims,
+    requireCompleteRecord: true,
+  });
+
+  if (!customClaimValidation.ok) {
+    throw new SamlProvisioningError(
+      customClaimValidation.error,
+      customClaimValidation.missingRequiredFields
+    );
+  }
+
   // Create new user (JIT provisioning - PII/Non-PII DB separation)
   const userId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
@@ -781,8 +837,9 @@ async function findOrCreateUser(
 
   // Step 1: Insert into users_core with pii_status='pending'
   await coreAdapter.execute(
-    `INSERT INTO users_core (id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at)
-     VALUES (?, ?, 1, 'end_user', ?, 'pending', ?, ?)`,
+    `INSERT INTO users_core (
+      id, tenant_id, email_verified, user_type, pii_partition, pii_status, lifecycle_state, created_at, updated_at
+     ) VALUES (?, ?, 1, 'end_user', ?, 'pending', 'provisioning', ?, ?)`,
     [userId, tenantId, tenantId, now, now]
   );
 
@@ -800,6 +857,33 @@ async function findOrCreateUser(
       userId,
     ]);
   }
+
+  try {
+    await persistCustomClaimWrite({
+      db: env.DB,
+      dbPii: env.DB_PII ?? null,
+      tenantId,
+      userId,
+      validation: customClaimValidation,
+    });
+  } catch (persistError) {
+    if (piiAdapter) {
+      await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [userId]);
+    }
+    await coreAdapter.execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
+      userId,
+      tenantId,
+    ]);
+    await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [userId]);
+    throw persistError;
+  }
+
+  await syncUserLifecycleState({
+    db: env.DB,
+    dbPii: env.DB_PII ?? null,
+    tenantId,
+    userId,
+  });
 
   return userId;
 }

@@ -23,6 +23,10 @@ import {
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
   type ResolvedOrganization,
+  validateCustomClaimWrite,
+  persistCustomClaimWrite,
+  syncUserLifecycleState,
+  type ValidatedCustomClaimWriteResult,
 } from '@authrim/ar-lib-core';
 import {
   ExternalIdPError,
@@ -282,6 +286,7 @@ export async function handleIdentity(
       tenantId,
       rawClaims: userInfo,
       jitConfig,
+      customClaims: extractMappedCustomClaims(userInfo, provider.attributeMapping),
     });
 
     // Check if access was denied by policy
@@ -400,6 +405,109 @@ interface CreateUserParams {
   tenantId: string;
 }
 
+const CUSTOM_CLAIM_TARGET_PREFIXES = ['custom_claims.', 'custom_fields.'] as const;
+
+function getCustomClaimFieldKey(targetClaim: string): string | null {
+  for (const prefix of CUSTOM_CLAIM_TARGET_PREFIXES) {
+    if (targetClaim.startsWith(prefix) && targetClaim.length > prefix.length) {
+      return targetClaim.slice(prefix.length);
+    }
+  }
+
+  return null;
+}
+
+function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
+  const parts = path.split('.');
+  let current: unknown = obj;
+
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+
+  return current;
+}
+
+function normalizeCustomClaimValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const normalized = normalizeCustomClaimValue(entry);
+      if (normalized !== undefined) {
+        return normalized;
+      }
+    }
+    return undefined;
+  }
+
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
+/**
+ * Provider attributeMapping can target both standard OIDC claims and
+ * custom Authrim claims. Reserve:
+ * - custom_claims.<field_key>
+ * - custom_fields.<field_key>
+ */
+function extractMappedCustomClaims(
+  userInfo: UserInfo,
+  attributeMapping: Record<string, string>
+): Record<string, unknown> {
+  const customClaims: Record<string, unknown> = {};
+
+  for (const [targetClaim, sourcePath] of Object.entries(attributeMapping)) {
+    const fieldKey = getCustomClaimFieldKey(targetClaim);
+    if (!fieldKey) {
+      continue;
+    }
+
+    const normalized = normalizeCustomClaimValue(getNestedValue(userInfo, sourcePath));
+    if (normalized !== undefined) {
+      customClaims[fieldKey] = normalized;
+    }
+  }
+
+  return customClaims;
+}
+
+async function validateProvisionedCustomClaims(
+  env: Env,
+  tenantId: string,
+  submitted: Record<string, unknown>
+): Promise<ValidatedCustomClaimWriteResult> {
+  const validation = await validateCustomClaimWrite({
+    db: env.DB,
+    dbPii: env.DB_PII ?? null,
+    tenantId,
+    submitted,
+    requireCompleteRecord: true,
+  });
+
+  if (!validation.ok) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.REQUIRED_CUSTOM_CLAIMS_MISSING,
+      'Automatic account creation requires additional profile attributes that are not available from the external provider.',
+      {
+        validationError: validation.error,
+        missingRequiredFields: validation.missingRequiredFields,
+      }
+    );
+  }
+
+  return validation;
+}
+
 /**
  * Create user from external identity
  * PII/Non-PII DB separation: creates records in both Core DB and PII DB
@@ -408,6 +516,8 @@ async function createUserFromExternalIdentity(
   env: Env,
   params: CreateUserParams
 ): Promise<{ id: string }> {
+  await validateProvisionedCustomClaims(env, params.tenantId, {});
+
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
@@ -514,6 +624,7 @@ export async function hasPasskeyCredential(env: Env, userId: string): Promise<bo
 interface JITProvisioningParams extends CreateUserParams {
   rawClaims: Record<string, unknown>;
   jitConfig: JITProvisioningConfig;
+  customClaims: Record<string, unknown>;
 }
 
 interface JITProvisioningResult {
@@ -552,6 +663,12 @@ async function createUserWithJITProvisioning(
   env: Env,
   params: JITProvisioningParams
 ): Promise<JITProvisioningResult> {
+  const customClaimValidation = await validateProvisionedCustomClaims(
+    env,
+    params.tenantId,
+    params.customClaims
+  );
+
   const result: JITProvisioningResult = {
     userId: '',
     denied: false,
@@ -592,8 +709,8 @@ async function createUserWithJITProvisioning(
   await coreAdapter.execute(
     `INSERT INTO users_core (
       id, tenant_id, email_verified, email_domain_hash, email_domain_hash_version,
-      user_type, pii_partition, pii_status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'end_user', ?, 'pending', ?, ?)`,
+      user_type, pii_partition, pii_status, lifecycle_state, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'end_user', ?, 'pending', 'provisioning', ?, ?)`,
     [
       id,
       params.tenantId,
@@ -633,6 +750,40 @@ async function createUserWithJITProvisioning(
 
   result.userId = id;
 
+  try {
+    await persistCustomClaimWrite({
+      db: env.DB,
+      dbPii: env.DB_PII ?? null,
+      tenantId: params.tenantId,
+      userId: id,
+      validation: customClaimValidation,
+    });
+  } catch (persistError) {
+    try {
+      if (env.DB_PII) {
+        const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
+      }
+      await coreAdapter.execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
+      await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
+    } catch (cleanupError) {
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.error(
+        'Failed to cleanup user after custom claim persistence failure',
+        {
+          action: 'cleanup_user',
+          errorName: cleanupError instanceof Error ? cleanupError.name : 'Unknown error',
+        },
+        cleanupError as Error
+      );
+    }
+
+    throw persistError;
+  }
+
   // Step 4: Evaluate policy rules
   const ruleEvaluator = createRuleEvaluator(env.DB, env.SETTINGS);
 
@@ -661,6 +812,10 @@ async function createUserWithJITProvisioning(
         const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
         await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
       }
+      await coreAdapter.execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
       await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
@@ -735,6 +890,10 @@ async function createUserWithJITProvisioning(
         const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
         await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
       }
+      await coreAdapter.execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
       await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
@@ -821,6 +980,13 @@ async function createUserWithJITProvisioning(
       });
     }
   }
+
+  await syncUserLifecycleState({
+    db: env.DB,
+    dbPii: env.DB_PII ?? null,
+    tenantId: params.tenantId,
+    userId: id,
+  });
 
   return result;
 }

@@ -516,6 +516,46 @@ describe('Passkey Handlers', () => {
       );
     });
 
+    it('should return missing_required_fields when registration fields are required', async () => {
+      const db = createMockDB({
+        allResults: [
+          {
+            field_key: 'department',
+            display_label: 'Department',
+            field_type: 'string',
+            registration_required: 1,
+            validation_rules: null,
+          },
+        ],
+      });
+
+      const c = createMockContext({
+        body: { email: 'newuser@example.com' },
+        headers: { origin: 'https://example.com' },
+        db,
+      });
+
+      const response = await passkeyRegisterOptionsHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        missing_required_fields?: Array<{
+          field_key: string;
+          label: string;
+          field_type: string;
+        }>;
+      };
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
+
     it('should generate registration options for existing user', async () => {
       // PII/Non-PII DB Separation via Repository:
       // 1. Query PII DB for user by email

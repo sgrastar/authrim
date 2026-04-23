@@ -191,6 +191,7 @@ import {
   adminCustomClaimCreateHandler,
   adminCustomClaimsReservedNamesHandler,
   adminCustomClaimsStatsHandler,
+  adminCustomClaimRequiredViolationsDetectHandler,
   adminCustomClaimGetHandler,
   adminCustomClaimUpdateHandler,
   adminCustomClaimDeleteHandler,
@@ -1593,6 +1594,10 @@ app.get('/api/admin/custom-claims', adminCustomClaimsListHandler);
 app.post('/api/admin/custom-claims', adminCustomClaimCreateHandler);
 app.get('/api/admin/custom-claims/reserved-names', adminCustomClaimsReservedNamesHandler);
 app.get('/api/admin/custom-claims/stats', adminCustomClaimsStatsHandler);
+app.post(
+  '/api/admin/custom-claims/required-violations/detect',
+  adminCustomClaimRequiredViolationsDetectHandler
+);
 app.get('/api/admin/custom-claims/:id', adminCustomClaimGetHandler);
 app.put('/api/admin/custom-claims/:id', adminCustomClaimUpdateHandler);
 app.delete('/api/admin/custom-claims/:id', adminCustomClaimDeleteHandler);

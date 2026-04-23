@@ -8,7 +8,8 @@
  * Used during signup to automatically route users to their tenant.
  */
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import {
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
@@ -44,36 +45,34 @@ export interface TenantDomainCandidate {
  * This should only be called when the Host header resolves to 'default',
  * as Host-header tenant resolution always takes precedence.
  *
- * @param db - D1 database binding
+ * @param db - Database source
  * @param email - User email address (e.g. "user@company.com")
  * @param env - Cloudflare Workers environment bindings
  * @returns Tenant ID string, or null if no mapping found
  */
 export async function resolveTenantCandidatesFromEmailDomain(
-  db: D1Database,
+  db: DatabaseSource,
   email: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   env: any
 ): Promise<TenantDomainCandidate[]> {
   try {
+    const adapter = ensureDatabaseAdapter(db, 'tenant-domain-resolver');
     const hashConfig = await getEmailDomainHashConfig(env);
     const hashResult = await generateEmailDomainHashWithVersion(email, hashConfig);
 
-    const rows = await db
-      .prepare(
-        `SELECT tenant_domain_mappings.tenant_id, tenant_domain_mappings.priority
-         FROM tenant_domain_mappings
-         INNER JOIN tenants ON tenants.id = tenant_domain_mappings.tenant_id
-         WHERE domain_hash = ?
-           AND tenant_domain_mappings.verified = 1
-           AND tenant_domain_mappings.is_active = 1
-           AND tenants.is_active = 1
-         ORDER BY priority DESC, tenant_domain_mappings.tenant_id ASC`
-      )
-      .bind(hashResult.hash)
-      .all<TenantDomainMappingRow>();
+    const results = await adapter.query<TenantDomainMappingRow>(
+      `SELECT tenant_domain_mappings.tenant_id, tenant_domain_mappings.priority
+       FROM tenant_domain_mappings
+       INNER JOIN tenants ON tenants.id = tenant_domain_mappings.tenant_id
+       WHERE domain_hash = ?
+         AND tenant_domain_mappings.verified = 1
+         AND tenant_domain_mappings.is_active = 1
+         AND tenants.is_active = 1
+       ORDER BY priority DESC, tenant_domain_mappings.tenant_id ASC`,
+      [hashResult.hash]
+    );
 
-    const results = rows.results ?? [];
     if (results.length === 0) {
       return [];
     }
@@ -92,7 +91,7 @@ export async function resolveTenantCandidatesFromEmailDomain(
 }
 
 export async function resolveTenantFromEmailDomain(
-  db: D1Database,
+  db: DatabaseSource,
   email: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   env: any

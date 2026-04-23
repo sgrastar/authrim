@@ -186,6 +186,38 @@ function createMockContext(options: {
   return c;
 }
 
+function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'schema-1',
+    tenant_id: 'default',
+    field_key: 'department',
+    display_label: 'Department',
+    field_type: 'string',
+    is_pii: 0,
+    is_required: 1,
+    is_active: 1,
+    validation_rules: null,
+    include_in_id_token: 0,
+    include_in_userinfo: 0,
+    include_in_introspection: 0,
+    required_scopes: null,
+    scope_mode: 'any',
+    is_searchable: 1,
+    is_exportable: 1,
+    is_vc_claim: 0,
+    claim_namespace: null,
+    description: null,
+    display_order: 0,
+    schema_version: 1,
+    operation_status: 'active',
+    operation_detail: null,
+    created_by: null,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    ...overrides,
+  };
+}
+
 describe('Admin API Handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -480,6 +512,46 @@ describe('Admin API Handlers', () => {
         })
       );
     });
+
+    it('should support lifecycle_state filtering and include it in results', async () => {
+      const mockDB = createMockDB({
+        firstResult: { count: 1 },
+        allResults: [
+          {
+            id: 'user-1',
+            tenant_id: 'default',
+            email_verified: 1,
+            phone_number_verified: 0,
+            is_active: 1,
+            user_type: 'end_user',
+            pii_partition: 'default',
+            pii_status: 'active',
+            lifecycle_state: 'incomplete',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            last_login_at: null,
+          },
+        ],
+      });
+
+      const c = createMockContext({
+        query: { lifecycle_state: 'incomplete' },
+        db: mockDB,
+      });
+
+      await adminUsersListHandler(c);
+
+      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('lifecycle_state = ?'));
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          users: expect.arrayContaining([
+            expect.objectContaining({
+              lifecycle_state: 'incomplete',
+            }),
+          ]),
+        })
+      );
+    });
   });
 
   describe('adminUserGetHandler', () => {
@@ -538,6 +610,13 @@ describe('Admin API Handlers', () => {
           passkeys: expect.any(Array),
         })
       );
+
+      expect(
+        (mockDB as any).prepare.mock.calls.some(
+          ([sql]: [string]) =>
+            sql.includes('FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?')
+        )
+      ).toBe(true);
     });
 
     it('should return 404 for non-existent user', async () => {
@@ -589,6 +668,79 @@ describe('Admin API Handlers', () => {
 
       expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('passkeys'));
     });
+
+    it('should include lifecycle_state and missing_required_fields in user details', async () => {
+      const userId = 'user-missing-required';
+      const mockDB = createMockDB({
+        firstResult: {
+          id: userId,
+          tenant_id: 'default',
+          email_verified: 1,
+          phone_number_verified: 0,
+          is_active: 1,
+          user_type: 'end_user',
+          pii_partition: 'default',
+          pii_status: 'active',
+          lifecycle_state: 'incomplete',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          last_login_at: null,
+        },
+        allResults: [],
+      });
+      let allCallCount = 0;
+      (mockDB as any)._mockStatement.all.mockImplementation(() => {
+        allCallCount++;
+        if (allCallCount === 1) {
+          return Promise.resolve({ results: [] });
+        }
+        if (allCallCount === 2) {
+          return Promise.resolve({ results: [] });
+        }
+        if (allCallCount === 3) {
+          return Promise.resolve({
+            results: [createCustomClaimSchemaRow()],
+          });
+        }
+        if (allCallCount === 4) {
+          return Promise.resolve({ results: [] });
+        }
+        return Promise.resolve({ results: [] });
+      });
+
+      const mockDBPII = createMockDB({
+        firstResult: {
+          id: userId,
+          email: 'user@example.com',
+          name: 'Missing Required User',
+          custom_attributes_json: '{}',
+        },
+        allResults: [],
+      });
+
+      const c = createMockContext({
+        params: { id: userId },
+        db: mockDB,
+        dbPII: mockDBPII,
+      });
+
+      await adminUserGetHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({
+            lifecycle_state: 'incomplete',
+          }),
+          missing_required_fields: [
+            {
+              field_key: 'department',
+              label: 'Department',
+              field_type: 'string',
+            },
+          ],
+        })
+      );
+    });
   });
 
   describe('adminUserCreateHandler', () => {
@@ -612,6 +764,46 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should reject create when required custom field is missing', async () => {
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({
+        results: [createCustomClaimSchemaRow()],
+      });
+
+      const mockDBPII = createMockDB({
+        firstResult: null,
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          email: 'newuser@example.com',
+          name: 'New User',
+        },
+        db: mockDB,
+        dbPII: mockDBPII,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Department is required',
+          missing_required_fields: [
+            {
+              field_key: 'department',
+              label: 'Department',
+              field_type: 'string',
+            },
+          ],
+        }),
+        400
+      );
+    });
+
     it('should create new user with valid data', async () => {
       // PII/Non-PII DB Separation:
       // 1. Check email uniqueness in PII DB (returns null = no existing user)
@@ -622,6 +814,9 @@ describe('Admin API Handlers', () => {
 
       const mockDB = createMockDB({
         runResult: { success: true },
+      });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({
+        results: [createCustomClaimSchemaRow({ is_required: 0 })],
       });
 
       // Configure Core DB mock to return created user on final query
@@ -667,6 +862,7 @@ describe('Admin API Handlers', () => {
         body: {
           email: 'newuser@example.com',
           name: 'New User',
+          department: 'Engineering',
         },
         db: mockDB,
         dbPII: mockDBPII,
@@ -677,6 +873,12 @@ describe('Admin API Handlers', () => {
       // Verify insert into Core DB
       expect(mockDB.prepare).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO users_core')
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT user_id FROM user_custom_fields')
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE user_custom_fields SET')
       );
       // Verify insert into PII DB
       expect(mockDBPII.prepare).toHaveBeenCalledWith(
@@ -727,6 +929,72 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserUpdateHandler', () => {
+    it('should persist custom field updates', async () => {
+      const userId = 'user-custom-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      let coreQueryCount = 0;
+      (mockDB as any)._mockStatement.first.mockImplementation(() => {
+        coreQueryCount++;
+        return Promise.resolve({
+          id: userId,
+          tenant_id: 'default',
+          email_verified: 0,
+          phone_number_verified: 0,
+          is_active: 1,
+          user_type: 'end_user',
+          pii_partition: 'default',
+          pii_status: 'active',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          last_login_at: null,
+        });
+      });
+      (mockDB as any)._mockStatement.all
+        .mockResolvedValueOnce({
+          results: [createCustomClaimSchemaRow({ is_required: 0 })],
+        })
+        .mockResolvedValueOnce({
+          results: [],
+        });
+
+      const mockDBPII = createMockDB({
+        firstResult: {
+          id: userId,
+          email: 'old@example.com',
+          name: 'Updated Name',
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: userId },
+        body: {
+          department: 'Support',
+        },
+        db: mockDB,
+        dbPII: mockDBPII,
+      });
+
+      await adminUserUpdateHandler(c);
+
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT user_id FROM user_custom_fields')
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE user_custom_fields SET')
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({
+            id: userId,
+          }),
+        })
+      );
+    });
+
     it('should update user fields', async () => {
       // PII/Non-PII DB Separation:
       // Core fields (email_verified, phone_number_verified, user_type) → Core DB
@@ -736,6 +1004,13 @@ describe('Admin API Handlers', () => {
       const mockDB = createMockDB({
         runResult: { success: true },
       });
+      (mockDB as any)._mockStatement.all
+        .mockResolvedValueOnce({
+          results: [createCustomClaimSchemaRow({ is_required: 0 })],
+        })
+        .mockResolvedValueOnce({
+          results: [],
+        });
 
       // Core DB: first call checks user exists, subsequent calls for updates/reads
       let coreQueryCount = 0;

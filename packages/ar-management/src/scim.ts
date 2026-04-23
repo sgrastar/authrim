@@ -31,23 +31,28 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   type DatabaseAdapter,
+  ensureDatabaseAdapter,
   generateId,
   generateUserIdFromSettings,
   hashPassword,
+  validateCustomClaimWrite,
+  persistCustomClaimWrite,
+  syncUserLifecycleState,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 
 /**
- * Create database adapters from Hono context
+ * Create database adapters from Hono context.
+ * Keeping this at the route edge lets the shared custom-claims logic stay
+ * backend-agnostic while Workers still supply raw D1 bindings today.
  */
 function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter | null;
 } {
-  const coreAdapter = new D1Adapter({ db: c.env.DB });
-  const piiAdapter = c.env.DB_PII ? new D1Adapter({ db: c.env.DB_PII }) : null;
+  const coreAdapter = ensureDatabaseAdapter(c.env.DB, 'scim-core');
+  const piiAdapter = c.env.DB_PII ? ensureDatabaseAdapter(c.env.DB_PII, 'scim-pii') : null;
   return { coreAdapter, piiAdapter };
 }
 
@@ -104,6 +109,7 @@ async function fetchUserWithPII(
     address_region: string | null;
     address_postal_code: string | null;
     address_country: string | null;
+    custom_attributes_json: string | null;
   } | null = null;
 
   if (piiAdapter) {
@@ -111,7 +117,8 @@ async function fetchUserWithPII(
       `SELECT email, name, given_name, family_name, middle_name, nickname,
               preferred_username, profile, picture, website, gender, birthdate,
               zoneinfo, locale, phone_number, address_formatted, address_street_address,
-              address_locality, address_region, address_postal_code, address_country
+              address_locality, address_region, address_postal_code, address_country,
+              custom_attributes_json
        FROM users_pii WHERE id = ?`,
       [userId]
     );
@@ -151,7 +158,7 @@ async function fetchUserWithPII(
     password_hash: userCore.password_hash as string | null,
     external_id: userCore.external_id as string | null,
     active: userCore.is_active as number,
-    custom_attributes_json: null,
+    custom_attributes_json: userPII?.custom_attributes_json ?? null,
     created_at: new Date(userCore.created_at * 1000).toISOString(),
     updated_at: new Date(userCore.updated_at * 1000).toISOString(),
   } as InternalUser;
@@ -186,6 +193,90 @@ interface AddressComponents {
   country?: string;
 }
 
+function parseAddressParts(addressJson: string | null | undefined): AddressComponents {
+  if (!addressJson) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(addressJson);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as AddressComponents;
+    }
+  } catch {
+    // Ignore parse errors from stored address JSON.
+  }
+
+  return {};
+}
+
+function parseScimCustomAttributes(
+  internalUser: Partial<InternalUser>
+): Record<string, unknown> | undefined {
+  if (!internalUser.custom_attributes_json) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(internalUser.custom_attributes_json);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore malformed custom attribute payloads from mapping.
+  }
+
+  return {};
+}
+
+async function validateScimCustomClaimWrite(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  internalUser: Partial<InternalUser>,
+  options?: {
+    userId?: string;
+    mergeExistingValues?: boolean;
+    deleteMissingFields?: boolean;
+  }
+) {
+  return validateCustomClaimWrite({
+    db: c.env.DB,
+    dbPii: c.env.DB_PII ?? null,
+    tenantId,
+    userId: options?.userId,
+    submitted: parseScimCustomAttributes(internalUser),
+    requireCompleteRecord: true,
+    mergeExistingValues: options?.mergeExistingValues,
+    deleteMissingFields: options?.deleteMissingFields,
+  });
+}
+
+async function persistScimCustomClaimWrite(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  validation: Awaited<ReturnType<typeof validateScimCustomClaimWrite>>
+) {
+  if (!validation.ok) {
+    return;
+  }
+
+  await persistCustomClaimWrite({
+    db: c.env.DB,
+    dbPii: c.env.DB_PII ?? null,
+    tenantId,
+    userId,
+    validation,
+  });
+
+  await syncUserLifecycleState({
+    db: c.env.DB,
+    dbPii: c.env.DB_PII ?? null,
+    tenantId,
+    userId,
+  });
+}
+
 /**
  * PII user row from database
  */
@@ -212,6 +303,7 @@ interface PIIUserRow {
   address_region: string | null;
   address_postal_code: string | null;
   address_country: string | null;
+  custom_attributes_json: string | null;
 }
 
 /**
@@ -233,7 +325,8 @@ async function fetchUsersWithPII(
       `SELECT id, email, name, given_name, family_name, middle_name, nickname,
               preferred_username, profile, picture, website, gender, birthdate,
               zoneinfo, locale, phone_number, address_formatted, address_street_address,
-              address_locality, address_region, address_postal_code, address_country
+              address_locality, address_region, address_postal_code, address_country,
+              custom_attributes_json
        FROM users_pii WHERE id IN (${placeholders})`,
       userIds
     );
@@ -279,7 +372,7 @@ async function fetchUsersWithPII(
       password_hash: core.password_hash,
       external_id: core.external_id,
       active: core.is_active,
-      custom_attributes_json: null,
+      custom_attributes_json: pii?.custom_attributes_json ?? null,
       created_at: new Date(core.created_at * 1000).toISOString(),
       updated_at: new Date(core.updated_at * 1000).toISOString(),
     } as InternalUser;
@@ -439,9 +532,10 @@ function scimError(
   c: ScimContext,
   status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 500,
   detail: string,
-  scimType?: ScimErrorType
+  scimType?: ScimErrorType,
+  extensions?: Record<string, unknown>
 ): Response {
-  const error: ScimError = {
+  const error: ScimError & Record<string, unknown> = {
     schemas: [SCIM_SCHEMAS.ERROR],
     status: status.toString(),
     detail,
@@ -451,7 +545,27 @@ function scimError(
     error.scimType = scimType;
   }
 
+  if (extensions) {
+    Object.assign(error, extensions);
+  }
+
   return c.json(error, status);
+}
+
+function toCustomClaimErrorExtensions(validation: {
+  missingRequiredFields?: Array<{ fieldKey: string; label: string; fieldType: string }>;
+}): Record<string, unknown> | undefined {
+  if (!validation.missingRequiredFields || validation.missingRequiredFields.length === 0) {
+    return undefined;
+  }
+
+  return {
+    missing_required_fields: validation.missingRequiredFields.map((field) => ({
+      field_key: field.fieldKey,
+      label: field.label,
+      field_type: field.fieldType,
+    })),
+  };
 }
 
 /**
@@ -1238,6 +1352,16 @@ app.post('/Users', async (c) => {
 
     // Convert SCIM user to internal format
     const internalUser = scimToUser(scimUser);
+    const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser);
+    if (!customFieldValidation.ok) {
+      return scimError(
+        c,
+        400,
+        customFieldValidation.error,
+        'invalidValue',
+        toCustomClaimErrorExtensions(customFieldValidation)
+      );
+    }
 
     // Generate ID
     const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
@@ -1258,14 +1382,7 @@ app.post('/Users', async (c) => {
     if (internalUser.active === undefined) internalUser.active = 1;
 
     // Parse address JSON if provided
-    let addressParts: AddressComponents = {};
-    if (internalUser.address_json) {
-      try {
-        addressParts = JSON.parse(internalUser.address_json);
-      } catch {
-        // Ignore parse errors
-      }
-    }
+    const addressParts = parseAddressParts(internalUser.address_json);
 
     // Step 1: Insert into users_core with pii_status='pending' via Adapter
     await coreAdapter.execute(
@@ -1334,6 +1451,8 @@ app.post('/Users', async (c) => {
       ]);
     }
 
+    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+
     // Fetch created user from both DBs via Adapter
     const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
@@ -1368,6 +1487,7 @@ app.put('/Users/:id', async (c) => {
     const userId = c.req.param('id')!;
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
+    const tenantId = getTenantIdFromContext(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Validate required fields
@@ -1395,6 +1515,20 @@ app.put('/Users/:id', async (c) => {
 
     // Convert SCIM user to internal format
     const internalUser = scimToUser(scimUser);
+    const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
+      userId,
+      mergeExistingValues: false,
+      deleteMissingFields: true,
+    });
+    if (!customFieldValidation.ok) {
+      return scimError(
+        c,
+        400,
+        customFieldValidation.error,
+        'invalidValue',
+        toCustomClaimErrorExtensions(customFieldValidation)
+      );
+    }
     const nowUnix = Math.floor(Date.now() / 1000);
     internalUser.updated_at = new Date().toISOString();
 
@@ -1404,14 +1538,7 @@ app.put('/Users/:id', async (c) => {
     }
 
     // Parse address JSON if provided
-    let addressParts: AddressComponents = {};
-    if (internalUser.address_json) {
-      try {
-        addressParts = JSON.parse(internalUser.address_json);
-      } catch {
-        // Ignore parse errors
-      }
-    }
+    const addressParts = parseAddressParts(internalUser.address_json);
 
     // Update Core DB (non-PII fields)
     await coreAdapter.execute(
@@ -1458,6 +1585,8 @@ app.put('/Users/:id', async (c) => {
         ]
       );
     }
+
+    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, userId);
@@ -1496,6 +1625,7 @@ app.patch('/Users/:id', async (c) => {
     const userId = c.req.param('id')!;
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
+    const tenantId = getTenantIdFromContext(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if user exists - fetch from both DBs
@@ -1529,6 +1659,19 @@ app.patch('/Users/:id', async (c) => {
 
     // Convert back to internal format
     const internalUser = scimToUser(scimUser);
+    const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
+      userId,
+      mergeExistingValues: true,
+    });
+    if (!customFieldValidation.ok) {
+      return scimError(
+        c,
+        400,
+        customFieldValidation.error,
+        'invalidValue',
+        toCustomClaimErrorExtensions(customFieldValidation)
+      );
+    }
     internalUser.updated_at = new Date().toISOString();
 
     // Hash password if changed
@@ -1539,14 +1682,7 @@ app.patch('/Users/:id', async (c) => {
     const nowUnix = Math.floor(Date.now() / 1000);
 
     // Parse address JSON if provided
-    let addressParts: AddressComponents = {};
-    if (internalUser.address_json) {
-      try {
-        addressParts = JSON.parse(internalUser.address_json);
-      } catch {
-        // Ignore parse errors
-      }
-    }
+    const addressParts = parseAddressParts(internalUser.address_json);
 
     // Update Core DB (non-PII fields)
     await coreAdapter.execute(
@@ -1593,6 +1729,8 @@ app.patch('/Users/:id', async (c) => {
         ]
       );
     }
+
+    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, userId);
@@ -2557,6 +2695,21 @@ async function processUserOperation(
 
       // Convert and create
       const internalUser = scimToUser(scimUser);
+      const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser);
+      if (!customFieldValidation.ok) {
+        return {
+          method: 'POST',
+          bulkId,
+          status: '400',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '400',
+            detail: customFieldValidation.error,
+            scimType: 'invalidValue',
+            ...toCustomClaimErrorExtensions(customFieldValidation),
+          },
+        };
+      }
       const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
       const now = new Date().toISOString();
       const nowUnix = Math.floor(Date.now() / 1000);
@@ -2571,14 +2724,7 @@ async function processUserOperation(
       }
 
       // Parse address JSON if provided
-      let addressParts: Record<string, string | null> = {};
-      if (internalUser.address_json) {
-        try {
-          addressParts = JSON.parse(internalUser.address_json);
-        } catch {
-          // Ignore parse errors
-        }
-      }
+      const addressParts = parseAddressParts(internalUser.address_json);
 
       // Insert into Core DB
       await coreAdapter.execute(
@@ -2644,6 +2790,8 @@ async function processUserOperation(
           userId,
         ]);
       }
+
+      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
 
       // Store bulkId mapping for cross-references
       if (bulkId) {
@@ -2714,6 +2862,24 @@ async function processUserOperation(
       }
 
       const internalUser = scimToUser(scimUser);
+      const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
+        userId: resourceId,
+        mergeExistingValues: false,
+        deleteMissingFields: true,
+      });
+      if (!customFieldValidation.ok) {
+        return {
+          method: 'PUT',
+          status: '400',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '400',
+            detail: customFieldValidation.error,
+            scimType: 'invalidValue',
+            ...toCustomClaimErrorExtensions(customFieldValidation),
+          },
+        };
+      }
       const nowUnix = Math.floor(Date.now() / 1000);
       internalUser.updated_at = new Date().toISOString();
 
@@ -2721,14 +2887,7 @@ async function processUserOperation(
         internalUser.password_hash = await hashPassword(scimUser.password);
       }
 
-      let addressParts: Record<string, string | null> = {};
-      if (internalUser.address_json) {
-        try {
-          addressParts = JSON.parse(internalUser.address_json);
-        } catch {
-          // Ignore parse errors
-        }
-      }
+      const addressParts = parseAddressParts(internalUser.address_json);
 
       // Update Core DB
       await coreAdapter.execute(
@@ -2781,6 +2940,8 @@ async function processUserOperation(
           ]
         );
       }
+
+      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
 
       await invalidateUserCache(c.env, resourceId!);
 
@@ -2849,6 +3010,23 @@ async function processUserOperation(
       }
 
       const internalUser = scimToUser(scimUser);
+      const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
+        userId: resourceId,
+        mergeExistingValues: true,
+      });
+      if (!customFieldValidation.ok) {
+        return {
+          method: 'PATCH',
+          status: '400',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '400',
+            detail: customFieldValidation.error,
+            scimType: 'invalidValue',
+            ...toCustomClaimErrorExtensions(customFieldValidation),
+          },
+        };
+      }
       const nowUnix = Math.floor(Date.now() / 1000);
       internalUser.updated_at = new Date().toISOString();
 
@@ -2856,14 +3034,7 @@ async function processUserOperation(
         internalUser.password_hash = await hashPassword(scimUser.password);
       }
 
-      let addressParts: Record<string, string | null> = {};
-      if (internalUser.address_json) {
-        try {
-          addressParts = JSON.parse(internalUser.address_json);
-        } catch {
-          // Ignore parse errors
-        }
-      }
+      const addressParts = parseAddressParts(internalUser.address_json);
 
       // Update Core DB
       await coreAdapter.execute(
@@ -2916,6 +3087,8 @@ async function processUserOperation(
           ]
         );
       }
+
+      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
 
       await invalidateUserCache(c.env, resourceId!);
 

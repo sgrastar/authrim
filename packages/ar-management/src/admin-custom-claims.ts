@@ -15,15 +15,27 @@ import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
-  D1Adapter,
   type DatabaseAdapter,
-  escapeLikePattern,
+  ensureDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   generateId,
   createAuditLogFromContext,
   SchemaLoader,
   CustomClaimSchemaHistoryManager,
+  listCustomClaimSchemas,
+  getCustomClaimSchemaById,
+  findActiveCustomClaimSchemaByFieldKey,
+  insertCustomClaimSchema,
+  updateCustomClaimSchemaFields,
+  deleteCustomClaimSchemaById,
+  getRequiredCustomClaimViolationStatuses,
+  countUsersWithNonPiiCustomClaimData,
+  countUsersWithPiiCustomClaimData,
+  listNonPiiFieldUsage,
+  countUsersWithNonPiiFieldData,
+  deleteStoredCustomClaimData,
+  renameStoredCustomClaimData,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -44,17 +56,23 @@ function asBaseContext(c: AdminContext): BaseContext {
 }
 
 /**
- * Create database adapter from context (D1_CORE)
+ * Create database adapter from context.
+ * The route still receives raw Worker bindings, but the custom-claims layer
+ * now normalizes them through DatabaseAdapter instead of depending on D1 APIs.
  */
 function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  return ensureDatabaseAdapter(c.env.DB, 'custom-claims-admin');
 }
 
 /**
- * Create database adapter for PII database
+ * Create database adapter for PII database when configured.
  */
-function createPiiAdapterFromContext(c: AdminContext): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB_PII });
+function createOptionalPiiAdapterFromContext(c: AdminContext): DatabaseAdapter | null {
+  return c.env.DB_PII ? ensureDatabaseAdapter(c.env.DB_PII, 'custom-claims-admin-pii') : null;
+}
+
+function createHistoryManagerFromContext(c: AdminContext): CustomClaimSchemaHistoryManager {
+  return new CustomClaimSchemaHistoryManager(createAdapterFromContext(c));
 }
 
 // =============================================================================
@@ -124,6 +142,9 @@ const VALID_OPERATION_STATUSES = new Set(['active', 'deleting', 'renaming', 'err
 
 /** Batch size for PII user data operations */
 const PII_BATCH_SIZE = 500;
+
+/** Lifecycle states the detector may safely rewrite during Phase 1 backfill. */
+const DETECTABLE_LIFECYCLE_STATES = ['active', 'incomplete', 'provisioning'] as const;
 
 // =============================================================================
 // Validation Helpers
@@ -286,7 +307,7 @@ async function invalidateSchemaCache(c: AdminContext, tenantId: string): Promise
   try {
     const kv = c.env.AUTHRIM_CONFIG || null;
     if (kv) {
-      const loader = new SchemaLoader(c.env.DB, kv);
+      const loader = new SchemaLoader(createAdapterFromContext(c), kv);
       await loader.invalidateCache(tenantId);
     }
   } catch {
@@ -318,55 +339,18 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
     const isSystem = c.req.query('is_system');
     const operationStatus = c.req.query('operation_status');
 
-    // Build query
-    const whereConditions = ['tenant_id = ?'];
-    const params: unknown[] = [tenantId];
-
-    if (search) {
-      whereConditions.push('(field_key LIKE ? OR display_label LIKE ? OR description LIKE ?)');
-      const pattern = `%${escapeLikePattern(search)}%`;
-      params.push(pattern, pattern, pattern);
-    }
-
-    if (fieldType && VALID_FIELD_TYPES.includes(fieldType as FieldType)) {
-      whereConditions.push('field_type = ?');
-      params.push(fieldType);
-    }
-
-    if (isPii === '0' || isPii === '1') {
-      whereConditions.push('is_pii = ?');
-      params.push(parseInt(isPii));
-    }
-
-    if (isActive === '0' || isActive === '1') {
-      whereConditions.push('is_active = ?');
-      params.push(parseInt(isActive));
-    }
-
-    if (isSystem === '0' || isSystem === '1') {
-      whereConditions.push('is_system = ?');
-      params.push(parseInt(isSystem));
-    }
-
-    if (operationStatus && VALID_OPERATION_STATUSES.has(operationStatus)) {
-      whereConditions.push('operation_status = ?');
-      params.push(operationStatus);
-    }
-
-    const whereClause = whereConditions.join(' AND ');
-
-    // Count total
-    const countResult = await adapter.query<{ count: number }>(
-      `SELECT COUNT(*) as count FROM custom_claim_schemas WHERE ${whereClause}`,
-      params
-    );
-    const total = countResult[0]?.count || 0;
-
-    // Get schemas
-    const schemas = await adapter.query(
-      `SELECT * FROM custom_claim_schemas WHERE ${whereClause} ORDER BY display_order ASC, created_at ASC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
-    );
+    const { schemas, total } = await listCustomClaimSchemas(adapter, {
+      tenantId,
+      search,
+      fieldType: fieldType && VALID_FIELD_TYPES.includes(fieldType as FieldType) ? fieldType : null,
+      isPii: isPii === '0' || isPii === '1' ? parseInt(isPii, 10) : null,
+      isActive: isActive === '0' || isActive === '1' ? parseInt(isActive, 10) : null,
+      isSystem: isSystem === '0' || isSystem === '1' ? parseInt(isSystem, 10) : null,
+      operationStatus:
+        operationStatus && VALID_OPERATION_STATUSES.has(operationStatus) ? operationStatus : null,
+      limit,
+      offset,
+    });
 
     return c.json({
       schemas,
@@ -536,11 +520,8 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
     }
 
     // Check for duplicate active field_key
-    const existing = await adapter.query<{ id: string }>(
-      'SELECT id FROM custom_claim_schemas WHERE tenant_id = ? AND field_key = ? AND is_active = 1',
-      [tenantId, field_key]
-    );
-    if (existing.length > 0) {
+    const existing = await findActiveCustomClaimSchemaByFieldKey(adapter, tenantId, field_key);
+    if (existing) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'field_key',
@@ -554,47 +535,40 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
     const adminAuth = c.get('adminAuth');
     const createdBy = adminAuth?.userId || null;
 
-    await adapter.execute(
-      `INSERT INTO custom_claim_schemas (
-        id, tenant_id, field_key, display_label, field_type, is_pii, is_required, is_active,
-        validation_rules, include_in_id_token, include_in_userinfo, include_in_introspection,
-        required_scopes, scope_mode, is_searchable, is_exportable, is_vc_claim,
-        claim_namespace, description, display_order, schema_version,
-        operation_status, created_by, created_at, updated_at,
-        show_on_registration, registration_required, registration_order, registration_placeholder
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        tenantId,
-        field_key,
-        display_label,
-        field_type,
-        body.is_pii ? 1 : 0,
-        body.is_required ? 1 : 0,
-        validationRulesJson,
-        body.include_in_id_token ? 1 : 0,
-        body.include_in_userinfo ? 1 : 0,
-        body.include_in_introspection ? 1 : 0,
-        requiredScopesJson,
-        scopeMode,
-        body.is_searchable !== false ? 1 : 0,
-        body.is_exportable !== false ? 1 : 0,
-        body.is_vc_claim ? 1 : 0,
-        claimNamespaceValue,
-        body.description || null,
-        body.display_order ?? 100,
-        createdBy,
-        now,
-        now,
-        showOnRegistration ? 1 : 0,
-        registrationRequired ? 1 : 0,
-        body.registration_order || 0,
-        body.registration_placeholder || null,
-      ]
-    );
+    await insertCustomClaimSchema(adapter, {
+      id,
+      tenant_id: tenantId,
+      field_key,
+      display_label,
+      field_type,
+      is_pii: body.is_pii ? 1 : 0,
+      is_required: body.is_required ? 1 : 0,
+      is_active: 1,
+      validation_rules: validationRulesJson,
+      include_in_id_token: body.include_in_id_token ? 1 : 0,
+      include_in_userinfo: body.include_in_userinfo ? 1 : 0,
+      include_in_introspection: body.include_in_introspection ? 1 : 0,
+      required_scopes: requiredScopesJson,
+      scope_mode: scopeMode,
+      is_searchable: body.is_searchable !== false ? 1 : 0,
+      is_exportable: body.is_exportable !== false ? 1 : 0,
+      is_vc_claim: body.is_vc_claim ? 1 : 0,
+      claim_namespace: claimNamespaceValue,
+      description: body.description || null,
+      display_order: body.display_order ?? 100,
+      schema_version: 1,
+      operation_status: 'active',
+      created_by: createdBy,
+      created_at: now,
+      updated_at: now,
+      show_on_registration: showOnRegistration ? 1 : 0,
+      registration_required: registrationRequired ? 1 : 0,
+      registration_order: body.registration_order || 0,
+      registration_placeholder: body.registration_placeholder || null,
+    });
 
     // Fetch created schema
-    const created = await adapter.query('SELECT * FROM custom_claim_schemas WHERE id = ?', [id]);
+    const created = await getCustomClaimSchemaById(adapter, tenantId, id);
 
     await createAuditLogFromContext(asBaseContext(c), 'create', 'custom_claim_schema', id, {
       field_key,
@@ -604,14 +578,14 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
 
     // Record history
     try {
-      const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+      const historyManager = createHistoryManagerFromContext(c);
       const adminAuth = c.get('adminAuth');
       await historyManager.recordChange({
         schemaId: id,
         tenantId,
         operation: 'create',
         previousSnapshot: null,
-        newSnapshot: created[0] as Record<string, unknown>,
+        newSnapshot: created as Record<string, unknown>,
         actorId: adminAuth?.userId,
         actorType: 'admin',
         changeSource: 'admin_api',
@@ -623,7 +597,7 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
     await invalidateStatsCache(c, tenantId);
     await invalidateSchemaCache(c, tenantId);
 
-    return c.json({ schema: created[0] }, 201);
+    return c.json({ schema: created }, 201);
   } catch (error) {
     console.error('Failed to create custom claim schema:', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -647,6 +621,7 @@ export async function adminCustomClaimsReservedNamesHandler(c: AdminContext) {
 export async function adminCustomClaimsStatsHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
+    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
 
     // Check KV cache
@@ -682,30 +657,19 @@ export async function adminCustomClaimsStatsHandler(c: AdminContext) {
     );
 
     // Non-PII user data count (from user_custom_fields)
-    const nonPiiDataResult = await adapter.query<{ count: number }>(
-      'SELECT COUNT(DISTINCT user_id) as count FROM user_custom_fields WHERE tenant_id = ?',
-      [tenantId]
-    );
+    const nonPiiUserCount = await countUsersWithNonPiiCustomClaimData(adapter, tenantId);
 
     // PII approximate count (users with any custom PII data)
-    const piiAdapter = createPiiAdapterFromContext(c);
     let piiUserCount = 0;
     try {
-      const piiDataResult = await piiAdapter.query<{ count: number }>(
-        "SELECT COUNT(*) as count FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}'",
-        [tenantId]
-      );
-      piiUserCount = piiDataResult[0]?.count || 0;
+      piiUserCount = piiAdapter ? await countUsersWithPiiCustomClaimData(piiAdapter, tenantId) : 0;
     } catch {
       // PII DB may not be accessible
       piiUserCount = -1;
     }
 
     // Per-field usage for non-PII
-    const fieldUsage = await adapter.query<{ field_name: string; count: number }>(
-      'SELECT field_name, COUNT(DISTINCT user_id) as count FROM user_custom_fields WHERE tenant_id = ? GROUP BY field_name',
-      [tenantId]
-    );
+    const fieldUsage = await listNonPiiFieldUsage(adapter, tenantId);
 
     // Error state count
     const errorResult = await adapter.query<{ count: number }>(
@@ -717,10 +681,13 @@ export async function adminCustomClaimsStatsHandler(c: AdminContext) {
       total: totalResult[0]?.count || 0,
       active_non_pii: nonPiiResult[0]?.count || 0,
       active_pii: piiResult[0]?.count || 0,
-      non_pii_users_with_data: nonPiiDataResult[0]?.count || 0,
+      non_pii_users_with_data: nonPiiUserCount,
       pii_users_with_data: piiUserCount,
       pii_users_approximate: true,
-      field_usage: fieldUsage,
+      field_usage: fieldUsage.map((row: { fieldName: string; count: number }) => ({
+        field_name: row.fieldName,
+        count: row.count,
+      })),
       error_count: errorResult[0]?.count || 0,
     };
 
@@ -743,46 +710,134 @@ export async function adminCustomClaimsStatsHandler(c: AdminContext) {
 }
 
 /**
+ * POST /api/admin/custom-claims/required-violations/detect
+ * Re-scan active users for required custom-claim violations and refresh lifecycle_state.
+ *
+ * This is intentionally server-side because required fields may span Core + PII storage.
+ * Admin UI should call this action, then use users list filtering on lifecycle_state=incomplete.
+ */
+export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const adapter = createAdapterFromContext(c);
+    const piiAdapter = createOptionalPiiAdapterFromContext(c);
+    const previewLimit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
+    const lifecyclePlaceholders = DETECTABLE_LIFECYCLE_STATES.map(() => '?').join(', ');
+    const userRows = await adapter.query<{
+      id: string;
+    }>(
+      `SELECT id
+       FROM users_core
+       WHERE tenant_id = ? AND is_active = 1 AND lifecycle_state IN (${lifecyclePlaceholders})
+       ORDER BY created_at DESC`,
+      [tenantId, ...DETECTABLE_LIFECYCLE_STATES]
+    );
+
+    if (userRows.length === 0) {
+      return c.json({
+        summary: {
+          scanned_users: 0,
+          violating_users: 0,
+          required_schema_count: 0,
+          preview_limit: previewLimit,
+        },
+        violations: [],
+        truncated: false,
+      });
+    }
+
+    const violationStatuses = await getRequiredCustomClaimViolationStatuses({
+      db: adapter,
+      dbPii: piiAdapter,
+      cache: c.env.SETTINGS || c.env.AUTHRIM_CONFIG || null,
+      tenantId,
+      userIds: userRows.map((row) => row.id),
+      syncLifecycleState: true,
+    });
+
+    const violatingUsers = violationStatuses.users.filter(
+      (user) => user.missingRequiredFields.length > 0
+    );
+    const previewUsers = violatingUsers.slice(0, previewLimit);
+    const previewPiiMap = new Map<string, { email: string | null; name: string | null }>();
+
+    if (previewUsers.length > 0 && piiAdapter) {
+      const userIds = previewUsers.map((user) => user.userId);
+      const placeholders = userIds.map(() => '?').join(', ');
+      const piiRows = await piiAdapter.query<{
+        id: string;
+        email: string | null;
+        name: string | null;
+      }>(
+        `SELECT id, email, name
+         FROM users_pii
+         WHERE tenant_id = ? AND id IN (${placeholders})`,
+        [tenantId, ...userIds]
+      );
+
+      for (const row of piiRows) {
+        previewPiiMap.set(row.id, {
+          email: row.email ?? null,
+          name: row.name ?? null,
+        });
+      }
+    }
+
+    return c.json({
+      summary: {
+        scanned_users: userRows.length,
+        violating_users: violatingUsers.length,
+        required_schema_count: violationStatuses.requiredSchemaCount,
+        preview_limit: previewLimit,
+      },
+      violations: previewUsers.map((user) => ({
+        user_id: user.userId,
+        email: previewPiiMap.get(user.userId)?.email ?? null,
+        name: previewPiiMap.get(user.userId)?.name ?? null,
+        lifecycle_state: user.lifecycleState,
+        missing_required_fields: user.missingRequiredFields.map((field) => ({
+          field_key: field.fieldKey,
+          label: field.label,
+          field_type: field.fieldType,
+        })),
+      })),
+      truncated: violatingUsers.length > previewLimit,
+    });
+  } catch (error) {
+    console.error('Failed to detect required custom-claim violations:', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
  * GET /api/admin/custom-claims/:id
  * Get a single custom claim schema
  */
 export async function adminCustomClaimGetHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
+    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
 
-    const results = await adapter.query(
-      'SELECT * FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const schema = await getCustomClaimSchemaById(adapter, tenantId, id);
 
-    if (results.length === 0) {
+    if (!schema) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Get user count for this field
-    const schema = results[0] as Record<string, unknown>;
     let userCount = 0;
 
     if (schema.is_pii) {
       // PII: approximate count
-      const piiAdapter = createPiiAdapterFromContext(c);
       try {
-        const piiResult = await piiAdapter.query<{ count: number }>(
-          "SELECT COUNT(*) as count FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}'",
-          [tenantId]
-        );
-        userCount = piiResult[0]?.count || 0;
+        userCount = piiAdapter ? await countUsersWithPiiCustomClaimData(piiAdapter, tenantId) : 0;
       } catch {
         userCount = -1;
       }
     } else {
-      const countResult = await adapter.query<{ count: number }>(
-        'SELECT COUNT(DISTINCT user_id) as count FROM user_custom_fields WHERE tenant_id = ? AND field_name = ?',
-        [tenantId, schema.field_key]
-      );
-      userCount = countResult[0]?.count || 0;
+      userCount = await countUsersWithNonPiiFieldData(adapter, tenantId, schema.field_key as string);
     }
 
     return c.json({
@@ -808,16 +863,11 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     const body = await c.req.json();
 
     // Fetch existing
-    const existing = await adapter.query<Record<string, unknown>>(
-      'SELECT * FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const schema = await getCustomClaimSchemaById<Record<string, unknown>>(adapter, tenantId, id);
 
-    if (existing.length === 0) {
+    if (!schema) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-
-    const schema = existing[0];
 
     // Block updates during operations
     if (schema.operation_status !== 'active') {
@@ -1046,13 +1096,17 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     updates.push('updated_at = ?');
     updateParams.push(now);
 
-    await adapter.execute(
-      `UPDATE custom_claim_schemas SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`,
-      [...updateParams, id, tenantId]
-    );
+    await updateCustomClaimSchemaFields({
+      db: adapter,
+      tenantId,
+      schemaId: id,
+      updates: Object.fromEntries(
+        updates.map((clause, index) => [clause.replace(' = ?', ''), updateParams[index]])
+      ),
+    });
 
     // Fetch updated schema
-    const updated = await adapter.query('SELECT * FROM custom_claim_schemas WHERE id = ?', [id]);
+    const updated = await getCustomClaimSchemaById(adapter, tenantId, id);
 
     await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
       changes: Object.keys(body).filter((k) => k !== 'is_pii' && k !== 'field_key'),
@@ -1060,14 +1114,14 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
 
     // Record history
     try {
-      const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+      const historyManager = createHistoryManagerFromContext(c);
       const adminAuth = c.get('adminAuth');
       await historyManager.recordChange({
         schemaId: id,
         tenantId,
         operation: 'update',
-        previousSnapshot: existing[0] as Record<string, unknown>,
-        newSnapshot: updated[0] as Record<string, unknown>,
+        previousSnapshot: schema,
+        newSnapshot: updated as Record<string, unknown>,
         actorId: adminAuth?.userId,
         actorType: 'admin',
         changeSource: 'admin_api',
@@ -1079,7 +1133,7 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     await invalidateStatsCache(c, tenantId);
     await invalidateSchemaCache(c, tenantId);
 
-    return c.json({ schema: updated[0] });
+    return c.json({ schema: updated });
   } catch (error) {
     console.error('Failed to update custom claim schema:', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1093,20 +1147,16 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
 export async function adminCustomClaimDeleteHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
+    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
 
     // Fetch existing
-    const existing = await adapter.query<Record<string, unknown>>(
-      'SELECT * FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const schema = await getCustomClaimSchemaById<Record<string, unknown>>(adapter, tenantId, id);
 
-    if (existing.length === 0) {
+    if (!schema) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-
-    const schema = existing[0];
 
     // Block deletion of system claims
     if (schema.is_system === 1) {
@@ -1130,11 +1180,17 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
     const isPii = schema.is_pii as number;
 
     // Phase 1: Mark as deleting (CAS: only if still active/error)
-    const casResult = await adapter.execute(
-      "UPDATE custom_claim_schemas SET operation_status = 'deleting', updated_at = ? WHERE id = ? AND tenant_id = ? AND operation_status IN ('active', 'error')",
-      [Math.floor(Date.now() / 1000), id, tenantId]
-    );
-    if (!casResult?.rowsAffected) {
+    const casRows = await updateCustomClaimSchemaFields({
+      db: adapter,
+      tenantId,
+      schemaId: id,
+      updates: {
+        operation_status: 'deleting',
+        updated_at: Math.floor(Date.now() / 1000),
+      },
+      allowedCurrentStatuses: ['active', 'error'],
+    });
+    if (!casRows) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'operation_status',
@@ -1146,86 +1202,57 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
     try {
       // Phase 2: Delete user data
       if (isPii) {
-        // PII: Remove key from custom_attributes_json in batches (cursor-based)
-        const piiAdapter = createPiiAdapterFromContext(c);
-        let failedDeleteUsers = 0;
-        let totalProcessed = 0;
-        let lastProcessedId = '';
+        const deleteResult = await deleteStoredCustomClaimData({
+          db: adapter,
+          dbPii: piiAdapter,
+          tenantId,
+          fieldKey,
+          isPii: true,
+          piiBatchSize: PII_BATCH_SIZE,
+        });
 
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const batch = await piiAdapter.query<{
-            id: string;
-            custom_attributes_json: string;
-          }>(
-            "SELECT id, custom_attributes_json FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}' AND id > ? ORDER BY id LIMIT ?",
-            [tenantId, lastProcessedId, PII_BATCH_SIZE]
+        if (deleteResult.failedUsers > 0) {
+          console.warn(
+            `PII delete: ${deleteResult.failedUsers} user(s) failed out of ${deleteResult.processedUsers}`
           );
-
-          if (batch.length === 0) break;
-
-          for (const user of batch) {
-            try {
-              const attrs = JSON.parse(user.custom_attributes_json);
-              if (fieldKey in attrs) {
-                delete attrs[fieldKey];
-                await piiAdapter.execute(
-                  'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-                  [JSON.stringify(attrs), Math.floor(Date.now() / 1000), user.id, tenantId]
-                );
-              }
-            } catch (err) {
-              failedDeleteUsers++;
-              console.error(`Failed to delete PII field for user ${user.id}:`, err);
-            }
-          }
-
-          totalProcessed += batch.length;
-          lastProcessedId = batch[batch.length - 1].id;
-
-          if (batch.length < PII_BATCH_SIZE) break;
-        }
-
-        if (failedDeleteUsers > 0) {
-          console.warn(`PII delete: ${failedDeleteUsers} user(s) failed out of ${totalProcessed}`);
           // Partial failure - transition to error state instead of deleting schema
-          await adapter.execute(
-            "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-            [
-              JSON.stringify({
+          await updateCustomClaimSchemaFields({
+            db: adapter,
+            tenantId,
+            schemaId: id,
+            updates: {
+              operation_status: 'error',
+              operation_detail: JSON.stringify({
                 operation: 'delete',
                 field_key: fieldKey,
-                error: `Partial deletion: ${failedDeleteUsers} user(s) failed out of ${totalProcessed}`,
-                failed_users: failedDeleteUsers,
-                total_processed: totalProcessed,
+                error: `Partial deletion: ${deleteResult.failedUsers} user(s) failed out of ${deleteResult.processedUsers}`,
+                failed_users: deleteResult.failedUsers,
+                total_processed: deleteResult.processedUsers,
               }),
-              Math.floor(Date.now() / 1000),
-              id,
-              tenantId,
-            ]
-          );
+              updated_at: Math.floor(Date.now() / 1000),
+            },
+          });
           await invalidateStatsCache(c, tenantId);
+          await invalidateSchemaCache(c, tenantId);
           return c.json(
             {
               success: false,
-              error: `Partial deletion: ${failedDeleteUsers} user(s) failed. Schema marked as error state for retry.`,
+              error: `Partial deletion: ${deleteResult.failedUsers} user(s) failed. Schema marked as error state for retry.`,
             },
             500
           );
         }
       } else {
-        // Non-PII: Delete from user_custom_fields
-        await adapter.execute(
-          'DELETE FROM user_custom_fields WHERE tenant_id = ? AND field_name = ?',
-          [tenantId, fieldKey]
-        );
+        await deleteStoredCustomClaimData({
+          db: adapter,
+          tenantId,
+          fieldKey,
+          isPii: false,
+        });
       }
 
       // Phase 3: Delete schema record (only reached on full success)
-      await adapter.execute('DELETE FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?', [
-        id,
-        tenantId,
-      ]);
+      await deleteCustomClaimSchemaById(adapter, tenantId, id);
 
       await createAuditLogFromContext(asBaseContext(c), 'delete', 'custom_claim_schema', id, {
         field_key: fieldKey,
@@ -1234,7 +1261,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
 
       // Record history
       try {
-        const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+        const historyManager = createHistoryManagerFromContext(c);
         const adminAuth = c.get('adminAuth');
         await historyManager.recordChange({
           schemaId: id,
@@ -1257,15 +1284,18 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
     } catch (error) {
       // Operation failed - mark as error
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-        [
-          JSON.stringify({ operation: 'delete', field_key: fieldKey, error: errorMsg }),
-          Math.floor(Date.now() / 1000),
-          id,
-          tenantId,
-        ]
-      );
+      await updateCustomClaimSchemaFields({
+        db: adapter,
+        tenantId,
+        schemaId: id,
+        updates: {
+          operation_status: 'error',
+          operation_detail: JSON.stringify({ operation: 'delete', field_key: fieldKey, error: errorMsg }),
+          updated_at: Math.floor(Date.now() / 1000),
+        },
+      });
+      await invalidateStatsCache(c, tenantId);
+      await invalidateSchemaCache(c, tenantId);
       console.error('Failed to cascade delete custom claim schema:', error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
@@ -1282,6 +1312,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
 export async function adminCustomClaimRenameHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
+    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
     const body = await c.req.json();
@@ -1313,16 +1344,11 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
     }
 
     // Fetch existing
-    const existing = await adapter.query<Record<string, unknown>>(
-      'SELECT * FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const schema = await getCustomClaimSchemaById<Record<string, unknown>>(adapter, tenantId, id);
 
-    if (existing.length === 0) {
+    if (!schema) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-
-    const schema = existing[0];
 
     // Block renaming of system claims
     if (schema.is_system === 1) {
@@ -1353,11 +1379,10 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
     }
 
     // Check new key doesn't conflict with existing active schemas
-    const conflict = await adapter.query<{ id: string }>(
-      'SELECT id FROM custom_claim_schemas WHERE tenant_id = ? AND field_key = ? AND is_active = 1 AND id != ?',
-      [tenantId, newKey, id]
-    );
-    if (conflict.length > 0) {
+    const conflict = await findActiveCustomClaimSchemaByFieldKey(adapter, tenantId, newKey, {
+      excludeSchemaId: id,
+    });
+    if (conflict) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'new_field_key',
@@ -1370,11 +1395,18 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
     const now = Math.floor(Date.now() / 1000);
 
     // Phase 1: Mark as renaming (CAS: only if still active)
-    const casResult = await adapter.execute(
-      "UPDATE custom_claim_schemas SET operation_status = 'renaming', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND operation_status = 'active'",
-      [JSON.stringify({ old_key: oldKey, new_key: newKey }), now, id, tenantId]
-    );
-    if (!casResult?.rowsAffected) {
+    const casRows = await updateCustomClaimSchemaFields({
+      db: adapter,
+      tenantId,
+      schemaId: id,
+      updates: {
+        operation_status: 'renaming',
+        operation_detail: JSON.stringify({ old_key: oldKey, new_key: newKey }),
+        updated_at: now,
+      },
+      allowedCurrentStatuses: ['active'],
+    });
+    if (!casRows) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'operation_status',
@@ -1389,62 +1421,39 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       let failedPiiUsers = 0;
 
       if (isPii) {
-        const piiAdapter = createPiiAdapterFromContext(c);
-        let lastProcessedId = '';
-
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const batch = await piiAdapter.query<{
-            id: string;
-            custom_attributes_json: string;
-          }>(
-            "SELECT id, custom_attributes_json FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}' AND id > ? ORDER BY id LIMIT ?",
-            [tenantId, lastProcessedId, PII_BATCH_SIZE]
-          );
-
-          if (batch.length === 0) break;
-
-          for (const user of batch) {
-            try {
-              const attrs = JSON.parse(user.custom_attributes_json);
-              // Idempotent: only migrate if old_key exists and new_key does not
-              if (oldKey in attrs && !(newKey in attrs)) {
-                attrs[newKey] = attrs[oldKey];
-                delete attrs[oldKey];
-                await piiAdapter.execute(
-                  'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-                  [JSON.stringify(attrs), now, user.id, tenantId]
-                );
-                affectedUsers++;
-              }
-            } catch (err) {
-              failedPiiUsers++;
-              console.error(`Failed to rename PII field for user ${user.id}:`, err);
-            }
-          }
-
-          lastProcessedId = batch[batch.length - 1].id;
-          if (batch.length < PII_BATCH_SIZE) break;
-        }
+        const renameResult = await renameStoredCustomClaimData({
+          db: adapter,
+          dbPii: piiAdapter,
+          tenantId,
+          oldKey,
+          newKey,
+          isPii: true,
+          updatedAt: now,
+          piiBatchSize: PII_BATCH_SIZE,
+        });
+        affectedUsers = renameResult.affectedUsers;
+        failedPiiUsers = renameResult.failedUsers;
 
         if (failedPiiUsers > 0) {
           console.warn(`PII rename: ${failedPiiUsers} user(s) failed`);
           // Partial failure - transition to error state, keep old field_key for consistency
-          await adapter.execute(
-            "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-            [
-              JSON.stringify({
+          await updateCustomClaimSchemaFields({
+            db: adapter,
+            tenantId,
+            schemaId: id,
+            updates: {
+              operation_status: 'error',
+              operation_detail: JSON.stringify({
                 operation: 'rename',
                 old_key: oldKey,
                 new_key: newKey,
                 error: `Partial rename: ${failedPiiUsers} user(s) failed`,
               }),
-              Math.floor(Date.now() / 1000),
-              id,
-              tenantId,
-            ]
-          );
+              updated_at: Math.floor(Date.now() / 1000),
+            },
+          });
           await invalidateStatsCache(c, tenantId);
+          await invalidateSchemaCache(c, tenantId);
           return c.json(
             {
               success: false,
@@ -1454,22 +1463,30 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
           );
         }
       } else {
-        // Non-PII: Update field_name in user_custom_fields
-        const result = await adapter.execute(
-          'UPDATE user_custom_fields SET field_name = ? WHERE tenant_id = ? AND field_name = ?',
-          [newKey, tenantId, oldKey]
-        );
-        affectedUsers = result?.rowsAffected || 0;
+        const renameResult = await renameStoredCustomClaimData({
+          db: adapter,
+          tenantId,
+          oldKey,
+          newKey,
+          isPii: false,
+        });
+        affectedUsers = renameResult.affectedUsers;
       }
 
       // Phase 3: Atomic update - switch field_key, increment version, restore status (only on full success)
-      await adapter.execute(
-        `UPDATE custom_claim_schemas
-         SET field_key = ?, schema_version = schema_version + 1,
-             operation_status = 'active', operation_detail = NULL, updated_at = ?
-         WHERE id = ? AND tenant_id = ? AND operation_status = 'renaming'`,
-        [newKey, Math.floor(Date.now() / 1000), id, tenantId]
-      );
+      await updateCustomClaimSchemaFields({
+        db: adapter,
+        tenantId,
+        schemaId: id,
+        updates: {
+          field_key: newKey,
+          operation_status: 'active',
+          operation_detail: null,
+          updated_at: Math.floor(Date.now() / 1000),
+        },
+        allowedCurrentStatuses: ['renaming'],
+        incrementSchemaVersion: true,
+      });
 
       await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
         action: 'rename',
@@ -1482,18 +1499,18 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       await invalidateSchemaCache(c, tenantId);
 
       // Fetch updated schema
-      const updated = await adapter.query('SELECT * FROM custom_claim_schemas WHERE id = ?', [id]);
+      const updated = await getCustomClaimSchemaById(adapter, tenantId, id);
 
       // Record history
       try {
-        const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+        const historyManager = createHistoryManagerFromContext(c);
         const adminAuth = c.get('adminAuth');
         await historyManager.recordChange({
           schemaId: id,
           tenantId,
           operation: 'rename',
           previousSnapshot: schema as Record<string, unknown>,
-          newSnapshot: updated[0] as Record<string, unknown>,
+          newSnapshot: updated as Record<string, unknown>,
           actorId: adminAuth?.userId,
           actorType: 'admin',
           changeSource: 'admin_api',
@@ -1503,7 +1520,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       }
 
       return c.json({
-        schema: updated[0],
+        schema: updated,
         affected_users: affectedUsers,
         old_key: oldKey,
         new_key: newKey,
@@ -1511,21 +1528,23 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
     } catch (error) {
       // Operation failed - mark as error (field_key remains old_key for read consistency)
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-        [
-          JSON.stringify({
+      await updateCustomClaimSchemaFields({
+        db: adapter,
+        tenantId,
+        schemaId: id,
+        updates: {
+          operation_status: 'error',
+          operation_detail: JSON.stringify({
             operation: 'rename',
             old_key: oldKey,
             new_key: newKey,
             error: errorMsg,
           }),
-          Math.floor(Date.now() / 1000),
-          id,
-          tenantId,
-        ]
-      );
+          updated_at: Math.floor(Date.now() / 1000),
+        },
+      });
       await invalidateStatsCache(c, tenantId);
+      await invalidateSchemaCache(c, tenantId);
       console.error('Failed to rename custom claim schema:', error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
@@ -1542,20 +1561,16 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
 export async function adminCustomClaimRetryHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
+    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
 
     // Fetch existing
-    const existing = await adapter.query<Record<string, unknown>>(
-      'SELECT * FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const schema = await getCustomClaimSchemaById<Record<string, unknown>>(adapter, tenantId, id);
 
-    if (existing.length === 0) {
+    if (!schema) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-
-    const schema = existing[0];
 
     if (schema.operation_status !== 'error') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -1572,10 +1587,18 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
       detail = JSON.parse(schema.operation_detail as string);
     } catch {
       // If detail is unparseable, reset to active
-      await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
-        [Math.floor(Date.now() / 1000), id, tenantId]
-      );
+      await updateCustomClaimSchemaFields({
+        db: adapter,
+        tenantId,
+        schemaId: id,
+        updates: {
+          operation_status: 'active',
+          operation_detail: null,
+          updated_at: Math.floor(Date.now() / 1000),
+        },
+      });
+      await invalidateStatsCache(c, tenantId);
+      await invalidateSchemaCache(c, tenantId);
       return c.json({ success: true, action: 'reset_to_active' });
     }
 
@@ -1584,15 +1607,23 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
     if (operation === 'delete') {
       // Re-run delete by calling the delete handler logic
       // First reset to active, then the user can retry delete
-      await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
-        [Math.floor(Date.now() / 1000), id, tenantId]
-      );
+      await updateCustomClaimSchemaFields({
+        db: adapter,
+        tenantId,
+        schemaId: id,
+        updates: {
+          operation_status: 'active',
+          operation_detail: null,
+          updated_at: Math.floor(Date.now() / 1000),
+        },
+      });
 
       await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
         action: 'retry_reset',
         original_operation: 'delete',
       });
+      await invalidateStatsCache(c, tenantId);
+      await invalidateSchemaCache(c, tenantId);
 
       return c.json({
         success: true,
@@ -1606,10 +1637,18 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
       const newKey = detail.new_key as string;
 
       if (!oldKey || !newKey) {
-        await adapter.execute(
-          "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
-          [Math.floor(Date.now() / 1000), id, tenantId]
-        );
+        await updateCustomClaimSchemaFields({
+          db: adapter,
+          tenantId,
+          schemaId: id,
+          updates: {
+            operation_status: 'active',
+            operation_detail: null,
+            updated_at: Math.floor(Date.now() / 1000),
+          },
+        });
+        await invalidateStatsCache(c, tenantId);
+        await invalidateSchemaCache(c, tenantId);
         return c.json({ success: true, action: 'reset_to_active' });
       }
 
@@ -1617,11 +1656,17 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
       const isPii = schema.is_pii as number;
       const now = Math.floor(Date.now() / 1000);
 
-      const retryCas = await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'renaming', updated_at = ? WHERE id = ? AND tenant_id = ? AND operation_status = 'error'",
-        [now, id, tenantId]
-      );
-      if (!retryCas?.rowsAffected) {
+      const retryRows = await updateCustomClaimSchemaFields({
+        db: adapter,
+        tenantId,
+        schemaId: id,
+        updates: {
+          operation_status: 'renaming',
+          updated_at: now,
+        },
+        allowedCurrentStatuses: ['error'],
+      });
+      if (!retryRows) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
           variables: {
             field: 'operation_status',
@@ -1634,64 +1679,40 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
         let affectedUsers = 0;
 
         if (isPii) {
-          const piiAdapter = createPiiAdapterFromContext(c);
-          let failedRetryUsers = 0;
-          let lastProcessedId = '';
-
-          // eslint-disable-next-line no-constant-condition
-          while (true) {
-            const batch = await piiAdapter.query<{
-              id: string;
-              custom_attributes_json: string;
-            }>(
-              "SELECT id, custom_attributes_json FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}' AND id > ? ORDER BY id LIMIT ?",
-              [tenantId, lastProcessedId, PII_BATCH_SIZE]
-            );
-
-            if (batch.length === 0) break;
-
-            for (const user of batch) {
-              try {
-                const attrs = JSON.parse(user.custom_attributes_json);
-                // Check for both old and new key (partial migration may have occurred)
-                if (oldKey in attrs && !(newKey in attrs)) {
-                  attrs[newKey] = attrs[oldKey];
-                  delete attrs[oldKey];
-                  await piiAdapter.execute(
-                    'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-                    [JSON.stringify(attrs), now, user.id, tenantId]
-                  );
-                  affectedUsers++;
-                }
-              } catch (err) {
-                failedRetryUsers++;
-                console.error(`Failed to rename PII field for user ${user.id} (retry):`, err);
-              }
-            }
-
-            lastProcessedId = batch[batch.length - 1].id;
-            if (batch.length < PII_BATCH_SIZE) break;
-          }
+          const renameResult = await renameStoredCustomClaimData({
+            db: adapter,
+            dbPii: piiAdapter,
+            tenantId,
+            oldKey,
+            newKey,
+            isPii: true,
+            updatedAt: now,
+            piiBatchSize: PII_BATCH_SIZE,
+          });
+          affectedUsers = renameResult.affectedUsers;
+          const failedRetryUsers = renameResult.failedUsers;
 
           if (failedRetryUsers > 0) {
             console.warn(`PII rename retry: ${failedRetryUsers} user(s) failed`);
             // Partial failure - keep error state
-            await adapter.execute(
-              "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-              [
-                JSON.stringify({
+            await updateCustomClaimSchemaFields({
+              db: adapter,
+              tenantId,
+              schemaId: id,
+              updates: {
+                operation_status: 'error',
+                operation_detail: JSON.stringify({
                   operation: 'rename',
                   old_key: oldKey,
                   new_key: newKey,
                   error: `Retry partial failure: ${failedRetryUsers} user(s) failed`,
                   retry_failed: true,
                 }),
-                Math.floor(Date.now() / 1000),
-                id,
-                tenantId,
-              ]
-            );
+                updated_at: Math.floor(Date.now() / 1000),
+              },
+            });
             await invalidateStatsCache(c, tenantId);
+            await invalidateSchemaCache(c, tenantId);
             return c.json(
               {
                 success: false,
@@ -1702,30 +1723,36 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
           }
         } else {
           // Non-PII: Check remaining records to distinguish "all migrated" from "nothing to do"
-          const remaining = await adapter.query<{ count: number }>(
-            'SELECT COUNT(*) as count FROM user_custom_fields WHERE tenant_id = ? AND field_name = ?',
-            [tenantId, oldKey]
-          );
-          const remainingCount = remaining[0]?.count || 0;
+          const remainingCount = await countUsersWithNonPiiFieldData(adapter, tenantId, oldKey);
 
           if (remainingCount > 0) {
-            const result = await adapter.execute(
-              'UPDATE user_custom_fields SET field_name = ? WHERE tenant_id = ? AND field_name = ?',
-              [newKey, tenantId, oldKey]
-            );
-            affectedUsers = result?.rowsAffected || 0;
+            const renameResult = await renameStoredCustomClaimData({
+              db: adapter,
+              tenantId,
+              oldKey,
+              newKey,
+              isPii: false,
+              updatedAt: now,
+            });
+            affectedUsers = renameResult.affectedUsers;
           }
           // remainingCount === 0 means already fully migrated (idempotent success)
         }
 
         // Atomic update
-        await adapter.execute(
-          `UPDATE custom_claim_schemas
-           SET field_key = ?, schema_version = schema_version + 1,
-               operation_status = 'active', operation_detail = NULL, updated_at = ?
-           WHERE id = ? AND tenant_id = ? AND operation_status = 'renaming'`,
-          [newKey, Math.floor(Date.now() / 1000), id, tenantId]
-        );
+        await updateCustomClaimSchemaFields({
+          db: adapter,
+          tenantId,
+          schemaId: id,
+          updates: {
+            field_key: newKey,
+            operation_status: 'active',
+            operation_detail: null,
+            updated_at: Math.floor(Date.now() / 1000),
+          },
+          allowedCurrentStatuses: ['renaming'],
+          incrementSchemaVersion: true,
+        });
 
         await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
           action: 'retry_rename_success',
@@ -1735,45 +1762,71 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
         });
 
         await invalidateStatsCache(c, tenantId);
+        await invalidateSchemaCache(c, tenantId);
 
-        const updated = await adapter.query('SELECT * FROM custom_claim_schemas WHERE id = ?', [
-          id,
-        ]);
+        const updated = await getCustomClaimSchemaById(adapter, tenantId, id);
+
+        try {
+          const historyManager = createHistoryManagerFromContext(c);
+          const adminAuth = c.get('adminAuth');
+          await historyManager.recordChange({
+            schemaId: id,
+            tenantId,
+            operation: 'rename',
+            previousSnapshot: schema as Record<string, unknown>,
+            newSnapshot: updated as Record<string, unknown>,
+            actorId: adminAuth?.userId,
+            actorType: 'admin',
+            changeSource: 'admin_api',
+          });
+        } catch {
+          // History recording failure is non-critical
+        }
 
         return c.json({
           success: true,
           action: 'rename_completed',
-          schema: updated[0],
+          schema: updated,
           affected_users: affectedUsers,
         });
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        await adapter.execute(
-          "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-          [
-            JSON.stringify({
+        await updateCustomClaimSchemaFields({
+          db: adapter,
+          tenantId,
+          schemaId: id,
+          updates: {
+            operation_status: 'error',
+            operation_detail: JSON.stringify({
               operation: 'rename',
               old_key: oldKey,
               new_key: newKey,
               error: errorMsg,
               retry_failed: true,
             }),
-            Math.floor(Date.now() / 1000),
-            id,
-            tenantId,
-          ]
-        );
+            updated_at: Math.floor(Date.now() / 1000),
+          },
+        });
         await invalidateStatsCache(c, tenantId);
+        await invalidateSchemaCache(c, tenantId);
         console.error('Retry rename failed:', error);
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
     }
 
     // Unknown operation - reset to active
-    await adapter.execute(
-      "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
-      [Math.floor(Date.now() / 1000), id, tenantId]
-    );
+    await updateCustomClaimSchemaFields({
+      db: adapter,
+      tenantId,
+      schemaId: id,
+      updates: {
+        operation_status: 'active',
+        operation_detail: null,
+        updated_at: Math.floor(Date.now() / 1000),
+      },
+    });
+    await invalidateStatsCache(c, tenantId);
+    await invalidateSchemaCache(c, tenantId);
 
     return c.json({ success: true, action: 'reset_to_active' });
   } catch (error) {
@@ -1797,7 +1850,7 @@ export async function adminCustomClaimHistoryListHandler(c: AdminContext) {
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
     const offset = parseInt(c.req.query('offset') || '0', 10);
 
-    const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+    const historyManager = createHistoryManagerFromContext(c);
     const result = await historyManager.listVersions(tenantId, schemaId, limit, offset);
 
     return c.json(result);
@@ -1823,7 +1876,7 @@ export async function adminCustomClaimHistoryVersionHandler(c: AdminContext) {
       });
     }
 
-    const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+    const historyManager = createHistoryManagerFromContext(c);
     const entry = await historyManager.getVersion(tenantId, schemaId, version);
 
     if (!entry) {

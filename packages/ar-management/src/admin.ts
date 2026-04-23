@@ -22,6 +22,7 @@ import {
   generateUserIdFromSettings,
   D1Adapter,
   type DatabaseAdapter,
+  ensureDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   validateAllowedOrigins,
@@ -54,6 +55,10 @@ import {
   putClient,
   buildKVKey,
   getClient,
+  validateCustomClaimWrite,
+  persistCustomClaimWrite,
+  syncUserLifecycleState,
+  getRequiredCustomClaimViolationStatuses,
 } from '@authrim/ar-lib-core';
 import type { UserCore, UserPII } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
@@ -65,6 +70,60 @@ import { getCanonicalTenantBaseUrl } from './request-issuer';
 interface ImageTypeInfo {
   mimeType: string;
   extension: string;
+}
+
+const ADMIN_USER_CREATE_RESERVED_FIELDS = new Set([
+  'email',
+  'name',
+  'given_name',
+  'family_name',
+  'nickname',
+  'preferred_username',
+  'picture',
+  'email_verified',
+  'phone_number',
+  'phone_number_verified',
+  'user_type',
+]);
+
+const ADMIN_USER_UPDATE_RESERVED_FIELDS = new Set([
+  'name',
+  'given_name',
+  'family_name',
+  'nickname',
+  'preferred_username',
+  'email_verified',
+  'phone_number',
+  'phone_number_verified',
+  'picture',
+  'user_type',
+]);
+
+const VALID_USER_LIFECYCLE_STATES = new Set([
+  'invited',
+  'pending_verification',
+  'provisioning',
+  'incomplete',
+  'active',
+  'dormant',
+  'archived',
+  'deprovisioned',
+]);
+
+function extractCustomClaimInput(
+  body: Record<string, string | boolean | number | null | undefined>,
+  reservedFields: Set<string>
+): Record<string, unknown> {
+  const customFields: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(body)) {
+    if (reservedFields.has(key)) {
+      continue;
+    }
+    customFields[key] = value;
+  }
+
+  return customFields;
 }
 
 /**
@@ -623,6 +682,7 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
  * - search: Search by email or name (PII DB)
  * - verified: Filter by email_verified (true/false)
  * - pii_status: Filter by PII status (none/pending/active/failed/deleted)
+ * - lifecycle_state: Filter by lifecycle state (active/incomplete/...)
  *
  * PII Separation: Search (email/name) queries PII DB, filters (email_verified, pii_status) query Core DB.
  * Results are merged in application layer.
@@ -638,6 +698,7 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     const search = c.req.query('search') || '';
     const verified = c.req.query('verified'); // 'true', 'false', or undefined
     const piiStatus = c.req.query('pii_status'); // 'none', 'pending', 'active', 'failed', 'deleted', or undefined
+    const lifecycleState = c.req.query('lifecycle_state');
 
     const offset = (page - 1) * limit;
 
@@ -712,6 +773,13 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
+    if (lifecycleState !== undefined && VALID_USER_LIFECYCLE_STATES.has(lifecycleState)) {
+      coreQuery += ' AND lifecycle_state = ?';
+      countQuery += ' AND lifecycle_state = ?';
+      coreBindings.push(lifecycleState);
+      countBindings.push(lifecycleState);
+    }
+
     // Order and pagination
     coreQuery += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     coreBindings.push(limit, offset);
@@ -772,6 +840,7 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           suspended_until: toMilliseconds(core.suspended_until),
           locked_at: toMilliseconds(core.locked_at),
           locked_until: toMilliseconds(core.locked_until),
+          lifecycle_state: core.lifecycle_state ?? 'active',
         };
       });
     } else if (coreUsers.length > 0) {
@@ -796,6 +865,7 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
         suspended_until: toMilliseconds(core.suspended_until),
         locked_at: toMilliseconds(core.locked_at),
         locked_until: toMilliseconds(core.locked_until),
+        lifecycle_state: core.lifecycle_state ?? 'active',
       }));
     }
 
@@ -860,9 +930,20 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       field_name: string;
       field_value: string;
       field_type: string;
-    }>('SELECT field_name, field_value, field_type FROM user_custom_fields WHERE user_id = ?', [
+    }>('SELECT field_name, field_value, field_type FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
       userId,
+      tenantId,
     ]);
+
+    const requiredViolations = await getRequiredCustomClaimViolationStatuses({
+      db: c.env.DB,
+      dbPii: c.env.DB_PII ?? null,
+      cache: c.env.SETTINGS || null,
+      tenantId,
+      userIds: [userId],
+      syncLifecycleState: false,
+    });
+    const missingRequiredFields = requiredViolations.users[0]?.missingRequiredFields ?? [];
 
     // Merge Core and PII data
     const formattedUser = {
@@ -906,6 +987,7 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       suspended_until: toMilliseconds(userCore.suspended_until),
       locked_at: toMilliseconds(userCore.locked_at),
       locked_until: toMilliseconds(userCore.locked_until),
+      lifecycle_state: userCore.lifecycle_state ?? 'active',
     };
 
     // Format passkeys with millisecond timestamps (Repository returns array directly)
@@ -920,6 +1002,11 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       user: formattedUser,
       passkeys: formattedPasskeys,
+      missing_required_fields: missingRequiredFields.map((field) => ({
+        field_key: field.fieldKey,
+        label: field.label,
+        field_type: field.fieldType,
+      })),
       customFields, // adapter.query returns array directly
     });
   } catch (error) {
@@ -975,6 +1062,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       phone_number_verified,
       user_type,
     } = body;
+    const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_CREATE_RESERVED_FIELDS);
 
     if (!email) {
       return c.json(
@@ -1004,6 +1092,29 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           409
         );
       }
+    }
+
+    const customFieldValidation = await validateCustomClaimWrite({
+      db: c.env.DB,
+      dbPii: c.env.DB_PII ?? null,
+      tenantId,
+      submitted: customFieldInput,
+      requireCompleteRecord: true,
+    });
+
+    if (!customFieldValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: customFieldValidation.error,
+          missing_required_fields: customFieldValidation.missingRequiredFields?.map((field) => ({
+            field_key: field.fieldKey,
+            label: field.label,
+            field_type: field.fieldType,
+          })),
+        },
+        400
+      );
     }
 
     const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
@@ -1048,6 +1159,50 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     } else {
       // No PII DB - mark as 'none' (M2M user or single-DB mode)
       await authCtx.repositories.userCore.updatePIIStatus(userId, 'none');
+    }
+
+    try {
+      await persistCustomClaimWrite({
+        db: c.env.DB,
+        dbPii: c.env.DB_PII ?? null,
+        tenantId,
+        userId,
+        validation: customFieldValidation,
+      });
+      await syncUserLifecycleState({
+        db: c.env.DB,
+        dbPii: c.env.DB_PII ?? null,
+        tenantId,
+        userId,
+      });
+    } catch (customFieldError) {
+      logSanitizedError('Custom claim persistence failed during admin user create', customFieldError);
+
+      try {
+        await authCtx.coreAdapter.execute(
+          'DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?',
+          [userId, tenantId]
+        );
+
+        if (c.env.DB_PII) {
+          await ensureDatabaseAdapter(c.env.DB_PII, 'admin-user-create-rollback-pii').execute(
+            'DELETE FROM users_pii WHERE id = ? AND tenant_id = ?',
+            [userId, tenantId]
+          );
+        }
+
+        await authCtx.coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+          userId,
+          tenantId,
+        ]);
+      } catch (cleanupError) {
+        logSanitizedError(
+          'Failed to rollback admin user create after custom claim persistence failure',
+          cleanupError
+        );
+      }
+
+      throw customFieldError;
     }
 
     // Fetch created user data (merged from both DBs)
@@ -1149,6 +1304,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       /** Additional custom attributes */
       [key: string]: string | boolean | number | null | undefined;
     }>();
+    const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_UPDATE_RESERVED_FIELDS);
 
     const authCtx = createAuthContextFromHono(c, tenantId);
 
@@ -1204,7 +1360,41 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Check if there are any updates
-    if (Object.keys(coreUpdateData).length === 0 && Object.keys(piiUpdateData).length === 0) {
+    const customFieldValidation = await validateCustomClaimWrite({
+      db: c.env.DB,
+      dbPii: c.env.DB_PII ?? null,
+      tenantId,
+      userId,
+      submitted: customFieldInput,
+      requireCompleteRecord: true,
+    });
+
+    if (!customFieldValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: customFieldValidation.error,
+          missing_required_fields: customFieldValidation.missingRequiredFields?.map((field) => ({
+            field_key: field.fieldKey,
+            label: field.label,
+            field_type: field.fieldType,
+          })),
+        },
+        400
+      );
+    }
+
+    const hasCustomFieldChanges =
+      Object.keys(customFieldValidation.nonPiiValues).length > 0 ||
+      Object.keys(customFieldValidation.piiValues).length > 0 ||
+      customFieldValidation.nonPiiKeysToDelete.length > 0 ||
+      customFieldValidation.piiKeysToDelete.length > 0;
+
+    if (
+      Object.keys(coreUpdateData).length === 0 &&
+      Object.keys(piiUpdateData).length === 0 &&
+      !hasCustomFieldChanges
+    ) {
       return c.json(
         {
           error: 'invalid_request',
@@ -1224,6 +1414,22 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
       await piiCtx.piiRepositories.userPII.updatePII(userId, piiUpdateData, piiAdapter);
+    }
+
+    if (hasCustomFieldChanges) {
+      await persistCustomClaimWrite({
+        db: c.env.DB,
+        dbPii: c.env.DB_PII ?? null,
+        tenantId,
+        userId,
+        validation: customFieldValidation,
+      });
+      await syncUserLifecycleState({
+        db: c.env.DB,
+        dbPii: c.env.DB_PII ?? null,
+        tenantId,
+        userId,
+      });
     }
 
     // Invalidate user cache (cache invalidation hook)

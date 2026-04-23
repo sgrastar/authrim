@@ -1501,6 +1501,8 @@ CREATE TABLE users_core (
   is_active INTEGER DEFAULT 1,
 
   -- User type: end_user | admin | m2m
+  -- m2m is reserved for non-human service principals represented as user rows.
+  -- Many OAuth client_credentials actors are modeled as OAuth clients instead.
   user_type TEXT NOT NULL DEFAULT 'end_user',
 
   -- PII partition info
@@ -1519,7 +1521,29 @@ CREATE TABLE users_core (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   last_login_at INTEGER
-, email_domain_hash_version INTEGER DEFAULT 1, external_id TEXT DEFAULT NULL, status TEXT DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'locked')), suspended_at INTEGER, suspended_until INTEGER, locked_at INTEGER, locked_until INTEGER);
+, email_domain_hash_version INTEGER DEFAULT 1, external_id TEXT DEFAULT NULL,
+  -- Operational access control only. Keep separate from future lifecycle_state.
+  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'locked')),
+  -- Account lifecycle stage. Keep separate from status and user_type.
+  -- Values: invited, pending_verification, provisioning, incomplete,
+  -- active, dormant, archived, deprovisioned.
+  lifecycle_state TEXT DEFAULT 'active' CHECK (
+    lifecycle_state IN (
+      'invited',
+      'pending_verification',
+      'provisioning',
+      'incomplete',
+      'active',
+      'dormant',
+      'archived',
+      'deprovisioned'
+    )
+  ),
+  suspended_at INTEGER,
+  suspended_until INTEGER,
+  locked_at INTEGER,
+  locked_until INTEGER
+);
 
 CREATE TABLE verified_attributes (
   id TEXT PRIMARY KEY,

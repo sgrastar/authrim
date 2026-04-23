@@ -20,7 +20,7 @@
 
 import { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { Env, Session } from '@authrim/ar-lib-core';
+import type { Env, Session, UserLifecycleState } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
@@ -36,6 +36,7 @@ import {
   type AuthEventData,
   // Logger
   getLogger,
+  syncUserLifecycleState,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -398,6 +399,20 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       [anonymousUserId]
     );
 
+    const lifecycleSync = await syncUserLifecycleState({
+      db: c.env.DB,
+      dbPii: c.env.DB_PII ?? null,
+      tenantId,
+      userId: finalUserId,
+    });
+    const missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
+      field_key: field.fieldKey,
+      label: field.label,
+      field_type: field.fieldType,
+    }));
+    const profileCompletionRequired = missingRequiredCustomClaims.length > 0;
+    const accountLifecycleState: UserLifecycleState = lifecycleSync.lifecycleState;
+
     // Update session to reflect upgraded state
     // Security: Clear verified_email to prevent replay attacks
     const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
@@ -413,6 +428,11 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       upgrade_nonce: undefined,
       // Clear device identification data (privacy)
       device_id_hash: undefined,
+      // Mirror the lifecycle snapshot into session data so the UI can recover
+      // completion state without an extra round-trip after upgrade.
+      profile_completion_required: profileCompletionRequired,
+      missing_required_custom_claims: missingRequiredCustomClaims,
+      account_lifecycle_state: accountLifecycleState,
     });
 
     // Cleanup: Delete orphaned OTP user (created during email verification)
@@ -458,6 +478,9 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       preserve_sub: preserveSub,
       method,
       upgraded_at: now,
+      profile_completion_required: profileCompletionRequired,
+      missing_required_custom_claims: missingRequiredCustomClaims,
+      account_lifecycle_state: accountLifecycleState,
     });
   } catch (error) {
     log.error('Upgrade complete error', { action: 'complete' }, error as Error);
@@ -495,6 +518,29 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     // Check if user is anonymous
     const user = await authCtx.repositories.userCore.findById(session.userId);
     const isAnonymous = user?.user_type === 'anonymous';
+    let missingRequiredCustomClaims: Array<{
+      field_key: string;
+      label: string;
+      field_type: string;
+    }> = [];
+    let accountLifecycleState: UserLifecycleState = 'active';
+
+    if (!isAnonymous) {
+      const lifecycleSync = await syncUserLifecycleState({
+        db: c.env.DB,
+        dbPii: c.env.DB_PII ?? null,
+        tenantId,
+        userId: session.userId,
+      });
+      missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
+        field_key: field.fieldKey,
+        label: field.label,
+        field_type: field.fieldType,
+      }));
+      accountLifecycleState = lifecycleSync.lifecycleState;
+    }
+
+    const profileCompletionRequired = missingRequiredCustomClaims.length > 0;
 
     // Get upgrade history if exists
     const upgradeHistory = await authCtx.coreAdapter.query<{
@@ -514,6 +560,9 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
       user_id: session.userId,
       is_anonymous: isAnonymous,
       upgrade_eligible: isAnonymous,
+      profile_completion_required: profileCompletionRequired,
+      missing_required_custom_claims: missingRequiredCustomClaims,
+      account_lifecycle_state: accountLifecycleState,
       upgrade_history: upgradeHistory.map((h) => ({
         id: h.id,
         method: h.upgrade_method,

@@ -255,7 +255,13 @@ export interface SAMLIdPConfig {
   certificate: string;
   /** NameID format */
   nameIdFormat: NameIDFormat;
-  /** SAML attribute to OIDC claim mapping */
+  /**
+   * SAML attribute to Authrim claim mapping.
+   * Standard targets are OIDC-style claims such as email or name.
+   * For JIT provisioning, targets may also use:
+   * - custom_claims.<field_key>
+   * - custom_fields.<field_key>
+   */
   attributeMapping: Record<string, string>;
   /** Allowed bindings */
   allowedBindings: SAMLBinding[];

@@ -14,7 +14,7 @@
  * @packageDocumentation
  */
 
-import { D1Adapter, type DatabaseAdapter } from '../db';
+import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
 
 // =============================================================================
 // Types
@@ -159,18 +159,16 @@ export function calculateChanges(
 // =============================================================================
 
 export class SettingsHistoryManager {
-  private db: D1Database;
   private adapter: DatabaseAdapter;
   private tenantId: string;
   private config: SettingsHistoryConfig;
 
   constructor(
-    db: D1Database,
+    db: DatabaseSource,
     tenantId: string = DEFAULT_TENANT_ID,
     config: SettingsHistoryConfig = {}
   ) {
-    this.db = db;
-    this.adapter = new D1Adapter({ db });
+    this.adapter = ensureDatabaseAdapter(db, 'settings-history');
     this.tenantId = tenantId;
     this.config = {
       maxVersions: config.maxVersions ?? DEFAULT_MAX_VERSIONS,
@@ -469,7 +467,7 @@ export class SettingsHistoryManager {
  * Create a settings history manager
  */
 export function createSettingsHistoryManager(
-  db: D1Database,
+  db: DatabaseSource,
   tenantId?: string,
   config?: SettingsHistoryConfig
 ): SettingsHistoryManager {

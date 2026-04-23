@@ -37,7 +37,9 @@ import {
  * Types:
  * - end_user: Regular authenticated user
  * - admin: Administrative user
- * - m2m: Machine-to-machine (service account)
+ * - m2m: Machine-to-machine service principal when represented as a user row
+ *   Note: many client_credentials flows are modeled as OAuth clients, not users_core rows.
+ *   AI agents acting on behalf of a human user should stay in delegated end_user context.
  * - anonymous: Device-based anonymous user (can be upgraded to end_user)
  */
 export type CoreUserType = 'end_user' | 'admin' | 'm2m' | 'anonymous';
@@ -47,8 +49,35 @@ export type CoreUserType = 'end_user' | 'admin' | 'm2m' | 'anonymous';
  */
 /**
  * User account status for suspend/lock functionality (Admin SDK Phase 1)
+ *
+ * Keep this focused on operational access control only.
+ * lifecycle_state remains a separate axis and covers stages such as:
+ * invited, pending_verification, provisioning, incomplete, active, dormant,
+ * archived, and deprovisioned.
  */
 export type UserStatus = 'active' | 'suspended' | 'locked';
+/**
+ * Account lifecycle stages, kept separate from status and user_type.
+ *
+ * Canonical examples:
+ * - invited: invitation issued but not accepted
+ * - pending_verification: primary verification step outstanding
+ * - provisioning: account is being auto-provisioned
+ * - incomplete: account exists but required profile claims are missing
+ * - active: account is ready for normal use
+ * - dormant: inactive but still retained
+ * - archived: retained for history, not actively used
+ * - deprovisioned: access withdrawn by an upstream source or admin workflow
+ */
+export type UserLifecycleState =
+  | 'invited'
+  | 'pending_verification'
+  | 'provisioning'
+  | 'incomplete'
+  | 'active'
+  | 'dormant'
+  | 'archived'
+  | 'deprovisioned';
 
 export interface UserCore extends BaseEntity {
   tenant_id: string;
@@ -63,6 +92,7 @@ export interface UserCore extends BaseEntity {
   last_login_at: number | null;
   // Status fields for suspend/lock (Admin SDK Phase 1)
   status: UserStatus;
+  lifecycle_state: UserLifecycleState;
   suspended_at: number | null;
   suspended_until: number | null;
   locked_at: number | null;
@@ -83,6 +113,7 @@ export interface CreateUserCoreInput {
   user_type?: CoreUserType;
   pii_partition?: string;
   pii_status?: PIIStatus;
+  lifecycle_state?: UserLifecycleState;
 }
 
 /**
@@ -100,6 +131,7 @@ export interface UpdateUserCoreInput {
   last_login_at?: number | null;
   // Status fields for suspend/lock (Admin SDK Phase 1)
   status?: UserStatus;
+  lifecycle_state?: UserLifecycleState;
   suspended_at?: number | null;
   suspended_until?: number | null;
   locked_at?: number | null;
@@ -139,6 +171,7 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
         'pii_partition',
         'pii_status',
         'last_login_at',
+        'lifecycle_state',
       ],
     });
   }
@@ -164,6 +197,7 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
       user_type: input.user_type ?? 'end_user',
       pii_partition: input.pii_partition ?? 'default',
       pii_status: input.pii_status ?? 'pending',
+      lifecycle_state: input.lifecycle_state ?? 'active',
       created_at: now,
       updated_at: now,
       last_login_at: null,
@@ -179,8 +213,8 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
       INSERT INTO users_core (
         id, tenant_id, email_verified, phone_number_verified,
         email_domain_hash, password_hash, is_active, user_type,
-        pii_partition, pii_status, created_at, updated_at, last_login_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        pii_partition, pii_status, lifecycle_state, created_at, updated_at, last_login_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
@@ -194,6 +228,7 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
       user.user_type,
       user.pii_partition,
       user.pii_status,
+      user.lifecycle_state,
       user.created_at,
       user.updated_at,
       user.last_login_at,
@@ -453,6 +488,7 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
       last_login_at: row.last_login_at as number | null,
       // Status fields for suspend/lock (Admin SDK Phase 1)
       status: (row.status as UserStatus) ?? 'active',
+      lifecycle_state: (row.lifecycle_state as UserLifecycleState) ?? 'active',
       suspended_at: row.suspended_at as number | null,
       suspended_until: row.suspended_until as number | null,
       locked_at: row.locked_at as number | null,
