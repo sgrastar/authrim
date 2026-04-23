@@ -22,7 +22,7 @@ import {
   getSessionStoreForNewSession,
   getTenantIdFromContext,
   LinkedIdentityRepository,
-  D1Adapter,
+  createPIIContextFromHono,
   resolveDID,
   type DIDDocument,
   type VerificationMethod,
@@ -284,8 +284,8 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Find linked user (use DB_PII for linked identities)
-    const adapter = new D1Adapter({ db: c.env.DB_PII });
+    // Linked identities live in the configured PII store, which may resolve to DB in single-db mode.
+    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
     const linkedIdentity = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
 

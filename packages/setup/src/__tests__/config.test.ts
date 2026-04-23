@@ -87,6 +87,8 @@ describe('createDefaultConfig', () => {
     expect(config.components.api).toBe(true);
     expect(config.components.loginUi).toBe(true);
     expect(config.components.adminUi).toBe(true);
+    expect(config.profiles.defaults.storage).toBe('builtin:storage:standard');
+    expect(config.profiles.registry.backend).toBe('kv');
   });
 
   it('should create a default config with custom prefix', () => {
@@ -107,6 +109,16 @@ describe('parseConfig', () => {
       profile: 'fapi-rw',
       oidc: { accessTokenTtl: 7200 },
       sharding: { authCodeShards: 32 },
+      profiles: {
+        defaults: {
+          storage: 'builtin:storage:external-postgres',
+          audit: 'builtin:audit:standard',
+          residency: 'builtin:residency:eu',
+        },
+        registry: {
+          backend: 'database',
+        },
+      },
       features: {},
       keys: {},
     };
@@ -117,6 +129,40 @@ describe('parseConfig', () => {
     expect(config.tenant.name).toBe('test-tenant');
     expect(config.profile).toBe('fapi-rw');
     expect(config.oidc.accessTokenTtl).toBe(7200);
+    expect(config.profiles.defaults.storage).toBe('builtin:storage:external-postgres');
+    expect(config.profiles.registry.backend).toBe('database');
+  });
+
+  it('should accept built-in single-db and eu-pii storage profile IDs', () => {
+    const rawConfig = {
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      environment: { prefix: 'dev' },
+      tenant: { name: 'test-tenant' },
+      components: { api: true, loginUi: true },
+      profile: 'basic-op',
+      oidc: {},
+      sharding: {},
+      profiles: {
+        defaults: {
+          storage: 'builtin:storage:single-db',
+          audit: 'builtin:audit:minimal',
+          residency: 'builtin:residency:eu',
+        },
+        registry: {
+          backend: 'kv',
+        },
+      },
+      features: {},
+      keys: {},
+    };
+
+    const config = parseConfig(rawConfig);
+    expect(config.profiles.defaults.storage).toBe('builtin:storage:single-db');
+
+    rawConfig.profiles.defaults.storage = 'builtin:storage:eu-pii-split';
+    const euConfig = parseConfig(rawConfig);
+    expect(euConfig.profiles.defaults.storage).toBe('builtin:storage:eu-pii-split');
   });
 
   it('should throw on invalid config', () => {

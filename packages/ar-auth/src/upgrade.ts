@@ -27,6 +27,7 @@ import {
   generateId,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   isAnonymousAuthEnabled,
@@ -37,6 +38,7 @@ import {
   // Logger
   getLogger,
   syncUserLifecycleState,
+  resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -315,7 +317,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       );
 
       // Create PII record if email provided
-      if (email && c.env.DB_PII) {
+      if (email && hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         try {
           await piiCtx.piiRepositories.userPII.createPII({
@@ -349,7 +351,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       });
 
       // Create PII record for new user
-      if (email && c.env.DB_PII) {
+      if (email && hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         try {
           await piiCtx.piiRepositories.userPII.createPII({
@@ -399,9 +401,12 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       [anonymousUserId]
     );
 
+    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const lifecycleSync = await syncUserLifecycleState({
-      db: c.env.DB,
-      dbPii: c.env.DB_PII ?? null,
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      schemaDb: customClaimSources.schemaDb,
+      stateDb: authCtx.coreAdapter,
       tenantId,
       userId: finalUserId,
     });
@@ -526,9 +531,12 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     let accountLifecycleState: UserLifecycleState = 'active';
 
     if (!isAnonymous) {
+      const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
       const lifecycleSync = await syncUserLifecycleState({
-        db: c.env.DB,
-        dbPii: c.env.DB_PII ?? null,
+        db: customClaimSources.nonPiiDb,
+        dbPii: customClaimSources.piiDb,
+        schemaDb: customClaimSources.schemaDb,
+        stateDb: authCtx.coreAdapter,
         tenantId,
         userId: session.userId,
       });

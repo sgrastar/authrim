@@ -300,6 +300,47 @@ export const DatabaseConfigSchema = z.object({
 });
 
 // =============================================================================
+// Runtime Profile Configuration
+// =============================================================================
+
+export const ProfileIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9:_-]+$/, { message: 'Profile ID may only contain letters, numbers, :, _, -' });
+
+export const ProfileRegistryBackendSchema = z.enum(['kv', 'database']);
+
+export const ProfileDefaultsConfigSchema = z.object({
+  /**
+   * Environment default storage profile ID.
+   *
+   * Common built-ins:
+   * - builtin:storage:standard
+   * - builtin:storage:single-db
+   * - builtin:storage:eu-pii-split
+   * - builtin:storage:external-postgres
+   */
+  storage: ProfileIdSchema.default('builtin:storage:standard'),
+  /** Environment default audit profile ID */
+  audit: ProfileIdSchema.default('builtin:audit:standard'),
+  /** Environment default residency profile ID */
+  residency: ProfileIdSchema.default('builtin:residency:default'),
+});
+
+export const ProfileRegistryConfigSchema = z.object({
+  /**
+   * Registry storage backend for runtime profiles.
+   * - kv: lightweight install, no dedicated DB required for profile definitions
+   * - database: profile definitions stored in the configured database backend
+   */
+  backend: ProfileRegistryBackendSchema.default('kv'),
+});
+
+export const ProfilesConfigSchema = z.object({
+  defaults: ProfileDefaultsConfigSchema.default({}),
+  registry: ProfileRegistryConfigSchema.default({}),
+});
+
+// =============================================================================
 // Security Configuration
 // =============================================================================
 
@@ -380,6 +421,9 @@ export const AuthrimConfigSchema = z.object({
   /** Database configuration (D1 location/jurisdiction) */
   database: DatabaseConfigSchema.default({}),
 
+  /** Runtime profile defaults and registry backend selection */
+  profiles: ProfilesConfigSchema.default({}),
+
   /** Security configuration (PII encryption, domain hashing) */
   security: SecurityConfigSchema.default({}),
 });
@@ -402,6 +446,11 @@ export type D1Location = z.infer<typeof D1LocationSchema>;
 export type D1Jurisdiction = z.infer<typeof D1JurisdictionSchema>;
 export type DatabaseLocation = z.infer<typeof DatabaseLocationSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
+export type ProfileId = z.infer<typeof ProfileIdSchema>;
+export type ProfileRegistryBackend = z.infer<typeof ProfileRegistryBackendSchema>;
+export type ProfileDefaultsConfig = z.infer<typeof ProfileDefaultsConfigSchema>;
+export type ProfileRegistryConfig = z.infer<typeof ProfileRegistryConfigSchema>;
+export type ProfilesConfig = z.infer<typeof ProfilesConfigSchema>;
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
 // =============================================================================

@@ -6,9 +6,11 @@ import {
   LOGIN_ENTRY_DEFAULTS,
   LOGIN_UI_DEFAULTS,
   TENANT_DISCOVERY_UI_DEFAULTS,
+  ensureDatabaseAdapter,
   getDefaultTenantId,
   getTenantIdFromContext,
   getUIConfig,
+  resolveUserStoreRuntimeSourcesFromEnv,
   resolveTenantCandidatesFromEmailDomain,
   usesNakedDomainIssuer,
   validateTenantRequestBinding,
@@ -529,42 +531,53 @@ async function getTenantRowByTenantCode(
 }
 
 async function getTenantRowsByExactEmail(env: Env, email: string): Promise<TenantLookupRow[]> {
-  if (!env.DB_PII) {
-    return [];
-  }
-
-  const piiAdapter = new D1Adapter({ db: env.DB_PII });
   const coreAdapter = new D1Adapter({ db: env.DB });
 
   try {
-    const piiUsers = await piiAdapter.query<ExactEmailUserRow>(
-      'SELECT id, tenant_id FROM users_pii WHERE email = ?',
-      [email]
+    const activeTenants = await coreAdapter.query<TenantLookupRow>(
+      'SELECT id, tenant_code, name, is_active FROM tenants WHERE is_active = 1 ORDER BY id ASC',
+      []
     );
-    if (piiUsers.length === 0) {
-      return [];
-    }
+    const matchedTenants = await Promise.all(
+      activeTenants.map(async (tenant) => {
+        const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenant.id);
+        if (!userStoreSources.piiDb) {
+          return null;
+        }
 
-    const activeUsers = await Promise.all(
-      piiUsers.map((user) =>
-        coreAdapter.queryOne<ActiveUserTenantRow>(
+        const piiAdapter = ensureDatabaseAdapter(userStoreSources.piiDb, `discovery-pii-${tenant.id}`);
+        const piiUser = await piiAdapter.queryOne<ExactEmailUserRow>(
+          'SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?',
+          [email, tenant.id]
+        );
+        if (!piiUser) {
+          return null;
+        }
+
+        const activeUser = await coreAdapter.queryOne<ActiveUserTenantRow>(
           'SELECT id, tenant_id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-          [user.id, user.tenant_id]
-        )
-      )
+          [piiUser.id, piiUser.tenant_id]
+        );
+
+        return activeUser ? tenant : null;
+      })
     );
 
-    const activeTenantIds = [
-      ...new Set(activeUsers.flatMap((user) => (user ? [user.tenant_id] : []))),
-    ];
-    if (activeTenantIds.length === 0) {
+    const resolvedTenants = matchedTenants.filter(
+      (tenant): tenant is TenantLookupRow => tenant !== null
+    );
+    if (resolvedTenants.length === 0) {
       return [];
     }
 
-    const tenants = await Promise.all(
-      activeTenantIds.map((tenantId) => getTenantRowById(env, tenantId))
-    );
-    return tenants.filter((tenant): tenant is TenantLookupRow => tenant !== null);
+    const uniqueTenantIds = new Set<string>();
+    return resolvedTenants.filter((tenant) => {
+      if (uniqueTenantIds.has(tenant.id)) {
+        return false;
+      }
+      uniqueTenantIds.add(tenant.id);
+      return true;
+    });
   } catch {
     return [];
   }

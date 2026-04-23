@@ -29,19 +29,10 @@ export async function upsertUserCustomFieldValue(
 ): Promise<void> {
   const { adapter, userId, tenantId, fieldName, fieldValue, fieldType } = params;
 
-  const existing = await adapter.queryOne<{ user_id: string }>(SELECT_EXISTING_USER_CUSTOM_FIELD_SQL, [
-    userId,
-    fieldName,
-  ]);
+  const updateParams = [fieldValue, fieldType, tenantId, userId, fieldName];
+  const updateResult = await adapter.execute(UPDATE_USER_CUSTOM_FIELD_SQL, updateParams);
 
-  if (existing) {
-    await adapter.execute(UPDATE_USER_CUSTOM_FIELD_SQL, [
-      fieldValue,
-      fieldType,
-      tenantId,
-      userId,
-      fieldName,
-    ]);
+  if (updateResult.rowsAffected > 0) {
     return;
   }
 
@@ -54,21 +45,11 @@ export async function upsertUserCustomFieldValue(
       tenantId,
     ]);
   } catch (error) {
-    const existingAfterInsertFailure = await adapter.queryOne<{ user_id: string }>(
-      SELECT_EXISTING_USER_CUSTOM_FIELD_SQL,
-      [userId, fieldName]
-    );
-
-    if (!existingAfterInsertFailure) {
-      throw error;
+    const retryUpdateResult = await adapter.execute(UPDATE_USER_CUSTOM_FIELD_SQL, updateParams);
+    if (retryUpdateResult.rowsAffected > 0) {
+      return;
     }
 
-    await adapter.execute(UPDATE_USER_CUSTOM_FIELD_SQL, [
-      fieldValue,
-      fieldType,
-      tenantId,
-      userId,
-      fieldName,
-    ]);
+    throw error;
   }
 }

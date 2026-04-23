@@ -2493,6 +2493,7 @@ async function executeSetup(
       createQueues: config.features.queue?.enabled,
       createR2: config.features.r2?.enabled,
       databaseConfig: config.database,
+      config,
       onProgress: (msg) => console.log(`  ${msg}`),
     });
   } catch (error) {
@@ -2833,6 +2834,7 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
         createQueues: config.features.queue?.enabled,
         createR2: config.features.r2?.enabled,
         databaseConfig: config.database,
+        config,
         onProgress: (msg) => console.log(`  ${msg}`),
       });
 

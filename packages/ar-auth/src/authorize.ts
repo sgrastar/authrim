@@ -4353,53 +4353,51 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
           });
         });
 
-      // Step 2: Insert into users_pii (if DB_PII is configured)
-      if (c.env.DB_PII) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        await piiCtx.piiRepositories.userPII
-          .createPII({
-            id: userId,
-            tenant_id: tenantId,
-            pii_class: 'PROFILE',
-            email: 'test@example.com',
-            name: 'John Doe',
-            given_name: 'John',
-            family_name: 'Doe',
-            nickname: 'Johnny',
-            preferred_username: 'test',
-            picture: 'https://example.com/avatar.jpg',
-            website: 'https://example.com',
-            gender: 'male',
-            birthdate: '1990-01-01',
-            zoneinfo: 'America/New_York',
-            locale: 'en-US',
-            phone_number: '+1-555-0100',
-            address_formatted: '1234 Main St, Anytown, ST 12345, USA',
-            address_street_address: '1234 Main St',
-            address_locality: 'Anytown',
-            address_region: 'ST',
-            address_postal_code: '12345',
-            address_country: 'USA',
-          })
-          .catch((error: unknown) => {
-            // PII Protection: Don't log full error
-            log.error('Failed to create test user in PII DB', {
-              action: 'login_test_user_pii',
-              errorName: error instanceof Error ? error.name : 'Unknown error',
-            });
+      // Step 2: Insert into the configured PII store
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      await piiCtx.piiRepositories.userPII
+        .createPII({
+          id: userId,
+          tenant_id: tenantId,
+          pii_class: 'PROFILE',
+          email: 'test@example.com',
+          name: 'John Doe',
+          given_name: 'John',
+          family_name: 'Doe',
+          nickname: 'Johnny',
+          preferred_username: 'test',
+          picture: 'https://example.com/avatar.jpg',
+          website: 'https://example.com',
+          gender: 'male',
+          birthdate: '1990-01-01',
+          zoneinfo: 'America/New_York',
+          locale: 'en-US',
+          phone_number: '+1-555-0100',
+          address_formatted: '1234 Main St, Anytown, ST 12345, USA',
+          address_street_address: '1234 Main St',
+          address_locality: 'Anytown',
+          address_region: 'ST',
+          address_postal_code: '12345',
+          address_country: 'USA',
+        })
+        .catch((error: unknown) => {
+          // PII Protection: Don't log full error
+          log.error('Failed to create test user in PII store', {
+            action: 'login_test_user_pii',
+            errorName: error instanceof Error ? error.name : 'Unknown error',
           });
+        });
 
-        // Step 3: Update pii_status to 'active'
-        await authCtx.repositories.userCore
-          .updatePIIStatus(userId, 'active')
-          .catch((error: unknown) => {
-            // PII Protection: Don't log full error
-            log.error('Failed to update pii_status', {
-              action: 'login_pii_status_update',
-              errorName: error instanceof Error ? error.name : 'Unknown error',
-            });
+      // Step 3: Update pii_status to 'active'
+      await authCtx.repositories.userCore
+        .updatePIIStatus(userId, 'active')
+        .catch((error: unknown) => {
+          // PII Protection: Don't log full error
+          log.error('Failed to update pii_status', {
+            action: 'login_pii_status_update',
+            errorName: error instanceof Error ? error.name : 'Unknown error',
           });
-      }
+        });
     }
   } else {
     // Normal client: create new random user
@@ -4451,39 +4449,33 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         });
       });
 
-    // Step 2: Insert into users_pii (if DB_PII is configured)
-    if (c.env.DB_PII) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      try {
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: userId,
-          tenant_id: tenantId,
-          email: userEmail,
-        });
-
-        // Step 3: Update pii_status to 'active' (only on successful PII DB write)
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-      } catch (error: unknown) {
-        // PII Protection: Don't log full error
-        log.error('Failed to create user in PII DB', {
-          action: 'login_user_pii_create',
-          errorName: error instanceof Error ? error.name : 'Unknown error',
-        });
-        // Update pii_status to 'failed' to indicate PII DB write failure
-        await authCtx.repositories.userCore
-          .updatePIIStatus(userId, 'failed')
-          .catch((statusError: unknown) => {
-            // PII Protection: Don't log full error
-            log.error('Failed to update pii_status to failed', {
-              action: 'login_pii_status_failed',
-              errorName: statusError instanceof Error ? statusError.name : 'Unknown error',
-            });
-          });
-      }
-    } else {
-      log.warn('DB_PII not configured - user created with pii_status=pending', {
-        action: 'login_pii_missing',
+    // Step 2: Insert into the configured PII store
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    try {
+      await piiCtx.piiRepositories.userPII.createPII({
+        id: userId,
+        tenant_id: tenantId,
+        email: userEmail,
       });
+
+      // Step 3: Update pii_status to 'active' (only on successful PII store write)
+      await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
+    } catch (error: unknown) {
+      // PII Protection: Don't log full error
+      log.error('Failed to create user in PII store', {
+        action: 'login_user_pii_create',
+        errorName: error instanceof Error ? error.name : 'Unknown error',
+      });
+      // Update pii_status to 'failed' to indicate PII write failure
+      await authCtx.repositories.userCore
+        .updatePIIStatus(userId, 'failed')
+        .catch((statusError: unknown) => {
+          // PII Protection: Don't log full error
+          log.error('Failed to update pii_status to failed', {
+            action: 'login_pii_status_failed',
+            errorName: statusError instanceof Error ? statusError.name : 'Unknown error',
+          });
+        });
     }
   }
 

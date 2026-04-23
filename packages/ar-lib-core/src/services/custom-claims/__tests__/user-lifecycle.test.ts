@@ -124,4 +124,36 @@ describe('user-lifecycle', () => {
     expect(result.missingRequiredFields).toEqual([]);
     expect(state.lifecycleStates.get('user-1')).toBe('active');
   });
+
+  it('can read schemas and custom data separately from the lifecycle state backend', async () => {
+    const schemaState = {
+      schemas: [makeSchema()],
+      userCustomFields: new Map<string, Record<string, string>>(),
+      lifecycleStates: new Map<string, string | null>(),
+    };
+    const dataState = {
+      schemas: [],
+      userCustomFields: new Map<string, Record<string, string>>([
+        ['user-1', { department: 'Engineering' }],
+      ]),
+      lifecycleStates: new Map<string, string | null>(),
+    };
+    const stateDb = {
+      schemas: [],
+      userCustomFields: new Map<string, Record<string, string>>(),
+      lifecycleStates: new Map<string, string | null>([['user-1', 'incomplete']]),
+    };
+
+    const result = await syncUserLifecycleState({
+      db: createMockCoreDb(dataState),
+      schemaDb: createMockCoreDb(schemaState),
+      stateDb: createMockCoreDb(stateDb),
+      tenantId: 'default',
+      userId: 'user-1',
+    });
+
+    expect(result.lifecycleState).toBe('active');
+    expect(result.missingRequiredFields).toEqual([]);
+    expect(stateDb.lifecycleStates.get('user-1')).toBe('active');
+  });
 });

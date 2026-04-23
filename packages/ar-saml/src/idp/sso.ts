@@ -17,8 +17,6 @@ import type { SAMLAuthnRequest, SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
-  D1Adapter,
-  type DatabaseAdapter,
   getUIConfig,
   buildIssuerUrl,
   shouldUseBuiltinForms,
@@ -48,6 +46,7 @@ import { signXml } from '../common/signature';
 import { getSigningKey, getSigningCertificate } from '../common/key-utils';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig } from '../admin/providers';
+import { getSamlUserInfoById } from '../common/user-store';
 
 /**
  * Handle SSO request (both GET and POST)
@@ -123,7 +122,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     // Get user information
-    const userInfo = await getUserInfo(env, userId);
+    const userInfo = await getUserInfo(env, tenantId, userId);
     if (!userInfo) {
       return createErrorResponse(c, 'Authentication failed', STATUS_CODES.UNKNOWN_PRINCIPAL);
     }
@@ -366,42 +365,10 @@ async function storeAuthnRequest(
  */
 async function getUserInfo(
   env: Env,
+  tenantId: string,
   userId: string
 ): Promise<{ id: string; email: string; name?: string } | null> {
-  // PII/Non-PII DB separation: verify user in Core DB, fetch email/name from PII DB
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-    [userId]
-  );
-
-  if (!userCore) {
-    return null;
-  }
-
-  // Fetch PII from PII DB
-  let email: string | null = null;
-  let name: string | undefined = undefined;
-
-  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
-  if (piiAdapter) {
-    const userPII = await piiAdapter.queryOne<{ email: string; name: string }>(
-      'SELECT email, name FROM users_pii WHERE id = ?',
-      [userId]
-    );
-    email = userPII?.email || null;
-    name = userPII?.name || undefined;
-  }
-
-  if (!email) {
-    return null;
-  }
-
-  return {
-    id: userCore.id,
-    email,
-    name,
-  };
+  return getSamlUserInfoById(env, tenantId, userId);
 }
 
 /**

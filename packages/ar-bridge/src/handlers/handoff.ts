@@ -22,6 +22,7 @@ import {
   getTenantIdFromContext,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -258,7 +259,7 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
     }
 
     let userPII: { email: string | null; name: string | null } = { email: null, name: null };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(handoffData.userId);
       if (piiResult) {

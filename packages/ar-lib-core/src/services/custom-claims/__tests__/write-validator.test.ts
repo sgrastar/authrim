@@ -207,6 +207,33 @@ describe('write-validator', () => {
     });
   });
 
+  it('loads schema metadata from schemaDb when storage and schema backends differ', async () => {
+    const schemas = [makeSchema({ field_key: 'department', display_label: 'Department' })];
+    const dataState = {
+      schemas: [],
+      userCustomFields: new Map<string, Record<string, string>>(),
+    };
+    const schemaState = {
+      schemas,
+      userCustomFields: new Map<string, Record<string, string>>(),
+    };
+
+    const result = await validateCustomClaimWrite({
+      db: createMockCoreDb(dataState),
+      schemaDb: createMockCoreDb(schemaState),
+      tenantId: 'default',
+      submitted: { department: 'Engineering' },
+      requireCompleteRecord: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        nonPiiValues: { department: 'Engineering' },
+      })
+    );
+  });
+
   it('persists non-PII and PII values', async () => {
     const schemas = [
       makeSchema({ field_key: 'department', is_pii: 0, is_required: 0 }),

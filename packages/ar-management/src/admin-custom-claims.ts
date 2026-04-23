@@ -36,6 +36,7 @@ import {
   countUsersWithNonPiiFieldData,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
+  resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -64,15 +65,12 @@ function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
   return ensureDatabaseAdapter(c.env.DB, 'custom-claims-admin');
 }
 
-/**
- * Create database adapter for PII database when configured.
- */
-function createOptionalPiiAdapterFromContext(c: AdminContext): DatabaseAdapter | null {
-  return c.env.DB_PII ? ensureDatabaseAdapter(c.env.DB_PII, 'custom-claims-admin-pii') : null;
-}
-
 function createHistoryManagerFromContext(c: AdminContext): CustomClaimSchemaHistoryManager {
   return new CustomClaimSchemaHistoryManager(createAdapterFromContext(c));
+}
+
+async function resolveCustomClaimStorageSources(c: AdminContext, tenantId: string) {
+  return resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
 }
 
 // =============================================================================
@@ -621,8 +619,8 @@ export async function adminCustomClaimsReservedNamesHandler(c: AdminContext) {
 export async function adminCustomClaimsStatsHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
-    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
 
     // Check KV cache
     const kv = c.env.SETTINGS || c.env.AUTHRIM_CONFIG;
@@ -657,19 +655,24 @@ export async function adminCustomClaimsStatsHandler(c: AdminContext) {
     );
 
     // Non-PII user data count (from user_custom_fields)
-    const nonPiiUserCount = await countUsersWithNonPiiCustomClaimData(adapter, tenantId);
+    const nonPiiUserCount = await countUsersWithNonPiiCustomClaimData(
+      storageSources.nonPiiDb,
+      tenantId
+    );
 
     // PII approximate count (users with any custom PII data)
     let piiUserCount = 0;
     try {
-      piiUserCount = piiAdapter ? await countUsersWithPiiCustomClaimData(piiAdapter, tenantId) : 0;
+      piiUserCount = storageSources.piiDb
+        ? await countUsersWithPiiCustomClaimData(storageSources.piiDb, tenantId)
+        : 0;
     } catch {
       // PII DB may not be accessible
       piiUserCount = -1;
     }
 
     // Per-field usage for non-PII
-    const fieldUsage = await listNonPiiFieldUsage(adapter, tenantId);
+    const fieldUsage = await listNonPiiFieldUsage(storageSources.nonPiiDb, tenantId);
 
     // Error state count
     const errorResult = await adapter.query<{ count: number }>(
@@ -720,7 +723,7 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const adapter = createAdapterFromContext(c);
-    const piiAdapter = createOptionalPiiAdapterFromContext(c);
+    const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
     const previewLimit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
     const lifecyclePlaceholders = DETECTABLE_LIFECYCLE_STATES.map(() => '?').join(', ');
     const userRows = await adapter.query<{
@@ -747,8 +750,10 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
     }
 
     const violationStatuses = await getRequiredCustomClaimViolationStatuses({
-      db: adapter,
-      dbPii: piiAdapter,
+      db: storageSources.nonPiiDb,
+      schemaDb: adapter,
+      stateDb: adapter,
+      dbPii: storageSources.piiDb,
       cache: c.env.SETTINGS || c.env.AUTHRIM_CONFIG || null,
       tenantId,
       userIds: userRows.map((row) => row.id),
@@ -761,10 +766,13 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
     const previewUsers = violatingUsers.slice(0, previewLimit);
     const previewPiiMap = new Map<string, { email: string | null; name: string | null }>();
 
-    if (previewUsers.length > 0 && piiAdapter) {
+    if (previewUsers.length > 0 && storageSources.piiDb) {
       const userIds = previewUsers.map((user) => user.userId);
       const placeholders = userIds.map(() => '?').join(', ');
-      const piiRows = await piiAdapter.query<{
+      const piiRows = await ensureDatabaseAdapter(
+        storageSources.piiDb,
+        'custom-claims-required-violations-preview-pii'
+      ).query<{
         id: string;
         email: string | null;
         name: string | null;
@@ -816,9 +824,9 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
 export async function adminCustomClaimGetHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
-    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
+    const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
 
     const schema = await getCustomClaimSchemaById(adapter, tenantId, id);
 
@@ -832,12 +840,18 @@ export async function adminCustomClaimGetHandler(c: AdminContext) {
     if (schema.is_pii) {
       // PII: approximate count
       try {
-        userCount = piiAdapter ? await countUsersWithPiiCustomClaimData(piiAdapter, tenantId) : 0;
+        userCount = storageSources.piiDb
+          ? await countUsersWithPiiCustomClaimData(storageSources.piiDb, tenantId)
+          : 0;
       } catch {
         userCount = -1;
       }
     } else {
-      userCount = await countUsersWithNonPiiFieldData(adapter, tenantId, schema.field_key as string);
+      userCount = await countUsersWithNonPiiFieldData(
+        storageSources.nonPiiDb,
+        tenantId,
+        schema.field_key as string
+      );
     }
 
     return c.json({
@@ -1147,9 +1161,9 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
 export async function adminCustomClaimDeleteHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
-    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
+    const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
 
     // Fetch existing
     const schema = await getCustomClaimSchemaById<Record<string, unknown>>(adapter, tenantId, id);
@@ -1203,8 +1217,8 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
       // Phase 2: Delete user data
       if (isPii) {
         const deleteResult = await deleteStoredCustomClaimData({
-          db: adapter,
-          dbPii: piiAdapter,
+          db: storageSources.nonPiiDb,
+          dbPii: storageSources.piiDb,
           tenantId,
           fieldKey,
           isPii: true,
@@ -1244,7 +1258,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
         }
       } else {
         await deleteStoredCustomClaimData({
-          db: adapter,
+          db: storageSources.nonPiiDb,
           tenantId,
           fieldKey,
           isPii: false,
@@ -1312,10 +1326,10 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
 export async function adminCustomClaimRenameHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
-    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
     const body = await c.req.json();
+    const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
 
     const newKey = body.new_field_key;
 
@@ -1422,8 +1436,8 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
 
       if (isPii) {
         const renameResult = await renameStoredCustomClaimData({
-          db: adapter,
-          dbPii: piiAdapter,
+          db: storageSources.nonPiiDb,
+          dbPii: storageSources.piiDb,
           tenantId,
           oldKey,
           newKey,
@@ -1464,7 +1478,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
         }
       } else {
         const renameResult = await renameStoredCustomClaimData({
-          db: adapter,
+          db: storageSources.nonPiiDb,
           tenantId,
           oldKey,
           newKey,
@@ -1561,9 +1575,9 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
 export async function adminCustomClaimRetryHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
-    const piiAdapter = createOptionalPiiAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
+    const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
 
     // Fetch existing
     const schema = await getCustomClaimSchemaById<Record<string, unknown>>(adapter, tenantId, id);
@@ -1680,8 +1694,8 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
 
         if (isPii) {
           const renameResult = await renameStoredCustomClaimData({
-            db: adapter,
-            dbPii: piiAdapter,
+            db: storageSources.nonPiiDb,
+            dbPii: storageSources.piiDb,
             tenantId,
             oldKey,
             newKey,
@@ -1723,11 +1737,15 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
           }
         } else {
           // Non-PII: Check remaining records to distinguish "all migrated" from "nothing to do"
-          const remainingCount = await countUsersWithNonPiiFieldData(adapter, tenantId, oldKey);
+          const remainingCount = await countUsersWithNonPiiFieldData(
+            storageSources.nonPiiDb,
+            tenantId,
+            oldKey
+          );
 
           if (remainingCount > 0) {
             const renameResult = await renameStoredCustomClaimData({
-              db: adapter,
+              db: storageSources.nonPiiDb,
               tenantId,
               oldKey,
               newKey,

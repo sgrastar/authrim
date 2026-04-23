@@ -201,6 +201,12 @@ export interface Env {
   ENABLE_CHECK_API_WEBSOCKET?: string; // "true" to enable WebSocket Push
   ENABLE_CHECK_API_AUDIT?: string; // "true" to enable audit logging (default: enabled)
 
+  // Runtime Profile Registry / Defaults
+  PROFILE_REGISTRY_BACKEND?: string; // "kv" | "database"
+  DEFAULT_STORAGE_PROFILE_ID?: string; // Environment default storage profile pointer
+  DEFAULT_AUDIT_PROFILE_ID?: string; // Environment default audit profile pointer
+  DEFAULT_RESIDENCY_PROFILE_ID?: string; // Environment default residency profile pointer
+
   // Mock/Anonymous Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
   ENABLE_ANONYMOUS_AUTH?: string; // "true" to enable device-based anonymous login

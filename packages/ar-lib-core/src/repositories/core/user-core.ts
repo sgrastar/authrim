@@ -171,7 +171,12 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
         'pii_partition',
         'pii_status',
         'last_login_at',
+        'status',
         'lifecycle_state',
+        'suspended_at',
+        'suspended_until',
+        'locked_at',
+        'locked_until',
       ],
     });
   }

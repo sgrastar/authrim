@@ -120,6 +120,10 @@ describe('admin-info tenant base URL resolution', () => {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
       BASE_DOMAIN: 'auth.example.com',
+      PROFILE_REGISTRY_BACKEND: 'database',
+      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
+      DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
+      DEFAULT_RESIDENCY_PROFILE_ID: 'builtin:residency:default',
       DB: {
         prepare: vi.fn().mockReturnValue({
           bind: vi.fn().mockReturnValue({
@@ -150,10 +154,24 @@ describe('admin-info tenant base URL resolution', () => {
       login_ui_url: string | null;
       global_login_ui_url: string | null;
       discover_url: string | null;
+      runtime_profiles: {
+        registry_backend: string;
+        effective: {
+          storage: { id: string };
+          audit: { id: string };
+          residency: { id: string };
+        };
+      } | null;
+      runtime_profiles_error: string | null;
     };
     expect(body.login_ui_url).toBe('https://default.auth.example.com/login');
     expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev/login');
     expect(body.discover_url).toBe('https://nodomain-ar-login-ui.pages.dev/discover');
+    expect(body.runtime_profiles?.registry_backend).toBe('database');
+    expect(body.runtime_profiles?.effective.storage.id).toBe('builtin:storage:standard');
+    expect(body.runtime_profiles?.effective.audit.id).toBe('builtin:audit:standard');
+    expect(body.runtime_profiles?.effective.residency.id).toBe('builtin:residency:default');
+    expect(body.runtime_profiles_error).toBeNull();
   });
 
   it('uses naked-domain issuer login URL for the primary tenant', async () => {

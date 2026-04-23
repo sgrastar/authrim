@@ -637,21 +637,19 @@ export async function getUserClaimsForRules(
 
   // Get core user data
   const coreRows = await adapter.query<{
-    email: string | null;
     email_verified: number | null;
-    locale: string | null;
-  }>(`SELECT email, email_verified, locale FROM users_core WHERE id = ?`, [userId]);
+  }>(`SELECT email_verified FROM users_core WHERE id = ? AND tenant_id = ?`, [userId, tenantId]);
 
   if (coreRows.length > 0) {
     const core = coreRows[0];
-    if (core.email) claims.email = core.email;
     if (core.email_verified !== null) claims.email_verified = core.email_verified === 1;
-    if (core.locale) claims.locale = core.locale;
   }
 
   // Try to get PII data (may fail if separate DB)
   try {
     const piiRows = await adapter.query<{
+      email: string | null;
+      locale: string | null;
       given_name: string | null;
       family_name: string | null;
       birthdate: string | null;
@@ -661,14 +659,16 @@ export async function getUserClaimsForRules(
       zoneinfo: string | null;
       metadata: string | null;
     }>(
-      `SELECT given_name, family_name, birthdate, phone_number,
+      `SELECT email, locale, given_name, family_name, birthdate, phone_number,
               address_country, address_region, zoneinfo, metadata
-       FROM users_pii WHERE user_id = ?`,
-      [userId]
+       FROM users_pii WHERE id = ? AND tenant_id = ?`,
+      [userId, tenantId]
     );
 
     if (piiRows.length > 0) {
       const pii = piiRows[0];
+      if (pii.email) claims.email = pii.email;
+      if (pii.locale) claims.locale = pii.locale;
       if (pii.given_name) claims.given_name = pii.given_name;
       if (pii.family_name) claims.family_name = pii.family_name;
       if (pii.birthdate) claims.birthdate = pii.birthdate;

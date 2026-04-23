@@ -16,8 +16,6 @@ import type { Env, SAMLIdPConfig } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
-  D1Adapter,
-  type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
@@ -47,6 +45,7 @@ import { STATUS_CODES, DEFAULTS } from '../common/constants';
 import { signXml, verifyXmlSignature, hasSignature } from '../common/signature';
 import { getSigningKey, getSigningCertificate } from '../common/key-utils';
 import { getIdPConfigByEntityId } from '../admin/providers';
+import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user-store';
 
 /**
  * Handle SP Single Logout (both POST and GET)
@@ -316,27 +315,7 @@ async function terminateSessionByNameId(
     // Log warning for debugging
     // PII/Non-PII DB separation: search email in PII DB
     const tenantId = getTenantIdFromContext(c);
-    let user: { id: string } | null = null;
-    const piiAdapter: DatabaseAdapter | null = env.DB_PII
-      ? new D1Adapter({ db: env.DB_PII })
-      : null;
-    if (piiAdapter) {
-      const userPII = await piiAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-        [tenantId, nameId]
-      );
-      if (userPII) {
-        // Verify user exists in Core DB
-        const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-        const userCore = await coreAdapter.queryOne<{ id: string }>(
-          'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-          [userPII.id]
-        );
-        if (userCore) {
-          user = { id: userCore.id };
-        }
-      }
-    }
+    const user = await findActiveSamlUserByEmail(env, tenantId, nameId);
     if (user) {
       // PII Protection: Do not log NameID (may contain email/PII)
       log.warn(
@@ -462,15 +441,7 @@ export async function initiateSPLogout(
   tenantId = getDefaultTenantId(env)
 ): Promise<{ html: string }> {
   // Get user info for NameID (PII/Non-PII DB separation)
-  let nameId: string | null = null;
-  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
-  if (piiAdapter) {
-    const userPII = await piiAdapter.queryOne<{ email: string }>(
-      'SELECT email FROM users_pii WHERE id = ?',
-      [userId]
-    );
-    nameId = userPII?.email || null;
-  }
+  const nameId = await getSamlUserNameIdById(env, tenantId, userId);
 
   if (!nameId) {
     throw new Error('Logout request could not be processed');

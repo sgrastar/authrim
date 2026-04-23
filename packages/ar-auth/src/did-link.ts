@@ -24,7 +24,7 @@ import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   LinkedIdentityRepository,
-  D1Adapter,
+  createPIIContextFromHono,
   resolveDID,
   type DIDDocument,
   type VerificationMethod,
@@ -108,7 +108,7 @@ export async function didRegisterChallengeHandler(
     }
 
     // Check if DID is already linked to another account
-    const adapter = new D1Adapter({ db: c.env.DB_PII });
+    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
     const existingLink = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
 
@@ -236,7 +236,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
 
     // SECURITY: Early check if DID is already linked (before expensive operations)
     // This prevents DoS via repeated verification attempts for already-linked DIDs
-    const adapter = new D1Adapter({ db: c.env.DB_PII });
+    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
     const existingLinkEarly = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
     if (existingLinkEarly) {
@@ -384,7 +384,7 @@ export async function didListHandler(c: Context<{ Bindings: Env }>): Promise<Res
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const adapter = new D1Adapter({ db: c.env.DB_PII });
+    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
     const identities = await linkedIdentityRepo.findByUserId(tenantId, userId);
 
@@ -438,7 +438,7 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const adapter = new D1Adapter({ db: c.env.DB_PII });
+    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
 
     // Find the link

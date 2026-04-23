@@ -93,6 +93,7 @@ function createMockContext(options: {
     ISSUER_URL: 'https://op.example.com',
     ...options.env,
   };
+  const contextStore = new Map<string, unknown>();
 
   // Setup getCookie mock
   vi.mocked(getCookie).mockImplementation((_c, name) => {
@@ -110,6 +111,9 @@ function createMockContext(options: {
     json: vi.fn((body, status = 200) => {
       return new Response(JSON.stringify(body), { status });
     }),
+    header: vi.fn(),
+    get: vi.fn((key: string) => contextStore.get(key)),
+    set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
   } as any;
 
   return c;
@@ -368,6 +372,82 @@ describe('Data Export API', () => {
 
       const response = await dataExportDownloadHandler(c);
       expect(response.status).toBe(401);
+    });
+
+    it('should load profile data from users_core/users_pii by id and tenant_id', async () => {
+      mockCoreAdapter.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM data_export_requests')) {
+          expect(params).toEqual(['export-123', 'user-123', 'default']);
+          return [
+            {
+              status: 'completed',
+              format: 'json',
+              include_sections: JSON.stringify(['profile']),
+              expires_at: Date.now() + 60_000,
+              file_path: null,
+            },
+          ];
+        }
+
+        if (sql.includes('FROM users_core WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['user-123', 'default']);
+          return [
+            {
+              id: 'user-123',
+              email_domain_hash: null,
+              created_at: 1700000000000,
+              updated_at: 1700000001000,
+              email_verified: 1,
+              phone_number_verified: 0,
+            },
+          ];
+        }
+
+        return [];
+      });
+
+      mockPiiAdapter.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('SELECT * FROM users_pii WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['user-123', 'default']);
+          return [
+            {
+              id: 'user-123',
+              tenant_id: 'default',
+              email: 'export@example.com',
+              name: 'Export User',
+              locale: 'ja',
+            },
+          ];
+        }
+        return [];
+      });
+
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer token' },
+        params: { id: 'export-123' },
+      });
+
+      const response = await dataExportDownloadHandler(c);
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        profile: {
+          id: string;
+          email: string;
+          emailVerified: boolean;
+          phoneNumberVerified: boolean;
+          name?: string;
+          locale?: string;
+        };
+      };
+      expect(body.profile).toMatchObject({
+        id: 'user-123',
+        email: 'export@example.com',
+        emailVerified: true,
+        phoneNumberVerified: false,
+        name: 'Export User',
+        locale: 'ja',
+      });
     });
   });
 });

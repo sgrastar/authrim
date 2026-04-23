@@ -25,7 +25,7 @@
 import type { Context as HonoContext } from 'hono';
 import type { Env } from '../types/env';
 import type { AuthContext, PIIContext } from './types';
-import { createD1Adapter } from '../db/adapters/d1-adapter';
+import { ensureDatabaseAdapter } from '../db/adapter-source';
 import { PIIPartitionRouter } from '../db/partition-router';
 import {
   UserCoreRepository,
@@ -43,11 +43,20 @@ import {
   PIIAuditLogRepository,
 } from '../repositories/pii';
 import { MapRequestScopedCache } from './types';
+import type { ResolvedUserStoreRuntimeSources } from '../services/user-store-runtime-sources';
 
 function getTenantIdFromHonoContext(c: HonoContext<{ Bindings: Env }>): string | undefined {
   // Hono's generic context type does not know about middleware-injected values.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return ((c as any).get?.('tenantId') as string | undefined) || undefined;
+}
+
+function getRuntimeUserStoreSourcesFromHonoContext(
+  c: HonoContext<{ Bindings: Env }>
+): ResolvedUserStoreRuntimeSources | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((c as any).get?.('runtimeUserStoreSources') as ResolvedUserStoreRuntimeSources | undefined)
+    || undefined;
 }
 
 /**
@@ -68,7 +77,8 @@ export function createAuthContextFromHono(
   tenantId?: string
 ): AuthContext {
   const resolvedTenantId = tenantId || getTenantIdFromHonoContext(c) || 'default';
-  const coreAdapter = createD1Adapter(c.env.DB, 'core');
+  const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
+  const coreAdapter = ensureDatabaseAdapter(runtimeSources?.coreDb ?? c.env.DB, 'core');
 
   return {
     tenantId: resolvedTenantId,
@@ -104,13 +114,16 @@ export function createPIIContextFromHono(
   c: HonoContext<{ Bindings: Env }>,
   tenantId?: string
 ): PIIContext {
-  if (!c.env.DB_PII) {
-    throw new Error('DB_PII is not configured. Cannot create PIIContext.');
-  }
   const resolvedTenantId = tenantId || getTenantIdFromHonoContext(c) || 'default';
+  const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
+  const piiSource = runtimeSources?.piiDb ?? c.env.DB_PII ?? c.env.DB;
 
-  const coreAdapter = createD1Adapter(c.env.DB, 'core');
-  const piiAdapter = createD1Adapter(c.env.DB_PII, 'pii');
+  if (!piiSource) {
+    throw new Error('PII database is not configured. Cannot create PIIContext.');
+  }
+
+  const coreAdapter = ensureDatabaseAdapter(runtimeSources?.coreDb ?? c.env.DB, 'core');
+  const piiAdapter = ensureDatabaseAdapter(piiSource, 'pii');
 
   // Create partition router with default PII adapter
   const partitionRouter = new PIIPartitionRouter(coreAdapter, piiAdapter, c.env.AUTHRIM_CONFIG);
@@ -153,12 +166,13 @@ export function createPIIContextFromHono(
  */
 export function elevateToPIIContext(authCtx: AuthContext): PIIContext {
   const c = authCtx.honoContext as HonoContext<{ Bindings: Env }>;
-
-  if (!c.env.DB_PII) {
-    throw new Error('DB_PII is not configured. Cannot elevate to PIIContext.');
+  const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
+  const piiSource = runtimeSources?.piiDb ?? c.env.DB_PII ?? c.env.DB;
+  if (!piiSource) {
+    throw new Error('PII database is not configured. Cannot elevate to PIIContext.');
   }
 
-  const piiAdapter = createD1Adapter(c.env.DB_PII, 'pii');
+  const piiAdapter = ensureDatabaseAdapter(piiSource, 'pii');
   const partitionRouter = new PIIPartitionRouter(
     authCtx.coreAdapter,
     piiAdapter,
@@ -187,5 +201,5 @@ export function elevateToPIIContext(authCtx: AuthContext): PIIContext {
  * @returns True if DB_PII is configured
  */
 export function hasPIIDatabase(c: HonoContext<{ Bindings: Env }>): boolean {
-  return c.env.DB_PII !== undefined;
+  return !!(getRuntimeUserStoreSourcesFromHonoContext(c)?.piiDb ?? c.env.DB_PII ?? c.env.DB);
 }

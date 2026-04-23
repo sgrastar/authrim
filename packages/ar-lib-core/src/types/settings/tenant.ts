@@ -24,6 +24,11 @@ export interface TenantSettings {
   'tenant.allowed_domains': string;
   'tenant.allowed_identifiers': string;
 
+  // Runtime Profile Overrides
+  'tenant.storage_profile_id': string;
+  'tenant.audit_profile_id': string;
+  'tenant.residency_profile_id': string;
+
   // Branding
   'tenant.name': string;
   'tenant.logo_uri': string;
@@ -109,6 +114,33 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     label: 'Allowed Identifiers',
     description:
       'Comma-separated list of exact issuer/verifier identifiers allowed for this tenant. Empty disables additional identifier restrictions.',
+    visibility: 'admin',
+  },
+  'tenant.storage_profile_id': {
+    key: 'tenant.storage_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Storage Profile Override',
+    description:
+      'Optional storage profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.audit_profile_id': {
+    key: 'tenant.audit_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Audit Profile Override',
+    description:
+      'Optional audit profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.residency_profile_id': {
+    key: 'tenant.residency_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Residency Profile Override',
+    description:
+      'Optional residency profile ID override for this tenant. Empty means inherit the environment default.',
     visibility: 'admin',
   },
 
@@ -220,6 +252,9 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.allowed_origins': '',
   'tenant.allowed_domains': '',
   'tenant.allowed_identifiers': '',
+  'tenant.storage_profile_id': '',
+  'tenant.audit_profile_id': '',
+  'tenant.residency_profile_id': '',
   // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',

@@ -19,6 +19,7 @@ import type {
 } from '../types/consent';
 import type { RelationshipType, PermissionLevel, OrganizationType, PlanType } from '../types/rbac';
 import { resolveAllOrganizations, resolveEffectiveRoles } from './rbac-claims';
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 
 // =============================================================================
 // Consent RBAC Data Retrieval
@@ -323,15 +324,16 @@ export async function getActingAsUserInfo(
  * @returns User info or null if not found
  */
 export async function getConsentUserInfo(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
-  dbPII?: D1Database
+  dbPII?: DatabaseSource
 ): Promise<ConsentUserInfo | null> {
+  const coreAdapter = ensureDatabaseAdapter(db, 'consent-user-core');
   // Check Core DB for user existence
-  const userCore = await db
-    .prepare('SELECT id FROM users_core WHERE id = ? AND is_active = 1')
-    .bind(subjectId)
-    .first<{ id: string }>();
+  const userCore = await coreAdapter.queryOne<{ id: string }>(
+    'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
+    [subjectId]
+  );
 
   if (!userCore) {
     return null;
@@ -343,10 +345,11 @@ export async function getConsentUserInfo(
   let picture: string | undefined = undefined;
 
   if (dbPII) {
-    const userPII = await dbPII
-      .prepare('SELECT email, name, picture FROM users_pii WHERE id = ?')
-      .bind(subjectId)
-      .first<{ email: string; name: string | null; picture: string | null }>();
+    const piiAdapter = ensureDatabaseAdapter(dbPII, 'consent-user-pii');
+    const userPII = await piiAdapter.queryOne<{ email: string; name: string | null; picture: string | null }>(
+      'SELECT email, name, picture FROM users_pii WHERE id = ?',
+      [subjectId]
+    );
 
     if (userPII) {
       email = userPII.email;

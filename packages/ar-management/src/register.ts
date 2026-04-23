@@ -22,6 +22,7 @@ import {
   validateExternalUrl,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   getDefaultTenantId,
   getTenantIdFromContext,
   D1Adapter,
@@ -1245,7 +1246,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
 
       // Insert into users_pii (PII database) via PIIContext
-      if (c.env.DB_PII) {
+      if (hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         await piiCtx.getPiiAdapter(tenantId).execute(
           `INSERT OR IGNORE INTO users_pii (

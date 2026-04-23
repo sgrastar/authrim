@@ -499,10 +499,11 @@ async function collectExportData(
       created_at: number;
       updated_at: number;
       email_verified: number | null;
-      phone_verified: number | null;
+      phone_number_verified: number | null;
     }>(
-      'SELECT id, email_domain_hash, created_at, updated_at, email_verified, phone_number_verified FROM users_core WHERE id = ?',
-      [userId]
+      `SELECT id, email_domain_hash, created_at, updated_at, email_verified, phone_number_verified
+       FROM users_core WHERE id = ? AND tenant_id = ?`,
+      [userId, tenantId]
     );
 
     // PII data (if available)
@@ -538,7 +539,7 @@ async function collectExportData(
         birthdate?: string;
         zoneinfo?: string;
         locale?: string;
-      }>('SELECT * FROM users_pii WHERE user_id = ?', [userId]);
+      }>('SELECT * FROM users_pii WHERE id = ? AND tenant_id = ?', [userId, tenantId]);
       if (piiUser.length > 0) {
         piiData = piiUser[0];
       }
@@ -550,7 +551,7 @@ async function collectExportData(
         email: piiData.email ?? '',
         emailVerified: coreUser[0].email_verified === 1,
         phoneNumber: piiData.phone_number,
-        phoneNumberVerified: coreUser[0].phone_verified === 1,
+        phoneNumberVerified: coreUser[0].phone_number_verified === 1,
         name: piiData.name,
         givenName: piiData.given_name,
         familyName: piiData.family_name,

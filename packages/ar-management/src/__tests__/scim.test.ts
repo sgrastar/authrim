@@ -107,6 +107,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       .mockImplementation(
         async () => `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
       ),
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
   };
 });
 

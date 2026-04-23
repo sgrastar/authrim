@@ -92,6 +92,22 @@ export interface ProvisionOptions {
   onProgress?: (message: string) => void;
   /** Database location configuration */
   databaseConfig?: DatabaseProvisionConfig;
+  /** Runtime profile defaults used for migration layout decisions */
+  config?: MigrationProfileConfig;
+}
+
+export interface MigrationProfileConfig {
+  profiles?: {
+    defaults?: {
+      storage?: string;
+    };
+  };
+}
+
+export function shouldMirrorPiiMigrationsToCore(
+  config?: MigrationProfileConfig | null
+): boolean {
+  return config?.profiles?.defaults?.storage === 'builtin:storage:single-db';
 }
 
 // =============================================================================
@@ -1926,7 +1942,8 @@ export async function ensureInitialAdminRolesInD1(
 export async function runMigrationsForEnvironment(
   env: string,
   rootDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  config?: MigrationProfileConfig
 ): Promise<{
   success: boolean;
   core: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -2003,6 +2020,27 @@ export async function runMigrationsForEnvironment(
     }
   }
 
+  let coreMirrorResult: {
+    success: boolean;
+    appliedCount: number;
+    skippedCount: number;
+    error?: string;
+  } | null = null;
+
+  if (shouldMirrorPiiMigrationsToCore(config) && existsSync(piiMigrationsDir)) {
+    onProgress?.(`📜 Mirroring PII migrations into ${coreDbName} for single-db profile...`);
+    coreMirrorResult = await runD1Migrations(coreDbName, piiMigrationsDir, onProgress);
+    if (!coreMirrorResult.success) {
+      onProgress?.(`  ❌ Core mirror migration failed: ${coreMirrorResult.error}`);
+    } else {
+      coreResult.appliedCount += coreMirrorResult.appliedCount;
+      coreResult.skippedCount += coreMirrorResult.skippedCount;
+      onProgress?.(
+        `  ✅ Mirrored ${coreMirrorResult.appliedCount} PII migrations into core (${coreMirrorResult.skippedCount} skipped)`
+      );
+    }
+  }
+
   // Run Admin database migrations
   const adminMigrationsDir = join(migrationsRoot, 'admin');
   onProgress?.(`📜 Running migrations for ${adminDbName}...`);
@@ -2023,8 +2061,16 @@ export async function runMigrationsForEnvironment(
   }
 
   return {
-    success: coreResult.success && piiResult.success && adminResult.success,
-    core: coreResult,
+    success:
+      coreResult.success &&
+      (coreMirrorResult?.success ?? true) &&
+      piiResult.success &&
+      adminResult.success,
+    core: {
+      ...coreResult,
+      success: coreResult.success && (coreMirrorResult?.success ?? true),
+      error: coreMirrorResult?.error ?? coreResult.error,
+    },
     pii: piiResult,
     admin: adminResult,
   };
@@ -2410,7 +2456,12 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     if (options.runMigrations !== false && options.rootDir) {
       onProgress('📜 Running database migrations...');
 
-      const migrationsResult = await runMigrationsForEnvironment(env, options.rootDir, onProgress);
+      const migrationsResult = await runMigrationsForEnvironment(
+        env,
+        options.rootDir,
+        onProgress,
+        options.config
+      );
 
       if (!migrationsResult.success) {
         const errors = [];

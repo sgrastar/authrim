@@ -156,6 +156,55 @@ describe('generateEnvVars - ar-saml', () => {
       expect(vars['ISSUER_URL']).toBe(scenario.expected.issuerUrl);
     }
   });
+
+  it('includes runtime profile defaults and registry backend for profile-aware workers', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
+    config.profiles = {
+      defaults: {
+        storage: 'builtin:storage:external-postgres',
+        audit: 'builtin:audit:standard',
+        residency: 'builtin:residency:eu',
+      },
+      registry: {
+        backend: 'database',
+      },
+    };
+
+    const authVars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+    const samlVars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
+
+    expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
+    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
+    expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
+    expect(authVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
+
+    expect(samlVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
+    expect(samlVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
+    expect(samlVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
+    expect(samlVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
+  });
+
+  it('passes through built-in single-db profile defaults for profile-aware workers', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
+    config.profiles = {
+      defaults: {
+        storage: 'builtin:storage:single-db',
+        audit: 'builtin:audit:minimal',
+        residency: 'builtin:residency:default',
+      },
+      registry: {
+        backend: 'kv',
+      },
+    };
+
+    const authVars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+    const managementVars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
+
+    expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('kv');
+    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
+    expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:minimal');
+    expect(managementVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
+  });
 });
 
 // =============================================================================

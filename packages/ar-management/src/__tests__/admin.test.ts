@@ -46,6 +46,23 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
     }),
   };
 });
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
+  };
+});
 
 import {
   adminStatsHandler,
@@ -54,6 +71,8 @@ import {
   adminUserCreateHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
+  adminUserAnonymizeHandler,
+  adminUserSendEmailHandler,
   adminClientsListHandler,
   adminClientGetHandler,
   adminClientCreateHandler,
@@ -83,6 +102,33 @@ function createMockDB(options: {
     dump: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
     _mockStatement: mockStatement,
   } as unknown as D1Database & { _mockStatement: typeof mockStatement };
+}
+
+function createSqlAwareMockDB(
+  handler: (
+    sql: string,
+    params: unknown[],
+    op: 'first' | 'all' | 'run'
+  ) => unknown | Promise<unknown>
+) {
+  return {
+    prepare: vi.fn((sql: string) => {
+      let boundParams: unknown[] = [];
+      const statement = {
+        bind: vi.fn((...params: unknown[]) => {
+          boundParams = params;
+          return statement;
+        }),
+        first: vi.fn(async () => (await handler(sql, boundParams, 'first')) ?? null),
+        all: vi.fn(async () => ({ results: ((await handler(sql, boundParams, 'all')) ?? []) as any[] })),
+        run: vi.fn(async () => (await handler(sql, boundParams, 'run')) ?? { success: true }),
+      };
+      return statement;
+    }),
+    batch: vi.fn().mockResolvedValue([]),
+    exec: vi.fn().mockResolvedValue(undefined),
+    dump: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
+  } as unknown as D1Database;
 }
 
 // Mock KV namespace for cache invalidation
@@ -875,10 +921,10 @@ describe('Admin API Handlers', () => {
         expect.stringContaining('INSERT INTO users_core')
       );
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT user_id FROM user_custom_fields')
+        expect.stringContaining('UPDATE user_custom_fields SET')
       );
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE user_custom_fields SET')
+        expect.stringContaining('INSERT INTO user_custom_fields')
       );
       // Verify insert into PII DB
       expect(mockDBPII.prepare).toHaveBeenCalledWith(
@@ -981,10 +1027,10 @@ describe('Admin API Handlers', () => {
       await adminUserUpdateHandler(c);
 
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT user_id FROM user_custom_fields')
+        expect.stringContaining('UPDATE user_custom_fields SET')
       );
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE user_custom_fields SET')
+        expect.stringContaining('INSERT INTO user_custom_fields')
       );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1211,6 +1257,174 @@ describe('Admin API Handlers', () => {
         call[0].includes('UPDATE users_core SET is_active = ?')
       );
       expect(updateCalls.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('adminUserAnonymizeHandler', () => {
+    it('should anonymize using current schema tables and avoid legacy SQL', async () => {
+      const userId = 'user-anon-1';
+      let coreUpdateSql: string | null = null;
+      let coreUpdateParams: unknown[] | null = null;
+      const coreDb = createSqlAwareMockDB(async (sql, params, op) => {
+        if (op === 'first') {
+          if (sql.includes('SELECT * FROM users_core WHERE id = ?')) {
+            return {
+              id: userId,
+              tenant_id: 'default',
+              is_active: 1,
+              pii_status: 'active',
+              pii_partition: 'default',
+              status: 'active',
+              lifecycle_state: 'active',
+              created_at: Date.now(),
+              updated_at: Date.now(),
+            };
+          }
+          if (sql.includes('SELECT id, reason FROM legal_holds')) {
+            return null;
+          }
+          return undefined;
+        }
+
+        if (op === 'run' && sql.includes('UPDATE users_core SET')) {
+          coreUpdateSql = sql;
+          coreUpdateParams = [...params];
+        }
+
+        if (op === 'all' && sql.includes('SELECT * FROM sessions WHERE user_id = ?')) {
+          return [
+            {
+              id: 'sess-1',
+              user_id: userId,
+              expires_at: Date.now() + 3600_000,
+              created_at: Date.now(),
+              tenant_id: 'default',
+            },
+          ];
+        }
+
+        return op === 'run' ? { success: true } : undefined;
+      });
+
+      const piiDb = createSqlAwareMockDB(async (sql, _params, op) => {
+        if (op === 'first') {
+          if (sql.includes('SELECT * FROM users_pii_tombstone WHERE id = ?')) {
+            return null;
+          }
+          if (sql.includes('SELECT * FROM users_pii WHERE id = ?')) {
+            return {
+              id: userId,
+              tenant_id: 'default',
+              email: 'anon@example.com',
+              email_blind_index: 'blind-index',
+              created_at: Date.now(),
+              updated_at: Date.now(),
+            };
+          }
+          return undefined;
+        }
+
+        return op === 'run' ? { success: true } : undefined;
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: userId },
+        body: { reason_code: 'user_request', confirm: true },
+        db: coreDb,
+        dbPII: piiDb,
+      });
+
+      const res = await adminUserAnonymizeHandler(c);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        success: boolean;
+        tombstone_id: string | null;
+      };
+
+      expect(body.success).toBe(true);
+      expect(body.tombstone_id).toBe(userId);
+
+      const coreSqls = (coreDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
+      const piiSqls = (piiDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
+
+      expect(piiSqls).toContainEqual(expect.stringContaining('INSERT INTO users_pii_tombstone'));
+      expect(piiSqls).toContainEqual(expect.stringContaining('DELETE FROM users_pii WHERE id = ?'));
+      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM subject_org_membership'));
+      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM passkeys WHERE user_id = ?'));
+      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM sessions WHERE user_id = ?'));
+      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM session_clients WHERE session_id = ?'));
+      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM user_roles WHERE user_id = ?'));
+      expect(coreUpdateSql).toContain('status = ?');
+      expect(coreUpdateSql).toContain('lifecycle_state = ?');
+      expect(coreUpdateParams).toEqual(
+        expect.arrayContaining([false, 'deleted', 'locked', 'deprovisioned', userId])
+      );
+      expect(coreSqls).not.toContainEqual(expect.stringContaining('UPDATE sessions SET revoked'));
+      expect(coreSqls).not.toContainEqual(expect.stringContaining('organization_members'));
+      expect(coreSqls).not.toContainEqual(expect.stringContaining('passkey_credentials'));
+      expect(piiSqls).not.toContainEqual(
+        expect.stringContaining('DELETE FROM users_pii WHERE user_id = ?')
+      );
+    });
+  });
+
+  describe('adminUserSendEmailHandler', () => {
+    it('should load email from users_pii by id and tenant_id before enqueuing email', async () => {
+      const userId = 'user-mail-1';
+      const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
+        if (op === 'first' && sql.includes('SELECT * FROM users_core WHERE id = ? AND is_active = 1')) {
+          return {
+            id: userId,
+            tenant_id: 'default',
+            is_active: 1,
+            pii_status: 'active',
+            pii_partition: 'default',
+            status: 'active',
+            lifecycle_state: 'active',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          };
+        }
+
+        return op === 'run' ? { success: true } : undefined;
+      });
+
+      const piiDb = createSqlAwareMockDB(async (sql, params, op) => {
+        if (
+          op === 'first' &&
+          sql.includes('SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?')
+        ) {
+          expect(params).toEqual([userId, 'default']);
+          return { email: 'mail@example.com' };
+        }
+
+        return op === 'run' ? { success: true } : undefined;
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: userId },
+        body: {
+          template: 'welcome',
+          subject: 'hello',
+          variables: { locale: 'ja' },
+        },
+        db: coreDb,
+        dbPII: piiDb,
+      });
+
+      const res = await adminUserSendEmailHandler(c);
+      expect(res.status).toBe(200);
+
+      const piiSqls = (piiDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
+      const coreSqls = (coreDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
+
+      expect(piiSqls).toContainEqual(
+        expect.stringContaining('SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?')
+      );
+      expect(piiSqls).not.toContainEqual(expect.stringContaining('WHERE user_id = ?'));
+      expect(coreSqls).toContainEqual(expect.stringContaining('INSERT INTO email_queue'));
     });
   });
 

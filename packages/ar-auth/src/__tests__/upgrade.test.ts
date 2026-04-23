@@ -78,6 +78,17 @@ vi.mock('@authrim/ar-lib-core', async () => {
     publishEvent: vi.fn().mockResolvedValue(undefined),
     getLogger: vi.fn().mockReturnValue(hoistedMocks.mockLogger),
     syncUserLifecycleState: hoistedMocks.mockSyncUserLifecycleState,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
   };
 });
 

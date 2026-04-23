@@ -24,7 +24,12 @@ import { handleSPSLO } from '../sp/slo';
 import { handleSPMetadata } from '../sp/metadata';
 import { handleIdPMetadata } from '../idp/metadata';
 
-const { mockValidateCustomClaimWrite, mockPersistCustomClaimWrite, mockSyncUserLifecycleState } =
+const {
+  mockValidateCustomClaimWrite,
+  mockPersistCustomClaimWrite,
+  mockSyncUserLifecycleState,
+  mockResolveUserStoreRuntimeSourcesFromEnv,
+} =
   vi.hoisted(() => ({
     mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
     mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
@@ -32,6 +37,7 @@ const { mockValidateCustomClaimWrite, mockPersistCustomClaimWrite, mockSyncUserL
       lifecycleState: 'active',
       missingRequiredFields: [],
     }),
+    mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
   }));
 
 // Mock modules
@@ -69,6 +75,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateCustomClaimWrite: mockValidateCustomClaimWrite,
     persistCustomClaimWrite: mockPersistCustomClaimWrite,
     syncUserLifecycleState: mockSyncUserLifecycleState,
+    resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
     // Mock getSessionStoreForNewSession to avoid crypto dependency issues in tests
     getSessionStoreForNewSession: vi.fn().mockResolvedValue({
       stub: {
@@ -80,6 +98,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
   };
 });
+
+function createMockAdapter(options: {
+  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+} = {}) {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn(async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    transaction: vi.fn(async (fn: any) => fn()),
+    batch: vi.fn().mockResolvedValue([]),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 // Helper to create base64-encoded SAML Response
 function createMockSAMLResponse(
@@ -262,6 +295,16 @@ describe('SAML Integration', () => {
       }
       return null;
     });
+    mockResolveUserStoreRuntimeSourcesFromEnv.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      coreDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    }));
 
     // Mock environment
     mockEnv = {
@@ -755,6 +798,44 @@ describe('SAML Integration', () => {
       const html = await res.text();
       expect(html).toContain('SAMLResponse');
       expect(html).toContain('form');
+    });
+
+    it('should resolve user lookup from runtime storage sources when DB_PII is unset', async () => {
+      const runtimePiiAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            expect(params).toEqual(['default', 'user@example.com']);
+            return { id: 'user-001' };
+          }
+          return null;
+        },
+      });
+
+      mockEnv.DB_PII = undefined as any;
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:single-db',
+          kind: 'storage',
+          label: 'Single DB',
+          slices: {},
+        },
+        coreDb: mockEnv.DB,
+        piiDb: runtimePiiAdapter,
+      });
+
+      const formData = new FormData();
+      formData.append('SAMLRequest', createMockLogoutRequest());
+
+      const req = new Request('http://localhost/saml/sp/slo', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBe(200);
+      expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(mockEnv, 'default');
+      expect(runtimePiiAdapter.queryOne).toHaveBeenCalled();
     });
 
     it('should process LogoutResponse and redirect', async () => {

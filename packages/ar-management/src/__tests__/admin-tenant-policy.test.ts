@@ -39,7 +39,11 @@ function buildApp(env: Partial<Env>) {
   app.get('/api/admin/sessions/me', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.post('/api/admin/logout', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/tenants', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.get('/api/admin/runtime-profiles', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/users', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.get('/api/admin/tenants/:id/runtime-profiles', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('id') })
+  );
   app.get('/api/admin/tenants/:tenantId/settings/oauth', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('tenantId') })
   );
@@ -104,6 +108,36 @@ describe('adminTenantPolicyMiddleware', () => {
     });
 
     const res = await app.request(makeRequest('/api/admin/tenants'), undefined, env);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('allows platform runtime profile registry endpoints without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const res = await app.request(makeRequest('/api/admin/runtime-profiles'), undefined, env);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('allows tenant runtime profile inventory endpoints without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const res = await app.request(
+      makeRequest('/api/admin/tenants/default/runtime-profiles'),
+      undefined,
+      env
+    );
 
     expect(res.status).toBe(200);
   });

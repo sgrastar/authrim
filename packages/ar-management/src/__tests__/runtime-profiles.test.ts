@@ -1,0 +1,288 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Hono } from 'hono';
+import type { D1Database } from '@cloudflare/workers-types';
+import type { Env } from '@authrim/ar-lib-core';
+import {
+  DEFAULT_AUDIT_PROFILE_ID,
+  DEFAULT_RESIDENCY_PROFILE_ID,
+  DEFAULT_STORAGE_PROFILE_ID,
+} from '@authrim/ar-lib-core';
+import {
+  adminRuntimeProfileDeleteHandler,
+  adminRuntimeProfileGetHandler,
+  adminRuntimeProfileListHandler,
+  adminRuntimeProfileUpsertHandler,
+  adminTenantRuntimeProfilesHandler,
+} from '../runtime-profiles';
+
+function createMockKV(initial: Record<string, string> = {}): KVNamespace {
+  const store = new Map<string, string>(Object.entries(initial));
+
+  return {
+    get: vi.fn(async (key: string) => store.get(key) ?? null),
+    put: vi.fn(async (key: string, value: string) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn(async (key: string) => {
+      store.delete(key);
+    }),
+    list: vi.fn(async (options?: { prefix?: string }) => ({
+      keys: Array.from(store.keys())
+        .filter((key) => !options?.prefix || key.startsWith(options.prefix))
+        .map((name) => ({ name })),
+      list_complete: true,
+      cursor: '',
+    })),
+  } as unknown as KVNamespace;
+}
+
+function createTestApp() {
+  const app = new Hono<{ Bindings: Env }>();
+  app.get('/api/admin/runtime-profiles', adminRuntimeProfileListHandler);
+  app.get('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileGetHandler);
+  app.put('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileUpsertHandler);
+  app.delete('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileDeleteHandler);
+  app.get('/api/admin/tenants/:id/runtime-profiles', adminTenantRuntimeProfilesHandler);
+  return app;
+}
+
+function createEnv(kvData: Record<string, string> = {}): Env {
+  return {
+    DB: {} as D1Database,
+    AUTHRIM_CONFIG: createMockKV(kvData),
+    PROFILE_REGISTRY_BACKEND: 'kv',
+    DEFAULT_STORAGE_PROFILE_ID,
+    DEFAULT_AUDIT_PROFILE_ID,
+    DEFAULT_RESIDENCY_PROFILE_ID,
+    BASE_DOMAIN: 'auth.example.com',
+  } as unknown as Env;
+}
+
+describe('runtime profile admin handlers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('lists built-in and custom runtime profiles, with include_builtins filtering', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:storage:tenant-a-storage': JSON.stringify({
+        id: 'tenant-a-storage',
+        kind: 'storage',
+        label: 'Tenant A Storage',
+        slices: {
+          custom_claims: {
+            driver: 'postgres',
+            connectionRef: 'tenant-a-core',
+            role: 'core',
+          },
+        },
+      }),
+    });
+
+    const allRes = await app.request('/api/admin/runtime-profiles?kind=storage', undefined, env);
+    expect(allRes.status).toBe(200);
+    const allBody = (await allRes.json()) as {
+      include_builtins: boolean;
+      profiles: { storage: Array<{ id: string }> };
+    };
+    expect(allBody.include_builtins).toBe(true);
+    expect(allBody.profiles.storage.some((profile) => profile.id === DEFAULT_STORAGE_PROFILE_ID)).toBe(
+      true
+    );
+    expect(allBody.profiles.storage.some((profile) => profile.id === 'tenant-a-storage')).toBe(
+      true
+    );
+
+    const customOnlyRes = await app.request(
+      '/api/admin/runtime-profiles?kind=storage&include_builtins=false',
+      undefined,
+      env
+    );
+    expect(customOnlyRes.status).toBe(200);
+    const customOnlyBody = (await customOnlyRes.json()) as {
+      profiles: { storage: Array<{ id: string }> };
+    };
+    expect(customOnlyBody.profiles.storage.map((profile) => profile.id)).toEqual([
+      'tenant-a-storage',
+    ]);
+  });
+
+  it('creates, updates, fetches, and deletes a custom runtime profile', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const createRes = await app.request(
+      '/api/admin/runtime-profiles/storage/tenant-a-storage',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'Tenant A Storage',
+          slices: {
+            custom_claims: {
+              driver: 'postgres',
+              connectionRef: 'tenant-a-core',
+              role: 'core',
+            },
+          },
+        }),
+      },
+      env
+    );
+    expect(createRes.status).toBe(201);
+    const createBody = (await createRes.json()) as {
+      created: boolean;
+      profile: { id: string; label: string; builtin: boolean };
+    };
+    expect(createBody.created).toBe(true);
+    expect(createBody.profile.id).toBe('tenant-a-storage');
+    expect(createBody.profile.builtin).toBe(false);
+
+    const updateRes = await app.request(
+      '/api/admin/runtime-profiles/storage/tenant-a-storage',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'Tenant A Storage Updated',
+          description: 'updated',
+          slices: {
+            custom_claims: {
+              driver: 'postgres',
+              connectionRef: 'tenant-a-core',
+              role: 'core',
+            },
+          },
+        }),
+      },
+      env
+    );
+    expect(updateRes.status).toBe(200);
+    const updateBody = (await updateRes.json()) as {
+      created: boolean;
+      profile: { label: string };
+    };
+    expect(updateBody.created).toBe(false);
+    expect(updateBody.profile.label).toBe('Tenant A Storage Updated');
+
+    const getRes = await app.request(
+      '/api/admin/runtime-profiles/storage/tenant-a-storage',
+      undefined,
+      env
+    );
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as {
+      profile: { id: string; label: string };
+    };
+    expect(getBody.profile.id).toBe('tenant-a-storage');
+    expect(getBody.profile.label).toBe('Tenant A Storage Updated');
+
+    const deleteRes = await app.request(
+      '/api/admin/runtime-profiles/storage/tenant-a-storage',
+      { method: 'DELETE' },
+      env
+    );
+    expect(deleteRes.status).toBe(200);
+    const deleteBody = (await deleteRes.json()) as { deleted: boolean };
+    expect(deleteBody.deleted).toBe(true);
+
+    const missingRes = await app.request(
+      '/api/admin/runtime-profiles/storage/tenant-a-storage',
+      undefined,
+      env
+    );
+    expect(missingRes.status).toBe(404);
+  });
+
+  it('rejects invalid kinds and builtin profile mutation attempts', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const invalidRes = await app.request('/api/admin/runtime-profiles?kind=unknown', undefined, env);
+    expect(invalidRes.status).toBe(400);
+
+    const builtinPutRes = await app.request(
+      `/api/admin/runtime-profiles/storage/${DEFAULT_STORAGE_PROFILE_ID}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'Should Fail',
+          slices: {
+            custom_claims: {
+              driver: 'postgres',
+              connectionRef: 'forbidden',
+              role: 'core',
+            },
+          },
+        }),
+      },
+      env
+    );
+    expect(builtinPutRes.status).toBe(409);
+
+    const builtinDeleteRes = await app.request(
+      `/api/admin/runtime-profiles/storage/${DEFAULT_STORAGE_PROFILE_ID}`,
+      { method: 'DELETE' },
+      env
+    );
+    expect(builtinDeleteRes.status).toBe(409);
+  });
+
+  it('resolves tenant effective runtime profiles from environment defaults and tenant overrides', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:storage:tenant-a-storage': JSON.stringify({
+        id: 'tenant-a-storage',
+        kind: 'storage',
+        label: 'Tenant A Storage',
+        slices: {
+          custom_claims: {
+            driver: 'postgres',
+            connectionRef: 'tenant-a-core',
+            role: 'core',
+          },
+        },
+      }),
+      'settings:tenant:acme:tenant': JSON.stringify({
+        'tenant.storage_profile_id': 'tenant-a-storage',
+        'tenant.residency_profile_id': 'builtin:residency:eu',
+      }),
+    });
+
+    const response = await app.request('/api/admin/tenants/acme/runtime-profiles', undefined, env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      tenant_id: string;
+      refs: {
+        storageProfileId: string;
+        auditProfileId: string;
+        residencyProfileId: string;
+        inherited: {
+          storage: boolean;
+          audit: boolean;
+          residency: boolean;
+        };
+      };
+      effective: {
+        storage: { id: string };
+        audit: { id: string };
+        residency: { id: string };
+      };
+    };
+
+    expect(body.tenant_id).toBe('acme');
+    expect(body.refs.storageProfileId).toBe('tenant-a-storage');
+    expect(body.refs.auditProfileId).toBe(DEFAULT_AUDIT_PROFILE_ID);
+    expect(body.refs.residencyProfileId).toBe('builtin:residency:eu');
+    expect(body.refs.inherited).toEqual({
+      storage: false,
+      audit: true,
+      residency: false,
+    });
+    expect(body.effective.storage.id).toBe('tenant-a-storage');
+    expect(body.effective.audit.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
+    expect(body.effective.residency.id).toBe('builtin:residency:eu');
+  });
+});

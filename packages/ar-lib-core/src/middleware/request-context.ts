@@ -28,6 +28,7 @@ import {
   getPrimaryTenantVanityDomain,
   resolveTenantFromVanityHost,
 } from '../services/tenant-vanity-domain-resolver';
+import { resolveUserStoreRuntimeSourcesFromEnv } from '../services/user-store-runtime-sources';
 
 /**
  * Request context available to all handlers via c.get()
@@ -310,6 +311,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ctx.set('tenantId', tenantId);
     ctx.set('logger', logger);
     ctx.set('startTime', startTime);
+    ctx.set(
+      'runtimeUserStoreSources',
+      await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId)
+    );
 
     // Log request start
     logger.debug('Request started', {

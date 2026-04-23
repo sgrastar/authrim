@@ -18,6 +18,7 @@ import {
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   // Event System
@@ -39,8 +40,8 @@ import {
   D1Adapter,
 } from '@authrim/ar-lib-core';
 import {
-  persistRegistrationFieldValues,
-  validateRegistrationFieldSubmission,
+  persistRegistrationFieldValuesFromEnv,
+  validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 
 // ===== Module-level Logger for Helper Functions =====
@@ -229,8 +230,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const origin = originHeader;
 
     const tenantId = getTenantIdFromContext(c);
-    const customFieldValidation = await validateRegistrationFieldSubmission(
-      c.env.DB,
+    const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+      c.env,
       tenantId,
       custom_fields
     );
@@ -258,7 +259,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       // Search by userId: Core DB has the ID, PII DB has email/name
       const userCore = await authCtx.repositories.userCore.findById(userId);
 
-      if (userCore && userCore.is_active && c.env.DB_PII) {
+      if (userCore && userCore.is_active) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         const userPII = await piiCtx.piiRepositories.userPII.findById(userId);
         if (userPII) {
@@ -268,12 +269,9 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
             name: userPII.name || null,
           };
         }
-      } else if (userCore && userCore.is_active) {
-        // No PII DB - use Core only (email will be missing)
-        user = { id: userCore.id, email: '', name: null };
       }
-    } else if (c.env.DB_PII) {
-      // Search by email: PII DB first to get user id
+    } else {
+      // Search by email: PII store first to get user id
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(tenantId, email);
 
@@ -307,41 +305,35 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         pii_status: 'pending',
       });
 
-      // Step 2: Create user in PII DB (if DB_PII is configured)
-      if (c.env.DB_PII) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        try {
-          await piiCtx.piiRepositories.userPII.createPII({
-            id: newUserId,
-            tenant_id: tenantId,
-            email,
-            name: defaultName,
-            preferred_username: preferredUsername,
-          });
-
-          // Step 3: Update pii_status to 'active' (only on successful PII DB write)
-          await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
-        } catch (piiError: unknown) {
-          // PII Protection: Don't log full error (may contain PII)
-          log.error('Failed to create user in PII DB', {
-            action: 'pii_create',
-            errorType: piiError instanceof Error ? piiError.name : 'Unknown',
-          });
-          // Update pii_status to 'failed' to indicate PII DB write failure
-          await authCtx.repositories.userCore
-            .updatePIIStatus(newUserId, 'failed')
-            .catch((statusError: unknown) => {
-              log.error('Failed to update pii_status to failed', {
-                action: 'pii_status_update',
-                errorType: statusError instanceof Error ? statusError.name : 'Unknown',
-              });
-            });
-          // Note: We continue with registration - Core DB user exists, PII can be retried
-        }
-      } else {
-        log.warn('DB_PII not configured - user created with pii_status=pending', {
-          action: 'pii_config',
+      // Step 2: Create user in the configured PII store
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      try {
+        await piiCtx.piiRepositories.userPII.createPII({
+          id: newUserId,
+          tenant_id: tenantId,
+          email,
+          name: defaultName,
+          preferred_username: preferredUsername,
         });
+
+        // Step 3: Update pii_status to 'active' (only on successful PII store write)
+        await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
+      } catch (piiError: unknown) {
+        // PII Protection: Don't log full error (may contain PII)
+        log.error('Failed to create user in PII store', {
+          action: 'pii_create',
+          errorType: piiError instanceof Error ? piiError.name : 'Unknown',
+        });
+        // Update pii_status to 'failed' to indicate PII write failure
+        await authCtx.repositories.userCore
+          .updatePIIStatus(newUserId, 'failed')
+          .catch((statusError: unknown) => {
+            log.error('Failed to update pii_status to failed', {
+              action: 'pii_status_update',
+              errorType: statusError instanceof Error ? statusError.name : 'Unknown',
+            });
+          });
+        // Note: We continue with registration - Core DB user exists, PII can be retried
       }
 
       user = { id: newUserId, email, name: defaultName || email.split('@')[0] };
@@ -570,7 +562,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       email: null,
       name: null,
     };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(userId);
       if (piiResult) {
@@ -584,13 +576,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const customFields = challengeData.metadata?.custom_fields;
     if (customFields) {
       try {
-        await persistRegistrationFieldValues(
-          c.env.DB,
-          c.env.DB_PII ?? null,
-          tenantId,
-          userId,
-          customFields
-        );
+        await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
       } catch (persistError) {
         log.warn(
           'Failed to persist registration field values',
@@ -663,7 +649,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
 
     // If email provided, get user's passkeys via Repository
     // PII/Non-PII DB separation: email lookup uses PII DB
-    if (email && c.env.DB_PII) {
+    if (email && hasPIIDatabase(c)) {
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       const piiCtx = createPIIContextFromHono(c, tenantId);
@@ -954,7 +940,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       email: null,
       name: null,
     };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(passkey.user_id);
       if (piiResult) {

@@ -1040,6 +1040,7 @@ export function createApiRoutes(): Hono {
           runMigrations: true,
           onProgress: addProgress,
           databaseConfig,
+          config: state.config ?? undefined,
         });
 
         addProgress('Creating lock file...');
@@ -1642,7 +1643,12 @@ export function createApiRoutes(): Hono {
         if (runMigrations && !dryRun && workersSuccess) {
           const bootstrapConfig = cfg ? AuthrimConfigSchema.parse(cfg) : createDefaultConfig(env);
           addProgress('📜 Running D1 database migrations...');
-          migrationsResult = await runMigrationsForEnvironment(env, resolve(rootDir), addProgress);
+          migrationsResult = await runMigrationsForEnvironment(
+            env,
+            resolve(rootDir),
+            addProgress,
+            state.config ?? undefined
+          );
 
           if (migrationsResult.success) {
             addProgress('✅ Database migrations completed successfully');
@@ -2721,7 +2727,12 @@ export function createApiRoutes(): Hono {
         clearProgress();
         addProgress(`📜 Running D1 migrations for environment: ${env}`);
 
-        const result = await runMigrationsForEnvironment(env, rootDir, addProgress);
+        const result = await runMigrationsForEnvironment(
+          env,
+          rootDir,
+          addProgress,
+          state.config ?? undefined
+        );
 
         if (result.success) {
           addProgress('✅ All migrations completed successfully');

@@ -22,6 +22,19 @@ export function isDatabaseAdapter(value: unknown): value is DatabaseAdapter {
   );
 }
 
+export function isD1DatabaseLike(value: unknown): value is D1Database {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<D1Database>;
+  return typeof candidate.prepare === 'function' && typeof candidate.batch === 'function';
+}
+
+export function isDatabaseSource(value: unknown): value is DatabaseSource {
+  return isDatabaseAdapter(value) || isD1DatabaseLike(value);
+}
+
 export function ensureDatabaseAdapter(
   source: DatabaseSource,
   partition: string = 'core'

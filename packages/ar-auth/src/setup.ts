@@ -344,11 +344,9 @@ async function rollbackUserCreation(
     // Delete from users_core
     await authCtx.repositories.userCore.delete(userId);
 
-    // Delete from users_pii if PII DB is available
-    if (c.env.DB_PII) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      await piiCtx.piiRepositories.userPII.delete(userId);
-    }
+    // Delete from the configured PII user store
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    await piiCtx.piiRepositories.userPII.delete(userId);
 
     moduleLogger.info('User rollback completed (legacy)', {
       action: 'rollback_completed',
@@ -596,18 +594,16 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       });
       createdUserId = userId;
 
-      // Create user in users_pii if PII DB is available
-      if (c.env.DB_PII) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        const preferredUsername = email.split('@')[0];
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: userId,
-          tenant_id: tenantId,
-          email: email.toLowerCase(),
-          name: name || null,
-          preferred_username: preferredUsername,
-        });
-      }
+      // Create user in the configured PII store
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const preferredUsername = email.split('@')[0];
+      await piiCtx.piiRepositories.userPII.createPII({
+        id: userId,
+        tenant_id: tenantId,
+        email: email.toLowerCase(),
+        name: name || null,
+        preferred_username: preferredUsername,
+      });
     }
 
     // Assign super_admin role

@@ -33,6 +33,7 @@ import {
   invalidateConsentCache,
   getChallengeStoreByChallengeId,
   createAuthContextFromHono,
+  createPIIContextFromHono,
   getTenantIdFromContext,
   createOAuthConfigManager,
   // Event System
@@ -246,6 +247,8 @@ async function handleJsonConsentGet(
   }
 ): Promise<Response> {
   const { challenge_id, userId, clientRow, scopeDetails, metadata } = params;
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
 
   // Build client info
   const client: ConsentClientInfo = {
@@ -259,7 +262,8 @@ async function handleJsonConsentGet(
   };
 
   // Get user info (PII/Non-PII DB separation)
-  const userInfo = await getConsentUserInfo(c.env.DB, userId, c.env.DB_PII);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const userInfo = await getConsentUserInfo(authCtx.coreAdapter, userId, piiCtx.defaultPiiAdapter);
   if (!userInfo) {
     return c.json(
       {
@@ -296,8 +300,6 @@ async function handleJsonConsentGet(
   }
 
   // Get consent settings
-  const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
   const configManager = createOAuthConfigManager(c.env);
 
   // Check versioning and re-consent requirements

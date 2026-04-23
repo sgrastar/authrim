@@ -53,8 +53,8 @@ import {
   hashEmail,
 } from './utils/email-code-utils';
 import {
-  persistRegistrationFieldValues,
-  validateRegistrationFieldSubmission,
+  persistRegistrationFieldValuesFromEnv,
+  validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
@@ -152,8 +152,8 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       }
 
       const tenantId = getTenantIdFromContext(c);
-      const customFieldValidation = await validateRegistrationFieldSubmission(
-        c.env.DB,
+      const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+        c.env,
         tenantId,
         custom_fields
       );
@@ -177,8 +177,8 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       const authCtx = createAuthContextFromHono(c, tenantId);
       let user: { id: string; email: string; name: string | null } | null = null;
 
-      // Search by email in PII DB
-      if (c.env.DB_PII) {
+      // Search by email in the configured PII user store
+      {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
           tenantId,
@@ -213,43 +213,37 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           pii_status: 'pending',
         });
 
-        // Step 2: Create user in PII DB (if DB_PII is configured)
-        if (c.env.DB_PII) {
-          const piiCtx = createPIIContextFromHono(c, tenantId);
-          try {
-            await piiCtx.piiRepositories.userPII.createPII({
-              id: userId,
-              tenant_id: tenantId,
-              email: email.toLowerCase(),
-              name: defaultName,
-              preferred_username: preferredUsername,
-            });
-
-            // Step 3: Update pii_status to 'active' (only on successful PII DB write)
-            await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-          } catch (piiError: unknown) {
-            // PII Protection: Don't log full error (may contain PII)
-            log.error(
-              'Failed to create user in PII DB',
-              { action: 'pii_create' },
-              piiError instanceof Error ? piiError : undefined
-            );
-            // Update pii_status to 'failed' to indicate PII DB write failure
-            await authCtx.repositories.userCore
-              .updatePIIStatus(userId, 'failed')
-              .catch((statusError: unknown) => {
-                log.error(
-                  'Failed to update pii_status to failed',
-                  { action: 'pii_status_update' },
-                  statusError instanceof Error ? statusError : undefined
-                );
-              });
-            // Note: We continue with user creation - Core DB user exists, PII can be retried
-          }
-        } else {
-          log.warn('DB_PII not configured - user created with pii_status=pending', {
-            action: 'pii_config',
+        // Step 2: Create user in the configured PII store
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        try {
+          await piiCtx.piiRepositories.userPII.createPII({
+            id: userId,
+            tenant_id: tenantId,
+            email: email.toLowerCase(),
+            name: defaultName,
+            preferred_username: preferredUsername,
           });
+
+          // Step 3: Update pii_status to 'active' (only on successful PII store write)
+          await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
+        } catch (piiError: unknown) {
+          // PII Protection: Don't log full error (may contain PII)
+          log.error(
+            'Failed to create user in PII store',
+            { action: 'pii_create' },
+            piiError instanceof Error ? piiError : undefined
+          );
+          // Update pii_status to 'failed' to indicate PII write failure
+          await authCtx.repositories.userCore
+            .updatePIIStatus(userId, 'failed')
+            .catch((statusError: unknown) => {
+              log.error(
+                'Failed to update pii_status to failed',
+                { action: 'pii_status_update' },
+                statusError instanceof Error ? statusError : undefined
+              );
+            });
+          // Note: We continue with user creation - Core DB user exists, PII can be retried
         }
 
         user = { id: userId, email: email.toLowerCase(), name: defaultName || email.split('@')[0] };
@@ -470,8 +464,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
 
-      // Create PII context only if DB_PII is configured
-      const piiCtx = c.env.DB_PII ? createPIIContextFromHono(c, tenantId) : null;
+      const piiCtx = createPIIContextFromHono(c, tenantId);
 
       const [isValidCode, userCore, userPII] = await Promise.all([
         verifyEmailCodeHash(
@@ -483,9 +476,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           hmacSecret
         ),
         authCtx.repositories.userCore.findById(challengeData.userId),
-        piiCtx
-          ? piiCtx.piiRepositories.userPII.findById(challengeData.userId)
-          : Promise.resolve(null),
+        piiCtx.piiRepositories.userPII.findById(challengeData.userId),
       ]);
 
       if (!isValidCode) {
@@ -541,13 +532,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       const customFields = challengeData.metadata?.custom_fields;
       if (customFields) {
         try {
-          await persistRegistrationFieldValues(
-            c.env.DB,
-            c.env.DB_PII ?? null,
-            tenantId,
-            challengeData.userId,
-            customFields
-          );
+          await persistRegistrationFieldValuesFromEnv(c.env, tenantId, challengeData.userId, customFields);
         } catch (persistError) {
           log.warn(
             'Failed to persist registration field values',

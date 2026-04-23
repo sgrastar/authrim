@@ -53,7 +53,7 @@ import type {
 // =============================================================================
 
 /**
- * Core repositories (Non-PII data in D1_CORE)
+ * Core repositories (Non-PII data in the configured core user store)
  */
 export interface CoreRepositories {
   /** User core data (pii_partition, pii_status, password_hash, etc.) */
@@ -79,7 +79,7 @@ export interface CoreRepositories {
 }
 
 /**
- * PII repositories (Personal information in D1_PII)
+ * PII repositories (Personal information in the configured PII user store)
  */
 export interface PIIRepositories {
   /** User PII data (email, name, address, etc.) */

@@ -17,6 +17,7 @@ import {
   AR_ERROR_CODES,
   getUIConfig,
   getLogger,
+  resolveTenantRuntimeProfilesFromEnv,
   usesNakedDomainIssuer as usesNakedDomainIssuerCore,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from './single-tenant-guard';
@@ -28,6 +29,7 @@ type AdminInfoEnv = Env & {
   SAML_ENABLED?: string;
   ASYNC_ENABLED?: string;
   VC_ENABLED?: string;
+  PROFILE_REGISTRY_BACKEND?: string;
 };
 
 interface ComponentAvailability {
@@ -95,6 +97,7 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
 
     // Construct all standard endpoint URLs
     const endpoints = buildEndpoints(issuer, apiBaseUrl);
+    const runtimeProfiles = await resolveRuntimeProfileInfo(c.env, tenantId, log);
 
     return c.json({
       tenant_id: tenantId,
@@ -106,11 +109,65 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
       discover_url: discoverUrl,
       admin_ui_url: adminUiUrl,
       api_url: apiBaseUrl,
+      runtime_profiles: runtimeProfiles.profiles,
+      runtime_profiles_error: runtimeProfiles.error,
       ...endpoints,
     });
   } catch (error) {
     log.error('Failed to get tenant info', { tenantId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+async function resolveRuntimeProfileInfo(
+  env: AdminInfoEnv,
+  tenantId: string,
+  log: { warn: (message: string, data?: Record<string, unknown>) => void }
+): Promise<{
+  profiles: {
+    registry_backend: string;
+    effective: {
+      storage: { id: string; label: string; inherited: boolean };
+      audit: { id: string; label: string; inherited: boolean };
+      residency: { id: string; label: string; inherited: boolean };
+    };
+  } | null;
+  error: string | null;
+}> {
+  try {
+    const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
+    return {
+      profiles: {
+        registry_backend: env.PROFILE_REGISTRY_BACKEND ?? 'kv',
+        effective: {
+          storage: {
+            id: resolved.storageProfile.id,
+            label: resolved.storageProfile.label,
+            inherited: resolved.refs.inherited.storage,
+          },
+          audit: {
+            id: resolved.auditProfile.id,
+            label: resolved.auditProfile.label,
+            inherited: resolved.refs.inherited.audit,
+          },
+          residency: {
+            id: resolved.residencyProfile.id,
+            label: resolved.residencyProfile.label,
+            inherited: resolved.refs.inherited.residency,
+          },
+        },
+      },
+      error: null,
+    };
+  } catch (error) {
+    log.warn('Failed to resolve runtime profiles for tenant info', {
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      profiles: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

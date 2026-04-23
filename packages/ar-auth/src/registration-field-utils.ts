@@ -1,9 +1,14 @@
 import type {
   DatabaseSource,
+  Env,
   RegistrationFieldSchemaRow,
   ValidatedCustomClaimWriteResult,
 } from '@authrim/ar-lib-core';
-import { listRegistrationFieldSchemas, persistCustomClaimWrite } from '@authrim/ar-lib-core';
+import {
+  listRegistrationFieldSchemas,
+  persistCustomClaimWrite,
+  resolveCustomClaimRuntimeSourcesFromEnv,
+} from '@authrim/ar-lib-core';
 
 interface MissingRequiredRegistrationField {
   fieldKey: string;
@@ -251,4 +256,51 @@ export async function persistRegistrationFieldValues(
     userId,
     validation,
   });
+}
+
+export async function validateRegistrationFieldSubmissionFromEnv(
+  env: Pick<
+    Env,
+    | 'DB'
+    | 'DB_PII'
+    | 'DB_ADMIN'
+    | 'SETTINGS'
+    | 'AUTHRIM_CONFIG'
+    | 'PROFILE_REGISTRY_BACKEND'
+    | 'DEFAULT_STORAGE_PROFILE_ID'
+    | 'DEFAULT_AUDIT_PROFILE_ID'
+    | 'DEFAULT_RESIDENCY_PROFILE_ID'
+  >,
+  tenantId: string,
+  submitted: Record<string, unknown> | undefined
+): Promise<ValidationResult> {
+  const sources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
+  return validateRegistrationFieldSubmission(sources.schemaDb, tenantId, submitted);
+}
+
+export async function persistRegistrationFieldValuesFromEnv(
+  env: Pick<
+    Env,
+    | 'DB'
+    | 'DB_PII'
+    | 'DB_ADMIN'
+    | 'SETTINGS'
+    | 'AUTHRIM_CONFIG'
+    | 'PROFILE_REGISTRY_BACKEND'
+    | 'DEFAULT_STORAGE_PROFILE_ID'
+    | 'DEFAULT_AUDIT_PROFILE_ID'
+    | 'DEFAULT_RESIDENCY_PROFILE_ID'
+  >,
+  tenantId: string,
+  userId: string,
+  values: Record<string, unknown> | undefined
+): Promise<void> {
+  const sources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
+  await persistRegistrationFieldValues(
+    sources.nonPiiDb,
+    sources.piiDb,
+    tenantId,
+    userId,
+    values
+  );
 }

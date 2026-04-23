@@ -205,6 +205,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     D1Adapter: vi.fn().mockImplementation(function (opts: { db: unknown }) {
       return selectMockAdapter(opts.db);
     }),
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
     CustomClaimSchemaHistoryManager: vi
       .fn()
       .mockImplementation(function MockCustomClaimSchemaHistoryManager() {

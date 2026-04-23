@@ -28,17 +28,18 @@ import {
   getTenantIdFromContext,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   getLogger,
 } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
-  ensureDatabaseAdapter,
   generateId,
   generateUserIdFromSettings,
   hashPassword,
   validateCustomClaimWrite,
   persistCustomClaimWrite,
   syncUserLifecycleState,
+  resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 
@@ -51,8 +52,12 @@ function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter | null;
 } {
-  const coreAdapter = ensureDatabaseAdapter(c.env.DB, 'scim-core');
-  const piiAdapter = c.env.DB_PII ? ensureDatabaseAdapter(c.env.DB_PII, 'scim-pii') : null;
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const coreAdapter = authCtx.coreAdapter;
+  const piiAdapter = hasPIIDatabase(c)
+    ? createPIIContextFromHono(c, tenantId).defaultPiiAdapter
+    : null;
   return { coreAdapter, piiAdapter };
 }
 
@@ -239,9 +244,11 @@ async function validateScimCustomClaimWrite(
     deleteMissingFields?: boolean;
   }
 ) {
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
   return validateCustomClaimWrite({
-    db: c.env.DB,
-    dbPii: c.env.DB_PII ?? null,
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
     tenantId,
     userId: options?.userId,
     submitted: parseScimCustomAttributes(internalUser),
@@ -261,17 +268,20 @@ async function persistScimCustomClaimWrite(
     return;
   }
 
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
   await persistCustomClaimWrite({
-    db: c.env.DB,
-    dbPii: c.env.DB_PII ?? null,
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
     tenantId,
     userId,
     validation,
   });
 
   await syncUserLifecycleState({
-    db: c.env.DB,
-    dbPii: c.env.DB_PII ?? null,
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    stateDb: createAuthContextFromHono(c, tenantId).coreAdapter,
     tenantId,
     userId,
   });

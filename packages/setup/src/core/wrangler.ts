@@ -505,6 +505,21 @@ export function generateEnvVars(
   const uiUrl = loginUiUsesApiDomain
     ? apiUrlForUi
     : config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl;
+  const profileDefaults = config.profiles?.defaults ?? {
+    storage: 'builtin:storage:standard',
+    audit: 'builtin:audit:standard',
+    residency: 'builtin:residency:default',
+  };
+  const profileRegistryBackend = config.profiles?.registry?.backend ?? 'kv';
+  const profileAwareComponents: WorkerComponent[] = [
+    'ar-auth',
+    'ar-management',
+    'ar-token',
+    'ar-userinfo',
+    'ar-discovery',
+    'ar-saml',
+    'ar-bridge',
+  ];
 
   // Issuer URL (single-tenant mode uses this directly)
   // In multi-tenant mode, issuer is dynamically built from subdomain + BASE_DOMAIN
@@ -595,6 +610,13 @@ export function generateEnvVars(
 
   if (component === 'ar-discovery') {
     vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
+  }
+
+  if (profileAwareComponents.includes(component)) {
+    vars['PROFILE_REGISTRY_BACKEND'] = profileRegistryBackend;
+    vars['DEFAULT_STORAGE_PROFILE_ID'] = profileDefaults.storage;
+    vars['DEFAULT_AUDIT_PROFILE_ID'] = profileDefaults.audit;
+    vars['DEFAULT_RESIDENCY_PROFILE_ID'] = profileDefaults.residency;
   }
 
   // OIDC settings

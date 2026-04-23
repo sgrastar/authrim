@@ -17,6 +17,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   listRegistrationFieldDefinitions,
+  resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -32,7 +33,8 @@ export async function registrationFieldsHandler(c: Context<{ Bindings: Env }>) {
 
   try {
     const tenantId = getTenantIdFromContext(c);
-    const fields = await listRegistrationFieldDefinitions(c.env.DB, tenantId);
+    const sources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+    const fields = await listRegistrationFieldDefinitions(sources.schemaDb, tenantId);
 
     return c.json({ fields });
   } catch (error) {

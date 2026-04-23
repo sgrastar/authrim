@@ -40,6 +40,8 @@ export {
   ensureDatabaseAdapter,
   ensureOptionalDatabaseAdapter,
   isDatabaseAdapter,
+  isD1DatabaseLike,
+  isDatabaseSource,
 } from './adapter-source';
 
 // Adapters

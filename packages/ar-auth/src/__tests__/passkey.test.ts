@@ -124,6 +124,17 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
     getTenantIdFromContext: () => 'default',
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
   };
 });
 

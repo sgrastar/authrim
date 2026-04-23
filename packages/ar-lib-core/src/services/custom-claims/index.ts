@@ -77,3 +77,8 @@ export {
   type SyncUserLifecycleStateResult,
   type SetUserLifecycleStateParams,
 } from './user-lifecycle';
+export {
+  resolveCustomClaimRuntimeSourcesFromEnv,
+  type CustomClaimRuntimeSourceEnv,
+  type ResolvedCustomClaimRuntimeSources,
+} from './runtime-sources';

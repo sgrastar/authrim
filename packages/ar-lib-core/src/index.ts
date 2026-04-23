@@ -11,6 +11,7 @@ export * from './types/policy-rules';
 export * from './types/jit-config';
 export * from './types/token-claim-rules';
 export * from './types/check-api';
+export * from './types/runtime-profile';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -239,6 +240,9 @@ export * from './services/logout-webhook-sender';
 export * from './services/policy-resolver';
 export * from './services/custom-claims';
 export * from './services/custom-claim-schema-history';
+export * from './services/profile-registry';
+export * from './services/runtime-profile-resolver';
+export * from './services/user-store-runtime-sources';
 
 // Audit Logging (Phase 10 - Unified Audit System)
 export * from './services/audit';

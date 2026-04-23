@@ -19,6 +19,8 @@ export interface RequiredCustomClaimViolationStatus {
 export interface GetRequiredCustomClaimViolationStatusesParams {
   db: DatabaseSource;
   dbPii?: DatabaseSource | null;
+  schemaDb?: DatabaseSource;
+  stateDb?: DatabaseSource;
   cache?: KVNamespace | null;
   tenantId: string;
   userIds: string[];
@@ -50,6 +52,8 @@ export async function getRequiredCustomClaimViolationStatuses(
   const {
     db,
     dbPii = null,
+    schemaDb = db,
+    stateDb = schemaDb,
     cache = null,
     tenantId,
     userIds,
@@ -62,7 +66,7 @@ export async function getRequiredCustomClaimViolationStatuses(
     return { requiredSchemaCount: 0, users: [] };
   }
 
-  const schemas = await new SchemaLoader(db, cache).loadActiveSchemas(tenantId);
+  const schemas = await new SchemaLoader(schemaDb, cache).loadActiveSchemas(tenantId);
   const requiredSchemas = schemas.filter((schema) => schema.is_required === 1);
 
   if (requiredSchemas.length === 0) {
@@ -75,7 +79,7 @@ export async function getRequiredCustomClaimViolationStatuses(
     if (syncLifecycleState) {
       for (const user of users) {
         await setUserLifecycleState({
-          db,
+          db: stateDb,
           tenantId,
           userId: user.userId,
           lifecycleState: user.lifecycleState,
@@ -168,7 +172,7 @@ export async function getRequiredCustomClaimViolationStatuses(
 
       if (syncLifecycleState) {
         await setUserLifecycleState({
-          db,
+          db: stateDb,
           tenantId,
           userId,
           lifecycleState,

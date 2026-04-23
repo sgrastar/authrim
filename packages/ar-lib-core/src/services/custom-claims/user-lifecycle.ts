@@ -31,8 +31,6 @@ export type UserLifecycleState =
   | 'archived'
   | 'deprovisioned';
 
-export interface SyncUserLifecycleStateParams extends GetMissingRequiredCustomClaimsParams {}
-
 export interface SyncUserLifecycleStateResult {
   lifecycleState: UserLifecycleState;
   missingRequiredFields: MissingRequiredCustomClaim[];
@@ -43,6 +41,10 @@ export interface SetUserLifecycleStateParams {
   tenantId: string;
   userId: string;
   lifecycleState: UserLifecycleState;
+}
+
+export interface SyncUserLifecycleStateParams extends GetMissingRequiredCustomClaimsParams {
+  stateDb?: DatabaseSource;
 }
 
 export async function setUserLifecycleState(
@@ -71,13 +73,13 @@ export async function setUserLifecycleState(
 export async function syncUserLifecycleState(
   params: SyncUserLifecycleStateParams
 ): Promise<SyncUserLifecycleStateResult> {
-  const { db, tenantId, userId } = params;
+  const { db, stateDb = params.schemaDb ?? db, tenantId, userId } = params;
   const missingRequiredFields = await getMissingRequiredCustomClaims(params);
   const lifecycleState: UserLifecycleState =
     missingRequiredFields.length > 0 ? 'incomplete' : 'active';
 
   await setUserLifecycleState({
-    db,
+    db: stateDb,
     tenantId,
     userId,
     lifecycleState,

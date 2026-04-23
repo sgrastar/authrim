@@ -10,8 +10,8 @@ import type { Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig, SAMLAssertion } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
-  D1Adapter,
   type DatabaseAdapter,
+  ensureDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
@@ -22,6 +22,8 @@ import {
   validateCustomClaimWrite,
   persistCustomClaimWrite,
   syncUserLifecycleState,
+  resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveUserStoreRuntimeSourcesFromEnv,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -793,8 +795,12 @@ async function findOrCreateUser(
   idpEntityId: string,
   tenantId: string
 ): Promise<string> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
+  const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(userStoreSources.coreDb, 'saml-acs-core');
+  const piiAdapter: DatabaseAdapter | null = userStoreSources.piiDb
+    ? ensureDatabaseAdapter(userStoreSources.piiDb, 'saml-acs-pii')
+    : null;
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
 
   // Try to find user by email (PII/Non-PII DB separation)
   if (userInfo.email && piiAdapter) {
@@ -816,8 +822,9 @@ async function findOrCreateUser(
   }
 
   const customClaimValidation = await validateCustomClaimWrite({
-    db: env.DB,
-    dbPii: env.DB_PII ?? null,
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
     tenantId,
     submitted: userInfo.customClaims,
     requireCompleteRecord: true,
@@ -860,8 +867,8 @@ async function findOrCreateUser(
 
   try {
     await persistCustomClaimWrite({
-      db: env.DB,
-      dbPii: env.DB_PII ?? null,
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
       tenantId,
       userId,
       validation: customClaimValidation,
@@ -870,7 +877,10 @@ async function findOrCreateUser(
     if (piiAdapter) {
       await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [userId]);
     }
-    await coreAdapter.execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
+    await ensureDatabaseAdapter(
+      customClaimSources.nonPiiDb,
+      'saml-acs-custom-claim-cleanup'
+    ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
       userId,
       tenantId,
     ]);
@@ -879,8 +889,10 @@ async function findOrCreateUser(
   }
 
   await syncUserLifecycleState({
-    db: env.DB,
-    dbPii: env.DB_PII ?? null,
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    stateDb: coreAdapter,
     tenantId,
     userId,
   });

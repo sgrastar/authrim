@@ -9,6 +9,7 @@ import { upsertUserCustomFieldValue } from './non-pii-storage';
 export interface ValidateCustomClaimWriteParams {
   db: DatabaseSource;
   dbPii?: DatabaseSource | null;
+  schemaDb?: DatabaseSource;
   cache?: KVNamespace | null;
   tenantId: string;
   userId?: string;
@@ -54,6 +55,7 @@ export interface MissingRequiredCustomClaim {
 export interface GetMissingRequiredCustomClaimsParams {
   db: DatabaseSource;
   dbPii?: DatabaseSource | null;
+  schemaDb?: DatabaseSource;
   cache?: KVNamespace | null;
   tenantId: string;
   userId: string;
@@ -199,6 +201,7 @@ export async function validateCustomClaimWrite(
   const {
     db,
     dbPii = null,
+    schemaDb = db,
     cache = null,
     tenantId,
     userId,
@@ -208,7 +211,7 @@ export async function validateCustomClaimWrite(
     deleteMissingFields = false,
   } = params;
 
-  const schemas = await new SchemaLoader(db, cache).loadActiveSchemas(tenantId);
+  const schemas = await new SchemaLoader(schemaDb, cache).loadActiveSchemas(tenantId);
   const schemaMap = new Map(schemas.map((schema) => [schema.field_key, schema] as const));
   const input =
     submitted && typeof submitted === 'object' && !Array.isArray(submitted) ? submitted : {};
@@ -312,8 +315,8 @@ export async function validateCustomClaimWrite(
 export async function getMissingRequiredCustomClaims(
   params: GetMissingRequiredCustomClaimsParams
 ): Promise<MissingRequiredCustomClaim[]> {
-  const { db, dbPii = null, cache = null, tenantId, userId } = params;
-  const schemas = await new SchemaLoader(db, cache).loadActiveSchemas(tenantId);
+  const { db, dbPii = null, schemaDb = db, cache = null, tenantId, userId } = params;
+  const schemas = await new SchemaLoader(schemaDb, cache).loadActiveSchemas(tenantId);
   const existingValues = await new UserCustomDataFetcher(db, dbPii).fetch(tenantId, userId, schemas);
 
   return collectMissingRequiredCustomClaims(schemas, existingValues);

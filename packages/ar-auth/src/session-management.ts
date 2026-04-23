@@ -20,6 +20,7 @@ import {
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   createPIIContextFromHono,
+  hasPIIDatabase,
   getTenantIdFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
@@ -295,7 +296,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
     let userEmail: string | undefined;
     let userName: string | undefined;
 
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       try {
         const tenantId = getTenantIdFromContext(c);
         const piiCtx = createPIIContextFromHono(c, tenantId);

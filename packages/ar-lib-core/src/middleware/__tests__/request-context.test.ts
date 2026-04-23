@@ -19,6 +19,7 @@ function createMockDB(options: { tenantRow?: { id: string } | null; shouldThrow?
         }),
       }),
     })),
+    batch: vi.fn(),
   } as unknown as D1Database;
 }
 

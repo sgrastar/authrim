@@ -83,6 +83,7 @@ const {
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
   getDefaultTenantId: vi.fn(() => 'default'),
   createRuleEvaluator: vi.fn(() => ({
     evaluate: vi.fn().mockResolvedValue({
@@ -117,6 +118,27 @@ vi.mock('@authrim/ar-lib-core', () => ({
   validateCustomClaimWrite: mockValidateCustomClaimWrite,
   persistCustomClaimWrite: mockPersistCustomClaimWrite,
   syncUserLifecycleState: mockSyncUserLifecycleState,
+  resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    storageProfile: {
+      id: 'builtin:storage:standard',
+      kind: 'storage',
+      label: 'Standard D1 Split',
+      slices: {},
+    },
+    schemaDb: env.DB,
+    nonPiiDb: env.DB,
+    piiDb: env.DB_PII ?? null,
+  })),
+  resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    storageProfile: {
+      id: 'builtin:storage:standard',
+      kind: 'storage',
+      label: 'Standard D1 Split',
+      slices: {},
+    },
+    coreDb: env.DB,
+    piiDb: env.DB_PII ?? env.DB ?? null,
+  })),
 }));
 
 // Mock the linked identity store

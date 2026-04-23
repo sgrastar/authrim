@@ -7,6 +7,11 @@
  */
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
+import {
+  DEFAULT_AUDIT_PROFILE_ID,
+  DEFAULT_RESIDENCY_PROFILE_ID,
+  DEFAULT_STORAGE_PROFILE_ID,
+} from '../runtime-profile';
 
 /**
  * Infrastructure Settings Interface
@@ -35,6 +40,11 @@ export interface InfrastructureSettings {
   // Supported Algorithms (platform-level, read-only)
   'infra.supported_signing_algs': string;
   'infra.dpop_signing_alg_values_supported': string;
+
+  // Runtime Profile Defaults
+  'infra.default_storage_profile_id': string;
+  'infra.default_audit_profile_id': string;
+  'infra.default_residency_profile_id': string;
 
   // Durable Objects Configuration
   'infra.do_cleanup_interval': number;
@@ -193,6 +203,33 @@ export const INFRASTRUCTURE_SETTINGS_META: Record<keyof InfrastructureSettings, 
     description: 'Supported algorithms for DPoP proofs (comma-separated)',
     visibility: 'internal',
   },
+  'infra.default_storage_profile_id': {
+    key: 'infra.default_storage_profile_id',
+    type: 'string',
+    default: DEFAULT_STORAGE_PROFILE_ID,
+    envKey: 'DEFAULT_STORAGE_PROFILE_ID',
+    label: 'Default Storage Profile',
+    description: 'Environment default storage profile ID used when tenant overrides are empty.',
+    visibility: 'admin',
+  },
+  'infra.default_audit_profile_id': {
+    key: 'infra.default_audit_profile_id',
+    type: 'string',
+    default: DEFAULT_AUDIT_PROFILE_ID,
+    envKey: 'DEFAULT_AUDIT_PROFILE_ID',
+    label: 'Default Audit Profile',
+    description: 'Environment default audit profile ID used when tenant overrides are empty.',
+    visibility: 'admin',
+  },
+  'infra.default_residency_profile_id': {
+    key: 'infra.default_residency_profile_id',
+    type: 'string',
+    default: DEFAULT_RESIDENCY_PROFILE_ID,
+    envKey: 'DEFAULT_RESIDENCY_PROFILE_ID',
+    label: 'Default Residency Profile',
+    description: 'Environment default residency profile ID used when tenant overrides are empty.',
+    visibility: 'admin',
+  },
 
   // Durable Objects Configuration
   'infra.do_cleanup_interval': {
@@ -273,6 +310,9 @@ export const INFRASTRUCTURE_DEFAULTS: InfrastructureSettings = {
   'infra.default_fetch_timeout_ms': 5000,
   'infra.supported_signing_algs': 'RS256,RS384,RS512,ES256,ES384,ES512,PS256,PS384,PS512,EdDSA',
   'infra.dpop_signing_alg_values_supported': 'RS256,ES256,ES384,EdDSA',
+  'infra.default_storage_profile_id': DEFAULT_STORAGE_PROFILE_ID,
+  'infra.default_audit_profile_id': DEFAULT_AUDIT_PROFILE_ID,
+  'infra.default_residency_profile_id': DEFAULT_RESIDENCY_PROFILE_ID,
   'infra.do_cleanup_interval': 60000,
   'infra.do_audit_flush_delay': 5000,
   'infra.do_saml_request_expiry': 300,

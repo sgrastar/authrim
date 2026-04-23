@@ -35,6 +35,7 @@ import {
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   // Event System
@@ -91,8 +92,8 @@ import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import { getPluginContext } from '@authrim/ar-lib-core';
 import { importPKCS8 } from 'jose';
 import {
-  persistRegistrationFieldValues,
-  validateRegistrationFieldSubmission,
+  persistRegistrationFieldValuesFromEnv,
+  validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 
 // ===== Constants =====
@@ -541,7 +542,7 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       transports?: AuthenticatorTransport[];
     }> = [];
 
-    if (email && c.env.DB_PII) {
+    if (email && hasPIIDatabase(c)) {
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       const piiCtx = createPIIContextFromHono(c, tenantId);
@@ -840,7 +841,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
         tenantId,
@@ -874,7 +875,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         pii_status: 'pending',
       });
 
-      if (c.env.DB_PII) {
+      if (hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         try {
           await piiCtx.piiRepositories.userPII.createPII({
@@ -1283,8 +1284,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       }
     }
 
-    const customFieldValidation = await validateRegistrationFieldSubmission(
-      c.env.DB,
+    const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+      c.env,
       tenantId,
       custom_fields
     );
@@ -1306,7 +1307,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
         tenantId,
@@ -1338,7 +1339,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         pii_status: 'pending',
       });
 
-      if (c.env.DB_PII) {
+      if (hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         try {
           await piiCtx.piiRepositories.userPII.createPII({
@@ -1638,13 +1639,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     const customFields = challengeData.metadata?.custom_fields as Record<string, unknown> | undefined;
     if (customFields && c.env.DB) {
       try {
-        await persistRegistrationFieldValues(
-          c.env.DB,
-          c.env.DB_PII ?? null,
-          tenantId,
-          challengeData.userId,
-          customFields
-        );
+        await persistRegistrationFieldValuesFromEnv(c.env, tenantId, challengeData.userId, customFields);
       } catch (persistError) {
         log.warn(
           'Failed to persist registration field values',
@@ -1754,7 +1749,7 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
     }
 
     let userPII: { email: string | null; name: string | null } = { email: null, name: null };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(userId);
       if (piiResult) {
@@ -2031,7 +2026,7 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     }
 
     let userPII: { email: string; name: string | null } = { email: '', name: null };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(session.userId);
       if (piiResult) {
@@ -2335,7 +2330,7 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
     }
 
     let userPII: { email: string | null; name: string | null } = { email: null, name: null };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(session.userId);
       if (piiResult) {

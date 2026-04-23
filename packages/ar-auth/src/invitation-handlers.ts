@@ -12,7 +12,14 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  D1Adapter,
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  hasPIIDatabase,
+  createPIIContextFromHono,
+} from '@authrim/ar-lib-core';
 
 // =============================================================================
 // Types
@@ -153,12 +160,12 @@ export async function useInvitationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // If invitation is email-restricted, verify the user's email matches (PII DB)
-    if (invitation.invited_email && c.env.DB_PII) {
-      const piiRow = await c.env.DB_PII.prepare(
-        'SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?'
-      )
-        .bind(user_id, invitation.tenant_id)
-        .first<{ email: string }>();
+    if (invitation.invited_email && hasPIIDatabase(c)) {
+      const piiCtx = createPIIContextFromHono(c, invitation.tenant_id);
+      const piiRow = await piiCtx.defaultPiiAdapter.queryOne<{ email: string }>(
+        'SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?',
+        [user_id, invitation.tenant_id]
+      );
 
       // No PII record → cannot verify email; block to prevent misuse
       if (!piiRow || piiRow.email.toLowerCase() !== invitation.invited_email.toLowerCase()) {

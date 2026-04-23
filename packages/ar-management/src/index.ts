@@ -274,6 +274,13 @@ import {
 } from './admin-settings-meta';
 import { adminTenantInfoHandler } from './admin-info';
 import {
+  adminRuntimeProfileDeleteHandler,
+  adminRuntimeProfileGetHandler,
+  adminRuntimeProfileListHandler,
+  adminRuntimeProfileUpsertHandler,
+  adminTenantRuntimeProfilesHandler,
+} from './runtime-profiles';
+import {
   adminTenantsListHandler,
   adminTenantCreateHandler,
   adminTenantGetHandler,
@@ -1058,6 +1065,28 @@ app.get('/api/admin/settings/diff', adminSettingsDiffHandler);
 app.get('/api/admin/settings/schema', adminSettingsSchemaHandler);
 app.post('/api/admin/settings/validate', adminSettingsValidateHandler);
 
+// Runtime Profile Registry API
+// - GET    /api/admin/runtime-profiles                 - List runtime profiles
+// - GET    /api/admin/runtime-profiles/:kind/:id       - Get runtime profile
+// - PUT    /api/admin/runtime-profiles/:kind/:id       - Create/update runtime profile
+// - DELETE /api/admin/runtime-profiles/:kind/:id       - Delete runtime profile
+app.get('/api/admin/runtime-profiles', requireSystemAdmin(), adminRuntimeProfileListHandler);
+app.get(
+  '/api/admin/runtime-profiles/:kind/:id',
+  requireSystemAdmin(),
+  adminRuntimeProfileGetHandler
+);
+app.put(
+  '/api/admin/runtime-profiles/:kind/:id',
+  requireSystemAdmin(),
+  adminRuntimeProfileUpsertHandler
+);
+app.delete(
+  '/api/admin/runtime-profiles/:kind/:id',
+  requireSystemAdmin(),
+  adminRuntimeProfileDeleteHandler
+);
+
 // Tenant Management API
 // - GET    /api/admin/tenants          - List all tenants
 // - POST   /api/admin/tenants          - Create tenant
@@ -1076,6 +1105,7 @@ app.post('/api/admin/tenants', adminTenantCreateHandler);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
 app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
 app.get('/api/admin/tenants/:id/info', adminTenantInfoHandler);
+app.get('/api/admin/tenants/:id/runtime-profiles', adminTenantRuntimeProfilesHandler);
 app.get('/api/admin/tenants/:id', adminTenantGetHandler);
 app.patch('/api/admin/tenants/:id', adminTenantUpdateHandler);
 app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);

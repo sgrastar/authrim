@@ -603,4 +603,61 @@ describe('Consent Statements Utility', () => {
       expect(adapter.execute).toHaveBeenCalled();
     });
   });
+
+  describe('getUserClaimsForRules', () => {
+    it('should load email and locale from users_pii using id and tenant_id', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          ['users_core', [{ email_verified: 1 }]],
+          [
+            'users_pii',
+            [
+              {
+                email: 'claims@example.com',
+                locale: 'ja',
+                given_name: 'Yuta',
+                family_name: 'Sato',
+                phone_number: '+819012345678',
+                birthdate: '1990-01-01',
+                address_country: 'JP',
+                address_region: 'Tokyo',
+                zoneinfo: 'Asia/Tokyo',
+                metadata: '{"segment":"enterprise"}',
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const claims = await getUserClaimsForRules(adapter, 'tenant-claims', 'user-claims');
+
+      expect(claims).toMatchObject({
+        email: 'claims@example.com',
+        email_verified: true,
+        locale: 'ja',
+        given_name: 'Yuta',
+        family_name: 'Sato',
+        phone_number: '+819012345678',
+        birthdate: '1990-01-01',
+        zoneinfo: 'Asia/Tokyo',
+        metadata: { segment: 'enterprise' },
+        address: {
+          country: 'JP',
+          region: 'Tokyo',
+        },
+      });
+
+      const queryCalls = (adapter.query as any).mock.calls as Array<[string, unknown[]]>;
+      expect(queryCalls).toContainEqual([
+        'SELECT email_verified FROM users_core WHERE id = ? AND tenant_id = ?',
+        ['user-claims', 'tenant-claims'],
+      ]);
+      expect(queryCalls).toContainEqual([
+        `SELECT email, locale, given_name, family_name, birthdate, phone_number,
+              address_country, address_region, zoneinfo, metadata
+       FROM users_pii WHERE id = ? AND tenant_id = ?`,
+        ['user-claims', 'tenant-claims'],
+      ]);
+    });
+  });
 });

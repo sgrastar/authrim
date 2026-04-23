@@ -14,6 +14,9 @@ import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
+  createAuthContextFromHono,
+  createPIIContextFromHono,
+  hasPIIDatabase,
   D1Adapter,
   type DatabaseAdapter,
   escapeLikePattern,
@@ -28,6 +31,8 @@ import {
  * Hono context type with admin auth variable
  */
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
+type MembershipType = 'member' | 'admin' | 'owner';
+const VALID_MEMBERSHIP_TYPES = new Set<MembershipType>(['member', 'admin', 'owner']);
 
 /**
  * Convert timestamp to milliseconds for API response
@@ -48,6 +53,18 @@ function getAdminAuth(c: AdminContext): AdminAuthContext | null {
   return c.get('adminAuth') ?? null;
 }
 
+function normalizeMembershipType(value: unknown): MembershipType | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  if (VALID_MEMBERSHIP_TYPES.has(value as MembershipType)) {
+    return value as MembershipType;
+  }
+
+  return null;
+}
+
 /**
  * Create database adapters from context
  */
@@ -55,8 +72,11 @@ function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter | null;
 } {
-  const coreAdapter = new D1Adapter({ db: c.env.DB });
-  const piiAdapter = c.env.DB_PII ? new D1Adapter({ db: c.env.DB_PII }) : null;
+  const tenantId = getTenantIdFromContext(c);
+  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+  const piiAdapter = hasPIIDatabase(c)
+    ? createPIIContextFromHono(c, tenantId).defaultPiiAdapter
+    : null;
   return { coreAdapter, piiAdapter };
 }
 
@@ -526,7 +546,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
         [tenantId, orgId]
       ),
       coreAdapter.query<Record<string, unknown>>(
-        `SELECT m.*
+        `SELECT m.subject_id, m.org_id, m.membership_type, m.is_primary, m.created_at
          FROM subject_org_membership m
          WHERE m.tenant_id = ? AND m.org_id = ?
          ORDER BY m.created_at DESC
@@ -548,7 +568,10 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
         id: string;
         email: string | null;
         name: string | null;
-      }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, memberUserIds);
+      }>(
+        `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
+        [tenantId, ...memberUserIds]
+      );
 
       for (const pii of piiResult) {
         memberPIIMap.set(pii.id, {
@@ -563,7 +586,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
       return {
         subject_id: m.subject_id,
         org_id: m.org_id,
-        org_role: m.org_role,
+        membership_type: m.membership_type,
         is_primary: Boolean(m.is_primary),
         joined_at: toMilliseconds(m.created_at as number),
         user_email: pii?.email || null,
@@ -606,14 +629,16 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
 export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const body = await c.req.json<{
       subject_id: string;
+      membership_type?: MembershipType;
       org_role?: string;
       is_primary?: boolean;
     }>();
 
-    const { subject_id, org_role, is_primary } = body;
+    const { subject_id, is_primary } = body;
 
     if (!subject_id) {
       return c.json(
@@ -625,10 +650,38 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
       );
     }
 
+    const membershipType =
+      normalizeMembershipType(body.membership_type) ??
+      normalizeMembershipType(body.org_role) ??
+      'member';
+
+    if (
+      body.membership_type !== undefined &&
+      normalizeMembershipType(body.membership_type) === null
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'membership_type',
+          reason: 'Must be one of: member, admin, owner',
+        },
+      });
+    }
+
+    if (body.membership_type === undefined && body.org_role !== undefined) {
+      if (normalizeMembershipType(body.org_role) === null) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: {
+            field: 'membership_type',
+            reason: 'Must be one of: member, admin, owner',
+          },
+        });
+      }
+    }
+
     // Check if organization exists
     const org = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE id = ?',
-      [orgId]
+      'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
+      [orgId, tenantId]
     );
 
     if (!org) {
@@ -643,8 +696,8 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
 
     // Check if user exists
     const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ?',
-      [subject_id]
+      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
+      [subject_id, tenantId]
     );
 
     if (!user) {
@@ -659,8 +712,9 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
 
     // Check if membership already exists
     const existing = await coreAdapter.queryOne<{ subject_id: string }>(
-      'SELECT subject_id FROM subject_org_membership WHERE org_id = ? AND subject_id = ?',
-      [orgId, subject_id]
+      `SELECT subject_id FROM subject_org_membership
+       WHERE tenant_id = ? AND org_id = ? AND subject_id = ?`,
+      [tenantId, orgId, subject_id]
     );
 
     if (existing) {
@@ -674,21 +728,24 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const role = org_role || 'member';
     const primary = is_primary ? 1 : 0;
+    const membershipId = generateId();
 
     // If setting as primary, unset other primary memberships for this user
     if (primary) {
       await coreAdapter.execute(
-        'UPDATE subject_org_membership SET is_primary = 0 WHERE subject_id = ?',
-        [subject_id]
+        `UPDATE subject_org_membership
+         SET is_primary = 0, updated_at = ?
+         WHERE tenant_id = ? AND subject_id = ?`,
+        [now, tenantId, subject_id]
       );
     }
 
     await coreAdapter.execute(
-      `INSERT INTO subject_org_membership (org_id, subject_id, org_role, is_primary, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [orgId, subject_id, role, primary, now]
+      `INSERT INTO subject_org_membership (
+        id, tenant_id, subject_id, org_id, membership_type, is_primary, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [membershipId, tenantId, subject_id, orgId, membershipType, primary, now, now]
     );
 
     return c.json(
@@ -696,11 +753,14 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
         success: true,
         message: 'Member added to organization',
         membership: {
+          id: membershipId,
+          tenant_id: tenantId,
           org_id: orgId,
           subject_id,
-          org_role: role,
+          membership_type: membershipType,
           is_primary: Boolean(primary),
           created_at: toMilliseconds(now),
+          updated_at: toMilliseconds(now),
         },
       },
       201
@@ -725,13 +785,15 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
 export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const subjectId = c.req.param('subjectId')!;
 
     // Check if membership exists
     const membership = await coreAdapter.queryOne<{ subject_id: string }>(
-      'SELECT subject_id FROM subject_org_membership WHERE org_id = ? AND subject_id = ?',
-      [orgId, subjectId]
+      `SELECT subject_id FROM subject_org_membership
+       WHERE tenant_id = ? AND org_id = ? AND subject_id = ?`,
+      [tenantId, orgId, subjectId]
     );
 
     if (!membership) {
@@ -745,8 +807,8 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
     }
 
     await coreAdapter.execute(
-      'DELETE FROM subject_org_membership WHERE org_id = ? AND subject_id = ?',
-      [orgId, subjectId]
+      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
+      [tenantId, orgId, subjectId]
     );
 
     return c.json({
@@ -1626,11 +1688,11 @@ export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: E
     if (orgIds.length > 0) {
       const placeholders = orgIds.map(() => '?').join(',');
       const counts = await coreAdapter.query<{ org_id: string; count: number }>(
-        `SELECT organization_id as org_id, COUNT(*) as count
-         FROM organization_members
-         WHERE organization_id IN (${placeholders})
-         GROUP BY organization_id`,
-        orgIds
+        `SELECT org_id, COUNT(*) as count
+         FROM subject_org_membership
+         WHERE tenant_id = ? AND org_id IN (${placeholders})
+         GROUP BY org_id`,
+        [tenantId, ...orgIds]
       );
       for (const row of counts) {
         memberCounts[row.org_id] = row.count;
@@ -1791,15 +1853,20 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
       org_name: string;
       role_id: string | null;
       role_name: string | null;
+      membership_type: string;
       joined_at: number | null;
     }>(
-      `SELECT om.organization_id as org_id, o.name as org_name,
-              om.role_id, r.name as role_name, om.created_at as joined_at
-       FROM organization_members om
-       INNER JOIN organizations o ON om.organization_id = o.id
-       LEFT JOIN roles r ON om.role_id = r.id
-       WHERE om.user_id = ?`,
-      [userId]
+      `SELECT om.org_id as org_id,
+              o.name as org_name,
+              r.id as role_id,
+              COALESCE(r.display_name, r.name, om.membership_type) as role_name,
+              om.membership_type,
+              om.created_at as joined_at
+       FROM subject_org_membership om
+       INNER JOIN organizations o ON om.org_id = o.id AND o.tenant_id = om.tenant_id
+       LEFT JOIN roles r ON r.name = om.membership_type AND r.tenant_id = om.tenant_id
+       WHERE om.subject_id = ? AND om.tenant_id = ?`,
+      [userId, tenantId]
     );
 
     for (const membership of orgMemberships) {
@@ -1816,7 +1883,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
               permission: rp.permission,
               source: 'organization',
               source_id: membership.org_id,
-              source_name: `${membership.org_name} (${membership.role_name})`,
+              source_name: `${membership.org_name} (${membership.role_name ?? membership.membership_type})`,
               granted_at: membership.joined_at,
               expires_at: null,
             });

@@ -865,9 +865,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     const migrationsSpinner = ora('Running migrations...').start();
 
     try {
-      const migrationsResult = await runMigrationsForEnvironment(env, rootDir, (msg) => {
-        migrationsSpinner.text = msg;
-      });
+      const migrationsResult = await runMigrationsForEnvironment(
+        env,
+        rootDir,
+        (msg) => {
+          migrationsSpinner.text = msg;
+        },
+        config
+      );
 
       if (migrationsResult.success) {
         migrationsSpinner.succeed(

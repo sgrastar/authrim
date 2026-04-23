@@ -80,6 +80,7 @@ const mocked = vi.hoisted(() => {
   return {
     state,
     discoveryCandidatesMock: vi.fn(),
+    resolveUserStoreRuntimeSourcesMock: vi.fn(),
     FakeD1Adapter,
   };
 });
@@ -91,6 +92,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     D1Adapter: mocked.FakeD1Adapter,
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
+    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
   };
 });
 
@@ -114,6 +116,21 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
     list: vi.fn(),
     getWithMetadata: vi.fn(),
   } as unknown as KVNamespace;
+}
+
+function createMockAdapter(options: {
+  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+} = {}) {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn(async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    transaction: vi.fn(async (fn: any) => fn()),
+    batch: vi.fn().mockResolvedValue([]),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
 }
 
 function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
@@ -191,6 +208,34 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
 describe('discovery API', () => {
   beforeEach(() => {
     mocked.discoveryCandidatesMock.mockReset();
+    const defaultPiiAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
+          const email = String(params[0] ?? '');
+          const tenantId = String(params[1] ?? '');
+          const user =
+            mocked.state.users.find(
+              (candidate) =>
+                candidate.email === email &&
+                candidate.tenant_id === tenantId &&
+                candidate.is_active === 1
+            ) ?? null;
+          return user ? { id: user.id, tenant_id: user.tenant_id } : null;
+        }
+        return null;
+      },
+    });
+
+    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      coreDb: env.DB,
+      piiDb: defaultPiiAdapter,
+    }));
   });
 
   it('returns public config for the current host', async () => {
@@ -335,6 +380,51 @@ describe('discovery API', () => {
     };
     expect(body.result).toBe('resolved');
     expect(body.candidate.tenant_id).toBe('acme');
+  });
+
+  it('uses the runtime-resolved pii store for exact-email discovery', async () => {
+    mocked.discoveryCandidatesMock.mockResolvedValue([]);
+    const { app, env } = createDiscoveryApp({ DB_PII: undefined as any });
+    const acmePiiAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
+          return params[1] === 'acme' ? { id: 'user-1', tenant_id: 'acme' } : null;
+        }
+        return null;
+      },
+    });
+
+    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(
+      async (_env: Partial<Env>, tenantId: string) => ({
+        storageProfile: {
+          id: 'builtin:storage:tenant-override',
+          kind: 'storage',
+          label: 'Tenant Override',
+          slices: {},
+        },
+        coreDb: env.DB,
+        piiDb: tenantId === 'acme' ? acmePiiAdapter : null,
+      })
+    );
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'email', value: 'user@gmail.com' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      result: 'resolved';
+      candidate: { tenant_id: string };
+    };
+    expect(body.result).toBe('resolved');
+    expect(body.candidate.tenant_id).toBe('acme');
+    expect(mocked.resolveUserStoreRuntimeSourcesMock).toHaveBeenCalledWith(env, 'acme');
   });
 
   it('resolves invitation tokens and returns invited_email', async () => {
