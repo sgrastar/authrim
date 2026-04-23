@@ -18,11 +18,18 @@ export type {
   AuditStorageHealth,
   AuditBackendConfig,
   AuditRetentionConfig,
+  AuditStorageRoutingTargets,
   AuditStorageRoutingRule,
   AuditStorageConfig,
 } from './adapter';
 
-export { DEFAULT_AUDIT_STORAGE_CONFIG } from './adapter';
+export {
+  DEFAULT_AUDIT_STORAGE_CONFIG,
+  hasAuditStorageRoutingTargets,
+  normalizeAuditStorageRoutingTargets,
+} from './adapter';
+export { auditRoutingRuleMatches, resolveAuditRoutingTargets } from './routing';
+export type { AuditRoutingContext, ResolvedAuditRoutingTargets } from './routing';
 
 // D1 Adapter
 export { D1AuditAdapter, createD1EventLogAdapter, createD1PIILogAdapter } from './d1-adapter';

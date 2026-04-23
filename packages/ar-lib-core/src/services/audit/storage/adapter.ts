@@ -5,6 +5,7 @@
  * - D1: Hot data storage for recent logs
  * - R2: Archive storage for long-term retention
  * - Hyperdrive: External PostgreSQL for enterprise deployments
+ * - Logpush / Firehose: Forwarding sinks for external delivery
  */
 
 import type { EventLogEntry, PIILogEntry } from '../types';
@@ -16,7 +17,7 @@ import type { EventLogEntry, PIILogEntry } from '../types';
 /**
  * Supported storage backend types.
  */
-export type AuditStorageBackendType = 'D1' | 'R2' | 'HYPERDRIVE';
+export type AuditStorageBackendType = 'D1' | 'R2' | 'HYPERDRIVE' | 'LOGPUSH' | 'FIREHOSE';
 
 /**
  * Log type for routing.
@@ -296,6 +297,22 @@ export interface AuditBackendConfig {
     /** Connection pool size */
     poolSize?: number;
   };
+
+  /** Logpush-specific configuration */
+  logpushConfig?: {
+    /** Destination reference or binding */
+    destinationRef: string;
+    /** Optional dataset/category name */
+    dataset?: string;
+  };
+
+  /** Firehose-specific configuration */
+  firehoseConfig?: {
+    /** Stream reference or binding */
+    streamRef: string;
+    /** Optional delivery region hint */
+    region?: string;
+  };
 }
 
 /**
@@ -313,6 +330,25 @@ export interface AuditRetentionConfig {
 
   /** Minimum retention required by regulations */
   minimumRetentionDays?: number;
+}
+
+/**
+ * Fan-out targets for a routing rule.
+ *
+ * A single matching rule may:
+ * - write hot data to one primary store
+ * - mirror or archive into one or more archive stores
+ * - forward to one or more sinks such as Logpush or Firehose
+ */
+export interface AuditStorageRoutingTargets {
+  /** Primary queryable store for matched logs */
+  primaryStore?: string;
+
+  /** Archive stores that should receive a copy */
+  archiveStores?: string[];
+
+  /** Forwarding sinks that should receive a copy */
+  forwardingSinks?: string[];
 }
 
 /**
@@ -337,8 +373,16 @@ export interface AuditStorageRoutingRule {
     region?: string | string[];
   };
 
-  /** Target backend ID */
-  backend: string;
+  /** Canonical fan-out targets for this rule */
+  targets: AuditStorageRoutingTargets;
+
+  /**
+   * Deprecated single-backend alias.
+   *
+   * Pre-Phase 4 configs may still persist `backend`; runtime/admin code should
+   * normalize it into `targets.primaryStore` on read and write.
+   */
+  backend?: string;
 
   /** Override retention for matching logs */
   retention?: Partial<AuditRetentionConfig>;
@@ -372,6 +416,44 @@ export interface AuditStorageConfig {
     /** Maximum batch size for writes */
     maxBatchSize: number;
   };
+}
+
+function normalizeTargetList(values: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+
+  const normalized = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+/**
+ * Normalize legacy and partial routing targets into the Phase 4 canonical shape.
+ */
+export function normalizeAuditStorageRoutingTargets(
+  targets: AuditStorageRoutingTargets | undefined,
+  backend?: string | null
+): AuditStorageRoutingTargets {
+  const primaryStore = targets?.primaryStore?.trim() || backend?.trim() || undefined;
+  const archiveStores = normalizeTargetList(targets?.archiveStores);
+  const forwardingSinks = normalizeTargetList(targets?.forwardingSinks);
+
+  return {
+    ...(primaryStore ? { primaryStore } : {}),
+    ...(archiveStores ? { archiveStores } : {}),
+    ...(forwardingSinks ? { forwardingSinks } : {}),
+  };
+}
+
+/**
+ * Returns true when the routing rule has at least one effective target.
+ */
+export function hasAuditStorageRoutingTargets(targets: AuditStorageRoutingTargets): boolean {
+  return Boolean(
+    targets.primaryStore ||
+      (targets.archiveStores && targets.archiveStores.length > 0) ||
+      (targets.forwardingSinks && targets.forwardingSinks.length > 0)
+  );
 }
 
 /**

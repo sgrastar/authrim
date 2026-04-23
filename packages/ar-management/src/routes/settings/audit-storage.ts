@@ -21,7 +21,11 @@ import type {
   AuditRetentionConfig,
   AuditStorageRoutingRule,
 } from '@authrim/ar-lib-core';
-import { DEFAULT_AUDIT_STORAGE_CONFIG } from '@authrim/ar-lib-core';
+import {
+  DEFAULT_AUDIT_STORAGE_CONFIG,
+  hasAuditStorageRoutingTargets,
+  normalizeAuditStorageRoutingTargets,
+} from '@authrim/ar-lib-core';
 
 // KV key constants
 const KV_KEY_STORAGE_CONFIG = 'audit_storage_config';
@@ -34,6 +38,59 @@ const DEFAULT_RETENTION_CONFIG: AuditRetentionConfig = {
   piiLogRetentionDays: 365,
   archiveBeforeDelete: false,
 };
+
+function normalizeRoutingRule(
+  rule: AuditStorageRoutingRule & { backend?: string }
+): AuditStorageRoutingRule {
+  const targets = normalizeAuditStorageRoutingTargets(rule.targets, rule.backend);
+
+  return {
+    name: rule.name,
+    priority: rule.priority,
+    enabled: rule.enabled,
+    conditions: rule.conditions ?? {},
+    targets,
+    ...(rule.retention ? { retention: rule.retention } : {}),
+  };
+}
+
+function validateRoutingRule(
+  rule: Partial<AuditStorageRoutingRule> & { backend?: string },
+  prefix: string
+): string[] {
+  const errors: string[] = [];
+
+  if (!rule.name) {
+    errors.push(`${prefix}: name is required`);
+  }
+  if (typeof rule.priority !== 'number') {
+    errors.push(`${prefix}: priority must be a number`);
+  }
+  if (typeof rule.enabled !== 'boolean') {
+    errors.push(`${prefix}: enabled must be a boolean`);
+  }
+  if (!rule.conditions) {
+    errors.push(`${prefix}: conditions is required`);
+  }
+
+  const targets = normalizeAuditStorageRoutingTargets(rule.targets, rule.backend);
+  if (!hasAuditStorageRoutingTargets(targets)) {
+    errors.push(
+      `${prefix}: at least one target is required (targets.primaryStore, archiveStores, forwardingSinks)`
+    );
+  }
+
+  return errors;
+}
+
+function parseStoredRoutingRules(value: string | null): AuditStorageRoutingRule[] {
+  if (!value) {
+    return [];
+  }
+
+  const parsed = JSON.parse(value) as Array<AuditStorageRoutingRule & { backend?: string }>;
+  return parsed.map((rule) => normalizeRoutingRule(rule));
+}
 
 /**
  * GET /api/admin/settings/audit-storage
@@ -65,7 +122,7 @@ export async function getAuditStorageConfig(c: Context<{ Bindings: Env }>) {
       }
 
       if (routingValue) {
-        routingRules = JSON.parse(routingValue) as AuditStorageRoutingRule[];
+        routingRules = parseStoredRoutingRules(routingValue);
       }
     } catch {
       // KV read error - use defaults
@@ -101,6 +158,8 @@ export async function getAuditStorageConfig(c: Context<{ Bindings: Env }>) {
       D1: 'Cloudflare D1 (SQLite) - Hot data, fast queries',
       R2: 'Cloudflare R2 (Object Storage) - Archive, cost-efficient',
       HYPERDRIVE: 'External PostgreSQL - Enterprise, external compliance',
+      LOGPUSH: 'Forwarding sink for Cloudflare Logpush delivery',
+      FIREHOSE: 'Forwarding sink for external stream delivery',
     },
     note: 'Changes take effect within 10 seconds (cache TTL)',
   });
@@ -352,7 +411,7 @@ export async function getRoutingRules(c: Context<{ Bindings: Env }>) {
     try {
       const kvValue = await c.env.AUTHRIM_CONFIG.get(KV_KEY_ROUTING_RULES);
       if (kvValue) {
-        rules = JSON.parse(kvValue) as AuditStorageRoutingRule[];
+        rules = parseStoredRoutingRules(kvValue);
       }
     } catch {
       // No rules
@@ -372,7 +431,11 @@ export async function getRoutingRules(c: Context<{ Bindings: Env }>) {
         logType: '*',
         region: 'EU',
       },
-      backend: 'hyperdrive-eu',
+      targets: {
+        primaryStore: 'hyperdrive-eu',
+        archiveStores: ['r2-eu-archive'],
+        forwardingSinks: ['logpush-eu'],
+      },
       retention: {
         piiLogRetentionDays: 365,
       },
@@ -412,26 +475,7 @@ export async function updateRoutingRules(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const errors: string[] = [];
-
-  // Validate each rule
-  rules.forEach((rule, index) => {
-    if (!rule.name) {
-      errors.push(`Rule ${index}: name is required`);
-    }
-    if (typeof rule.priority !== 'number') {
-      errors.push(`Rule ${index}: priority must be a number`);
-    }
-    if (typeof rule.enabled !== 'boolean') {
-      errors.push(`Rule ${index}: enabled must be a boolean`);
-    }
-    if (!rule.backend) {
-      errors.push(`Rule ${index}: backend is required`);
-    }
-    if (!rule.conditions) {
-      errors.push(`Rule ${index}: conditions is required`);
-    }
-  });
+  const errors = rules.flatMap((rule, index) => validateRoutingRule(rule, `Rule ${index}`));
 
   if (errors.length > 0) {
     return c.json(
@@ -444,7 +488,9 @@ export async function updateRoutingRules(c: Context<{ Bindings: Env }>) {
   }
 
   // Sort by priority
-  const sortedRules = [...rules].sort((a, b) => a.priority - b.priority);
+  const sortedRules = [...rules]
+    .map((rule) => normalizeRoutingRule(rule))
+    .sort((a, b) => a.priority - b.priority);
 
   await c.env.AUTHRIM_CONFIG.put(KV_KEY_ROUTING_RULES, JSON.stringify(sortedRules));
 
@@ -476,12 +522,7 @@ export async function addRoutingRule(c: Context<{ Bindings: Env }>) {
   const newRule = await c.req.json<AuditStorageRoutingRule>();
 
   // Validate rule
-  const errors: string[] = [];
-  if (!newRule.name) errors.push('name is required');
-  if (typeof newRule.priority !== 'number') errors.push('priority must be a number');
-  if (typeof newRule.enabled !== 'boolean') errors.push('enabled must be a boolean');
-  if (!newRule.backend) errors.push('backend is required');
-  if (!newRule.conditions) errors.push('conditions is required');
+  const errors = validateRoutingRule(newRule, 'Rule');
 
   if (errors.length > 0) {
     return c.json(
@@ -498,7 +539,7 @@ export async function addRoutingRule(c: Context<{ Bindings: Env }>) {
   try {
     const kvValue = await c.env.AUTHRIM_CONFIG.get(KV_KEY_ROUTING_RULES);
     if (kvValue) {
-      rules = JSON.parse(kvValue) as AuditStorageRoutingRule[];
+      rules = parseStoredRoutingRules(kvValue);
     }
   } catch {
     // No existing rules
@@ -516,14 +557,15 @@ export async function addRoutingRule(c: Context<{ Bindings: Env }>) {
   }
 
   // Add and sort
-  rules.push(newRule);
+  const normalizedRule = normalizeRoutingRule(newRule);
+  rules.push(normalizedRule);
   rules.sort((a, b) => a.priority - b.priority);
 
   await c.env.AUTHRIM_CONFIG.put(KV_KEY_ROUTING_RULES, JSON.stringify(rules));
 
   return c.json({
     success: true,
-    rule: newRule,
+    rule: normalizedRule,
     total_rules: rules.length,
     note: 'Routing rule added.',
   });
@@ -562,7 +604,7 @@ export async function deleteRoutingRule(c: Context<{ Bindings: Env }>) {
   try {
     const kvValue = await c.env.AUTHRIM_CONFIG.get(KV_KEY_ROUTING_RULES);
     if (kvValue) {
-      rules = JSON.parse(kvValue) as AuditStorageRoutingRule[];
+      rules = parseStoredRoutingRules(kvValue);
     }
   } catch {
     // No existing rules

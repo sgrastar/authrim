@@ -378,7 +378,6 @@ describe('Audit Storage Configuration API', () => {
     it('should return stored routing rules', async () => {
       const rules = [
         {
-          id: 'rule-1',
           name: 'EU Data',
           priority: 10,
           enabled: true,
@@ -403,6 +402,8 @@ describe('Audit Storage Configuration API', () => {
 
       expect(body.rules).toHaveLength(1);
       expect(body.rules[0].name).toBe('EU Data');
+      expect(body.rules[0].targets).toEqual({ primaryStore: 'hyperdrive' });
+      expect(body.rules[0].backend).toBeUndefined();
     });
   });
 
@@ -421,7 +422,10 @@ describe('Audit Storage Configuration API', () => {
             priority: 100,
             enabled: true,
             conditions: { tenantId: 'premium-tenant' },
-            backend: 'd1-core',
+            targets: {
+              primaryStore: 'd1-core',
+              forwardingSinks: ['logpush-premium'],
+            },
           }),
         },
         mockEnv
@@ -433,6 +437,10 @@ describe('Audit Storage Configuration API', () => {
 
       expect(body.success).toBe(true);
       expect(body.rule.name).toBe('High Priority Tenant');
+      expect(body.rule.targets).toEqual({
+        primaryStore: 'd1-core',
+        forwardingSinks: ['logpush-premium'],
+      });
     });
 
     it('should reject rule without name', async () => {
@@ -456,6 +464,109 @@ describe('Audit Storage Configuration API', () => {
 
       expect(body.error_description).toContain('name is required');
     });
+
+    it('accepts legacy backend and normalizes it to targets.primaryStore', async () => {
+      const mockKV = createMockKV();
+      const { app, mockEnv, mockKV: kv } = createTestApp({ kv: mockKV });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/routing-rules',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Legacy Backend Rule',
+            priority: 50,
+            enabled: true,
+            conditions: { logType: 'event' },
+            backend: 'd1-core',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.rule.targets).toEqual({ primaryStore: 'd1-core' });
+      expect(body.rule.backend).toBeUndefined();
+
+      const [, storedValue] = (kv.put as any).mock.calls.at(-1);
+      expect(JSON.parse(storedValue)).toEqual([
+        expect.objectContaining({
+          name: 'Legacy Backend Rule',
+          targets: { primaryStore: 'd1-core' },
+        }),
+      ]);
+    });
+
+    it('rejects a rule when no targets are configured', async () => {
+      const { app, mockEnv } = createTestApp();
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/routing-rules',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'No Target Rule',
+            priority: 100,
+            enabled: true,
+            conditions: { tenantId: 'tenant-1' },
+            targets: {},
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.error_description).toContain('at least one target is required');
+    });
+  });
+
+  describe('PUT /api/admin/settings/audit-storage/routing-rules', () => {
+    it('sorts and stores canonical target-based rules', async () => {
+      const mockKV = createMockKV();
+      const { app, mockEnv, mockKV: kv } = createTestApp({ kv: mockKV });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/routing-rules',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rules: [
+              {
+                name: 'Archive First',
+                priority: 20,
+                enabled: true,
+                conditions: { logType: 'event' },
+                targets: { archiveStores: ['r2-archive'] },
+              },
+              {
+                name: 'Hot Path',
+                priority: 10,
+                enabled: true,
+                conditions: { tenantId: 'tenant-1' },
+                backend: 'd1-core',
+              },
+            ],
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.rules.map((rule: any) => rule.name)).toEqual(['Hot Path', 'Archive First']);
+      expect(body.rules[0].targets).toEqual({ primaryStore: 'd1-core' });
+      expect(body.rules[1].targets).toEqual({ archiveStores: ['r2-archive'] });
+
+      const [, storedValue] = (kv.put as any).mock.calls.at(-1);
+      const stored = JSON.parse(storedValue);
+      expect(stored[0].backend).toBeUndefined();
+      expect(stored[0].targets).toEqual({ primaryStore: 'd1-core' });
+    });
   });
 
   describe('DELETE /api/admin/settings/audit-storage/routing-rules/:name', () => {
@@ -466,14 +577,14 @@ describe('Audit Storage Configuration API', () => {
           priority: 10,
           enabled: true,
           conditions: {},
-          backend: 'd1-core',
+          targets: { primaryStore: 'd1-core' },
         },
         {
           name: 'To Keep',
           priority: 20,
           enabled: true,
           conditions: {},
-          backend: 'd1-pii',
+          targets: { primaryStore: 'd1-pii' },
         },
       ];
 

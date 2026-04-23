@@ -88,6 +88,10 @@ export type { AuditQueueConsumerEnv } from './queue-consumer';
 export {
   // Interface and types
   DEFAULT_AUDIT_STORAGE_CONFIG,
+  hasAuditStorageRoutingTargets,
+  normalizeAuditStorageRoutingTargets,
+  auditRoutingRuleMatches,
+  resolveAuditRoutingTargets,
   // D1 Adapter
   D1AuditAdapter,
   createD1EventLogAdapter,
@@ -110,6 +114,9 @@ export type {
   AuditStorageHealth,
   AuditBackendConfig,
   AuditRetentionConfig,
+  AuditRoutingContext,
+  ResolvedAuditRoutingTargets,
+  AuditStorageRoutingTargets,
   AuditStorageRoutingRule,
   AuditStorageConfig,
   D1AuditAdapterConfig,
