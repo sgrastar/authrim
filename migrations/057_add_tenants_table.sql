@@ -8,14 +8,20 @@ CREATE TABLE tenants (
   description TEXT,
   is_active   INTEGER NOT NULL DEFAULT 1, -- 0=無効, 1=有効
   is_default  INTEGER NOT NULL DEFAULT 0, -- デフォルトテナント（1つのみ）
+  default_tenant_guard TEXT,              -- 'default' when is_default=1, NULL otherwise
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
 
--- is_default=1 は1行のみ（SQLite partial unique index）
-CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(is_default)
-  WHERE is_default = 1;
+-- Portable uniqueness: only the default tenant materializes a shared sentinel
+CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(default_tenant_guard);
 
 -- 既存の 'default' テナントを初期挿入（既に存在する場合はスキップ）
-INSERT OR IGNORE INTO tenants (id, name, is_active, is_default, created_at, updated_at)
-VALUES ('default', 'Default', 1, 1, unixepoch(), unixepoch());
+INSERT INTO tenants (id, name, is_active, is_default, default_tenant_guard, created_at, updated_at)
+SELECT 'default', 'Default', 1, 1, 'default',
+       __AUTHRIM_NOW_EPOCH_SECONDS__, __AUTHRIM_NOW_EPOCH_SECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM tenants
+  WHERE id = 'default'
+);

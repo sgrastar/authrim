@@ -2916,6 +2916,7 @@ async function handleEditConfig(config: AuthrimConfig, configPath: string): Prom
       { value: 'profile', name: '🔐 OIDCProfile' },
       { value: 'oidc', name: '⚙️  OIDC Settings (TTL, etc.)' },
       { value: 'features', name: '🎛️  Feature Flags' },
+      { value: 'runtimeProfiles', name: '🧭 Runtime Profiles' },
       { value: 'sharding', name: '⚡ Sharding Settings' },
       { value: 'cancel', name: '❌ Cancel' },
     ],
@@ -2943,6 +2944,9 @@ async function handleEditConfig(config: AuthrimConfig, configPath: string): Prom
       break;
     case 'features':
       configModified = await editFeatures(config);
+      break;
+    case 'runtimeProfiles':
+      configModified = await editRuntimeProfiles(config);
       break;
     case 'sharding':
       configModified = await editSharding(config);
@@ -3228,6 +3232,239 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
     fromAddress: config.features.email?.fromAddress,
     fromName: config.features.email?.fromName,
   };
+
+  return true;
+}
+
+// =============================================================================
+// Edit Runtime Profiles
+// =============================================================================
+
+async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
+  console.log(chalk.bold('\nCurrent Runtime Profile Settings:'));
+  console.log(
+    `  Default Audit Profile: ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
+  );
+  console.log(`  Registry Backend:      ${chalk.cyan(config.profiles.registry.backend || 'kv')}`);
+  console.log(`  Seeded Audit Profiles: ${chalk.cyan(config.profiles.seed.audit.length)}`);
+  console.log('');
+
+  const defaultAuditProfileId = await input({
+    message: 'Default audit profile ID',
+    default: config.profiles.defaults.audit || 'builtin:audit:standard',
+    validate: (value) => {
+      if (!value.trim()) return 'Profile ID is required';
+      return true;
+    },
+  });
+
+  config.profiles.defaults.audit = defaultAuditProfileId.trim();
+
+  const editHttpSinkProfile = await confirm({
+    message: 'Create or update a seeded audit profile with a generic HTTP sink?',
+    default: config.profiles.seed.audit.length > 0,
+  });
+
+  if (!editHttpSinkProfile) {
+    return true;
+  }
+
+  const existingProfile =
+    config.profiles.seed.audit.find((profile) =>
+      profile.sinks.some((sink) => sink.type === 'http')
+    ) ?? config.profiles.seed.audit[0];
+  const existingHttpSink = existingProfile?.sinks.find(
+    (
+      sink
+    ): sink is {
+      type: 'http';
+      url?: string;
+      urlRef?: string;
+      authTokenRef?: string;
+      headers?: Record<string, string>;
+    } => sink.type === 'http'
+  );
+
+  const profileId = await input({
+    message: 'Audit profile ID',
+    default: existingProfile?.id || 'custom:audit:http-sink',
+    validate: (value) => {
+      if (!value.trim()) return 'Profile ID is required';
+      return true;
+    },
+  });
+
+  const label = await input({
+    message: 'Audit profile label',
+    default: existingProfile?.label || 'HTTP Sink Audit Profile',
+    validate: (value) => {
+      if (!value.trim()) return 'Label is required';
+      return true;
+    },
+  });
+
+  const deliveryMode = await select({
+    message: 'Select audit delivery mode',
+    choices: [
+      {
+        value: 'archive-only',
+        name: 'Archive-only + HTTP sink',
+        description: 'No hot query store. Archive to R2 and forward to the HTTP sink.',
+      },
+      {
+        value: 'd1-primary',
+        name: 'D1 primary + archive + HTTP sink',
+        description: 'Keep hot queries in D1 and also archive / forward.',
+      },
+      {
+        value: 'postgres-primary',
+        name: 'PostgreSQL primary + archive + HTTP sink',
+        description: 'Use Hyperdrive / PostgreSQL as the primary audit store.',
+      },
+      {
+        value: 'mysql-primary',
+        name: 'MySQL primary + archive + HTTP sink',
+        description: 'Use Hyperdrive / MySQL as the primary audit store.',
+      },
+    ],
+    default:
+      existingProfile?.primary == null
+        ? 'archive-only'
+        : existingProfile?.primary.type === 'postgres'
+          ? 'postgres-primary'
+          : existingProfile?.primary.type === 'mysql'
+            ? 'mysql-primary'
+          : 'd1-primary',
+  });
+
+  const useDirectUrl = await confirm({
+    message: 'Store the sink URL directly in config? (Use "No" to keep only a urlRef/bindingRef)',
+    default: Boolean(existingHttpSink?.url),
+  });
+
+  const directUrl = useDirectUrl
+    ? await input({
+        message: 'HTTP sink URL',
+        default: existingHttpSink?.url || 'https://example.com/audit',
+        validate: (value) => {
+          try {
+            new URL(value);
+            return true;
+          } catch {
+            return 'Please enter a valid URL';
+          }
+        },
+      })
+    : '';
+
+  const urlRef = await input({
+    message: 'HTTP sink URL ref (env/binding name, leave empty if using direct URL only)',
+    default: existingHttpSink?.urlRef || (!useDirectUrl ? 'AUTHRIM_AUDIT_HTTP_URL' : ''),
+  });
+
+  if (!directUrl && !urlRef.trim()) {
+    console.log(chalk.red('\nEither a direct URL or a URL ref is required.'));
+    return false;
+  }
+
+  const authTokenRef = await input({
+    message: 'HTTP sink auth token ref (optional)',
+    default: existingHttpSink?.authTokenRef || 'AUTHRIM_AUDIT_HTTP_TOKEN',
+  });
+
+  const headersInput = await input({
+    message: 'Additional HTTP headers as JSON object (optional)',
+    default: JSON.stringify(existingHttpSink?.headers || {}, null, 0),
+    validate: (value) => {
+      if (!value.trim()) return true;
+      try {
+        const parsed = JSON.parse(value);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          return 'Please enter a JSON object';
+        }
+        return true;
+      } catch {
+        return 'Please enter valid JSON';
+      }
+    },
+  });
+
+  const parsedHeaders = headersInput.trim() ? (JSON.parse(headersInput) as Record<string, string>) : {};
+
+  const seededProfile = {
+    id: profileId.trim(),
+    label: label.trim(),
+    description:
+      deliveryMode === 'archive-only'
+        ? 'Archive-only audit profile with a generic HTTP forwarding sink.'
+        : deliveryMode === 'postgres-primary'
+          ? 'PostgreSQL-backed audit profile with archive and generic HTTP forwarding sink.'
+          : deliveryMode === 'mysql-primary'
+            ? 'MySQL-backed audit profile with archive and generic HTTP forwarding sink.'
+          : 'D1-backed audit profile with archive and generic HTTP forwarding sink.',
+    primary:
+      deliveryMode === 'archive-only'
+        ? null
+        : deliveryMode === 'postgres-primary'
+          ? {
+              type: 'postgres' as const,
+              connectionRef: 'audit-primary',
+              dataset: 'event_log',
+            }
+          : deliveryMode === 'mysql-primary'
+            ? {
+                type: 'mysql' as const,
+                connectionRef: 'audit-primary-mysql',
+                dataset: 'event_log',
+              }
+          : {
+              type: 'd1' as const,
+              bindingRef: 'DB',
+              dataset: 'event_log',
+            },
+    archive: {
+      type: 'r2' as const,
+      bucketRef: 'DIAGNOSTIC_LOGS',
+      prefix: 'audit/',
+    },
+    sinks: [
+      {
+        type: 'http' as const,
+        ...(directUrl ? { url: directUrl.trim() } : {}),
+        ...(urlRef.trim() ? { urlRef: urlRef.trim() } : {}),
+        ...(authTokenRef.trim() ? { authTokenRef: authTokenRef.trim() } : {}),
+        ...(Object.keys(parsedHeaders).length > 0 ? { headers: parsedHeaders } : {}),
+      },
+    ],
+    retention:
+      deliveryMode === 'archive-only'
+        ? {
+            eventLogRetentionDays: 30,
+            piiLogRetentionDays: 30,
+            archiveBeforeDelete: false,
+            primaryDays: null,
+            archiveDays: 30,
+          }
+        : {
+            eventLogRetentionDays: 90,
+            piiLogRetentionDays: 365,
+            archiveBeforeDelete: false,
+            primaryDays: 90,
+            archiveDays: null,
+          },
+    archiveFailureMode: 'gate_cleanup' as const,
+    sinkFailureMode: 'best_effort' as const,
+  };
+
+  const existingIndex = config.profiles.seed.audit.findIndex(
+    (profile) => profile.id === seededProfile.id
+  );
+
+  if (existingIndex >= 0) {
+    config.profiles.seed.audit[existingIndex] = seededProfile;
+  } else {
+    config.profiles.seed.audit.push(seededProfile);
+  }
 
   return true;
 }

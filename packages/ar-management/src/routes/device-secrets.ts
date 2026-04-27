@@ -13,11 +13,11 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   DeviceSecretRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  createAuthContextFromHono,
 } from '@authrim/ar-lib-core';
 
 // Input validation constants
@@ -71,6 +71,11 @@ interface DeviceSecretAdminResponse {
   is_active: boolean;
   revoked_at?: string;
   revoke_reason?: string;
+}
+
+function getDeviceSecretRepository(c: Context<{ Bindings: Env }>): DeviceSecretRepository {
+  const authCtx = createAuthContextFromHono(c);
+  return new DeviceSecretRepository(authCtx.coreAdapter);
 }
 
 /**
@@ -133,8 +138,7 @@ export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Prom
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
     const offset = parseInt(c.req.query('offset') || '0', 10);
 
-    const adapter = new D1Adapter({ db: c.env.DB });
-    const repo = new DeviceSecretRepository(adapter);
+    const repo = getDeviceSecretRepository(c);
 
     // Get all device secrets for user
     const allSecrets = await repo.findByUserId(userId);
@@ -191,8 +195,7 @@ export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Re
   }
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
-    const repo = new DeviceSecretRepository(adapter);
+    const repo = getDeviceSecretRepository(c);
 
     const secret = await repo.findById(id);
 
@@ -240,8 +243,7 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
       // Body is optional, ignore parse errors
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
-    const repo = new DeviceSecretRepository(adapter);
+    const repo = getDeviceSecretRepository(c);
 
     // Check if secret exists
     const existing = await repo.findById(id);
@@ -307,8 +309,7 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
       // Body is optional, ignore parse errors
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
-    const repo = new DeviceSecretRepository(adapter);
+    const repo = getDeviceSecretRepository(c);
 
     const revokedCount = await repo.revokeByUserId(userId, reason);
 
@@ -338,8 +339,7 @@ export async function cleanupExpiredDeviceSecrets(
 ): Promise<Response> {
   const log = getLogger(c).module('DeviceSecretsAPI');
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
-    const repo = new DeviceSecretRepository(adapter);
+    const repo = getDeviceSecretRepository(c);
 
     const cleanedCount = await repo.cleanupExpired();
 

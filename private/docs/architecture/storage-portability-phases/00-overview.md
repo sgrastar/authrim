@@ -1,6 +1,6 @@
 # Storage / Validation 全体フェーズ
 
-最終更新: 2026-04-23
+最終更新: 2026-04-24
 
 ## 目的
 
@@ -88,13 +88,94 @@ audit routing を拡張し、Logpush など forwarding sink を扱えるよう�
 
 状態:
 
-- Phase 4 は 2026-04-23 時点で着手済み
-- 最初の slice は rule model を `backend` から `primary / archive / sink` へ正規化する
+- Phase 4 scope は 2026-04-24 時点で完了
+- rule model の canonical 化
+- audit profile 正本化
+- queue fan-out
+- routing rule 由来の delivery plan 反映
+- generic HTTP sink
+- PostgreSQL / MySQL audit primary
+- canonical log format `authrim.audit.v1`
+  まで実装済み
+- 残りは Firehose、archive-only の検索系、target 単位 failure mode など後続項目
 
 理由:
 
 - 小規模と大規模の両方に対応できる
 - vendor lock-in を避けながら Cloudflare native も使える
+
+### Phase 5
+
+repo-wide storage portability の残骸を整理する。
+
+状態:
+
+- Phase 5 は 2026-04-24 時点で開始
+- Phase 2 / 3 / 4 で局所的に進めた adapter/profile 対応を、
+  repo 全体の runtime wiring へ広げるフェーズとして定義する
+- 実施単位は `5a / 5b / 5c` に分ける
+- `5a` の inventory / classification は開始済み
+- `5b` の first slice として
+  `SessionStore` / `DeviceCodeStore` / `CIBARequestStore`
+  の store-specific persistence 契約を追加済み
+
+理由:
+
+- これは全体調整であり、個別機能追加と混ぜるとスコープが崩れやすい
+- audit と user-store の一部だけ portability が進んだ状態を閉じるため、
+  独立した 1 フェーズとして扱う方が管理しやすい
+
+#### Phase 5a
+
+inventory / classification。
+
+- raw `new D1Adapter(...)`
+- env-level binding 直結
+- profile-aware でない runtime path
+
+を棚卸しし、優先順位と slice を決める。
+
+#### Phase 5b
+
+security-sensitive store portability。
+
+- sessions
+- refresh tokens
+- device codes
+- CIBA requests
+- token / consent / auth-code 周辺の stateful store
+
+を portability の観点で整理する。
+
+#### Phase 5c
+
+broader runtime wiring / cache invalidation。
+
+- admin / management / bridge / policy / vc などの wider runtime path
+- custom claims route wiring の残り
+- backend-agnostic cache invalidation helper
+
+を寄せる。
+
+### Phase 6
+
+Phase 4 以降の運用強化と個別 follow-up を進める。
+
+状態:
+
+- Phase 6 は 2026-04-24 時点で未着手
+- 対象は次の通り
+  - audit の retention / retry / backpressure / delivery guarantee 整理
+  - profile registry の運用強化
+  - Firehose sink
+  - sink UI 改善
+  - import runner
+  - archive-only 検索系
+
+理由:
+
+- portability の横断調整を終えた後でないと、運用面の改善と機能拡張の責務がぶれやすい
+- 独立して進めやすい item を 1 つの後続フェーズにまとめることで優先順位を管理しやすい
 
 ## 先に決まっている方針
 
@@ -114,6 +195,8 @@ audit routing を拡張し、Logpush など forwarding sink を扱えるよう�
 3. Phase 2
 4. Phase 3
 5. Phase 4
+6. Phase 5
+7. Phase 6
 
 ## 持ち越し管理
 

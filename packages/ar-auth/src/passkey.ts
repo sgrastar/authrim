@@ -37,7 +37,7 @@ import {
   getSessionCookieSameSite,
   // Admin Session Repository
   AdminSessionRepository,
-  D1Adapter,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
   persistRegistrationFieldValuesFromEnv,
@@ -955,7 +955,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     // This is required because admin-auth middleware reads from admin_sessions (DB_ADMIN)
     if (userCore?.user_type === 'admin' && c.env.DB_ADMIN) {
       try {
-        const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+        const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'passkey-admin');
         const adminSessionRepo = new AdminSessionRepository(adminAdapter);
 
         // Get client IP from Cloudflare header

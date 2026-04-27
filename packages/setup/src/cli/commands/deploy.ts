@@ -40,6 +40,7 @@ import {
   runMigrationsForEnvironment,
   ensureInitialAdminRolesInD1,
   ensureInitialTenantInD1,
+  seedRuntimeProfiles,
   getWorkersSubdomain,
   ensureWildcardDnsForMultiTenant,
 } from '../../core/cloudflare.js';
@@ -854,6 +855,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   let migrationsSuccess = true;
   let initialTenantSuccess = true;
   let initialAdminRolesSuccess = true;
+  let runtimeProfileSeedSuccess = true;
   if (
     !options.skipMigrations &&
     !options.dryRun &&
@@ -908,6 +910,23 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
           initialAdminRolesSuccess = false;
         }
+
+        const profileSeedSpinner = ora('Seeding runtime profiles...').start();
+        const profileSeedResult = await seedRuntimeProfiles(env, config, (msg) => {
+          profileSeedSpinner.text = msg;
+        });
+
+        if (profileSeedResult.success) {
+          profileSeedSpinner.succeed(
+            `Runtime profiles ready (${profileSeedResult.seededCount} seeded to ${profileSeedResult.backend})`
+          );
+        } else {
+          profileSeedSpinner.fail('Runtime profile seed failed');
+          if (profileSeedResult.error) {
+            console.log(chalk.red(`  ${profileSeedResult.error}`));
+          }
+          runtimeProfileSeedSuccess = false;
+        }
       } else {
         migrationsSpinner.warn('Some migrations failed');
         if (migrationsResult.core.error) {
@@ -935,7 +954,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     summary.failedCount === 0 &&
     migrationsSuccess &&
     initialTenantSuccess &&
-    initialAdminRolesSuccess
+    initialAdminRolesSuccess &&
+    runtimeProfileSeedSuccess
   ) {
     console.log(chalk.green('✅ All components deployed and migrations applied!\n'));
   } else if (summary.failedCount === 0 && !migrationsSuccess) {
@@ -948,6 +968,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     console.log(
       chalk.yellow('⚠️  All components deployed, but initial admin role bootstrap failed.\n')
     );
+  } else if (summary.failedCount === 0 && !runtimeProfileSeedSuccess) {
+    console.log(chalk.yellow('⚠️  All components deployed, but runtime profile seed failed.\n'));
   } else {
     console.log(
       chalk.yellow(`⚠️  ${summary.successCount}/${summary.totalComponents} components deployed\n`)

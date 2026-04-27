@@ -18,13 +18,14 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
   createAuditLogFromContext,
   getLogger,
+  getNestedValue,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
 import {
@@ -527,8 +528,23 @@ const SETTINGS_SCHEMA: CategorySchema[] = [
 /**
  * Create database adapter from context
  */
-function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+function createAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+function parseSettingsObject(settingsJson: string | null | undefined): Record<string, unknown> {
+  if (!settingsJson) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(settingsJson) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -663,7 +679,7 @@ export async function adminSettingsDiffHandler(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Build query for source version
     let fromQuery = `
@@ -707,21 +723,20 @@ export async function adminSettingsDiffHandler(c: Context<{ Bindings: Env }>) {
       // Get current settings from tenant (to_version not specified = compare with current)
       if (category) {
         const currentSettings = await adapter.queryOne<{
-          settings: string;
+          settings: string | null;
           updated_at: number;
-        }>(
-          `SELECT json_extract(settings, ?) as settings, updated_at
-           FROM tenants WHERE id = ?`,
-          [`$.${category}`, tenantId]
-        );
+        }>('SELECT settings, updated_at FROM tenants WHERE id = ?', [tenantId]);
 
         if (currentSettings) {
+          const parsedSettings = parseSettingsObject(currentSettings.settings);
+          const currentCategoryValue = getNestedValue(parsedSettings, category);
           toRows = [
             {
               id: 'current',
               tenant_id: tenantId,
               category,
-              settings: currentSettings.settings || '{}',
+              settings:
+                currentCategoryValue === undefined ? '{}' : JSON.stringify(currentCategoryValue),
               changed_by: 'current',
               version: 0, // Current
               created_at: currentSettings.updated_at || Math.floor(Date.now() / 1000),
@@ -738,7 +753,7 @@ export async function adminSettingsDiffHandler(c: Context<{ Bindings: Env }>) {
         );
 
         if (tenant && tenant.settings) {
-          const settings = JSON.parse(tenant.settings) as Record<string, unknown>;
+          const settings = parseSettingsObject(tenant.settings);
           toRows = Object.entries(settings).map(([cat, value]) => ({
             id: 'current',
             tenant_id: tenantId,
@@ -1173,7 +1188,7 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       include_roles,
       include_webhooks,
     } = parseResult.data;
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, sourceTenantId);
 
     // Verify source tenant exists and user has access
     // Note: For cross-tenant cloning, user must be system_admin or distributor_admin
@@ -1204,9 +1219,12 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
 
     // Clone tenant with new id, name, and description
     await adapter.execute(
-      `INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
-      [newTenantId, newTenantId, name, description ?? null, nowTs, nowTs]
+      `INSERT INTO tenants (
+         id, tenant_code, name, description, is_active, is_default,
+         default_tenant_guard, created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+      [newTenantId, newTenantId, name, description ?? null, null, nowTs, nowTs]
     );
 
     const clonedItems = {

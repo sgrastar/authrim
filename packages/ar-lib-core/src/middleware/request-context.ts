@@ -28,6 +28,7 @@ import {
   getPrimaryTenantVanityDomain,
   resolveTenantFromVanityHost,
 } from '../services/tenant-vanity-domain-resolver';
+import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
 import { resolveUserStoreRuntimeSourcesFromEnv } from '../services/user-store-runtime-sources';
 
 /**
@@ -153,11 +154,14 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Single-tenant mode: always returns default tenant
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
+    const authCoreSource = await resolveAuthCorePersistenceSourceFromEnv(c.env).catch(
+      () => c.env.DB
+    );
     let tenantId = tenantResult.tenantId;
     const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
     if (!tenantResult.success && shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)) {
       const vanityTenantId = await resolveTenantFromVanityHost(
-        c.env.DB,
+        authCoreSource,
         c.env.AUTHRIM_CONFIG,
         requestHost
       );
@@ -235,7 +239,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       (requestClass === 'tenant_scoped_admin' || tenantResult.success);
 
     if (shouldValidateTenantExists) {
-      const exists = await validateTenantExistsAsync(c.env.DB, c.env.AUTHRIM_CONFIG, tenantId);
+      const exists = await validateTenantExistsAsync(authCoreSource, c.env.AUTHRIM_CONFIG, tenantId);
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
         errorLogger.warn('Tenant existence check failed', {
@@ -254,7 +258,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       !!c.env.BASE_DOMAIN &&
       requestHost === `${tenantId}.${c.env.BASE_DOMAIN}`
     ) {
-      const primaryVanity = await getPrimaryTenantVanityDomain(c.env, tenantId);
+      const primaryVanity = await getPrimaryTenantVanityDomain(
+        { ...c.env, DB: authCoreSource },
+        tenantId
+      );
       if (primaryVanity && primaryVanity.hostname !== requestHost) {
         const isBrowserNavigation =
           ['GET', 'HEAD'].includes(c.req.method) &&

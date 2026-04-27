@@ -12,7 +12,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   type DatabaseAdapter,
   getSessionStoreBySessionId,
   isShardedSessionId,
@@ -20,6 +19,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
+  resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -217,7 +217,7 @@ async function invalidateUserSessions(
 
       // Mark the linked identity as requiring re-authentication
       // We do this by clearing the tokens
-      await updateLinkedIdentity(env, identity.id, {
+      await updateLinkedIdentity(env, identity.tenantId, identity.id, {
         tokens: {
           access_token: '', // Clear tokens
           token_type: 'Bearer',
@@ -227,7 +227,10 @@ async function invalidateUserSessions(
 
     // Terminate sessions that were created via this provider and subject
     // Query D1 for sessions with matching external_provider_id and external_provider_sub
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      `bridge-backchannel-logout:${tenantId}`
+    );
     const sessions = await coreAdapter.query<{ id: string }>(
       `SELECT id FROM sessions
        WHERE external_provider_id = ?

@@ -13,13 +13,19 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   createErrorResponse,
   AR_ERROR_CODES,
+  createAuthContextFromHono,
   getLogger,
   hasPIIDatabase,
   createPIIContextFromHono,
 } from '@authrim/ar-lib-core';
+import {
+  applyInvitationAssignments,
+  consumeInvitationUse,
+  findActiveInvitationByToken,
+  hasRemainingInvitationUses,
+} from '@authrim/ar-lib-core/services/invitation-auth-core';
 
 // =============================================================================
 // Types
@@ -63,25 +69,20 @@ export async function validateInvitationHandler(c: Context<{ Bindings: Env }>) {
 
   try {
     const now = Math.floor(Date.now() / 1000);
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
 
-    const invitation = await adapter.queryOne<TenantInvitationRow>(
-      `SELECT id, token, tenant_id, invited_email, role_id, org_id, max_uses, use_count, expires_at
-       FROM tenant_invitations
-       WHERE token = ? AND expires_at > ?`,
-      [token, now]
-    );
+    const invitation = await findActiveInvitationByToken(coreAdapter, token, now);
 
     if (!invitation) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check uses remaining
-    if (invitation.max_uses !== -1 && invitation.use_count >= invitation.max_uses) {
+    if (!hasRemainingInvitationUses(invitation)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const tenant = await adapter.queryOne<TenantRow>('SELECT id, name FROM tenants WHERE id = ?', [
+    const tenant = await coreAdapter.queryOne<TenantRow>('SELECT id, name FROM tenants WHERE id = ?', [
       invitation.tenant_id,
     ]);
 
@@ -128,25 +129,20 @@ export async function useInvitationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
 
-    const invitation = await adapter.queryOne<TenantInvitationRow>(
-      `SELECT id, tenant_id, invited_email, role_id, org_id, max_uses, use_count, expires_at
-       FROM tenant_invitations
-       WHERE token = ? AND expires_at > ?`,
-      [token, now]
-    );
+    const invitation = await findActiveInvitationByToken(coreAdapter, token, now);
 
     if (!invitation) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    if (invitation.max_uses !== -1 && invitation.use_count >= invitation.max_uses) {
+    if (!hasRemainingInvitationUses(invitation)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Verify the user_id actually exists in the correct tenant
-    const userRow = await adapter.queryOne<{ id: string }>(
+    const userRow = await coreAdapter.queryOne<{ id: string }>(
       'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
       [user_id, invitation.tenant_id]
     );
@@ -179,50 +175,32 @@ export async function useInvitationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Atomically increment use_count only if still within limit
-    const result = await c.env.DB.prepare(
-      `UPDATE tenant_invitations
-       SET use_count = use_count + 1, updated_at = ?
-       WHERE id = ? AND (max_uses = -1 OR use_count < max_uses)`
-    )
-      .bind(now, invitation.id)
-      .run();
-
-    if (result.meta.changes === 0) {
+    const consumed = await consumeInvitationUse(coreAdapter, invitation.id, now);
+    if (!consumed) {
       // Another concurrent request consumed the last use
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Apply role/org assignments
-    if (invitation.role_id) {
-      try {
-        await adapter.execute(
-          `INSERT OR IGNORE INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?)`,
-          [
-            crypto.randomUUID(),
-            invitation.tenant_id,
-            user_id,
-            invitation.role_id,
-            invitation.tenant_id,
-            now,
-            now,
-          ]
-        );
-      } catch (assignErr) {
-        log.warn('Failed to assign role from invitation', { error: String(assignErr) });
-      }
+    const assignmentResults = await applyInvitationAssignments(coreAdapter, {
+      userId: user_id,
+      tenantId: invitation.tenant_id,
+      roleId: invitation.role_id,
+      orgId: invitation.org_id,
+    });
+
+    if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
+      log.warn('Failed to assign role from invitation', {
+        invitation_id: invitation.id,
+        error: assignmentResults.roleAssignment?.error,
+      });
     }
 
-    if (invitation.org_id) {
-      try {
-        await adapter.execute(
-          `INSERT OR IGNORE INTO org_memberships (id, tenant_id, user_id, org_id, membership_type, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'member', ?, ?)`,
-          [crypto.randomUUID(), invitation.tenant_id, user_id, invitation.org_id, now, now]
-        );
-      } catch (assignErr) {
-        log.warn('Failed to assign org from invitation', { error: String(assignErr) });
-      }
+    if (invitation.org_id && !assignmentResults.orgMembership?.success) {
+      log.warn('Failed to assign org from invitation', {
+        invitation_id: invitation.id,
+        error: assignmentResults.orgMembership?.error,
+      });
     }
 
     return c.json({ success: true });

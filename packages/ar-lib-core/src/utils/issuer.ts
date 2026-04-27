@@ -22,6 +22,7 @@
  * NOT tenant_hint (untrusted UX hint).
  */
 
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 
@@ -46,7 +47,7 @@ export interface IssuerEnvLike {
  * @returns true if tenant exists and is active, false if not found or inactive
  */
 export async function validateTenantExistsAsync(
-  db: D1Database | undefined,
+  db: DatabaseSource | undefined,
   kv: KVNamespace | undefined,
   tenantId: string
 ): Promise<boolean> {
@@ -66,12 +67,18 @@ export async function validateTenantExistsAsync(
   if (!db) return true;
 
   try {
-    const row = await db
-      .prepare('SELECT id FROM tenants WHERE id = ? AND is_active = 1')
-      .bind(tenantId)
-      .first<{ id: string }>();
+    const adapter = ensureDatabaseAdapter(db, 'tenant-exists');
+    const row = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM tenants WHERE id = ? AND is_active = 1',
+      [tenantId]
+    );
 
-    if (!row) return false;
+    if (!row) {
+      const health = await adapter.isHealthy().catch(() => ({
+        healthy: false,
+      }));
+      return health.healthy ? false : true;
+    }
 
     // Write positive cache only (never cache negative to ensure immediate visibility)
     if (kv) {

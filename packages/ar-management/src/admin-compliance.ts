@@ -19,15 +19,17 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
   createAuditLogFromContext,
   getLogger,
+  getNestedValue,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
+import { getAuditHotQuerySqlSpec, getAuditHotQuerySupport, getAuditTimeRange } from './audit-hot-query';
 
 // =============================================================================
 // Constants
@@ -93,6 +95,7 @@ interface ComplianceStatusResponse {
     retention_days: number;
     total_entries: number;
     entries_last_30_days: number;
+    hot_query_status?: 'supported' | 'not_supported' | 'pending_runtime_support';
   };
   mfa_status: {
     enforced: boolean;
@@ -122,8 +125,8 @@ interface ComplianceStatusResponse {
 /**
  * Create database adapter from context
  */
-function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+function createAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 /**
@@ -143,6 +146,60 @@ function determineOverallStatus(statuses: ComplianceStatus[]): ComplianceStatus 
   if (statuses.includes('warning')) return 'warning';
   if (statuses.every((s) => s === 'not_applicable')) return 'not_applicable';
   return 'compliant';
+}
+
+function parseSettingsObject(settingsJson: string | null | undefined): Record<string, unknown> {
+  if (!settingsJson) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(settingsJson) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function getBooleanSetting(
+  settings: Record<string, unknown>,
+  path: string,
+  fallback: boolean
+): boolean {
+  const value = getNestedValue(settings, path);
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    if (value === '1') return true;
+    if (value === '0') return false;
+  }
+  return fallback;
+}
+
+function getNumberSetting(
+  settings: Record<string, unknown>,
+  path: string,
+  fallback: number | null
+): number | null {
+  const value = getNestedValue(settings, path);
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return fallback;
 }
 
 // =============================================================================
@@ -167,39 +224,51 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
   const tenantId = getTenantIdFromContext(c);
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
     const thirtyDaysAgo = nowTs - 30 * 24 * 60 * 60;
 
     // 1. Get tenant settings for compliance configuration
-    const tenantSettings = await adapter.queryOne<{
-      data_retention_enabled: number;
-      data_retention_days: number | null;
-      mfa_enforced: number;
-      audit_log_retention_days: number;
-    }>(
-      `SELECT
-        COALESCE(json_extract(settings, '$.data_retention.enabled'), 0) as data_retention_enabled,
-        json_extract(settings, '$.data_retention.days') as data_retention_days,
-        COALESCE(json_extract(settings, '$.security.mfa_enforced'), 0) as mfa_enforced,
-        COALESCE(json_extract(settings, '$.audit.retention_days'), 90) as audit_log_retention_days
-      FROM tenants
-      WHERE id = ?`,
+    const tenantSettingsRow = await adapter.queryOne<{ settings: string | null }>(
+      'SELECT settings FROM tenants WHERE id = ?',
       [tenantId]
     );
+    const tenantSettingsObject = parseSettingsObject(tenantSettingsRow?.settings);
+    const tenantSettings = {
+      data_retention_enabled: getBooleanSetting(
+        tenantSettingsObject,
+        'data_retention.enabled',
+        false
+      ),
+      data_retention_days: getNumberSetting(tenantSettingsObject, 'data_retention.days', null),
+      mfa_enforced: getBooleanSetting(tenantSettingsObject, 'security.mfa_enforced', false),
+      audit_log_retention_days:
+        getNumberSetting(tenantSettingsObject, 'audit.retention_days', 90) ?? 90,
+    };
 
     // 2. Get audit log statistics
-    const auditStats = await adapter.queryOne<{
-      total: number;
-      last_30_days: number;
-    }>(
-      `SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as last_30_days
-      FROM audit_log
-      WHERE tenant_id = ?`,
-      [thirtyDaysAgo, tenantId]
-    );
+    let auditStats:
+      | {
+          total: number;
+          last_30_days: number;
+        }
+      | null = null;
+    if (hotQuery.supported && hotQuery.context) {
+      const { tableName } = getAuditHotQuerySqlSpec(hotQuery.context);
+      const [auditFromTs] = getAuditTimeRange(thirtyDaysAgo, nowTs, hotQuery.context);
+      auditStats = await hotQuery.context.adapter.queryOne<{
+        total: number;
+        last_30_days: number;
+      }>(
+        `SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as last_30_days
+        FROM ${tableName}
+        WHERE tenant_id = ?`,
+        [auditFromTs, tenantId]
+      );
+    }
 
     // 3. Get MFA status
     const mfaStats = await adapter.queryOne<{
@@ -251,7 +320,7 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     const frameworkSummaries: FrameworkSummary[] = [];
 
     // GDPR summary
-    const gdprStatus: ComplianceStatus = tenantSettings?.data_retention_enabled
+    const gdprStatus: ComplianceStatus = tenantSettings.data_retention_enabled
       ? 'compliant'
       : 'warning';
     frameworkSummaries.push({
@@ -289,9 +358,9 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
         name: 'Data Retention Policy',
         description: 'Verify data retention policy is configured',
         framework: 'gdpr',
-        status: tenantSettings?.data_retention_enabled ? 'compliant' : 'warning',
+        status: tenantSettings.data_retention_enabled ? 'compliant' : 'warning',
         last_checked: new Date().toISOString(),
-        details: tenantSettings?.data_retention_enabled
+        details: tenantSettings.data_retention_enabled
           ? `Retention period: ${tenantSettings.data_retention_days} days`
           : 'Data retention policy not configured',
       },
@@ -335,19 +404,20 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
       frameworks: frameworkSummaries,
       recent_checks: recentChecks,
       data_retention: {
-        policy_enabled: !!tenantSettings?.data_retention_enabled,
-        retention_days: tenantSettings?.data_retention_days || null,
+        policy_enabled: tenantSettings.data_retention_enabled,
+        retention_days: tenantSettings.data_retention_days || null,
         last_cleanup: toISOString(lastCleanup),
         pending_deletions: retentionStats?.pending_deletions || 0,
       },
       audit_log: {
         enabled: true, // Always enabled in Authrim
-        retention_days: tenantSettings?.audit_log_retention_days || 90,
+        retention_days: tenantSettings.audit_log_retention_days,
         total_entries: auditStats?.total || 0,
         entries_last_30_days: auditStats?.last_30_days || 0,
+        ...(hotQuery.supported ? { hot_query_status: 'supported' as const } : { hot_query_status: hotQuery.status }),
       },
       mfa_status: {
-        enforced: !!tenantSettings?.mfa_enforced,
+        enforced: tenantSettings.mfa_enforced,
         users_with_mfa: mfaStats?.users_with_mfa || 0,
         users_without_mfa: mfaStats?.users_without_mfa || 0,
         mfa_coverage_percent: mfaCoveragePercent,
@@ -496,7 +566,7 @@ export async function adminComplianceAccessReviewsListHandler(c: Context<{ Bindi
   const limit = Math.min(Math.max(parseInt(limitParam || '20', 10) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Build query
     const whereClauses: string[] = ['tenant_id = ?'];
@@ -608,7 +678,7 @@ export async function adminComplianceAccessReviewsCreateHandler(c: Context<{ Bin
     }
 
     const { name, description, scope, scope_value, due_date } = parseResult.data;
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Get admin auth
     const adminAuth = getAdminAuth(c);
@@ -782,7 +852,7 @@ export async function adminComplianceReportsListHandler(c: Context<{ Bindings: E
   const limit = Math.min(Math.max(parseInt(limitParam || '20', 10) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Build query
     const whereClauses: string[] = ['tenant_id = ?'];
@@ -901,6 +971,7 @@ interface CategoryRetentionInfo {
   next_cleanup_date: string | null;
   last_cleanup_date: string | null;
   records_deleted_last_30_days: number;
+  hot_query_status?: 'supported' | 'not_supported' | 'pending_runtime_support';
 }
 
 /**
@@ -974,56 +1045,90 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
   const tenantId = getTenantIdFromContext(c);
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
 
     // Get tenant retention settings
-    const tenantSettings = await adapter.queryOne<{
-      data_retention_enabled: number;
-      data_retention_days: number | null;
-      audit_log_retention_days: number | null;
-      session_retention_days: number | null;
-      tombstone_retention_days: number | null;
-      last_cleanup_at: number | null;
-      next_cleanup_at: number | null;
-    }>(
-      `SELECT
-        COALESCE(json_extract(settings, '$.data_retention.enabled'), 0) as data_retention_enabled,
-        json_extract(settings, '$.data_retention.days') as data_retention_days,
-        json_extract(settings, '$.audit.retention_days') as audit_log_retention_days,
-        json_extract(settings, '$.session.retention_days') as session_retention_days,
-        json_extract(settings, '$.compliance.tombstone_retention_days') as tombstone_retention_days,
-        json_extract(settings, '$.data_retention.last_cleanup_at') as last_cleanup_at,
-        json_extract(settings, '$.data_retention.next_cleanup_at') as next_cleanup_at
-      FROM tenants
-      WHERE id = ?`,
+    const tenantSettingsRow = await adapter.queryOne<{ settings: string | null }>(
+      'SELECT settings FROM tenants WHERE id = ?',
       [tenantId]
     );
+    const tenantSettingsObject = parseSettingsObject(tenantSettingsRow?.settings);
+    const tenantSettings = {
+      data_retention_enabled: getBooleanSetting(
+        tenantSettingsObject,
+        'data_retention.enabled',
+        false
+      ),
+      data_retention_days: getNumberSetting(tenantSettingsObject, 'data_retention.days', null),
+      audit_log_retention_days: getNumberSetting(
+        tenantSettingsObject,
+        'audit.retention_days',
+        null
+      ),
+      session_retention_days: getNumberSetting(
+        tenantSettingsObject,
+        'session.retention_days',
+        null
+      ),
+      tombstone_retention_days: getNumberSetting(
+        tenantSettingsObject,
+        'compliance.tombstone_retention_days',
+        null
+      ),
+      last_cleanup_at: getNumberSetting(
+        tenantSettingsObject,
+        'data_retention.last_cleanup_at',
+        null
+      ),
+      next_cleanup_at: getNumberSetting(
+        tenantSettingsObject,
+        'data_retention.next_cleanup_at',
+        null
+      ),
+    };
 
-    const retentionEnabled = !!tenantSettings?.data_retention_enabled;
-    const defaultRetentionDays = tenantSettings?.data_retention_days || 365;
+    const retentionEnabled = tenantSettings.data_retention_enabled;
+    const defaultRetentionDays = tenantSettings.data_retention_days || 365;
 
     // Build category-specific statistics
     const categories: CategoryRetentionInfo[] = [];
 
     // Audit logs statistics
-    const auditStats = await adapter.queryOne<{
-      total: number;
-      pending_deletion: number;
-      oldest_date: number | null;
-      deleted_last_30_days: number;
-    }>(
-      `SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END) as pending_deletion,
-        MIN(created_at) as oldest_date,
-        0 as deleted_last_30_days
-      FROM audit_log
-      WHERE tenant_id = ?`,
-      [nowTs - (tenantSettings?.audit_log_retention_days || 90) * 24 * 60 * 60, tenantId]
-    );
-
     const auditRetentionDays = tenantSettings?.audit_log_retention_days || 90;
+    let auditStats:
+      | {
+          total: number;
+          pending_deletion: number;
+          oldest_date: number | null;
+          deleted_last_30_days: number;
+        }
+      | null = null;
+    if (hotQuery.supported && hotQuery.context) {
+      const { tableName } = getAuditHotQuerySqlSpec(hotQuery.context);
+      const [retentionThreshold] = getAuditTimeRange(
+        nowTs - auditRetentionDays * 24 * 60 * 60,
+        nowTs,
+        hotQuery.context
+      );
+      auditStats = await hotQuery.context.adapter.queryOne<{
+        total: number;
+        pending_deletion: number;
+        oldest_date: number | null;
+        deleted_last_30_days: number;
+      }>(
+        `SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END) as pending_deletion,
+          MIN(created_at) as oldest_date,
+          0 as deleted_last_30_days
+        FROM ${tableName}
+        WHERE tenant_id = ?`,
+        [retentionThreshold, tenantId]
+      );
+    }
+
     categories.push({
       category: 'audit_logs',
       retention_days: auditRetentionDays,
@@ -1033,6 +1138,7 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
       next_cleanup_date: toISOString(tenantSettings?.next_cleanup_at ?? null),
       last_cleanup_date: toISOString(tenantSettings?.last_cleanup_at ?? null),
       records_deleted_last_30_days: auditStats?.deleted_last_30_days || 0,
+      ...(hotQuery.supported ? { hot_query_status: 'supported' as const } : { hot_query_status: hotQuery.status }),
     });
 
     // Sessions statistics

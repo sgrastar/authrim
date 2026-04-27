@@ -7,7 +7,8 @@
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
+  type DatabaseAdapter,
   generateId,
   getTenantIdFromContext,
   createAuditLogFromContext,
@@ -109,6 +110,10 @@ function getAdminUserId(c: AdminContext): string | null {
   return adminAuth?.userId ?? null;
 }
 
+function getCoreAdapter(c: BaseContext, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -119,7 +124,7 @@ function getAdminUserId(c: AdminContext): string | null {
 export async function adminPoliciesListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(c, tenantId);
 
     const { enabled, search, page = '1', limit = '20' } = c.req.query();
 
@@ -194,7 +199,7 @@ export async function adminPoliciesListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminPolicyGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(c, tenantId);
     const ruleId = c.req.param('id')!;
 
     const row = await db.queryOne<PolicyRuleRow>(
@@ -243,7 +248,7 @@ export async function adminPolicyGetHandler(c: Context<{ Bindings: Env }>) {
 export async function adminPolicyCreateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
     const body = await c.req.json<{
       name: string;
       description?: string;
@@ -334,7 +339,7 @@ export async function adminPolicyCreateHandler(c: AdminContext) {
 export async function adminPolicyUpdateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
     const ruleId = c.req.param('id')!;
 
     // Check existence
@@ -439,7 +444,7 @@ export async function adminPolicyUpdateHandler(c: AdminContext) {
 export async function adminPolicyDeleteHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
     const ruleId = c.req.param('id')!;
 
     // Check existence
@@ -484,7 +489,7 @@ export async function adminPolicyDeleteHandler(c: AdminContext) {
 export async function adminPolicySimulateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
 
     const body = await c.req.json<{
       context: PolicyContext;
@@ -566,7 +571,7 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
 export async function adminPolicySimulationsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(c, tenantId);
 
     const { page = '1', limit = '20' } = c.req.query();
     const pageNum = Math.max(1, parseInt(page));

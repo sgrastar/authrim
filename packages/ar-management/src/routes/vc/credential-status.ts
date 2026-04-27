@@ -12,13 +12,13 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, DatabaseAdapter } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   IssuedCredentialRepository,
   D1StatusListRepository,
   StatusListManager,
   StatusValue,
+  createAuthContextFromHono,
   getTenantIdFromContext,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -45,7 +45,7 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
     // SECURITY: Get tenant ID from authenticated context, not from request
     const tenantId = getTenantIdFromContext(c);
 
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
@@ -109,7 +109,7 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
     // SECURITY: Get tenant ID from authenticated context, not from request
     const tenantId = getTenantIdFromContext(c);
 
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
@@ -177,7 +177,7 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
     // SECURITY: Get tenant ID from authenticated context, not from request
     const tenantId = getTenantIdFromContext(c);
 
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
@@ -243,7 +243,7 @@ export async function listStatusListsHandler(c: Context<{ Bindings: Env }>): Pro
   const state = c.req.query('state') as 'active' | 'sealed' | 'archived' | undefined;
 
   try {
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
 
@@ -288,7 +288,7 @@ export async function getStatusListHandler(c: Context<{ Bindings: Env }>): Promi
     // SECURITY: Get tenant ID from authenticated context
     const tenantId = getTenantIdFromContext(c);
 
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
 
@@ -337,7 +337,7 @@ export async function getStatusListStatsHandler(c: Context<{ Bindings: Env }>): 
   const tenantId = getTenantIdFromContext(c);
 
   try {
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const statusListRepo = new D1StatusListRepository(adapter);
 
     const stats = await statusListRepo.getStats(tenantId);

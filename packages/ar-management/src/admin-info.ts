@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
@@ -62,7 +62,7 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string; name: string }>(

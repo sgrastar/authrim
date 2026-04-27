@@ -10,8 +10,8 @@
  */
 
 import type { Env } from '../types/env';
-import { D1Adapter } from '../db/adapters/d1-adapter';
-import type { DatabaseAdapter } from '../db/adapter';
+import { ensureDatabaseAdapter } from '../db';
+import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
 import { createLogger } from './logger';
 
 const log = createLogger().module('SYSTEM_INIT');
@@ -54,7 +54,7 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
   // First, try DB_ADMIN (new architecture)
   if (env.DB_ADMIN) {
     try {
-      const adminAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_ADMIN });
+      const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'admin-init');
       const now = Date.now(); // Milliseconds for admin_role_assignments
 
       // Count Admin users with active, non-expired super_admin role
@@ -87,7 +87,7 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
 
   // Fallback to legacy DB (for backward compatibility)
   try {
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'system-init');
     const now = Math.floor(Date.now() / 1000); // UNIX seconds for legacy role_assignments
 
     // Count users with active, non-expired system_admin role (legacy)
@@ -139,7 +139,7 @@ export async function assignSystemAdminRole(
 ): Promise<void> {
   // Use DB_ADMIN (new architecture) when available
   if (env.DB_ADMIN) {
-    const adminAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_ADMIN });
+    const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'admin-init');
 
     // Get the super_admin role ID
     const role = await adminAdapter.queryOne<{ id: string }>(
@@ -185,7 +185,7 @@ export async function assignSystemAdminRole(
   }
 
   // Fallback to legacy DB
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'system-init');
 
   // Get the system_admin role ID (legacy)
   const role = await coreAdapter.queryOne<{ id: string }>(

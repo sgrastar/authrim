@@ -988,14 +988,15 @@ export async function activateVersion(
   // Transaction: deactivate old current, activate new (D5)
   await adapter.execute(
     `UPDATE consent_statement_versions
-     SET is_current = 0, status = 'archived', updated_at = ?
+     SET is_current = 0, current_statement_guard = NULL, status = 'archived', updated_at = ?
      WHERE statement_id = ? AND tenant_id = ? AND is_current = 1`,
     [Date.now(), statementId, tenantId]
   );
 
   await adapter.execute(
     `UPDATE consent_statement_versions
-     SET is_current = 1, status = 'active', content_hash = ?, updated_at = ?
+     SET is_current = 1, current_statement_guard = statement_id,
+         status = 'active', content_hash = ?, updated_at = ?
      WHERE id = ?`,
     [contentHash, Date.now(), versionId]
   );

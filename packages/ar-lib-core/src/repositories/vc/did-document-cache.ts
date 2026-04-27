@@ -76,11 +76,22 @@ export class DIDDocumentCacheRepository {
   ): Promise<void> {
     const now = getCurrentTimestamp();
     const expiresAt = now + ttlSeconds * 1000;
+    const payload = [JSON.stringify(document), now, expiresAt, did] as const;
+    const updated = await this.adapter.execute(
+      `UPDATE did_document_cache
+       SET document = ?, resolved_at = ?, expires_at = ?
+       WHERE did = ?`,
+      [...payload]
+    );
+
+    if (updated.rowsAffected > 0) {
+      return;
+    }
 
     await this.adapter.execute(
-      `INSERT OR REPLACE INTO did_document_cache (did, document, resolved_at, expires_at)
+      `INSERT INTO did_document_cache (did, document, resolved_at, expires_at)
        VALUES (?, ?, ?, ?)`,
-      [did, JSON.stringify(document), now, expiresAt]
+      [did, payload[0], payload[1], payload[2]]
     );
   }
 

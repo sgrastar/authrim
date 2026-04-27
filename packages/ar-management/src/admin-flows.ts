@@ -8,7 +8,8 @@
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
+  type DatabaseAdapter,
   generateId,
   getTenantIdFromContext,
   createAuditLogFromContext,
@@ -45,6 +46,10 @@ type BaseContext = Context<{ Bindings: Env }>;
  */
 function asBaseContext(c: AdminContext): BaseContext {
   return c as unknown as BaseContext;
+}
+
+function getCoreAdapter(c: BaseContext, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 /**
@@ -407,7 +412,7 @@ function validateGraphDefinition(
 export async function adminFlowsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(c, tenantId);
 
     const { profile_id, client_id, is_active, search, page = '1', limit = '20' } = c.req.query();
 
@@ -486,7 +491,7 @@ export async function adminFlowsListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminFlowGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(c, tenantId);
     const flowId = c.req.param('id')!;
 
     const row = await db.queryOne<FlowRow>('SELECT * FROM flows WHERE tenant_id = ? AND id = ?', [
@@ -526,7 +531,7 @@ export async function adminFlowGetHandler(c: Context<{ Bindings: Env }>) {
 export async function adminFlowCreateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
 
     const body = await c.req.json<{
       name: string;
@@ -674,7 +679,7 @@ export async function adminFlowCreateHandler(c: AdminContext) {
 export async function adminFlowUpdateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
     const flowId = c.req.param('id')!;
 
     // Check existence
@@ -797,7 +802,7 @@ export async function adminFlowUpdateHandler(c: AdminContext) {
 export async function adminFlowDeleteHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
     const flowId = c.req.param('id')!;
 
     // Check existence
@@ -853,7 +858,7 @@ export async function adminFlowDeleteHandler(c: AdminContext) {
 export async function adminFlowCopyHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
     const flowId = c.req.param('id')!;
 
     // Get source flow
@@ -1051,7 +1056,7 @@ export async function adminFlowCompileHandler(c: AdminContext) {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
 
     // Get flow from database
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
     const row = await db.queryOne<FlowRow>('SELECT * FROM flows WHERE id = ? AND tenant_id = ?', [
       flowId,
       tenantId,

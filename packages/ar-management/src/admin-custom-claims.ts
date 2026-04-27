@@ -14,6 +14,7 @@
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
   getTenantIdFromContext,
   type DatabaseAdapter,
   ensureDatabaseAdapter,
@@ -62,7 +63,8 @@ function asBaseContext(c: AdminContext): BaseContext {
  * now normalizes them through DatabaseAdapter instead of depending on D1 APIs.
  */
 function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
-  return ensureDatabaseAdapter(c.env.DB, 'custom-claims-admin');
+  const tenantId = getTenantIdFromContext(asBaseContext(c));
+  return createAuthContextFromHono(asBaseContext(c), tenantId).coreAdapter;
 }
 
 function createHistoryManagerFromContext(c: AdminContext): CustomClaimSchemaHistoryManager {

@@ -1,5 +1,11 @@
 import type { Context } from 'hono';
-import { getDefaultTenantId, getTenantIdFromContext, type Env } from '@authrim/ar-lib-core';
+import {
+  createAuthContextFromHono,
+  getDefaultTenantId,
+  getTenantIdFromContext,
+  type DatabaseAdapter,
+  type Env,
+} from '@authrim/ar-lib-core';
 
 export function resolveSettingsTenantId(c: Context, explicitTenantId?: string | null): string {
   const trimmedExplicit = explicitTenantId?.trim();
@@ -13,4 +19,12 @@ export function resolveSettingsTenantId(c: Context, explicitTenantId?: string | 
   }
 
   return getDefaultTenantId((c as Context<{ Bindings: Env }>).env);
+}
+
+export function resolveSettingsCoreAdapter(
+  c: Context,
+  explicitTenantId?: string | null
+): DatabaseAdapter {
+  const tenantId = resolveSettingsTenantId(c, explicitTenantId);
+  return createAuthContextFromHono(c as Context<{ Bindings: Env }>, tenantId).coreAdapter;
 }

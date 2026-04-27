@@ -13,7 +13,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
@@ -126,7 +126,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     const { invited_email, role_id, org_id, max_uses, expires_in_hours } = parsed.data;
 
     // Verify tenant exists
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const tenant = await adapter.queryOne<{ id: string; name: string }>(
       'SELECT id, name FROM tenants WHERE id = ?',
       [tenantId]
@@ -243,7 +243,7 @@ export async function listTenantInvitationsHandler(c: Context<{ Bindings: Env }>
   const includeExpired = c.req.query('include_expired') === 'true';
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [
@@ -293,7 +293,7 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
   }
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     const invitation = await adapter.queryOne<{ id: string }>(
       'SELECT id FROM tenant_invitations WHERE id = ? AND tenant_id = ?',

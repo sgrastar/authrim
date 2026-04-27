@@ -25,7 +25,8 @@
 import type { Context as HonoContext } from 'hono';
 import type { Env } from '../types/env';
 import type { AuthContext, PIIContext } from './types';
-import { ensureDatabaseAdapter } from '../db/adapter-source';
+import type { DatabaseAdapter } from '../db/adapter';
+import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../db/adapter-source';
 import { PIIPartitionRouter } from '../db/partition-router';
 import {
   UserCoreRepository,
@@ -57,6 +58,20 @@ function getRuntimeUserStoreSourcesFromHonoContext(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return ((c as any).get?.('runtimeUserStoreSources') as ResolvedUserStoreRuntimeSources | undefined)
     || undefined;
+}
+
+/**
+ * Resolve the core adapter from runtime user-store sources or env bindings, if available.
+ *
+ * Use this in routes where DB-backed bookkeeping is optional and should not force a
+ * hard dependency on `env.DB`.
+ */
+export function resolveOptionalCoreAdapterFromHono(
+  c: HonoContext<{ Bindings: Env }>,
+  partition: string = 'core'
+): DatabaseAdapter | null {
+  const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
+  return ensureOptionalDatabaseAdapter(runtimeSources?.coreDb ?? c.env.DB ?? null, partition);
 }
 
 /**

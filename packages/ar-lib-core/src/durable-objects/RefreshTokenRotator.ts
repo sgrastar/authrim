@@ -28,7 +28,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
-import { retryD1Operation } from '../utils/d1-retry';
+import { createAuditLog } from '../utils/audit-log';
 import { createLogger, type Logger } from '../utils/logger';
 
 /**
@@ -709,10 +709,6 @@ export class RefreshTokenRotator extends DurableObject<Env> {
    * Log non-critical events (batched, async)
    */
   private async logToD1(entry: AuditLogEntry): Promise<void> {
-    if (!this.env.DB) {
-      return;
-    }
-
     this.pendingAuditLogs.push(entry);
     this.scheduleAuditFlush();
   }
@@ -721,30 +717,16 @@ export class RefreshTokenRotator extends DurableObject<Env> {
    * Log critical events synchronously (theft_detected, family_revoked)
    */
   private async logCritical(entry: AuditLogEntry): Promise<void> {
-    if (!this.env.DB) {
-      return;
-    }
-
-    await retryD1Operation(
-      async () => {
-        await this.env.DB.prepare(
-          `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            `audit_${crypto.randomUUID()}`,
-            entry.userId || null,
-            `refresh_token.${entry.action}`,
-            'refresh_token_family',
-            entry.familyKey,
-            entry.metadata ? JSON.stringify(entry.metadata) : null,
-            Math.floor(entry.timestamp / 1000)
-          )
-          .run();
-      },
-      'RefreshTokenRotator.logCritical',
-      { maxRetries: 3 }
-    );
+    await createAuditLog(this.env, {
+      userId: entry.userId ?? 'system',
+      action: `refresh_token.${entry.action}`,
+      resource: 'refresh_token_family',
+      resourceId: entry.familyKey,
+      ipAddress: 'system',
+      userAgent: 'RefreshTokenRotator',
+      metadata: JSON.stringify(entry.metadata ?? {}),
+      severity: 'warning',
+    });
   }
 
   /**
@@ -767,7 +749,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   private async flushAuditLogs(): Promise<void> {
     this.flushScheduled = false;
 
-    if (this.pendingAuditLogs.length === 0 || !this.env.DB) {
+    if (this.pendingAuditLogs.length === 0) {
       return;
     }
 
@@ -775,22 +757,20 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     this.pendingAuditLogs = [];
 
     try {
-      const statements = logsToFlush.map((entry) =>
-        this.env.DB.prepare(
-          `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).bind(
-          `audit_${crypto.randomUUID()}`,
-          entry.userId || null,
-          `refresh_token.${entry.action}`,
-          'refresh_token_family',
-          entry.familyKey,
-          entry.metadata ? JSON.stringify(entry.metadata) : null,
-          Math.floor(entry.timestamp / 1000)
+      await Promise.all(
+        logsToFlush.map((entry) =>
+          createAuditLog(this.env, {
+            userId: entry.userId ?? 'system',
+            action: `refresh_token.${entry.action}`,
+            resource: 'refresh_token_family',
+            resourceId: entry.familyKey,
+            ipAddress: 'system',
+            userAgent: 'RefreshTokenRotator',
+            metadata: JSON.stringify(entry.metadata ?? {}),
+            severity: 'info',
+          })
         )
       );
-
-      await this.env.DB.batch(statements);
     } catch (error) {
       this.log.error('Failed to flush audit logs', {}, error as Error);
       // Re-queue (limited to prevent memory leak)

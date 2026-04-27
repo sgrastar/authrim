@@ -15,7 +15,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -178,8 +178,12 @@ interface TenantRow {
 // Helpers
 // =============================================================================
 
+function getDefaultTenantGuard(isDefault: boolean): string | null {
+  return isDefault ? 'default' : null;
+}
+
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  return createAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter;
 }
 
 function formatTenant(row: TenantRow) {
@@ -671,9 +675,12 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     const nowTs = Math.floor(Date.now() / 1000);
 
     await adapter.execute(
-      `INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
-      [id, tenantCode, name, description ?? null, nowTs, nowTs]
+      `INSERT INTO tenants (
+         id, tenant_code, name, description, is_active, is_default,
+         default_tenant_guard, created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+      [id, tenantCode, name, description ?? null, getDefaultTenantGuard(false), nowTs, nowTs]
     );
 
     const created = await adapter.queryOne<TenantRow>(
@@ -1015,16 +1022,16 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
 
     const nowTs = Math.floor(Date.now() / 1000);
 
-    // Atomic swap using D1 batch
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        'UPDATE tenants SET is_default = 0, updated_at = ? WHERE is_default = 1'
-      ).bind(nowTs),
-      c.env.DB.prepare('UPDATE tenants SET is_default = 1, updated_at = ? WHERE id = ?').bind(
-        nowTs,
-        id
-      ),
-    ]);
+    await adapter.transaction(async (tx) => {
+      await tx.execute(
+        'UPDATE tenants SET is_default = 0, default_tenant_guard = NULL, updated_at = ? WHERE is_default = 1',
+        [nowTs]
+      );
+      await tx.execute(
+        'UPDATE tenants SET is_default = 1, default_tenant_guard = ?, updated_at = ? WHERE id = ?',
+        [getDefaultTenantGuard(true), nowTs, id]
+      );
+    });
 
     const updated = await adapter.queryOne<TenantRow>(
       'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',

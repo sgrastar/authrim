@@ -18,10 +18,10 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
+  createAuthContextFromHono,
   getLogger,
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
@@ -115,6 +115,10 @@ function formatMapping(row: TenantDomainMappingRow) {
   };
 }
 
+function getActiveDomainHash(domainHash: string, isActive: boolean): string | null {
+  return isActive ? domainHash : null;
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -130,7 +134,7 @@ export async function listTenantDomainMappingsHandler(c: Context<{ Bindings: Env
   const offset = parseInt(c.req.query('offset') || '0', 10);
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c).coreAdapter;
 
     let query = `SELECT * FROM tenant_domain_mappings WHERE 1=1`;
     const params: unknown[] = [];
@@ -195,7 +199,7 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
       });
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c).coreAdapter;
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [
@@ -216,7 +220,7 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
 
     // Check for duplicate (active mappings)
     const existing = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM tenant_domain_mappings WHERE domain_hash = ? AND is_active = 1',
+      'SELECT id FROM tenant_domain_mappings WHERE active_domain_hash = ?',
       [hashResult.hash]
     );
     if (existing) {
@@ -232,9 +236,9 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
 
     await adapter.execute(
       `INSERT INTO tenant_domain_mappings
-        (id, domain_hash, hash_version, tenant_id, priority, is_active, verified,
+        (id, domain_hash, hash_version, tenant_id, priority, is_active, active_domain_hash, verified,
          created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         hashResult.hash,
@@ -242,6 +246,7 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
         tenant_id,
         priority,
         is_active ? 1 : 0,
+        getActiveDomainHash(hashResult.hash, is_active),
         verified ? 1 : 0,
         createdBy ?? null,
         nowTs,
@@ -280,7 +285,7 @@ export async function getTenantDomainMappingHandler(c: Context<{ Bindings: Env }
   const id = c.req.param('id')!;
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c).coreAdapter;
     const row = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [id]
@@ -321,7 +326,7 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
     }
 
     const updates = parseResult.data;
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c).coreAdapter;
 
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
@@ -334,6 +339,21 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
       });
     }
 
+    if (updates.is_active === true && existing.is_active === 0) {
+      const collision = await adapter.queryOne<{ id: string }>(
+        'SELECT id FROM tenant_domain_mappings WHERE active_domain_hash = ? AND id != ?',
+        [existing.domain_hash, id]
+      );
+      if (collision) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: {
+            field: 'is_active',
+            reason: 'An active mapping for this domain already exists',
+          },
+        });
+      }
+    }
+
     const fields: string[] = [];
     const values: unknown[] = [];
 
@@ -344,6 +364,8 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
     if (updates.is_active !== undefined) {
       fields.push('is_active = ?');
       values.push(updates.is_active ? 1 : 0);
+      fields.push('active_domain_hash = ?');
+      values.push(getActiveDomainHash(existing.domain_hash, updates.is_active));
     }
 
     if (fields.length === 0) {
@@ -355,10 +377,7 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
     values.push(nowTs);
     values.push(id);
 
-    await adapter.execute(
-      `UPDATE tenant_domain_mappings SET ${fields.join(', ')} WHERE id = ?`,
-      values
-    );
+    await adapter.execute(`UPDATE tenant_domain_mappings SET ${fields.join(', ')} WHERE id = ?`, values);
 
     const updated = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
@@ -391,7 +410,7 @@ export async function deleteTenantDomainMappingHandler(c: Context<{ Bindings: En
   const id = c.req.param('id')!;
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c).coreAdapter;
 
     const existing = await adapter.queryOne<{ id: string }>(
       'SELECT id FROM tenant_domain_mappings WHERE id = ?',
@@ -438,7 +457,7 @@ export async function initiateTenantDomainVerificationHandler(c: Context<{ Bindi
       });
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c).coreAdapter;
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [body.id]
@@ -490,7 +509,7 @@ export async function confirmTenantDomainVerificationHandler(c: Context<{ Bindin
       });
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c).coreAdapter;
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [body.id]

@@ -25,6 +25,7 @@ import type { Env } from '@authrim/ar-lib-core';
 // Use vi.hoisted to define mocks that will be used in vi.mock factory
 const {
   mockCreateAuditLogFromContext,
+  mockCreateAuthContextFromHono,
   mockValidateEventPattern,
   mockEncryptValue,
   mockDecryptValue,
@@ -36,6 +37,7 @@ const {
   mockD1AdapterExecute,
 } = vi.hoisted(() => ({
   mockCreateAuditLogFromContext: vi.fn(),
+  mockCreateAuthContextFromHono: vi.fn(),
   mockValidateEventPattern: vi.fn(),
   mockEncryptValue: vi.fn(),
   mockDecryptValue: vi.fn(),
@@ -65,6 +67,15 @@ const {
 function resetMocks() {
   mockCreateAuditLogFromContext.mockReset();
   mockCreateAuditLogFromContext.mockResolvedValue(undefined);
+
+  mockCreateAuthContextFromHono.mockReset();
+  mockCreateAuthContextFromHono.mockReturnValue({
+    coreAdapter: {
+      query: mockD1AdapterQuery,
+      queryOne: mockD1AdapterQueryOne,
+      execute: mockD1AdapterExecute,
+    },
+  });
 
   mockValidateEventPattern.mockReset();
 
@@ -102,6 +113,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     createAuditLogFromContext: mockCreateAuditLogFromContext,
+    createAuthContextFromHono: mockCreateAuthContextFromHono,
     validateEventPattern: mockValidateEventPattern,
     encryptValue: mockEncryptValue,
     decryptValue: mockDecryptValue,
@@ -1201,20 +1213,12 @@ describe('Webhook Admin API - List Deliveries', () => {
         query: { limit: '200' },
       });
       mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
-
-      // Mock D1Adapter to track the query
-      const { D1Adapter } = await import('@authrim/ar-lib-core');
-      const mockAdapter = {
-        query: vi.fn().mockResolvedValue([]),
-      };
-      vi.mocked(D1Adapter).mockImplementation(function () {
-        return mockAdapter as any;
-      });
+      mockD1AdapterQuery.mockResolvedValue([]);
 
       await listWebhookDeliveries(c);
 
       // The SQL should use 101 (100 + 1 for pagination check)
-      expect(mockAdapter.query).toHaveBeenCalledWith(
+      expect(mockD1AdapterQuery).toHaveBeenCalledWith(
         expect.stringContaining('LIMIT ?'),
         expect.arrayContaining([101])
       );
@@ -1290,20 +1294,12 @@ describe('Webhook Admin API - Replay Delivery', () => {
         body: { delivery_id: 'delivery-123' },
       });
       mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
-
-      // Mock D1Adapter to return a successful delivery
-      const { D1Adapter } = await import('@authrim/ar-lib-core');
-      const mockAdapter = {
-        queryOne: vi.fn().mockResolvedValue({
-          id: 'delivery-123',
-          webhook_id: 'webhook-123',
-          tenant_id: 'test-tenant',
-          status: 'success', // Cannot replay successful deliveries
-          request_body: '{}',
-        }),
-      };
-      vi.mocked(D1Adapter).mockImplementation(function () {
-        return mockAdapter as any;
+      mockD1AdapterQueryOne.mockResolvedValue({
+        id: 'delivery-123',
+        webhook_id: 'webhook-123',
+        tenant_id: 'test-tenant',
+        status: 'success',
+        request_body: '{}',
       });
 
       await replayWebhookDelivery(c);
@@ -1326,25 +1322,17 @@ describe('Webhook Admin API - Replay Delivery', () => {
         body: { delivery_id: 'delivery-123' },
       });
       mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
-
-      // Mock D1Adapter
-      const { D1Adapter } = await import('@authrim/ar-lib-core');
-      const mockAdapter = {
-        queryOne: vi.fn().mockResolvedValue({
-          id: 'delivery-123',
-          webhook_id: 'webhook-123',
-          tenant_id: 'test-tenant',
-          event_type: 'user.created',
-          event_id: 'event-123',
-          status: 'failed',
-          request_body: '{"event":"user.created"}',
-          attempts: 3,
-        }),
-        execute: vi.fn().mockResolvedValue({ success: true }),
-      };
-      vi.mocked(D1Adapter).mockImplementation(function () {
-        return mockAdapter as any;
+      mockD1AdapterQueryOne.mockResolvedValue({
+        id: 'delivery-123',
+        webhook_id: 'webhook-123',
+        tenant_id: 'test-tenant',
+        event_type: 'user.created',
+        event_id: 'event-123',
+        status: 'failed',
+        request_body: '{"event":"user.created"}',
+        attempts: 3,
       });
+      mockD1AdapterExecute.mockResolvedValue({ success: true });
 
       const mockFetch = vi.mocked(fetch);
       mockFetch.mockResolvedValue(new Response('OK', { status: 200 }));

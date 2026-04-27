@@ -13,7 +13,7 @@
 import type { Context } from 'hono';
 import type { Env, VPRequestState, VPVerificationResult } from '../../types';
 import {
-  D1Adapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
   AttributeVerificationRepository,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -178,7 +178,10 @@ async function storeAttributeVerification(
   vpRequest: VPRequestState,
   result: VPVerificationResult
 ): Promise<void> {
-  const adapter = new D1Adapter({ db: env.DB });
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    `vc-vp-response:${vpRequest.tenantId}`
+  );
   const verificationRepo = new AttributeVerificationRepository(adapter);
 
   await verificationRepo.createVerification({

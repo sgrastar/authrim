@@ -90,12 +90,14 @@ describe('schema-admin', () => {
     });
 
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      'INSERT INTO custom_claim_schemas (id, tenant_id, field_key, display_label) VALUES (?, ?, ?, ?)',
-      ['schema-1', 'tenant-1', 'department', 'Department']
+      expect.stringContaining('active_field_key'),
+      ['schema-1', 'tenant-1', 'department', 'Department', 'department']
     );
   });
 
   it('updates schema fields with optional status guard and version increment', async () => {
+    mockAdapter.query.mockResolvedValueOnce([{ field_key: 'department', is_active: 1 }]);
+
     await expect(
       updateCustomClaimSchemaFields({
         db: mockAdapter as any,
@@ -114,7 +116,16 @@ describe('schema-admin', () => {
 
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('schema_version = schema_version + 1'),
-      ['department_code', 'active', null, 1700000000, 'schema-1', 'tenant-1', 'renaming']
+      [
+        'department_code',
+        'active',
+        null,
+        1700000000,
+        'department_code',
+        'schema-1',
+        'tenant-1',
+        'renaming',
+      ]
     );
   });
 

@@ -21,6 +21,10 @@ import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
+  createRefreshTokenFamily,
+  getRefreshTokenRotatorStubByJti,
+} from '@authrim/ar-lib-core/services/refresh-token-family-store';
+import {
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreForNewSession,
@@ -56,15 +60,18 @@ import {
   getClient,
   // Refresh Token
   createRefreshToken,
-  getRefreshTokenShardConfig,
-  getRefreshTokenShardIndex,
-  buildRefreshTokenRotatorInstanceName,
-  createRefreshTokenJti,
-  generateRefreshTokenRandomPart,
+  listRefreshTokenFamiliesByUser,
+  expireRefreshTokenFamiliesByUser,
   // Tenant domain resolution
   resolveTenantFromEmailDomain,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import {
+  applyInvitationAssignments,
+  consumeInvitationUse,
+  findActiveInvitationByToken,
+  hasRemainingInvitationUses,
+} from '@authrim/ar-lib-core/services/invitation-auth-core';
 
 import {
   generateRegistrationOptions,
@@ -320,7 +327,7 @@ async function _validateClientId(
   const authCtx = createAuthContextFromHono(c, tenantId);
 
   // Find client by client_id using KV cache (with D1 fallback)
-  const client = await getClient(c.env, clientId);
+  const client = await getClient(c.env, clientId, authCtx.coreAdapter);
 
   if (!client) {
     return {
@@ -1230,6 +1237,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
 
     // Check/create user
     let tenantId = getTenantIdFromContext(c);
+    const routingCoreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Invitation token routing: overrides all other tenant resolution
     let inviteData: {
@@ -1240,45 +1248,32 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       invited_email: string | null;
     } | null = null;
 
-    if (invite_token && c.env.DB) {
+    if (invite_token) {
       const nowTs = Math.floor(Date.now() / 1000);
-      const row = await c.env.DB.prepare(
-        `SELECT id, tenant_id, invited_email, role_id, org_id, max_uses, use_count
-         FROM tenant_invitations WHERE token = ? AND expires_at > ?`
-      )
-        .bind(invite_token, nowTs)
-        .first<{
-          id: string;
-          tenant_id: string;
-          invited_email: string | null;
-          role_id: string | null;
-          org_id: string | null;
-          max_uses: number;
-          use_count: number;
-        }>();
+      const invitation = await findActiveInvitationByToken(routingCoreAdapter, invite_token, nowTs);
 
-      if (!row) {
+      if (!invitation) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
-      if (row.max_uses !== -1 && row.use_count >= row.max_uses) {
+      if (!hasRemainingInvitationUses(invitation)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
       // If invitation is restricted to a specific email, enforce it
-      if (row.invited_email && row.invited_email.toLowerCase() !== email.toLowerCase()) {
+      if (invitation.invited_email && invitation.invited_email.toLowerCase() !== email.toLowerCase()) {
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
-      tenantId = row.tenant_id;
+      tenantId = invitation.tenant_id;
       inviteData = {
-        invite_id: row.id,
+        invite_id: invitation.id,
         invite_token,
-        invite_role_id: row.role_id,
-        invite_org_id: row.org_id,
-        invited_email: row.invited_email,
+        invite_role_id: invitation.role_id,
+        invite_org_id: invitation.org_id,
+        invited_email: invitation.invited_email,
       };
-    } else if (tenantId === getDefaultTenantId(c.env) && c.env.DB) {
+    } else if (tenantId === getDefaultTenantId(c.env)) {
       // If Host header did not resolve a specific tenant, try email domain routing
-      const resolvedTenantId = await resolveTenantFromEmailDomain(c.env.DB, email, c.env);
+      const resolvedTenantId = await resolveTenantFromEmailDomain(routingCoreAdapter, email, c.env);
       if (resolvedTenantId) {
         tenantId = resolvedTenantId;
       }
@@ -1580,52 +1575,44 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     // Apply invitation role/org assignment if present
     const inviteId = challengeData.metadata?.invite_id as string | undefined;
     const inviteToken = challengeData.metadata?.invite_token as string | undefined;
-    const inviteRoleId = challengeData.metadata?.invite_role_id as string | undefined;
-    const inviteOrgId = challengeData.metadata?.invite_org_id as string | undefined;
 
-    if (inviteId && inviteToken && c.env.DB) {
+    if (inviteId && inviteToken) {
       const inviteNow = Math.floor(now / 1000);
       try {
-        // Increment use_count atomically
-        await c.env.DB.prepare(
-          'UPDATE tenant_invitations SET use_count = use_count + 1, updated_at = ? WHERE id = ?'
-        )
-          .bind(inviteNow, inviteId)
-          .run();
+        const invitation = await findActiveInvitationByToken(authCtx.coreAdapter, inviteToken, inviteNow);
+        if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
+          log.warn('Invitation metadata no longer matches an active tenant invitation', {
+            invite_id: inviteId,
+            tenant_id: tenantId,
+          });
+        } else if (!(await consumeInvitationUse(authCtx.coreAdapter, invitation.id, inviteNow))) {
+          log.warn('Invitation use_count increment was skipped during email verification', {
+            invite_id: inviteId,
+            tenant_id: tenantId,
+          });
+        } else {
+          const assignmentResults = await applyInvitationAssignments(authCtx.coreAdapter, {
+            userId: challengeData.userId,
+            tenantId,
+            roleId: invitation.role_id,
+            orgId: invitation.org_id,
+          });
 
-        // Assign role if specified
-        if (inviteRoleId) {
-          await c.env.DB.prepare(
-            `INSERT OR IGNORE INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?)`
-          )
-            .bind(
-              crypto.randomUUID(),
-              tenantId,
-              challengeData.userId,
-              inviteRoleId,
-              tenantId,
-              inviteNow,
-              inviteNow
-            )
-            .run();
-        }
+          if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
+            log.warn('Failed to assign role from invitation', {
+              invite_id: inviteId,
+              tenant_id: tenantId,
+              error: assignmentResults.roleAssignment?.error,
+            });
+          }
 
-        // Assign org if specified
-        if (inviteOrgId) {
-          await c.env.DB.prepare(
-            `INSERT OR IGNORE INTO org_memberships (id, tenant_id, user_id, org_id, membership_type, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 'member', ?, ?)`
-          )
-            .bind(
-              crypto.randomUUID(),
-              tenantId,
-              challengeData.userId,
-              inviteOrgId,
-              inviteNow,
-              inviteNow
-            )
-            .run();
+          if (invitation.org_id && !assignmentResults.orgMembership?.success) {
+            log.warn('Failed to assign organization from invitation', {
+              invite_id: inviteId,
+              tenant_id: tenantId,
+              error: assignmentResults.orgMembership?.error,
+            });
+          }
         }
       } catch (inviteErr) {
         log.warn('Failed to apply invitation assignments', {
@@ -1637,7 +1624,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Save custom registration fields if present
     const customFields = challengeData.metadata?.custom_fields as Record<string, unknown> | undefined;
-    if (customFields && c.env.DB) {
+    if (customFields) {
       try {
         await persistRegistrationFieldValuesFromEnv(c.env, tenantId, challengeData.userId, customFields);
       } catch (persistError) {
@@ -1885,41 +1872,13 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
           getTenantIdFromContext(c)
         );
 
-        // Get shard configuration and calculate shard index
-        const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
-        const shardIndex = await getRefreshTokenShardIndex(
-          userId,
-          client_id,
-          shardConfig.currentShardCount
-        );
-
-        // Generate sharded JTI with generation and shard info
-        const randomPart = generateRefreshTokenRandomPart();
-        const refreshTokenJti = createRefreshTokenJti(
-          shardConfig.currentGeneration,
-          shardIndex,
-          randomPart
-        );
-
-        // Route to sharded DO instance
-        const instanceName = buildRefreshTokenRotatorInstanceName(
-          client_id,
-          shardConfig.currentGeneration,
-          shardIndex
-        );
-        const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-        const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
-
-        // Create token family in RefreshTokenRotator
-        const familyResult = await rotator.createFamilyRpc({
-          jti: refreshTokenJti,
+        const familyResult = await createRefreshTokenFamily(c.env, {
           userId,
           clientId: client_id,
-          scope: 'openid profile email', // Default scope for direct auth
+          scope: 'openid profile email',
           ttl: REFRESH_TOKEN_TTL,
-          generation: shardConfig.currentGeneration,
-          shardIndex,
         });
+        const refreshTokenJti = familyResult.jti;
 
         // Create refresh token JWT with rtv (Refresh Token Version) claim
         const refreshTokenResult = await createRefreshToken(
@@ -1928,13 +1887,13 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
             sub: userId,
             aud: client_id,
             client_id,
-            scope: familyResult.allowedScope,
+            scope: familyResult.family.allowedScope,
           },
           privateKey,
           kid,
-          familyResult.expiresIn,
-          familyResult.newJti,
-          familyResult.version
+          familyResult.family.expiresIn,
+          familyResult.family.newJti,
+          familyResult.family.version
         );
 
         response.refresh_token = refreshTokenResult.token;
@@ -2406,7 +2365,7 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Revoke refresh tokens for this user if requested
-      if (revoke_tokens && c.env.REFRESH_TOKEN_ROTATOR && c.env.DB) {
+      if (revoke_tokens && c.env.REFRESH_TOKEN_ROTATOR) {
         try {
           // Get session to get user ID
           const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
@@ -2418,34 +2377,22 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
             const authCtx = createAuthContextFromHono(c, tenantId);
 
             // Find all active token families for this user
-            const families = await authCtx.coreAdapter.query<{
-              jti: string;
-              client_id: string;
-              generation: number;
-            }>(
-              `SELECT jti, client_id, generation FROM user_token_families
-               WHERE user_id = ? AND tenant_id = ? AND expires_at > ?`,
-              [session.userId, tenantId, Date.now()]
-            );
+            const families = await listRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+              tenantId,
+              userId: session.userId,
+              activeOnly: true,
+              nowMs: Date.now(),
+            });
 
             // Revoke each family in the RefreshTokenRotator
             for (const family of families) {
               try {
-                // Parse JTI to get shard info
-                const jtiParts = family.jti.split(':');
-                if (jtiParts.length >= 3) {
-                  const shardIndex = parseInt(jtiParts[1], 10);
-                  const instanceName = buildRefreshTokenRotatorInstanceName(
-                    family.client_id,
-                    family.generation,
-                    shardIndex
-                  );
-                  const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-                  const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
-
-                  // Revoke the family
-                  await rotator.revokeFamilyRpc(family.jti);
-                }
+                const { stub: rotator } = getRefreshTokenRotatorStubByJti(
+                  c.env,
+                  family.client_id,
+                  family.jti
+                );
+                await rotator.revokeByJtiRpc(family.jti, 'direct_auth_revoke_tokens');
               } catch (familyError) {
                 // Log but continue with other families
                 log.warn('Failed to revoke token family', {
@@ -2457,11 +2404,10 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
             }
 
             // Mark families as revoked in D1
-            await authCtx.coreAdapter.execute(
-              `UPDATE user_token_families SET expires_at = 0
-               WHERE user_id = ? AND tenant_id = ?`,
-              [session.userId, tenantId]
-            );
+            await expireRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+              tenantId,
+              userId: session.userId,
+            });
 
             log.info('Revoked refresh tokens on logout', {
               action: 'revoke_refresh_tokens',

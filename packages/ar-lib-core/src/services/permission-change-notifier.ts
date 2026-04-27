@@ -29,6 +29,8 @@
  */
 
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import type { PermissionChangeEvent, AuditLogConfig } from '../types/check-api';
 import { createLogger } from '../utils/logger';
 
@@ -42,8 +44,8 @@ const log = createLogger().module('PERMISSION-CHANGE-NOTIFIER');
  * Permission Change Notifier configuration
  */
 export interface PermissionChangeNotifierConfig {
-  /** D1 Database (for audit log) */
-  db?: D1Database;
+  /** Database source for audit log */
+  db?: DatabaseSource;
   /** KV Namespace for cache invalidation */
   cache?: KVNamespace;
   /** PermissionChangeHub Durable Object namespace */
@@ -207,13 +209,11 @@ export function createPermissionChangeNotifier(
       const id = crypto.randomUUID();
       const now = Math.floor(Date.now() / 1000);
 
-      await db
-        .prepare(
-          `INSERT INTO permission_change_audit (
-            id, tenant_id, event_type, subject_id, resource, relation, permission, timestamp, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .bind(
+      await ensureDatabaseAdapter(db, 'permission-change-notifier').execute(
+        `INSERT INTO permission_change_audit (
+          id, tenant_id, event_type, subject_id, resource, relation, permission, timestamp, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           id,
           event.tenant_id,
           event.event,
@@ -222,9 +222,9 @@ export function createPermissionChangeNotifier(
           event.relation ?? null,
           event.permission ?? null,
           event.timestamp,
-          now
-        )
-        .run();
+          now,
+        ]
+      );
 
       debugLog('Audit log recorded', { event: event.event, subjectId: event.subject_id });
       return true;

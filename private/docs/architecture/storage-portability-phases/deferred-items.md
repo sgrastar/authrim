@@ -1,6 +1,6 @@
 # Deferred Items Across Phases
 
-最終更新: 2026-04-23
+最終更新: 2026-04-24
 
 ## 目的
 
@@ -60,12 +60,66 @@ Phase 0 と Phase 1 で決めたもの、実装したもののうち、Phase 2 �
 - custom claims route layer の backend wiring 統一
   - shared helper の `DatabaseSource` 化は先行済み
   - ただし `admin.ts` など broader runtime path の `D1Adapter` 直結は段階的に寄せる
-- PostgreSQL / MySQL backend 実装
-  - まだ adapter 自体は未実装
-  - 先に portable SQL subset と差分一覧を固める
+- repo-wide PostgreSQL / MySQL backend 実装
+  - audit scope の adapter と primary wiring は実装済み
+  - custom claims / users / wider runtime path への展開はまだ
 - registration / custom-claims cache invalidation helper の共通化
   - cache invalidation 自体は既に修正済み
   - backend 切替前提の抽象はまだない
+
+### Phase 5 にまとめて扱うもの
+
+- repo-wide storage portability の残骸整理
+- raw `new D1Adapter(...)` 残骸
+- broader runtime path の profile-aware 化
+- custom claims route wiring の統一
+- repo-wide PostgreSQL / MySQL backend 展開の土台整理
+- backend-agnostic cache invalidation helper
+- storage boundary policy の code-level enforcement
+  - current spec の boundary class を machine-readable に持つ
+  - runtime-profile / admin path で
+    auth core plane の tenant override を reject する
+  - 実装が `users_core` slice 名だけを見て誤解しないよう、
+    `auth_core` alias または同等の明示的表現を検討する
+- `RefreshTokenRotator` family state の cold persistence / recovery 再導入要否
+  - 5b reevaluation では見送った
+  - current `user_token_families` / `refresh_token_shard_configs` だけでは
+    `version` / `last_jti` / `allowed_scope` を
+    canonical に再構成できない
+  - portable な family-state persistence 契約と schema を追加する場合だけ再検討する
+  - `5a`: inventory / classification
+  - `5b`: security-sensitive stores
+  - `5c`: broader runtime wiring / cache
+
+#### Phase 5 boundary enforcement の実行順
+
+新しい current spec に合わせて、Phase 5 の実装順は次を基準にする。
+
+1. tenant override guard
+   - `tenant.storage_profile_id` 更新時に、
+     environment default と比べて auth core plane が変わらないことを強制する
+   - 最初の enforcement point は admin settings update path に置く
+2. machine-readable boundary policy
+   - boundary class と tenant override policy を code helper にする
+   - `users_core` slice が auth core plane shorthand であることを
+     helper 側で明示する
+3. runtime-profile/admin surface の整合
+   - runtime-profile API / UI で
+     auth core plane が tenant override 対象外であることを明示する
+4. naming cleanup
+   - `users_core` の ambiguity を減らすため、
+     `auth_core` alias または同等の metadata を検討する
+5. setup / external backend wiring の debt 整理
+   - `connectionRef` 解決
+   - D1-biased な env/setup の整理
+   - external backend の end-to-end 現実装化
+
+この execution pass の non-goal:
+
+- auth core plane の tenant-specific backend switching
+- canonical store placement の変更
+- DO/KV sharding / cache responsibility の再設計
+- full PostgreSQL/MySQL parity
 
 ## Phase 3 完了後の follow-up
 
@@ -81,15 +135,62 @@ Phase 0 と Phase 1 で決めたもの、実装したもののうち、Phase 2 �
 
 ## Phase 4 で残している持ち越し
 
-- routing rule の canonical fan-out model
-  - Phase 4 の初手で `backend` から `targets.primaryStore / archiveStores / forwardingSinks` へ正規化する
-  - legacy `backend` は read/write で受けつつ canonical shape に寄せる
-- `primary store / archive store / forwarding sink` への audit model 拡張
-- Cloudflare Logpush 実装
+- external primary backend の拡張順
+  - まずは `audit + PostgreSQL + Hyperdrive + pg`
+  - PostgreSQL primary の request-path write と admin hot query は実装済み
+  - MySQL primary も audit scope では実装済み
+  - `users_core / users_pii / custom claims` など repo-wide storage portability はさらに後段
+- PostgreSQL client の追加選択肢
+  - 最初の基準実装は `pg`
+  - `postgres.js` など別 client の評価・切替は後段
 - Cloudflare 非依存 sink 実装
+  - generic HTTP sink は実装済み
   - 例: Firehose 相当
-- mirror / dual-write / temporary capture の rule model
+- sink backend config UI / registry の改善
+  - audit profile API と setup seed は正本化した
+  - Admin UI からも JSON editor で変更できる
+  - ただし sink ごとのフォーム UI、接続確認、registry lifecycle はまだ薄い
+- target ごとの failure mode
+  - 現在は audit profile 単位
+  - `archiveFailureMode / sinkFailureMode` を target override したい場合は後段
+- canonical ログフォーマットの拡張
+  - `authrim.audit.v1` は実装済み
+  - version negotiation
+  - sink ごとの formatter 選択 UI
+  - Firehose 専用 formatter
+  は後段
+- mirror / dual-write / temporary capture の高度化
+  - `targets.primaryStore / archiveStores / forwardingSinks` は実装済み
+  - ただし time-window capture や admin UI での高度な rule 編集は後段
+- archive scan / hot query
+  - archive-only profile での検索は未実装
+  - R2/S3 上の log reader か外部製品連携で扱う
 - retention / retry / backpressure / delivery guarantee の backend 別設計
+  - retention の canonical source は audit profile に寄せた
+  - backend/sink ごとの運用 policy はまだ分離していない
+
+### Phase 6 にまとめて扱うもの
+
+- audit の運用強化
+  - retention / retry / backpressure / delivery guarantee
+- profile registry の運用強化
+- Firehose sink
+- sink UI 改善
+- `users/import` 実処理
+- archive-only 検索系
+
+## テスト調整メモ
+
+- `ar-token` package の test script は `op-token: tests skipped` のまま
+  - 5b 完了後に package-local test 実行へ戻し、
+    Native SSO / security-critical / token-family 系の focused suite を実際に走らせる
+- `ar-auth/src/__tests__/authorize-hybrid-flow.test.ts` には `describe.skip` が残る
+  - token / session / consent の stateful path 整理後に有効化可否を再評価する
+- `direct-auth` の focused suite はまだ薄い
+  - logout 時の `revoke_tokens`
+  - refresh token family index
+  - session invalidation / device secret revoke
+  を重点回帰に追加する
 
 ## 後段でも意識する前提
 
@@ -101,3 +202,6 @@ Phase 0 と Phase 1 で決めたもの、実装したもののうち、Phase 2 �
 - profile registry backend は deployment profile ごとに選べる
 - DB portability は `portable SQL subset` を原則とする
 - audit は `primary store / archive store / forwarding sink`
+- tenant override の初期対象は `PII / custom / audit`
+- auth core plane は current spec では tenant override 対象にしない
+- PII plane は製品アーキテクチャとして non-D1 option を必須とする

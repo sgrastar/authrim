@@ -1,4 +1,6 @@
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import type { Env } from '../types/env';
+import { resolveAuthCorePersistenceAdapterFromEnv } from './auth-core-persistence-context';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('TENANT-VANITY-DOMAINS');
@@ -116,7 +118,7 @@ export async function invalidateTenantVanityDomainCache(
 }
 
 export async function resolveTenantFromVanityHost(
-  db: D1Database | undefined,
+  db: DatabaseSource | undefined,
   kv: KVNamespace | undefined,
   host: string | null | undefined
 ): Promise<string | null> {
@@ -134,21 +136,20 @@ export async function resolveTenantFromVanityHost(
   }
 
   if (!db) return null;
+  const adapter = ensureDatabaseAdapter(db, 'tenant-vanity-domain-resolver');
 
   try {
-    const row = await db
-      .prepare(
-        `SELECT tenant_vanity_domains.tenant_id, tenant_vanity_domains.status, tenant_vanity_domains.is_active
-         FROM tenant_vanity_domains
-         INNER JOIN tenants ON tenants.id = tenant_vanity_domains.tenant_id
-         WHERE tenant_vanity_domains.hostname = ?
-           AND tenant_vanity_domains.is_active = 1
-           AND tenant_vanity_domains.status = 'active'
-           AND tenants.is_active = 1
-         LIMIT 1`
-      )
-      .bind(hostname)
-      .first<{ tenant_id: string; status: string; is_active: number }>();
+    const row = await adapter.queryOne<{ tenant_id: string; status: string; is_active: number }>(
+      `SELECT tenant_vanity_domains.tenant_id, tenant_vanity_domains.status, tenant_vanity_domains.is_active
+       FROM tenant_vanity_domains
+       INNER JOIN tenants ON tenants.id = tenant_vanity_domains.tenant_id
+       WHERE tenant_vanity_domains.active_hostname = ?
+         AND tenant_vanity_domains.is_active = 1
+         AND tenant_vanity_domains.status = 'active'
+         AND tenants.is_active = 1
+       LIMIT 1`,
+      [hostname]
+    );
 
     if (!row || !isUsableVanityDomain(row)) return null;
 
@@ -160,8 +161,10 @@ export async function resolveTenantFromVanityHost(
   }
 }
 
+type TenantVanityLookupEnv = Partial<Omit<Env, 'DB'>> & { DB?: DatabaseSource };
+
 export async function getPrimaryTenantVanityDomain(
-  env: Partial<Env>,
+  env: TenantVanityLookupEnv,
   tenantId: string
 ): Promise<TenantVanityDomain | null> {
   const kv = env.AUTHRIM_CONFIG;
@@ -182,19 +185,24 @@ export async function getPrimaryTenantVanityDomain(
   }
 
   if (!env.DB) return null;
+  const adapter =
+    'AUTHRIM_CONFIG' in env
+      ? await resolveAuthCorePersistenceAdapterFromEnv(
+          env as Parameters<typeof resolveAuthCorePersistenceAdapterFromEnv>[0],
+          'tenant-vanity-domain-resolver'
+        )
+      : ensureDatabaseAdapter(env.DB, 'tenant-vanity-domain-resolver');
 
   try {
-    const row = await env.DB.prepare(
+    const row = await adapter.queryOne<TenantVanityDomainRow>(
       `SELECT *
        FROM tenant_vanity_domains
-       WHERE tenant_id = ?
-         AND is_primary = 1
+       WHERE primary_active_tenant_key = ?
          AND is_active = 1
          AND status = 'active'
-       LIMIT 1`
-    )
-      .bind(tenantId)
-      .first<TenantVanityDomainRow>();
+       LIMIT 1`,
+      [tenantId]
+    );
 
     if (!isVanityDomainRow(row)) return null;
 
@@ -210,7 +218,7 @@ export async function getPrimaryTenantVanityDomain(
 }
 
 export async function buildCanonicalTenantIssuerUrl(
-  env: Partial<Env>,
+  env: TenantVanityLookupEnv,
   tenantId: string,
   fallback: string
 ): Promise<string> {

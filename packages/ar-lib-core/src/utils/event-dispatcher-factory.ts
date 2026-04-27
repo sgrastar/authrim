@@ -18,11 +18,14 @@ import type {
   EventPublishOptions,
   EventPublishResult,
 } from '../types/events/dispatcher';
-import { D1Adapter, type DatabaseAdapter } from '../db';
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { EventDispatcherImpl, type EventDispatcherConfig } from '../services/event-dispatcher';
 import { EventHandlerRegistryImpl } from '../services/event-handler-registry';
 import { EventHookRegistryImpl } from '../services/event-hook-registry';
 import { createWebhookRegistry } from '../services/webhook-registry';
+import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
+import { createAuthContextFromHono } from '../context';
+import { createAuditLog } from './audit-log';
 import { decryptValue } from './pii-encryption';
 
 // =============================================================================
@@ -52,8 +55,8 @@ export interface SimpleEventPublisher {
 export interface EventPublisherFactoryOptions {
   /** Custom KV namespace for settings/deduplication */
   settingsKv?: KVNamespace;
-  /** Custom database adapter */
-  adapter?: DatabaseAdapter;
+  /** Custom database source */
+  adapter?: DatabaseSource;
   /** Environment (for logging) */
   environment?: string;
   /** Enable webhook delivery */
@@ -62,6 +65,32 @@ export interface EventPublisherFactoryOptions {
   enableHandlers?: boolean;
   /** Enable audit logging */
   enableAuditLog?: boolean;
+}
+
+function extractAuditResourceType(eventType: string): string {
+  const parts = eventType.split('.');
+  return parts[0] || 'unknown';
+}
+
+function buildRuntimeAuditLogWriter(env: Env) {
+  return async (event: { type: string; tenantId: string; data: Record<string, unknown>; metadata?: { actor?: { id?: string } } }) => {
+    const resourceId =
+      (typeof event.data.clientId === 'string' && event.data.clientId) ||
+      (typeof event.data.userId === 'string' && event.data.userId) ||
+      'event';
+
+    await createAuditLog(env, {
+      tenantId: event.tenantId,
+      userId: event.metadata?.actor?.id ?? 'system',
+      action: event.type,
+      resource: extractAuditResourceType(event.type),
+      resourceId,
+      ipAddress: 'system',
+      userAgent: 'event-dispatcher',
+      metadata: JSON.stringify(event.data),
+      severity: 'info',
+    });
+  };
 }
 
 // =============================================================================
@@ -130,7 +159,9 @@ export async function createEventDispatcherFromContext(
 ): Promise<SimpleEventPublisher> {
   const env = c.env;
   const settingsKv = options?.settingsKv ?? env.SETTINGS;
-  const adapter = options?.adapter ?? new D1Adapter({ db: env.DB });
+  const adapter = options?.adapter
+    ? ensureDatabaseAdapter(options.adapter, 'event-dispatcher')
+    : createAuthContextFromHono(c).coreAdapter;
   const environment = options?.environment ?? env.ENVIRONMENT ?? 'production';
 
   // SETTINGS KV is required for event deduplication
@@ -177,6 +208,7 @@ export async function createEventDispatcherFromContext(
     handlerRegistry: getGlobalHandlerRegistry(),
     hookRegistry: getGlobalHookRegistry(),
     decryptSecret,
+    auditLogWriter: buildRuntimeAuditLogWriter(c.env),
     options: {
       environment,
       enableAuditLog: options?.enableAuditLog ?? true,
@@ -203,7 +235,9 @@ export async function createEventDispatcherFromEnv(
   options?: EventPublisherFactoryOptions
 ): Promise<SimpleEventPublisher> {
   const settingsKv = options?.settingsKv ?? env.SETTINGS;
-  const adapter = options?.adapter ?? new D1Adapter({ db: env.DB });
+  const adapter = options?.adapter
+    ? ensureDatabaseAdapter(options.adapter, 'event-dispatcher')
+    : await resolveAuthCorePersistenceAdapterFromEnv(env, 'event-dispatcher');
   const environment = options?.environment ?? env.ENVIRONMENT ?? 'production';
 
   // SETTINGS KV is required for event deduplication
@@ -244,6 +278,7 @@ export async function createEventDispatcherFromEnv(
     handlerRegistry: getGlobalHandlerRegistry(),
     hookRegistry: getGlobalHookRegistry(),
     decryptSecret,
+    auditLogWriter: buildRuntimeAuditLogWriter(env),
     options: {
       environment,
       enableAuditLog: options?.enableAuditLog ?? true,

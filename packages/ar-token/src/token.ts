@@ -1,6 +1,10 @@
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseSource, Env } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
+  createPIIContextFromHono,
+  createRefreshTokenFamily,
+  getRefreshTokenRotatorStubByJti,
   // Logging
   getLogger,
   createLogger,
@@ -15,20 +19,14 @@ import {
   buildDOInstanceName,
   remapShardIndex,
   getShardCount,
-  // Refresh Token Sharding
-  getRefreshTokenShardConfig,
-  getRefreshTokenShardIndex,
-  createRefreshTokenJti,
-  parseRefreshTokenJti,
-  buildRefreshTokenRotatorInstanceName,
-  generateRefreshTokenRandomPart,
   // Token Revocation Sharding (Region-aware)
   generateRegionAwareJti,
+  storeRefreshToken,
+  getRefreshToken,
+  deleteRefreshToken,
   // Configuration Manager (KV > env > default)
   createOAuthConfigManager,
-  // Database Adapter
-  D1Adapter,
-  type DatabaseAdapter,
+  recordRefreshTokenFamilyIndex,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
   loadTenantProfileCached,
@@ -36,9 +34,6 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   revokeToken,
-  storeRefreshToken,
-  getRefreshToken,
-  deleteRefreshToken,
   getCachedUser,
   getCachedUserCore,
   SessionClientRepository,
@@ -102,7 +97,7 @@ import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-cor
 // Custom Claim Schema Resolver
 import { loadFeatureConfig, createCustomClaimSchemaResolver } from '@authrim/ar-lib-core';
 // Tenant context
-import { getTenantIdFromContext } from '@authrim/ar-lib-core';
+import { getTenantIdFromContext, hasPIIDatabase } from '@authrim/ar-lib-core';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';
 // ID-JAG (Identity Assertion Authorization Grant)
@@ -947,17 +942,18 @@ async function handleAuthorizationCodeGrant(
   // Only response_type=id_token (Implicit Flow) should include these claims in the ID token.
   // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
   // phone scope values are returned from the UserInfo Endpoint"
+  const authCtx = createAuthContextFromHono(c, tenantId);
 
   // Phase 1 RBAC: Fetch RBAC claims for tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, authCodeData.sub, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
       }),
-      getIDTokenRBACClaims(c.env.DB, authCodeData.sub, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
       }),
@@ -973,7 +969,7 @@ async function handleAuthorizationCodeGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && authCodeData.scope) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         authCodeData.sub,
         authCodeData.scope,
         { cache: c.env.REBAC_CACHE }
@@ -991,9 +987,9 @@ async function handleAuthorizationCodeGrant(
     if (idLevelEnabled) {
       const limits = await getEmbeddingLimits(c.env);
       const allIdPerms = await evaluateIdLevelPermissions(
-        c.env.DB,
+        authCtx.coreAdapter,
         authCodeData.sub,
-        getTenantIdFromContext(c),
+        tenantId,
         { cache: c.env.REBAC_CACHE }
       );
       // Apply limits to prevent token bloat
@@ -1016,7 +1012,7 @@ async function handleAuthorizationCodeGrant(
   // Anonymous user claims (architecture-decisions.md §17)
   let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(c.env, authCodeData.sub);
+    const userCore = await getCachedUserCore(c.env, authCodeData.sub, authCtx.coreAdapter);
     if (userCore?.user_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
@@ -1034,7 +1030,7 @@ async function handleAuthorizationCodeGrant(
     const customClaimsEnabled = await isCustomClaimsEnabled(c.env);
     if (customClaimsEnabled) {
       const limits = await getEmbeddingLimits(c.env);
-      const evaluator = createTokenClaimEvaluator(c.env.DB, c.env.REBAC_CACHE, {
+      const evaluator = createTokenClaimEvaluator(authCtx.coreAdapter, c.env.REBAC_CACHE, {
         maxCustomClaims: limits.max_custom_claims,
       });
 
@@ -1182,11 +1178,10 @@ async function handleAuthorizationCodeGrant(
   const nativeSSOGloballyEnabled = await isNativeSSOEnabled(c.env);
   const clientNativeSSOEnabled = Boolean(clientMetadata.native_sso_enabled);
 
-  if (nativeSSOGloballyEnabled && clientNativeSSOEnabled && authCodeData.sid && c.env.DB) {
+  if (nativeSSOGloballyEnabled && clientNativeSSOEnabled && authCodeData.sid) {
     try {
       const nativeSSOConfig = await getNativeSSOConfig(c.env);
-      const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-      const deviceSecretRepo = new DeviceSecretRepository(coreAdapter);
+      const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
 
       // Check max device secrets per user (revoke oldest if exceeded)
       const userSecrets = await deviceSecretRepo.findByUserId(authCodeData.sub);
@@ -1267,9 +1262,10 @@ async function handleAuthorizationCodeGrant(
   try {
     const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
     if (ccFeatureConfig.enabled) {
+      const piiCtx = hasPIIDatabase(c) ? createPIIContextFromHono(c, tenantId) : null;
       const ccResolver = createCustomClaimSchemaResolver(
-        c.env.DB,
-        c.env.DB_PII || null,
+        authCtx.coreAdapter,
+        piiCtx?.defaultPiiAdapter ?? null,
         c.env.AUTHRIM_CONFIG || null,
         ccFeatureConfig
       );
@@ -1422,51 +1418,19 @@ async function handleAuthorizationCodeGrant(
     // V2/V3: Register with RefreshTokenRotator first to get version
     // V3: Uses sharded DO instances for horizontal scaling
     let rtv: number = 1; // Default version for new family
+    let familyResult:
+      | Awaited<ReturnType<typeof createRefreshTokenFamily>>
+      | undefined;
 
     if (c.env.REFRESH_TOKEN_ROTATOR) {
-      // V3: Get shard configuration and calculate shard index
-      const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
-      const shardIndex = await getRefreshTokenShardIndex(
-        authCodeData.sub,
-        client_id,
-        shardConfig.currentShardCount
-      );
-
-      // V3: Generate sharded JTI with generation and shard info
-      const randomPart = generateRefreshTokenRandomPart();
-      refreshTokenJti = createRefreshTokenJti(
-        shardConfig.currentGeneration,
-        shardIndex,
-        randomPart
-      );
-
-      // V3: Route to sharded DO instance
-      const instanceName = buildRefreshTokenRotatorInstanceName(
-        client_id,
-        shardConfig.currentGeneration,
-        shardIndex
-      );
-      const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-      const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
-
-      // Use RPC for family creation
-      let familyResult: {
-        version: number;
-        newJti: string;
-        expiresIn: number;
-        allowedScope: string;
-      };
       try {
-        familyResult = await rotator.createFamilyRpc({
-          jti: refreshTokenJti,
+        familyResult = await createRefreshTokenFamily(c.env, {
           userId: authCodeData.sub,
           clientId: client_id,
           scope: authCodeData.scope,
           ttl: refreshTokenExpiresIn,
-          // V3: Include shard metadata (for debugging/audit)
-          generation: shardConfig.currentGeneration,
-          shardIndex: shardIndex,
         });
+        refreshTokenJti = familyResult.jti;
       } catch (error) {
         log.error('Failed to register refresh token family', {}, error as Error);
         return c.json(
@@ -1477,16 +1441,17 @@ async function handleAuthorizationCodeGrant(
           500
         );
       }
-      rtv = familyResult.version;
+      rtv = familyResult.family.version;
 
-      // V3: Record in D1 for user-wide revocation support
+      // V3: Record in the token family index for user-wide revocation support
       // (non-blocking, fire-and-forget for performance)
-      void recordTokenFamilyInD1(
-        c.env,
+      void recordTokenFamilyIndex(
+        authCtx.coreAdapter,
+        getTenantIdFromContext(c),
         refreshTokenJti,
         authCodeData.sub,
         client_id,
-        shardConfig.currentGeneration,
+        familyResult.resolution.generation,
         refreshTokenExpiresIn
       );
     } else {
@@ -1543,18 +1508,17 @@ async function handleAuthorizationCodeGrant(
   // This enables frontchannel/backchannel logout to notify the correct RPs
   log.debug('Session-client check', {
     sidPresent: !!authCodeData.sid,
-    dbPresent: !!c.env.DB,
+    dbPresent: !!authCtx.coreAdapter,
     action: 'Logout',
   });
-  if (authCodeData.sid && c.env.DB) {
+  if (authCodeData.sid) {
     try {
       log.debug('Attempting to register session-client', {
         sid: authCodeData.sid,
         clientId: client_id,
         action: 'Logout',
       });
-      const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-      const sessionClientRepo = new SessionClientRepository(coreAdapter);
+      const sessionClientRepo = new SessionClientRepository(authCtx.coreAdapter);
       const result = await sessionClientRepo.createOrUpdate({
         session_id: authCodeData.sid,
         client_id: client_id,
@@ -1572,7 +1536,7 @@ async function handleAuthorizationCodeGrant(
   } else {
     log.warn('Skipped session-client registration', {
       sid: authCodeData.sid,
-      dbAvailable: !!c.env.DB,
+      dbAvailable: !!authCtx.coreAdapter,
       action: 'Logout',
     });
   }
@@ -1885,6 +1849,7 @@ async function handleRefreshTokenGrant(
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
+  const authCtx = createAuthContextFromHono(c, tenantId);
 
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
@@ -1892,11 +1857,11 @@ async function handleRefreshTokenGrant(
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, refreshTokenData.sub, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
       }),
-      getIDTokenRBACClaims(c.env.DB, refreshTokenData.sub, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
       }),
@@ -1912,7 +1877,7 @@ async function handleRefreshTokenGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && grantedScope) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         refreshTokenData.sub,
         grantedScope,
         { cache: c.env.REBAC_CACHE }
@@ -1926,7 +1891,7 @@ async function handleRefreshTokenGrant(
   // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
   let anonymousClaimsRefresh: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(c.env, refreshTokenData.sub);
+    const userCore = await getCachedUserCore(c.env, refreshTokenData.sub, authCtx.coreAdapter);
     if (userCore?.user_type === 'anonymous') {
       anonymousClaimsRefresh = {
         user_type: 'anonymous',
@@ -2071,15 +2036,7 @@ async function handleRefreshTokenGrant(
       return oauthError(c, 'server_error', 'Refresh token rotation unavailable', 500);
     }
 
-    // V3: Parse JTI to extract generation and shard info for routing
-    const parsedJti = parseRefreshTokenJti(jti);
-    const instanceName = buildRefreshTokenRotatorInstanceName(
-      client_id,
-      parsedJti.generation,
-      parsedJti.shardIndex
-    );
-    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-    const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+    const { stub: rotator } = getRefreshTokenRotatorStubByJti(c.env, client_id, jti);
 
     // V2: Get incoming version from JWT (default to 1 for legacy tokens without rtv)
     const incomingVersion =
@@ -2637,17 +2594,18 @@ async function handleDeviceCodeGrant(
   // Token expiration (KV > env > default priority)
   const configManager = createOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
+  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
       }),
-      getIDTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
       }),
@@ -2663,7 +2621,7 @@ async function handleDeviceCodeGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
         { cache: c.env.REBAC_CACHE }
@@ -2758,15 +2716,27 @@ async function handleDeviceCodeGrant(
   let refreshToken: string;
   let refreshJti: string;
   try {
-    // V3: Generate sharded JTI for proper DO routing
-    const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
-    const shardIndex = await getRefreshTokenShardIndex(
-      metadata.sub!,
-      client_id,
-      shardConfig.currentShardCount
-    );
-    const randomPart = generateRefreshTokenRandomPart();
-    refreshJti = createRefreshTokenJti(shardConfig.currentGeneration, shardIndex, randomPart);
+    let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+    if (c.env.REFRESH_TOKEN_ROTATOR) {
+      familyResult = await createRefreshTokenFamily(c.env, {
+        userId: metadata.sub!,
+        clientId: client_id,
+        scope: metadata.scope || '',
+        ttl: refreshTokenExpiry,
+      });
+      refreshJti = familyResult.jti;
+      void recordTokenFamilyIndex(
+        authCtx.coreAdapter,
+        getTenantIdFromContext(c),
+        refreshJti,
+        metadata.sub!,
+        client_id,
+        familyResult.resolution.generation,
+        refreshTokenExpiry
+      );
+    } else {
+      refreshJti = `rt_${crypto.randomUUID()}`;
+    }
 
     const refreshTokenClaims = {
       sub: metadata.sub!,
@@ -2782,14 +2752,16 @@ async function handleDeviceCodeGrant(
     );
     refreshToken = result.token;
 
-    await storeRefreshToken(c.env, refreshJti, {
-      jti: refreshJti,
-      client_id,
-      sub: metadata.sub!,
-      scope: metadata.scope,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
-    });
+    if (!familyResult) {
+      await storeRefreshToken(c.env, refreshJti, {
+        jti: refreshJti,
+        client_id,
+        sub: metadata.sub!,
+        scope: metadata.scope,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
+      });
+    }
   } catch (error) {
     log.error('Failed to create refresh token', {}, error as Error);
     return c.json(
@@ -3079,10 +3051,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }
   }
 
+  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+
   // Verify user exists in Core DB (PII/Non-PII separation: NO PII DB access in token endpoint)
   // Note: metadata.sub is guaranteed to exist due to the check at line 2340
   // Use getCachedUserCore() instead of getCachedUser() to avoid unnecessary PII DB access
-  const userCore = await getCachedUserCore(c.env, metadata.sub);
+  const userCore = await getCachedUserCore(c.env, metadata.sub, authCtx.coreAdapter);
 
   if (!userCore) {
     // Security: Internal error - don't leak user existence
@@ -3131,11 +3105,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
       }),
-      getIDTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
       }),
@@ -3151,7 +3125,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
         { cache: c.env.REBAC_CACHE }
@@ -3244,20 +3218,29 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     idToken = await encryptJWT(idToken, clientPublicKey, { alg, enc });
   }
 
-  // Create Refresh Token with V3 sharding support
-  // V3: Generate sharded JTI for proper DO routing
-  const shardConfig = await getRefreshTokenShardConfig(c.env, metadata.client_id);
-  const shardIndex = await getRefreshTokenShardIndex(
-    metadata.sub!,
-    metadata.client_id,
-    shardConfig.currentShardCount
-  );
-  const randomPart = generateRefreshTokenRandomPart();
-  const refreshTokenJti = createRefreshTokenJti(
-    shardConfig.currentGeneration,
-    shardIndex,
-    randomPart
-  );
+  // Create Refresh Token with canonical family registration
+  let refreshTokenJti: string;
+  let cibaFamilyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+  if (c.env.REFRESH_TOKEN_ROTATOR) {
+    cibaFamilyResult = await createRefreshTokenFamily(c.env, {
+      userId: metadata.sub!,
+      clientId: metadata.client_id,
+      scope: metadata.scope || '',
+      ttl: refreshExpiresIn,
+    });
+    refreshTokenJti = cibaFamilyResult.jti;
+    void recordTokenFamilyIndex(
+      authCtx.coreAdapter,
+      getTenantIdFromContext(c),
+      refreshTokenJti,
+      metadata.sub!,
+      metadata.client_id,
+      cibaFamilyResult.resolution.generation,
+      refreshExpiresIn
+    );
+  } else {
+    refreshTokenJti = `rt_${crypto.randomUUID()}`;
+  }
 
   const refreshTokenClaims = {
     iss: getRequestIssuer(c),
@@ -3275,15 +3258,16 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     refreshTokenJti // V3: Pass pre-generated sharded JTI
   );
 
-  // Store refresh token in KV
-  await storeRefreshToken(c.env, refreshTokenJti, {
-    client_id: metadata.client_id,
-    sub: metadata.sub!,
-    scope: metadata.scope,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + refreshExpiresIn,
-    jti: refreshTokenJti,
-  });
+  if (!cibaFamilyResult) {
+    await storeRefreshToken(c.env, refreshTokenJti, {
+      client_id: metadata.client_id,
+      sub: metadata.sub!,
+      scope: metadata.scope,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + refreshExpiresIn,
+      jti: refreshTokenJti,
+    });
+  }
 
   // Delete the CIBA request after successful token issuance
   await cibaRequestStore.fetch(
@@ -3359,24 +3343,25 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 }
 
 /**
- * Record token family in D1 for user-wide revocation support (V3 Sharding)
+ * Record token family in the relational index for user-wide revocation support (V3 Sharding)
  *
- * This is a non-blocking operation that records the token family in D1's
+ * This is a non-blocking operation that records the token family in the
  * user_token_families table. This enables efficient user-wide token revocation
  * by allowing the admin API to query all token families for a user.
  *
  * Note: This is fire-and-forget for performance. Failure does not affect
  * token issuance, but may impact user-wide revocation functionality.
  */
-async function recordTokenFamilyInD1(
-  env: Env,
+async function recordTokenFamilyIndex(
+  db: DatabaseSource | null | undefined,
+  tenantId: string,
   jti: string,
   userId: string,
   clientId: string,
   generation: number,
   ttlSeconds: number
 ): Promise<void> {
-  if (!env.DB) {
+  if (!db) {
     return;
   }
 
@@ -3384,16 +3369,17 @@ async function recordTokenFamilyInD1(
     const now = Date.now();
     const expiresAt = now + ttlSeconds * 1000;
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-    await coreAdapter.execute(
-      `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (jti) DO NOTHING`,
-      [jti, 'default', userId, clientId, generation, expiresAt]
-    );
+    await recordRefreshTokenFamilyIndex(db, {
+      jti,
+      tenantId,
+      userId,
+      clientId,
+      generation,
+      expiresAt,
+    });
   } catch (error) {
     // Log but don't fail - this is a non-critical operation
-    moduleLogger.error('Failed to record token family in D1', {}, error as Error);
+    moduleLogger.error('Failed to record token family in index', {}, error as Error);
   }
 }
 
@@ -4455,20 +4441,8 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
-  // 3. Check if DB is available
-  if (!c.env.DB) {
-    log.error('D1 database not available', { action: 'NativeSSO' });
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Database not available',
-      },
-      500
-    );
-  }
-
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-  const deviceSecretRepo = new DeviceSecretRepository(coreAdapter);
+  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
   const nativeSSOConfig = await getNativeSSOConfig(c.env);
 
   // 3b. Rate limiting for brute-force protection (checked BEFORE validation)

@@ -38,7 +38,6 @@ import {
   getFrontchannelLogoutConfig,
   BROWSER_STATE_COOKIE_NAME,
   // Native SSO device_secret revocation
-  D1Adapter,
   DeviceSecretRepository,
   isNativeSSOEnabled,
   // Simple Logout Webhook (Authrim Extension)
@@ -417,12 +416,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // When a session is invalidated, all associated device_secrets should also be revoked
     // to prevent continued Native SSO token exchange from other apps
-    if (deletedSessions.length > 0 && c.env.DB) {
+    if (deletedSessions.length > 0) {
       const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
       if (nativeSSOEnabled) {
         try {
-          const adapter = new D1Adapter({ db: c.env.DB });
-          const deviceSecretRepo = new DeviceSecretRepository(adapter);
+          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
 
           let totalRevoked = 0;
           for (const sessId of deletedSessions) {
@@ -1166,6 +1164,8 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     const userId = logoutClaims.sub as string;
     const sessionId = logoutClaims.sid as string | undefined;
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Invalidate sessions
     // With sharded SessionStore, we can only delete sessions by specific sessionId
@@ -1201,12 +1201,11 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Revoke Native SSO device_secrets for the deleted session
-    if (sessionDeleted && sessionId && c.env.DB) {
+    if (sessionDeleted && sessionId) {
       const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
       if (nativeSSOEnabled) {
         try {
-          const adapter = new D1Adapter({ db: c.env.DB });
-          const deviceSecretRepo = new DeviceSecretRepository(adapter);
+          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
           const revokedCount = await deviceSecretRepo.revokeBySessionId(
             sessionId,
             'backchannel_logout'

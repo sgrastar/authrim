@@ -48,6 +48,7 @@ import {
   getConsentItemsForScreen,
   processConsentItemDecisions,
   hashIpAddress,
+  upsertOAuthClientConsent,
   // Logger
   getLogger,
 } from '@authrim/ar-lib-core';
@@ -275,7 +276,7 @@ async function handleJsonConsentGet(
   }
 
   // Get RBAC data (organizations, roles)
-  const rbacData = await getConsentRBACData(c.env.DB, userId);
+  const rbacData = await getConsentRBACData(authCtx.coreAdapter, userId);
 
   // Parse feature flags from environment
   const features = parseConsentFeatureFlags(
@@ -287,7 +288,7 @@ async function handleJsonConsentGet(
   // Get acting-as info if present in metadata
   let actingAsInfo = null;
   if (metadata.acting_as && features.acting_as_enabled) {
-    actingAsInfo = await getActingAsUserInfo(c.env.DB, userId, metadata.acting_as);
+    actingAsInfo = await getActingAsUserInfo(authCtx.coreAdapter, userId, metadata.acting_as);
   }
 
   // Determine target org and get roles for that org
@@ -296,7 +297,7 @@ async function handleJsonConsentGet(
 
   // If targeting a specific org, get roles for that org
   if (targetOrgId) {
-    roles = await getRolesInOrganization(c.env.DB, userId, targetOrgId);
+    roles = await getRolesInOrganization(authCtx.coreAdapter, userId, targetOrgId);
   }
 
   // Get consent settings
@@ -822,36 +823,22 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const privacyPolicyVersion = acknowledged_policy_versions?.privacy_policy || null;
     const tosVersion = acknowledged_policy_versions?.terms_of_service || null;
 
-    // Insert or update consent with new columns
-    await authCtx.coreAdapter.execute(
-      `INSERT OR REPLACE INTO oauth_client_consents
-       (id, user_id, client_id, scope, selected_scopes, granted_at, expires_at,
-        privacy_policy_version, tos_version, consent_version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
-        COALESCE((SELECT consent_version + 1 FROM oauth_client_consents WHERE user_id = ? AND client_id = ?), 1),
-        COALESCE((SELECT created_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?), ?),
-        ?)`,
-      [
-        consentId,
-        userId,
-        client_id,
-        effectiveScope,
-        selectedScopesJson,
-        now,
-        expiresAt,
-        privacyPolicyVersion,
-        tosVersion,
-        userId,
-        client_id,
-        userId,
-        client_id,
-        now,
-        now,
-      ]
-    );
+    await upsertOAuthClientConsent(authCtx.coreAdapter, {
+      consentId,
+      userId,
+      clientId: client_id,
+      tenantId,
+      scope: effectiveScope,
+      selectedScopesJson,
+      grantedAt: now,
+      expiresAt,
+      privacyPolicyVersion,
+      tosVersion,
+      now,
+    });
 
     // Invalidate consent cache so next check reflects updated consent
-    await invalidateConsentCache(c.env, userId, client_id);
+    await invalidateConsentCache(c.env, userId, tenantId, client_id);
 
     // Process consent item decisions (consent management)
     if (consent_item_decisions && Object.keys(consent_item_decisions).length > 0) {

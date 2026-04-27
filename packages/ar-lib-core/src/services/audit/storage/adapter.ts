@@ -17,7 +17,7 @@ import type { EventLogEntry, PIILogEntry } from '../types';
 /**
  * Supported storage backend types.
  */
-export type AuditStorageBackendType = 'D1' | 'R2' | 'HYPERDRIVE' | 'LOGPUSH' | 'FIREHOSE';
+export type AuditStorageBackendType = 'D1' | 'R2' | 'HYPERDRIVE' | 'LOGPUSH' | 'FIREHOSE' | 'HTTP';
 
 /**
  * Log type for routing.
@@ -179,7 +179,7 @@ export interface IAuditStorageAdapter {
 
   /**
    * Write a single event log entry.
-   * Must be idempotent (use UPSERT or ON CONFLICT DO NOTHING).
+   * Must be idempotent.
    */
   writeEventLog(entry: EventLogEntry): Promise<AuditWriteResult>;
 
@@ -292,6 +292,8 @@ export interface AuditBackendConfig {
   hyperdriveConfig?: {
     /** Hyperdrive binding name */
     binding: string;
+    /** External database engine */
+    driver?: 'postgres' | 'mysql';
     /** Schema name */
     schema: string;
     /** Connection pool size */
@@ -312,6 +314,22 @@ export interface AuditBackendConfig {
     streamRef: string;
     /** Optional delivery region hint */
     region?: string;
+  };
+
+  /** Generic HTTP sink configuration */
+  httpConfig?: {
+    /** Direct URL (non-secret) */
+    url?: string;
+    /** Environment variable / binding reference for the URL */
+    urlRef?: string;
+    /** Optional secret/env reference for bearer token */
+    authTokenRef?: string;
+    /** Additional static headers */
+    headers?: Record<string, string>;
+    /** HTTP method */
+    method?: 'POST';
+    /** Payload format */
+    format?: 'json';
   };
 }
 

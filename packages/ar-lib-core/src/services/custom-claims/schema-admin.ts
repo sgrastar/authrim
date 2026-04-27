@@ -35,6 +35,13 @@ function getAdapter(db: DatabaseSource) {
   return ensureDatabaseAdapter(db, 'custom-claims-schema-admin');
 }
 
+function normalizeActiveFieldKey(
+  fieldKey: unknown,
+  isActive: unknown
+): string | null {
+  return typeof fieldKey === 'string' && (isActive === 1 || isActive === true) ? fieldKey : null;
+}
+
 function buildSchemaWhereClause(params: Omit<ListCustomClaimSchemasParams, 'limit' | 'offset'>): {
   whereClause: string;
   queryParams: unknown[];
@@ -126,14 +133,14 @@ export async function findActiveCustomClaimSchemaByFieldKey<
 
   if (options.excludeSchemaId) {
     const rows = await adapter.query<TSchema>(
-      'SELECT * FROM custom_claim_schemas WHERE tenant_id = ? AND field_key = ? AND is_active = 1 AND id != ?',
+      'SELECT * FROM custom_claim_schemas WHERE tenant_id = ? AND active_field_key = ? AND id != ?',
       [tenantId, fieldKey, options.excludeSchemaId]
     );
     return rows[0] ?? null;
   }
 
   const rows = await adapter.query<TSchema>(
-    'SELECT * FROM custom_claim_schemas WHERE tenant_id = ? AND field_key = ? AND is_active = 1',
+    'SELECT * FROM custom_claim_schemas WHERE tenant_id = ? AND active_field_key = ?',
     [tenantId, fieldKey]
   );
   return rows[0] ?? null;
@@ -144,7 +151,14 @@ export async function insertCustomClaimSchema(
   schema: Record<string, unknown>
 ): Promise<void> {
   const adapter = getAdapter(db);
-  const entries = Object.entries(schema);
+  const normalizedSchema = { ...schema };
+  if (!('active_field_key' in normalizedSchema)) {
+    normalizedSchema.active_field_key = normalizeActiveFieldKey(
+      normalizedSchema.field_key,
+      normalizedSchema.is_active ?? 1
+    );
+  }
+  const entries = Object.entries(normalizedSchema);
   const columns = entries.map(([key]) => key);
   const placeholders = columns.map(() => '?');
   const values = entries.map(([, value]) => value);
@@ -167,7 +181,17 @@ export async function updateCustomClaimSchemaFields(
     incrementSchemaVersion = false,
   } = params;
   const adapter = getAdapter(db);
-  const updateEntries = Object.entries(updates);
+  const normalizedUpdates = { ...updates };
+  if ('field_key' in normalizedUpdates || 'is_active' in normalizedUpdates) {
+    const existing = await getCustomClaimSchemaById<Record<string, unknown>>(db, tenantId, schemaId);
+    if (!existing) {
+      return 0;
+    }
+    const nextFieldKey = normalizedUpdates.field_key ?? existing.field_key;
+    const nextIsActive = normalizedUpdates.is_active ?? existing.is_active ?? 1;
+    normalizedUpdates.active_field_key = normalizeActiveFieldKey(nextFieldKey, nextIsActive);
+  }
+  const updateEntries = Object.entries(normalizedUpdates);
   const setClauses = updateEntries.map(([key]) => `${key} = ?`);
   const values = updateEntries.map(([, value]) => value);
 

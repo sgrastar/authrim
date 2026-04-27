@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { D1Database } from '@cloudflare/workers-types';
+import { renderPortableMigrationSql } from './sql-portability.js';
 
 /**
  * Migration file metadata
@@ -81,7 +82,7 @@ export class MigrationRunner {
           'utf-8'
         );
 
-        await this.db.exec(initSql);
+        await this.db.exec(renderPortableMigrationSql(initSql, 'sqlite'));
         console.log('✅ Migration infrastructure initialized');
       }
     } catch (error) {
@@ -204,7 +205,7 @@ export class MigrationRunner {
         console.log(`   SQL:\n${migration.sql.substring(0, 200)}...`);
       }
 
-      await this.db.exec(migration.sql);
+      await this.db.exec(renderPortableMigrationSql(migration.sql, 'sqlite'));
 
       const executionTime = Date.now() - startTime;
 

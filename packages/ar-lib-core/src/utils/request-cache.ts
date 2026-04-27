@@ -18,6 +18,7 @@ import type { Env } from '../types/env';
 import type { ClientMetadata } from '../types/oidc';
 import type { TenantProfile } from '../types/contracts/tenant-profile';
 import type { ClientContract } from '../types/contracts';
+import { createAuthContextFromHono } from '../context';
 import { getClient } from './kv';
 import { loadTenantProfile, loadTenantContract, loadClientContract } from './contract-loader';
 import { getTenantProfile } from '../types/contracts/tenant-profile';
@@ -213,7 +214,7 @@ export async function getClientCached(
 
   // Cache miss - fetch from KV/D1
   cache.stats.clientMiss++;
-  const clientMetadata = await getClient(env, clientId);
+  const clientMetadata = await getClient(env, clientId, createAuthContextFromHono(c).coreAdapter);
 
   // Store in request cache (including null for not-found)
   cache.clients.set(clientId, clientMetadata);

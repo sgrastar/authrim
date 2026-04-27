@@ -25,8 +25,8 @@ import type {
 import {
   timingSafeEqual,
   validateExternalUrl,
-  D1Adapter,
-  type DatabaseAdapter,
+  createAuthContextFromHono,
+  resolveAuthCorePersistenceAdapterFromEnv,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -57,7 +57,7 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
     const providers = await coreAdapter.query<{
       id: string;
       name: string;
@@ -136,7 +136,7 @@ export async function handleCreateProvider(c: Context<{ Bindings: Env }>): Promi
     const id = crypto.randomUUID();
     const now = Date.now();
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
     await coreAdapter.execute(
       `INSERT INTO identity_providers (id, name, provider_type, config_json, enabled, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -182,7 +182,7 @@ export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
     const provider = await coreAdapter.queryOne<{
       id: string;
       name: string;
@@ -230,7 +230,7 @@ export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
 
     // Get existing provider
     const existing = await coreAdapter.queryOne<{
@@ -297,7 +297,7 @@ export async function handleDeleteProvider(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
     const result = await coreAdapter.execute(
       `DELETE FROM identity_providers
        WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
@@ -328,7 +328,7 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
 
     // Get existing provider
     const existing = await coreAdapter.queryOne<{
@@ -629,11 +629,15 @@ function parseSPMetadata(xml: string): SAMLSPConfig {
 // Public Helper Functions (used by other modules)
 // ============================================================================
 
+async function resolveSAMLProvidersCoreAdapter(env: Env) {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-providers');
+}
+
 /**
  * Get SP configuration by Entity ID
  */
 export async function getSPConfig(env: Env, entityId: string): Promise<SAMLSPConfig | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
      WHERE provider_type = 'saml_sp' AND enabled = 1`,
@@ -654,7 +658,7 @@ export async function getSPConfig(env: Env, entityId: string): Promise<SAMLSPCon
  * Get IdP configuration by provider ID
  */
 export async function getIdPConfig(env: Env, providerId: string): Promise<SAMLIdPConfig | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.queryOne<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
      WHERE id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
@@ -675,7 +679,7 @@ export async function getIdPConfigByEntityId(
   env: Env,
   entityId: string
 ): Promise<SAMLIdPConfig | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
      WHERE provider_type = 'saml_idp' AND enabled = 1`,
@@ -698,7 +702,7 @@ export async function getIdPConfigByEntityId(
 export async function listSPConfigs(
   env: Env
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{
     id: string;
     name: string;
@@ -722,7 +726,7 @@ export async function listSPConfigs(
 export async function listIdPConfigs(
   env: Env
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{
     id: string;
     name: string;

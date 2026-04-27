@@ -21,8 +21,6 @@ import {
   parseBasicAuth,
   getKeyByKid,
   verifyClientSecretHash,
-  // Database adapter for user status check
-  D1Adapter,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
@@ -389,8 +387,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // Note: Using users_core for PII-separated architecture
   if (sub) {
     try {
-      const adapter = new D1Adapter({ db: c.env.DB });
-      const user = await adapter.queryOne<{ status: string }>(
+      const user = await authCtx.coreAdapter.queryOne<{ status: string }>(
         'SELECT status FROM users_core WHERE id = ? AND tenant_id = ?',
         [sub, tenantId]
       );

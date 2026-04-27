@@ -8,6 +8,8 @@ import {
   DEFAULT_STORAGE_PROFILE_ID,
 } from '@authrim/ar-lib-core';
 import {
+  adminRuntimeProfileDefaultsHandler,
+  adminRuntimeProfileDefaultsUpdateHandler,
   adminRuntimeProfileDeleteHandler,
   adminRuntimeProfileGetHandler,
   adminRuntimeProfileListHandler,
@@ -39,6 +41,8 @@ function createMockKV(initial: Record<string, string> = {}): KVNamespace {
 function createTestApp() {
   const app = new Hono<{ Bindings: Env }>();
   app.get('/api/admin/runtime-profiles', adminRuntimeProfileListHandler);
+  app.get('/api/admin/runtime-profiles/defaults', adminRuntimeProfileDefaultsHandler);
+  app.put('/api/admin/runtime-profiles/defaults', adminRuntimeProfileDefaultsUpdateHandler);
   app.get('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileGetHandler);
   app.put('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileUpsertHandler);
   app.delete('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileDeleteHandler);
@@ -50,6 +54,7 @@ function createEnv(kvData: Record<string, string> = {}): Env {
   return {
     DB: {} as D1Database,
     AUTHRIM_CONFIG: createMockKV(kvData),
+    SETTINGS: createMockKV(),
     PROFILE_REGISTRY_BACKEND: 'kv',
     DEFAULT_STORAGE_PROFILE_ID,
     DEFAULT_AUDIT_PROFILE_ID,
@@ -85,6 +90,20 @@ describe('runtime profile admin handlers', () => {
     const allBody = (await allRes.json()) as {
       include_builtins: boolean;
       profiles: { storage: Array<{ id: string }> };
+      storage_policy: {
+        authCoreSlices: string[];
+        slicePolicies: {
+          users_core: {
+            boundaryClass: string;
+            tenantOverrideAllowed: boolean;
+            compatibilityShorthand?: boolean;
+          };
+          users_pii: {
+            boundaryClass: string;
+            nonD1OptionRequired: boolean;
+          };
+        };
+      };
     };
     expect(allBody.include_builtins).toBe(true);
     expect(allBody.profiles.storage.some((profile) => profile.id === DEFAULT_STORAGE_PROFILE_ID)).toBe(
@@ -92,6 +111,25 @@ describe('runtime profile admin handlers', () => {
     );
     expect(allBody.profiles.storage.some((profile) => profile.id === 'tenant-a-storage')).toBe(
       true
+    );
+    expect(allBody).toHaveProperty('storage_policy.environmentDefaultStorageProfileId');
+    expect(allBody).toHaveProperty(
+      'storage_policy.tenantOverrideEligibility.tenant-a-storage.tenantOverrideAllowed',
+      true
+    );
+    expect(allBody.storage_policy.authCoreSlices).toEqual(['users_core']);
+    expect(allBody.storage_policy.slicePolicies.users_core).toEqual(
+      expect.objectContaining({
+        boundaryClass: 'auth_core',
+        tenantOverrideAllowed: false,
+        compatibilityShorthand: true,
+      })
+    );
+    expect(allBody.storage_policy.slicePolicies.users_pii).toEqual(
+      expect.objectContaining({
+        boundaryClass: 'pii',
+        nonD1OptionRequired: true,
+      })
     );
 
     const customOnlyRes = await app.request(
@@ -174,9 +212,11 @@ describe('runtime profile admin handlers', () => {
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
       profile: { id: string; label: string };
+      storage_policy: { tenantOverrideAllowed: boolean };
     };
     expect(getBody.profile.id).toBe('tenant-a-storage');
     expect(getBody.profile.label).toBe('Tenant A Storage Updated');
+    expect(getBody.storage_policy.tenantOverrideAllowed).toBe(true);
 
     const deleteRes = await app.request(
       '/api/admin/runtime-profiles/storage/tenant-a-storage',
@@ -193,6 +233,186 @@ describe('runtime profile admin handlers', () => {
       env
     );
     expect(missingRes.status).toBe(404);
+  });
+
+  it('persists audit profiles with primary=null and failure modes', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const createRes = await app.request(
+      '/api/admin/runtime-profiles/audit/archive-only',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'Archive Only',
+          primary: null,
+          archive: {
+            type: 'r2',
+            bucketRef: 'DIAGNOSTIC_LOGS',
+            prefix: 'audit/',
+          },
+          sinks: [
+            {
+              type: 'logpush',
+              destinationRef: 'workers-logpush',
+              dataset: 'authrim_audit',
+            },
+          ],
+          archiveFailureMode: 'gate_cleanup',
+          sinkFailureMode: 'retry_until_ttl',
+        }),
+      },
+      env
+    );
+
+    expect(createRes.status).toBe(201);
+    const createBody = (await createRes.json()) as {
+      profile: {
+        primary: null;
+        archiveFailureMode: string;
+        sinkFailureMode: string;
+      };
+    };
+    expect(createBody.profile.primary).toBeNull();
+    expect(createBody.profile.archiveFailureMode).toBe('gate_cleanup');
+    expect(createBody.profile.sinkFailureMode).toBe('retry_until_ttl');
+  });
+
+  it('persists audit profiles with generic HTTP sinks', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const createRes = await app.request(
+      '/api/admin/runtime-profiles/audit/http-sink-profile',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'HTTP Sink Profile',
+          primary: null,
+          archive: null,
+          sinks: [
+            {
+              type: 'http',
+              url: 'https://example.com/audit',
+              headers: {
+                'X-Authrim-Sink': 'enabled',
+              },
+            },
+          ],
+        }),
+      },
+      env
+    );
+
+    expect(createRes.status).toBe(201);
+    const body = (await createRes.json()) as {
+      profile: {
+        sinks: Array<{ type: string; url?: string }>;
+      };
+    };
+    expect(body.profile.sinks).toEqual([
+      expect.objectContaining({
+        type: 'http',
+        url: 'https://example.com/audit',
+      }),
+    ]);
+  });
+
+  it('rejects non-https generic HTTP sinks', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const createRes = await app.request(
+      '/api/admin/runtime-profiles/audit/http-sink-profile',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'HTTP Sink Profile',
+          primary: null,
+          archive: null,
+          sinks: [
+            {
+              type: 'http',
+              url: 'http://example.com/audit',
+            },
+          ],
+        }),
+      },
+      env
+    );
+
+    expect(createRes.status).toBe(400);
+  });
+
+  it('returns runtime profile defaults and updates them through infrastructure settings', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:audit:archive-only': JSON.stringify({
+        id: 'archive-only',
+        kind: 'audit',
+        label: 'Archive Only',
+        builtin: false,
+        primary: null,
+        archive: {
+          type: 'r2',
+          bucketRef: 'DIAGNOSTIC_LOGS',
+          prefix: 'audit/',
+        },
+        sinks: [],
+      }),
+    });
+
+    const beforeRes = await app.request('/api/admin/runtime-profiles/defaults', undefined, env);
+    expect(beforeRes.status).toBe(200);
+    const beforeBody = (await beforeRes.json()) as {
+      defaults: { auditProfileId: string };
+      effective: { audit: { id: string } };
+    };
+    expect(beforeBody.defaults.auditProfileId).toBe(DEFAULT_AUDIT_PROFILE_ID);
+    expect(beforeBody.effective.audit.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
+
+    const updateRes = await app.request(
+      '/api/admin/runtime-profiles/defaults',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          auditProfileId: 'archive-only',
+        }),
+      },
+      env
+    );
+    expect(updateRes.status).toBe(200);
+    const updateBody = (await updateRes.json()) as {
+      updated: string[];
+      defaults: { auditProfileId: string };
+      effective: { audit: { id: string } };
+    };
+    expect(updateBody.updated).toContain('infra.default_audit_profile_id');
+    expect(updateBody.defaults.auditProfileId).toBe('archive-only');
+    expect(updateBody.effective.audit.id).toBe('archive-only');
+  });
+
+  it('rejects unknown runtime profile defaults', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const res = await app.request(
+      '/api/admin/runtime-profiles/defaults',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          auditProfileId: 'missing-profile',
+        }),
+      },
+      env
+    );
+
+    expect(res.status).toBe(404);
   });
 
   it('rejects invalid kinds and builtin profile mutation attempts', async () => {
@@ -228,6 +448,51 @@ describe('runtime profile admin handlers', () => {
       env
     );
     expect(builtinDeleteRes.status).toBe(409);
+  });
+
+  it('marks auth-core-changing storage profiles as not tenant-override compatible', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:storage:tenant-auth-core-storage': JSON.stringify({
+        id: 'tenant-auth-core-storage',
+        kind: 'storage',
+        label: 'Tenant Auth Core Storage',
+        slices: {
+          users_core: {
+            driver: 'postgres',
+            connectionRef: 'tenant-a-core',
+            role: 'core',
+          },
+        },
+      }),
+    });
+
+    const response = await app.request(
+      '/api/admin/runtime-profiles/storage/tenant-auth-core-storage',
+      undefined,
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      storage_policy: {
+        authCoreSlice: string;
+        authCoreSlices: string[];
+        slicePolicies: {
+          users_core: {
+            compatibilityShorthand?: boolean;
+          };
+        };
+        tenantOverrideAllowed: boolean;
+        violationCode?: string;
+      };
+    };
+
+    expect(body.storage_policy.authCoreSlice).toBe('users_core');
+    expect(body.storage_policy.authCoreSlices).toEqual(['users_core']);
+    expect(body.storage_policy.slicePolicies.users_core.compatibilityShorthand).toBe(true);
+    expect(body.storage_policy.tenantOverrideAllowed).toBe(false);
+    expect(body.storage_policy.violationCode).toBe('tenant_auth_core_override_not_allowed');
   });
 
   it('resolves tenant effective runtime profiles from environment defaults and tenant overrides', async () => {
@@ -270,6 +535,16 @@ describe('runtime profile admin handlers', () => {
         audit: { id: string };
         residency: { id: string };
       };
+      storage_policy: {
+        slicePolicies: {
+          custom_claims: {
+            boundaryClass: string;
+            tenantOverrideAllowed: boolean;
+          };
+        };
+        tenantOverrideRequested: boolean;
+        tenantOverrideAllowed: boolean;
+      };
     };
 
     expect(body.tenant_id).toBe('acme');
@@ -284,5 +559,13 @@ describe('runtime profile admin handlers', () => {
     expect(body.effective.storage.id).toBe('tenant-a-storage');
     expect(body.effective.audit.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
     expect(body.effective.residency.id).toBe('builtin:residency:eu');
+    expect(body.storage_policy.slicePolicies.custom_claims).toEqual(
+      expect.objectContaining({
+        boundaryClass: 'custom_extension',
+        tenantOverrideAllowed: true,
+      })
+    );
+    expect(body.storage_policy.tenantOverrideRequested).toBe(true);
+    expect(body.storage_policy.tenantOverrideAllowed).toBe(true);
   });
 });

@@ -31,6 +31,7 @@ import {
   runMigrationsForEnvironment,
   ensureInitialAdminRolesInD1,
   ensureInitialTenantInD1,
+  seedRuntimeProfiles,
   getWorkerDeployments,
   type CloudflareAuth,
 } from '../core/cloudflare.js';
@@ -1640,6 +1641,7 @@ export function createApiRoutes(): Hono {
         let migrationsResult = null;
         let initialTenantResult = null;
         let initialAdminRolesResult = null;
+        let runtimeProfileSeedResult = null;
         if (runMigrations && !dryRun && workersSuccess) {
           const bootstrapConfig = cfg ? AuthrimConfigSchema.parse(cfg) : createDefaultConfig(env);
           addProgress('📜 Running D1 database migrations...');
@@ -1677,6 +1679,18 @@ export function createApiRoutes(): Hono {
                 `⚠️ Initial admin role bootstrap failed: ${initialAdminRolesResult.error || 'unknown error'}`
               );
             }
+
+            addProgress('🔧 Seeding runtime profiles...');
+            runtimeProfileSeedResult = await seedRuntimeProfiles(env, bootstrapConfig, addProgress);
+            if (runtimeProfileSeedResult.success) {
+              addProgress(
+                `✅ Runtime profiles ready (${runtimeProfileSeedResult.seededCount} seeded to ${runtimeProfileSeedResult.backend})`
+              );
+            } else {
+              addProgress(
+                `⚠️ Runtime profile seed failed: ${runtimeProfileSeedResult.error || 'unknown error'}`
+              );
+            }
           } else {
             addProgress(
               `⚠️ Some migrations failed - core: ${migrationsResult.core.error || 'ok'}, pii: ${migrationsResult.pii.error || 'ok'}, admin: ${migrationsResult.admin.error || 'ok'}`
@@ -1689,13 +1703,17 @@ export function createApiRoutes(): Hono {
         const initialAdminRolesSuccess = initialAdminRolesResult
           ? initialAdminRolesResult.success
           : true;
+        const runtimeProfileSeedSuccess = runtimeProfileSeedResult
+          ? runtimeProfileSeedResult.success
+          : true;
 
         if (
           workersSuccess &&
           pagesSuccess &&
           migrationsSuccess &&
           initialTenantSuccess &&
-          initialAdminRolesSuccess
+          initialAdminRolesSuccess &&
+          runtimeProfileSeedSuccess
         ) {
           state.status = 'complete';
           addProgress('Deployment complete!');
@@ -1717,6 +1735,8 @@ export function createApiRoutes(): Hono {
             state.error = `Initial tenant bootstrap failed: ${initialTenantResult?.error || 'unknown error'}`;
           } else if (!initialAdminRolesSuccess) {
             state.error = `Initial admin role bootstrap failed: ${initialAdminRolesResult?.error || 'unknown error'}`;
+          } else if (!runtimeProfileSeedSuccess) {
+            state.error = `Runtime profile seed failed: ${runtimeProfileSeedResult?.error || 'unknown error'}`;
           }
           addProgress(`❌ ${state.error}`);
         }
@@ -1730,12 +1750,14 @@ export function createApiRoutes(): Hono {
             pagesSuccess &&
             migrationsSuccess &&
             initialTenantSuccess &&
-            initialAdminRolesSuccess,
+            initialAdminRolesSuccess &&
+            runtimeProfileSeedSuccess,
           summary,
           pagesResult: pagesSummary,
           migrationsResult,
           initialTenantResult,
           initialAdminRolesResult,
+          runtimeProfileSeedResult,
           logPath: state.logPath,
         });
       } catch (error) {

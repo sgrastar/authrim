@@ -7,7 +7,11 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter, createLogger } from '@authrim/ar-lib-core';
+import {
+  type DatabaseAdapter,
+  createLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
+} from '@authrim/ar-lib-core';
 
 const log = createLogger().module('TOKEN-REFRESH');
 import type { LinkedIdentity } from '../types';
@@ -91,7 +95,10 @@ async function findExpiringTokens(
   threshold: number,
   limit: number
 ): Promise<LinkedIdentity[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'bridge-token-refresh'
+  );
   const result = await coreAdapter.query<DbLinkedIdentity>(
     `SELECT * FROM linked_identities
      WHERE token_expires_at IS NOT NULL
@@ -141,7 +148,7 @@ async function refreshIdentityToken(
   const tokens = await client.refreshTokens(refreshToken);
 
   // Update the linked identity with new tokens
-  await updateLinkedIdentity(env, identity.id, {
+  await updateLinkedIdentity(env, identity.tenantId, identity.id, {
     tokens,
   });
 

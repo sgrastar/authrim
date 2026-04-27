@@ -148,11 +148,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_role_assignments_expires ON admin_role_assi
 -- =============================================================================
 
 -- super_admin: Full system access (hierarchy: 100)
-INSERT OR IGNORE INTO admin_roles (
+INSERT INTO admin_roles (
   id, tenant_id, name, display_name, description,
   permissions_json, hierarchy_level, role_type, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'role_super_admin',
   'default',
   'super_admin',
@@ -162,16 +162,20 @@ INSERT OR IGNORE INTO admin_roles (
   100,
   'system',
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_roles
+  WHERE id = 'role_super_admin'
 );
 
 -- security_admin: Security and audit management (hierarchy: 90)
-INSERT OR IGNORE INTO admin_roles (
+INSERT INTO admin_roles (
   id, tenant_id, name, display_name, description,
   permissions_json, hierarchy_level, role_type, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'role_security_admin',
   'default',
   'security_admin',
@@ -181,16 +185,20 @@ INSERT OR IGNORE INTO admin_roles (
   90,
   'system',
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_roles
+  WHERE id = 'role_security_admin'
 );
 
 -- admin: User and client management (hierarchy: 80)
-INSERT OR IGNORE INTO admin_roles (
+INSERT INTO admin_roles (
   id, tenant_id, name, display_name, description,
   permissions_json, hierarchy_level, role_type, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'role_admin',
   'default',
   'admin',
@@ -200,16 +208,20 @@ INSERT OR IGNORE INTO admin_roles (
   80,
   'system',
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_roles
+  WHERE id = 'role_admin'
 );
 
 -- support: Support operations (hierarchy: 40)
-INSERT OR IGNORE INTO admin_roles (
+INSERT INTO admin_roles (
   id, tenant_id, name, display_name, description,
   permissions_json, hierarchy_level, role_type, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'role_support',
   'default',
   'support',
@@ -219,16 +231,20 @@ INSERT OR IGNORE INTO admin_roles (
   40,
   'system',
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_roles
+  WHERE id = 'role_support'
 );
 
 -- viewer: Read-only access (hierarchy: 20)
-INSERT OR IGNORE INTO admin_roles (
+INSERT INTO admin_roles (
   id, tenant_id, name, display_name, description,
   permissions_json, hierarchy_level, role_type, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'role_viewer',
   'default',
   'viewer',
@@ -238,8 +254,12 @@ INSERT OR IGNORE INTO admin_roles (
   20,
   'system',
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_roles
+  WHERE id = 'role_viewer'
 );
 
 -- =============================================================================

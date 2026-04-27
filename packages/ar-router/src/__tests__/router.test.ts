@@ -263,6 +263,45 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route GET /clients/:client_id to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/clients/client-123');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route PUT /clients/:client_id to OP_MANAGEMENT without router CSRF rejection', async () => {
+        const req = new Request('https://example.com/clients/client-123', {
+          method: 'PUT',
+          headers: {
+            Origin: 'https://foreign.example.test',
+            Authorization: 'Bearer reg-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ client_name: 'Updated smoke client' }),
+        });
+
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route DELETE /clients/:client_id to OP_MANAGEMENT without router CSRF rejection', async () => {
+        const req = new Request('https://example.com/clients/client-123', {
+          method: 'DELETE',
+          headers: {
+            Origin: 'https://foreign.example.test',
+            Authorization: 'Bearer reg-token',
+          },
+        });
+
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route /api/auth/discovery/grant/verify to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/api/auth/discovery/grant/verify', {
           method: 'POST',

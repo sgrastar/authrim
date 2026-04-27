@@ -20,7 +20,7 @@ import {
   parseDID,
   didWebToUrl,
   isValidDID,
-  D1Adapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
   DIDDocumentCacheRepository,
   safeFetch,
   getLogger,
@@ -129,7 +129,7 @@ export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // Initialize repository
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-did-resolver');
     const cacheRepo = new DIDDocumentCacheRepository(adapter);
 
     // Check cache first

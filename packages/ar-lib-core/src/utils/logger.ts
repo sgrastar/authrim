@@ -8,7 +8,7 @@
  * {"timestamp":"2024-01-01T00:00:00.000Z","level":"info","tenantId":"default","message":"..."}
  */
 
-import { DEFAULT_TENANT_ID } from './tenant-context';
+const DEFAULT_LOG_TENANT_ID = 'default';
 
 /**
  * Log levels in order of severity (lowest to highest).
@@ -203,7 +203,7 @@ export function createLogger(
   config?: Partial<LoggerConfig>
 ): Logger {
   const ctx: LogContext = {
-    tenantId: DEFAULT_TENANT_ID,
+    tenantId: DEFAULT_LOG_TENANT_ID,
     ...baseContext,
   };
 

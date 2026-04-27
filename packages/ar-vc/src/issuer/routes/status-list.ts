@@ -14,7 +14,11 @@
 import type { Context } from 'hono';
 import type { JWK } from 'jose';
 import type { Env } from '../../types';
-import { getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import {
+  getLogger,
+  getTenantIdFromContext,
+  resolveAuthCorePersistenceAdapterFromEnv,
+} from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /**
@@ -73,19 +77,11 @@ async function calculateETag(
  * Get status list from database
  */
 async function getStatusList(env: Env, listId: string): Promise<StatusListData | null> {
-  const db = env.DB;
-  if (!db) {
-    return null;
-  }
-
-  const result = await db
-    .prepare(
-      'SELECT id, tenant_id, purpose, encoded_list, updated_at FROM status_lists WHERE id = ?'
-    )
-    .bind(listId)
-    .first<StatusListData>();
-
-  return result;
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'vc-status-list');
+  return adapter.queryOne<StatusListData>(
+    'SELECT id, tenant_id, purpose, encoded_list, updated_at FROM status_lists WHERE id = ?',
+    [listId]
+  );
 }
 
 /**

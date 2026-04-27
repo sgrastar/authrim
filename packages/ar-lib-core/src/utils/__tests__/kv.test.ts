@@ -7,8 +7,10 @@ import {
   getNonce,
   deleteNonce,
   getClient,
+  getCachedConsent,
 } from '../kv';
 import type { Env } from '../../types/env';
+import type { DatabaseAdapter } from '../../db';
 
 // Mock KV namespace
 class MockKVNamespace implements KVNamespace {
@@ -180,7 +182,7 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(dbResult),
       });
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.client_id).toBe(clientId);
@@ -199,7 +201,7 @@ describe('KV Utilities', () => {
       // Pre-populate cache using tenant-prefixed key pattern
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, clientId, env.DB);
 
       // normalizeClientMetadata adds default values for missing fields
       const expectedNormalized = {
@@ -232,7 +234,7 @@ describe('KV Utilities', () => {
 
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.response_types).toEqual(['code']);
@@ -271,7 +273,7 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(dbResult),
       });
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.response_types).toEqual(['code']);
@@ -284,8 +286,79 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(null),
       });
 
-      const retrieved = await getClient(env, 'non-existent-client');
+      const retrieved = await getClient(env, 'non-existent-client', env.DB);
       expect(retrieved).toBeNull();
+    });
+  });
+
+  describe('Consent Cache Read-Through', () => {
+    function createMockAdapter(result: Record<string, unknown> | null): DatabaseAdapter {
+      return {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue(result),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+    }
+
+    it('should read consent through the provided adapter when env.DB is unavailable', async () => {
+      const coreAdapter = createMockAdapter({
+        scope: 'openid profile',
+        granted_at: 1234,
+        expires_at: null,
+      });
+      (env as unknown as { DB?: D1Database }).DB = undefined;
+
+      const consent = await getCachedConsent(
+        env,
+        'user-1',
+        'client-1',
+        'tenant-a',
+        coreAdapter
+      );
+
+      expect(consent).toEqual({
+        scope: 'openid profile',
+        granted_at: 1234,
+        expires_at: null,
+      });
+      expect(coreAdapter.queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('FROM oauth_client_consents'),
+        ['user-1', 'client-1', 'tenant-a']
+      );
+    });
+
+    it('should populate CONSENT_CACHE after a miss using the provided adapter', async () => {
+      const coreAdapter = createMockAdapter({
+        scope: 'openid email',
+        granted_at: 5678,
+        expires_at: 9999,
+      });
+      const consentCacheKV = new MockKVNamespace();
+      (env as unknown as { DB?: D1Database }).DB = undefined;
+      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+      (env as unknown as Record<string, string>).CONSENT_CACHE_TTL = '120';
+
+      const consent = await getCachedConsent(
+        env,
+        'user-2',
+        'client-2',
+        'tenant-b',
+        coreAdapter
+      );
+
+      expect(consent).toEqual({
+        scope: 'openid email',
+        granted_at: 5678,
+        expires_at: 9999,
+      });
+      expect(await consentCacheKV.get('tenant:default:consent:tenant-b:user-2:client-2')).toBe(
+        JSON.stringify(consent)
+      );
     });
   });
 });

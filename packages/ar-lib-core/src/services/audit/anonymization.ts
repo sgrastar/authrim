@@ -7,11 +7,15 @@
  * Key design decisions:
  * - Random UUID: When mapping is deleted, event logs become truly anonymous
  * - HMAC (used in Logger.userIdHash only): Can be reversed with the key, so it's "pseudonymization"
- * - Conflict handling: SELECT → INSERT ON CONFLICT → re-SELECT pattern
+ * - Conflict handling: SELECT → INSERT → unique-race retry → re-SELECT pattern
  */
 
-import type { D1Database } from '@cloudflare/workers-types';
+import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../../db';
 import type { UserAnonymizationMap } from './types';
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
+}
 
 /**
  * Anonymization service interface.
@@ -49,27 +53,30 @@ export interface IAnonymizationService {
 }
 
 /**
- * D1-backed anonymization service.
+ * Adapter-backed anonymization service.
  */
 export class AnonymizationService implements IAnonymizationService {
-  constructor(private readonly piiDb: D1Database) {}
+  private readonly piiAdapter: DatabaseAdapter;
+
+  constructor(piiDb: DatabaseSource) {
+    this.piiAdapter = ensureDatabaseAdapter(piiDb, 'audit-pii-anonymization');
+  }
 
   /**
    * Get or create anonymized user ID.
    *
    * Uses conflict-safe pattern:
    * 1. SELECT existing mapping
-   * 2. If not found, INSERT with ON CONFLICT DO NOTHING
+   * 2. If not found, INSERT
+   * 3. If a concurrent request wins first, treat UNIQUE as expected race
    * 3. Re-SELECT to get the actual value (handles race conditions)
    */
   async getAnonymizedUserId(tenantId: string, userId: string): Promise<string> {
     // Step 1: Check for existing mapping
-    const existing = await this.piiDb
-      .prepare(
-        'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?'
-      )
-      .bind(tenantId, userId)
-      .first<{ anonymized_user_id: string }>();
+    const existing = await this.piiAdapter.queryOne<{ anonymized_user_id: string }>(
+      'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
+    );
 
     if (existing) {
       return existing.anonymized_user_id;
@@ -81,30 +88,22 @@ export class AnonymizationService implements IAnonymizationService {
     const createdAt = Date.now();
 
     try {
-      await this.piiDb
-        .prepare(
-          `INSERT INTO user_anonymization_map (id, tenant_id, user_id, anonymized_user_id, created_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT (tenant_id, user_id) DO NOTHING`
-        )
-        .bind(id, tenantId, userId, anonymizedId, createdAt)
-        .run();
+      await this.piiAdapter.execute(
+        `INSERT INTO user_anonymization_map (id, tenant_id, user_id, anonymized_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [id, tenantId, userId, anonymizedId, createdAt]
+      );
     } catch (error) {
-      // Handle D1 versions that may not support ON CONFLICT
-      const errorMessage = String(error);
-      if (!errorMessage.includes('UNIQUE constraint')) {
+      if (!isUniqueConstraintError(error)) {
         throw error;
       }
-      // UNIQUE constraint means another request won the race - that's fine
     }
 
     // Step 3: Re-SELECT to get the actual value (handles race conditions)
-    const inserted = await this.piiDb
-      .prepare(
-        'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?'
-      )
-      .bind(tenantId, userId)
-      .first<{ anonymized_user_id: string }>();
+    const inserted = await this.piiAdapter.queryOne<{ anonymized_user_id: string }>(
+      'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
+    );
 
     if (!inserted) {
       throw new Error(
@@ -119,24 +118,22 @@ export class AnonymizationService implements IAnonymizationService {
    * Delete anonymization mapping (GDPR "right to be forgotten").
    */
   async deleteMapping(tenantId: string, userId: string): Promise<boolean> {
-    const result = await this.piiDb
-      .prepare('DELETE FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?')
-      .bind(tenantId, userId)
-      .run();
+    const result = await this.piiAdapter.execute(
+      'DELETE FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
+    );
 
-    return (result.meta?.changes ?? 0) > 0;
+    return result.rowsAffected > 0;
   }
 
   /**
    * Get real user ID from anonymized ID (admin use only).
    */
   async getRealUserId(tenantId: string, anonymizedUserId: string): Promise<string | null> {
-    const mapping = await this.piiDb
-      .prepare(
-        'SELECT user_id FROM user_anonymization_map WHERE tenant_id = ? AND anonymized_user_id = ?'
-      )
-      .bind(tenantId, anonymizedUserId)
-      .first<{ user_id: string }>();
+    const mapping = await this.piiAdapter.queryOne<{ user_id: string }>(
+      'SELECT user_id FROM user_anonymization_map WHERE tenant_id = ? AND anonymized_user_id = ?',
+      [tenantId, anonymizedUserId]
+    );
 
     return mapping?.user_id ?? null;
   }
@@ -145,10 +142,10 @@ export class AnonymizationService implements IAnonymizationService {
 /**
  * Create an anonymization service instance.
  *
- * @param piiDb - D1 database instance (PII database)
+ * @param piiDb - Database source for the PII audit plane
  * @returns Anonymization service
  */
-export function createAnonymizationService(piiDb: D1Database): IAnonymizationService {
+export function createAnonymizationService(piiDb: DatabaseSource): IAnonymizationService {
   return new AnonymizationService(piiDb);
 }
 
@@ -160,13 +157,13 @@ export function createAnonymizationService(piiDb: D1Database): IAnonymizationSer
  * Batch get anonymized user IDs.
  * Efficient for bulk operations.
  *
- * @param piiDb - D1 database instance
+ * @param piiDb - Database source for the PII audit plane
  * @param tenantId - Tenant identifier
  * @param userIds - List of real user IDs
  * @returns Map of userId -> anonymizedUserId
  */
 export async function batchGetAnonymizedUserIds(
-  piiDb: D1Database,
+  piiDb: DatabaseSource,
   tenantId: string,
   userIds: string[]
 ): Promise<Map<string, string>> {
@@ -194,36 +191,35 @@ export async function batchGetAnonymizedUserIds(
 /**
  * List all anonymization mappings for a tenant (admin use only).
  *
- * @param piiDb - D1 database instance
+ * @param piiDb - Database source for the PII audit plane
  * @param tenantId - Tenant identifier
  * @param limit - Max number of results (default: 100)
  * @param offset - Offset for pagination (default: 0)
  * @returns List of anonymization mappings
  */
 export async function listAnonymizationMappings(
-  piiDb: D1Database,
+  piiDb: DatabaseSource,
   tenantId: string,
   limit: number = 100,
   offset: number = 0
 ): Promise<UserAnonymizationMap[]> {
-  const results = await piiDb
-    .prepare(
-      `SELECT id, tenant_id, user_id, anonymized_user_id, created_at
-       FROM user_anonymization_map
-       WHERE tenant_id = ?
-       ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`
-    )
-    .bind(tenantId, limit, offset)
-    .all<{
-      id: string;
-      tenant_id: string;
-      user_id: string;
-      anonymized_user_id: string;
-      created_at: number;
-    }>();
+  const adapter = ensureDatabaseAdapter(piiDb, 'audit-pii-anonymization');
+  const results = await adapter.query<{
+    id: string;
+    tenant_id: string;
+    user_id: string;
+    anonymized_user_id: string;
+    created_at: number;
+  }>(
+    `SELECT id, tenant_id, user_id, anonymized_user_id, created_at
+     FROM user_anonymization_map
+     WHERE tenant_id = ?
+     ORDER BY created_at DESC
+     LIMIT ? OFFSET ?`,
+    [tenantId, limit, offset]
+  );
 
-  return (results.results ?? []).map((row) => ({
+  return results.map((row) => ({
     id: row.id,
     tenantId: row.tenant_id,
     userId: row.user_id,

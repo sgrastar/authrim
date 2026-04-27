@@ -12,7 +12,7 @@
  * - KV-based configuration with caching
  *
  * @see region-sharding.ts for region sharding design
- * @see docs/architecture/refresh-token-sharding.md
+ * @see docs/architecture/storage/refresh-token-sharding.md
  */
 
 import type { Env } from '../types/env';

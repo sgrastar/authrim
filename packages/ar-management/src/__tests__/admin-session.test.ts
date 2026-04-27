@@ -14,7 +14,7 @@ const {
   mockLogger,
   mockAdminAdapter,
   mockAdminSessionRepo,
-  MockD1Adapter,
+  mockRequireDedicatedAdminDatabaseAdapter,
   MockAdminSessionRepository,
 } = vi.hoisted(() => {
   const logger = {
@@ -36,10 +36,6 @@ const {
     deleteSession: vi.fn(),
   };
 
-  const MockD1Adapter = vi.fn(function MockD1Adapter() {
-    return adminAdapter;
-  });
-
   const MockAdminSessionRepository = vi.fn(function MockAdminSessionRepository() {
     return adminSessionRepo;
   });
@@ -57,7 +53,7 @@ const {
     mockLogger: logger,
     mockAdminAdapter: adminAdapter,
     mockAdminSessionRepo: adminSessionRepo,
-    MockD1Adapter,
+    mockRequireDedicatedAdminDatabaseAdapter: vi.fn().mockReturnValue(adminAdapter),
     MockAdminSessionRepository,
   };
 });
@@ -76,7 +72,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     parseAllowedOrigins: mockParseAllowedOrigins,
     isAllowedOrigin: mockIsAllowedOrigin,
     getLogger: mockGetLogger,
-    D1Adapter: MockD1Adapter,
+    requireDedicatedAdminDatabaseAdapter: mockRequireDedicatedAdminDatabaseAdapter,
     AdminSessionRepository: MockAdminSessionRepository,
     publishEvent: mockPublishEvent,
     getAdminCookieSameSite: mockGetAdminCookieSameSite,
@@ -119,6 +115,7 @@ describe('Admin Session Handlers', () => {
     mockPublishEvent.mockResolvedValue(undefined);
     mockGetAdminCookieSameSite.mockReturnValue('Lax');
     mockGetLogger.mockReturnValue(mockLogger);
+    mockRequireDedicatedAdminDatabaseAdapter.mockReturnValue(mockAdminAdapter);
   });
 
   it('returns session details when the admin user has an allowed role', async () => {

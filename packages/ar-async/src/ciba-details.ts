@@ -12,6 +12,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getClient,
+  createAuthContextFromHono,
   getDefaultTenantId,
   getTenantIdFromContext,
   buildDOInstanceName,
@@ -86,7 +87,11 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Enrich with client metadata from KV cache (with D1 fallback)
-    const client = await getClient(c.env, metadata.client_id);
+    const client = await getClient(
+      c.env,
+      metadata.client_id,
+      createAuthContextFromHono(c, tenantId).coreAdapter
+    );
 
     // Calculate time remaining
     const now = Math.floor(Date.now() / 1000);

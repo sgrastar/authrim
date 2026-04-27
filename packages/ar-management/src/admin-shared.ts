@@ -1,11 +1,11 @@
 import { Context } from 'hono';
 import {
-  D1Adapter,
   type DatabaseAdapter,
   getTenantIdFromContext,
   getLogger,
   AdminAuditLogRepository,
   type AdminAuthContext,
+  requireAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -113,8 +113,7 @@ export function detectImageType(data: Uint8Array): ImageTypeInfo | null {
 }
 
 function getAdminAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  const db = c.env.DB_ADMIN ?? c.env.DB;
-  return new D1Adapter({ db });
+  return requireAdminDatabaseAdapter(c.env, 'admin-shared');
 }
 
 async function createAdminAuditLog(

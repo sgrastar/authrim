@@ -10,6 +10,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
+const { mockPostgresAdapterFactory } = vi.hoisted(() => ({
+  mockPostgresAdapterFactory: vi.fn(),
+}));
+
 // Mock specific submodules to avoid ESM barrel export resolution issues
 // Vite's barrel export resolution can't handle deep `export *` chains with vi.spyOn,
 // so we mock the specific source modules directly.
@@ -61,6 +65,63 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       nonPiiDb: env.DB,
       piiDb: env.DB_PII ?? null,
     })),
+    resolveTenantRuntimeProfilesFromEnv: vi.fn(async (env: Partial<Env>) => {
+      const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
+      if (auditProfileId === 'builtin:audit:archive-only-logpush') {
+        return {
+          auditProfile: {
+            id: 'builtin:audit:archive-only-logpush',
+            kind: 'audit',
+            label: 'Archive Only + Logpush',
+            builtin: true,
+            primary: null,
+            archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+            sinks: [],
+          },
+        };
+      }
+      if (auditProfileId === 'custom:audit:postgres-primary') {
+        return {
+          auditProfile: {
+            id: 'custom:audit:postgres-primary',
+            kind: 'audit',
+            label: 'Postgres Primary',
+            builtin: false,
+            primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
+            archive: null,
+            sinks: [],
+          },
+        };
+      }
+      return {
+          auditProfile: {
+            id: 'builtin:audit:standard',
+            kind: 'audit',
+            label: 'Standard Audit',
+            builtin: true,
+            primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+            archive: null,
+            sinks: [],
+          },
+      };
+    }),
+    PostgresAdapter: vi.fn().mockImplementation(function MockPostgresAdapter(config: unknown) {
+      const adapter = mockPostgresAdapterFactory(config);
+      if (!adapter) {
+        throw new Error('mockPostgresAdapterFactory returned no adapter');
+      }
+      return adapter;
+    }),
+    MysqlAdapter: vi.fn().mockImplementation(function MockMysqlAdapter(config: unknown) {
+      const adapter = mockPostgresAdapterFactory(config);
+      if (!adapter) {
+        throw new Error('mockPostgresAdapterFactory returned no adapter');
+      }
+      return adapter;
+    }),
+    createExternalAuditDatabaseAdapter: vi.fn((env: unknown, target: unknown, partition: unknown) =>
+      mockPostgresAdapterFactory({ env, target, partition })
+    ),
   };
 });
 
@@ -73,6 +134,8 @@ import {
   adminUserDeleteHandler,
   adminUserAnonymizeHandler,
   adminUserSendEmailHandler,
+  adminAuditLogListHandler,
+  adminUserActivityLogHandler,
   adminClientsListHandler,
   adminClientGetHandler,
   adminClientCreateHandler,
@@ -267,6 +330,7 @@ function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
 describe('Admin API Handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPostgresAdapterFactory.mockReset();
   });
 
   afterEach(() => {
@@ -372,6 +436,153 @@ describe('Admin API Handlers', () => {
           recentActivity: [],
         })
       );
+    });
+  });
+
+  describe('archive-only audit hot query guard', () => {
+    it('returns not_supported for audit log list when archive-only profile is active', async () => {
+      const c = createMockContext({
+        envOverrides: {
+          DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush',
+        } as Partial<Env>,
+      });
+
+      const response = await adminAuditLogListHandler(c);
+      expect(response.status).toBe(501);
+      const body = (await response.json()) as {
+        error: string;
+        profile_id: string;
+        hot_query_status: string;
+      };
+      expect(body.error).toBe('not_supported');
+      expect(body.profile_id).toBe('builtin:audit:archive-only-logpush');
+      expect(body.hot_query_status).toBe('not_supported');
+    });
+
+    it('returns pending_runtime_support for non-D1 primary audit profiles', async () => {
+      const c = createMockContext({
+        envOverrides: {
+          DEFAULT_AUDIT_PROFILE_ID: 'custom:audit:postgres-primary',
+        } as Partial<Env>,
+      });
+
+      const response = await adminAuditLogListHandler(c);
+      expect(response.status).toBe(501);
+      const body = (await response.json()) as {
+        error: string;
+        profile_id: string;
+        hot_query_status: string;
+      };
+      expect(body.error).toBe('not_supported');
+      expect(body.profile_id).toBe('custom:audit:postgres-primary');
+      expect(body.hot_query_status).toBe('pending_runtime_support');
+    });
+
+    it('returns audit log entries from postgres primary when a Hyperdrive binding is configured', async () => {
+      mockPostgresAdapterFactory.mockReturnValue({
+        queryOne: vi
+          .fn()
+          .mockResolvedValueOnce({ total: 1 }),
+        query: vi.fn().mockResolvedValue([
+          {
+            id: 'evt-1',
+            anonymized_user_id: null,
+            event_type: 'token.issued',
+            event_category: 'token',
+            result: 'success',
+            severity: 'info',
+            error_code: null,
+            error_message: null,
+            client_id: 'client-1',
+            session_id: 'session-1',
+            request_id: 'req-1',
+            details_json: JSON.stringify({
+              resourceType: 'client',
+              resourceId: 'client-1',
+            }),
+            created_at: 1710000000000,
+          },
+        ]),
+      });
+
+      const c = createMockContext({
+        envOverrides: {
+          DEFAULT_AUDIT_PROFILE_ID: 'custom:audit:postgres-primary',
+          HYPERDRIVE_AUDIT_PRIMARY: {
+            connectionString: 'postgres://audit:secret@example.com:5432/authrim',
+          } as unknown as Hyperdrive,
+        } as Partial<Env>,
+      });
+
+      const response = await adminAuditLogListHandler(c);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        entries: Array<Record<string, unknown>>;
+        pagination: { total: number };
+      };
+
+      expect(body.pagination.total).toBe(1);
+      expect(body.entries).toEqual([
+        expect.objectContaining({
+          id: 'evt-1',
+          action: 'token.issued',
+          resourceType: 'client',
+          resourceId: 'client-1',
+          clientId: 'client-1',
+        }),
+      ]);
+    });
+  });
+
+  describe('adminUserActivityLogHandler', () => {
+    it('reads unified event_log entries using current schema columns', async () => {
+      const mockDB = createSqlAwareMockDB(async (sql, params, op) => {
+        if (sql.includes('SELECT id FROM users_core')) {
+          return { id: 'user-1' };
+        }
+
+        if (sql.includes('FROM event_log') && op === 'all') {
+          expect(sql).toContain('anonymized_user_id = ?');
+          expect(sql).toContain('details_json as details');
+          expect(params).toContain('anon-user-1');
+          return [
+            {
+              id: 'audit-1',
+              action: 'auth.login',
+              details: JSON.stringify({ method: 'passkey' }),
+              created_at: 1710000000000,
+              ip_address: '127.0.0.1',
+              user_agent: 'Vitest',
+            },
+          ];
+        }
+
+        if (sql.includes('SELECT anonymized_user_id FROM user_anonymization_map')) {
+          return { anonymized_user_id: 'anon-user-1' };
+        }
+
+        return null;
+      });
+
+      const c = createMockContext({
+        params: { id: 'user-1' },
+        db: mockDB,
+        dbPII: mockDB,
+      });
+
+      const response = await adminUserActivityLogHandler(c);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: Array<{ action: string; details: Record<string, unknown>; ip_address: string | null }>;
+      };
+
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0]).toMatchObject({
+        action: 'auth.login',
+        details: expect.objectContaining({ method: 'passkey' }),
+        ip_address: '127.0.0.1',
+        user_agent: 'Vitest',
+      });
     });
   });
 

@@ -21,8 +21,8 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import type { AdminAuthContext } from '../types/admin';
-import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
+import { requireAdminDatabaseAdapter } from '../services/admin-database-adapter';
 import { createLogger } from '../utils/logger';
 import { hasAdminPermission } from '../types/admin-user';
 import { getDefaultTenantId } from '../utils/issuer';
@@ -146,10 +146,7 @@ async function authenticateSession(
   requiredRoles: string[] = ['super_admin', 'security_admin', 'admin', 'support', 'viewer']
 ): Promise<AdminAuthContext | null> {
   try {
-    // Use DB_ADMIN for Admin/EndUser separation
-    // If DB_ADMIN is not available, fall back to DB (for backward compatibility during migration)
-    const db = c.env.DB_ADMIN ?? c.env.DB;
-    const adminAdapter: DatabaseAdapter = new D1Adapter({ db });
+    const adminAdapter: DatabaseAdapter = requireAdminDatabaseAdapter(c.env, 'admin-auth');
     const now = Date.now();
 
     // Fetch session from admin_sessions
@@ -276,9 +273,7 @@ async function isIpAllowed(c: Context<{ Bindings: Env }>, tenantId: string): Pro
       return true; // Allow if we can't determine IP (fail open)
     }
 
-    // Use DB_ADMIN for IP allowlist
-    const db = c.env.DB_ADMIN ?? c.env.DB;
-    const adminAdapter: DatabaseAdapter = new D1Adapter({ db });
+    const adminAdapter: DatabaseAdapter = requireAdminDatabaseAdapter(c.env, 'admin-auth');
 
     // Check if any enabled entries exist
     const entries = await adminAdapter.query<{

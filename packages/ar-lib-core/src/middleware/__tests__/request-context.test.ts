@@ -11,14 +11,22 @@ function createMockDB(options: { tenantRow?: { id: string } | null; shouldThrow?
   const { tenantRow = null, shouldThrow = false } = options;
 
   return {
-    prepare: vi.fn().mockImplementation(() => ({
-      bind: vi.fn().mockReturnValue({
-        first: vi.fn().mockImplementation(async () => {
-          if (shouldThrow) throw new Error('DB error');
-          return tenantRow;
+    prepare: vi.fn().mockImplementation((sql: string) => {
+      const executeFirst = vi.fn().mockImplementation(async () => {
+        if (shouldThrow) throw new Error('DB error');
+        if (sql.includes('SELECT 1')) {
+          return { '1': 1 };
+        }
+        return tenantRow;
+      });
+
+      return {
+        bind: vi.fn().mockReturnValue({
+          first: executeFirst,
         }),
-      }),
-    })),
+        first: executeFirst,
+      };
+    }),
     batch: vi.fn(),
   } as unknown as D1Database;
 }

@@ -13,7 +13,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -74,8 +74,8 @@ export interface AccessControlStats {
 /**
  * Create database adapter from context
  */
-function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+function createAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 // =============================================================================
@@ -90,7 +90,7 @@ export async function adminAccessControlStatsHandler(c: Context<{ Bindings: Env 
   const tenantId = getTenantIdFromContext(c);
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Execute all queries in parallel for performance
     const [rbacStats, abacStats, rebacStats, policyStats] = await Promise.all([

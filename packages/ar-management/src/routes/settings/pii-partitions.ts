@@ -17,6 +17,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
   type PartitionSettings,
   type PartitionRule,
   type UserPartitionAttributes,
@@ -301,13 +302,9 @@ export async function testPartitionRouting(c: Context<{ Bindings: Env }>) {
  * - byPartition: Map of partition → user count
  */
 export async function getPartitionStats(c: Context<{ Bindings: Env }>) {
-  const db = c.env.DB;
-  if (!db) {
-    return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
-  }
-
   const tenantId = c.req.query('tenant_id');
   const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);
+  const coreAdapter = createAuthContextFromHono(c, tenantId ?? undefined).coreAdapter;
 
   // Query partition statistics
   const sql = tenantId
@@ -317,15 +314,11 @@ export async function getPartitionStats(c: Context<{ Bindings: Env }>) {
   const params = tenantId ? [tenantId] : [];
 
   try {
-    const result = await db
-      .prepare(sql)
-      .bind(...params)
-      .all();
-
+    const result = await coreAdapter.query<{ pii_partition: string; count: number }>(sql, params);
     const byPartition: Record<string, number> = {};
     let total = 0;
 
-    for (const row of result.results as { pii_partition: string; count: number }[]) {
+    for (const row of result) {
       byPartition[row.pii_partition] = row.count;
       total += row.count;
     }

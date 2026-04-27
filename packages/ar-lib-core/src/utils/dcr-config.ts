@@ -4,7 +4,7 @@
  * Provides helper functions for reading DCR settings from KV/env.
  * Uses the Settings API v2 storage format for consistency.
  *
- * Priority: KV > Environment variable > Default value
+ * Priority: SETTINGS KV > legacy AUTHRIM_CONFIG KV > Environment variable > Default value
  *
  * Settings:
  * - dcr.enabled: Enable Dynamic Client Registration (default: false)
@@ -53,20 +53,23 @@ async function loadDCRSettingsFromKV(
     return cached.data;
   }
 
-  // Try to load from AUTHRIM_CONFIG KV
-  if (!env.AUTHRIM_CONFIG) {
-    return {};
-  }
-
-  try {
-    const json = await env.AUTHRIM_CONFIG.get(cacheKey);
-    if (json) {
-      const data = JSON.parse(json) as Record<string, unknown>;
-      cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
-      return data;
+  // Settings API v2 stores category-scoped tenant settings in SETTINGS.
+  // Keep AUTHRIM_CONFIG as a legacy fallback for older deployments.
+  for (const kv of [env.SETTINGS, env.AUTHRIM_CONFIG]) {
+    if (!kv) {
+      continue;
     }
-  } catch (error) {
-    log.warn('Failed to load DCR settings from KV');
+
+    try {
+      const json = await kv.get(cacheKey);
+      if (json) {
+        const data = JSON.parse(json) as Record<string, unknown>;
+        cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+        return data;
+      }
+    } catch (error) {
+      log.warn('Failed to load DCR settings from KV');
+    }
   }
 
   return {};

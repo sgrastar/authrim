@@ -14,6 +14,7 @@ import {
   createStorageAdapter,
 } from '../cloudflare-adapter';
 import type { Env } from '../../../types/env';
+import * as sessionHelper from '../../../utils/session-helper';
 
 // Helper to create mock DO stubs with RPC methods
 function createMockSessionStoreDO() {
@@ -205,9 +206,10 @@ describe('CloudflareStorageAdapter', () => {
       expect(env.AUTH_CODE_STORE.get).toHaveBeenCalled();
     });
 
-    it('should route refreshtoken: prefix to RefreshTokenRotator DO', async () => {
-      await adapter.get('refreshtoken:family_123');
-      expect(env.REFRESH_TOKEN_ROTATOR.get).toHaveBeenCalled();
+    it('should reject low-level refreshtoken reads without routing metadata', async () => {
+      await expect(adapter.get('refreshtoken:family_123')).rejects.toThrow(
+        'Use getRefreshToken() from @authrim/ar-lib-core/utils/refresh-token-store instead.'
+      );
     });
 
     it('should throw error for unknown prefixes (KV fallback is deprecated)', async () => {
@@ -236,6 +238,28 @@ describe('CloudflareStorageAdapter', () => {
       expect(env.CLIENTS_CACHE?.delete).toHaveBeenCalled();
     });
 
+    it('should set value with refreshtoken: prefix via sharded refresh token helper', async () => {
+      const mockCreateFamilyRpc = vi.fn().mockResolvedValue({ familyId: 'family_123' });
+      (env.REFRESH_TOKEN_ROTATOR.get as any).mockReturnValue({
+        createFamilyRpc: mockCreateFamilyRpc,
+      });
+
+      await adapter.set(
+        'refreshtoken:g1:wnam:7:rt_123',
+        JSON.stringify({
+          jti: 'g1:wnam:7:rt_123',
+          client_id: 'client_123',
+          sub: 'user_123',
+          scope: 'openid offline_access',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        })
+      );
+
+      expect(env.REFRESH_TOKEN_ROTATOR.get).toHaveBeenCalled();
+      expect(mockCreateFamilyRpc).toHaveBeenCalled();
+    });
+
     it('should throw error for unknown prefixes (KV fallback is deprecated)', async () => {
       await expect(adapter.set('custom:key', 'value', 3600)).rejects.toThrow(
         'setToKV called with custom:key - CLIENTS KV is deprecated'
@@ -258,6 +282,12 @@ describe('CloudflareStorageAdapter', () => {
       await adapter.delete('client:test-client');
       expect(env.DB.prepare).toHaveBeenCalled();
       expect(env.CLIENTS_CACHE?.delete).toHaveBeenCalled();
+    });
+
+    it('should reject low-level refreshtoken deletes without routing metadata', async () => {
+      await expect(adapter.delete('refreshtoken:family_123')).rejects.toThrow(
+        'Use deleteRefreshToken() from @authrim/ar-lib-core/utils/refresh-token-store instead.'
+      );
     });
 
     it('should throw error for unknown prefixes (KV fallback is deprecated)', async () => {
@@ -617,7 +647,7 @@ describe('SessionStore', () => {
 
   it('should get session by ID', async () => {
     const mockSession = {
-      id: 'session_123',
+      id: 'g1:wnam:7:session_123',
       user_id: 'user_123',
       created_at: 1234567890,
       expires_at: 1234567890 + 86400,
@@ -625,9 +655,10 @@ describe('SessionStore', () => {
     const mockGetSessionRpc = vi.fn().mockResolvedValue(mockSession);
     (env.SESSION_STORE.get as any).mockReturnValue({ getSessionRpc: mockGetSessionRpc });
 
-    const session = await sessionStore.get('session_123');
+    const session = await sessionStore.get('g1:wnam:7:session_123');
     expect(session).toEqual(mockSession);
-    expect(mockGetSessionRpc).toHaveBeenCalledWith('session_123');
+    expect(mockGetSessionRpc).toHaveBeenCalledWith('g1:wnam:7:session_123');
+    expect(env.SESSION_STORE.idFromName).toHaveBeenCalledWith('default:wnam:ses:7');
   });
 
   it('should return null for non-existent session', async () => {
@@ -639,20 +670,38 @@ describe('SessionStore', () => {
   });
 
   it('should create new session', async () => {
-    const mockCreateSessionRpc = vi.fn().mockResolvedValue({
-      id: 'session_new',
-      expiresAt: Date.now() + 86400000,
-    });
-    (env.SESSION_STORE.get as any).mockReturnValue({ createSessionRpc: mockCreateSessionRpc });
+    const mockCreateSessionRpc = vi
+      .fn()
+      .mockImplementation(async (sessionId: string, userId: string, ttl: number, data: unknown) => ({
+        id: sessionId,
+        userId,
+        expiresAt: Date.now() + ttl * 1000,
+        data,
+      }));
+    const getSessionStoreForNewSessionSpy = vi
+      .spyOn(sessionHelper, 'getSessionStoreForNewSession')
+      .mockResolvedValue({
+        stub: {
+          createSessionRpc: mockCreateSessionRpc,
+        } as any,
+        sessionId: 'g1:wnam:7:session_test',
+        resolution: {
+          generation: 1,
+          regionKey: 'wnam',
+          shardIndex: 7,
+        },
+        instanceName: 'default:wnam:ses:7',
+      });
 
     const session = await sessionStore.create({ user_id: 'user_123', data: { amr: ['pwd'] } });
-    expect(session.id).toBeDefined();
+    expect(session.id).toBe('g1:wnam:7:session_test');
     expect(mockCreateSessionRpc).toHaveBeenCalledWith(
-      expect.any(String), // sessionId
+      'g1:wnam:7:session_test',
       'user_123',
       expect.any(Number), // ttl
       { amr: ['pwd'] }
     );
+    getSessionStoreForNewSessionSpy.mockRestore();
   });
 
   it('should delete session', async () => {
@@ -665,32 +714,10 @@ describe('SessionStore', () => {
     expect(mockInvalidateSessionRpc).toHaveBeenCalledWith('session_123');
   });
 
-  it('should list sessions by user', async () => {
-    // SessionStore DO returns SessionResponse[] format (id, userId, expiresAt, createdAt, data)
-    const mockSessionResponses = [
-      {
-        id: 'session_1',
-        userId: 'user_123',
-        expiresAt: 1234567890 + 86400,
-        createdAt: 1234567890,
-        data: {},
-      },
-      {
-        id: 'session_2',
-        userId: 'user_123',
-        expiresAt: 1234567891 + 86400,
-        createdAt: 1234567891,
-        data: {},
-      },
-    ];
-    const mockListUserSessionsRpc = vi.fn().mockResolvedValue(mockSessionResponses);
-    (env.SESSION_STORE.get as any).mockReturnValue({
-      listUserSessionsRpc: mockListUserSessionsRpc,
-    });
-
-    const sessions = await sessionStore.listByUser('user_123');
-    expect(sessions).toHaveLength(2);
-    expect(mockListUserSessionsRpc).toHaveBeenCalledWith('user_123');
+  it('should reject listByUser without a user-session index', async () => {
+    await expect(sessionStore.listByUser('user_123')).rejects.toThrow(
+      'is not supported for region-sharded sessions without a user-session index'
+    );
   });
 
   it('should extend session expiration', async () => {

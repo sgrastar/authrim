@@ -18,7 +18,9 @@
  * ```
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import { resolveEffectiveRoles } from './rbac-claims';
 
 /**
@@ -116,28 +118,26 @@ export function parseScopeToActions(scope: string): ScopeAction[] {
  * @returns Set of permission strings (e.g., "documents:read")
  */
 async function getUserPermissionsFromRoles(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string
 ): Promise<Set<string>> {
   const now = Math.floor(Date.now() / 1000);
 
   // Get permissions from all active roles
-  const result = await db
-    .prepare(
-      `SELECT DISTINCT r.permissions_json
+  const rows = await ensureDatabaseAdapter(db, 'policy-embedding').query<{ permissions_json: string }>(
+    `SELECT DISTINCT r.permissions_json
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
          AND r.permissions_json IS NOT NULL
-         AND r.permissions_json != '[]'`
-    )
-    .bind(subjectId, now)
-    .all<{ permissions_json: string }>();
+         AND r.permissions_json != '[]'`,
+    [subjectId, now]
+  );
 
   const permissionsSet = new Set<string>();
 
-  for (const r of result.results) {
+  for (const r of rows) {
     try {
       const perms = JSON.parse(r.permissions_json) as string[];
       for (const p of perms) {
@@ -176,7 +176,7 @@ async function getUserPermissionsFromRoles(
  * // 'users:manage' is excluded because user doesn't have that permission
  */
 export async function evaluatePermissionsForScope(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   scope: string,
   options: PolicyEmbeddingOptions = {}

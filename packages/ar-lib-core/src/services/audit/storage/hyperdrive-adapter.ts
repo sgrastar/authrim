@@ -6,7 +6,7 @@
  *
  * Features:
  * - Connection pooling via Hyperdrive
- * - PostgreSQL-specific optimizations
+ * - PostgreSQL-specific query support
  * - Compatible with standard PostgreSQL client libraries
  *
  * Note: This adapter requires a PostgreSQL client library to be available.
@@ -14,6 +14,7 @@
  */
 
 import type { EventLogEntry, PIILogEntry } from '../types';
+import type { Client as NodePgClient } from 'pg';
 import type {
   IAuditStorageAdapter,
   AuditStorageBackendType,
@@ -39,6 +40,12 @@ export interface HyperdriveAuditAdapterConfig {
 
   /** Whether this is for PII logs */
   isPiiDb: boolean;
+
+  /**
+   * Optional factory for tests or custom client wiring.
+   * Receives the Hyperdrive-generated connection string.
+   */
+  clientFactory?: (connectionString: string) => Promise<PgClient> | PgClient;
 }
 
 /**
@@ -58,6 +65,41 @@ interface PgClient {
   end(): Promise<void>;
 }
 
+function sanitizeIdentifier(identifier: string): string {
+  if (!/^[A-Za-z0-9_]+$/.test(identifier)) {
+    throw new Error(`invalid_sql_identifier:${identifier}`);
+  }
+  return identifier;
+}
+
+function buildInsertIfNotExistsSql(
+  tableName: string,
+  columns: string[],
+  keyColumn: string,
+  rowCount: number
+): string {
+  const cteColumns = columns.join(', ');
+  const values = Array.from({ length: rowCount }, (_, idx) => {
+    const offset = idx * columns.length;
+    const placeholders = columns.map((_, columnIdx) => `$${offset + columnIdx + 1}`);
+    return `(${placeholders.join(', ')})`;
+  });
+  const selects = columns.map((column) => `incoming.${column}`).join(', ');
+
+  return `
+    WITH incoming (${cteColumns}) AS (
+      VALUES ${values.join(', ')}
+    )
+    INSERT INTO ${tableName} (${cteColumns})
+    SELECT ${selects}
+    FROM incoming
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ${tableName} existing
+      WHERE existing.${keyColumn} = incoming.${keyColumn}
+    )
+  `;
+}
+
 /**
  * Hyperdrive audit storage adapter implementation.
  *
@@ -70,13 +112,15 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
   private readonly hyperdrive: Hyperdrive;
   private readonly schema: string;
   private readonly isPiiDb: boolean;
+  private readonly clientFactory?: HyperdriveAuditAdapterConfig['clientFactory'];
   private client: PgClient | null = null;
 
   constructor(config: HyperdriveAuditAdapterConfig) {
     this.id = config.id;
     this.hyperdrive = config.hyperdrive;
-    this.schema = config.schema;
+    this.schema = sanitizeIdentifier(config.schema);
     this.isPiiDb = config.isPiiDb;
+    this.clientFactory = config.clientFactory;
   }
 
   getBackendType(): AuditStorageBackendType {
@@ -95,36 +139,30 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
   private async getClient(): Promise<PgClient> {
     if (this.client) return this.client;
 
-    // Get connection string from Hyperdrive
     const connectionString = this.hyperdrive.connectionString;
 
-    // Parse connection string
-    // Format: postgres://user:password@host:port/database
-    const url = new URL(connectionString);
+    if (this.clientFactory) {
+      this.client = await this.clientFactory(connectionString);
+      return this.client;
+    }
 
-    // Create a minimal client using fetch (for Workers compatibility)
-    // In production, use @neondatabase/serverless or similar
+    const { Client } = await import('pg');
+    const rawClient: NodePgClient = new Client({
+      connectionString,
+      application_name: 'authrim-audit',
+    });
+    await rawClient.connect();
+
     this.client = {
       query: async <T = unknown>(sql: string, params?: unknown[]): Promise<PgQueryResult<T>> => {
-        // This is a placeholder - in production, use a real PostgreSQL client
-        // For Workers, consider using:
-        // - @neondatabase/serverless
-        // - postgres (porsager/postgres)
-        // - @electric-sql/pglite (for local dev)
-
-        // For now, we'll throw an error indicating the need for a proper client
-        throw new Error(
-          'PostgreSQL client not configured. Use @neondatabase/serverless or similar.'
-        );
-
-        // Example with a real client would be:
-        // const client = new Client(connectionString);
-        // await client.connect();
-        // const result = await client.query(sql, params);
-        // return result as PgQueryResult<T>;
+        const result = await rawClient.query(sql, params);
+        return {
+          rows: result.rows as T[],
+          rowCount: result.rowCount ?? result.rows.length,
+        };
       },
       end: async () => {
-        // Cleanup
+        await rawClient.end();
       },
     };
 
@@ -154,18 +192,28 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     try {
       const client = await this.getClient();
 
-      // Build bulk INSERT with ON CONFLICT DO NOTHING
       const values: unknown[] = [];
-      const placeholders: string[] = [];
+      const columns = [
+        'id',
+        'tenant_id',
+        'event_type',
+        'event_category',
+        'result',
+        'severity',
+        'error_code',
+        'error_message',
+        'anonymized_user_id',
+        'client_id',
+        'session_id',
+        'request_id',
+        'duration_ms',
+        'details_r2_key',
+        'details_json',
+        'retention_until',
+        'created_at',
+      ] as const;
 
-      entries.forEach((e, idx) => {
-        const offset = idx * 17;
-        placeholders.push(
-          `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, ` +
-            `$${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, ` +
-            `$${offset + 11}, $${offset + 12}, $${offset + 13}, $${offset + 14}, $${offset + 15}, ` +
-            `$${offset + 16}, $${offset + 17})`
-        );
+      entries.forEach((e) => {
         values.push(
           e.id,
           e.tenantId,
@@ -187,15 +235,12 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
         );
       });
 
-      const sql = `
-        INSERT INTO ${this.schema}.event_log (
-          id, tenant_id, event_type, event_category, result, severity,
-          error_code, error_message, anonymized_user_id, client_id,
-          session_id, request_id, duration_ms, details_r2_key, details_json,
-          retention_until, created_at
-        ) VALUES ${placeholders.join(', ')}
-        ON CONFLICT (id) DO NOTHING
-      `;
+      const sql = buildInsertIfNotExistsSql(
+        `${this.schema}.event_log`,
+        [...columns],
+        'id',
+        entries.length
+      );
 
       await client.query(sql, values);
 
@@ -236,16 +281,27 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
       const client = await this.getClient();
 
       const values: unknown[] = [];
-      const placeholders: string[] = [];
+      const columns = [
+        'id',
+        'tenant_id',
+        'user_id',
+        'anonymized_user_id',
+        'change_type',
+        'affected_fields',
+        'values_r2_key',
+        'values_encrypted',
+        'encryption_key_id',
+        'encryption_iv',
+        'actor_user_id',
+        'actor_type',
+        'request_id',
+        'legal_basis',
+        'consent_reference',
+        'retention_until',
+        'created_at',
+      ] as const;
 
-      entries.forEach((e, idx) => {
-        const offset = idx * 17;
-        placeholders.push(
-          `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, ` +
-            `$${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, ` +
-            `$${offset + 11}, $${offset + 12}, $${offset + 13}, $${offset + 14}, $${offset + 15}, ` +
-            `$${offset + 16}, $${offset + 17})`
-        );
+      entries.forEach((e) => {
         values.push(
           e.id,
           e.tenantId,
@@ -267,15 +323,12 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
         );
       });
 
-      const sql = `
-        INSERT INTO ${this.schema}.pii_log (
-          id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
-          values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
-          actor_user_id, actor_type, request_id, legal_basis, consent_reference,
-          retention_until, created_at
-        ) VALUES ${placeholders.join(', ')}
-        ON CONFLICT (id) DO NOTHING
-      `;
+      const sql = buildInsertIfNotExistsSql(
+        `${this.schema}.pii_log`,
+        [...columns],
+        'id',
+        entries.length
+      );
 
       await client.query(sql, values);
 
@@ -584,10 +637,28 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
       let params: unknown[];
 
       if (tenantId) {
-        sql = `DELETE FROM ${this.schema}.${table} WHERE retention_until < $1 AND tenant_id = $2 LIMIT $3`;
+        sql = `
+          WITH doomed AS (
+            SELECT ctid
+            FROM ${this.schema}.${table}
+            WHERE retention_until < $1 AND tenant_id = $2
+            LIMIT $3
+          )
+          DELETE FROM ${this.schema}.${table}
+          WHERE ctid IN (SELECT ctid FROM doomed)
+        `;
         params = [beforeTime, tenantId, batchSize];
       } else {
-        sql = `DELETE FROM ${this.schema}.${table} WHERE retention_until < $1 LIMIT $2`;
+        sql = `
+          WITH doomed AS (
+            SELECT ctid
+            FROM ${this.schema}.${table}
+            WHERE retention_until < $1
+            LIMIT $2
+          )
+          DELETE FROM ${this.schema}.${table}
+          WHERE ctid IN (SELECT ctid FROM doomed)
+        `;
         params = [beforeTime, batchSize];
       }
 
@@ -690,6 +761,7 @@ export function createHyperdriveAuditAdapter(
     id?: string;
     schema?: string;
     isPiiDb?: boolean;
+    clientFactory?: HyperdriveAuditAdapterConfig['clientFactory'];
   }
 ): HyperdriveAuditAdapter {
   return new HyperdriveAuditAdapter({
@@ -697,5 +769,6 @@ export function createHyperdriveAuditAdapter(
     hyperdrive,
     schema: options?.schema ?? 'audit',
     isPiiDb: options?.isPiiDb ?? false,
+    clientFactory: options?.clientFactory,
   });
 }

@@ -9,11 +9,11 @@ import type { Env } from '../../types';
 import {
   createSDJWTVC,
   type SDJWTVCCreateOptions,
-  D1Adapter,
   IssuedCredentialRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import { validateVCIAccessToken } from '../services/token-validation';
 import { generateSecureNonce } from '../../utils/crypto';
@@ -61,7 +61,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Look up deferred credential using repository
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core');
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
 
     const result = await issuedCredentialRepo.findDeferredByIdAndUser(

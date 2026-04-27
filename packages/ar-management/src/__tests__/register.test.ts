@@ -287,10 +287,9 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.client_id).toBeDefined();
       expect(json.client_name).toBe('Test Client');
 
-      // Verify client was stored in D1 (source of truth)
-      // The implementation uses INSERT OR REPLACE into oauth_clients table
+      // Verify client was stored in the core relational source of truth.
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT OR REPLACE INTO oauth_clients')
+        expect.stringContaining('INSERT INTO oauth_clients')
       );
 
       // Verify the run method was called (client was actually inserted)

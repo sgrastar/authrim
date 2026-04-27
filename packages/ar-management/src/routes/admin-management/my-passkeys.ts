@@ -16,7 +16,6 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   AdminPasskeyRepository,
   AdminAuditLogRepository,
   createErrorResponse,
@@ -24,6 +23,7 @@ import {
   getTenantIdFromContext,
   adminAuthMiddleware,
   generateId,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import type {
@@ -82,10 +82,7 @@ function toBase64URLString(input: CredentialIDLike): string {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getAdminAdapter(c: Context<any, any, any>) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
-  }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
 }
 
 /**

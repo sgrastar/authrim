@@ -9,7 +9,6 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   AdminAttributeRepository,
   AdminAttributeValueRepository,
   AdminAuditLogRepository,
@@ -19,6 +18,7 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 
 // Define context type
@@ -42,10 +42,7 @@ adminAbacRouter.use(
  * Helper to get DB_ADMIN adapter
  */
 function getAdminAdapter(c: AdminContext) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
-  }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
 }
 
 /**

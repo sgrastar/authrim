@@ -242,7 +242,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
     );
 
     // Invalidate consent cache
-    await invalidateConsentCache(c.env, userId, clientId);
+    await invalidateConsentCache(c.env, userId, tenantId, clientId);
 
     // Revoke related tokens if requested
     let accessTokensRevoked = 0;

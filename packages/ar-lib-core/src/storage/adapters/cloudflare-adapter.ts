@@ -5,11 +5,11 @@
  * Integrates D1, KV, and Durable Objects with intelligent routing logic.
  *
  * Routing Strategy:
- * - session:* → SessionStore Durable Object (hot data) + D1 fallback (cold data)
+ * - session:* → SessionStore Durable Object (region-sharded hot path + cold persistence adapter)
  * - client:* → D1 database + KV cache (read-through cache pattern)
  * - user:* → D1 database
  * - authcode:* → AuthorizationCodeStore Durable Object (one-time use guarantee)
- * - refreshtoken:* → RefreshTokenRotator Durable Object (atomic rotation)
+ * - refreshtoken:* → Deprecated low-level shim (use refresh token helpers instead)
  * - Other keys → KV storage (fallback)
  */
 
@@ -38,10 +38,31 @@ import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
 import { buildDOInstanceName } from '../../utils/tenant-context';
 import { getDefaultTenantId } from '../../utils/issuer';
-import type { SessionResponse } from '../../durable-objects/SessionStore';
 import { createLogger } from '../../utils/logger';
+import {
+  getSessionStoreBySessionId,
+  getSessionStoreForNewSession,
+  isRegionShardedSessionId,
+} from '../../utils/session-helper';
+import { storeRefreshToken } from '../../utils/refresh-token-store';
 
 const log = createLogger().module('CloudflareStorageAdapter');
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
+}
+
+type SessionStoreRpcStub = {
+  getSessionRpc(sessionId: string): Promise<Session | null>;
+  createSessionRpc(
+    sessionId: string,
+    userId: string,
+    ttl: number,
+    data?: Record<string, unknown>
+  ): Promise<Session>;
+  invalidateSessionRpc(sessionId: string): Promise<boolean>;
+  extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null>;
+};
 
 /**
  * CloudflareStorageAdapter
@@ -54,6 +75,23 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
   getConfiguredTenantId(): string {
     return getDefaultTenantId(this.env);
+  }
+
+  private getLegacySessionStoreStub(): SessionStoreRpcStub {
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
+    return this.env.SESSION_STORE.get(doId) as unknown as SessionStoreRpcStub;
+  }
+
+  getExistingSessionStoreStub(sessionId: string): SessionStoreRpcStub {
+    if (isRegionShardedSessionId(sessionId)) {
+      return getSessionStoreBySessionId(
+        this.env,
+        sessionId,
+        this.getConfiguredTenantId()
+      ).stub as unknown as SessionStoreRpcStub;
+    }
+
+    return this.getLegacySessionStoreStub();
   }
 
   /**
@@ -145,8 +183,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async getFromSessionStore(key: string): Promise<string | null> {
     const sessionId = key.substring(8); // Remove 'session:' prefix
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
+    const doStub = this.getExistingSessionStoreStub(sessionId);
 
     const session = await doStub.getSessionRpc(sessionId);
     if (!session) {
@@ -162,8 +199,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   private async setToSessionStore(key: string, value: string, ttl?: number): Promise<void> {
     const sessionData = JSON.parse(value);
     const sessionId = key.substring(8); // Remove 'session:' prefix
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
+    const doStub = this.getExistingSessionStoreStub(sessionId);
 
     await doStub.createSessionRpc(
       sessionId,
@@ -178,8 +214,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async deleteFromSessionStore(key: string): Promise<void> {
     const sessionId = key.substring(8); // Remove 'session:' prefix
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
+    const doStub = this.getExistingSessionStoreStub(sessionId);
 
     await doStub.invalidateSessionRpc(sessionId);
   }
@@ -286,9 +321,26 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    * Set to D1 database
    */
   private async setToD1(key: string, value: string): Promise<void> {
-    await this.env.DB.prepare('INSERT OR REPLACE INTO kv_store (key, data) VALUES (?, ?)')
-      .bind(key, value)
+    const updateResult = await this.env.DB.prepare('UPDATE kv_store SET data = ? WHERE key = ?')
+      .bind(value, key)
       .run();
+    if ((updateResult.meta?.changes ?? 0) > 0) {
+      return;
+    }
+
+    try {
+      await this.env.DB.prepare('INSERT INTO kv_store (key, data) VALUES (?, ?)')
+        .bind(key, value)
+        .run();
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+
+      await this.env.DB.prepare('UPDATE kv_store SET data = ? WHERE key = ?')
+        .bind(value, key)
+        .run();
+    }
   }
 
   /**
@@ -335,85 +387,72 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   /**
    * Get from RefreshTokenRotator Durable Object (RPC)
    *
-   * @deprecated This method uses legacy (non-sharded) routing.
-   * For V3 sharding support, use getRefreshToken() from @authrim/ar-lib-core/utils/kv instead.
-   * Key format: refreshtoken:{familyId} - lacks JTI/clientId for sharding.
+   * @deprecated Refresh token reads require userId/version/clientId/jti.
+   * Legacy key-based access does not carry enough routing metadata for V3 sharding.
    */
   private async getFromRefreshTokenRotator(key: string): Promise<string | null> {
-    log.warn('DEPRECATED: getFromRefreshTokenRotator uses legacy routing', {
-      recommendation:
-        'Use getRefreshToken() from @authrim/ar-lib-core/utils/kv for V3 sharding support.',
-    });
-    const familyId = key.substring(13); // Remove 'refreshtoken:' prefix (familyId = userId in legacy)
-    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
-    const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
-
-    const family = await doStub.getFamilyRpc(familyId);
-    if (!family) {
-      return null;
-    }
-
-    return JSON.stringify(family);
+    throw new Error(
+      `getFromRefreshTokenRotator called with ${key} - refresh token reads require userId/version/clientId/jti. ` +
+        'Use getRefreshToken() from @authrim/ar-lib-core/utils/refresh-token-store instead.'
+    );
   }
 
   /**
    * Set to RefreshTokenRotator Durable Object (RPC)
    *
-   * V3: Supports sharding if familyData contains jti and clientId.
-   * Falls back to legacy routing if sharding info is not available.
+   * V3: Supports sharding via storeRefreshToken() when the payload contains
+   * RefreshTokenData fields (`jti`, `client_id`, `sub`, `scope`, `iat`, `exp`).
    */
   private async setToRefreshTokenRotator(key: string, value: string, ttl?: number): Promise<void> {
-    const familyData = JSON.parse(value);
+    const refreshTokenData = JSON.parse(value) as {
+      jti?: string;
+      client_id?: string;
+      sub?: string;
+      scope?: string;
+      iat?: number;
+      exp?: number;
+    };
 
-    // V3: Try to extract sharding info from familyData
-    let doId: DurableObjectId;
-    const jti = familyData.jti;
-    const clientId = familyData.clientId || familyData.client_id;
-
-    if (jti && clientId) {
-      // V3: Parse JTI and route to sharded DO
-      const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
-        await import('../../utils/refresh-token-sharding');
-      const parsedJti = parseRefreshTokenJti(jti);
-      const instanceName = buildRefreshTokenRotatorInstanceName(
-        clientId,
-        parsedJti.generation,
-        parsedJti.shardIndex
+    if (
+      !refreshTokenData.jti ||
+      !refreshTokenData.client_id ||
+      !refreshTokenData.sub ||
+      typeof refreshTokenData.iat !== 'number' ||
+      typeof refreshTokenData.exp !== 'number'
+    ) {
+      throw new Error(
+        `setToRefreshTokenRotator called with ${key} - payload must include jti, client_id, sub, iat, exp. ` +
+          'Use storeRefreshToken() compatible RefreshTokenData payloads.'
       );
-      doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-    } else {
-      // Legacy: Use non-sharded routing
-      log.warn('DEPRECATED: setToRefreshTokenRotator using legacy routing', {
-        recommendation: 'Include jti and clientId in familyData for V3 sharding support.',
-      });
-      doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     }
 
-    const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
+    if (ttl !== undefined) {
+      log.debug('setToRefreshTokenRotator ignores explicit TTL and uses configured refresh token expiry', {
+        key,
+      });
+    }
 
-    await doStub.createFamilyRpc({
-      ...familyData,
-      ttl: ttl || 30 * 24 * 60 * 60, // Default: 30 days
+    await storeRefreshToken(this.env, refreshTokenData.jti, {
+      jti: refreshTokenData.jti,
+      client_id: refreshTokenData.client_id,
+      sub: refreshTokenData.sub,
+      scope: refreshTokenData.scope || '',
+      iat: refreshTokenData.iat,
+      exp: refreshTokenData.exp,
     });
   }
 
   /**
    * Delete from RefreshTokenRotator Durable Object (RPC)
    *
-   * @deprecated This method uses legacy (non-sharded) routing.
-   * For V3 sharding support, use deleteRefreshToken() from @authrim/ar-lib-core/utils/kv instead.
-   * Key format: refreshtoken:{familyId} - lacks JTI/clientId for sharding.
+   * @deprecated Refresh token deletes require JTI and client_id.
+   * Legacy key-based access does not carry enough routing metadata for V3 sharding.
    */
   private async deleteFromRefreshTokenRotator(key: string): Promise<void> {
-    log.warn('DEPRECATED: deleteFromRefreshTokenRotator uses legacy routing', {
-      recommendation:
-        'Use deleteRefreshToken() from @authrim/ar-lib-core/utils/kv for V3 sharding support.',
-    });
-    const familyId = key.substring(13); // Remove 'refreshtoken:' prefix (familyId = userId in legacy)
-    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
-    const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
-
-    await doStub.revokeFamilyRpc(familyId, 'deleteFromRefreshTokenRotator');
+    throw new Error(
+      `deleteFromRefreshTokenRotator called with ${key} - refresh token deletes require jti + client_id. ` +
+        'Use deleteRefreshToken() from @authrim/ar-lib-core/utils/refresh-token-store instead.'
+    );
   }
 
   /**
@@ -974,8 +1013,7 @@ export class SessionStore implements ISessionStore {
   ) {}
 
   async get(sessionId: string): Promise<Session | null> {
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
+    const doStub = this.adapter.getExistingSessionStoreStub(sessionId);
 
     // RPC call
     const session = await doStub.getSessionRpc(sessionId);
@@ -983,45 +1021,41 @@ export class SessionStore implements ISessionStore {
   }
 
   async create(session: Partial<Session>): Promise<Session> {
-    const id = session.id || `session_${crypto.randomUUID()}`;
     const now = Date.now();
     const ttl = session.expires_at ? Math.floor((session.expires_at - now) / 1000) : 86400;
-
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
+    const resolved = session.id
+      ? {
+          stub: this.adapter.getExistingSessionStoreStub(session.id),
+          sessionId: session.id,
+        }
+      : await getSessionStoreForNewSession(this.env, this.adapter.getConfiguredTenantId());
 
     // RPC call
-    const result = await doStub.createSessionRpc(id, session.user_id!, ttl, session.data);
+    const result = await resolved.stub.createSessionRpc(
+      resolved.sessionId,
+      session.user_id!,
+      ttl,
+      session.data
+    );
     return result as Session;
   }
 
   async delete(sessionId: string): Promise<void> {
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
+    const doStub = this.adapter.getExistingSessionStoreStub(sessionId);
 
     // RPC call
     await doStub.invalidateSessionRpc(sessionId);
   }
 
   async listByUser(userId: string): Promise<Session[]> {
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
-
-    // RPC call - returns SessionResponse[]
-    const sessions: SessionResponse[] = await doStub.listUserSessionsRpc(userId);
-    // Convert SessionResponse[] to Session[] (interface adapts field names)
-    return sessions.map((s: SessionResponse) => ({
-      id: s.id,
-      user_id: s.userId,
-      expires_at: s.expiresAt,
-      created_at: s.createdAt,
-      data: s.data,
-    })) as Session[];
+    throw new Error(
+      `SessionStore.listByUser(${userId}) is not supported for region-sharded sessions ` +
+        'without a user-session index.'
+    );
   }
 
   async extend(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
-    const doStub = this.env.SESSION_STORE.get(doId);
+    const doStub = this.adapter.getExistingSessionStoreStub(sessionId);
 
     // RPC call
     const result = await doStub.extendSessionRpc(sessionId, additionalSeconds);

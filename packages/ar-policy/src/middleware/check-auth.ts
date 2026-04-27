@@ -15,14 +15,16 @@
  * - API key expiration support
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
 import {
+  ensureDatabaseAdapter,
   timingSafeEqual,
   verifyToken,
   importPublicKeyFromJWK,
   parseTokenHeader,
   createLogger,
   DEFAULT_TENANT_ID,
+  type DatabaseSource,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import type { CheckApiKey, RateLimitTier, CheckApiOperation } from '@authrim/ar-lib-core';
@@ -76,7 +78,7 @@ export interface CheckAuthResult {
  * Authentication context for Check API
  */
 export interface CheckAuthContext {
-  db: D1Database;
+  db: DatabaseSource;
   cache?: KVNamespace;
   policyApiSecret?: string;
   defaultTenantId?: string;
@@ -196,32 +198,31 @@ async function validateApiKey(
 
   // Query database by prefix (narrow down candidates) then verify hash
   try {
-    const result = await ctx.db
-      .prepare(
-        `SELECT id, tenant_id, client_id, name, key_hash, key_prefix,
+    const adapter = ensureDatabaseAdapter(ctx.db, 'policy-check-auth');
+    const rows = await adapter.query<{
+      id: string;
+      tenant_id: string;
+      client_id: string;
+      name: string;
+      key_hash: string;
+      key_prefix: string;
+      allowed_operations: string;
+      rate_limit_tier: string;
+      is_active: number;
+      expires_at: number | null;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT id, tenant_id, client_id, name, key_hash, key_prefix,
                 allowed_operations, rate_limit_tier, is_active, expires_at,
                 created_at, updated_at
          FROM check_api_keys
          WHERE key_prefix = ?
-         LIMIT 10`
-      )
-      .bind(keyPrefix)
-      .all<{
-        id: string;
-        tenant_id: string;
-        client_id: string;
-        name: string;
-        key_hash: string;
-        key_prefix: string;
-        allowed_operations: string;
-        rate_limit_tier: string;
-        is_active: number;
-        expires_at: number | null;
-        created_at: number;
-        updated_at: number;
-      }>();
+         LIMIT 10`,
+      [keyPrefix]
+    );
 
-    for (const row of result.results) {
+    for (const row of rows) {
       // Use timing-safe comparison to prevent timing attacks
       if (timingSafeEqual(row.key_hash, keyHash)) {
         // Check if active

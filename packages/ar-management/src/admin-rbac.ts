@@ -2124,7 +2124,7 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const { coreAdapter: adapter } = createAdaptersFromContext(c);
 
     // Check if role name already exists
     const existingRole = await adapter.queryOne<{ id: string }>(
@@ -2214,7 +2214,7 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       permissions?: string[];
     }>();
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const { coreAdapter: adapter } = createAdaptersFromContext(c);
 
     // Get the existing role
     const existingRole = await adapter.queryOne<{
@@ -2327,7 +2327,7 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-RBAC');
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const { coreAdapter: adapter } = createAdaptersFromContext(c);
 
     // Get the existing role
     const existingRole = await adapter.queryOne<{

@@ -23,9 +23,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     set: (key: string, value: unknown) => void;
   };
 
-  class MockD1Adapter {
-    constructor(_options: unknown) {}
-  }
+  const mockAdminAdapter = {};
 
   class MockAdminPolicyRepository {
     listPolicies = policyRepoMocks.listPolicies;
@@ -44,7 +42,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
   return {
     ...actual,
-    D1Adapter: MockD1Adapter,
+    requireDedicatedAdminDatabaseAdapter: vi.fn().mockReturnValue(mockAdminAdapter),
     AdminPolicyRepository: MockAdminPolicyRepository,
     AdminAuditLogRepository: MockAdminAuditLogRepository,
     adminAuthMiddleware: () => {

@@ -13,7 +13,7 @@ import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   escapeLikePattern,
   createAuditLog,
@@ -76,6 +76,10 @@ const AI_GRANT_LIMITS = {
   MAX_GRANT_LIFETIME_SECONDS: 365 * 24 * 60 * 60,
 } as const;
 
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -99,8 +103,11 @@ function getAdminTenantId(c: AdminContext): string {
 /**
  * Create database adapter from context
  */
-function createAdapterFromContext(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+function createAdapterFromContext(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 /**
@@ -156,8 +163,8 @@ function formatGrant(grant: AIGrant) {
  */
 export async function adminAIGrantsListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(c);
+    const adapter = createAdapterFromContext(c, tenantId);
     const page = parseInt(c.req.query('page') || '1');
     const limit = Math.min(parseInt(c.req.query('limit') || '20'), 100);
     const clientId = c.req.query('client_id');
@@ -223,8 +230,8 @@ export async function adminAIGrantsListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminAIGrantGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(c);
+    const adapter = createAdapterFromContext(c, tenantId);
     const grantId = c.req.param('id')!;
 
     const grant = await adapter.queryOne<AIGrant>(
@@ -251,12 +258,15 @@ export async function adminAIGrantGetHandler(c: Context<{ Bindings: Env }>) {
  * Security features:
  * - Input length validation (prevents DoS via oversized strings)
  * - expires_at range validation (prevents infinite grants)
- * - INSERT ON CONFLICT for race condition protection (TOCTOU)
+ * - plain INSERT + unique race handling for TOCTOU protection
  */
 export async function adminAIGrantCreateHandler(c: AdminContext) {
   try {
-    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
     const tenantId = getAdminTenantId(c);
+    const adapter = createAdapterFromContext(
+      c as unknown as Context<{ Bindings: Env }>,
+      tenantId
+    );
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<AIGrantCreateRequest>();
 
@@ -314,31 +324,29 @@ export async function adminAIGrantCreateHandler(c: AdminContext) {
 
     const grantId = generateId();
 
-    // Security: Use INSERT ON CONFLICT DO NOTHING to prevent TOCTOU race condition
-    // This eliminates the gap between checking for existing grant and inserting
-    // If a concurrent request inserts first, this will silently do nothing
-    const insertResult = await adapter.execute(
-      `INSERT INTO ai_grants (
-        id, tenant_id, client_id, ai_principal, scopes, scope_targets,
-        is_active, expires_at, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
-      ON CONFLICT (tenant_id, client_id, ai_principal) DO NOTHING`,
-      [
-        grantId,
-        tenantId,
-        body.client_id,
-        body.ai_principal,
-        body.scopes,
-        body.scope_targets ? JSON.stringify(body.scope_targets) : null,
-        body.expires_at || null,
-        adminAuth?.userId || null,
-        now,
-        now,
-      ]
-    );
-
-    // Check if insert was successful (rowsAffected = 0 means conflict occurred)
-    if (insertResult.rowsAffected === 0) {
+    try {
+      await adapter.execute(
+        `INSERT INTO ai_grants (
+          id, tenant_id, client_id, ai_principal, scopes, scope_targets,
+          is_active, expires_at, created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+        [
+          grantId,
+          tenantId,
+          body.client_id,
+          body.ai_principal,
+          body.scopes,
+          body.scope_targets ? JSON.stringify(body.scope_targets) : null,
+          body.expires_at || null,
+          adminAuth?.userId || null,
+          now,
+          now,
+        ]
+      );
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
       return c.json({ error: 'AI grant already exists for this client and principal' }, 409);
     }
 
@@ -380,8 +388,11 @@ export async function adminAIGrantCreateHandler(c: AdminContext) {
  */
 export async function adminAIGrantUpdateHandler(c: AdminContext) {
   try {
-    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
     const tenantId = getAdminTenantId(c);
+    const adapter = createAdapterFromContext(
+      c as unknown as Context<{ Bindings: Env }>,
+      tenantId
+    );
     const adminAuth = getAdminAuth(c);
     const grantId = c.req.param('id')!;
     const body = await c.req.json<AIGrantUpdateRequest>();
@@ -475,8 +486,11 @@ export async function adminAIGrantUpdateHandler(c: AdminContext) {
  */
 export async function adminAIGrantRevokeHandler(c: AdminContext) {
   try {
-    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
     const tenantId = getAdminTenantId(c);
+    const adapter = createAdapterFromContext(
+      c as unknown as Context<{ Bindings: Env }>,
+      tenantId
+    );
     const adminAuth = getAdminAuth(c);
     const grantId = c.req.param('id')!;
 

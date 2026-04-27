@@ -11,7 +11,7 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   createLogger,
-  D1Adapter,
+  ensureDatabaseAdapter,
   ClientRepository,
   DiagnosticLogR2Adapter,
   createSettingsManager,
@@ -59,7 +59,7 @@ async function validateClient(
   clientSecret?: string
 ): Promise<{ valid: boolean; client?: OAuthClient; error?: string }> {
   try {
-    const adapter = new D1Adapter({ db: env.DB });
+    const adapter = ensureDatabaseAdapter(env.DB, 'diagnostic-logging-client-validation');
     const clientRepo = new ClientRepository(adapter);
     const client = await clientRepo.findByClientId(clientId);
 

@@ -295,6 +295,7 @@ app.use(
       '/introspect', // Token introspection (client auth)
       '/revoke', // Token revocation (client auth)
       '/register', // Dynamic Client Registration (initial access token)
+      '/clients', // RFC 7592 client configuration endpoints (registration_access_token)
       '/userinfo', // UserInfo endpoint (Bearer token auth, not cookies)
       '/logout/backchannel', // Back-channel logout (RP server-to-server)
       '/device_authorization', // Device flow (client auth)
@@ -608,6 +609,7 @@ app.all('/api/ciba/*', async (c) => {
 /**
  * Management endpoints - Route to OP_MANAGEMENT worker
  * - /register (POST) - Dynamic Client Registration (OIDC standard)
+ * - /clients/:client_id (GET/PUT/DELETE) - Client Configuration Management (RFC 7592)
  * - /introspect (POST) - Token Introspection (OAuth 2.0 standard)
  * - /revoke (POST) - Token Revocation (OAuth 2.0 standard)
  * - /api/admin/* - Admin API (users, clients, stats)
@@ -615,6 +617,21 @@ app.all('/api/ciba/*', async (c) => {
  * - /scim/v2/* - SCIM 2.0 User Provisioning (RFC 7643, 7644)
  */
 app.post('/register', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.get('/clients/:client_id', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.put('/clients/:client_id', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.delete('/clients/:client_id', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });

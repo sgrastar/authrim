@@ -42,8 +42,7 @@ import {
   getClientCached,
   loadTenantProfileCached,
   loadClientContractCached,
-  // Database Adapter and Session-Client Repository (for implicit/hybrid logout support)
-  D1Adapter,
+  // Session-Client Repository (for implicit/hybrid logout support)
   SessionClientRepository,
   // Logging
   getLogger,
@@ -2694,10 +2693,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       willSkipConsent: isTrustedClient && !prompt?.includes('consent'),
     });
 
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (isTrustedClient && !prompt?.includes('consent')) {
       // Check if consent already exists (using cache)
-      const existingConsent = await getCachedConsent(c.env, sub, validClientId);
+      const existingConsent = await getCachedConsent(
+        c.env,
+        sub,
+        validClientId,
+        tenantId,
+        authCtx.coreAdapter
+      );
 
       if (!existingConsent) {
         // Auto-grant consent for trusted client
@@ -2705,8 +2712,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const now = Date.now();
 
         // Use DatabaseAdapter for consent insert (portable across D1/PostgreSQL/MySQL)
-        const tenantId = getTenantIdFromContext(c);
-        const authCtx = createAuthContextFromHono(c, tenantId);
         await authCtx.coreAdapter.execute(
           `INSERT INTO oauth_client_consents
            (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
@@ -2715,7 +2720,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         );
 
         // Invalidate consent cache after insert so next read picks up new consent
-        await invalidateConsentCache(c.env, sub, validClientId);
+        await invalidateConsentCache(c.env, sub, tenantId, validClientId);
 
         log.info('Auto-granted consent for trusted client', {
           action: 'consent_auto_grant',
@@ -2731,7 +2736,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       let consentRequired = false;
       try {
         // Use cached consent check (Read-Through Cache)
-        const existingConsent = await getCachedConsent(c.env, sub, validClientId);
+        const existingConsent = await getCachedConsent(
+          c.env,
+          sub,
+          validClientId,
+          tenantId,
+          authCtx.coreAdapter
+        );
 
         if (!existingConsent) {
           // No consent record exists
@@ -3339,7 +3350,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       if (isIdTokenOnly || hasEssentialClaims) {
         // Fetch user data from cache (Read-Through Cache) or D1
-        const user = await getCachedUser(c.env, sub);
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        const user = await getCachedUser(c.env, sub, {
+          coreDb: piiCtx.coreAdapter,
+          piiDb: piiCtx.defaultPiiAdapter,
+        });
 
         if (user) {
           // Parse address JSON if present (CachedUser.address is already JSON string)
@@ -3454,15 +3469,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // OIDC Session Management: Register session-client association for logout (Implicit/Hybrid flows)
   // This enables frontchannel/backchannel logout to notify the correct RPs
   // For code flow, this is done in the token endpoint; for implicit/hybrid, we do it here
-  if ((includesIdToken || includesToken) && sessionId && c.env.DB) {
+  if ((includesIdToken || includesToken) && sessionId) {
     try {
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
       log.debug('Registering session-client for implicit/hybrid logout', {
         action: 'session_client_register',
         sidPrefix: sessionId.substring(0, 25),
         clientIdPrefix: validClientId.substring(0, 25),
       });
-      const coreAdapter = new D1Adapter({ db: c.env.DB });
-      const sessionClientRepo = new SessionClientRepository(coreAdapter);
+      const sessionClientRepo = new SessionClientRepository(authCtx.coreAdapter);
       const result = await sessionClientRepo.createOrUpdate({
         session_id: sessionId,
         client_id: validClientId,

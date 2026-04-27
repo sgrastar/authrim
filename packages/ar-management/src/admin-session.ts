@@ -17,9 +17,9 @@ import {
   parseAllowedOrigins,
   isAllowedOrigin,
   getLogger,
-  D1Adapter,
   type DatabaseAdapter,
   AdminSessionRepository,
+  requireDedicatedAdminDatabaseAdapter,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -70,7 +70,10 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get session from D1 admin_sessions table
-    const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter: DatabaseAdapter = requireDedicatedAdminDatabaseAdapter(
+      c.env,
+      'admin-session'
+    );
     const adminSessionRepo = new AdminSessionRepository(adminAdapter);
     const session = await adminSessionRepo.getSession(sessionId);
 
@@ -241,7 +244,10 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (sessionId && c.env.DB_ADMIN) {
       try {
         // Get session from D1 admin_sessions for event publishing before deletion
-        const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+        const adminAdapter: DatabaseAdapter = requireDedicatedAdminDatabaseAdapter(
+          c.env,
+          'admin-session'
+        );
         const adminSessionRepo = new AdminSessionRepository(adminAdapter);
         const session = await adminSessionRepo.getSessionIncludingExpired(sessionId);
         const userId = session?.admin_user_id;

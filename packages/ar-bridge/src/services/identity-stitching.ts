@@ -6,9 +6,10 @@
 
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  createAuditLog,
   createLogger,
-  D1Adapter,
   type DatabaseAdapter,
+  type DatabaseSource,
   ensureDatabaseAdapter,
   getDefaultTenantId,
   type JITProvisioningConfig,
@@ -149,7 +150,7 @@ export async function handleIdentity(
   const existingLink = await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub);
   if (existingLink) {
     // Update tokens and last login
-    await updateLinkedIdentity(env, existingLink.id, {
+    await updateLinkedIdentity(env, existingLink.tenantId, existingLink.id, {
       tokens,
       lastLoginAt: Date.now(),
       rawClaims: userInfo,
@@ -361,11 +362,13 @@ interface ExistingUser {
 }
 
 async function resolveUserStoreAdapters(env: Env, tenantId: string): Promise<{
+  coreSource: DatabaseSource;
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter | null;
 }> {
   const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
   return {
+    coreSource: sources.coreDb,
     coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'identity-stitching-core'),
     piiAdapter: sources.piiDb
       ? ensureDatabaseAdapter(sources.piiDb, 'identity-stitching-pii')
@@ -592,23 +595,17 @@ interface AuditEventParams {
  */
 async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> {
   try {
-    const id = crypto.randomUUID();
-    const now = Date.now();
-
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-    await coreAdapter.execute(
-      `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        params.userId,
-        params.action,
-        params.resourceType,
-        params.resourceId,
-        JSON.stringify(params.metadata || {}),
-        now,
-      ]
-    );
+    await createAuditLog(env, {
+      userId: params.userId,
+      tenantId: getDefaultTenantId(env),
+      action: params.action,
+      resource: params.resourceType,
+      resourceId: params.resourceId,
+      ipAddress: 'system',
+      userAgent: 'identity-stitching',
+      metadata: JSON.stringify(params.metadata || {}),
+      severity: 'info',
+    });
   } catch (error) {
     // Don't fail the main operation if audit logging fails
     // PII Protection: Don't log full error (may contain DB details)
@@ -624,8 +621,12 @@ async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> 
 /**
  * Check if user has passkey credentials
  */
-export async function hasPasskeyCredential(env: Env, userId: string): Promise<boolean> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+export async function hasPasskeyCredential(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  const { coreAdapter } = await resolveUserStoreAdapters(env, tenantId);
   const result = await coreAdapter.queryOne<{ count: number }>(
     'SELECT COUNT(*) as count FROM passkeys WHERE user_id = ?',
     [userId]
@@ -681,7 +682,10 @@ async function createUserWithJITProvisioning(
   params: JITProvisioningParams
 ): Promise<JITProvisioningResult> {
   const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, params.tenantId);
-  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, params.tenantId);
+  const { coreSource, coreAdapter, piiAdapter } = await resolveUserStoreAdapters(
+    env,
+    params.tenantId
+  );
   const customClaimValidation = await validateProvisionedCustomClaims(
     env,
     params.tenantId,
@@ -804,7 +808,7 @@ async function createUserWithJITProvisioning(
   }
 
   // Step 4: Evaluate policy rules
-  const ruleEvaluator = createRuleEvaluator(env.DB, env.SETTINGS);
+  const ruleEvaluator = createRuleEvaluator(coreSource, env.SETTINGS);
 
   const evaluationContext: RuleEvaluationContext = {
     email_domain_hash: emailDomainHash,
@@ -874,7 +878,7 @@ async function createUserWithJITProvisioning(
     if (params.jitConfig.join_all_matching_orgs) {
       // Join all matching orgs
       const matchedOrgs = await resolveAllOrgsByDomainHash(
-        env.DB,
+        coreSource,
         emailDomainHash,
         params.tenantId,
         params.jitConfig
@@ -887,7 +891,7 @@ async function createUserWithJITProvisioning(
     } else {
       // Join first matching org only
       const matchedOrg = await resolveOrgByDomainHash(
-        env.DB,
+        coreSource,
         emailDomainHash,
         params.tenantId,
         params.jitConfig
@@ -937,7 +941,7 @@ async function createUserWithJITProvisioning(
   // Actually join the organizations
   for (const orgId of orgsToJoin) {
     const joinResult = await joinOrganization(
-      env.DB,
+      coreSource,
       id,
       orgId,
       params.tenantId,
@@ -963,7 +967,7 @@ async function createUserWithJITProvisioning(
     }
 
     const assignResult = await assignRoleToUserInternal(
-      env.DB,
+      coreSource,
       id,
       roleAssignment.role_id,
       roleAssignment.scope_type,
@@ -987,7 +991,7 @@ async function createUserWithJITProvisioning(
     const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
 
     const assignResult = await assignRoleToUserInternal(
-      env.DB,
+      coreSource,
       id,
       params.jitConfig.default_role_id,
       defaultScopeType,
@@ -1020,7 +1024,7 @@ async function createUserWithJITProvisioning(
  * Assign role to user (internal helper)
  */
 async function assignRoleToUserInternal(
-  db: D1Database,
+  db: DatabaseSource,
   userId: string,
   roleId: string,
   scopeType: string,
@@ -1031,7 +1035,7 @@ async function assignRoleToUserInternal(
   const now = Math.floor(Date.now() / 1000);
 
   try {
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db });
+    const coreAdapter = ensureDatabaseAdapter(db, 'identity-stitching-role-assignment');
 
     // Check if role exists
     const roleCheck = await coreAdapter.queryOne<{ id: string }>(

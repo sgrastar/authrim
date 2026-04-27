@@ -20,10 +20,10 @@
 
 import type { Context } from 'hono';
 import {
-  D1Adapter,
   createWebhookRegistry,
   validateEventPattern,
   createAuditLogFromContext,
+  createAuthContextFromHono,
   getTenantIdFromContext,
   encryptValue,
   decryptValue,
@@ -130,12 +130,16 @@ interface ListWebhooksQuery {
 // Helpers
 // =============================================================================
 
+function getCoreAdapter(c: Context<{ Bindings: Env }>) {
+  return createAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter;
+}
+
 /**
  * Create WebhookRegistry from context
  */
 function createRegistry(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
-  const adapter = new D1Adapter({ db: c.env.DB });
+  const adapter = getCoreAdapter(c);
   return createWebhookRegistry({
     adapter,
     encryptSecret: async (plaintext) => {
@@ -742,7 +746,7 @@ export async function listWebhookDeliveries(c: Context<{ Bindings: Env }>) {
     }
 
     // Fetch data
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = getCoreAdapter(c);
     const limitPlusOne = limit + 1;
     const sql = `
       SELECT id, webhook_id, tenant_id, event_type, event_id, status,
@@ -875,7 +879,7 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
     }
 
     // Fetch the original delivery
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = getCoreAdapter(c);
     const delivery = await adapter.queryOne<WebhookDeliveryRow>(
       `SELECT id, webhook_id, tenant_id, event_type, event_id, status,
               request_headers, request_body, attempts

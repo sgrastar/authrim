@@ -5,6 +5,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SessionStore } from '../SessionStore';
 import type { Env } from '../../types/env';
+import { DEFAULT_STORAGE_PROFILE_ID } from '../../types/runtime-profile';
+import { AUTH_CORE_PERSISTENCE_CONTEXT_KEY } from '../../services/auth-core-persistence-context';
 
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
@@ -81,16 +83,21 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 }
 
 // Mock Env
+const createMockD1 = (overrides: Partial<D1Database> = {}): D1Database =>
+  ({
+    prepare: vi.fn().mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      first: vi.fn().mockResolvedValue(null),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      run: vi.fn().mockResolvedValue({}),
+    }),
+    batch: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  }) as unknown as D1Database;
+
 const createMockEnv = (): Env =>
   ({
-    DB: {
-      prepare: vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnThis(),
-        first: vi.fn().mockResolvedValue(null),
-        all: vi.fn().mockResolvedValue({ results: [] }),
-        run: vi.fn().mockResolvedValue({}),
-      }),
-    } as unknown as D1Database,
+    DB: createMockD1(),
     // Add other required Env properties as needed
   }) as Env;
 
@@ -164,6 +171,40 @@ describe('SessionStore', () => {
       expect(id1).toBe('0_session_first');
       expect(id2).toBe('1_session_second');
       expect(id1).not.toBe(id2);
+    });
+
+    it('pins the auth core persistence context on first cold persistence write', async () => {
+      const sessionId = '0_session_persistence_context_test';
+      const request = new Request('http://localhost/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          userId: 'user_123',
+          ttl: 3600,
+        }),
+      });
+
+      const response = await sessionStore.fetch(request);
+      expect(response.status).toBe(201);
+
+      let context: unknown;
+      for (let i = 0; i < 5; i++) {
+        context = await mockState.storage.get(AUTH_CORE_PERSISTENCE_CONTEXT_KEY);
+        if (context) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(context).toEqual({
+        storageProfileId: DEFAULT_STORAGE_PROFILE_ID,
+        coreTarget: {
+          driver: 'd1',
+          bindingRef: 'DB',
+          role: 'core',
+        },
+      });
     });
   });
 
@@ -548,14 +589,14 @@ describe('SessionStore', () => {
       // Mock D1 to throw error
       const errorEnv = {
         ...mockEnv,
-        DB: {
+        DB: createMockD1({
           prepare: vi.fn().mockReturnValue({
             bind: vi.fn().mockReturnThis(),
             run: vi.fn().mockRejectedValue(new Error('D1 connection failed')),
             first: vi.fn().mockResolvedValue(null),
             all: vi.fn().mockResolvedValue({ results: [] }),
           }),
-        },
+        }),
       } as unknown as Env;
 
       const errorSessionStore = new SessionStore(
@@ -593,14 +634,14 @@ describe('SessionStore', () => {
       // Mock D1 to throw error for extension
       const errorEnv = {
         ...mockEnv,
-        DB: {
+        DB: createMockD1({
           prepare: vi.fn().mockReturnValue({
             bind: vi.fn().mockReturnThis(),
             run: vi.fn().mockRejectedValue(new Error('D1 update failed')),
             first: vi.fn().mockResolvedValue(null),
             all: vi.fn().mockResolvedValue({ results: [] }),
           }),
-        },
+        }),
       } as unknown as Env;
 
       const errorSessionStore = new SessionStore(
@@ -630,7 +671,7 @@ describe('SessionStore', () => {
       // Mock D1 to return a session not in memory (cold storage)
       const d1Env = {
         ...mockEnv,
-        DB: {
+        DB: createMockD1({
           prepare: vi.fn().mockReturnValue({
             bind: vi.fn().mockReturnThis(),
             run: vi.fn().mockResolvedValue({}),
@@ -646,7 +687,7 @@ describe('SessionStore', () => {
               ],
             }),
           }),
-        },
+        }),
       } as unknown as Env;
 
       const d1SessionStore = new SessionStore(mockState as unknown as DurableObjectState, d1Env);
@@ -668,14 +709,14 @@ describe('SessionStore', () => {
       // Mock D1 to throw error
       const errorEnv = {
         ...mockEnv,
-        DB: {
+        DB: createMockD1({
           prepare: vi.fn().mockReturnValue({
             bind: vi.fn().mockReturnThis(),
             run: vi.fn().mockResolvedValue({}),
             first: vi.fn().mockResolvedValue(null),
             all: vi.fn().mockRejectedValue(new Error('D1 list error')),
           }),
-        },
+        }),
       } as unknown as Env;
 
       const errorSessionStore = new SessionStore(

@@ -278,14 +278,13 @@ export class RoleRepository {
       return null;
     }
 
+    const existingAssignment = await this.getUserRoleAssignment(userId, roleId);
+    if (existingAssignment) {
+      return existingAssignment;
+    }
+
     const now = getCurrentTimestamp();
-
-    // Use INSERT OR IGNORE to handle duplicate assignments gracefully
-    const sql = `
-      INSERT OR IGNORE INTO user_roles (user_id, role_id, created_at)
-      VALUES (?, ?, ?)
-    `;
-
+    const sql = 'INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)';
     await this.adapter.execute(sql, [userId, roleId, now]);
 
     return {

@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { DEFAULT_AUDIT_STORAGE_CONFIG } from '@authrim/ar-lib-core';
+import { DEFAULT_AUDIT_PROFILE_ID, DEFAULT_AUDIT_STORAGE_CONFIG } from '@authrim/ar-lib-core';
 import {
   getAuditStorageConfig,
   updateAuditStorageConfig,
@@ -37,7 +37,13 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
     delete: vi.fn(async (key: string) => {
       store.delete(key);
     }),
-    list: vi.fn(async () => ({ keys: [], list_complete: true, cacheStatus: null })),
+    list: vi.fn(async (options?: { prefix?: string }) => ({
+      keys: Array.from(store.keys())
+        .filter((key) => !options?.prefix || key.startsWith(options.prefix))
+        .map((name) => ({ name })),
+      list_complete: true,
+      cacheStatus: null,
+    })),
     getWithMetadata: vi.fn(),
   } as unknown as KVNamespace;
 }
@@ -58,8 +64,17 @@ function createMockD1(): D1Database {
 }
 
 // Create test app
-function createTestApp(options: { kv?: KVNamespace; db?: D1Database } = {}) {
+function createTestApp(
+  options: {
+    kv?: KVNamespace;
+    settingsKv?: KVNamespace;
+    db?: D1Database;
+    defaultAuditProfileId?: string;
+    extraEnv?: Record<string, unknown>;
+  } = {}
+) {
   const mockKV = options.kv ?? createMockKV();
+  const mockSettingsKV = options.settingsKv ?? createMockKV();
   const mockDB = options.db ?? createMockD1();
 
   const app = new Hono<{
@@ -87,10 +102,14 @@ function createTestApp(options: { kv?: KVNamespace; db?: D1Database } = {}) {
 
   const mockEnv = {
     AUTHRIM_CONFIG: mockKV,
+    SETTINGS: mockSettingsKV,
     DB: mockDB,
+    PROFILE_REGISTRY_BACKEND: 'kv',
+    DEFAULT_AUDIT_PROFILE_ID: options.defaultAuditProfileId ?? DEFAULT_AUDIT_PROFILE_ID,
+    ...options.extraEnv,
   } as unknown as Env;
 
-  return { app, mockEnv, mockKV, mockDB };
+  return { app, mockEnv, mockKV, mockSettingsKV, mockDB };
 }
 
 describe('Audit Storage Configuration API', () => {
@@ -115,16 +134,31 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      expect(body.storage.source).toBe('default');
-      expect(body.storage.config).toEqual(DEFAULT_AUDIT_STORAGE_CONFIG);
-      expect(body.retention.source).toBe('default');
+      expect(body.storage.source).toBe('builtin');
+      expect(body.storage.profile_id).toBe(DEFAULT_AUDIT_PROFILE_ID);
+      expect(body.storage.available_profiles).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: DEFAULT_AUDIT_PROFILE_ID,
+            primaryType: 'd1',
+          }),
+        ])
+      );
+      expect(body.storage.config.defaultEventBackend).toBe('d1-core');
+      expect(body.storage.config.defaultPiiBackend).toBe('d1-pii');
+      expect(body.storage.config.batchConfig).toEqual(DEFAULT_AUDIT_STORAGE_CONFIG.batchConfig);
+      expect(body.retention.source).toBe('builtin');
       expect(body.routing_rules.rules).toEqual([]);
     });
 
-    it('should return stored config when exists', async () => {
+    it('should merge legacy batch config while keeping runtime profile as the source of truth', async () => {
       const customConfig = {
         ...DEFAULT_AUDIT_STORAGE_CONFIG,
-        defaultEventBackend: 'r2',
+        batchConfig: {
+          maxBufferSize: 250,
+          flushIntervalMs: 2500,
+          maxBatchSize: 50,
+        },
       };
 
       const mockKV = createMockKV({
@@ -141,8 +175,10 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      expect(body.storage.source).toBe('kv');
-      expect(body.storage.config.defaultEventBackend).toBe('r2');
+      expect(body.storage.source).toBe('builtin');
+      expect(body.storage.batch_config_source).toBe('kv');
+      expect(body.storage.config.defaultEventBackend).toBe('d1-core');
+      expect(body.storage.config.batchConfig).toEqual(customConfig.batchConfig);
     });
 
     it('should include backend types and constraints', async () => {
@@ -170,7 +206,7 @@ describe('Audit Storage Configuration API', () => {
   describe('PUT /api/admin/settings/audit-storage', () => {
     it('should update defaultEventBackend', async () => {
       const mockKV = createMockKV();
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
+      const { app, mockEnv, mockSettingsKV } = createTestApp({ kv: mockKV });
 
       const res = await app.request(
         '/api/admin/settings/audit-storage',
@@ -178,8 +214,11 @@ describe('Audit Storage Configuration API', () => {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            // Valid backend from DEFAULT_AUDIT_STORAGE_CONFIG.backends
-            defaultEventBackend: 'd1-core',
+            defaultEventBackend: 'archive-only',
+            defaultPiiBackend: 'archive-only',
+            batchConfig: {
+              maxBufferSize: 120,
+            },
           }),
         },
         mockEnv
@@ -189,7 +228,123 @@ describe('Audit Storage Configuration API', () => {
       const body = (await res.json()) as any;
 
       expect(body.success).toBe(true);
+      expect(body.source).toBe('runtime_profile');
+      expect(body.profile_id).toBe('managed:audit:settings-default');
+      expect(body.config.defaultEventBackend).toBe('archive-only');
+      expect(body.config.defaultPiiBackend).toBe('archive-only');
+      expect(mockSettingsKV.put).toHaveBeenCalled();
       expect(mockKV.put).toHaveBeenCalled();
+    });
+
+    it('should accept a Hyperdrive backend when provided in the legacy backend list', async () => {
+      const { app, mockEnv } = createTestApp();
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            backends: [
+              {
+                id: 'hyperdrive-audit',
+                type: 'HYPERDRIVE',
+                enabled: true,
+                priority: 1,
+                hyperdriveConfig: {
+                  binding: 'audit-hyperdrive',
+                  schema: 'public',
+                },
+              },
+            ],
+            defaultEventBackend: 'hyperdrive-audit',
+            defaultPiiBackend: 'hyperdrive-audit',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.config.defaultEventBackend).toBe('audit-hyperdrive');
+    });
+
+    it('should switch the default audit profile without mutating the managed profile', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:archive-only': JSON.stringify({
+          id: 'archive-only',
+          kind: 'audit',
+          label: 'Archive Only',
+          builtin: false,
+          primary: null,
+          archive: {
+            type: 'r2',
+            bucketRef: 'DIAGNOSTIC_LOGS',
+            prefix: 'audit/',
+          },
+          sinks: [],
+        }),
+      });
+      const { app, mockEnv, mockSettingsKV, mockKV: authrimKv } = createTestApp({ kv: mockKV });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            auditProfileId: 'archive-only',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.success).toBe(true);
+      expect(body.profile_id).toBe('archive-only');
+      expect(body.config.defaultEventBackend).toBe('archive-only');
+      expect(mockSettingsKV.put).toHaveBeenCalled();
+      expect(authrimKv.put).not.toHaveBeenCalledWith(
+        'profile-registry:audit:managed:audit:settings-default',
+        expect.any(String)
+      );
+    });
+
+    it('should reject switching to a custom profile while also mutating storage targets', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:archive-only': JSON.stringify({
+          id: 'archive-only',
+          kind: 'audit',
+          label: 'Archive Only',
+          builtin: false,
+          primary: null,
+          archive: {
+            type: 'r2',
+            bucketRef: 'DIAGNOSTIC_LOGS',
+            prefix: 'audit/',
+          },
+          sinks: [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            auditProfileId: 'archive-only',
+            defaultEventBackend: 'archive-only',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.error).toBe('invalid_request');
     });
 
     it('should reject invalid backend', async () => {
@@ -250,22 +405,33 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      expect(body.source).toBe('default');
+      expect(body.source).toBe('builtin');
       expect(body.config.eventLogRetentionDays).toBe(90);
       expect(body.config.piiLogRetentionDays).toBe(365);
     });
 
-    it('should return stored retention config', async () => {
-      const customRetention = {
-        eventLogRetentionDays: 180,
-        piiLogRetentionDays: 730,
-        archiveBeforeDelete: true,
-      };
-
+    it('should return runtime-profile retention config when a custom audit profile is active', async () => {
+      const customProfileId = 'custom-retention-profile';
       const mockKV = createMockKV({
-        audit_retention_config: JSON.stringify(customRetention),
+        'profile-registry:audit:custom-retention-profile': JSON.stringify({
+          id: customProfileId,
+          kind: 'audit',
+          label: 'Custom Retention',
+          builtin: false,
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+          retention: {
+            eventLogRetentionDays: 180,
+            piiLogRetentionDays: 730,
+            archiveBeforeDelete: true,
+          },
+        }),
       });
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: customProfileId,
+      });
 
       const res = await app.request(
         '/api/admin/settings/audit-storage/retention',
@@ -276,7 +442,7 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      expect(body.source).toBe('kv');
+      expect(body.source).toBe('runtime_profile');
       expect(body.config.eventLogRetentionDays).toBe(180);
       expect(body.config.archiveBeforeDelete).toBe(true);
     });
@@ -285,7 +451,7 @@ describe('Audit Storage Configuration API', () => {
   describe('PUT /api/admin/settings/audit-storage/retention', () => {
     it('should update retention config', async () => {
       const mockKV = createMockKV();
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
+      const { app, mockEnv, mockSettingsKV } = createTestApp({ kv: mockKV });
 
       const res = await app.request(
         '/api/admin/settings/audit-storage/retention',
@@ -307,6 +473,10 @@ describe('Audit Storage Configuration API', () => {
       expect(body.success).toBe(true);
       expect(body.config.eventLogRetentionDays).toBe(180);
       expect(body.config.archiveBeforeDelete).toBe(true);
+      expect(body.source).toBe('runtime_profile');
+      expect(body.profile_id).toBe('managed:audit:settings-default');
+      expect(mockKV.put).toHaveBeenCalled();
+      expect(mockSettingsKV.put).toHaveBeenCalled();
     });
 
     it('should reject invalid retention days', async () => {
@@ -647,8 +817,91 @@ describe('Audit Storage Configuration API', () => {
 
       // This endpoint returns info about scheduled cleanup, not actual deletion
       expect(body.success).toBe(true);
+      expect(body.profile_id).toBe(DEFAULT_AUDIT_PROFILE_ID);
       expect(body.note).toBeDefined();
       expect(body.scheduled_cleanup).toBeDefined();
+      expect(body.hot_query.status).toBe('supported');
+    });
+
+    it('marks archive-only profiles as hot-query unsupported', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:archive-only': JSON.stringify({
+          id: 'archive-only',
+          kind: 'audit',
+          label: 'Archive Only',
+          builtin: false,
+          primary: null,
+          archive: {
+            type: 'r2',
+            bucketRef: 'DIAGNOSTIC_LOGS',
+            prefix: 'audit/',
+          },
+          sinks: [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: 'archive-only',
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/cleanup',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.profile_id).toBe('archive-only');
+      expect(body.hot_query.status).toBe('not_supported');
+      expect(body.functions.event_log).toBeNull();
+    });
+
+    it('marks postgres primary as supported when a Hyperdrive binding is resolved', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:pg-primary': JSON.stringify({
+          id: 'pg-primary',
+          kind: 'audit',
+          label: 'Postgres Primary',
+          builtin: false,
+          primary: {
+            type: 'postgres',
+            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY',
+            connectionRef: 'audit-primary',
+          },
+          archive: null,
+          sinks: [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: 'pg-primary',
+        extraEnv: {
+          HYPERDRIVE_AUDIT_PRIMARY: {
+            connectionString: 'postgres://example',
+          },
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/cleanup',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.profile_id).toBe('pg-primary');
+      expect(body.hot_query.status).toBe('supported');
+      expect(body.functions.event_log).toBe('cleanupExpiredEventLogs(db, tenantId?, batchSize?)');
     });
   });
 
@@ -670,10 +923,171 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      // Stats endpoint returns backend configuration status
-      expect(body.backends).toBeDefined();
-      expect(body.backends.d1_core).toBeDefined();
-      expect(body.backends.d1_pii).toBeDefined();
+      expect(body.profile_id).toBe(DEFAULT_AUDIT_PROFILE_ID);
+      expect(body.targets.primary).toBeDefined();
+      expect(body.targets.primary.type).toBe('d1');
+      expect(body.hot_query.status).toBe('supported');
+    });
+
+    it('returns archive-only stats when the resolved audit profile has no primary store', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:archive-only': JSON.stringify({
+          id: 'archive-only',
+          kind: 'audit',
+          label: 'Archive Only',
+          builtin: false,
+          primary: null,
+          archive: {
+            type: 'r2',
+            bucketRef: 'DIAGNOSTIC_LOGS',
+            prefix: 'audit/',
+          },
+          sinks: [
+            {
+              type: 'logpush',
+              destinationRef: 'workers-logpush',
+              dataset: 'authrim_audit',
+            },
+          ],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: 'archive-only',
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/stats',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.profile_id).toBe('archive-only');
+      expect(body.targets.primary).toBeNull();
+      expect(body.targets.archive.type).toBe('r2');
+      expect(body.targets.sinks).toHaveLength(1);
+      expect(body.hot_query.status).toBe('not_supported');
+    });
+
+    it('returns supported hot-query stats for postgres primary when a binding is configured', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:pg-primary': JSON.stringify({
+          id: 'pg-primary',
+          kind: 'audit',
+          label: 'Postgres Primary',
+          builtin: false,
+          primary: {
+            type: 'postgres',
+            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY',
+            connectionRef: 'audit-primary',
+          },
+          archive: null,
+          sinks: [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: 'pg-primary',
+        extraEnv: {
+          HYPERDRIVE_AUDIT_PRIMARY: {
+            connectionString: 'postgres://example',
+          },
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/stats',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.profile_id).toBe('pg-primary');
+      expect(body.targets.primary.type).toBe('postgres');
+      expect(body.hot_query.status).toBe('supported');
+      expect(body.hot_query.supported).toBe(true);
+    });
+
+    it('returns pending runtime support for postgres primary without a binding', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:pg-primary': JSON.stringify({
+          id: 'pg-primary',
+          kind: 'audit',
+          label: 'Postgres Primary',
+          builtin: false,
+          primary: {
+            type: 'postgres',
+            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY',
+            connectionRef: 'audit-primary',
+          },
+          archive: null,
+          sinks: [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: 'pg-primary',
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/stats',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.profile_id).toBe('pg-primary');
+      expect(body.hot_query.status).toBe('pending_runtime_support');
+      expect(body.hot_query.supported).toBe(false);
+    });
+
+    it('returns supported hot-query status for mysql primary with a Hyperdrive binding', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:mysql-primary': JSON.stringify({
+          id: 'mysql-primary',
+          kind: 'audit',
+          label: 'MySQL Primary',
+          builtin: false,
+          primary: {
+            type: 'mysql',
+            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY_MYSQL',
+            connectionRef: 'audit-primary-mysql',
+          },
+          archive: null,
+          sinks: [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: 'mysql-primary',
+        extraEnv: {
+          HYPERDRIVE_AUDIT_PRIMARY_MYSQL: {
+            connectionString: 'mysql://example',
+            host: 'mysql.example.com',
+            user: 'audit',
+            password: 'secret',
+            database: 'authrim',
+            port: 3306,
+          },
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/stats',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.profile_id).toBe('mysql-primary');
+      expect(body.targets.primary.type).toBe('mysql');
+      expect(body.hot_query.status).toBe('supported');
+      expect(body.hot_query.supported).toBe(true);
     });
   });
 });

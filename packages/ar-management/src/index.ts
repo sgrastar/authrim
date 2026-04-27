@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import { bodyLimit } from 'hono/body-limit';
+import type { MessageBatch } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   rateLimitMiddleware,
@@ -14,7 +15,7 @@ import {
   pluginContextMiddleware,
   createPluginLoader,
   idempotencyMiddleware,
-  D1Adapter,
+  ensureDatabaseAdapter,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -28,17 +29,21 @@ import {
   // Logger
   getLogger,
   createLogger,
+  processAuditQueue,
+  type AuditQueueMessage,
   isAllowedOrigin,
   parseAllowedOrigins,
   csrfProtectionMiddleware,
   getTenantIdFromContext,
   getTenantSettings,
+  resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import {
   cloudflareEmailPlugin,
   resendEmailPlugin,
 } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
+import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 
 // Import handlers
 import { registerHandler } from './register';
@@ -274,6 +279,8 @@ import {
 } from './admin-settings-meta';
 import { adminTenantInfoHandler } from './admin-info';
 import {
+  adminRuntimeProfileDefaultsHandler,
+  adminRuntimeProfileDefaultsUpdateHandler,
   adminRuntimeProfileDeleteHandler,
   adminRuntimeProfileGetHandler,
   adminRuntimeProfileListHandler,
@@ -1067,10 +1074,22 @@ app.post('/api/admin/settings/validate', adminSettingsValidateHandler);
 
 // Runtime Profile Registry API
 // - GET    /api/admin/runtime-profiles                 - List runtime profiles
+// - GET    /api/admin/runtime-profiles/defaults        - Get environment default profiles
+// - PUT    /api/admin/runtime-profiles/defaults        - Update environment default profiles
 // - GET    /api/admin/runtime-profiles/:kind/:id       - Get runtime profile
 // - PUT    /api/admin/runtime-profiles/:kind/:id       - Create/update runtime profile
 // - DELETE /api/admin/runtime-profiles/:kind/:id       - Delete runtime profile
 app.get('/api/admin/runtime-profiles', requireSystemAdmin(), adminRuntimeProfileListHandler);
+app.get(
+  '/api/admin/runtime-profiles/defaults',
+  requireSystemAdmin(),
+  adminRuntimeProfileDefaultsHandler
+);
+app.put(
+  '/api/admin/runtime-profiles/defaults',
+  requireSystemAdmin(),
+  adminRuntimeProfileDefaultsUpdateHandler
+);
 app.get(
   '/api/admin/runtime-profiles/:kind/:id',
   requireSystemAdmin(),
@@ -2560,7 +2579,7 @@ app.onError((err, c) => {
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   const log = createLogger().module('SCHEDULED');
-  log.info('D1 cleanup job started', { timestamp: new Date().toISOString() });
+  log.info('Scheduled maintenance job started', { timestamp: new Date().toISOString() });
 
   // Register builtin plugins (idempotent - skips if already registered)
   try {
@@ -2577,7 +2596,10 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
 
   try {
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'management-scheduled'
+    );
 
     // 1. Cleanup expired sessions (with 1-day grace period)
     const sessionsResult = await coreAdapter.execute(
@@ -2595,15 +2617,10 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     const passwordTokensDeleted = passwordTokensResult.rowsAffected || 0;
     log.debug('Deleted expired/used password reset tokens', { count: passwordTokensDeleted });
 
-    // 3. Cleanup old audit logs (older than 90 days)
-    // Keep audit logs for 90 days for compliance (adjust based on requirements)
-    const ninetyDaysAgo = now - 90 * 86400;
-    const auditLogsResult = await coreAdapter.execute(
-      'DELETE FROM audit_log WHERE created_at < ?',
-      [ninetyDaysAgo]
-    );
-    const auditLogsDeleted = auditLogsResult.rowsAffected || 0;
-    log.debug('Deleted old audit logs', { count: auditLogsDeleted, olderThanDays: 90 });
+    // 3. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
+    // by cleanupResolvedAuditPrimaries(), which resolves the effective audit profile per tenant
+    // and applies retention to D1/Postgres primaries or skips archive-only installs.
+    const auditLogsDeleted = 0;
 
     // 4. Cleanup expired Native SSO device_secrets (if enabled)
     // This cleans up device secrets that have passed their expiration date
@@ -2653,68 +2670,80 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       });
     }
 
-    log.info('D1 cleanup completed', {
+    let unifiedAuditCleanup = {
+      tenantCount: 0,
+      processedTenants: 0,
+      archiveOnlyTenants: 0,
+      pendingSupportTenants: 0,
+      eventDeleted: 0,
+      piiDeleted: 0,
+    };
+
+    try {
+      unifiedAuditCleanup = await cleanupResolvedAuditPrimaries(env, {
+        logger: log.module('AUDIT-MAINTENANCE'),
+      });
+      log.debug('Unified audit retention cleanup completed', unifiedAuditCleanup);
+    } catch (auditCleanupError) {
+      log.error('Unified audit retention cleanup failed', {}, auditCleanupError as Error);
+    }
+
+    log.info('Scheduled maintenance cleanup completed', {
       sessionsDeleted,
       passwordTokensDeleted,
       auditLogsDeleted,
       deviceSecretsDeleted,
       operationalLogsDeleted,
       idempotencyKeysDeleted,
+      unifiedAuditCleanup,
     });
   } catch (error) {
-    log.error('D1 cleanup job failed', {}, error as Error);
+    log.error('Scheduled maintenance job failed', {}, error as Error);
     // Don't throw - we don't want to mark the cron job as failed
     // Errors are logged for monitoring
   }
 
   // Process pending tenant deletion jobs (up to 5 per Cron run to stay within CPU limits)
   try {
-    const pendingJobsResult = await env.DB.prepare(
+    const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'management-scheduled-jobs'
+    );
+    const pendingJobs = await coreAdapter.query<{ id: string; config: string }>(
       "SELECT id, config FROM admin_jobs WHERE job_type = 'tenants/delete' AND status = 'pending' LIMIT 5"
-    ).all<{ id: string; config: string }>();
-
-    const pendingJobs = pendingJobsResult.results ?? [];
+    );
 
     for (const job of pendingJobs) {
       const nowTs = Math.floor(Date.now() / 1000);
-      await env.DB.prepare(
-        "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ?"
-      )
-        .bind(nowTs, nowTs, job.id)
-        .run();
+      await coreAdapter.execute(
+        "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ?",
+        [nowTs, nowTs, job.id]
+      );
 
       try {
         const config = JSON.parse(job.config) as { tenant_id: string };
         const tenantId = config.tenant_id;
 
-        // Delete all tenant data in batches of 100 (D1 batch limit)
-        const deleteStatements = [
-          ...TENANT_TABLES_TO_DELETE.map((table) =>
-            env.DB.prepare(`DELETE FROM ${table} WHERE tenant_id = ?`).bind(tenantId)
-          ),
-          env.DB.prepare('DELETE FROM tenants WHERE id = ?').bind(tenantId),
-        ];
-
-        const BATCH_SIZE = 100;
-        for (let i = 0; i < deleteStatements.length; i += BATCH_SIZE) {
-          await env.DB.batch(deleteStatements.slice(i, i + BATCH_SIZE));
-        }
+        await coreAdapter.transaction(async (tx) => {
+          for (const table of TENANT_TABLES_TO_DELETE) {
+            await tx.execute(`DELETE FROM ${table} WHERE tenant_id = ?`, [tenantId]);
+          }
+          await tx.execute('DELETE FROM tenants WHERE id = ?', [tenantId]);
+        });
 
         const completedTs = Math.floor(Date.now() / 1000);
-        await env.DB.prepare(
-          "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ?"
-        )
-          .bind(completedTs, completedTs, JSON.stringify({ stage: 'completed' }), job.id)
-          .run();
+        await coreAdapter.execute(
+          "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ?",
+          [completedTs, completedTs, JSON.stringify({ stage: 'completed' }), job.id]
+        );
 
         log.info('Tenant deletion job completed', { job_id: job.id, tenant_id: tenantId });
       } catch (jobError) {
         const failedTs = Math.floor(Date.now() / 1000);
-        await env.DB.prepare(
-          "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ?"
-        )
-          .bind(String(jobError), failedTs, failedTs, job.id)
-          .run();
+        await coreAdapter.execute(
+          "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+          [String(jobError), failedTs, failedTs, job.id]
+        );
 
         log.error('Tenant deletion job failed', { job_id: job.id }, jobError as Error);
       }
@@ -2729,8 +2758,13 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
 }
 
-// Export for Cloudflare Workers with scheduled handler
+async function handleAuditQueue(batch: MessageBatch<AuditQueueMessage>, env: Env): Promise<void> {
+  await processAuditQueue(batch, env, createLogger().module('AR-MANAGEMENT-AUDIT-QUEUE'));
+}
+
+// Export for Cloudflare Workers with scheduled + queue handlers
 export default {
   fetch: app.fetch,
   scheduled: handleScheduled,
+  queue: handleAuditQueue,
 };

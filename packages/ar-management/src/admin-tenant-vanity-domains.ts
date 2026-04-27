@@ -4,12 +4,15 @@ import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
+  createAuthContextFromHono,
   createAuditLogFromContext,
   createErrorResponse,
+  ensureDatabaseAdapter,
   getLogger,
   getTenantIdFromContext,
   hasAdminPermission,
   invalidateTenantVanityDomainCache,
+  type DatabaseSource,
 } from '@authrim/ar-lib-core';
 
 const HOSTNAME_REGEX =
@@ -95,6 +98,10 @@ function permissionDenied(c: Context<{ Bindings: Env }>) {
   return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
 }
 
+function getCoreAdapter(c: Context<{ Bindings: Env }>) {
+  return createAuthContextFromHono(c).coreAdapter;
+}
+
 function formatDomain(row: TenantVanityDomainRow) {
   return {
     id: row.id,
@@ -116,6 +123,18 @@ function formatDomain(row: TenantVanityDomainRow) {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+function getActiveHostname(hostname: string, isActive: boolean): string | null {
+  return isActive ? hostname : null;
+}
+
+function getPrimaryActiveTenantKey(
+  tenantId: string,
+  isPrimary: boolean,
+  isActive: boolean
+): string | null {
+  return isPrimary && isActive ? tenantId : null;
 }
 
 function getCloudflareZoneId(env: Env, override?: string): string | null {
@@ -208,30 +227,40 @@ function cloudflareStatus(result: CloudflareCustomHostname): DomainStatus {
 }
 
 async function getDomainById(
-  env: Env,
+  db: DatabaseSource,
   id: string,
   tenantId?: string
 ): Promise<TenantVanityDomainRow | null> {
+  const adapter = ensureDatabaseAdapter(db, 'tenant-vanity-domains');
   const tenantClause = tenantId ? ' AND tenant_id = ?' : '';
   const params = tenantId ? [id, tenantId] : [id];
-  return env.DB.prepare(`SELECT * FROM tenant_vanity_domains WHERE id = ?${tenantClause}`)
-    .bind(...params)
-    .first<TenantVanityDomainRow>();
+  return adapter.queryOne<TenantVanityDomainRow>(
+    `SELECT * FROM tenant_vanity_domains WHERE id = ?${tenantClause}`,
+    params
+  );
 }
 
-async function setPrimary(env: Env, id: string, tenantId: string): Promise<TenantVanityDomainRow> {
+async function setPrimary(
+  db: DatabaseSource,
+  env: Env,
+  id: string,
+  tenantId: string
+): Promise<TenantVanityDomainRow> {
+  const adapter = ensureDatabaseAdapter(db, 'tenant-vanity-domains');
   const now = Math.floor(Date.now() / 1000);
-  await env.DB.batch([
-    env.DB.prepare(
-      'UPDATE tenant_vanity_domains SET is_primary = 0, updated_at = ? WHERE tenant_id = ?'
-    ).bind(now, tenantId),
-    env.DB.prepare(
+  await adapter.transaction(async (tx) => {
+    await tx.execute(
+      'UPDATE tenant_vanity_domains SET is_primary = 0, primary_active_tenant_key = NULL, updated_at = ? WHERE tenant_id = ?',
+      [now, tenantId]
+    );
+    await tx.execute(
       `UPDATE tenant_vanity_domains
-       SET is_primary = 1, updated_at = ?
-       WHERE id = ? AND tenant_id = ? AND is_active = 1 AND status = 'active'`
-    ).bind(now, id, tenantId),
-  ]);
-  const updated = await getDomainById(env, id, tenantId);
+       SET is_primary = 1, primary_active_tenant_key = ?, updated_at = ?
+       WHERE id = ? AND tenant_id = ? AND is_active = 1 AND status = 'active'`,
+      [getPrimaryActiveTenantKey(tenantId, true, true), now, id, tenantId]
+    );
+  });
+  const updated = await getDomainById(adapter, id, tenantId);
   if (!updated || updated.is_primary !== 1) {
     throw new Error('Primary vanity domain must be active before it can become canonical');
   }
@@ -244,24 +273,26 @@ async function setPrimary(env: Env, id: string, tenantId: string): Promise<Tenan
 
 async function createDomain(
   c: Context<{ Bindings: Env }>,
+  db: DatabaseSource,
   tenantId: string,
   hostname: string,
   options: { isPrimary: boolean; cloudflareZoneId?: string }
 ) {
-  const tenant = await c.env.DB.prepare('SELECT id FROM tenants WHERE id = ? AND is_active = 1')
-    .bind(tenantId)
-    .first<{ id: string }>();
+  const adapter = ensureDatabaseAdapter(db, 'tenant-vanity-domains');
+  const tenant = await adapter.queryOne<{ id: string }>(
+    'SELECT id FROM tenants WHERE id = ? AND is_active = 1',
+    [tenantId]
+  );
   if (!tenant) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
       variables: { resource: 'tenant' },
     });
   }
 
-  const existing = await c.env.DB.prepare(
-    'SELECT id FROM tenant_vanity_domains WHERE hostname = ? AND is_active = 1'
-  )
-    .bind(hostname)
-    .first<{ id: string }>();
+  const existing = await adapter.queryOne<{ id: string }>(
+    'SELECT id FROM tenant_vanity_domains WHERE active_hostname = ?',
+    [hostname]
+  );
   if (existing) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
       variables: { field: 'hostname', reason: 'An active vanity domain already exists' },
@@ -286,17 +317,18 @@ async function createDomain(
     }
   }
 
-  await c.env.DB.prepare(
+  await adapter.execute(
     `INSERT INTO tenant_vanity_domains (
-       id, tenant_id, hostname, is_active, is_primary, status, cloudflare_zone_id,
+       id, tenant_id, hostname, is_active, active_hostname, is_primary, primary_active_tenant_key, status, cloudflare_zone_id,
        cloudflare_custom_hostname_id, ssl_status, ownership_status, validation_method,
        validation_records_json, last_sync_at, created_by, created_at, updated_at
-     ) VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
+     ) VALUES (?, ?, ?, 1, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       id,
       tenantId,
       hostname,
+      getActiveHostname(hostname, true),
+      getPrimaryActiveTenantKey(tenantId, false, true),
       status,
       zoneId,
       cloudflare?.id ?? null,
@@ -307,13 +339,13 @@ async function createDomain(
       cloudflare ? now : null,
       auth?.userId ?? null,
       now,
-      now
-    )
-    .run();
+      now,
+    ]
+  );
 
-  let row = await getDomainById(c.env, id, tenantId);
+  let row = await getDomainById(adapter, id, tenantId);
   if (row && options.isPrimary && row.status === 'active') {
-    row = await setPrimary(c.env, id, tenantId);
+    row = await setPrimary(adapter, c.env, id, tenantId);
   }
 
   await createAuditLogFromContext(c, 'tenant_vanity_domain.created', 'tenant_vanity_domain', id, {
@@ -337,13 +369,12 @@ export async function listTenantVanityDomainsHandler(c: Context<{ Bindings: Env 
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_READ)) return permissionDenied(c);
 
   const tenantId = getTenantIdFromContext(c);
-  const rows = await c.env.DB.prepare(
-    'SELECT * FROM tenant_vanity_domains WHERE tenant_id = ? ORDER BY is_primary DESC, created_at DESC'
-  )
-    .bind(tenantId)
-    .all<TenantVanityDomainRow>();
+  const rows = await getCoreAdapter(c).query<TenantVanityDomainRow>(
+    'SELECT * FROM tenant_vanity_domains WHERE tenant_id = ? ORDER BY is_primary DESC, created_at DESC',
+    [tenantId]
+  );
   return c.json({
-    domains: (rows.results ?? []).map(formatDomain),
+    domains: rows.map(formatDomain),
     cloudflare_configured: !!c.env.CLOUDFLARE_API_TOKEN && !!getCloudflareZoneId(c.env),
   });
 }
@@ -363,7 +394,7 @@ export async function createTenantVanityDomainHandler(c: Context<{ Bindings: Env
       variables: { field: 'hostname', reason: validationError },
     });
   }
-  return createDomain(c, getTenantIdFromContext(c), hostname, {
+  return createDomain(c, getCoreAdapter(c), getTenantIdFromContext(c), hostname, {
     isPrimary: parsed.data.is_primary,
     cloudflareZoneId: parsed.data.cloudflare_zone_id,
   });
@@ -373,7 +404,7 @@ export async function getTenantVanityDomainHandler(c: Context<{ Bindings: Env }>
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_READ)) return permissionDenied(c);
 
   const tenantId = getTenantIdFromContext(c);
-  const row = await getDomainById(c.env, c.req.param('id')!, tenantId);
+  const row = await getDomainById(getCoreAdapter(c), c.req.param('id')!, tenantId);
   if (!row) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   return c.json({ domain: formatDomain(row) });
 }
@@ -390,11 +421,9 @@ export async function listPlatformTenantVanityDomainsHandler(c: Context<{ Bindin
   }
   query += ' ORDER BY tenant_id ASC, is_primary DESC, created_at DESC';
 
-  const rows = await c.env.DB.prepare(query)
-    .bind(...params)
-    .all<TenantVanityDomainRow>();
+  const rows = await getCoreAdapter(c).query<TenantVanityDomainRow>(query, params);
   return c.json({
-    domains: (rows.results ?? []).map(formatDomain),
+    domains: rows.map(formatDomain),
     cloudflare_configured: !!c.env.CLOUDFLARE_API_TOKEN && !!getCloudflareZoneId(c.env),
   });
 }
@@ -414,7 +443,7 @@ export async function createPlatformTenantVanityDomainHandler(c: Context<{ Bindi
       variables: { field: 'hostname', reason: validationError },
     });
   }
-  return createDomain(c, parsed.data.tenant_id, hostname, {
+  return createDomain(c, getCoreAdapter(c), parsed.data.tenant_id, hostname, {
     isPrimary: parsed.data.is_primary,
     cloudflareZoneId: parsed.data.cloudflare_zone_id,
   });
@@ -423,7 +452,7 @@ export async function createPlatformTenantVanityDomainHandler(c: Context<{ Bindi
 export async function getPlatformTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
-  const row = await getDomainById(c.env, c.req.param('id')!);
+  const row = await getDomainById(getCoreAdapter(c), c.req.param('id')!);
   if (!row) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   return c.json({ domain: formatDomain(row) });
 }
@@ -436,19 +465,45 @@ export async function updateTenantVanityDomainHandler(c: Context<{ Bindings: Env
   const parsed = UpdateSchema.safeParse(await c.req.json<unknown>().catch(() => null));
   if (!parsed.success) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
 
-  const existing = await getDomainById(c.env, id, tenantId);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id, tenantId);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   if (parsed.data.is_active !== undefined) {
+    if (parsed.data.is_active && existing.is_active === 0) {
+      const collision = await adapter.queryOne<{ id: string }>(
+        'SELECT id FROM tenant_vanity_domains WHERE active_hostname = ? AND id != ?',
+        [existing.hostname, id]
+      );
+      if (collision) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'hostname', reason: 'An active vanity domain already exists' },
+        });
+      }
+    }
     const now = Math.floor(Date.now() / 1000);
-    await c.env.DB.prepare(
-      'UPDATE tenant_vanity_domains SET is_active = ?, is_primary = CASE WHEN ? = 0 THEN 0 ELSE is_primary END, updated_at = ? WHERE id = ? AND tenant_id = ?'
-    )
-      .bind(parsed.data.is_active ? 1 : 0, parsed.data.is_active ? 1 : 0, now, id, tenantId)
-      .run();
+    await adapter.execute(
+      `UPDATE tenant_vanity_domains
+       SET is_active = ?,
+           active_hostname = ?,
+           is_primary = CASE WHEN ? = 0 THEN 0 ELSE is_primary END,
+           primary_active_tenant_key = CASE WHEN ? = 1 AND is_primary = 1 THEN ? ELSE NULL END,
+           updated_at = ?
+       WHERE id = ? AND tenant_id = ?`,
+      [
+        parsed.data.is_active ? 1 : 0,
+        getActiveHostname(existing.hostname, parsed.data.is_active),
+        parsed.data.is_active ? 1 : 0,
+        parsed.data.is_active ? 1 : 0,
+        getPrimaryActiveTenantKey(tenantId, true, true),
+        now,
+        id,
+        tenantId,
+      ]
+    );
   }
 
-  const updated = await getDomainById(c.env, id, tenantId);
+  const updated = await getDomainById(adapter, id, tenantId);
   await invalidateTenantVanityDomainCache(c.env.AUTHRIM_CONFIG, {
     hostname: existing.hostname,
     tenantId,
@@ -460,7 +515,12 @@ export async function setPrimaryTenantVanityDomainHandler(c: Context<{ Bindings:
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)) return permissionDenied(c);
 
   try {
-    const updated = await setPrimary(c.env, c.req.param('id')!, getTenantIdFromContext(c));
+    const updated = await setPrimary(
+      getCoreAdapter(c),
+      c.env,
+      c.req.param('id')!,
+      getTenantIdFromContext(c)
+    );
     return c.json(formatDomain(updated));
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -474,7 +534,8 @@ export async function syncTenantVanityDomainHandler(c: Context<{ Bindings: Env }
 
   const tenantId = getTenantIdFromContext(c);
   const id = c.req.param('id')!;
-  const existing = await getDomainById(c.env, id, tenantId);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id, tenantId);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   if (!existing.cloudflare_zone_id || !existing.cloudflare_custom_hostname_id) {
     return c.json({ domain: formatDomain(existing), cloudflare_configured: false });
@@ -488,13 +549,12 @@ export async function syncTenantVanityDomainHandler(c: Context<{ Bindings: Env }
     );
     const now = Math.floor(Date.now() / 1000);
     const status = cloudflareStatus(result);
-    await c.env.DB.prepare(
+    await adapter.execute(
       `UPDATE tenant_vanity_domains
        SET status = ?, ssl_status = ?, ownership_status = ?, validation_method = ?,
            validation_records_json = ?, last_sync_at = ?, updated_at = ?
-       WHERE id = ? AND tenant_id = ?`
-    )
-      .bind(
+       WHERE id = ? AND tenant_id = ?`,
+      [
         status,
         result.ssl?.status ?? null,
         result.status ?? null,
@@ -503,14 +563,14 @@ export async function syncTenantVanityDomainHandler(c: Context<{ Bindings: Env }
         now,
         now,
         id,
-        tenantId
-      )
-      .run();
+        tenantId,
+      ]
+    );
     await invalidateTenantVanityDomainCache(c.env.AUTHRIM_CONFIG, {
       hostname: existing.hostname,
       tenantId,
     });
-    const updated = await getDomainById(c.env, id, tenantId);
+    const updated = await getDomainById(adapter, id, tenantId);
     return c.json({ domain: formatDomain(updated!), cloudflare_configured: true });
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
@@ -524,7 +584,8 @@ export async function verifyTenantVanityDomainHandler(c: Context<{ Bindings: Env
 
   const tenantId = getTenantIdFromContext(c);
   const id = c.req.param('id')!;
-  const existing = await getDomainById(c.env, id, tenantId);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id, tenantId);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   if (existing.cloudflare_zone_id && existing.cloudflare_custom_hostname_id) {
@@ -532,19 +593,18 @@ export async function verifyTenantVanityDomainHandler(c: Context<{ Bindings: Env
   }
 
   const now = Math.floor(Date.now() / 1000);
-  await c.env.DB.prepare(
+  await adapter.execute(
     `UPDATE tenant_vanity_domains
      SET status = 'active', ssl_status = 'active', ownership_status = 'active',
          validation_method = 'manual', last_sync_at = ?, updated_at = ?
-     WHERE id = ? AND tenant_id = ?`
-  )
-    .bind(now, now, id, tenantId)
-    .run();
+     WHERE id = ? AND tenant_id = ?`,
+    [now, now, id, tenantId]
+  );
   await invalidateTenantVanityDomainCache(c.env.AUTHRIM_CONFIG, {
     hostname: existing.hostname,
     tenantId,
   });
-  const updated = await getDomainById(c.env, id, tenantId);
+  const updated = await getDomainById(adapter, id, tenantId);
   return c.json({ domain: formatDomain(updated!), cloudflare_configured: false });
 }
 
@@ -553,7 +613,8 @@ export async function deleteTenantVanityDomainHandler(c: Context<{ Bindings: Env
 
   const tenantId = getTenantIdFromContext(c);
   const id = c.req.param('id')!;
-  const existing = await getDomainById(c.env, id, tenantId);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id, tenantId);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   if (existing.cloudflare_zone_id && existing.cloudflare_custom_hostname_id && c.env.CLOUDFLARE_API_TOKEN) {
@@ -565,11 +626,10 @@ export async function deleteTenantVanityDomainHandler(c: Context<{ Bindings: Env
   }
 
   const now = Math.floor(Date.now() / 1000);
-  await c.env.DB.prepare(
-    "UPDATE tenant_vanity_domains SET is_active = 0, is_primary = 0, status = 'deleted', updated_at = ? WHERE id = ? AND tenant_id = ?"
-  )
-    .bind(now, id, tenantId)
-    .run();
+  await adapter.execute(
+    "UPDATE tenant_vanity_domains SET is_active = 0, active_hostname = NULL, is_primary = 0, primary_active_tenant_key = NULL, status = 'deleted', updated_at = ? WHERE id = ? AND tenant_id = ?",
+    [now, id, tenantId]
+  );
   await invalidateTenantVanityDomainCache(c.env.AUTHRIM_CONFIG, {
     hostname: existing.hostname,
     tenantId,
@@ -581,11 +641,12 @@ export async function setPrimaryPlatformTenantVanityDomainHandler(c: Context<{ B
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
-  const existing = await getDomainById(c.env, id);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
-    const updated = await setPrimary(c.env, id, existing.tenant_id);
+    const updated = await setPrimary(adapter, c.env, id, existing.tenant_id);
     return c.json(formatDomain(updated));
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -598,7 +659,8 @@ export async function syncPlatformTenantVanityDomainHandler(c: Context<{ Binding
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
-  const existing = await getDomainById(c.env, id);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   if (!existing.cloudflare_zone_id || !existing.cloudflare_custom_hostname_id) {
     return c.json({ domain: formatDomain(existing), cloudflare_configured: false });
@@ -612,13 +674,12 @@ export async function syncPlatformTenantVanityDomainHandler(c: Context<{ Binding
     );
     const now = Math.floor(Date.now() / 1000);
     const status = cloudflareStatus(result);
-    await c.env.DB.prepare(
+    await adapter.execute(
       `UPDATE tenant_vanity_domains
        SET status = ?, ssl_status = ?, ownership_status = ?, validation_method = ?,
            validation_records_json = ?, last_sync_at = ?, updated_at = ?
-       WHERE id = ?`
-    )
-      .bind(
+       WHERE id = ?`,
+      [
         status,
         result.ssl?.status ?? null,
         result.status ?? null,
@@ -626,14 +687,14 @@ export async function syncPlatformTenantVanityDomainHandler(c: Context<{ Binding
         JSON.stringify(collectValidationRecords(result)),
         now,
         now,
-        id
-      )
-      .run();
+        id,
+      ]
+    );
     await invalidateTenantVanityDomainCache(c.env.AUTHRIM_CONFIG, {
       hostname: existing.hostname,
       tenantId: existing.tenant_id,
     });
-    const updated = await getDomainById(c.env, id);
+    const updated = await getDomainById(adapter, id);
     return c.json({ domain: formatDomain(updated!), cloudflare_configured: true });
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
@@ -646,7 +707,8 @@ export async function verifyPlatformTenantVanityDomainHandler(c: Context<{ Bindi
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
-  const existing = await getDomainById(c.env, id);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   if (existing.cloudflare_zone_id && existing.cloudflare_custom_hostname_id) {
@@ -654,19 +716,18 @@ export async function verifyPlatformTenantVanityDomainHandler(c: Context<{ Bindi
   }
 
   const now = Math.floor(Date.now() / 1000);
-  await c.env.DB.prepare(
+  await adapter.execute(
     `UPDATE tenant_vanity_domains
      SET status = 'active', ssl_status = 'active', ownership_status = 'active',
          validation_method = 'manual', last_sync_at = ?, updated_at = ?
-     WHERE id = ?`
-  )
-    .bind(now, now, id)
-    .run();
+     WHERE id = ?`,
+    [now, now, id]
+  );
   await invalidateTenantVanityDomainCache(c.env.AUTHRIM_CONFIG, {
     hostname: existing.hostname,
     tenantId: existing.tenant_id,
   });
-  const updated = await getDomainById(c.env, id);
+  const updated = await getDomainById(adapter, id);
   return c.json({ domain: formatDomain(updated!), cloudflare_configured: false });
 }
 
@@ -674,7 +735,8 @@ export async function deletePlatformTenantVanityDomainHandler(c: Context<{ Bindi
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
-  const existing = await getDomainById(c.env, id);
+  const adapter = getCoreAdapter(c);
+  const existing = await getDomainById(adapter, id);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   if (existing.cloudflare_zone_id && existing.cloudflare_custom_hostname_id && c.env.CLOUDFLARE_API_TOKEN) {
@@ -686,11 +748,10 @@ export async function deletePlatformTenantVanityDomainHandler(c: Context<{ Bindi
   }
 
   const now = Math.floor(Date.now() / 1000);
-  await c.env.DB.prepare(
-    "UPDATE tenant_vanity_domains SET is_active = 0, is_primary = 0, status = 'deleted', updated_at = ? WHERE id = ?"
-  )
-    .bind(now, id)
-    .run();
+  await adapter.execute(
+    "UPDATE tenant_vanity_domains SET is_active = 0, active_hostname = NULL, is_primary = 0, primary_active_tenant_key = NULL, status = 'deleted', updated_at = ? WHERE id = ?",
+    [now, id]
+  );
   await invalidateTenantVanityDomainCache(c.env.AUTHRIM_CONFIG, {
     hostname: existing.hostname,
     tenantId: existing.tenant_id,

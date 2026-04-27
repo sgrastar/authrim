@@ -5,7 +5,7 @@
  * Used for hot data storage with fast query access.
  *
  * Features:
- * - Idempotent writes using ON CONFLICT DO NOTHING
+ * - Idempotent writes using insert-if-not-exists
  * - Batch operations for efficiency
  * - Index-optimized queries
  */
@@ -85,8 +85,11 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           error_code, error_message, anonymized_user_id, client_id,
           session_id, request_id, duration_ms, details_r2_key, details_json,
           retention_until, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO NOTHING
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM event_log WHERE id = ?
+        )
       `);
 
       const batch = entries.map((e) =>
@@ -107,7 +110,8 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           e.detailsR2Key ?? null,
           e.detailsJson ?? null,
           e.retentionUntil ?? null,
-          e.createdAt
+          e.createdAt,
+          e.id
         )
       );
 
@@ -157,8 +161,11 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
           actor_user_id, actor_type, request_id, legal_basis, consent_reference,
           retention_until, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO NOTHING
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pii_log WHERE id = ?
+        )
       `);
 
       const batch = entries.map((e) =>
@@ -179,7 +186,8 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           e.legalBasis ?? null,
           e.consentReference ?? null,
           e.retentionUntil,
-          e.createdAt
+          e.createdAt,
+          e.id
         )
       );
 

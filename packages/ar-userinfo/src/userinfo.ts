@@ -4,6 +4,8 @@ import {
   introspectTokenFromContext,
   getClientCached,
   getCachedUser,
+  createAuthContextFromHono,
+  createPIIContextFromHono,
   encryptJWT,
   isUserInfoEncryptionRequired,
   getClientPublicKey,
@@ -83,7 +85,8 @@ async function getSigningKeyFromKeyManager(
  */
 export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('USERINFO');
-  const requestIssuer = buildRequestIssuerUrl(c.req.raw, c.env, getTenantIdFromContext(c));
+  const tenantId = getTenantIdFromContext(c);
+  const requestIssuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
 
   // Perform comprehensive token validation (including DPoP if present)
   const introspection = await introspectTokenFromContext(c);
@@ -175,7 +178,11 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   // Fetch user data from KV cache (falls back to D1 on cache miss)
   // This dramatically reduces D1 calls under high load
-  const user = await getCachedUser(c.env, sub);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const user = await getCachedUser(c.env, sub, {
+    coreDb: piiCtx.coreAdapter,
+    piiDb: piiCtx.defaultPiiAdapter,
+  });
 
   if (!user) {
     // Security: Generic message to prevent user enumeration
@@ -331,9 +338,11 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   try {
     const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
     if (ccFeatureConfig.enabled) {
+      const authCtx = createAuthContextFromHono(c);
+      const piiCtx = createPIIContextFromHono(c, getTenantIdFromContext(c));
       const ccResolver = createCustomClaimSchemaResolver(
-        c.env.DB,
-        c.env.DB_PII || null,
+        authCtx.coreAdapter,
+        piiCtx.defaultPiiAdapter,
         c.env.AUTHRIM_CONFIG || null,
         ccFeatureConfig
       );

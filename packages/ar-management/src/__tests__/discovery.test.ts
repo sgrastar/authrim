@@ -91,6 +91,22 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     D1Adapter: mocked.FakeD1Adapter,
+    ensureDatabaseAdapter: vi.fn((source: unknown) => {
+      if (
+        source &&
+        typeof source === 'object' &&
+        'query' in source &&
+        'queryOne' in source &&
+        'execute' in source
+      ) {
+        return source;
+      }
+
+      return new mocked.FakeD1Adapter({ db: source });
+    }),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
+      async (_env: Partial<Env>) => new mocked.FakeD1Adapter({ db: {} })
+    ),
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
     resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
   };
@@ -161,8 +177,8 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
   app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
   const env = {
-    DB: {},
-    DB_PII: {},
+    DB: createMockAdapter(),
+    DB_PII: createMockAdapter(),
     SETTINGS: createMockKV({
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',

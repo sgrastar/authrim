@@ -9,7 +9,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-token: lint skipped'",
-    "test": "echo 'op-token: tests skipped'",
+    "test": "pnpm exec vitest run --config vitest.config.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

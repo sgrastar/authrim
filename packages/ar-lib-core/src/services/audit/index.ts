@@ -73,6 +73,18 @@ export type { IAnonymizationService } from './anonymization';
 export { AuditService, createAuditService } from './audit-service';
 
 export type { AuditServiceDependencies } from './audit-service';
+export {
+  resolveAuditPersistenceSourcesFromEnv,
+  resolveAuditPersistenceAdapterFromEnv,
+  resolveLegacyAuditLogAdapterFromEnv,
+} from './runtime-sources';
+export type { AuditPersistenceSourceEnv, AuditPersistenceSources } from './runtime-sources';
+export {
+  createAuditPrimaryDatabaseAdapter,
+  createAuditPrimaryStorageAdapter,
+  createExternalAuditDatabaseAdapter,
+  createExternalAuditStorageAdapter,
+} from './external-primary';
 
 // Queue Consumer
 export {
@@ -102,7 +114,23 @@ export {
   // Hyperdrive Adapter
   HyperdriveAuditAdapter,
   createHyperdriveAuditAdapter,
+  MysqlAuditAdapter,
+  createMysqlAuditAdapter,
+  resolveHyperdriveBindingForAuditTarget,
 } from './storage';
+export {
+  AUDIT_CANONICAL_LOG_FORMAT_V1,
+  buildCanonicalAuditBatch,
+  buildCanonicalAuditRecord,
+  extractAuditEntryFromCanonicalPayload,
+} from './canonical-format';
+export {
+  auditTargetFromBackendConfig,
+  buildAuditStorageBackendsFromProfile,
+  buildAuditStorageConfigFromProfile,
+  buildPrimaryBackendMap,
+  targetToBackendId,
+} from './runtime-targets';
 
 export type {
   IAuditStorageAdapter,
@@ -122,7 +150,14 @@ export type {
   D1AuditAdapterConfig,
   R2AuditAdapterConfig,
   HyperdriveAuditAdapterConfig,
+  MysqlAuditAdapterConfig,
 } from './storage';
+export type {
+  AuditCanonicalLogFormat,
+  CanonicalAuditBatchV1,
+  CanonicalAuditRecordV1,
+  CanonicalAuditDeliveryChannel,
+} from './canonical-format';
 
 // Operational Logs (reason_detail storage with encryption)
 export {

@@ -16,8 +16,9 @@
  * 4. Computed/ABAC (resource_context evaluation)
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
 import type { ExecutionContext } from '@cloudflare/workers-types';
+import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
 import type {
   CheckApiRequest,
   CheckApiResponse,
@@ -221,8 +222,8 @@ export function formatPermission(parsed: ParsedPermission): string {
  * Configuration for UnifiedCheckService
  */
 export interface UnifiedCheckServiceConfig {
-  /** D1 database for permission queries */
-  db: D1Database;
+  /** Database source for permission queries */
+  db: DatabaseSource;
   /** KV namespace for caching (optional) */
   cache?: KVNamespace;
   /** ReBAC service for relationship checks (optional) */
@@ -276,7 +277,7 @@ interface InternalCheckResult {
  * Provides unified permission checking with multiple resolution strategies.
  */
 export class UnifiedCheckService {
-  private db: D1Database;
+  private db: DatabaseAdapter;
   private cache?: KVNamespace;
   private rebacService?: ReBACService;
   private cacheTTL: number;
@@ -289,7 +290,7 @@ export class UnifiedCheckService {
   private defaultTenantId: string;
 
   constructor(config: UnifiedCheckServiceConfig) {
-    this.db = config.db;
+    this.db = ensureDatabaseAdapter(config.db, 'policy-check');
     this.cache = config.cache;
     this.rebacService = config.rebacService;
     this.cacheTTL = config.cacheTTL ?? DEFAULT_CACHE_TTL;
@@ -615,24 +616,23 @@ export class UnifiedCheckService {
     try {
       // Query user's roles
       const rolesResult = await this.db
-        .prepare(
+        .query<{ name: string; permissions_json: string }>(
           `SELECT r.name, r.permissions_json
            FROM roles r
            INNER JOIN role_assignments ra ON r.id = ra.role_id
            WHERE ra.subject_id = ?
              AND ra.tenant_id = ?
              AND r.is_active = 1
-             AND (ra.expires_at IS NULL OR ra.expires_at > ?)`
-        )
-        .bind(context.subjectId, context.tenantId, Math.floor(Date.now() / 1000))
-        .all<{ name: string; permissions_json: string }>();
+             AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
+          [context.subjectId, context.tenantId, Math.floor(Date.now() / 1000)]
+        );
 
       const permissionToCheck =
         context.parsed.type === 'type_level'
           ? `${context.parsed.resource}:${context.parsed.action}`
           : formatPermission(context.parsed);
 
-      for (const role of rolesResult.results) {
+      for (const role of rolesResult) {
         try {
           const permissions = JSON.parse(role.permissions_json || '[]') as string[];
 
@@ -717,12 +717,11 @@ export class UnifiedCheckService {
       // Organization membership check
       if (context.resourceContext.org_id) {
         const orgMemberResult = await this.db
-          .prepare(
+          .queryOne(
             `SELECT 1 FROM organization_memberships
-             WHERE user_id = ? AND org_id = ? AND is_active = 1`
-          )
-          .bind(context.subjectId, context.resourceContext.org_id)
-          .first();
+             WHERE user_id = ? AND org_id = ? AND is_active = 1`,
+            [context.subjectId, context.resourceContext.org_id]
+          );
 
         if (orgMemberResult) {
           return { allowed: true, ruleName: 'org_member_access' };

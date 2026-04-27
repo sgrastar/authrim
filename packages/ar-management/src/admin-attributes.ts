@@ -14,7 +14,7 @@ import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   escapeLikePattern,
   createErrorResponse,
@@ -44,7 +44,12 @@ function asBaseContext(c: AdminContext): BaseContext {
  * Create database adapter from context
  */
 function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  const tenantId = getTenantIdFromContext(asBaseContext(c));
+  return createAuthContextFromHono(asBaseContext(c), tenantId).coreAdapter;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
 }
 
 // =============================================================================
@@ -246,30 +251,81 @@ export async function adminAttributeCreateHandler(c: AdminContext) {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const id = generateId();
-
-    // Upsert attribute (update if exists)
-    await adapter.execute(
-      `INSERT INTO user_verified_attributes
-       (id, tenant_id, user_id, attribute_name, attribute_value, source_type, verified_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, 'manual', ?, ?)
-       ON CONFLICT(tenant_id, user_id, attribute_name) DO UPDATE SET
-       attribute_value = excluded.attribute_value,
-       source_type = 'manual',
-       issuer_did = NULL,
-       verification_id = NULL,
-       verified_at = excluded.verified_at,
-       expires_at = excluded.expires_at`,
-      [
-        id,
-        tenantId,
-        body.user_id,
-        body.attribute_name,
-        body.attribute_value,
-        now,
-        body.expires_at || null,
-      ]
+    const existing = await adapter.queryOne<{
+      id: string;
+      created_at: number;
+    }>(
+      `SELECT id, created_at
+       FROM user_verified_attributes
+       WHERE tenant_id = ? AND user_id = ? AND attribute_name = ?`,
+      [tenantId, body.user_id, body.attribute_name]
     );
+
+    let id = existing?.id ?? generateId();
+
+    if (existing) {
+      await adapter.execute(
+        `UPDATE user_verified_attributes
+         SET attribute_value = ?,
+             source_type = 'manual',
+             issuer_did = NULL,
+             verification_id = NULL,
+             verified_at = ?,
+             expires_at = ?,
+             updated_at = ?
+         WHERE id = ?`,
+        [body.attribute_value, now, body.expires_at || null, now, existing.id]
+      );
+    } else {
+      try {
+        await adapter.execute(
+          `INSERT INTO user_verified_attributes
+           (id, tenant_id, user_id, attribute_name, attribute_value, source_type, verified_at, expires_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
+          [
+            id,
+            tenantId,
+            body.user_id,
+            body.attribute_name,
+            body.attribute_value,
+            now,
+            body.expires_at || null,
+            now,
+            now,
+          ]
+        );
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          throw error;
+        }
+
+        const raced = await adapter.queryOne<{ id: string; created_at: number }>(
+          `SELECT id, created_at
+           FROM user_verified_attributes
+           WHERE tenant_id = ? AND user_id = ? AND attribute_name = ?`,
+          [tenantId, body.user_id, body.attribute_name]
+        );
+
+        if (!raced) {
+          throw new Error('Failed to resolve raced user attribute');
+        }
+
+        id = raced.id;
+
+        await adapter.execute(
+          `UPDATE user_verified_attributes
+           SET attribute_value = ?,
+               source_type = 'manual',
+               issuer_did = NULL,
+               verification_id = NULL,
+               verified_at = ?,
+               expires_at = ?,
+               updated_at = ?
+           WHERE id = ?`,
+          [body.attribute_value, now, body.expires_at || null, now, raced.id]
+        );
+      }
+    }
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'create', 'user_attribute', id, {

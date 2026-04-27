@@ -11,17 +11,27 @@ CREATE TABLE tenants (
   description TEXT,
   is_active   INTEGER NOT NULL DEFAULT 1, -- 0=無効, 1=有効
   is_default  INTEGER NOT NULL DEFAULT 0, -- デフォルトテナント（1つのみ）
+  default_tenant_guard TEXT,              -- 'default' when is_default=1, NULL otherwise
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
 
--- is_default=1 は1行のみ（SQLite partial unique index）
-CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(is_default)
-  WHERE is_default = 1;
+CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(default_tenant_guard);
 
 -- 既存の 'default' テナントを初期挿入
-INSERT INTO tenants (id, tenant_code, name, is_active, is_default, created_at, updated_at)
-VALUES ('default', 'default', 'Default', 1, 1, unixepoch(), unixepoch());
+INSERT INTO tenants (
+  id, tenant_code, name, is_active, is_default, default_tenant_guard, created_at, updated_at
+)
+VALUES (
+  'default',
+  'default',
+  'Default',
+  1,
+  1,
+  'default',
+  __AUTHRIM_NOW_EPOCH_SECONDS__,
+  __AUTHRIM_NOW_EPOCH_SECONDS__
+);
 
 -- Platform-level email domain → tenant routing (system_admin only)
 CREATE TABLE tenant_domain_mappings (
@@ -31,6 +41,7 @@ CREATE TABLE tenant_domain_mappings (
   tenant_id               TEXT NOT NULL,
   priority                INTEGER NOT NULL DEFAULT 0,
   is_active               INTEGER NOT NULL DEFAULT 1,
+  active_domain_hash      TEXT,
   verified                INTEGER NOT NULL DEFAULT 0,
   verification_token      TEXT,
   verification_expires_at INTEGER,
@@ -40,8 +51,8 @@ CREATE TABLE tenant_domain_mappings (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
-CREATE UNIQUE INDEX idx_tdm_domain_hash ON tenant_domain_mappings(domain_hash)
-  WHERE is_active = 1;
+CREATE UNIQUE INDEX idx_tdm_domain_hash ON tenant_domain_mappings(active_domain_hash);
+CREATE INDEX idx_tdm_domain_lookup ON tenant_domain_mappings(domain_hash, is_active);
 CREATE INDEX idx_tdm_tenant ON tenant_domain_mappings(tenant_id);
 CREATE INDEX idx_tdm_verified ON tenant_domain_mappings(verified, is_active, priority DESC);
 
@@ -51,7 +62,9 @@ CREATE TABLE tenant_vanity_domains (
   tenant_id                      TEXT NOT NULL,
   hostname                       TEXT NOT NULL,
   is_active                      INTEGER NOT NULL DEFAULT 1,
+  active_hostname                TEXT,
   is_primary                     INTEGER NOT NULL DEFAULT 0,
+  primary_active_tenant_key      TEXT,
   status                         TEXT NOT NULL DEFAULT 'pending',
   cloudflare_zone_id             TEXT,
   cloudflare_custom_hostname_id  TEXT,
@@ -66,10 +79,10 @@ CREATE TABLE tenant_vanity_domains (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
-CREATE UNIQUE INDEX idx_tvd_hostname_active ON tenant_vanity_domains(hostname)
-  WHERE is_active = 1;
-CREATE UNIQUE INDEX idx_tvd_primary_active ON tenant_vanity_domains(tenant_id)
-  WHERE is_primary = 1 AND is_active = 1;
+CREATE UNIQUE INDEX idx_tvd_hostname_active ON tenant_vanity_domains(active_hostname);
+CREATE UNIQUE INDEX idx_tvd_primary_active ON tenant_vanity_domains(primary_active_tenant_key);
+CREATE INDEX idx_tvd_hostname_lookup ON tenant_vanity_domains(hostname, is_active);
+CREATE INDEX idx_tvd_primary_lookup ON tenant_vanity_domains(tenant_id, is_primary, is_active, status);
 CREATE INDEX idx_tvd_tenant ON tenant_vanity_domains(tenant_id);
 CREATE INDEX idx_tvd_status ON tenant_vanity_domains(status, is_active);
 
@@ -190,7 +203,7 @@ CREATE TABLE attribute_verifications (
     status_valid INTEGER DEFAULT 0,
     -- JSON array of user_verified_attributes IDs
     mapped_attribute_ids TEXT,
-    verified_at TEXT DEFAULT (datetime('now')),
+    verified_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT
 );
 
@@ -371,6 +384,7 @@ CREATE TABLE consent_statement_versions (
   effective_at INTEGER NOT NULL,
   content_hash TEXT,                     -- SHA-256 integrity hash
   is_current INTEGER NOT NULL DEFAULT 0,
+  current_statement_guard TEXT,
   status TEXT NOT NULL DEFAULT 'draft',  -- 'draft'|'active'|'archived'
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -411,8 +425,8 @@ CREATE TABLE credential_configurations (
     signing_alg TEXT DEFAULT 'ES256',
     -- Active status
     is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     UNIQUE(tenant_id, configuration_id)
 );
 
@@ -430,15 +444,14 @@ CREATE TABLE credential_offers (
     grants TEXT NOT NULL,
     -- Status: 'pending' | 'accepted' | 'issued' | 'failed' | 'expired'
     status TEXT DEFAULT 'pending',
-    created_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT NOT NULL,
     issued_at TEXT,
     issued_credential_id TEXT REFERENCES issued_credentials(id)
 );
 
 CREATE TABLE d1_migrations(
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		name       TEXT UNIQUE,
+		name       TEXT PRIMARY KEY,
 		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -470,6 +483,8 @@ CREATE TABLE device_codes (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   last_poll_at INTEGER,
+  token_issued INTEGER DEFAULT 0,
+  token_issued_at INTEGER,
   poll_count INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default',
   FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
 );
@@ -478,7 +493,7 @@ CREATE TABLE did_document_cache (
     did TEXT PRIMARY KEY,
     -- JSON of DID Document
     document TEXT NOT NULL,
-    resolved_at TEXT DEFAULT (datetime('now')),
+    resolved_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT NOT NULL
 );
 
@@ -576,7 +591,7 @@ CREATE TABLE issued_credentials (
     status TEXT DEFAULT 'active',
     -- Status list index for revocation
     status_list_index INTEGER,
-    created_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT,
     revoked_at TEXT,
     revoked_reason TEXT
@@ -626,8 +641,8 @@ CREATE TABLE "oauth_client_consents" (
   scope TEXT NOT NULL,
   granted_at INTEGER NOT NULL,
   expires_at INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   tenant_id TEXT NOT NULL DEFAULT 'default', selected_scopes TEXT, privacy_policy_version TEXT, tos_version TEXT, consent_version INTEGER DEFAULT 1,
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
   FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
@@ -854,8 +869,8 @@ CREATE TABLE presentation_definitions (
     dcql_query TEXT,
     -- Active status
     is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE TABLE refresh_token_shard_configs (
@@ -1193,8 +1208,8 @@ CREATE TABLE profile_registry (
   id TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('storage', 'audit', 'residency')),
   payload_json TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   PRIMARY KEY (kind, id)
 );
 
@@ -1209,8 +1224,8 @@ CREATE TABLE status_lists (
     current_index INTEGER DEFAULT 0,
     -- Total capacity
     capacity INTEGER DEFAULT 131072,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE TABLE subject_identifiers (
@@ -1336,8 +1351,8 @@ CREATE TABLE trusted_issuers (
     jwks_uri TEXT,
     -- Issuer status: 'active' | 'suspended' | 'revoked'
     status TEXT DEFAULT 'active',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     UNIQUE(tenant_id, issuer_did)
 );
 
@@ -1448,7 +1463,7 @@ CREATE TABLE user_verified_attributes (
     issuer_did TEXT,
     -- Reference to verification record
     verification_id TEXT REFERENCES attribute_verifications(id),
-    verified_at TEXT DEFAULT (datetime('now')),
+    verified_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT,
     -- Each user can have only one value per attribute
     UNIQUE(tenant_id, user_id, attribute_name)
@@ -1592,7 +1607,7 @@ CREATE TABLE vp_requests (
     -- Error information if failed
     error_code TEXT,
     error_description TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT NOT NULL,
     verified_at TEXT
 );
@@ -1685,11 +1700,11 @@ CREATE INDEX idx_admin_jobs_type ON admin_jobs(
   created_at DESC
 );
 
-CREATE INDEX idx_ai_grants_active ON ai_grants(is_active) WHERE is_active = 1;
+CREATE INDEX idx_ai_grants_active ON ai_grants(is_active);
 
 CREATE INDEX idx_ai_grants_client ON ai_grants(client_id);
 
-CREATE INDEX idx_ai_grants_expires ON ai_grants(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_ai_grants_expires ON ai_grants(expires_at);
 
 CREATE INDEX idx_ai_grants_principal ON ai_grants(ai_principal);
 
@@ -1791,12 +1806,13 @@ CREATE INDEX idx_csv_effective ON consent_statement_versions(effective_at);
 
 CREATE INDEX idx_csv_statement ON consent_statement_versions(statement_id, is_current);
 
-CREATE UNIQUE INDEX idx_csv_unique_current ON consent_statement_versions(tenant_id, statement_id) WHERE is_current = 1;
+CREATE UNIQUE INDEX idx_csv_unique_current
+  ON consent_statement_versions(tenant_id, current_statement_guard);
 
 CREATE INDEX idx_consents_client ON oauth_client_consents(client_id);
 
 CREATE INDEX idx_consents_expires_at_active
-  ON oauth_client_consents(expires_at) WHERE expires_at IS NOT NULL;
+  ON oauth_client_consents(expires_at);
 
 CREATE INDEX idx_consents_user ON oauth_client_consents(user_id);
 
@@ -1807,7 +1823,7 @@ CREATE INDEX idx_credential_offers_code ON credential_offers(pre_authorized_code
 CREATE INDEX idx_credential_offers_status ON credential_offers(tenant_id, status);
 
 CREATE INDEX idx_data_export_expires
-  ON data_export_requests(expires_at) WHERE expires_at IS NOT NULL;
+  ON data_export_requests(expires_at);
 
 CREATE INDEX idx_data_export_status
   ON data_export_requests(status, requested_at);
@@ -1921,15 +1937,13 @@ CREATE INDEX idx_passkeys_user ON passkeys(user_id);
 CREATE INDEX idx_password_reset_user ON password_reset_tokens(user_id);
 
 CREATE INDEX idx_pca_api_key
-    ON permission_check_audit(api_key_id)
-    WHERE api_key_id IS NOT NULL;
+    ON permission_check_audit(api_key_id);
 
 CREATE INDEX idx_pca_checked_at
     ON permission_check_audit(checked_at);
 
 CREATE INDEX idx_pca_denied
-    ON permission_check_audit(tenant_id, final_decision)
-    WHERE final_decision = 'deny';
+    ON permission_check_audit(tenant_id, final_decision);
 
 CREATE INDEX idx_pca_tenant_subject
     ON permission_check_audit(tenant_id, subject_id);
@@ -2001,8 +2015,7 @@ CREATE INDEX idx_roles_role_type ON roles(role_type);
 
 CREATE INDEX idx_roles_tenant_id ON roles(tenant_id);
 
-CREATE INDEX idx_rp_expires ON resource_permissions(expires_at)
-WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_rp_expires ON resource_permissions(expires_at);
 
 CREATE INDEX idx_rp_lookup ON resource_permissions(
   tenant_id,
@@ -2140,13 +2153,12 @@ CREATE UNIQUE INDEX idx_upstream_providers_tenant_name
   ON upstream_providers(tenant_id, name);
 
 CREATE UNIQUE INDEX idx_upstream_providers_tenant_slug
-  ON upstream_providers(tenant_id, slug)
-  WHERE slug IS NOT NULL;
+  ON upstream_providers(tenant_id, slug);
 
 CREATE INDEX idx_upstream_providers_enable_sso
   ON upstream_providers(tenant_id, enable_sso);
 
-CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at);
 
 CREATE INDEX idx_ucr_statement ON user_consent_records(tenant_id, statement_id);
 
@@ -2201,7 +2213,7 @@ CREATE INDEX idx_vp_requests_nonce ON vp_requests(nonce);
 
 CREATE INDEX idx_vp_requests_tenant_status ON vp_requests(tenant_id, status);
 
-CREATE INDEX idx_webhook_configs_active ON webhook_configs(tenant_id, active) WHERE active = 1;
+CREATE INDEX idx_webhook_configs_active ON webhook_configs(tenant_id, active);
 
 CREATE INDEX idx_webhook_configs_client ON webhook_configs(tenant_id, client_id);
 
@@ -2218,8 +2230,7 @@ CREATE INDEX idx_webhook_delivery_logs_tenant ON webhook_delivery_logs(tenant_id
 CREATE INDEX idx_webhook_delivery_logs_webhook ON webhook_delivery_logs(webhook_id);
 
 CREATE INDEX idx_ws_subs_active
-    ON websocket_subscriptions(is_active)
-    WHERE is_active = 1;
+    ON websocket_subscriptions(is_active);
 
 CREATE INDEX idx_ws_subs_connection
     ON websocket_subscriptions(connection_id);
@@ -2236,6 +2247,7 @@ CREATE TABLE custom_claim_schemas (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
   field_key TEXT NOT NULL,
+  active_field_key TEXT,
   display_label TEXT NOT NULL,
   field_type TEXT NOT NULL DEFAULT 'string',
   is_pii INTEGER NOT NULL DEFAULT 0,
@@ -2266,10 +2278,11 @@ CREATE TABLE custom_claim_schemas (
   registration_placeholder TEXT
 );
 
-CREATE UNIQUE INDEX uniq_ccs_active_key ON custom_claim_schemas(tenant_id, field_key) WHERE is_active = 1;
+CREATE UNIQUE INDEX uniq_ccs_active_key
+  ON custom_claim_schemas(tenant_id, active_field_key);
 CREATE INDEX idx_ccs_tenant_active ON custom_claim_schemas(tenant_id, is_active, display_order);
 CREATE INDEX idx_ccs_tenant_key ON custom_claim_schemas(tenant_id, field_key);
-CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status) WHERE operation_status != 'active';
+CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status);
 
 -- =============================================================================
 -- From 054: Custom Claim Schema History
@@ -2313,6 +2326,5 @@ CREATE TABLE tenant_invitations (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
-CREATE INDEX idx_ti_token  ON tenant_invitations(token)
-  WHERE expires_at > unixepoch();
+CREATE INDEX idx_ti_token ON tenant_invitations(token, expires_at);
 CREATE INDEX idx_ti_tenant ON tenant_invitations(tenant_id, created_at DESC);

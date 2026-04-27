@@ -114,16 +114,17 @@ export async function seedCustomClaimSchemas({
 
     await adapter.execute(
       `INSERT INTO custom_claim_schemas (
-        id, tenant_id, field_key, display_label, field_type,
+        id, tenant_id, field_key, active_field_key, display_label, field_type,
         is_pii, is_required, is_active, is_system,
         is_searchable, is_exportable, is_vc_claim,
         include_in_id_token, include_in_userinfo, include_in_introspection,
         scope_mode, display_order, schema_version, operation_status,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, 1, 'active', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, 1, 'active', ?, ?)`,
       [
         idFactory(),
         tenantId,
+        schema.field_key,
         schema.field_key,
         schema.display_label,
         schema.field_type,

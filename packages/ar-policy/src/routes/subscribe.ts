@@ -30,6 +30,7 @@ import {
   isOperationAllowed,
   type CheckAuthContext,
 } from '../middleware/check-auth';
+import { getPolicyCoreAdapter } from '../rebac-storage-adapter';
 
 // =============================================================================
 // Types
@@ -114,8 +115,9 @@ subscribeRoutes.get('/subscribe', async (c) => {
   }
 
   // Authenticate using the token
+  const coreAdapter = getPolicyCoreAdapter(c);
   const authContext: CheckAuthContext = {
-    db: c.env.DB,
+    db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
     defaultTenantId: getDefaultTenantId(c.env),
@@ -176,8 +178,9 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
   }
 
   // Authentication
+  const coreAdapter = getPolicyCoreAdapter(c);
   const auth = await authenticateCheckApiRequest(c.req.header('Authorization'), {
-    db: c.env.DB,
+    db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
     defaultTenantId: getDefaultTenantId(c.env),

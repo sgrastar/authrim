@@ -17,11 +17,11 @@
 import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../types';
 import {
-  D1Adapter,
   AttributeVerificationRepository,
   UserVerifiedAttributeRepository,
   getLogger,
   createLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl, getRequestVerifierIdentifier } from '../../request-identifiers';
 
@@ -256,7 +256,7 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Link verification to user and store attributes
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core');
     const verificationRepo = new AttributeVerificationRepository(adapter);
     const attributeRepo = new UserVerifiedAttributeRepository(adapter);
 
@@ -321,7 +321,7 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
       return c.json({ error: 'invalid_token', error_description: 'Invalid access token' }, 401);
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core');
     const attributeRepo = new UserVerifiedAttributeRepository(adapter);
     const attributes = await getUserVerifiedAttributes(
       attributeRepo,

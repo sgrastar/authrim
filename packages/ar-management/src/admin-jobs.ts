@@ -17,7 +17,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -151,7 +151,8 @@ const ListJobsQuerySchema = z.object({
  * Create database adapter from context
  */
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  const tenantId = getTenantIdFromContext(c);
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 /**

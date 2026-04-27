@@ -70,6 +70,16 @@ const SESSION_TTL = 24 * 60 * 60; // 24 hours in seconds
 const MIN_RESPONSE_TIME_MS = 500;
 const JITTER_MS = 100;
 
+function isConflictInsertError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('unique') ||
+    normalized.includes('constraint') ||
+    normalized.includes('duplicate')
+  );
+}
+
 /**
  * Ensure constant-time execution
  */
@@ -447,29 +457,35 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           pii_status: 'none',
         });
 
-        // Create anonymous device record using INSERT OR IGNORE
-        // This handles race conditions where another request created the device concurrently
         const deviceId = generateId();
-        await authCtx.coreAdapter.execute(
-          `INSERT OR IGNORE INTO anonymous_devices (
-            id, tenant_id, user_id, device_id_hash, installation_id_hash,
-            fingerprint_hash, device_platform, device_stability,
-            expires_at, created_at, last_used_at, is_active
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-          [
-            deviceId,
-            tenantId,
-            newUserId,
-            currentSignature.device_id_hash,
-            currentSignature.installation_id_hash || null,
-            currentSignature.fingerprint_hash || null,
-            currentSignature.device_platform || null,
-            challengeData.metadata?.device_stability || 'installation',
-            expiresAt,
-            now,
-            now,
-          ]
-        );
+        let insertedDeviceRecord = false;
+        try {
+          await authCtx.coreAdapter.execute(
+            `INSERT INTO anonymous_devices (
+              id, tenant_id, user_id, device_id_hash, installation_id_hash,
+              fingerprint_hash, device_platform, device_stability,
+              expires_at, created_at, last_used_at, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            [
+              deviceId,
+              tenantId,
+              newUserId,
+              currentSignature.device_id_hash,
+              currentSignature.installation_id_hash || null,
+              currentSignature.fingerprint_hash || null,
+              currentSignature.device_platform || null,
+              challengeData.metadata?.device_stability || 'installation',
+              expiresAt,
+              now,
+              now,
+            ]
+          );
+          insertedDeviceRecord = true;
+        } catch (error) {
+          if (!isConflictInsertError(error)) {
+            throw error;
+          }
+        }
 
         // RACE CONDITION FIX: Re-check if another request created a device first
         // This handles the case where two requests passed the initial check concurrently
@@ -499,19 +515,25 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             });
 
           // Also delete our device record if it was inserted
-          authCtx.coreAdapter
-            .execute('DELETE FROM anonymous_devices WHERE id = ? AND tenant_id = ?', [
-              deviceId,
-              tenantId,
-            ])
-            .catch((err) => {
-              log.error(
-                'Failed to cleanup orphaned device',
-                { action: 'cleanup_device' },
-                err as Error
-              );
-            });
+          if (insertedDeviceRecord) {
+            authCtx.coreAdapter
+              .execute('DELETE FROM anonymous_devices WHERE id = ? AND tenant_id = ?', [
+                deviceId,
+                tenantId,
+              ])
+              .catch((err) => {
+                log.error(
+                  'Failed to cleanup orphaned device',
+                  { action: 'cleanup_device' },
+                  err as Error
+                );
+              });
+          }
         } else {
+          if (!raceCheckDevice) {
+            throw new Error('Anonymous device insert conflict could not be resolved');
+          }
+
           // Our insert succeeded or we won the race
           userId = newUserId;
         }

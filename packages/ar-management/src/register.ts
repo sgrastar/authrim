@@ -25,8 +25,6 @@ import {
   hasPIIDatabase,
   getDefaultTenantId,
   getTenantIdFromContext,
-  D1Adapter,
-  type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -791,13 +789,17 @@ function generateClientSecret(): string {
  * Store client metadata in D1 (source of truth)
  * Cache will be populated via Read-Through pattern on first access
  */
-async function storeClient(env: Env, clientId: string, metadata: ClientMetadata): Promise<void> {
-  // Store in D1 (source of truth)
+async function storeClient(
+  env: Env,
+  coreAdapter: ReturnType<typeof createAuthContextFromHono>['coreAdapter'],
+  clientId: string,
+  metadata: ClientMetadata
+): Promise<void> {
+  // Store in auth core relational source of truth.
   const now = Date.now(); // Store in milliseconds
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   await coreAdapter.execute(
     `
-    INSERT OR REPLACE INTO oauth_clients (
+    INSERT INTO oauth_clients (
       client_id, client_secret_hash, client_name, redirect_uris,
       grant_types, response_types, scope, logo_uri,
       client_uri, policy_uri, tos_uri, contacts,
@@ -901,6 +903,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
 
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
     // Parse request body
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
 
@@ -961,8 +965,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         tenantId
       );
       if (!allowDuplicateSoftwareId) {
-        const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-        const existingClient = await coreAdapter.queryOne<{ client_id: string }>(
+        const existingClient = await authCtx.coreAdapter.queryOne<{ client_id: string }>(
           'SELECT client_id FROM oauth_clients WHERE software_id = ? AND tenant_id = ?',
           [request.software_id, tenantId]
         );
@@ -1204,7 +1207,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Store tenant_id in metadata
     metadata.tenant_id = tenantId;
 
-    await storeClient(c.env, clientId, metadata);
+    await storeClient(c.env, authCtx.coreAdapter, clientId, metadata);
 
     // Log client registration for debugging/auditing
     log.info('Client registered', { action: 'register', clientId });
@@ -1223,68 +1226,55 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       };
 
       // Create fixed test user with complete profile (PII/Non-PII DB separation) via Adapter
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-
-      // Insert into users_core (non-PII database) - use INSERT OR IGNORE for idempotency
-      await authCtx.coreAdapter.execute(
-        `INSERT OR IGNORE INTO users_core (
-          id, tenant_id, email_verified, phone_number_verified,
-          is_active, pii_partition, pii_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          testUserId,
-          tenantId,
-          1, // email_verified
-          1, // phone_number_verified
-          1, // is_active
-          tenantId, // pii_partition
-          'active', // pii_status
-          issuedAt,
-          issuedAt,
-        ]
-      );
+      const existingTestUser = await authCtx.repositories.userCore.findById(testUserId);
+      if (!existingTestUser) {
+        await authCtx.repositories.userCore.createUser({
+          id: testUserId,
+          tenant_id: tenantId,
+          email_verified: true,
+          phone_number_verified: true,
+          is_active: true,
+          pii_partition: tenantId,
+          pii_status: 'active',
+        });
+      }
 
       // Insert into users_pii (PII database) via PIIContext
       if (hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
-        await piiCtx.getPiiAdapter(tenantId).execute(
-          `INSERT OR IGNORE INTO users_pii (
-            id, tenant_id, email, name, given_name, family_name,
-            middle_name, nickname, preferred_username, profile, picture,
-            website, gender, birthdate, zoneinfo, locale, phone_number,
-            address_formatted, address_street_address, address_locality,
-            address_region, address_postal_code, address_country,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            testUserId,
-            tenantId,
-            'test@example.com',
-            'John Doe',
-            'John',
-            'Doe',
-            'Q',
-            'Johnny',
-            'test',
-            'https://example.com/johndoe',
-            'https://example.com/avatar.jpg',
-            'https://example.com',
-            'male',
-            '1990-01-01',
-            'America/New_York',
-            'en-US',
-            '+1-555-0100',
-            testAddress.formatted,
-            testAddress.street_address,
-            testAddress.locality,
-            testAddress.region,
-            testAddress.postal_code,
-            testAddress.country,
-            issuedAt,
-            issuedAt,
-          ]
+        const piiAdapter = piiCtx.getPiiAdapter(tenantId);
+        const existingTestUserPII = await piiCtx.piiRepositories.userPII.findByUserId(
+          testUserId,
+          piiAdapter
         );
+        if (!existingTestUserPII) {
+          await piiCtx.piiRepositories.userPII.createPII(
+            {
+              id: testUserId,
+              tenant_id: tenantId,
+              email: 'test@example.com',
+              name: 'John Doe',
+              given_name: 'John',
+              family_name: 'Doe',
+              nickname: 'Johnny',
+              preferred_username: 'test',
+              picture: 'https://example.com/avatar.jpg',
+              website: 'https://example.com',
+              gender: 'male',
+              birthdate: '1990-01-01',
+              zoneinfo: 'America/New_York',
+              locale: 'en-US',
+              phone_number: '+1-555-0100',
+              address_formatted: testAddress.formatted,
+              address_street_address: testAddress.street_address,
+              address_locality: testAddress.locality,
+              address_region: testAddress.region,
+              address_postal_code: testAddress.postal_code,
+              address_country: testAddress.country,
+            },
+            piiAdapter
+          );
+        }
       }
 
       log.info('Test user created/verified: user-oidc-conformance-test', { action: 'register' });

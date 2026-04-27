@@ -23,9 +23,9 @@
  */
 
 import type { Context, MiddlewareHandler, Next } from 'hono';
+import { createAuthContextFromHono } from '../context/hono-context';
 import type { Env } from '../types/env';
-import type { DatabaseAdapter, ExecuteResult } from '../db/adapter';
-import { D1Adapter } from '../db/adapters/d1-adapter';
+import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from '../utils/logger';
 import { getDefaultTenantId } from '../utils/issuer';
 
@@ -76,6 +76,10 @@ const DEFAULT_REDACT_FIELDS = [
  * Default TTL: 24 hours
  */
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
+}
 
 /**
  * Generate SHA-256 hash of request body
@@ -229,7 +233,10 @@ export function idempotencyMiddleware(
     );
 
     // Create database adapter
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter: DatabaseAdapter = createAuthContextFromHono(
+      c as Context<{ Bindings: Env }>,
+      tenantId
+    ).coreAdapter;
 
     try {
       // Check for existing idempotency key
@@ -312,30 +319,50 @@ export function idempotencyMiddleware(
       const nowTs = Math.floor(Date.now() / 1000);
       const expiresAt = nowTs + ttlSeconds;
 
-      // Store the idempotency key and response
-      await adapter.execute(
-        `INSERT INTO idempotency_keys
-         (id, tenant_id, actor_id, method, path, resource_id, idempotency_key, body_hash, response_status, response_body, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           response_status = excluded.response_status,
-           response_body = excluded.response_body,
-           expires_at = excluded.expires_at`,
-        [
-          keyId,
-          tenantId,
-          actorId,
-          method,
-          normalizedPath,
-          resourceId,
-          idempotencyKey,
-          bodyHash,
-          responseStatus,
-          sanitizedBody,
-          nowTs,
-          expiresAt,
-        ]
+      // Store the idempotency key and response. A concurrent request may have
+      // inserted the key after the initial SELECT, so handle UNIQUE races
+      // explicitly instead of relying on dialect-specific upsert syntax.
+      const updateResult = await adapter.execute(
+        `UPDATE idempotency_keys
+         SET response_status = ?, response_body = ?, expires_at = ?
+         WHERE id = ?`,
+        [responseStatus, sanitizedBody, expiresAt, keyId]
       );
+
+      if (updateResult.rowsAffected === 0) {
+        try {
+          await adapter.execute(
+            `INSERT INTO idempotency_keys
+             (id, tenant_id, actor_id, method, path, resource_id, idempotency_key, body_hash, response_status, response_body, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              keyId,
+              tenantId,
+              actorId,
+              method,
+              normalizedPath,
+              resourceId,
+              idempotencyKey,
+              bodyHash,
+              responseStatus,
+              sanitizedBody,
+              nowTs,
+              expiresAt,
+            ]
+          );
+        } catch (error) {
+          if (!isUniqueConstraintError(error)) {
+            throw error;
+          }
+
+          await adapter.execute(
+            `UPDATE idempotency_keys
+             SET response_status = ?, response_body = ?, expires_at = ?
+             WHERE id = ?`,
+            [responseStatus, sanitizedBody, expiresAt, keyId]
+          );
+        }
+      }
 
       log.debug('Stored idempotency key', { keyId, status: responseStatus, expiresAt });
     } catch (error) {
@@ -355,9 +382,6 @@ export function idempotencyMiddleware(
  */
 export async function cleanupExpiredIdempotencyKeys(adapter: DatabaseAdapter): Promise<number> {
   const nowTs = Math.floor(Date.now() / 1000);
-  const result: ExecuteResult = await adapter.execute(
-    'DELETE FROM idempotency_keys WHERE expires_at < ?',
-    [nowTs]
-  );
+  const result = await adapter.execute('DELETE FROM idempotency_keys WHERE expires_at < ?', [nowTs]);
   return result.rowsAffected;
 }

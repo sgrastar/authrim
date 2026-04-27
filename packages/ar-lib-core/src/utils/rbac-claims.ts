@@ -26,7 +26,9 @@
  * ```
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import { createLogger } from './logger';
 import type {
   RBACTokenClaims,
@@ -44,6 +46,10 @@ import { DEFAULT_ID_TOKEN_CLAIMS, DEFAULT_ACCESS_TOKEN_CLAIMS } from '../types/r
 import type { Env } from '../types/env';
 
 const log = createLogger().module('RBAC_CLAIMS');
+
+function getRBACDatabaseAdapter(db: DatabaseSource) {
+  return ensureDatabaseAdapter(db, 'rbac-claims');
+}
 
 // =============================================================================
 // RBAC Cache Configuration
@@ -226,7 +232,7 @@ function buildCompositeRBACCacheKey(subjectId: string, tenantId?: string): strin
  * @returns Composite RBAC cache object
  */
 export async function getCompositeRBACCache(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   options: RBACClaimsOptions = {}
 ): Promise<CompositeRBACCache> {
@@ -437,22 +443,20 @@ interface ResolvedOrgInfo {
  * @param subjectId - User ID
  * @returns Array of role names
  */
-export async function resolveEffectiveRoles(db: D1Database, subjectId: string): Promise<string[]> {
+export async function resolveEffectiveRoles(db: DatabaseSource, subjectId: string): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000); // UNIX seconds
 
-  const result = await db
-    .prepare(
-      `SELECT DISTINCT r.name
+  const rows = await getRBACDatabaseAdapter(db).query<{ name: string }>(
+    `SELECT DISTINCT r.name
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-       ORDER BY r.name ASC`
-    )
-    .bind(subjectId, now)
-    .all<{ name: string }>();
+       ORDER BY r.name ASC`,
+    [subjectId, now]
+  );
 
-  return result.results.map((r) => r.name);
+  return rows.map((r) => r.name);
 }
 
 /**
@@ -466,18 +470,20 @@ export async function resolveEffectiveRoles(db: D1Database, subjectId: string): 
  * @returns Organization info or null if no primary org
  */
 export async function resolveOrganizationInfo(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string
 ): Promise<ResolvedOrgInfo | null> {
-  const result = await db
-    .prepare(
-      `SELECT o.id as org_id, o.plan, o.org_type
+  const result = await getRBACDatabaseAdapter(db).queryOne<{
+    org_id: string;
+    plan: string;
+    org_type: string;
+  }>(
+    `SELECT o.id as org_id, o.plan, o.org_type
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ? AND m.is_primary = 1 AND o.is_active = 1`
-    )
-    .bind(subjectId)
-    .first<{ org_id: string; plan: string; org_type: string }>();
+       WHERE m.subject_id = ? AND m.is_primary = 1 AND o.is_active = 1`,
+    [subjectId]
+  );
 
   if (!result) {
     return null;
@@ -497,11 +503,11 @@ export async function resolveOrganizationInfo(
  * @param subjectId - User ID
  * @returns User type or 'end_user' as default
  */
-export async function resolveUserType(db: D1Database, subjectId: string): Promise<UserType> {
-  const result = await db
-    .prepare('SELECT user_type FROM users_core WHERE id = ?')
-    .bind(subjectId)
-    .first<{ user_type: string }>();
+export async function resolveUserType(db: DatabaseSource, subjectId: string): Promise<UserType> {
+  const result = await getRBACDatabaseAdapter(db).queryOne<{ user_type: string }>(
+    'SELECT user_type FROM users_core WHERE id = ?',
+    [subjectId]
+  );
 
   return (result?.user_type as UserType) || 'end_user';
 }
@@ -530,7 +536,7 @@ export async function resolveUserType(db: D1Database, subjectId: string): Promis
  * ```
  */
 export async function getUserRBACClaims(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string
 ): Promise<RBACTokenClaims> {
   // Fetch all RBAC info in parallel
@@ -580,7 +586,7 @@ export async function getUserRBACClaims(
  * @returns Claims for ID Token
  */
 export async function getIDTokenRBACClaims(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   claimsConfigOrOptions?: string | RBACClaimsOptions
 ): Promise<Partial<RBACTokenClaims>> {
@@ -652,7 +658,7 @@ export async function getIDTokenRBACClaims(
  * @returns Claims for Access Token
  */
 export async function getAccessTokenRBACClaims(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   claimsConfigOrOptions?: string | RBACClaimsOptions
 ): Promise<Partial<RBACTokenClaims>> {
@@ -703,7 +709,7 @@ export async function getAccessTokenRBACClaims(
  * Internal function to fetch access token RBAC claims from D1 (no caching)
  */
 async function getAccessTokenRBACClaimsInternal(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   claimsConfig?: string
 ): Promise<Partial<RBACTokenClaims>> {
@@ -768,24 +774,26 @@ async function getAccessTokenRBACClaimsInternal(
  * @returns Array of scoped roles
  */
 export async function resolveScopedRoles(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string
 ): Promise<TokenScopedRole[]> {
   const now = Math.floor(Date.now() / 1000);
 
-  const result = await db
-    .prepare(
-      `SELECT r.name, ra.scope_type, ra.scope_target
+  const rows = await getRBACDatabaseAdapter(db).query<{
+    name: string;
+    scope_type: string;
+    scope_target: string;
+  }>(
+    `SELECT r.name, ra.scope_type, ra.scope_target
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-       ORDER BY r.name ASC`
-    )
-    .bind(subjectId, now)
-    .all<{ name: string; scope_type: string; scope_target: string }>();
+       ORDER BY r.name ASC`,
+    [subjectId, now]
+  );
 
-  return result.results.map((r) => ({
+  return rows.map((r) => ({
     name: r.name,
     scope: r.scope_type as ScopeType,
     ...(r.scope_target && { scopeTarget: r.scope_target }),
@@ -800,21 +808,24 @@ export async function resolveScopedRoles(
  * @returns Array of organization info
  */
 export async function resolveAllOrganizations(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string
 ): Promise<TokenOrgInfo[]> {
-  const result = await db
-    .prepare(
-      `SELECT o.id, o.name, o.org_type, m.is_primary
+  const rows = await getRBACDatabaseAdapter(db).query<{
+    id: string;
+    name: string;
+    org_type: string;
+    is_primary: number;
+  }>(
+    `SELECT o.id, o.name, o.org_type, m.is_primary
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
        WHERE m.subject_id = ? AND o.is_active = 1
-       ORDER BY m.is_primary DESC, o.name ASC`
-    )
-    .bind(subjectId)
-    .all<{ id: string; name: string; org_type: string; is_primary: number }>();
+       ORDER BY m.is_primary DESC, o.name ASC`,
+    [subjectId]
+  );
 
-  return result.results.map((r) => ({
+  return rows.map((r) => ({
     id: r.id,
     name: r.name,
     type: r.org_type as OrganizationType,
@@ -830,27 +841,29 @@ export async function resolveAllOrganizations(
  * @returns Relationships summary
  */
 export async function resolveRelationshipsSummary(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string
 ): Promise<RelationshipsSummary> {
   const now = Math.floor(Date.now() / 1000);
 
   // Fetch parent_child relationships where user is parent or child
-  const result = await db
-    .prepare(
-      `SELECT relationship_type, from_id, to_id
+  const rows = await getRBACDatabaseAdapter(db).query<{
+    relationship_type: string;
+    from_id: string;
+    to_id: string;
+  }>(
+    `SELECT relationship_type, from_id, to_id
        FROM relationships
        WHERE (from_id = ? OR to_id = ?)
          AND relationship_type = 'parent_child'
-         AND (expires_at IS NULL OR expires_at > ?)`
-    )
-    .bind(subjectId, subjectId, now)
-    .all<{ relationship_type: string; from_id: string; to_id: string }>();
+         AND (expires_at IS NULL OR expires_at > ?)`,
+    [subjectId, subjectId, now]
+  );
 
   const childrenIds: string[] = [];
   const parentIds: string[] = [];
 
-  for (const r of result.results) {
+  for (const r of rows) {
     if (r.from_id === subjectId) {
       // User is the parent
       childrenIds.push(r.to_id);
@@ -873,25 +886,23 @@ export async function resolveRelationshipsSummary(
  * @param subjectId - User ID
  * @returns Array of permission strings
  */
-export async function resolvePermissions(db: D1Database, subjectId: string): Promise<string[]> {
+export async function resolvePermissions(db: DatabaseSource, subjectId: string): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000);
 
-  const result = await db
-    .prepare(
-      `SELECT DISTINCT r.permissions_json
+  const rows = await getRBACDatabaseAdapter(db).query<{ permissions_json: string }>(
+    `SELECT DISTINCT r.permissions_json
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
          AND r.permissions_json IS NOT NULL
-         AND r.permissions_json != '[]'`
-    )
-    .bind(subjectId, now)
-    .all<{ permissions_json: string }>();
+         AND r.permissions_json != '[]'`,
+    [subjectId, now]
+  );
 
   const permissionsSet = new Set<string>();
 
-  for (const r of result.results) {
+  for (const r of rows) {
     try {
       const perms = JSON.parse(r.permissions_json) as string[];
       for (const p of perms) {
@@ -913,18 +924,16 @@ export async function resolvePermissions(db: D1Database, subjectId: string): Pro
  * @returns Organization name or null
  */
 export async function resolveOrganizationName(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string
 ): Promise<string | null> {
-  const result = await db
-    .prepare(
-      `SELECT o.name
+  const result = await getRBACDatabaseAdapter(db).queryOne<{ name: string }>(
+    `SELECT o.name
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ? AND m.is_primary = 1 AND o.is_active = 1`
-    )
-    .bind(subjectId)
-    .first<{ name: string }>();
+       WHERE m.subject_id = ? AND m.is_primary = 1 AND o.is_active = 1`,
+    [subjectId]
+  );
 
   return result?.name ?? null;
 }
@@ -969,7 +978,7 @@ function parseClaimsConfig<T extends string>(config: string | undefined, default
  * @returns Claims for ID Token
  */
 export async function getIDTokenRBACClaimsConfigurable(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   claimsConfig?: string
 ): Promise<Partial<RBACTokenClaims>> {

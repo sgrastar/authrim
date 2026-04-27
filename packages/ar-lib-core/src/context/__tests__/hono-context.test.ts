@@ -5,6 +5,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   hasPIIDatabase,
+  resolveOptionalCoreAdapterFromHono,
 } from '../hono-context';
 
 function createMockAdapter(name: string): DatabaseAdapter {
@@ -54,6 +55,43 @@ describe('hono-context runtime user store sources', () => {
 
     expect(authCtx.tenantId).toBe('tenant-a');
     expect(authCtx.coreAdapter).toBe(coreAdapter);
+  });
+
+  it('resolves an optional core adapter from pre-resolved user store sources', () => {
+    const coreAdapter = createMockAdapter('core-profiled');
+    const c = {
+      env: {},
+      get(key: string) {
+        if (key === 'runtimeUserStoreSources') {
+          return {
+            storageProfile: {
+              id: 'tenant-a-storage',
+              kind: 'storage',
+              label: 'Tenant A Storage',
+              slices: {},
+            },
+            coreDb: coreAdapter,
+            piiDb: null,
+          };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof resolveOptionalCoreAdapterFromHono>[0];
+
+    expect(resolveOptionalCoreAdapterFromHono(c, 'refresh-token-sharding-config')).toBe(
+      coreAdapter
+    );
+  });
+
+  it('returns null when no optional core adapter source is available', () => {
+    const c = {
+      env: {},
+      get() {
+        return undefined;
+      },
+    } as unknown as Parameters<typeof resolveOptionalCoreAdapterFromHono>[0];
+
+    expect(resolveOptionalCoreAdapterFromHono(c, 'refresh-token-sharding-config')).toBeNull();
   });
 
   it('uses pre-resolved user store sources for the pii context, including single-db profiles', () => {

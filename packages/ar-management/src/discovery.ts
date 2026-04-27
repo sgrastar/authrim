@@ -2,7 +2,6 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import type { Env, LoginEntrySettings } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   LOGIN_ENTRY_DEFAULTS,
   LOGIN_UI_DEFAULTS,
   TENANT_DISCOVERY_UI_DEFAULTS,
@@ -10,6 +9,7 @@ import {
   getDefaultTenantId,
   getTenantIdFromContext,
   getUIConfig,
+  resolveAuthCorePersistenceAdapterFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
   resolveTenantCandidatesFromEmailDomain,
   usesNakedDomainIssuer,
@@ -117,6 +117,10 @@ interface ExactEmailUserRow {
 interface ActiveUserTenantRow {
   id: string;
   tenant_id: string;
+}
+
+async function getDiscoveryCoreAdapter(env: Env) {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, 'discovery-core');
 }
 
 type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][number];
@@ -333,7 +337,7 @@ function appendLoginHint(url: string, loginHint?: string): string {
 }
 
 async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandidate | null> {
-  const adapter = new D1Adapter({ db: env.DB });
+  const adapter = await getDiscoveryCoreAdapter(env);
   const tenants = await adapter.query<TenantLookupRow>(
     `SELECT id, tenant_code, name, is_active
      FROM tenants
@@ -512,7 +516,7 @@ async function getDiscoveryUiConfig(
 }
 
 async function getTenantRowById(env: Env, tenantId: string): Promise<TenantLookupRow | null> {
-  const adapter = new D1Adapter({ db: env.DB });
+  const adapter = await getDiscoveryCoreAdapter(env);
   return adapter.queryOne<TenantLookupRow>(
     'SELECT id, tenant_code, name, is_active FROM tenants WHERE id = ? AND is_active = 1',
     [tenantId]
@@ -523,7 +527,7 @@ async function getTenantRowByTenantCode(
   env: Env,
   tenantCode: string
 ): Promise<TenantLookupRow | null> {
-  const adapter = new D1Adapter({ db: env.DB });
+  const adapter = await getDiscoveryCoreAdapter(env);
   return adapter.queryOne<TenantLookupRow>(
     'SELECT id, tenant_code, name, is_active FROM tenants WHERE tenant_code = ? AND is_active = 1',
     [tenantCode]
@@ -531,7 +535,7 @@ async function getTenantRowByTenantCode(
 }
 
 async function getTenantRowsByExactEmail(env: Env, email: string): Promise<TenantLookupRow[]> {
-  const coreAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getDiscoveryCoreAdapter(env);
 
   try {
     const activeTenants = await coreAdapter.query<TenantLookupRow>(
@@ -584,7 +588,7 @@ async function getTenantRowsByExactEmail(env: Env, email: string): Promise<Tenan
 }
 
 async function getClientRowByClientId(env: Env, clientId: string): Promise<ClientLookupRow | null> {
-  const adapter = new D1Adapter({ db: env.DB });
+  const adapter = await getDiscoveryCoreAdapter(env);
   return adapter.queryOne<ClientLookupRow>(
     'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ?',
     [clientId]
@@ -686,7 +690,11 @@ async function resolveEmailDiscovery(
     return null;
   }
 
-  const candidates = await resolveTenantCandidatesFromEmailDomain(env.DB, email, env);
+  const candidates = await resolveTenantCandidatesFromEmailDomain(
+    await getDiscoveryCoreAdapter(env),
+    email,
+    env
+  );
   if (candidates.length === 0) {
     return null;
   }
@@ -711,7 +719,7 @@ async function resolveInvitationDiscovery(
   env: Env,
   token: string
 ): Promise<Extract<DiscoveryResponse, { result: 'resolved' }> | null> {
-  const adapter = new D1Adapter({ db: env.DB });
+  const adapter = await getDiscoveryCoreAdapter(env);
   const now = Math.floor(Date.now() / 1000);
 
   const invitation = await adapter.queryOne<InvitationLookupRow>(

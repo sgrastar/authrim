@@ -184,6 +184,123 @@ describe('generateRoutes', () => {
     });
   });
 
+  it('assigns AUDIT_QUEUE producer bindings to auth/token and a consumer to management', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'queuephase4' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://queuephase4-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://queuephase4-ar-login-ui.pages.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://queuephase4-ar-admin-ui.pages.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      features: {
+        queue: { enabled: true },
+        r2: { enabled: true },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const resourceIds = {
+      d1: {},
+      kv: {},
+      queues: {
+        AUDIT_QUEUE: { id: 'queue-audit', name: 'queuephase4-audit' },
+      },
+      r2: {
+        DIAGNOSTIC_LOGS: { name: 'queuephase4-logs' },
+      },
+    };
+
+    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
+    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
+
+    expect(authConfig.queues?.producers).toEqual([
+      { queue: 'queuephase4-audit', binding: 'AUDIT_QUEUE' },
+    ]);
+    expect(tokenConfig.queues?.producers).toEqual([
+      { queue: 'queuephase4-audit', binding: 'AUDIT_QUEUE' },
+    ]);
+    expect(managementConfig.queues?.consumers).toEqual([{ queue: 'queuephase4-audit' }]);
+  });
+
+  it('serializes queue consumers in wrangler.toml output', () => {
+    const config = {
+      main: 'src/index.ts',
+      compatibility_date: '2026-04-24',
+      compatibility_flags: ['nodejs_compat'],
+      name: 'authrim-queue-consumer',
+      workers_dev: false,
+      vars: {},
+      queues: {
+        consumers: [{ queue: 'audit-queue' }],
+      },
+    };
+
+    const toml = toToml(config);
+
+    expect(toml).toContain('[[queues.consumers]]');
+    expect(toml).toContain('queue = "audit-queue"');
+  });
+
   it('routes admin setup and admin auth endpoints to ar-auth', () => {
     const routes = generateRoutes('ar-auth', 'conformance.authrim.com', 'authrim.com');
     const patterns = routes.map((route) => route.pattern);

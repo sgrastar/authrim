@@ -213,6 +213,11 @@ export interface ISessionRepository {
    * List active sessions for a user
    * @param userId - User identifier
    * @returns Array of active sessions
+   *
+   * Note:
+   * Cloudflare's region-sharded SessionStore cannot implement this correctly
+   * without a separate user-session index. Callers should prefer higher-level
+   * admin/session APIs until that index exists.
    */
   listByUser(userId: string): Promise<Session[]>;
 }

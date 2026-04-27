@@ -781,8 +781,8 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
       });
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
-    const client = await getClient(c.env, clientId);
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const client = await getClient(c.env, clientId, adapter);
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);

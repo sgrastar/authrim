@@ -165,6 +165,54 @@ describe('parseConfig', () => {
     expect(euConfig.profiles.defaults.storage).toBe('builtin:storage:eu-pii-split');
   });
 
+  it('should accept seeded audit profiles with generic HTTP sinks', () => {
+    const rawConfig = {
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      environment: { prefix: 'dev' },
+      profiles: {
+        defaults: {
+          storage: 'builtin:storage:standard',
+          audit: 'custom:audit:http-export',
+          residency: 'builtin:residency:default',
+        },
+        registry: {
+          backend: 'kv',
+        },
+        seed: {
+          audit: [
+            {
+              id: 'custom:audit:http-export',
+              label: 'HTTP Export',
+              primary: null,
+              archive: null,
+              sinks: [
+                {
+                  type: 'http',
+                  url: 'https://example.com/audit',
+                  headers: {
+                    'X-Authrim-Sink': 'enabled',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      features: {},
+      keys: {},
+    };
+
+    const config = parseConfig(rawConfig);
+    expect(config.profiles.defaults.audit).toBe('custom:audit:http-export');
+    expect(config.profiles.seed.audit[0].sinks[0]).toEqual(
+      expect.objectContaining({
+        type: 'http',
+        url: 'https://example.com/audit',
+      })
+    );
+  });
+
   it('should throw on invalid config', () => {
     const invalidConfig = {
       version: '1.0.0',

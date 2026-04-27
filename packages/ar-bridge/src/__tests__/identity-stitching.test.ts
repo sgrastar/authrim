@@ -610,7 +610,7 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce({ count: 1 });
 
-      const result = await hasPasskeyCredential(env as never, 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
 
       expect(result).toBe(true);
     });
@@ -619,7 +619,7 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce({ count: 0 });
 
-      const result = await hasPasskeyCredential(env as never, 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
 
       expect(result).toBe(false);
     });
@@ -628,7 +628,7 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce(null);
 
-      const result = await hasPasskeyCredential(env as never, 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
 
       expect(result).toBe(false);
     });

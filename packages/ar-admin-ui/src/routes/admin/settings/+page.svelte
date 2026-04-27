@@ -112,6 +112,7 @@
 	let showSigningKeys = $derived(currentScope === 'tenant');
 	let showSharding = $derived(currentScope === 'platform');
 	let showCacheMode = $derived(currentScope === 'platform');
+	let showRuntimeProfiles = $derived(currentScope === 'platform');
 	let showDiagnosticLogging = $derived(currentScope === 'tenant');
 
 	// Get style for category
@@ -223,6 +224,27 @@
 					</div>
 					<p class="icon-card-description">
 						Configure cache TTL for client metadata and related data
+					</p>
+				</a>
+			{/if}
+
+			<!-- Runtime Profiles (special card) - Platform scope only -->
+			{#if showRuntimeProfiles}
+				<a href="/admin/settings/runtime-profiles" class="icon-card">
+					<div class="icon-card-header">
+						<span class="icon-card-icon">🧭</span>
+						<div>
+							<h2 class="icon-card-title">Runtime Profiles</h2>
+							<span
+								class="icon-card-badge"
+								style="background: var(--warning-light); color: var(--warning);"
+							>
+								Special
+							</span>
+						</div>
+					</div>
+					<p class="icon-card-description">
+						Manage storage, audit, and residency runtime profiles, including audit sinks
 					</p>
 				</a>
 			{/if}

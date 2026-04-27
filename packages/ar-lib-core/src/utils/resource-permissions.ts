@@ -25,7 +25,9 @@
  * ```
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import type { Env } from '../types/env';
 import type {
   ResourcePermission,
@@ -169,7 +171,7 @@ function rowToResourcePermission(row: ResourcePermissionRow): ResourcePermission
  * @returns Array of ResourcePermission objects
  */
 export async function getUserIdLevelPermissions(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   tenantId: string = 'default'
 ): Promise<ResourcePermission[]> {
@@ -177,9 +179,11 @@ export async function getUserIdLevelPermissions(
 
   // Query for direct user permissions and role-based permissions
   // Note: Role inheritance would require joining with role_assignments
-  const result = await db
-    .prepare(
-      `SELECT *
+  const rows = await ensureDatabaseAdapter(
+    db,
+    'resource-permissions'
+  ).query<ResourcePermissionRow>(
+    `SELECT *
        FROM resource_permissions
        WHERE tenant_id = ?
          AND is_active = 1
@@ -192,12 +196,11 @@ export async function getUserIdLevelPermissions(
                AND (expires_at IS NULL OR expires_at > ?)
            )
          )
-       ORDER BY resource_type, resource_id`
-    )
-    .bind(tenantId, now, subjectId, subjectId, now)
-    .all<ResourcePermissionRow>();
+       ORDER BY resource_type, resource_id`,
+    [tenantId, now, subjectId, subjectId, now]
+  );
 
-  return result.results.map(rowToResourcePermission);
+  return rows.map(rowToResourcePermission);
 }
 
 /**
@@ -212,7 +215,7 @@ export async function getUserIdLevelPermissions(
  * @returns Array of ID-level permission strings (e.g., "documents:doc_123:read")
  */
 export async function evaluateIdLevelPermissions(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   tenantId: string = 'default',
   options: {
@@ -268,7 +271,7 @@ export async function evaluateIdLevelPermissions(
  * @returns true if user has the permission
  */
 export async function hasIdLevelPermission(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   resource: string,
   resourceId: string,
@@ -276,10 +279,10 @@ export async function hasIdLevelPermission(
   tenantId: string = 'default'
 ): Promise<boolean> {
   const now = Math.floor(Date.now() / 1000);
+  const adapter = ensureDatabaseAdapter(db, 'resource-permissions');
 
-  const result = await db
-    .prepare(
-      `SELECT 1
+  const result = await adapter.queryOne<{ matched: number }>(
+    `SELECT 1 AS matched
        FROM resource_permissions
        WHERE tenant_id = ?
          AND resource_type = ?
@@ -294,19 +297,17 @@ export async function hasIdLevelPermission(
                AND (expires_at IS NULL OR expires_at > ?)
            )
          )
-       LIMIT 1`
-    )
-    .bind(tenantId, resource, resourceId, now, subjectId, subjectId, now)
-    .first<{ '1': number }>();
+       LIMIT 1`,
+    [tenantId, resource, resourceId, now, subjectId, subjectId, now]
+  );
 
   if (!result) {
     return false;
   }
 
   // Check if the action is in the actions_json
-  const fullResult = await db
-    .prepare(
-      `SELECT actions_json
+  const fullResult = await adapter.query<{ actions_json: string }>(
+    `SELECT actions_json
        FROM resource_permissions
        WHERE tenant_id = ?
          AND resource_type = ?
@@ -320,12 +321,11 @@ export async function hasIdLevelPermission(
              WHERE subject_id = ?
                AND (expires_at IS NULL OR expires_at > ?)
            )
-         )`
-    )
-    .bind(tenantId, resource, resourceId, now, subjectId, subjectId, now)
-    .all<{ actions_json: string }>();
+         )`,
+    [tenantId, resource, resourceId, now, subjectId, subjectId, now]
+  );
 
-  for (const row of fullResult.results) {
+  for (const row of fullResult) {
     try {
       const actions = JSON.parse(row.actions_json) as string[];
       if (actions.includes(action) || actions.includes('*')) {

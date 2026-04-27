@@ -65,7 +65,7 @@ export async function resolveTenantCandidatesFromEmailDomain(
       `SELECT tenant_domain_mappings.tenant_id, tenant_domain_mappings.priority
        FROM tenant_domain_mappings
        INNER JOIN tenants ON tenants.id = tenant_domain_mappings.tenant_id
-       WHERE domain_hash = ?
+       WHERE tenant_domain_mappings.active_domain_hash = ?
          AND tenant_domain_mappings.verified = 1
          AND tenant_domain_mappings.is_active = 1
          AND tenants.is_active = 1

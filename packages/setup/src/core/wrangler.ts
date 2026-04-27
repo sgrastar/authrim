@@ -66,6 +66,13 @@ export interface WranglerConfig {
   routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
   queues?: {
     producers?: Array<{ queue: string; binding: string }>;
+    consumers?: Array<{
+      queue: string;
+      max_batch_size?: number;
+      max_batch_timeout?: number;
+      max_retries?: number;
+      dead_letter_queue?: string;
+    }>;
   };
   services?: Array<{ binding: string; service: string }>;
   send_email?: Array<{
@@ -388,6 +395,14 @@ export function generateWranglerConfig(
           {
             queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
             binding: 'AUDIT_QUEUE',
+          },
+        ],
+      };
+    } else if (component === 'ar-management') {
+      wranglerConfig.queues = {
+        consumers: [
+          {
+            queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
           },
         ],
       };
@@ -882,13 +897,37 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     }
 
     // Queues
-    if (config.queues?.producers && config.queues.producers.length > 0) {
+    if (
+      (config.queues?.producers && config.queues.producers.length > 0) ||
+      (config.queues?.consumers && config.queues.consumers.length > 0)
+    ) {
       lines.push('# Cloudflare Queues');
-      for (const producer of config.queues.producers) {
-        lines.push(`[[env.${envName}.queues.producers]]`);
-        lines.push(`queue = "${producer.queue}"`);
-        lines.push(`binding = "${producer.binding}"`);
-        lines.push('');
+      if (config.queues?.producers) {
+        for (const producer of config.queues.producers) {
+          lines.push(`[[env.${envName}.queues.producers]]`);
+          lines.push(`queue = "${producer.queue}"`);
+          lines.push(`binding = "${producer.binding}"`);
+          lines.push('');
+        }
+      }
+      if (config.queues?.consumers) {
+        for (const consumer of config.queues.consumers) {
+          lines.push(`[[env.${envName}.queues.consumers]]`);
+          lines.push(`queue = "${consumer.queue}"`);
+          if (consumer.max_batch_size !== undefined) {
+            lines.push(`max_batch_size = ${consumer.max_batch_size}`);
+          }
+          if (consumer.max_batch_timeout !== undefined) {
+            lines.push(`max_batch_timeout = ${consumer.max_batch_timeout}`);
+          }
+          if (consumer.max_retries !== undefined) {
+            lines.push(`max_retries = ${consumer.max_retries}`);
+          }
+          if (consumer.dead_letter_queue) {
+            lines.push(`dead_letter_queue = "${consumer.dead_letter_queue}"`);
+          }
+          lines.push('');
+        }
       }
     }
 
@@ -1006,13 +1045,37 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     }
 
     // Queues
-    if (config.queues?.producers && config.queues.producers.length > 0) {
+    if (
+      (config.queues?.producers && config.queues.producers.length > 0) ||
+      (config.queues?.consumers && config.queues.consumers.length > 0)
+    ) {
       lines.push('# Cloudflare Queues');
-      for (const producer of config.queues.producers) {
-        lines.push('[[queues.producers]]');
-        lines.push(`queue = "${producer.queue}"`);
-        lines.push(`binding = "${producer.binding}"`);
-        lines.push('');
+      if (config.queues?.producers) {
+        for (const producer of config.queues.producers) {
+          lines.push('[[queues.producers]]');
+          lines.push(`queue = "${producer.queue}"`);
+          lines.push(`binding = "${producer.binding}"`);
+          lines.push('');
+        }
+      }
+      if (config.queues?.consumers) {
+        for (const consumer of config.queues.consumers) {
+          lines.push('[[queues.consumers]]');
+          lines.push(`queue = "${consumer.queue}"`);
+          if (consumer.max_batch_size !== undefined) {
+            lines.push(`max_batch_size = ${consumer.max_batch_size}`);
+          }
+          if (consumer.max_batch_timeout !== undefined) {
+            lines.push(`max_batch_timeout = ${consumer.max_batch_timeout}`);
+          }
+          if (consumer.max_retries !== undefined) {
+            lines.push(`max_retries = ${consumer.max_retries}`);
+          }
+          if (consumer.dead_letter_queue) {
+            lines.push(`dead_letter_queue = "${consumer.dead_letter_queue}"`);
+          }
+          lines.push('');
+        }
       }
     }
 
@@ -1175,25 +1238,13 @@ export function parseWranglerToml(
 ): { kv: Record<string, string>; d1: Record<string, string> } {
   const result = { kv: {} as Record<string, string>, d1: {} as Record<string, string> };
 
-  // Find the [env.{env}] section
-  const envSectionRegex = new RegExp(`\\[env\\.${env}\\]`, 'g');
-  const envStart = content.search(envSectionRegex);
-  if (envStart === -1) {
-    return result;
-  }
-
-  // Find the next [env.*] section or end of file
-  const nextEnvMatch = content.slice(envStart + 1).search(/\[env\.[^\]]+\]/);
-  const envEnd = nextEnvMatch === -1 ? content.length : envStart + 1 + nextEnvMatch;
-  const envSection = content.slice(envStart, envEnd);
-
   // Parse KV namespaces: [[env.{env}.kv_namespaces]]
   const kvRegex = new RegExp(
     `\\[\\[env\\.${env}\\.kv_namespaces\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
     'g'
   );
   let kvMatch;
-  while ((kvMatch = kvRegex.exec(envSection)) !== null) {
+  while ((kvMatch = kvRegex.exec(content)) !== null) {
     result.kv[kvMatch[1]] = kvMatch[2];
   }
 
@@ -1203,7 +1254,7 @@ export function parseWranglerToml(
     'g'
   );
   let d1Match;
-  while ((d1Match = d1Regex.exec(envSection)) !== null) {
+  while ((d1Match = d1Regex.exec(content)) !== null) {
     result.d1[d1Match[1]] = d1Match[2];
   }
 

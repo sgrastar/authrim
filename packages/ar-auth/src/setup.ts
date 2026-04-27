@@ -40,7 +40,7 @@ import {
   AdminUserRepository,
   AdminPasskeyRepository,
   // Database adapter
-  D1Adapter,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 
 // Note: Passkey registration is now handled by Admin UI, not Router
@@ -320,7 +320,7 @@ async function rollbackUserCreation(
   try {
     // Use DB_ADMIN when available (new architecture)
     if (c.env.DB_ADMIN) {
-      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
       const adminUserRepo = new AdminUserRepository(adminAdapter);
       const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
 
@@ -562,7 +562,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Use DB_ADMIN when available (new Admin/EndUser separation architecture)
     if (c.env.DB_ADMIN) {
-      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
       const adminUserRepo = new AdminUserRepository(adminAdapter);
 
       // Create Admin user in admin_users (no PII separation needed for Admin)
@@ -615,7 +615,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
     const tokenExpiresAt = now + 24 * 60 * 60 * 1000; // 24 hours
 
     if (c.env.DB_ADMIN) {
-      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
       await adminAdapter.execute(
         `INSERT INTO admin_setup_tokens (id, tenant_id, admin_user_id, status, expires_at, created_at, created_by)
          VALUES (?, ?, ?, 'pending', ?, ?, 'initial_setup')`,

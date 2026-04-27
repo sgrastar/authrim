@@ -46,7 +46,11 @@
     "setup:manage": "tsx packages/setup/src/index.ts manage",
     "setup:deploy": "tsx packages/setup/src/index.ts deploy",
     "setup:status": "tsx packages/setup/src/index.ts status",
-    "setup:info": "tsx packages/setup/src/index.ts info"
+    "setup:info": "tsx packages/setup/src/index.ts info",
+    "setup:validate-generated-env": "tsx test/setup-portability/validate-generated-env.ts",
+    "setup:smoke-generated-api": "tsx test/setup-portability/smoke-generated-api.ts",
+    "setup:smoke-generated-admin-api": "tsx test/setup-portability/smoke-generated-admin-api.ts",
+    "setup:smoke-generated-auth-flow": "tsx test/setup-portability/smoke-generated-auth-flow.ts"
   },
   "workspaces": [
     "packages/*"

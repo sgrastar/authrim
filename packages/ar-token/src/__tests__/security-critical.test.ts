@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
+import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   createMockEnv,
   createMockContext,
@@ -366,6 +367,19 @@ function resetAllMocks() {
 
 // ============================================================================
 
+function createRuntimeCoreAdapter(): DatabaseAdapter {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn().mockResolvedValue(null),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'runtime-core' }),
+    getType: vi.fn().mockReturnValue('runtime-core'),
+    close: vi.fn(),
+  } as unknown as DatabaseAdapter;
+}
+
 describe('Security-Critical Tests', () => {
   let mockEnv: MockEnv;
 
@@ -402,6 +416,154 @@ describe('Security-Critical Tests', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('Storage portability wiring', () => {
+    it('uses the runtime-resolved core adapter for authorization_code RBAC and policy lookups', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({
+        userId: 'user-001',
+        scope: 'openid profile',
+      });
+      const runtimeCoreAdapter = createRuntimeCoreAdapter();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockValidateGrantType.mockReturnValue({ valid: true });
+      mocks.mockValidateAuthCode.mockReturnValue({ valid: true });
+      mocks.mockValidateClientId.mockReturnValue({ valid: true });
+      mocks.mockValidateRedirectUri.mockReturnValue({ valid: true });
+      mocks.mockIsPolicyEmbeddingEnabled.mockResolvedValue(true);
+      mocks.mockEvaluatePermissionsForScope.mockResolvedValue(['perm:read']);
+
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const ctx = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'authorization_code',
+          code: 'valid-auth-code',
+          redirect_uri: authCodeData.redirectUri,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: {
+          ...mockEnv,
+          DB: undefined as any,
+        },
+      });
+      (ctx as any).set('runtimeUserStoreSources', {
+        storageProfile: {
+          id: 'tenant-default-storage',
+          kind: 'storage',
+          label: 'Tenant Default Storage',
+          slices: {},
+        },
+        coreDb: runtimeCoreAdapter,
+        piiDb: null,
+      });
+
+      const response = await tokenHandler(ctx);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockGetAccessTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        authCodeData.userId,
+        expect.any(Object)
+      );
+      expect(mocks.mockGetIDTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        authCodeData.userId,
+        expect.any(Object)
+      );
+      expect(mocks.mockEvaluatePermissionsForScope).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        authCodeData.userId,
+        authCodeData.scope,
+        expect.any(Object)
+      );
+    });
+
+    it('uses the runtime-resolved core adapter for refresh_token RBAC and policy lookups', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const refreshTokenPayload = createRefreshTokenPayload({
+        client_id: client.client_id,
+        sub: 'user-002',
+        scope: 'openid profile',
+      });
+      const refreshTokenJWT = createTestRefreshTokenJWT({
+        client_id: client.client_id,
+      });
+      const runtimeCoreAdapter = createRuntimeCoreAdapter();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+      mocks.mockGetRefreshToken.mockResolvedValue({
+        sub: refreshTokenPayload.sub,
+        scope: refreshTokenPayload.scope,
+        client_id: refreshTokenPayload.client_id,
+      });
+      mocks.mockParseRefreshTokenJti.mockReturnValue({
+        generation: 1,
+        shardIndex: 0,
+        randomPart: 'abc',
+      });
+      mocks.mockIsPolicyEmbeddingEnabled.mockResolvedValue(true);
+      mocks.mockEvaluatePermissionsForScope.mockResolvedValue(['perm:refresh']);
+
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+        rotateRpc: vi.fn().mockResolvedValue({
+          newJti: 'rt-new-jti-002',
+          newVersion: 2,
+        }),
+      });
+
+      const ctx = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'refresh_token',
+          refresh_token: refreshTokenJWT,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: {
+          ...mockEnv,
+          DB: undefined as any,
+        },
+      });
+      (ctx as any).set('runtimeUserStoreSources', {
+        storageProfile: {
+          id: 'tenant-default-storage',
+          kind: 'storage',
+          label: 'Tenant Default Storage',
+          slices: {},
+        },
+        coreDb: runtimeCoreAdapter,
+        piiDb: null,
+      });
+
+      const response = await tokenHandler(ctx);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockGetAccessTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        refreshTokenPayload.sub,
+        expect.any(Object)
+      );
+      expect(mocks.mockGetIDTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        refreshTokenPayload.sub,
+        expect.any(Object)
+      );
+      expect(mocks.mockEvaluatePermissionsForScope).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        refreshTokenPayload.sub,
+        refreshTokenPayload.scope,
+        expect.any(Object)
+      );
+    });
   });
 
   // ==========================================================================

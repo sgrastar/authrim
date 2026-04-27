@@ -5,11 +5,10 @@
 
 import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   invalidateConsentCache,
   revokeToken,
-  parseRefreshTokenJti,
-  buildRefreshTokenRotatorInstanceName,
   getSessionStoreForNewSession,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
@@ -17,7 +16,6 @@ import {
   createAuthContextFromHono,
   hasPIIDatabase,
   generateId,
-  D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -51,6 +49,15 @@ import {
   toMilliseconds,
   toSeconds,
 } from './admin-shared';
+import {
+  createAuditHotQueryUnsupportedResponse,
+  fromStoredAuditTimestamp,
+  getAuditHotQuerySqlSpec,
+  getAuditHotQuerySupport,
+  getAuditTimeRange,
+  type AuditHotQueryContext,
+} from './audit-hot-query';
+import { getAuditJsonTextExpr } from './audit-sql-dialect';
 
 export {
   adminStatsHandler,
@@ -80,6 +87,109 @@ export {
   adminSessionRevokeHandler,
   adminUserRevokeAllSessionsHandler,
 } from './admin-user-sessions';
+
+function buildAuditTimestamp(timestamp: string | null | undefined): number | null {
+  if (!timestamp) {
+    return null;
+  }
+  const value = new Date(timestamp).getTime();
+  return Number.isFinite(value) ? Math.floor(value / 1000) : null;
+}
+
+function getCoreAdapter(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string = getTenantIdFromContext(c)
+): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+async function resolveAuditUserAnonymizedId(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<string | null> {
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const row = await piiCtx.defaultPiiAdapter.queryOne<{ anonymized_user_id: string }>(
+    'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+    [tenantId, userId]
+  );
+  return row?.anonymized_user_id ?? null;
+}
+
+async function resolveAuditUserIdMap(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  anonymizedUserIds: string[]
+): Promise<Map<string, string>> {
+  if (anonymizedUserIds.length === 0) {
+    return new Map();
+  }
+
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const placeholders = anonymizedUserIds.map(() => '?').join(', ');
+  const rows = await piiCtx.defaultPiiAdapter.query<{
+    anonymized_user_id: string;
+    user_id: string;
+  }>(
+    `SELECT anonymized_user_id, user_id
+       FROM user_anonymization_map
+      WHERE tenant_id = ? AND anonymized_user_id IN (${placeholders})`,
+    [tenantId, ...anonymizedUserIds]
+  );
+
+  return new Map(rows.map((row) => [row.anonymized_user_id, row.user_id]));
+}
+
+function buildAuditResourceFilter(
+  context: AuditHotQueryContext,
+  resourceType?: string | null,
+  resourceId?: string | null
+): { clause: string; params: string[] } {
+  if (context.mode === 'legacy') {
+    const conditions: string[] = [];
+    const params: string[] = [];
+    if (resourceType) {
+      conditions.push('resource_type = ?');
+      params.push(resourceType);
+    }
+    if (resourceId) {
+      conditions.push('resource_id = ?');
+      params.push(resourceId);
+    }
+    return {
+      clause: conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '',
+      params,
+    };
+  }
+
+  const { detailsColumn } = getAuditHotQuerySqlSpec(context);
+  const resourceTypeExpr = getAuditJsonTextExpr(detailsColumn, 'resourceType', context.dialect);
+  const legacyResourceTypeExpr = getAuditJsonTextExpr(
+    detailsColumn,
+    'resource_type',
+    context.dialect
+  );
+  const resourceIdExpr = getAuditJsonTextExpr(detailsColumn, 'resourceId', context.dialect);
+  const legacyResourceIdExpr = getAuditJsonTextExpr(detailsColumn, 'resource_id', context.dialect);
+
+  const conditions: string[] = [];
+  const params: string[] = [];
+
+  if (resourceType) {
+    conditions.push(`(${resourceTypeExpr} = ? OR ${legacyResourceTypeExpr} = ?)`);
+    params.push(resourceType, resourceType);
+  }
+
+  if (resourceId) {
+    conditions.push(`(${resourceIdExpr} = ? OR ${legacyResourceIdExpr} = ?)`);
+    params.push(resourceId, resourceId);
+  }
+
+  return {
+    clause: conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '',
+    params,
+  };
+}
 
 // =============================================================================
 // Policy Configuration
@@ -294,7 +404,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = getCoreAdapter(c, tenantId);
 
     // Get current user state (verify tenant ownership)
     // Note: Using users_core for PII-separated architecture
@@ -460,7 +570,7 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
       unlockAtTs = Math.floor(unlockDate.getTime() / 1000);
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = getCoreAdapter(c, tenantId);
 
     // Get current user state (verify tenant ownership)
     // Note: Using users_core for PII-separated architecture
@@ -616,7 +726,7 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = getCoreAdapter(c, tenantId);
 
     // Get current user state (verify tenant ownership)
     const user = await adapter.queryOne<{
@@ -953,8 +1063,13 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const env = c.env as Env;
     const tenantId = getTenantIdFromContext(c);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+    const context = hotQuery.context;
+    const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
 
     // Get query parameters
     const page = parseInt(c.req.query('page') || '1', 10);
@@ -974,89 +1089,210 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const params: (string | number)[] = [tenantId];
 
     if (userId) {
-      conditions.push('user_id = ?');
-      params.push(userId);
+      if (context.mode === 'legacy') {
+        conditions.push('user_id = ?');
+        params.push(userId);
+      } else {
+        const anonymizedUserId = await resolveAuditUserAnonymizedId(c, tenantId, userId);
+        if (!anonymizedUserId) {
+          return c.json({
+            entries: [],
+            pagination: {
+              page,
+              limit,
+              total: 0,
+              totalPages: 0,
+            },
+          });
+        }
+        conditions.push('anonymized_user_id = ?');
+        params.push(anonymizedUserId);
+      }
     }
 
     if (action) {
-      conditions.push('action = ?');
+      conditions.push(`${actionColumn} = ?`);
       params.push(action);
     }
 
-    if (resourceType) {
-      conditions.push('resource_type = ?');
-      params.push(resourceType);
-    }
-
-    if (resourceId) {
-      conditions.push('resource_id = ?');
-      params.push(resourceId);
+    const resourceFilter = buildAuditResourceFilter(context, resourceType, resourceId);
+    if (resourceFilter.clause) {
+      conditions.push(resourceFilter.clause.replace(/^ AND /, ''));
+      params.push(...resourceFilter.params);
     }
 
     if (startDate) {
-      const startTimestamp = Math.floor(new Date(startDate).getTime() / 1000);
-      conditions.push('created_at >= ?');
-      params.push(startTimestamp);
+      const startTimestamp = buildAuditTimestamp(startDate);
+      const storedStart =
+        startTimestamp == null
+          ? null
+          : context.createdAtUnit === 'milliseconds'
+            ? startTimestamp * 1000
+            : startTimestamp;
+      if (storedStart != null) {
+        conditions.push('created_at >= ?');
+        params.push(storedStart);
+      }
     }
 
     if (endDate) {
-      const endTimestamp = Math.floor(new Date(endDate).getTime() / 1000);
-      conditions.push('created_at <= ?');
-      params.push(endTimestamp);
+      const endTimestamp = buildAuditTimestamp(endDate);
+      const storedEnd =
+        endTimestamp == null
+          ? null
+          : context.createdAtUnit === 'milliseconds'
+            ? endTimestamp * 1000
+            : endTimestamp;
+      if (storedEnd != null) {
+        conditions.push('created_at <= ?');
+        params.push(storedEnd);
+      }
     }
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     // Get total count
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-    const countQuery = `SELECT COUNT(*) as total FROM audit_log ${whereClause}`;
-    const countResult = await coreAdapter.queryOne<{ total: number }>(countQuery, params);
+    const countQuery = `SELECT COUNT(*) as total FROM ${tableName} ${whereClause}`;
+    const countResult = await context.adapter.queryOne<{ total: number }>(countQuery, params);
 
     const total = countResult?.total || 0;
     const totalPages = Math.ceil(total / limit);
 
     // Get audit log entries
-    const query = `
-      SELECT
-        id,
-        user_id,
-        action,
-        resource_type,
-        resource_id,
-        ip_address,
-        user_agent,
-        metadata_json,
-        created_at
-      FROM audit_log
-      ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `;
+    let entries: Array<Record<string, unknown>> = [];
 
-    const result = await coreAdapter.query<{
-      id: string;
-      user_id: string | null;
-      action: string;
-      resource_type: string | null;
-      resource_id: string | null;
-      ip_address: string | null;
-      user_agent: string | null;
-      metadata_json: string | null;
-      created_at: number;
-    }>(query, [...params, limit, offset]);
+    if (hotQuery.context.mode === 'legacy') {
+      const query = `
+        SELECT
+          id,
+          user_id,
+          action,
+          resource_type,
+          resource_id,
+          ip_address,
+          user_agent,
+          metadata_json,
+          created_at,
+          severity
+        FROM audit_log
+        ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+      `;
 
-    // Format entries
-    const entries = result.map((row) => ({
-      id: row.id,
-      userId: row.user_id,
-      action: row.action,
-      resourceType: row.resource_type,
-      resourceId: row.resource_id,
-      ipAddress: row.ip_address,
-      userAgent: row.user_agent,
-      metadata: row.metadata_json ? JSON.parse(row.metadata_json) : null,
-      createdAt: new Date(row.created_at * 1000).toISOString(),
-    }));
+      const result = await context.adapter.query<{
+        id: string;
+        user_id: string | null;
+        action: string;
+        resource_type: string | null;
+        resource_id: string | null;
+        ip_address: string | null;
+        user_agent: string | null;
+        metadata_json: string | null;
+        created_at: number;
+        severity: string | null;
+      }>(query, [...params, limit, offset]);
+
+      entries = result.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        action: row.action,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        ipAddress: row.ip_address,
+        userAgent: row.user_agent,
+        metadata: row.metadata_json ? JSON.parse(row.metadata_json) : null,
+        severity: row.severity ?? 'info',
+        createdAt: fromStoredAuditTimestamp(row.created_at, context),
+      }));
+    } else {
+      const query = `
+        SELECT
+          id,
+          anonymized_user_id,
+          event_type,
+          event_category,
+          result,
+          severity,
+          error_code,
+          error_message,
+          client_id,
+          session_id,
+          request_id,
+          details_json,
+          created_at
+        FROM event_log
+        ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+      `;
+
+      const result = await context.adapter.query<{
+        id: string;
+        anonymized_user_id: string | null;
+        event_type: string;
+        event_category: string;
+        result: string;
+        severity: string;
+        error_code: string | null;
+        error_message: string | null;
+        client_id: string | null;
+        session_id: string | null;
+        request_id: string | null;
+        details_json: string | null;
+        created_at: number;
+      }>(query, [...params, limit, offset]);
+
+      const anonymizedIds = [...new Set(result.map((row) => row.anonymized_user_id).filter(Boolean))] as string[];
+      const userIdMap = await resolveAuditUserIdMap(c, tenantId, anonymizedIds);
+
+      entries = result.map((row) => {
+        const metadata = row.details_json ? JSON.parse(row.details_json) : null;
+        const metadataObject =
+          metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+            ? (metadata as Record<string, unknown>)
+            : null;
+
+        return {
+          id: row.id,
+          userId: row.anonymized_user_id ? (userIdMap.get(row.anonymized_user_id) ?? null) : null,
+          action: row.event_type,
+          resourceType:
+            typeof metadataObject?.resourceType === 'string'
+              ? metadataObject.resourceType
+              : typeof metadataObject?.resource_type === 'string'
+                ? metadataObject.resource_type
+                : row.event_category,
+          resourceId:
+            typeof metadataObject?.resourceId === 'string'
+              ? metadataObject.resourceId
+              : typeof metadataObject?.resource_id === 'string'
+                ? metadataObject.resource_id
+                : row.client_id,
+          ipAddress:
+            typeof metadataObject?.ipAddress === 'string'
+              ? metadataObject.ipAddress
+              : typeof metadataObject?.ip_address === 'string'
+                ? metadataObject.ip_address
+                : null,
+          userAgent:
+            typeof metadataObject?.userAgent === 'string'
+              ? metadataObject.userAgent
+              : typeof metadataObject?.user_agent === 'string'
+                ? metadataObject.user_agent
+                : null,
+          clientId: row.client_id,
+          sessionId: row.session_id,
+          requestId: row.request_id,
+          result: row.result,
+          severity: row.severity,
+          errorCode: row.error_code,
+          errorMessage: row.error_message,
+          metadata,
+          createdAt: fromStoredAuditTimestamp(row.created_at, context),
+        };
+      });
+    }
 
     return c.json({
       entries,
@@ -1085,8 +1321,14 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const env = c.env as Env;
+    const tenantId = getTenantIdFromContext(c);
     const id = c.req.param('id')!;
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+    const context = hotQuery.context;
+    const { tableName } = getAuditHotQuerySqlSpec(context);
 
     if (!id) {
       return c.json(
@@ -1099,51 +1341,168 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get audit log entry
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-    const entry = await coreAdapter.queryOne<{
-      id: string;
-      user_id: string | null;
-      action: string;
-      resource_type: string | null;
-      resource_id: string | null;
-      ip_address: string | null;
-      user_agent: string | null;
-      metadata_json: string | null;
-      created_at: number;
-    }>(
-      `
-      SELECT
-        id,
-        user_id,
-        action,
-        resource_type,
-        resource_id,
-        ip_address,
-        user_agent,
-        metadata_json,
-        created_at
-      FROM audit_log
-      WHERE id = ?
-      `,
-      [id]
-    );
+    const coreAdapter = getCoreAdapter(c, tenantId);
+    let resolvedUserId: string | null = null;
+    let user = null;
+    let responseBody: Record<string, unknown> | null = null;
 
-    if (!entry) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Audit log entry not found',
-        },
-        404
+    if (context.mode === 'legacy') {
+      const entry = await context.adapter.queryOne<{
+        id: string;
+        user_id: string | null;
+        action: string;
+        resource_type: string | null;
+        resource_id: string | null;
+        ip_address: string | null;
+        user_agent: string | null;
+        metadata_json: string | null;
+        created_at: number;
+        severity: string | null;
+      }>(
+        `
+        SELECT
+          id,
+          user_id,
+          action,
+          resource_type,
+          resource_id,
+          ip_address,
+          user_agent,
+          metadata_json,
+          created_at,
+          severity
+        FROM ${tableName}
+        WHERE id = ? AND tenant_id = ?
+        `,
+        [id, tenantId]
       );
+
+      if (!entry) {
+        return c.json(
+          {
+            error: 'not_found',
+            error_description: 'Audit log entry not found',
+          },
+          404
+        );
+      }
+
+      resolvedUserId = entry.user_id;
+      responseBody = {
+        id: entry.id,
+        userId: entry.user_id,
+        action: entry.action,
+        resourceType: entry.resource_type,
+        resourceId: entry.resource_id,
+        ipAddress: entry.ip_address,
+        userAgent: entry.user_agent,
+        metadata: entry.metadata_json ? JSON.parse(entry.metadata_json) : null,
+        severity: entry.severity ?? 'info',
+        createdAt: fromStoredAuditTimestamp(entry.created_at, context),
+      };
+    } else {
+      const entry = await context.adapter.queryOne<{
+        id: string;
+        anonymized_user_id: string | null;
+        event_type: string;
+        event_category: string;
+        result: string;
+        severity: string;
+        error_code: string | null;
+        error_message: string | null;
+        client_id: string | null;
+        session_id: string | null;
+        request_id: string | null;
+        details_json: string | null;
+        created_at: number;
+      }>(
+        `
+        SELECT
+          id,
+          anonymized_user_id,
+          event_type,
+          event_category,
+          result,
+          severity,
+          error_code,
+          error_message,
+          client_id,
+          session_id,
+          request_id,
+          details_json,
+          created_at
+        FROM ${tableName}
+        WHERE id = ? AND tenant_id = ?
+        `,
+        [id, tenantId]
+      );
+
+      if (!entry) {
+        return c.json(
+          {
+            error: 'not_found',
+            error_description: 'Audit log entry not found',
+          },
+          404
+        );
+      }
+
+      if (entry.anonymized_user_id) {
+        const userIdMap = await resolveAuditUserIdMap(c, tenantId, [entry.anonymized_user_id]);
+        resolvedUserId = userIdMap.get(entry.anonymized_user_id) ?? null;
+      }
+
+      const metadata = entry.details_json ? JSON.parse(entry.details_json) : null;
+      const metadataObject =
+        metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+          ? (metadata as Record<string, unknown>)
+          : null;
+
+      responseBody = {
+        id: entry.id,
+        userId: resolvedUserId,
+        action: entry.event_type,
+        resourceType:
+          typeof metadataObject?.resourceType === 'string'
+            ? metadataObject.resourceType
+            : typeof metadataObject?.resource_type === 'string'
+              ? metadataObject.resource_type
+              : entry.event_category,
+        resourceId:
+          typeof metadataObject?.resourceId === 'string'
+            ? metadataObject.resourceId
+            : typeof metadataObject?.resource_id === 'string'
+              ? metadataObject.resource_id
+              : entry.client_id,
+        ipAddress:
+          typeof metadataObject?.ipAddress === 'string'
+            ? metadataObject.ipAddress
+            : typeof metadataObject?.ip_address === 'string'
+              ? metadataObject.ip_address
+              : null,
+        userAgent:
+          typeof metadataObject?.userAgent === 'string'
+            ? metadataObject.userAgent
+            : typeof metadataObject?.user_agent === 'string'
+              ? metadataObject.user_agent
+              : null,
+        clientId: entry.client_id,
+        sessionId: entry.session_id,
+        requestId: entry.request_id,
+        result: entry.result,
+        severity: entry.severity,
+        errorCode: entry.error_code,
+        errorMessage: entry.error_message,
+        metadata,
+        createdAt: fromStoredAuditTimestamp(entry.created_at, context),
+      };
     }
 
     // Get user information if user_id exists (from both Core and PII DBs)
-    let user = null;
-    if (entry.user_id) {
+    if (resolvedUserId) {
       const userCore = await coreAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-        [entry.user_id]
+        'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+        [resolvedUserId, tenantId]
       );
 
       if (userCore && hasPIIDatabase(c)) {
@@ -1153,7 +1512,10 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
           email: string | null;
           name: string | null;
           picture: string | null;
-        }>('SELECT email, name, picture FROM users_pii WHERE id = ?', [entry.user_id]);
+        }>('SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?', [
+          resolvedUserId,
+          tenantId,
+        ]);
 
         user = {
           id: userCore.id,
@@ -1172,16 +1534,8 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     return c.json({
-      id: entry.id,
-      userId: entry.user_id,
+      ...responseBody,
       user,
-      action: entry.action,
-      resourceType: entry.resource_type,
-      resourceId: entry.resource_id,
-      ipAddress: entry.ip_address,
-      userAgent: entry.user_agent,
-      metadata: entry.metadata_json ? JSON.parse(entry.metadata_json as string) : null,
-      createdAt: new Date((entry.created_at as number) * 1000).toISOString(),
     });
   } catch (error) {
     logSanitizedError('Admin audit log get error', error);
@@ -1685,17 +2039,7 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // V3: Parse JTI to extract generation and shard info for proper routing
-    const parsedJti = parseRefreshTokenJti(jti);
-    const instanceName = buildRefreshTokenRotatorInstanceName(
-      clientId,
-      parsedJti.generation,
-      parsedJti.shardIndex
-    );
-
-    // Get RefreshTokenRotator DO with proper sharding
-    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-    const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+    const { stub: rotator, resolution } = getRefreshTokenRotatorStubByJti(c.env, clientId, jti);
 
     // Create token family using V3 API (with generation and shard info)
     // V3 stores generation/shardIndex for proper JTI generation during rotation
@@ -1712,10 +2056,10 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
           scope,
           ttl,
           // V3: Include generation and shard for DO to store
-          ...(parsedJti.generation > 0 &&
-            parsedJti.shardIndex !== null && {
-              generation: parsedJti.generation,
-              shardIndex: parsedJti.shardIndex,
+          ...(resolution.generation > 0 &&
+            resolution.shardIndex !== null && {
+              generation: resolution.generation,
+              shardIndex: resolution.shardIndex,
             }),
         }),
       })
@@ -2272,7 +2616,7 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
     );
 
     // Invalidate consent cache
-    await invalidateConsentCache(c.env, userId, clientId);
+    await invalidateConsentCache(c.env, userId, tenantId, clientId);
 
     const log = getLogger(c).module('ADMIN');
     // Add to revocation list
@@ -2372,10 +2716,24 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(to.getTime() / 1000);
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+    const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(hotQuery.context);
+    const auditAdapter = hotQuery.context.adapter;
+    const coreAdapter = getCoreAdapter(c, tenantId);
+    const clientClause =
+      hotQuery.context.mode === 'legacy'
+        ? `((resource_type = 'client' AND resource_id = ?) OR ${getAuditJsonTextExpr(detailsColumn, 'client_id', hotQuery.context.dialect)} = ? OR ${getAuditJsonTextExpr(detailsColumn, 'clientId', hotQuery.context.dialect)} = ?)`
+        : `(client_id = ? OR ${getAuditJsonTextExpr(detailsColumn, 'client_id', hotQuery.context.dialect)} = ? OR ${getAuditJsonTextExpr(detailsColumn, 'clientId', hotQuery.context.dialect)} = ? OR (${getAuditJsonTextExpr(detailsColumn, 'resourceType', hotQuery.context.dialect)} = 'client' AND ${getAuditJsonTextExpr(detailsColumn, 'resourceId', hotQuery.context.dialect)} = ?))`;
+    const clientBindings =
+      hotQuery.context.mode === 'legacy'
+        ? [clientId, clientId, clientId]
+        : [clientId, clientId, clientId, clientId];
 
     // Verify client exists and belongs to tenant using KV cache (with D1 fallback)
-    const client = await getClient(c.env, clientId);
+    const client = await getClient(c.env, clientId, coreAdapter);
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
@@ -2393,7 +2751,7 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
     // Frontend expects: tokens_issued_24h, tokens_issued_7d, tokens_issued_30d, active_sessions, last_token_issued_at
     const [tokenStats, activeSessionsResult, lastTokenResult] = await Promise.all([
       // Token issuance counts for 24h, 7d, 30d
-      adapter.queryOne<{
+      auditAdapter.queryOne<{
         tokens_24h: number;
         tokens_7d: number;
         tokens_30d: number;
@@ -2402,33 +2760,37 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
           SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as tokens_24h,
           SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as tokens_7d,
           COUNT(*) as tokens_30d
-        FROM audit_log
+        FROM ${tableName}
         WHERE tenant_id = ?
-          AND action LIKE 'token.%'
-          AND (resource_type = 'client' AND resource_id = ? OR json_extract(metadata_json, '$.client_id') = ?)
+          AND ${actionColumn} LIKE 'token.%'
+          AND ${clientClause}
           AND created_at >= ?`,
-        [ts24h, ts7d, tenantId, clientId, clientId, ts30d]
+        [
+          ...getAuditTimeRange(ts24h, ts24h, hotQuery.context).slice(0, 1),
+          ...getAuditTimeRange(ts7d, ts7d, hotQuery.context).slice(0, 1),
+          tenantId,
+          ...clientBindings,
+          ...getAuditTimeRange(ts30d, ts30d, hotQuery.context).slice(0, 1),
+        ]
       ),
 
       // Active sessions count (sessions that haven't expired)
-      adapter.queryOne<{ active_sessions: number }>(
-        `SELECT COUNT(DISTINCT user_id) as active_sessions
-        FROM audit_log
-        WHERE tenant_id = ?
-          AND action IN ('session.created', 'token.issued')
-          AND (resource_type = 'client' AND resource_id = ? OR json_extract(metadata_json, '$.client_id') = ?)
-          AND created_at >= ?`,
-        [tenantId, clientId, clientId, ts24h]
+      coreAdapter.queryOne<{ active_sessions: number }>(
+        `SELECT COUNT(DISTINCT sc.session_id) as active_sessions
+           FROM session_clients sc
+           JOIN sessions s ON s.id = sc.session_id
+          WHERE sc.client_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
+        [clientId, tenantId, nowTs]
       ),
 
       // Last token issued timestamp
-      adapter.queryOne<{ last_token_at: number | null }>(
+      auditAdapter.queryOne<{ last_token_at: number | null }>(
         `SELECT MAX(created_at) as last_token_at
-        FROM audit_log
+        FROM ${tableName}
         WHERE tenant_id = ?
-          AND action LIKE 'token.%'
-          AND (resource_type = 'client' AND resource_id = ? OR json_extract(metadata_json, '$.client_id') = ?)`,
-        [tenantId, clientId, clientId]
+          AND ${actionColumn} LIKE 'token.%'
+          AND ${clientClause}`,
+        [tenantId, ...clientBindings]
       ),
     ]);
 
@@ -2439,7 +2801,9 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
       tokens_issued_30d: tokenStats?.tokens_30d ?? 0,
       active_sessions: activeSessionsResult?.active_sessions ?? 0,
       last_token_issued_at: lastTokenResult?.last_token_at
-        ? lastTokenResult.last_token_at * 1000
+        ? hotQuery.context.createdAtUnit === 'milliseconds'
+          ? lastTokenResult.last_token_at
+          : lastTokenResult.last_token_at * 1000
         : null,
     });
   } catch (error) {
@@ -2477,10 +2841,17 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
   const toParam = c.req.query('to');
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+    const context = hotQuery.context;
+    const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
+    const coreAdapter = getCoreAdapter(c, tenantId);
+    const auditAdapter = context.adapter;
 
     // Verify user exists and belongs to tenant
-    const user = await adapter.queryOne<{ id: string }>(
+    const user = await coreAdapter.queryOne<{ id: string }>(
       'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
       [userId, tenantId]
     );
@@ -2491,39 +2862,64 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
       });
     }
 
+    let subjectFilterClause = '';
+    let subjectBindings: (string | number)[] = [];
+    if (context.mode === 'legacy') {
+      subjectFilterClause = 'AND user_id = ?';
+      subjectBindings = [userId];
+    } else {
+      const anonymizedUserId = await resolveAuditUserAnonymizedId(c, tenantId, userId);
+      if (!anonymizedUserId) {
+        return c.json({
+          data: [],
+          pagination: {
+            has_more: false,
+            next_cursor: undefined,
+          },
+        });
+      }
+      subjectFilterClause = 'AND anonymized_user_id = ?';
+      subjectBindings = [anonymizedUserId];
+    }
+
     // Build query
     let query = `
-      SELECT id, action, details, created_at, ip_address, user_agent
-      FROM audit_log
+      SELECT id, ${actionColumn} as action, ${detailsColumn} as details, created_at
+      ${context.mode === 'legacy' ? ', ip_address, user_agent' : ', result, severity, error_code, error_message, client_id, session_id, request_id'}
+      FROM ${tableName}
       WHERE tenant_id = ?
-        AND (subject_type = 'user' AND subject_id = ?)
+        ${subjectFilterClause}
     `;
-    const bindings: (string | number)[] = [tenantId, userId];
+    const bindings: (string | number)[] = [tenantId, ...subjectBindings];
 
     // Apply action filter
     if (actionFilter) {
       if (actionFilter.includes('*')) {
-        query += ' AND action LIKE ?';
+        query += ` AND ${actionColumn} LIKE ?`;
         bindings.push(actionFilter.replace(/\*/g, '%'));
       } else {
-        query += ' AND action = ?';
+        query += ` AND ${actionColumn} = ?`;
         bindings.push(actionFilter);
       }
     }
 
     // Apply date filters
     if (fromParam) {
-      const fromTs = Math.floor(new Date(fromParam).getTime() / 1000);
-      if (!isNaN(fromTs)) {
+      const fromTs = buildAuditTimestamp(fromParam);
+      if (fromTs != null) {
         query += ' AND created_at >= ?';
-        bindings.push(fromTs);
+        bindings.push(
+          context.createdAtUnit === 'milliseconds' ? fromTs * 1000 : fromTs
+        );
       }
     }
     if (toParam) {
-      const toTs = Math.floor(new Date(toParam).getTime() / 1000);
-      if (!isNaN(toTs)) {
+      const toTs = buildAuditTimestamp(toParam);
+      if (toTs != null) {
         query += ' AND created_at <= ?';
-        bindings.push(toTs);
+        bindings.push(
+          context.createdAtUnit === 'milliseconds' ? toTs * 1000 : toTs
+        );
       }
     }
 
@@ -2541,13 +2937,20 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
     bindings.push(limit + 1);
 
-    const activities = await adapter.query<{
+    const activities = await auditAdapter.query<{
       id: string;
       action: string;
       details: string | null;
       created_at: number;
-      ip_address: string | null;
-      user_agent: string | null;
+      ip_address?: string | null;
+      user_agent?: string | null;
+      result?: string | null;
+      severity?: string | null;
+      error_code?: string | null;
+      error_message?: string | null;
+      client_id?: string | null;
+      session_id?: string | null;
+      request_id?: string | null;
     }>(query, bindings);
 
     const hasMore = activities.length > limit;
@@ -2557,10 +2960,29 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     const formattedData = data.map((row) => ({
       id: row.id,
       action: row.action,
-      details: row.details ? JSON.parse(row.details) : null,
-      timestamp: new Date(row.created_at * 1000).toISOString(),
-      ip_address: row.ip_address,
-      user_agent: row.user_agent,
+      details: (() => {
+        const parsed = row.details ? JSON.parse(row.details) : null;
+        if (context.mode === 'legacy') {
+          return parsed;
+        }
+        return {
+          ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : parsed
+              ? { value: parsed }
+              : {}),
+          result: row.result ?? null,
+          severity: row.severity ?? null,
+          error_code: row.error_code ?? null,
+          error_message: row.error_message ?? null,
+          client_id: row.client_id ?? null,
+          session_id: row.session_id ?? null,
+          request_id: row.request_id ?? null,
+        };
+      })(),
+      timestamp: fromStoredAuditTimestamp(row.created_at, context),
+      ip_address: row.ip_address ?? null,
+      user_agent: row.user_agent ?? null,
     }));
 
     // Generate next cursor

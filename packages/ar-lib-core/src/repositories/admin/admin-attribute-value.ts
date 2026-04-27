@@ -79,44 +79,81 @@ export class AdminAttributeValueRepository extends BaseRepository<AdminAttribute
    * Set attribute value for an Admin user
    */
   async setAttributeValue(input: AdminAttributeValueCreateInput): Promise<AdminAttributeValue> {
-    const id = generateId();
     const now = getCurrentTimestamp();
+    const tenantId = input.tenant_id ?? 'default';
+    const valueIndex = input.value_index ?? 0;
+    const source = input.source ?? 'manual';
+    const expiresAt = input.expires_at ?? null;
+    const assignedBy = input.assigned_by ?? null;
+    const existing = await this.adapter.queryOne<Record<string, unknown>>(
+      `SELECT * FROM admin_attribute_values
+       WHERE admin_user_id = ? AND admin_attribute_id = ? AND value_index = ?`,
+      [input.admin_user_id, input.admin_attribute_id, valueIndex]
+    );
+
+    if (existing) {
+      await this.adapter.execute(
+        `UPDATE admin_attribute_values
+         SET tenant_id = ?, value = ?, source = ?, expires_at = ?, assigned_by = ?, updated_at = ?
+         WHERE admin_user_id = ? AND admin_attribute_id = ? AND value_index = ?`,
+        [
+          tenantId,
+          input.value,
+          source,
+          expiresAt,
+          assignedBy,
+          now,
+          input.admin_user_id,
+          input.admin_attribute_id,
+          valueIndex,
+        ]
+      );
+
+      return this.rowToValue({
+        ...existing,
+        tenant_id: tenantId,
+        value: input.value,
+        value_index: valueIndex,
+        source,
+        expires_at: expiresAt,
+        assigned_by: assignedBy,
+        updated_at: now,
+      });
+    }
 
     const entity: AdminAttributeValueEntity = {
-      id,
-      tenant_id: input.tenant_id ?? 'default',
+      id: generateId(),
+      tenant_id: tenantId,
       admin_user_id: input.admin_user_id,
       admin_attribute_id: input.admin_attribute_id,
       value: input.value,
-      value_index: input.value_index ?? 0,
-      source: input.source ?? 'manual',
-      expires_at: input.expires_at ?? null,
-      assigned_by: input.assigned_by ?? null,
+      value_index: valueIndex,
+      source,
+      expires_at: expiresAt,
+      assigned_by: assignedBy,
       created_at: now,
       updated_at: now,
     };
 
-    // Use INSERT OR REPLACE to handle upsert
-    const sql = `
-      INSERT OR REPLACE INTO admin_attribute_values (
+    await this.adapter.execute(
+      `INSERT INTO admin_attribute_values (
         id, tenant_id, admin_user_id, admin_attribute_id, value,
         value_index, source, expires_at, assigned_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    await this.adapter.execute(sql, [
-      entity.id,
-      entity.tenant_id,
-      entity.admin_user_id,
-      entity.admin_attribute_id,
-      entity.value,
-      entity.value_index,
-      entity.source,
-      entity.expires_at,
-      entity.assigned_by,
-      entity.created_at,
-      entity.updated_at,
-    ]);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entity.id,
+        entity.tenant_id,
+        entity.admin_user_id,
+        entity.admin_attribute_id,
+        entity.value,
+        entity.value_index,
+        entity.source,
+        entity.expires_at,
+        entity.assigned_by,
+        entity.created_at,
+        entity.updated_at,
+      ]
+    );
 
     return this.entityToValue(entity);
   }

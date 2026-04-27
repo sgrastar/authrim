@@ -4,18 +4,36 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter, getDefaultTenantId } from '@authrim/ar-lib-core';
+import {
+  ensureDatabaseAdapter,
+  type DatabaseAdapter,
+  getDefaultTenantId,
+  resolveUserStoreRuntimeSourcesFromEnv,
+} from '@authrim/ar-lib-core';
 import type { LinkedIdentity, TokenResponse } from '../types';
 import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
+
+async function getTenantLinkedIdentityAdapter(
+  env: Env,
+  tenantId: string,
+  partition: string
+): Promise<DatabaseAdapter> {
+  const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
+  return ensureDatabaseAdapter(sources.piiDb ?? sources.coreDb, partition);
+}
 
 /**
  * Get linked identity by ID
  */
-export async function getLinkedIdentityById(env: Env, id: string): Promise<LinkedIdentity | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.queryOne<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE id = ?',
-    [id]
+export async function getLinkedIdentityById(
+  env: Env,
+  tenantId: string,
+  id: string
+): Promise<LinkedIdentity | null> {
+  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:get-by-id');
+  const result = await adapter.queryOne<DbLinkedIdentity>(
+    'SELECT * FROM linked_identities WHERE tenant_id = ? AND id = ?',
+    [tenantId, id]
   );
 
   if (!result) return null;
@@ -31,8 +49,12 @@ export async function findLinkedIdentity(
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.queryOne<DbLinkedIdentity>(
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:find-by-provider-sub'
+  );
+  const result = await adapter.queryOne<DbLinkedIdentity>(
     'SELECT * FROM linked_identities WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?',
     [tenantId, providerId, providerUserId]
   );
@@ -51,8 +73,12 @@ export async function findLinkedIdentitiesByProviderSub(
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.query<DbLinkedIdentity>(
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:list-by-provider-sub'
+  );
+  const result = await adapter.query<DbLinkedIdentity>(
     `SELECT * FROM linked_identities
      WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?`,
     [tenantId, providerId, providerUserId]
@@ -64,29 +90,35 @@ export async function findLinkedIdentitiesByProviderSub(
 /**
  * Find linked identities across tenants by provider and provider user ID.
  * Explicit helper for global maintenance flows only.
+ * Caller must enumerate the candidate tenants so lookup stays tenant-aware.
  */
 export async function findLinkedIdentitiesAcrossTenantsByProviderSub(
   env: Env,
+  tenantIds: string[],
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.query<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?',
-    [providerId, providerUserId]
+  const results = await Promise.all(
+    tenantIds.map((tenantId) =>
+      findLinkedIdentitiesByProviderSub(env, tenantId, providerId, providerUserId)
+    )
   );
 
-  return result.map(mapDbToLinkedIdentity);
+  return results.flat();
 }
 
 /**
  * List linked identities for a user
  */
-export async function listLinkedIdentities(env: Env, userId: string): Promise<LinkedIdentity[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.query<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE user_id = ? ORDER BY linked_at DESC',
-    [userId]
+export async function listLinkedIdentities(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<LinkedIdentity[]> {
+  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:list');
+  const result = await adapter.query<DbLinkedIdentity>(
+    'SELECT * FROM linked_identities WHERE tenant_id = ? AND user_id = ? ORDER BY linked_at DESC',
+    [tenantId, userId]
   );
 
   return result.map(mapDbToLinkedIdentity);
@@ -101,8 +133,12 @@ export async function getLinkedIdentityForUserAndProvider(
   userId: string,
   providerId: string
 ): Promise<LinkedIdentity | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.queryOne<DbLinkedIdentity>(
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:get-for-user-provider'
+  );
+  const result = await adapter.queryOne<DbLinkedIdentity>(
     'SELECT * FROM linked_identities WHERE tenant_id = ? AND user_id = ? AND provider_id = ?',
     [tenantId, userId, providerId]
   );
@@ -127,6 +163,7 @@ export async function createLinkedIdentity(
     tenantId?: string;
   }
 ): Promise<string> {
+  const tenantId = params.tenantId || getDefaultTenantId(env);
   const id = crypto.randomUUID();
   const now = Date.now();
   const tokenExpiresAt = params.tokens.expires_in
@@ -140,8 +177,8 @@ export async function createLinkedIdentity(
     ? await encrypt(params.tokens.refresh_token, encryptionKey)
     : null;
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  await coreAdapter.execute(
+  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:create');
+  await adapter.execute(
     `INSERT INTO linked_identities (
       id, tenant_id, user_id, provider_id, provider_user_id,
       provider_email, email_verified,
@@ -151,7 +188,7 @@ export async function createLinkedIdentity(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      params.tenantId || getDefaultTenantId(env),
+      tenantId,
       params.userId,
       params.providerId,
       params.providerUserId,
@@ -176,6 +213,7 @@ export async function createLinkedIdentity(
  */
 export async function updateLinkedIdentity(
   env: Env,
+  tenantId: string,
   id: string,
   updates: {
     tokens?: TokenResponse;
@@ -221,12 +259,10 @@ export async function updateLinkedIdentity(
     params.push(JSON.stringify(updates.rawClaims));
   }
 
-  params.push(id);
-
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.execute(
-    `UPDATE linked_identities SET ${setClauses.join(', ')} WHERE id = ?`,
-    params
+  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:update');
+  const result = await adapter.execute(
+    `UPDATE linked_identities SET ${setClauses.join(', ')} WHERE tenant_id = ? AND id = ?`,
+    [...params, tenantId, id]
   );
 
   return result.rowsAffected > 0;
@@ -235,20 +271,31 @@ export async function updateLinkedIdentity(
 /**
  * Delete linked identity
  */
-export async function deleteLinkedIdentity(env: Env, id: string): Promise<boolean> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.execute('DELETE FROM linked_identities WHERE id = ?', [id]);
+export async function deleteLinkedIdentity(
+  env: Env,
+  tenantId: string,
+  id: string
+): Promise<boolean> {
+  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:delete');
+  const result = await adapter.execute(
+    'DELETE FROM linked_identities WHERE tenant_id = ? AND id = ?',
+    [tenantId, id]
+  );
   return result.rowsAffected > 0;
 }
 
 /**
  * Count linked identities for user (for unlink validation)
  */
-export async function countLinkedIdentities(env: Env, userId: string): Promise<number> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.queryOne<{ count: number }>(
-    'SELECT COUNT(*) as count FROM linked_identities WHERE user_id = ?',
-    [userId]
+export async function countLinkedIdentities(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<number> {
+  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:count');
+  const result = await adapter.queryOne<{ count: number }>(
+    'SELECT COUNT(*) as count FROM linked_identities WHERE tenant_id = ? AND user_id = ?',
+    [tenantId, userId]
   );
 
   return result?.count || 0;

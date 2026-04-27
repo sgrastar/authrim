@@ -13,7 +13,7 @@ import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   type IStorageAdapter,
   escapeLikePattern,
@@ -44,7 +44,8 @@ function asBaseContext(c: AdminContext): BaseContext {
  * Create database adapter from context
  */
 function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  const tenantId = getTenantIdFromContext(asBaseContext(c));
+  return createAuthContextFromHono(asBaseContext(c), tenantId).coreAdapter;
 }
 
 // =============================================================================

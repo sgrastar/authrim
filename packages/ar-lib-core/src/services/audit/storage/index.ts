@@ -4,7 +4,7 @@
  * Provides unified storage interface for audit logs with multiple backend support:
  * - D1: Hot data storage for recent logs (fast queries)
  * - R2: Archive storage for long-term retention (cost-efficient)
- * - Hyperdrive: External PostgreSQL for enterprise deployments
+ * - Hyperdrive: External PostgreSQL/MySQL for enterprise deployments
  */
 
 // Adapter Interface
@@ -43,5 +43,8 @@ export type { R2AuditAdapterConfig } from './r2-adapter';
 
 // Hyperdrive Adapter
 export { HyperdriveAuditAdapter, createHyperdriveAuditAdapter } from './hyperdrive-adapter';
+export { MysqlAuditAdapter, createMysqlAuditAdapter } from './mysql-audit-adapter';
+export { resolveHyperdriveBindingForAuditTarget } from '../hyperdrive-binding';
 
 export type { HyperdriveAuditAdapterConfig } from './hyperdrive-adapter';
+export type { MysqlAuditAdapterConfig } from './mysql-audit-adapter';

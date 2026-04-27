@@ -63,12 +63,28 @@ export type AuditTarget =
   | {
       type: 'firehose';
       streamRef: string;
+    }
+  | {
+      type: 'http';
+      url?: string;
+      urlRef?: string;
+      authTokenRef?: string;
+      method?: 'POST';
+      headers?: Record<string, string>;
+      format?: 'json';
     };
 
 export interface AuditRetentionPolicy {
+  eventLogRetentionDays?: number | null;
+  piiLogRetentionDays?: number | null;
+  archiveBeforeDelete?: boolean;
+  minimumRetentionDays?: number | null;
   primaryDays?: number | null;
   archiveDays?: number | null;
 }
+
+export type AuditArchiveFailureMode = 'best_effort' | 'gate_cleanup';
+export type AuditSinkFailureMode = 'best_effort' | 'retry_until_ttl';
 
 export interface AuditProfile extends RuntimeProfileBase {
   kind: 'audit';
@@ -76,6 +92,20 @@ export interface AuditProfile extends RuntimeProfileBase {
   archive?: AuditTarget | null;
   sinks: AuditTarget[];
   retention?: AuditRetentionPolicy;
+  /**
+   * Archive delivery failure policy.
+   *
+   * - best_effort: log and continue
+   * - gate_cleanup: keep retrying so archive delivery is not silently dropped
+   */
+  archiveFailureMode?: AuditArchiveFailureMode;
+  /**
+   * Sink delivery failure policy.
+   *
+   * - best_effort: log and continue
+   * - retry_until_ttl: retry through the queue / DLQ lifetime
+   */
+  sinkFailureMode?: AuditSinkFailureMode;
 }
 
 export type ResidencyLocationHint = 'auto' | 'wnam' | 'enam' | 'weur' | 'eeur' | 'apac' | 'oc';
@@ -175,10 +205,18 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
       'Primary searchable store with optional archive/sink expansion. Small installs can stay on D1.',
     builtin: true,
     version: 1,
-    primary: { type: 'd1', bindingRef: 'DB_ADMIN', dataset: 'admin_audit_log' },
+    primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
     archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
     sinks: [],
-    retention: { primaryDays: 1, archiveDays: null },
+    retention: {
+      eventLogRetentionDays: 90,
+      piiLogRetentionDays: 365,
+      archiveBeforeDelete: false,
+      primaryDays: 90,
+      archiveDays: null,
+    },
+    archiveFailureMode: 'gate_cleanup',
+    sinkFailureMode: 'best_effort',
   },
   {
     id: 'builtin:audit:minimal',
@@ -187,10 +225,39 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     description: 'Keep audit logs only in the primary database without archive or forwarding sinks.',
     builtin: true,
     version: 1,
-    primary: { type: 'd1', bindingRef: 'DB_ADMIN', dataset: 'admin_audit_log' },
+    primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
     archive: null,
     sinks: [],
-    retention: { primaryDays: 7, archiveDays: null },
+    retention: {
+      eventLogRetentionDays: 90,
+      piiLogRetentionDays: 365,
+      archiveBeforeDelete: false,
+      primaryDays: 90,
+      archiveDays: null,
+    },
+    archiveFailureMode: 'best_effort',
+    sinkFailureMode: 'best_effort',
+  },
+  {
+    id: 'builtin:audit:archive-only-logpush',
+    kind: 'audit',
+    label: 'Archive Only + Logpush',
+    description:
+      'Archive-only audit profile for large-volume installs. No hot query store; archive to R2 and forward to Workers Logpush-compatible structured logs.',
+    builtin: true,
+    version: 1,
+    primary: null,
+    archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+    sinks: [{ type: 'logpush', destinationRef: 'workers-logpush', dataset: 'authrim_audit' }],
+    retention: {
+      eventLogRetentionDays: 30,
+      piiLogRetentionDays: 30,
+      archiveBeforeDelete: false,
+      primaryDays: null,
+      archiveDays: 30,
+    },
+    archiveFailureMode: 'gate_cleanup',
+    sinkFailureMode: 'retry_until_ttl',
   },
   {
     id: DEFAULT_RESIDENCY_PROFILE_ID,

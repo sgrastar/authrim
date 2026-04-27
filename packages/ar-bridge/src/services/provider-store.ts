@@ -4,14 +4,22 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter, getDefaultTenantId } from '@authrim/ar-lib-core';
+import {
+  type DatabaseAdapter,
+  getDefaultTenantId,
+  resolveAuthCorePersistenceAdapterFromEnv,
+} from '@authrim/ar-lib-core';
 import type { UpstreamProvider, TokenEndpointAuthMethod } from '../types';
+
+async function getCoreAdapter(env: Env, partition: string): Promise<DatabaseAdapter> {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, partition);
+}
 
 /**
  * Get provider by ID
  */
 export async function getProvider(env: Env, id: string): Promise<UpstreamProvider | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get');
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE id = ?',
     [id]
@@ -30,7 +38,7 @@ export async function getProviderByIdOrSlug(
   idOrSlug: string,
   tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-id-or-slug');
 
   // First try by slug (case-insensitive)
   let result = await coreAdapter.queryOne<DbUpstreamProvider>(
@@ -58,7 +66,7 @@ export async function getProviderByName(
   name: string,
   tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-name');
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE name = ? AND tenant_id = ? AND enabled = 1',
     [name, tenantId]
@@ -75,7 +83,7 @@ export async function listEnabledProviders(
   env: Env,
   tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-enabled');
   const result = await coreAdapter.query<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC',
     [tenantId]
@@ -91,7 +99,7 @@ export async function listAllProviders(
   env: Env,
   tenantId = getDefaultTenantId(env)
 ): Promise<UpstreamProvider[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-all');
   const result = await coreAdapter.query<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC',
     [tenantId]
@@ -110,7 +118,7 @@ export async function createProvider(
   const id = crypto.randomUUID();
   const now = Date.now();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:create');
   await coreAdapter.execute(
     `INSERT INTO upstream_providers (
       id, tenant_id, slug, name, provider_type, enabled, priority,
@@ -181,7 +189,7 @@ export async function updateProvider(
   const now = Date.now();
   const updated = { ...existing, ...updates, updatedAt: now };
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:update');
   await coreAdapter.execute(
     `UPDATE upstream_providers SET
       slug = ?, name = ?, provider_type = ?, enabled = ?, priority = ?,
@@ -234,7 +242,7 @@ export async function updateProvider(
  * Delete provider
  */
 export async function deleteProvider(env: Env, id: string): Promise<boolean> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:delete');
   const result = await coreAdapter.execute('DELETE FROM upstream_providers WHERE id = ?', [id]);
   return result.rowsAffected > 0;
 }

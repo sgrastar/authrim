@@ -19,6 +19,7 @@ import {
   KV_NAMESPACES,
 } from './naming.js';
 import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
+import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-portability.js';
 
 // Package directory (for bundled migrations)
 const __filename = fileURLToPath(import.meta.url);
@@ -1583,7 +1584,15 @@ export async function executeD1Migration(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
-    await wrangler(['d1', 'execute', dbName, '--remote', '--file', sqlFilePath, '--yes']);
+    const { readFileSync } = await import('node:fs');
+    const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
+    const tempSqlPath = pathJoin(tmpdir(), `authrim-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`);
+    await writeFile(tempSqlPath, renderedSql, 'utf-8');
+    try {
+      await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes']);
+    } finally {
+      await unlink(tempSqlPath).catch(() => {});
+    }
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1658,8 +1667,19 @@ async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
 /**
  * Record a migration filename as applied.
  */
+export function buildRecordMigrationSql(filename: string, appliedAt = Date.now()): string {
+  const escapedFilename = filename.replace(/'/g, "''");
+  return `INSERT INTO authrim_migrations (filename, applied_at)
+SELECT '${escapedFilename}', ${appliedAt}
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM authrim_migrations
+  WHERE filename = '${escapedFilename}'
+);`;
+}
+
 async function recordMigration(dbName: string, filename: string): Promise<void> {
-  const sql = `INSERT OR IGNORE INTO authrim_migrations (filename, applied_at) VALUES ('${filename.replace(/'/g, "''")}', ${Date.now()});`;
+  const sql = buildRecordMigrationSql(filename);
   try {
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
   } catch {
@@ -1746,6 +1766,7 @@ function sqlString(value: string): string {
  * tenant must be inserted so host-based tenant resolution succeeds.
  */
 export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
+  const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantCode = tenantId;
   const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
@@ -1764,23 +1785,27 @@ SET id = ${tenantIdSql},
     tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     is_active = 1,
-    updated_at = unixepoch()
+    updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = 'default'
   AND ${tenantIdSql} <> 'default'
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
   AND (SELECT COUNT(*) FROM tenants) = 1;
 
-INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
+INSERT INTO tenants (
+  id, tenant_code, name, description, is_active, is_default,
+  default_tenant_guard, created_at, updated_at
+)
 SELECT ${tenantIdSql}, ${tenantCodeSql}, ${displayNameSql}, NULL, 1,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
-       unixepoch(), unixepoch()
+       CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
+       ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
 WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
 
 UPDATE tenants
 SET tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     is_active = 1,
-    updated_at = unixepoch()
+    updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = ${tenantIdSql};
 `.trim();
 }
@@ -1794,6 +1819,7 @@ WHERE id = ${tenantIdSql};
  * assign `super_admin` without failing.
  */
 export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
+  const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantIdSql = sqlString(tenantId);
 
@@ -1822,8 +1848,8 @@ SELECT
   hierarchy_level,
   role_type,
   is_system,
-  unixepoch() * 1000,
-  unixepoch() * 1000,
+  ${sqlExpr.nowEpochMilliseconds},
+  ${sqlExpr.nowEpochMilliseconds},
   inherits_from
 FROM admin_roles
 WHERE tenant_id = 'default'
@@ -1844,6 +1870,13 @@ export interface InitialTenantBootstrapResult {
 
 export interface InitialAdminRolesBootstrapResult {
   success: boolean;
+  error?: string;
+}
+
+export interface RuntimeProfileSeedResult {
+  success: boolean;
+  seededCount: number;
+  backend: 'kv' | 'database';
   error?: string;
 }
 
@@ -1924,6 +1957,150 @@ export async function ensureInitialAdminRolesInD1(
     const message = error instanceof Error ? error.message : String(error);
     onProgress?.(`  ❌ Admin role bootstrap failed: ${message}`);
     return { success: false, error: message };
+  }
+}
+
+type SeededRuntimeProfile = {
+  kind: 'storage' | 'audit' | 'residency';
+  id: string;
+  payload: Record<string, unknown>;
+};
+
+function collectSeededRuntimeProfiles(config: AuthrimConfig): SeededRuntimeProfile[] {
+  const seeded: SeededRuntimeProfile[] = [];
+  for (const profile of config.profiles?.seed?.storage ?? []) {
+    seeded.push({
+      kind: 'storage',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'storage',
+        builtin: false,
+      },
+    });
+  }
+  for (const profile of config.profiles?.seed?.audit ?? []) {
+    seeded.push({
+      kind: 'audit',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'audit',
+        builtin: false,
+      },
+    });
+  }
+  for (const profile of config.profiles?.seed?.residency ?? []) {
+    seeded.push({
+      kind: 'residency',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'residency',
+        builtin: false,
+      },
+    });
+  }
+  return seeded;
+}
+
+export function buildRuntimeProfileSeedSql(config: AuthrimConfig): string | null {
+  const seeded = collectSeededRuntimeProfiles(config);
+  if (seeded.length === 0) {
+    return null;
+  }
+
+  return seeded
+    .map((profile) => {
+      const payloadSql = sqlString(JSON.stringify(profile.payload));
+      const kindSql = sqlString(profile.kind);
+      const idSql = sqlString(profile.id);
+      return `
+UPDATE profile_registry
+SET payload_json = ${payloadSql},
+    updated_at = CURRENT_TIMESTAMP
+WHERE kind = ${kindSql}
+  AND id = ${idSql};
+
+INSERT INTO profile_registry (id, kind, payload_json, created_at, updated_at)
+SELECT ${idSql}, ${kindSql}, ${payloadSql}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM profile_registry
+  WHERE kind = ${kindSql}
+    AND id = ${idSql}
+);`.trim();
+    })
+    .join('\n\n');
+}
+
+export async function seedRuntimeProfiles(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<RuntimeProfileSeedResult> {
+  const seeded = collectSeededRuntimeProfiles(config);
+  if (seeded.length === 0) {
+    return {
+      success: true,
+      seededCount: 0,
+      backend: config.profiles?.registry?.backend ?? 'kv',
+    };
+  }
+
+  const backend = config.profiles?.registry?.backend ?? 'kv';
+
+  try {
+    if (backend === 'database') {
+      const dbName = getD1DatabaseName(env, 'core-db');
+      const sql = buildRuntimeProfileSeedSql(config);
+      if (!sql) {
+        return { success: true, seededCount: 0, backend };
+      }
+
+      onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
+      const { stdout, stderr } = await wrangler([
+        'd1',
+        'execute',
+        dbName,
+        '--remote',
+        '--yes',
+        '--command',
+        sql,
+      ]);
+
+      const combined = (stdout + '\n' + stderr).toLowerCase();
+      if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+        const errorDetail = stderr || stdout;
+        onProgress?.(`  ❌ Runtime profile seed failed: ${errorDetail}`);
+        return { success: false, seededCount: 0, backend, error: errorDetail };
+      }
+
+      onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
+      return { success: true, seededCount: seeded.length, backend };
+    }
+
+    onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into AUTHRIM_CONFIG KV...`);
+    for (const profile of seeded) {
+      await wrangler([
+        'kv',
+        'key',
+        'put',
+        `profile-registry:${profile.kind}:${profile.id}`,
+        JSON.stringify(profile.payload),
+        '--env',
+        env,
+        '--binding',
+        'AUTHRIM_CONFIG',
+      ]);
+    }
+
+    onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
+    return { success: true, seededCount: seeded.length, backend };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Runtime profile seed failed: ${message}`);
+    return { success: false, seededCount: 0, backend, error: message };
   }
 }
 

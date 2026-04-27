@@ -22,10 +22,7 @@ const repoMocks = vi.hoisted(() => ({
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
-
-  class MockD1Adapter {
-    constructor(_options: unknown) {}
-  }
+  const mockAdminAdapter = {};
 
   class MockAdminUserRepository {
     findByTenantAndId = repoMocks.findByTenantAndId;
@@ -67,7 +64,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
   return {
     ...actual,
-    D1Adapter: MockD1Adapter,
+    requireDedicatedAdminDatabaseAdapter: vi.fn().mockReturnValue(mockAdminAdapter),
     AdminUserRepository: MockAdminUserRepository,
     AdminRoleRepository: MockAdminRoleRepository,
     AdminRoleAssignmentRepository: MockAdminRoleAssignmentRepository,

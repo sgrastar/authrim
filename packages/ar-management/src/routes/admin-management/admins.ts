@@ -14,7 +14,6 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 // Define context type with adminAuth variable
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 import {
-  D1Adapter,
   AdminUserRepository,
   AdminRoleRepository,
   AdminRoleAssignmentRepository,
@@ -26,6 +25,7 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  requireDedicatedAdminDatabaseAdapter,
   type AdminUser,
 } from '@authrim/ar-lib-core';
 
@@ -48,10 +48,7 @@ adminUsersRouter.use(
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getAdminAdapter(c: Context<any, any, any>) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
-  }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
 }
 
 /**

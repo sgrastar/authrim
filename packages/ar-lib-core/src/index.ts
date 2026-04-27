@@ -83,6 +83,7 @@ export * from './utils/policy-embedding';
 export * from './utils/resource-permissions';
 export * from './utils/consent-rbac';
 export * from './utils/refresh-token-sharding';
+export * from './utils/refresh-token-store';
 export * from './utils/oauth-config';
 export * from './utils/dcr-config';
 export * from './utils/encryption-config';
@@ -175,6 +176,10 @@ export * from './utils/cookie-config';
 
 // Settings History (Configuration Rollback)
 export * from './services/settings-history';
+export * from './services/auth-core-persistence-context';
+export * from './services/consent-store';
+export * from './services/refresh-token-family-index';
+export * from './services/storage-boundary-policy';
 
 // Error System (Phase 10 - SDK public types)
 // Note: Exported with namespace to avoid conflicts with legacy error types
@@ -234,18 +239,27 @@ export * from './services/token-claim-evaluator';
 export * from './services/unified-check-service';
 export * from './services/check-audit-service';
 export * from './services/permission-change-notifier';
+export * from './services/admin-database-adapter';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
+export * from './services/invitation-auth-core';
 export * from './services/policy-resolver';
 export * from './services/custom-claims';
 export * from './services/custom-claim-schema-history';
 export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/user-store-runtime-sources';
+export * from './services/refresh-token-family-store';
 
 // Audit Logging (Phase 10 - Unified Audit System)
 export * from './services/audit';
+export {
+  createAuditPrimaryDatabaseAdapter,
+  createAuditPrimaryStorageAdapter,
+  createExternalAuditDatabaseAdapter,
+  createExternalAuditStorageAdapter,
+} from './services/audit';
 
 // Diagnostic Logging (Debugging, Troubleshooting, OIDF Conformance)
 export * from './services/diagnostic';

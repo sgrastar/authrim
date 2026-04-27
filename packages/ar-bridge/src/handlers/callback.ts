@@ -10,7 +10,6 @@ import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   type DatabaseAdapter,
   getSessionStoreForNewSession,
   getUIConfig,
@@ -32,6 +31,7 @@ import {
   // Logger
   getLogger,
   createLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
   // Audit Log
   createAuditLog,
   // Errors
@@ -753,7 +753,10 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
     // 2. Also record in D1 for backchannel logout queries
     // This allows us to find sessions by (provider_id, provider_sub)
     try {
-      const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+      const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'bridge-callback-session-record'
+      );
       await coreAdapter.execute(
         `INSERT INTO sessions (
            id, user_id, expires_at, created_at, external_provider_id, external_provider_sub, tenant_id

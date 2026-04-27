@@ -50,4 +50,5 @@ export {
   createPIIContextFromHono,
   elevateToPIIContext,
   hasPIIDatabase,
+  resolveOptionalCoreAdapterFromHono,
 } from './hono-context';

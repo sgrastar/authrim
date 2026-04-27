@@ -11,16 +11,26 @@
 
 import type { Env } from '../types/env';
 import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
-import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from './logger';
 import { getCacheTTL } from './cache-config';
 import { getDefaultTenantId } from './issuer';
+import {
+  storeRefreshToken as storeRefreshTokenCanonical,
+  getRefreshToken as getRefreshTokenCanonical,
+  deleteRefreshToken as deleteRefreshTokenCanonical,
+} from './refresh-token-store';
 
 const log = createLogger().module('KV');
+
+export interface UserCacheSources {
+  coreDb: DatabaseSource;
+  piiDb?: DatabaseSource | null;
+}
 
 // ===== User Cache =====
 // Read-Through Cache for user metadata with invalidation hook support
@@ -65,10 +75,14 @@ export interface CachedUser {
  * @param userId - User ID to retrieve
  * @returns Promise<CachedUser | null>
  */
-export async function getCachedUser(env: Env, userId: string): Promise<CachedUser | null> {
+export async function getCachedUser(
+  env: Env,
+  userId: string,
+  sources: UserCacheSources
+): Promise<CachedUser | null> {
   // If USER_CACHE is not configured, fall back to D1 directly
   if (!env.USER_CACHE) {
-    return await getUserFromD1(env, userId);
+    return await getUserFromD1(userId, sources);
   }
 
   const cacheKey = buildKVKey('user', userId);
@@ -90,7 +104,7 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
   }
 
   // Step 2: Cache miss - fetch from D1
-  const user = await getUserFromD1(env, userId);
+  const user = await getUserFromD1(userId, sources);
 
   if (!user) {
     return null;
@@ -116,9 +130,9 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
  * Fetch user directly from D1 database
  * PII/Non-PII DB separation: fetches from Core DB and PII DB in parallel and merges
  */
-async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | null> {
+async function getUserFromD1(userId: string, sources: UserCacheSources): Promise<CachedUser | null> {
   // Query Core DB for existence and non-PII fields
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.coreDb, 'user-cache-core');
   const coreResult = await coreAdapter.queryOne<{
     id: string;
     email_verified: number;
@@ -158,8 +172,8 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
     zoneinfo: string | null;
   } | null = null;
 
-  if (env.DB_PII) {
-    const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+  if (sources.piiDb) {
+    const piiAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.piiDb, 'user-cache-pii');
     piiResult = await piiAdapter.queryOne<{
       email: string | null;
       name: string | null;
@@ -288,9 +302,10 @@ export interface UserCoreExistence {
  */
 export async function getCachedUserCore(
   env: Env,
-  userId: string
+  userId: string,
+  coreDbSource: DatabaseSource
 ): Promise<UserCoreExistence | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'user-core-cache');
   const coreResult = await coreAdapter.queryOne<{
     id: string;
     email_verified: number;
@@ -344,14 +359,16 @@ export interface CachedConsent {
 export async function getCachedConsent(
   env: Env,
   userId: string,
-  clientId: string
+  clientId: string,
+  tenantId: string,
+  coreDbSource: DatabaseSource
 ): Promise<CachedConsent | null> {
   // If CONSENT_CACHE is not configured, fall back to D1 directly
   if (!env.CONSENT_CACHE) {
-    return await getConsentFromD1(env, userId, clientId);
+    return await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
   }
 
-  const cacheKey = buildKVKey('consent', `${userId}:${clientId}`);
+  const cacheKey = buildKVKey('consent', `${tenantId}:${userId}:${clientId}`);
 
   // Step 1: Try CONSENT_CACHE (Read-Through Cache)
   const cached = await env.CONSENT_CACHE.get(cacheKey);
@@ -370,7 +387,7 @@ export async function getCachedConsent(
   }
 
   // Step 2: Cache miss - fetch from D1
-  const consent = await getConsentFromD1(env, userId, clientId);
+  const consent = await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
 
   if (!consent) {
     return null;
@@ -393,21 +410,24 @@ export async function getCachedConsent(
 }
 
 /**
- * Fetch consent directly from D1 database
+ * Fetch consent directly from the configured core database.
  */
-async function getConsentFromD1(
-  env: Env,
+async function getConsentFromDatabase(
   userId: string,
-  clientId: string
+  clientId: string,
+  tenantId: string,
+  coreDbSource: DatabaseSource
 ): Promise<CachedConsent | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'consent-cache');
   const result = await coreAdapter.queryOne<{
     scope: string;
     granted_at: number;
     expires_at: number | null;
   }>(
-    'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?',
-    [userId, clientId]
+    `SELECT scope, granted_at, expires_at
+       FROM oauth_client_consents
+      WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
+    [userId, clientId, tenantId]
   );
 
   if (!result) {
@@ -432,6 +452,7 @@ async function getConsentFromD1(
 export async function invalidateConsentCache(
   env: Env,
   userId: string,
+  tenantId: string,
   clientId?: string
 ): Promise<void> {
   if (!env.CONSENT_CACHE) {
@@ -440,7 +461,7 @@ export async function invalidateConsentCache(
 
   if (clientId) {
     // Invalidate specific consent
-    const cacheKey = buildKVKey('consent', `${userId}:${clientId}`);
+    const cacheKey = buildKVKey('consent', `${tenantId}:${userId}:${clientId}`);
     try {
       await env.CONSENT_CACHE.delete(cacheKey);
     } catch (error) {
@@ -653,7 +674,11 @@ function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
  * @param clientId - Client ID to retrieve
  * @returns Promise<ClientMetadata | null>
  */
-export async function getClient(env: Env, clientId: string): Promise<ClientMetadata | null> {
+export async function getClient(
+  env: Env,
+  clientId: string,
+  coreDbSource: DatabaseSource
+): Promise<ClientMetadata | null> {
   const cacheKey = buildKVKey('client', clientId);
 
   // Get cache TTL based on cache mode (client-specific > platform > default)
@@ -676,7 +701,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
   }
 
   // Step 2: Cache miss - fetch from D1 (source of truth)
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'client-cache');
   const result = await coreAdapter.queryOne<{
     client_id: string;
     client_secret_hash: string | null;
@@ -958,152 +983,35 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
 // RefreshTokenData is now imported from types/oidc
 
 /**
- * Store refresh token using RefreshTokenRotator DO
- * Creates a new token family for the refresh token
+ * Legacy internal shim for refresh token storage.
  *
- * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI (unique identifier) - this is the actual token value
- * @param data - Refresh token metadata
- * @returns Promise<void>
+ * Canonical public exports live in `utils/refresh-token-store.ts`.
+ * Keep this wrapper only to avoid rewriting every internal reference in one step.
  */
-export async function storeRefreshToken(
+async function storeRefreshToken(
   env: Env,
   jti: string,
   data: RefreshTokenData
 ): Promise<void> {
-  if (!env.REFRESH_TOKEN_ROTATOR) {
-    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
-  }
-
-  // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
-    await import('./refresh-token-sharding');
-  const parsedJti = parseRefreshTokenJti(jti);
-  const instanceName = buildRefreshTokenRotatorInstanceName(
-    data.client_id,
-    parsedJti.generation,
-    parsedJti.shardIndex
-  );
-
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
-
-  // KV > env > default priority for refresh token TTL
-  const configManager = createOAuthConfigManager(env);
-  const refreshTokenTTL = await configManager.getRefreshTokenExpiry();
-
-  // Use RPC for family creation
-  await stub.createFamilyRpc({
-    jti: jti,
-    userId: data.sub,
-    clientId: data.client_id,
-    scope: data.scope || '',
-    ttl: refreshTokenTTL,
-    // V3: Include generation and shard for DO to store
-    ...(parsedJti.generation > 0 &&
-      parsedJti.shardIndex !== null && {
-        generation: parsedJti.generation,
-        shardIndex: parsedJti.shardIndex,
-      }),
-  });
+  return storeRefreshTokenCanonical(env, jti, data);
 }
 
 /**
- * Retrieve refresh token metadata using RefreshTokenRotator DO (V2)
- * Note: This validates the token and returns metadata if valid
- *
- * V2 API uses version-based validation. The token's userId and version (rtv claim)
- * are used to look up the token family in the DO.
- *
- * @param env - Cloudflare environment bindings
- * @param userId - User ID from the refresh token's sub claim
- * @param version - Token version from the refresh token's rtv claim
- * @param clientId - Client ID (required to locate the correct DO instance)
- * @param jti - JWT ID for verification against stored last_jti
- * @returns Promise<RefreshTokenData | null>
+ * Legacy internal shim for refresh token lookup.
  */
-export async function getRefreshToken(
+async function getRefreshToken(
   env: Env,
   userId: string,
   version: number,
   clientId: string,
   jti: string
 ): Promise<RefreshTokenData | null> {
-  if (!env.REFRESH_TOKEN_ROTATOR) {
-    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
-  }
-
-  // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
-    await import('./refresh-token-sharding');
-  const parsedJti = parseRefreshTokenJti(jti);
-  const instanceName = buildRefreshTokenRotatorInstanceName(
-    clientId,
-    parsedJti.generation,
-    parsedJti.shardIndex
-  );
-
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
-
-  try {
-    // V2: Use RPC for version-based validation
-    const result = await stub.validateRpc(userId, version, clientId);
-
-    if (!result.valid || !result.family) {
-      return null;
-    }
-
-    // Convert DO response to RefreshTokenData format
-    // familyId is constructed from userId:clientId (matches DO key structure)
-    return {
-      jti,
-      client_id: clientId,
-      sub: userId,
-      scope: result.family.allowed_scope || '',
-      iat: Math.floor(Date.now() / 1000), // V2 doesn't return createdAt
-      exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
-      familyId: `${userId}:${clientId}`,
-    };
-  } catch (error) {
-    // PII Protection: Don't log full error (may contain token details)
-    log.error('Failed to get refresh token', {}, error as Error);
-    return null;
-  }
+  return getRefreshTokenCanonical(env, userId, version, clientId, jti);
 }
 
 /**
- * Delete refresh token using RefreshTokenRotator DO
- * Revokes the entire token family for security
- *
- * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI (the actual token value)
- * @param client_id - Client ID (required to locate the correct DO instance)
- * @returns Promise<void>
+ * Legacy internal shim for refresh token deletion.
  */
-export async function deleteRefreshToken(env: Env, jti: string, client_id: string): Promise<void> {
-  if (!env.REFRESH_TOKEN_ROTATOR) {
-    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
-  }
-
-  // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
-    await import('./refresh-token-sharding');
-  const parsedJti = parseRefreshTokenJti(jti);
-  const instanceName = buildRefreshTokenRotatorInstanceName(
-    client_id,
-    parsedJti.generation,
-    parsedJti.shardIndex
-  );
-
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
-
-  // Use RPC to revoke by JTI (internally finds family and revokes)
-  try {
-    await stub.revokeByJtiRpc(jti, 'Token revocation requested');
-  } catch (error) {
-    // Token doesn't exist or already revoked - that's OK for delete operations
-    log.debug('Token revocation completed (may already be revoked)');
-  }
+async function deleteRefreshToken(env: Env, jti: string, client_id: string): Promise<void> {
+  return deleteRefreshTokenCanonical(env, jti, client_id);
 }
