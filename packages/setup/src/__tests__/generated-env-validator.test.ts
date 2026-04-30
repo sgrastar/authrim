@@ -21,11 +21,28 @@ async function createFixtureRoot() {
   return root;
 }
 
-async function writeGeneratedEnvironment(root: string, options?: { externalStorageDefault?: boolean }) {
+async function writeGeneratedEnvironment(
+  root: string,
+  options?: { externalStorageDefault?: boolean; withHyperdriveReferences?: boolean }
+) {
   const env = 'portable';
   const config = createDefaultConfig(env);
   if (options?.externalStorageDefault) {
     config.profiles.defaults.storage = 'builtin:storage:external-postgres';
+  }
+  if (options?.withHyperdriveReferences) {
+    config.profiles.references.hyperdrive = {
+      'core-primary': {
+        binding: 'HYPERDRIVE_CORE_PRIMARY',
+        id: 'hyperdrive-core-id',
+        driver: 'postgres',
+      },
+      'pii-primary': {
+        binding: 'HYPERDRIVE_PII_PRIMARY',
+        id: 'hyperdrive-pii-id',
+        driver: 'postgres',
+      },
+    };
   }
 
   const envPaths = getEnvironmentPaths({ baseDir: root, env });
@@ -49,7 +66,9 @@ async function writeGeneratedEnvironment(root: string, options?: { externalStora
       { binding: 'CONSENT_CACHE', name: `${env.toUpperCase()}-CONSENT_CACHE`, id: 'kv-consent' },
     ],
     queues: [],
-    r2: [],
+    r2: [
+      { binding: 'IMPORT_ARTIFACTS', name: `${env}-import-artifacts` },
+    ],
   });
 
   await writeFile(envPaths.config, JSON.stringify(config, null, 2), 'utf-8');
@@ -122,5 +141,17 @@ describe('validateGeneratedEnvironment', () => {
         expect.stringContaining('builtin:storage:external-postgres'),
       ])
     );
+  });
+
+  it('passes when the active external storage default is backed by configured Hyperdrive references', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
+      externalStorageDefault: true,
+      withHyperdriveReferences: true,
+    });
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+
+    expect(result.ok).toBe(true);
+    expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
   });
 });

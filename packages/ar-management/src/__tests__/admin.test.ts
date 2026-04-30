@@ -135,6 +135,7 @@ import {
   adminUserAnonymizeHandler,
   adminUserSendEmailHandler,
   adminAuditLogListHandler,
+  adminAuditLogGetHandler,
   adminUserActivityLogHandler,
   adminClientsListHandler,
   adminClientGetHandler,
@@ -295,6 +296,40 @@ function createMockContext(options: {
   return c;
 }
 
+function createMockR2Bucket(
+  entries: Array<{
+    key: string;
+    body: unknown;
+  }>
+): R2Bucket {
+  const objects = entries.map((entry) => ({
+    key: entry.key,
+    size: JSON.stringify(entry.body).length,
+    uploaded: new Date(),
+    etag: `etag-${entry.key}`,
+    checksums: {},
+    httpEtag: `etag-${entry.key}`,
+    version: 'v1',
+  })) as unknown as R2Object[];
+
+  return {
+    list: vi.fn(async ({ prefix }: { prefix?: string }) => ({
+      objects: prefix ? objects.filter((object) => object.key.startsWith(prefix)) : objects,
+      truncated: false,
+      delimitedPrefixes: [],
+    })),
+    get: vi.fn(async (key: string) => {
+      const found = entries.find((entry) => entry.key === key);
+      if (!found) {
+        return null;
+      }
+      return {
+        text: async () => JSON.stringify(found.body),
+      };
+    }),
+  } as unknown as R2Bucket;
+}
+
 function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'schema-1',
@@ -440,23 +475,94 @@ describe('Admin API Handlers', () => {
   });
 
   describe('archive-only audit hot query guard', () => {
-    it('returns not_supported for audit log list when archive-only profile is active', async () => {
+    it('returns archive-backed audit log entries when archive-only profile is active', async () => {
+      const archiveBucket = createMockR2Bucket([
+        {
+          key: 'audit/event/default/2026-04-30/evt-1.json',
+          body: {
+            id: 'evt-1',
+            tenantId: 'default',
+            eventType: 'user.login',
+            eventCategory: 'auth',
+            result: 'success',
+            severity: 'info',
+            clientId: 'client-1',
+            detailsJson: JSON.stringify({
+              resourceType: 'user',
+              resourceId: 'user-1',
+              ipAddress: '127.0.0.1',
+            }),
+            createdAt: Date.parse('2026-04-30T00:00:00.000Z'),
+          },
+        },
+      ]);
       const c = createMockContext({
         envOverrides: {
           DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush',
+          DIAGNOSTIC_LOGS: archiveBucket,
         } as Partial<Env>,
       });
 
       const response = await adminAuditLogListHandler(c);
-      expect(response.status).toBe(501);
+      expect(response.status).toBe(200);
       const body = (await response.json()) as {
-        error: string;
-        profile_id: string;
-        hot_query_status: string;
+        entries: Array<Record<string, unknown>>;
+        pagination: { total: number };
       };
-      expect(body.error).toBe('not_supported');
-      expect(body.profile_id).toBe('builtin:audit:archive-only-logpush');
-      expect(body.hot_query_status).toBe('not_supported');
+      expect(body.pagination.total).toBe(1);
+      expect(body.entries).toEqual([
+        expect.objectContaining({
+          id: 'evt-1',
+          action: 'user.login',
+          resourceType: 'user',
+          resourceId: 'user-1',
+          ipAddress: '127.0.0.1',
+        }),
+      ]);
+    });
+
+    it('returns archive-backed audit log details when archive-only profile is active', async () => {
+      const archiveBucket = createMockR2Bucket([
+        {
+          key: 'audit/event/default/2026-04-30/evt-1.json',
+          body: {
+            id: 'evt-1',
+            tenantId: 'default',
+            eventType: 'user.login',
+            eventCategory: 'auth',
+            result: 'success',
+            severity: 'info',
+            requestId: 'req-1',
+            detailsJson: JSON.stringify({
+              resourceType: 'user',
+              resourceId: 'user-1',
+              userAgent: 'Vitest',
+            }),
+            createdAt: Date.parse('2026-04-30T00:00:00.000Z'),
+          },
+        },
+      ]);
+      const c = createMockContext({
+        params: { id: 'evt-1' },
+        envOverrides: {
+          DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush',
+          DIAGNOSTIC_LOGS: archiveBucket,
+        } as Partial<Env>,
+      });
+
+      const response = await adminAuditLogGetHandler(c);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body).toEqual(
+        expect.objectContaining({
+          id: 'evt-1',
+          action: 'user.login',
+          resourceType: 'user',
+          resourceId: 'user-1',
+          requestId: 'req-1',
+          userAgent: 'Vitest',
+        })
+      );
     });
 
     it('returns pending_runtime_support for non-D1 primary audit profiles', async () => {
@@ -478,60 +584,6 @@ describe('Admin API Handlers', () => {
       expect(body.hot_query_status).toBe('pending_runtime_support');
     });
 
-    it('returns audit log entries from postgres primary when a Hyperdrive binding is configured', async () => {
-      mockPostgresAdapterFactory.mockReturnValue({
-        queryOne: vi
-          .fn()
-          .mockResolvedValueOnce({ total: 1 }),
-        query: vi.fn().mockResolvedValue([
-          {
-            id: 'evt-1',
-            anonymized_user_id: null,
-            event_type: 'token.issued',
-            event_category: 'token',
-            result: 'success',
-            severity: 'info',
-            error_code: null,
-            error_message: null,
-            client_id: 'client-1',
-            session_id: 'session-1',
-            request_id: 'req-1',
-            details_json: JSON.stringify({
-              resourceType: 'client',
-              resourceId: 'client-1',
-            }),
-            created_at: 1710000000000,
-          },
-        ]),
-      });
-
-      const c = createMockContext({
-        envOverrides: {
-          DEFAULT_AUDIT_PROFILE_ID: 'custom:audit:postgres-primary',
-          HYPERDRIVE_AUDIT_PRIMARY: {
-            connectionString: 'postgres://audit:secret@example.com:5432/authrim',
-          } as unknown as Hyperdrive,
-        } as Partial<Env>,
-      });
-
-      const response = await adminAuditLogListHandler(c);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        entries: Array<Record<string, unknown>>;
-        pagination: { total: number };
-      };
-
-      expect(body.pagination.total).toBe(1);
-      expect(body.entries).toEqual([
-        expect.objectContaining({
-          id: 'evt-1',
-          action: 'token.issued',
-          resourceType: 'client',
-          resourceId: 'client-1',
-          clientId: 'client-1',
-        }),
-      ]);
-    });
   });
 
   describe('adminUserActivityLogHandler', () => {

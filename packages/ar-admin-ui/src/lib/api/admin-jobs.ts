@@ -36,7 +36,13 @@ export type JobType =
 /**
  * Job status
  */
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type JobStatus =
+	| 'pending'
+	| 'running'
+	| 'completed'
+	| 'partial_failure'
+	| 'failed'
+	| 'cancelled';
 
 /**
  * Job progress info
@@ -46,6 +52,10 @@ export interface JobProgress {
 	total: number;
 	percentage: number;
 	current_item?: string;
+	stage?: string;
+	succeeded?: number;
+	failed?: number;
+	skipped?: number;
 }
 
 /**
@@ -68,12 +78,22 @@ export interface JobFailure {
 	code?: string;
 }
 
+export interface JobLogEntry {
+	timestamp: string;
+	level: 'info' | 'warn' | 'error';
+	code: string;
+	message: string;
+	row?: number;
+	email?: string;
+}
+
 /**
  * Job result
  */
 export interface JobResult {
 	summary: JobResultSummary;
 	failures: JobFailure[];
+	logs: JobLogEntry[];
 	download_url?: string;
 }
 
@@ -130,8 +150,147 @@ export interface BulkUpdateOperation {
  */
 export interface UploadUrlResponse {
 	upload_url: string;
+	upload_method?: 'PUT';
 	file_key: string;
 	expires_at: string;
+}
+
+type ApiJobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'partial_failure';
+type ApiJobType =
+	| 'users/import'
+	| 'users/bulk-update'
+	| 'reports/generate'
+	| 'organizations/bulk-members';
+
+const JOB_TYPE_TO_API: Record<JobType, ApiJobType> = {
+	users_import: 'users/import',
+	users_bulk_update: 'users/bulk-update',
+	report_generation: 'reports/generate',
+	org_bulk_members: 'organizations/bulk-members'
+};
+
+const JOB_TYPE_FROM_API: Record<ApiJobType, JobType> = {
+	'users/import': 'users_import',
+	'users/bulk-update': 'users_bulk_update',
+	'reports/generate': 'report_generation',
+	'organizations/bulk-members': 'org_bulk_members'
+};
+
+function normalizeJobStatus(status: ApiJobStatus | JobStatus | string | undefined): JobStatus {
+	switch (status) {
+		case 'processing':
+			return 'running';
+		case 'partial_failure':
+			return 'partial_failure';
+		case 'pending':
+		case 'running':
+		case 'completed':
+		case 'failed':
+		case 'cancelled':
+			return status;
+		default:
+			return 'pending';
+	}
+}
+
+function normalizeJobType(type: ApiJobType | JobType | string | undefined): JobType {
+	if (!type) {
+		return 'report_generation';
+	}
+	return JOB_TYPE_FROM_API[type as ApiJobType] || (type as JobType);
+}
+
+function normalizeProgress(raw: Record<string, unknown> | undefined, status: JobStatus): JobProgress | undefined {
+	if (!raw) {
+		return undefined;
+	}
+
+	const total = Number(raw.total ?? 0);
+	const processed = Number(raw.processed ?? 0);
+	const percentage =
+		typeof raw.percentage === 'number'
+			? raw.percentage
+			: total > 0
+				? Math.round((processed / total) * 100)
+				: status === 'completed' || status === 'partial_failure'
+					? 100
+					: 0;
+
+	return {
+		total,
+		processed,
+		percentage: Math.min(100, Math.max(0, percentage)),
+		current_item: typeof raw.current_item === 'string' ? raw.current_item : undefined,
+		stage: typeof raw.stage === 'string' ? raw.stage : undefined,
+		succeeded: typeof raw.succeeded === 'number' ? raw.succeeded : undefined,
+		failed: typeof raw.failed === 'number' ? raw.failed : undefined,
+		skipped: typeof raw.skipped === 'number' ? raw.skipped : undefined
+	};
+}
+
+function normalizeResult(raw: Record<string, unknown> | undefined): JobResult | undefined {
+	if (!raw) {
+		return undefined;
+	}
+
+	const rawSummary = (raw.summary as Record<string, unknown> | undefined) ?? {};
+	const rawFailures = Array.isArray(raw.failures) ? raw.failures : [];
+	const rawLogs = Array.isArray(raw.logs) ? raw.logs : [];
+
+	return {
+		summary: {
+			success_count: Number(rawSummary.success_count ?? rawSummary.succeeded ?? 0),
+			failure_count: Number(rawSummary.failure_count ?? rawSummary.failed ?? 0),
+			skipped_count: Number(rawSummary.skipped_count ?? rawSummary.skipped ?? 0),
+			warnings: Array.isArray(rawSummary.warnings)
+				? rawSummary.warnings.filter((entry): entry is string => typeof entry === 'string')
+				: []
+		},
+		failures: rawFailures.map((failure) => {
+			const value = failure as Record<string, unknown>;
+			return {
+				line: typeof value.row === 'number' ? value.row : typeof value.line === 'number' ? value.line : undefined,
+				item: typeof value.email === 'string' ? value.email : typeof value.item === 'string' ? value.item : undefined,
+				error:
+					(typeof value.message === 'string' && value.message) ||
+					(typeof value.error === 'string' && value.error) ||
+					'Unknown error',
+				code: typeof value.error_code === 'string' ? value.error_code : typeof value.code === 'string' ? value.code : undefined
+			};
+		}),
+		logs: rawLogs.map((entry) => {
+			const value = entry as Record<string, unknown>;
+			return {
+				timestamp: typeof value.timestamp === 'string' ? value.timestamp : '',
+				level:
+					value.level === 'warn' || value.level === 'error' || value.level === 'info'
+						? value.level
+						: 'info',
+				code: typeof value.code === 'string' ? value.code : 'log',
+				message: typeof value.message === 'string' ? value.message : '',
+				row: typeof value.row === 'number' ? value.row : undefined,
+				email: typeof value.email === 'string' ? value.email : undefined
+			};
+		}),
+		download_url: typeof raw.download_url === 'string' ? raw.download_url : undefined
+	};
+}
+
+function normalizeJob(raw: Record<string, unknown>): Job {
+	const status = normalizeJobStatus((raw.status as string | undefined) ?? 'pending');
+	return {
+		id: String(raw.id ?? raw.job_id ?? ''),
+		tenant_id: String(raw.tenant_id ?? ''),
+		type: normalizeJobType((raw.type as string | undefined) ?? (raw.job_type as string | undefined)),
+		status,
+		progress: normalizeProgress(raw.progress as Record<string, unknown> | undefined, status),
+		result: normalizeResult(raw.result as Record<string, unknown> | undefined),
+		created_by: String(raw.created_by ?? 'system'),
+		created_at: String(raw.created_at ?? ''),
+		started_at: typeof raw.started_at === 'string' ? raw.started_at : undefined,
+		completed_at: typeof raw.completed_at === 'string' ? raw.completed_at : undefined,
+		parameters: (raw.parameters as Record<string, unknown> | undefined) ?? undefined
+	};
 }
 
 /**
@@ -161,8 +320,8 @@ export const adminJobsAPI = {
 		if (params?.cursor) searchParams.set('cursor', params.cursor);
 
 		const filters: string[] = [];
-		if (params?.status) filters.push(`status=${params.status}`);
-		if (params?.type) filters.push(`job_type=${params.type}`);
+		if (params?.status) filters.push(`status=${params.status === 'running' ? 'processing' : params.status}`);
+		if (params?.type) filters.push(`job_type=${JOB_TYPE_TO_API[params.type]}`);
 		if (filters.length > 0) searchParams.set('filter', filters.join(','));
 
 		const url = `${API_BASE_URL}/api/admin/jobs${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
@@ -179,7 +338,16 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to list jobs');
 		}
 
-		return response.json();
+		const payload = (await response.json()) as {
+			data?: Record<string, unknown>[];
+			pagination?: { has_more?: boolean; next_cursor?: string };
+		};
+
+		return {
+			data: Array.isArray(payload.data) ? payload.data.map(normalizeJob) : [],
+			has_more: payload.pagination?.has_more ?? false,
+			next_cursor: payload.pagination?.next_cursor
+		};
 	},
 
 	/**
@@ -198,7 +366,7 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to get job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
@@ -217,24 +385,48 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to get job result');
 		}
 
-		return response.json();
+		return normalizeResult((await response.json()) as Record<string, unknown>) as JobResult;
 	},
 
 	/**
 	 * Get presigned upload URL for user import
 	 */
-	async getUploadUrl(filename: string): Promise<UploadUrlResponse> {
+	async getUploadUrl(
+		filename: string,
+		contentType = 'text/csv',
+		sizeBytes = 0
+	): Promise<UploadUrlResponse> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/import/upload-url`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
 				'Content-Type': 'application/json'
 			},
-			body: JSON.stringify({ filename })
+			body: JSON.stringify({
+				filename,
+				content_type: contentType,
+				size_bytes: sizeBytes
+			})
 		});
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to get upload URL');
+		}
+
+		return response.json();
+	},
+
+	async uploadImportFile(uploadUrl: string, file: File): Promise<{ file_key: string }> {
+		const response = await adminFetch(uploadUrl, {
+			method: 'PUT',
+			body: file,
+			headers: {
+				'Content-Type': 'text/csv'
+			}
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to upload import file');
 		}
 
 		return response.json();
@@ -257,7 +449,7 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create import job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
@@ -280,7 +472,7 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create bulk update job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
@@ -308,7 +500,7 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create report job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
@@ -337,7 +529,7 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create org bulk members job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	}
 };
 
@@ -352,12 +544,33 @@ export function getJobStatusColor(status: JobStatus): string {
 			return '#3b82f6';
 		case 'completed':
 			return '#22c55e';
+		case 'partial_failure':
+			return '#f59e0b';
 		case 'failed':
 			return '#ef4444';
 		case 'cancelled':
 			return '#9ca3af';
 		default:
 			return '#6b7280';
+	}
+}
+
+export function getJobStatusDisplayName(status: JobStatus): string {
+	switch (status) {
+		case 'pending':
+			return 'Pending';
+		case 'running':
+			return 'Running';
+		case 'completed':
+			return 'Completed';
+		case 'partial_failure':
+			return 'Partial Failure';
+		case 'failed':
+			return 'Failed';
+		case 'cancelled':
+			return 'Cancelled';
+		default:
+			return 'Unknown';
 	}
 }
 

@@ -434,6 +434,27 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
   // Maintenance Operations
   // ---------------------------------------------------------------------------
 
+  async listRetentionCandidates(
+    _logType: 'event',
+    _beforeTime: number,
+    _tenantId?: string,
+    _batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listRetentionCandidates(
+    _logType: 'pii',
+    _beforeTime: number,
+    _tenantId?: string,
+    _batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listRetentionCandidates(
+    _logType: AuditLogType,
+    _beforeTime: number,
+    _tenantId?: string,
+    _batchSize: number = 100
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    return [];
+  }
+
   async deleteByRetention(
     logType: AuditLogType,
     beforeTime: number,

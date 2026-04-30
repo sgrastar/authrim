@@ -64,6 +64,8 @@ describe('audit queue consumer fanout', () => {
     );
 
     expect(bucket.put).toHaveBeenCalled();
+    expect(bucket.get).not.toHaveBeenCalled();
+    expect((bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toContain('.json');
     expect(consoleLogSpy).toHaveBeenCalledWith(
       expect.stringContaining('"schema":"authrim.audit.v1"')
     );

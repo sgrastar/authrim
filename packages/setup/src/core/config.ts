@@ -335,6 +335,16 @@ export const ProfileRegistryConfigSchema = z.object({
   backend: ProfileRegistryBackendSchema.default('kv'),
 });
 
+const HyperdriveReferenceSchema = z.object({
+  binding: z.string().min(1),
+  id: z.string().min(1),
+  driver: z.enum(['postgres', 'mysql']),
+});
+
+export const ProfileReferencesConfigSchema = z.object({
+  hyperdrive: z.record(z.string(), HyperdriveReferenceSchema).default({}),
+});
+
 const RuntimeProfileMetadataSchema = z.record(z.string(), z.unknown()).optional();
 const RuntimeProfileVersionSchema = z.number().int().positive().optional();
 
@@ -490,6 +500,7 @@ export const ProfileSeedConfigSchema = z.object({
 export const ProfilesConfigSchema = z.object({
   defaults: ProfileDefaultsConfigSchema.default({}),
   registry: ProfileRegistryConfigSchema.default({}),
+  references: ProfileReferencesConfigSchema.default({}),
   seed: ProfileSeedConfigSchema.default({}),
 });
 
@@ -603,6 +614,7 @@ export type ProfileId = z.infer<typeof ProfileIdSchema>;
 export type ProfileRegistryBackend = z.infer<typeof ProfileRegistryBackendSchema>;
 export type ProfileDefaultsConfig = z.infer<typeof ProfileDefaultsConfigSchema>;
 export type ProfileRegistryConfig = z.infer<typeof ProfileRegistryConfigSchema>;
+export type ProfileReferencesConfig = z.infer<typeof ProfileReferencesConfigSchema>;
 export type ProfileSeedConfig = z.infer<typeof ProfileSeedConfigSchema>;
 export type ProfilesConfig = z.infer<typeof ProfilesConfigSchema>;
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;

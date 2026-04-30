@@ -93,6 +93,35 @@ export function buildCanonicalAuditRecord(
   };
 }
 
+export function buildCanonicalAuditArchiveRecordFromEntry(
+  target: AuditTarget,
+  logType: AuditQueueMessageType,
+  entry: EventLogEntry | PIILogEntry,
+  options?: {
+    emittedAt?: number;
+    auditProfileId?: string;
+    matchedRuleNames?: string[];
+  }
+): CanonicalAuditRecordV1 {
+  return {
+    schema: AUDIT_CANONICAL_LOG_FORMAT_V1,
+    recordType: 'audit_record',
+    emittedAt: new Date(options?.emittedAt ?? Date.now()).toISOString(),
+    tenantId: entry.tenantId,
+    logType,
+    ...(options?.auditProfileId ? { auditProfileId: options.auditProfileId } : {}),
+    ...(options?.matchedRuleNames ? { matchedRuleNames: options.matchedRuleNames } : {}),
+    delivery: {
+      channel: 'archive',
+      targetType: target.type,
+      ...(targetReferenceForCanonicalPayload(target)
+        ? { targetRef: targetReferenceForCanonicalPayload(target) }
+        : {}),
+    },
+    entry,
+  };
+}
+
 export function buildCanonicalAuditBatch(
   target: Extract<AuditTarget, { type: 'http' | 'firehose' }>,
   body: AuditQueueMessage,

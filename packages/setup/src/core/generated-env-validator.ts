@@ -63,6 +63,37 @@ const PROFILE_AWARE_COMPONENTS: WorkerComponent[] = [
 
 const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
 
+function normalizeHyperdriveRefCandidates(ref: string): string[] {
+  const normalized = ref.trim().replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
+  return [...new Set([ref.trim(), normalized, `HYPERDRIVE_${normalized}`])];
+}
+
+function resolveConfiguredHyperdriveReference(
+  config: AuthrimConfig,
+  ref: string | undefined,
+  driver: 'postgres' | 'mysql'
+) {
+  if (!ref) {
+    return null;
+  }
+
+  const configured = config.profiles.references?.hyperdrive ?? {};
+  for (const candidate of normalizeHyperdriveRefCandidates(ref)) {
+    const direct = configured[candidate];
+    if (direct && direct.driver === driver) {
+      return direct;
+    }
+  }
+
+  return (
+    Object.values(configured).find(
+      (entry) =>
+        entry.driver === driver &&
+        normalizeHyperdriveRefCandidates(ref).includes(entry.binding)
+    ) ?? null
+  );
+}
+
 function inferTargetFromConfigPath(configPath: string): ParsedTarget {
   const resolvedPath = resolve(configPath);
   const pathParts = resolvedPath.split(sep);
@@ -169,15 +200,29 @@ function resolveSeededAuditProfile(config: AuthrimConfig, id: string) {
 }
 
 function inspectStorageProfileTarget(
+  config: AuthrimConfig,
   check: ValidationCheck,
   scope: string,
   target: { driver: string; bindingRef?: string; connectionRef?: string }
 ): void {
-  if (target.connectionRef) {
+  if (target.driver === 'postgres' || target.driver === 'mysql') {
+    const reference = resolveConfiguredHyperdriveReference(
+      config,
+      target.connectionRef ?? target.bindingRef,
+      target.driver
+    );
+    if (reference) {
+      pushDetail(
+        check,
+        'pass',
+        `${scope}: ${target.driver} -> ${reference.binding} (${reference.id})`
+      );
+      return;
+    }
     pushDetail(
       check,
       'fail',
-      `${scope}: connectionRef=${target.connectionRef} は setup 出力だけでは解決されません`
+      `${scope}: ${target.driver} target requires a configured Hyperdrive reference for ${target.connectionRef ?? target.bindingRef ?? '(missing)'}`
     );
     return;
   }
@@ -185,7 +230,7 @@ function inspectStorageProfileTarget(
     pushDetail(
       check,
       'fail',
-      `${scope}: driver=${target.driver} は setup 生成の primary binding だけでは実行できません`
+      `${scope}: driver=${target.driver} は setup 生成の primary binding だけでは active default として実行できません`
     );
     return;
   }
@@ -199,6 +244,7 @@ function inspectStorageProfileTarget(
 }
 
 function inspectAuditDatabaseTarget(
+  config: AuthrimConfig,
   check: ValidationCheck,
   scope: string,
   target: { type: string; bindingRef?: string; connectionRef?: string } | null | undefined
@@ -206,11 +252,24 @@ function inspectAuditDatabaseTarget(
   if (!target) {
     return;
   }
-  if (target.connectionRef) {
+  if (target.type === 'postgres' || target.type === 'mysql') {
+    const reference = resolveConfiguredHyperdriveReference(
+      config,
+      target.connectionRef ?? target.bindingRef,
+      target.type
+    );
+    if (reference) {
+      pushDetail(
+        check,
+        'pass',
+        `${scope}: ${target.type} -> ${reference.binding} (${reference.id})`
+      );
+      return;
+    }
     pushDetail(
       check,
       'fail',
-      `${scope}: connectionRef=${target.connectionRef} は setup 出力だけでは解決されません`
+      `${scope}: ${target.type} target requires a configured Hyperdrive reference for ${target.connectionRef ?? target.bindingRef ?? '(missing)'}`
     );
     return;
   }
@@ -218,7 +277,7 @@ function inspectAuditDatabaseTarget(
     pushDetail(
       check,
       'fail',
-      `${scope}: type=${target.type} は setup 生成の D1 binding だけでは実行できません`
+      `${scope}: type=${target.type} は setup 生成の D1 binding だけでは active default として実行できません`
     );
     return;
   }
@@ -234,7 +293,7 @@ function inspectAuditDatabaseTarget(
 function inspectNonDefaultProfiles(config: AuthrimConfig): ValidationCheck {
   const check = makeCheck(
     'seeded-profile-portability',
-    '非デフォルトの seed profile に未解決 backend 依存が残っていない'
+    '非デフォルトの seed profile は保存可能だが、setup-only reference は warning として表示する'
   );
   const activeStorageId = config.profiles.defaults.storage;
   const activeAuditId = config.profiles.defaults.audit;
@@ -248,15 +307,33 @@ function inspectNonDefaultProfiles(config: AuthrimConfig): ValidationCheck {
         continue;
       }
       if (target.connectionRef) {
+        const reference = resolveConfiguredHyperdriveReference(
+          config,
+          target.connectionRef,
+          target.driver === 'mysql' ? 'mysql' : 'postgres'
+        );
         pushDetail(
           check,
-          'warn',
-          `storage profile ${profile.id} / ${slice}: connectionRef=${target.connectionRef}`
+          reference ? 'pass' : 'warn',
+          reference
+            ? `storage profile ${profile.id} / ${slice}: ${target.connectionRef} -> ${reference.binding}`
+            : `storage profile ${profile.id} / ${slice}: connectionRef=${target.connectionRef}`
         );
         continue;
       }
       if (target.driver !== 'd1') {
-        pushDetail(check, 'warn', `storage profile ${profile.id} / ${slice}: driver=${target.driver}`);
+        const reference = resolveConfiguredHyperdriveReference(
+          config,
+          target.bindingRef,
+          target.driver === 'mysql' ? 'mysql' : 'postgres'
+        );
+        pushDetail(
+          check,
+          reference ? 'pass' : 'warn',
+          reference
+            ? `storage profile ${profile.id} / ${slice}: ${target.bindingRef} -> ${reference.id}`
+            : `storage profile ${profile.id} / ${slice}: driver=${target.driver}`
+        );
         continue;
       }
       if (!target.bindingRef || !BUILTIN_D1_BINDINGS.has(target.bindingRef)) {
@@ -283,15 +360,33 @@ function inspectNonDefaultProfiles(config: AuthrimConfig): ValidationCheck {
         continue;
       }
       if ('connectionRef' in target && target.connectionRef) {
+        const reference = resolveConfiguredHyperdriveReference(
+          config,
+          target.connectionRef,
+          target.type === 'mysql' ? 'mysql' : 'postgres'
+        );
         pushDetail(
           check,
-          'warn',
-          `audit profile ${profile.id} / ${label}: connectionRef=${target.connectionRef}`
+          reference ? 'pass' : 'warn',
+          reference
+            ? `audit profile ${profile.id} / ${label}: ${target.connectionRef} -> ${reference.binding}`
+            : `audit profile ${profile.id} / ${label}: connectionRef=${target.connectionRef}`
         );
         continue;
       }
       if (target.type !== 'd1') {
-        pushDetail(check, 'warn', `audit profile ${profile.id} / ${label}: type=${target.type}`);
+        const reference = resolveConfiguredHyperdriveReference(
+          config,
+          target.bindingRef,
+          target.type === 'mysql' ? 'mysql' : 'postgres'
+        );
+        pushDetail(
+          check,
+          reference ? 'pass' : 'warn',
+          reference
+            ? `audit profile ${profile.id} / ${label}: ${target.bindingRef} -> ${reference.id}`
+            : `audit profile ${profile.id} / ${label}: type=${target.type}`
+        );
         continue;
       }
       if (!target.bindingRef || !BUILTIN_D1_BINDINGS.has(target.bindingRef)) {
@@ -343,15 +438,18 @@ function validateDefaultProfileReferences(config: AuthrimConfig): ValidationChec
 function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCheck {
   const check = makeCheck(
     'active-profile-compatibility',
-    'active default profile が setup 出力だけで実行可能'
+    'active default profile は setup 出力だけで activation 可能'
   );
 
   if (config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
-    pushDetail(
-      check,
-      'fail',
-      'storage default が builtin:storage:external-postgres です。setup は external primary binding を生成しません'
-    );
+    inspectStorageProfileTarget(config, check, 'storage profile builtin:storage:external-postgres / users_core', {
+      driver: 'postgres',
+      connectionRef: 'core-primary',
+    });
+    inspectStorageProfileTarget(config, check, 'storage profile builtin:storage:external-postgres / users_pii', {
+      driver: 'postgres',
+      connectionRef: 'pii-primary',
+    });
   }
 
   const seededStorage = resolveSeededStorageProfile(config, config.profiles.defaults.storage);
@@ -360,17 +458,27 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
       if (!target) {
         continue;
       }
-      inspectStorageProfileTarget(check, `storage profile ${seededStorage.id} / ${slice}`, target);
+      inspectStorageProfileTarget(config, check, `storage profile ${seededStorage.id} / ${slice}`, target);
     }
   }
 
   const seededAudit = resolveSeededAuditProfile(config, config.profiles.defaults.audit);
   if (seededAudit) {
-    inspectAuditDatabaseTarget(check, `audit profile ${seededAudit.id} / primary`, seededAudit.primary);
-    inspectAuditDatabaseTarget(check, `audit profile ${seededAudit.id} / archive`, seededAudit.archive);
+    inspectAuditDatabaseTarget(
+      config,
+      check,
+      `audit profile ${seededAudit.id} / primary`,
+      seededAudit.primary
+    );
+    inspectAuditDatabaseTarget(
+      config,
+      check,
+      `audit profile ${seededAudit.id} / archive`,
+      seededAudit.archive
+    );
   }
 
-  return finishCheck(check, 'active default profile は setup 出力だけで実行できます');
+  return finishCheck(check, 'active default profile は setup 出力だけで activation できます');
 }
 
 function validateRequiredD1Bindings(lock: AuthrimLock): ValidationCheck {
@@ -444,6 +552,17 @@ async function validateDeployWranglers(
       }
     }
 
+    const expectedImportArtifacts = lock.r2?.IMPORT_ARTIFACTS?.name;
+    if (component === 'ar-management' && expectedImportArtifacts) {
+      if (parsed.r2.IMPORT_ARTIFACTS !== expectedImportArtifacts) {
+        pushDetail(
+          check,
+          'fail',
+          `${component}: IMPORT_ARTIFACTS expected=${expectedImportArtifacts} actual=${parsed.r2.IMPORT_ARTIFACTS ?? '(missing)'}`
+        );
+      }
+    }
+
     if (PROFILE_AWARE_COMPONENTS.includes(component)) {
       const vars = parseWranglerVars(content, env);
       for (const [key, value] of Object.entries(expectedProfileVars(config))) {
@@ -452,6 +571,19 @@ async function validateDeployWranglers(
             check,
             'fail',
             `${component}: ${key} expected=${value} actual=${vars[key] ?? '(missing)'}`
+          );
+        }
+      }
+    }
+
+    const expectedHyperdrive = Object.values(config.profiles.references?.hyperdrive ?? {});
+    if (component !== 'ar-router' && expectedHyperdrive.length > 0) {
+      for (const binding of expectedHyperdrive) {
+        if (parsed.hyperdrive[binding.binding] !== binding.id) {
+          pushDetail(
+            check,
+            'fail',
+            `${component}: hyperdrive ${binding.binding} expected=${binding.id} actual=${parsed.hyperdrive[binding.binding] ?? '(missing)'}`
           );
         }
       }

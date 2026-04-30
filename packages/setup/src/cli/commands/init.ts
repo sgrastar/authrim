@@ -3240,14 +3240,143 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
 // Edit Runtime Profiles
 // =============================================================================
 
+function normalizeHyperdriveBindingSuggestion(ref: string): string {
+  return `HYPERDRIVE_${ref.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase()}`;
+}
+
+async function ensureHyperdriveReference(
+  config: AuthrimConfig,
+  options: {
+    refKey: string;
+    driver: 'postgres' | 'mysql';
+    label: string;
+    suggestedBinding?: string;
+  }
+): Promise<void> {
+  const existing = config.profiles.references.hyperdrive[options.refKey];
+  const binding = await input({
+    message: `${options.label} Hyperdrive binding`,
+    default:
+      existing?.binding ||
+      options.suggestedBinding ||
+      normalizeHyperdriveBindingSuggestion(options.refKey),
+    validate: (value) => {
+      if (!value.trim()) return 'Binding is required';
+      return true;
+    },
+  });
+
+  const id = await input({
+    message: `${options.label} Hyperdrive ID`,
+    default: existing?.id || '',
+    validate: (value) => {
+      if (!value.trim()) return 'Hyperdrive ID is required';
+      return true;
+    },
+  });
+
+  config.profiles.references.hyperdrive[options.refKey] = {
+    binding: binding.trim(),
+    id: id.trim(),
+    driver: options.driver,
+  };
+}
+
+async function configureRequiredHyperdriveReferences(
+  config: AuthrimConfig,
+  seededProfile?: {
+    primary?: { type: 'd1' | 'postgres' | 'mysql'; bindingRef?: string; connectionRef?: string } | null;
+    archive?:
+      | { type: 'd1' | 'postgres' | 'mysql'; bindingRef?: string; connectionRef?: string }
+      | { type: 'r2'; bucketRef: string; prefix?: string }
+      | null;
+  }
+): Promise<void> {
+  if (config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
+    await ensureHyperdriveReference(config, {
+      refKey: 'core-primary',
+      driver: 'postgres',
+      label: 'Storage users_core/custom_claims/registration_fields',
+      suggestedBinding: 'HYPERDRIVE_CORE_PRIMARY',
+    });
+    await ensureHyperdriveReference(config, {
+      refKey: 'pii-primary',
+      driver: 'postgres',
+      label: 'Storage users_pii/custom_pii',
+      suggestedBinding: 'HYPERDRIVE_PII_PRIMARY',
+    });
+  }
+
+  const refs = new Map<
+    string,
+    { refKey: string; driver: 'postgres' | 'mysql'; label: string; suggestedBinding?: string }
+  >();
+  const registerAuditTarget = (
+    target:
+      | { type: 'd1' | 'postgres' | 'mysql'; bindingRef?: string; connectionRef?: string }
+      | { type: 'r2'; bucketRef: string; prefix?: string }
+      | null
+      | undefined,
+    label: string
+  ) => {
+    if (!target || target.type === 'd1' || target.type === 'r2') {
+      return;
+    }
+    const refKey = target.connectionRef?.trim() || target.bindingRef?.trim();
+    if (!refKey) {
+      return;
+    }
+    refs.set(`${target.type}:${refKey}`, {
+      refKey,
+      driver: target.type,
+      label,
+      suggestedBinding: target.bindingRef?.trim() || normalizeHyperdriveBindingSuggestion(refKey),
+    });
+  };
+
+  const activeAuditProfile =
+    config.profiles.seed.audit.find((profile) => profile.id === config.profiles.defaults.audit) ?? null;
+  if (activeAuditProfile) {
+    registerAuditTarget(activeAuditProfile.primary, `Active audit profile ${activeAuditProfile.id} primary`);
+    registerAuditTarget(activeAuditProfile.archive, `Active audit profile ${activeAuditProfile.id} archive`);
+  }
+
+  if (seededProfile) {
+    registerAuditTarget(seededProfile.primary, 'Edited audit profile primary');
+    registerAuditTarget(seededProfile.archive, 'Edited audit profile archive');
+  }
+
+  for (const entry of refs.values()) {
+    await ensureHyperdriveReference(config, entry);
+  }
+}
+
 async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   console.log(chalk.bold('\nCurrent Runtime Profile Settings:'));
   console.log(
+    `  Default Storage Profile: ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:standard')}`
+  );
+  console.log(
     `  Default Audit Profile: ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
+  );
+  console.log(
+    `  Default Residency:     ${chalk.cyan(config.profiles.defaults.residency || 'builtin:residency:default')}`
   );
   console.log(`  Registry Backend:      ${chalk.cyan(config.profiles.registry.backend || 'kv')}`);
   console.log(`  Seeded Audit Profiles: ${chalk.cyan(config.profiles.seed.audit.length)}`);
+  console.log(
+    `  Hyperdrive Refs:       ${chalk.cyan(Object.keys(config.profiles.references.hyperdrive).length)}`
+  );
   console.log('');
+
+  const defaultStorageProfileId = await input({
+    message: 'Default storage profile ID',
+    default: config.profiles.defaults.storage || 'builtin:storage:standard',
+    validate: (value) => {
+      if (!value.trim()) return 'Profile ID is required';
+      return true;
+    },
+  });
 
   const defaultAuditProfileId = await input({
     message: 'Default audit profile ID',
@@ -3258,7 +3387,18 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     },
   });
 
+  const defaultResidencyProfileId = await input({
+    message: 'Default residency profile ID',
+    default: config.profiles.defaults.residency || 'builtin:residency:default',
+    validate: (value) => {
+      if (!value.trim()) return 'Profile ID is required';
+      return true;
+    },
+  });
+
+  config.profiles.defaults.storage = defaultStorageProfileId.trim();
   config.profiles.defaults.audit = defaultAuditProfileId.trim();
+  config.profiles.defaults.residency = defaultResidencyProfileId.trim();
 
   const editHttpSinkProfile = await confirm({
     message: 'Create or update a seeded audit profile with a generic HTTP sink?',
@@ -3266,6 +3406,7 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   });
 
   if (!editHttpSinkProfile) {
+    await configureRequiredHyperdriveReferences(config);
     return true;
   }
 
@@ -3465,6 +3606,8 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   } else {
     config.profiles.seed.audit.push(seededProfile);
   }
+
+  await configureRequiredHyperdriveReferences(config, seededProfile);
 
   return true;
 }

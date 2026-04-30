@@ -244,12 +244,15 @@ import {
   adminJobsListHandler,
   adminJobGetHandler,
   adminJobResultHandler,
+  adminJobResultDownloadHandler,
   adminJobsImportUploadUrlHandler,
+  adminJobsImportUploadHandler,
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
 } from './admin-jobs';
+import { processPendingUserImportJobs, USER_IMPORT_MAX_UPLOAD_BYTES } from './user-import-jobs';
 import {
   adminStatsTokensHandler,
   adminStatsAuthHandler,
@@ -945,18 +948,24 @@ app.use('/api/admin/*', adminAuthMiddleware());
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
 app.use(
   '/api/admin/*',
-  bodyLimit({
-    maxSize: 100 * 1024, // 100KB
-    onError: (c) => {
-      return c.json(
-        {
-          error: 'payload_too_large',
-          message: 'Request body exceeds maximum allowed size (100KB)',
-        },
-        413
-      );
-    },
-  })
+  async (c, next) => {
+    const isImportUpload = c.req.path.startsWith('/api/admin/jobs/users/import/upload/');
+    const maxSize = isImportUpload ? USER_IMPORT_MAX_UPLOAD_BYTES : 100 * 1024;
+    const maxSizeLabel = isImportUpload ? '50MB' : '100KB';
+
+    return bodyLimit({
+      maxSize,
+      onError: (ctx) => {
+        return ctx.json(
+          {
+            error: 'payload_too_large',
+            message: `Request body exceeds maximum allowed size (${maxSizeLabel})`,
+          },
+          413
+        );
+      },
+    })(c, next);
+  }
 );
 
 // Admin API endpoints
@@ -2128,12 +2137,14 @@ app.use('/api/admin/jobs/*', requireAnyRole(['system_admin', 'distributor_admin'
 app.get('/api/admin/jobs', adminJobsListHandler);
 // Job creation endpoints (must be before :id routes)
 app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHandler);
+app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadHandler);
 app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
 app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
 app.get('/api/admin/jobs/:id/result', adminJobResultHandler); // Must be before :id
+app.get('/api/admin/jobs/:id/result/download', adminJobResultDownloadHandler);
 app.get('/api/admin/jobs/:id', adminJobGetHandler);
 
 // =============================================================================
@@ -2675,6 +2686,9 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       processedTenants: 0,
       archiveOnlyTenants: 0,
       pendingSupportTenants: 0,
+      archiveCopyFailures: 0,
+      eventArchived: 0,
+      piiArchived: 0,
       eventDeleted: 0,
       piiDeleted: 0,
     };
@@ -2755,6 +2769,12 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   } catch (jobsError) {
     log.error('Tenant deletion job processing failed', {}, jobsError as Error);
     // Don't throw - other cleanup tasks already completed
+  }
+
+  try {
+    await processPendingUserImportJobs(env, log);
+  } catch (jobsError) {
+    log.error('User import job processing failed', {}, jobsError as Error);
   }
 }
 

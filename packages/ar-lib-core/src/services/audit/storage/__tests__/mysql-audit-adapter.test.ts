@@ -73,9 +73,62 @@ describe('MysqlAuditAdapter', () => {
     const deleted = await adapter.deleteByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
 
     expect(deleted).toBe(5);
-    expect(execute).toHaveBeenCalledWith(
-      'DELETE FROM `event_log` WHERE retention_until < ? AND tenant_id = ? LIMIT ?',
-      [1_700_000_000_000, 'tenant-1', 50]
-    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toContain('DELETE target');
+    expect(execute.mock.calls[0]?.[0]).toContain('INNER JOIN');
+    expect(execute.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(execute.mock.calls[0]?.[1]).toEqual([1_700_000_000_000, 'tenant-1', 50]);
+  });
+
+  it('lists retention candidates in stable oldest-first order', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          id: 'evt-1',
+          tenant_id: 'tenant-1',
+          event_type: 'auth.login',
+          event_category: 'auth',
+          result: 'success',
+          severity: 'info',
+          error_code: null,
+          error_message: null,
+          anonymized_user_id: null,
+          client_id: null,
+          session_id: null,
+          request_id: null,
+          duration_ms: null,
+          details_r2_key: null,
+          details_json: null,
+          retention_until: 1_690_000_000_000,
+          created_at: 1_700_000_000_000,
+        },
+      ],
+    });
+    const adapter = new MysqlAuditAdapter({
+      id: 'audit-mysql',
+      hyperdrive: {
+        host: 'mysql.example.com',
+        user: 'worker',
+        password: 'secret',
+        database: 'authrim',
+        port: 3306,
+      } as Hyperdrive,
+      isPiiDb: false,
+      clientFactory: async () => ({
+        query,
+        execute: async () => ({ rows: [], affectedRows: 0 }),
+        beginTransaction: async () => undefined,
+        commit: async () => undefined,
+        rollback: async () => undefined,
+        end: async () => undefined,
+      }),
+    });
+
+    const rows = await adapter.listRetentionCandidates('event', 1_700_000_000_000, 'tenant-1', 25);
+
+    expect(rows).toEqual([expect.objectContaining({ id: 'evt-1' })]);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(query.mock.calls[0]?.[0]).toContain('FROM `event_log`');
   });
 });

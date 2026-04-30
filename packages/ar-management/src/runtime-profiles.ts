@@ -22,6 +22,14 @@ import {
   resolveTenantRuntimeProfilesFromEnv,
   validateTenantStorageProfileOverride,
 } from '@authrim/ar-lib-core';
+import { validateAuditOperationalConstraints } from './audit-ops-policy';
+import {
+  buildRuntimeProfileReferenceCatalog,
+  describeRuntimeProfileActivationStatus,
+  describeRuntimeProfileReferenceStatus,
+  RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
+  type RuntimeProfileReferenceCatalog,
+} from './runtime-profile-reference-status';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 
 const VALID_KINDS = ['storage', 'audit', 'residency'] as const satisfies readonly RuntimeProfileKind[];
@@ -343,6 +351,55 @@ function buildPersistedProfile(
   return { ...(parsed as Omit<ResidencyProfile, 'id' | 'builtin'>), id, builtin: false };
 }
 
+function validateAuditProfileForEnvironment(
+  profile: AuditProfile,
+  env: Env
+): string[] {
+  return validateAuditOperationalConstraints(profile, {
+    queueConfigured: Boolean(env.AUDIT_QUEUE),
+  });
+}
+
+function buildRuntimeProfileActivationStatusMap(
+  env: Env,
+  profiles: Partial<Record<RuntimeProfileKind, RuntimeProfile[]>>
+) {
+  return Object.fromEntries(
+    Object.entries(profiles).map(([profileKind, entries]) => [
+      profileKind,
+      (entries as RuntimeProfile[]).reduce<
+        Record<string, ReturnType<typeof describeRuntimeProfileActivationStatus>>
+      >((acc, profile) => {
+        acc[profile.id] = describeRuntimeProfileActivationStatus(env, profile);
+        return acc;
+      }, {}),
+    ])
+  );
+}
+
+function describeOptionalRuntimeProfileActivationStatus(
+  env: Env,
+  profile: RuntimeProfile | null | undefined
+) {
+  if (!profile) {
+    return {
+      state: 'blocked' as const,
+      activatable: false,
+      severity: 'error' as const,
+      blockingReasons: ['Runtime profile is not configured.'],
+      warnings: [],
+    };
+  }
+
+  return describeRuntimeProfileActivationStatus(env, profile);
+}
+
+async function loadRuntimeProfileReferenceCatalog(env: Env): Promise<RuntimeProfileReferenceCatalog> {
+  const registry = createRuntimeProfileRegistryFromEnv(env);
+  const entries = await Promise.all(VALID_KINDS.map(async (kind) => await registry.list(kind)));
+  return buildRuntimeProfileReferenceCatalog(env, entries.flat() as RuntimeProfile[]);
+}
+
 export async function adminRuntimeProfileListHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-RUNTIME-PROFILES');
 
@@ -371,11 +428,32 @@ export async function adminRuntimeProfileListHandler(c: Context<{ Bindings: Env 
         ? await loadStoragePolicyContext(c.env)
         : null;
     const storageProfiles = (profiles.storage as StorageProfile[] | undefined) ?? [];
+    const referenceStatus = Object.fromEntries(
+      Object.entries(profiles).map(([profileKind, entries]) => [
+        profileKind,
+        (entries as RuntimeProfile[]).reduce<Record<string, ReturnType<typeof describeRuntimeProfileReferenceStatus>>>(
+          (acc, profile) => {
+            acc[profile.id] = describeRuntimeProfileReferenceStatus(c.env, profile);
+            return acc;
+          },
+          {}
+        ),
+      ])
+    );
+    const activationStatus = buildRuntimeProfileActivationStatusMap(
+      c.env,
+      profiles as Partial<Record<RuntimeProfileKind, RuntimeProfile[]>>
+    );
+    const referenceCatalog = await loadRuntimeProfileReferenceCatalog(c.env);
 
     return c.json({
       registry_backend: getRegistryBackend(c.env),
       include_builtins: includeBuiltins,
       profiles,
+      reference_status: referenceStatus,
+      activation_status: activationStatus,
+      reference_catalog: referenceCatalog,
+      reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
       storage_policy:
         storagePolicyContext && storageProfiles.length > 0
           ? {
@@ -423,6 +501,10 @@ export async function adminRuntimeProfileGetHandler(c: Context<{ Bindings: Env }
     return c.json({
       registry_backend: getRegistryBackend(c.env),
       profile,
+      reference_status: describeRuntimeProfileReferenceStatus(c.env, profile),
+      activation_status: describeRuntimeProfileActivationStatus(c.env, profile),
+      reference_catalog: await loadRuntimeProfileReferenceCatalog(c.env),
+      reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
       storage_policy:
         kind === 'storage'
           ? describeStorageProfileTenantOverridePolicy(
@@ -464,6 +546,14 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
     const registry = createRuntimeProfileRegistryFromEnv(c.env);
     const existing = await registry.get(kind, id);
     const profile = buildPersistedProfile(kind, id, parsed);
+    if (kind === 'audit') {
+      const auditErrors = validateAuditProfileForEnvironment(profile as AuditProfile, c.env);
+      if (auditErrors.length > 0) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'body', reason: auditErrors.join(' ') },
+        });
+      }
+    }
     await registry.put(profile);
 
     return c.json(
@@ -471,6 +561,10 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
         registry_backend: getRegistryBackend(c.env),
         created: !existing,
         profile,
+        reference_status: describeRuntimeProfileReferenceStatus(c.env, profile),
+        activation_status: describeRuntimeProfileActivationStatus(c.env, profile),
+        reference_catalog: await loadRuntimeProfileReferenceCatalog(c.env),
+        reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
       },
       existing ? 200 : 201
     );
@@ -544,6 +638,18 @@ export async function adminRuntimeProfileDefaultsHandler(c: Context<{ Bindings: 
         audit,
         residency,
       },
+      reference_status: {
+        storage: storage ? describeRuntimeProfileReferenceStatus(c.env, storage) : [],
+        audit: audit ? describeRuntimeProfileReferenceStatus(c.env, audit) : [],
+        residency: residency ? describeRuntimeProfileReferenceStatus(c.env, residency) : [],
+      },
+      activation_status: {
+        storage: describeOptionalRuntimeProfileActivationStatus(c.env, storage),
+        audit: describeOptionalRuntimeProfileActivationStatus(c.env, audit),
+        residency: describeOptionalRuntimeProfileActivationStatus(c.env, residency),
+      },
+      reference_catalog: await loadRuntimeProfileReferenceCatalog(c.env),
+      reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
     });
   } catch (error) {
     log.error('Failed to load runtime profile defaults', { error: String(error) });
@@ -577,6 +683,15 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
           variables: { resource: 'runtime_profile' },
         });
       }
+      const activation = describeRuntimeProfileActivationStatus(c.env, profile);
+      if (!activation.activatable) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: {
+            field: 'storageProfileId',
+            reason: activation.blockingReasons.join(' '),
+          },
+        });
+      }
       updates['infra.default_storage_profile_id'] = profile.id;
     }
 
@@ -585,6 +700,21 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
       if (!profile) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
           variables: { resource: 'runtime_profile' },
+        });
+      }
+      const auditErrors = validateAuditProfileForEnvironment(profile as AuditProfile, c.env);
+      if (auditErrors.length > 0) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'auditProfileId', reason: auditErrors.join(' ') },
+        });
+      }
+      const activation = describeRuntimeProfileActivationStatus(c.env, profile);
+      if (!activation.activatable) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: {
+            field: 'auditProfileId',
+            reason: activation.blockingReasons.join(' '),
+          },
         });
       }
       updates['infra.default_audit_profile_id'] = profile.id;
@@ -628,6 +758,18 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
         audit,
         residency,
       },
+      reference_status: {
+        storage: storage ? describeRuntimeProfileReferenceStatus(c.env, storage) : [],
+        audit: audit ? describeRuntimeProfileReferenceStatus(c.env, audit) : [],
+        residency: residency ? describeRuntimeProfileReferenceStatus(c.env, residency) : [],
+      },
+      activation_status: {
+        storage: describeOptionalRuntimeProfileActivationStatus(c.env, storage),
+        audit: describeOptionalRuntimeProfileActivationStatus(c.env, audit),
+        residency: describeOptionalRuntimeProfileActivationStatus(c.env, residency),
+      },
+      reference_catalog: await loadRuntimeProfileReferenceCatalog(c.env),
+      reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
     });
   } catch (error) {
     log.error('Failed to update runtime profile defaults', { error: String(error) });

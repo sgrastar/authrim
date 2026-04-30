@@ -220,6 +220,25 @@ export interface IAuditStorageAdapter {
   // ---------------------------------------------------------------------------
 
   /**
+   * List entries that have exceeded their retention period.
+   *
+   * Implementations should return entries in a stable oldest-first order so a
+   * follow-up delete operation can operate on the same batch window.
+   */
+  listRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  listRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+
+  /**
    * Delete entries that have exceeded their retention period.
    *
    * @param logType - Type of log to clean up

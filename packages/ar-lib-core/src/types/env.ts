@@ -56,6 +56,7 @@ export interface Env {
   // R2 Buckets
   AVATARS: R2Bucket;
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
+  IMPORT_ARTIFACTS?: R2Bucket; // Dedicated admin job artifacts (user imports, job result bundles)
 
   // KV Namespaces
   STATE_STORE: KVNamespace;

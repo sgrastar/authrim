@@ -519,6 +519,57 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
     }
   }
 
+  async listRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId?: string,
+    batchSize: number = 1000
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    try {
+      const client = await this.getClient();
+      const table = qualifyTable(this.schema, logType === 'event' ? 'event_log' : 'pii_log');
+      const selectColumns =
+        logType === 'event'
+          ? `id, tenant_id, event_type, event_category, result, severity,
+             error_code, error_message, anonymized_user_id, client_id,
+             session_id, request_id, duration_ms, details_r2_key, details_json,
+             retention_until, created_at`
+          : `id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
+             values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
+             actor_user_id, actor_type, request_id, legal_basis, consent_reference,
+             retention_until, created_at`;
+      const where = tenantId ? 'retention_until < ? AND tenant_id = ?' : 'retention_until < ?';
+      const params = tenantId ? [beforeTime, tenantId, batchSize] : [beforeTime, batchSize];
+      const result = await client.query<EventLogDbRow | PIILogDbRow>(
+        `SELECT ${selectColumns}
+         FROM ${table}
+         WHERE ${where}
+         ORDER BY retention_until ASC, created_at ASC, id ASC
+         LIMIT ?`,
+        params
+      );
+
+      if (logType === 'event') {
+        return result.rows.map((row) => this.mapEventLogRow(row as EventLogDbRow));
+      }
+      return result.rows.map((row) => this.mapPIILogRow(row as PIILogDbRow));
+    } catch {
+      return [];
+    }
+  }
+
   async deleteByRetention(
     logType: AuditLogType,
     beforeTime: number,
@@ -529,9 +580,19 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
       const client = await this.getClient();
       const table = qualifyTable(this.schema, logType === 'event' ? 'event_log' : 'pii_log');
       const params = tenantId ? [beforeTime, tenantId, batchSize] : [beforeTime, batchSize];
-      const where = tenantId ? 'retention_until < ? AND tenant_id = ?' : 'retention_until < ?';
+      const where = tenantId ? 'target.retention_until < ? AND target.tenant_id = ?' : 'target.retention_until < ?';
+      const subqueryWhere = tenantId ? 'retention_until < ? AND tenant_id = ?' : 'retention_until < ?';
       const result = await client.execute(
-        `DELETE FROM ${table} WHERE ${where} LIMIT ?`,
+        `DELETE target
+         FROM ${table} target
+         INNER JOIN (
+           SELECT id
+           FROM ${table}
+           WHERE ${subqueryWhere}
+           ORDER BY retention_until ASC, created_at ASC, id ASC
+           LIMIT ?
+         ) doomed ON doomed.id = target.id
+         WHERE ${where}`,
         params
       );
       return result.affectedRows ?? 0;

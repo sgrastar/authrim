@@ -60,8 +60,53 @@ describe('HyperdriveAuditAdapter', () => {
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0]?.[0]).toContain('WITH doomed AS');
     expect(query.mock.calls[0]?.[0]).toContain('DELETE FROM audit.event_log');
+    expect(query.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
     expect(query.mock.calls[0]?.[0]).toContain('tenant_id = $2');
     expect(query.mock.calls[0]?.[1]).toEqual([1_700_000_000_000, 'tenant-1', 50]);
+  });
+
+  it('lists retention candidates in stable oldest-first order', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          id: 'evt-1',
+          tenant_id: 'tenant-1',
+          event_type: 'auth.login',
+          event_category: 'authentication',
+          result: 'success',
+          severity: 'info',
+          error_code: null,
+          error_message: null,
+          anonymized_user_id: null,
+          client_id: null,
+          session_id: null,
+          request_id: null,
+          duration_ms: null,
+          details_r2_key: null,
+          details_json: null,
+          retention_until: 1_690_000_000_000,
+          created_at: 1_700_000_000_000,
+        },
+      ],
+      rowCount: 1,
+    });
+    const adapter = new HyperdriveAuditAdapter({
+      id: 'audit-pg',
+      hyperdrive: { connectionString: 'postgres://user:pass@example.com:5432/authrim' } as Hyperdrive,
+      schema: 'audit',
+      isPiiDb: false,
+      clientFactory: async () => ({
+        query,
+        end: async () => undefined,
+      }),
+    });
+
+    const rows = await adapter.listRetentionCandidates('event', 1_700_000_000_000, 'tenant-1', 25);
+
+    expect(rows).toEqual([expect.objectContaining({ id: 'evt-1' })]);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(query.mock.calls[0]?.[0]).toContain('FROM audit.event_log');
   });
 
   it('reports healthy when the PostgreSQL client responds', async () => {

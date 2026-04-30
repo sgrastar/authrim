@@ -623,6 +623,72 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
   // Maintenance Operations
   // ---------------------------------------------------------------------------
 
+  async listRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId?: string,
+    batchSize: number = 1000
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    try {
+      const client = await this.getClient();
+      const table = logType === 'event' ? 'event_log' : 'pii_log';
+      const selectColumns =
+        logType === 'event'
+          ? `id, tenant_id, event_type, event_category, result, severity,
+             error_code, error_message, anonymized_user_id, client_id,
+             session_id, request_id, duration_ms, details_r2_key, details_json,
+             retention_until, created_at`
+          : `id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
+             values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
+             actor_user_id, actor_type, request_id, legal_basis, consent_reference,
+             retention_until, created_at`;
+
+      let sql: string;
+      let params: unknown[];
+      if (tenantId) {
+        sql = `
+          SELECT ${selectColumns}
+          FROM ${this.schema}.${table}
+          WHERE retention_until < $1 AND tenant_id = $2
+          ORDER BY retention_until ASC, created_at ASC, id ASC
+          LIMIT $3
+        `;
+        params = [beforeTime, tenantId, batchSize];
+      } else {
+        sql = `
+          SELECT ${selectColumns}
+          FROM ${this.schema}.${table}
+          WHERE retention_until < $1
+          ORDER BY retention_until ASC, created_at ASC, id ASC
+          LIMIT $2
+        `;
+        params = [beforeTime, batchSize];
+      }
+
+      if (logType === 'event') {
+        const result = await client.query<EventLogDbRow>(sql, params);
+        return result.rows.map((row) => this.mapEventLogRow(row));
+      }
+
+      const result = await client.query<PIILogDbRow>(sql, params);
+      return result.rows.map((row) => this.mapPIILogRow(row));
+    } catch {
+      return [];
+    }
+  }
+
   async deleteByRetention(
     logType: AuditLogType,
     beforeTime: number,
@@ -642,6 +708,7 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
             SELECT ctid
             FROM ${this.schema}.${table}
             WHERE retention_until < $1 AND tenant_id = $2
+            ORDER BY retention_until ASC, created_at ASC, id ASC
             LIMIT $3
           )
           DELETE FROM ${this.schema}.${table}
@@ -654,6 +721,7 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
             SELECT ctid
             FROM ${this.schema}.${table}
             WHERE retention_until < $1
+            ORDER BY retention_until ASC, created_at ASC, id ASC
             LIMIT $2
           )
           DELETE FROM ${this.schema}.${table}

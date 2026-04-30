@@ -1,5 +1,37 @@
-import { isDatabaseSource, type DatabaseSource } from '../db';
+import { isDatabaseSource, MysqlAdapter, PostgresAdapter, type DatabaseSource } from '../db';
 import type { StorageProfile, StorageSlice, StorageTarget } from '../types/runtime-profile';
+
+function normalizeBindingCandidates(ref: string | undefined): string[] {
+  if (!ref) {
+    return [];
+  }
+
+  const normalized = ref.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
+  return [...new Set([ref, normalized, `HYPERDRIVE_${normalized}`])];
+}
+
+function resolveHyperdriveBinding(
+  env: object,
+  target: StorageTarget
+): Hyperdrive | null {
+  if (target.driver !== 'postgres' && target.driver !== 'mysql') {
+    return null;
+  }
+
+  const refs = [
+    ...normalizeBindingCandidates(target.bindingRef),
+    ...normalizeBindingCandidates(target.connectionRef),
+  ];
+
+  for (const ref of refs) {
+    const binding = (env as Record<string, unknown>)[ref];
+    if (binding && typeof binding === 'object' && 'connectionString' in binding) {
+      return binding as Hyperdrive;
+    }
+  }
+
+  return null;
+}
 
 export function getBoundStorageTargetSource(
   env: object,
@@ -19,10 +51,24 @@ export function getBoundStorageTargetSource(
       return fallback;
     }
 
+    const hyperdrive = resolveHyperdriveBinding(env, target);
+    if (hyperdrive) {
+      return target.driver === 'postgres'
+        ? new PostgresAdapter({ hyperdrive, partition: target.role ?? 'core' })
+        : new MysqlAdapter({ hyperdrive, partition: target.role ?? 'core' });
+    }
+
     throw new Error(`storage_profile_binding_not_configured:${target.bindingRef}`);
   }
 
   if (target.connectionRef) {
+    const hyperdrive = resolveHyperdriveBinding(env, target);
+    if (hyperdrive) {
+      return target.driver === 'postgres'
+        ? new PostgresAdapter({ hyperdrive, partition: target.role ?? 'core' })
+        : new MysqlAdapter({ hyperdrive, partition: target.role ?? 'core' });
+    }
+
     throw new Error(`storage_profile_connection_not_resolved:${target.connectionRef}`);
   }
 

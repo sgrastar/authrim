@@ -57,6 +57,7 @@ export interface WranglerConfig {
   placement?: { mode: string };
   kv_namespaces?: Array<{ binding: string; id: string; preview_id?: string }>;
   d1_databases?: Array<{ binding: string; database_name: string; database_id: string }>;
+  hyperdrive?: Array<{ binding: string; id: string }>;
   r2_buckets?: Array<{ binding: string; bucket_name: string }>;
   durable_objects?: {
     bindings: Array<{ name: string; class_name: string; script_name?: string }>;
@@ -81,6 +82,29 @@ export interface WranglerConfig {
     allowed_destination_addresses?: string[];
     allowed_sender_addresses?: string[];
   }>;
+}
+
+function collectConfiguredHyperdriveBindings(
+  config: AuthrimConfig
+): Array<{ binding: string; id: string }> {
+  const configured = Object.values(config.profiles?.references?.hyperdrive ?? {});
+  const deduped = new Map<string, { binding: string; id: string }>();
+  for (const entry of configured) {
+    if (!entry.binding || !entry.id) {
+      continue;
+    }
+    deduped.set(`${entry.binding}:${entry.id}`, {
+      binding: entry.binding,
+      id: entry.id,
+    });
+  }
+  return Array.from(deduped.values()).sort((left, right) =>
+    left.binding.localeCompare(right.binding)
+  );
+}
+
+function shouldAttachConfiguredHyperdriveBindings(component: WorkerComponent): boolean {
+  return component !== 'ar-router';
 }
 
 // =============================================================================
@@ -327,6 +351,11 @@ export function generateWranglerConfig(
     })).filter((db) => db.database_id);
   }
 
+  const hyperdriveBindings = collectConfiguredHyperdriveBindings(config);
+  if (shouldAttachConfiguredHyperdriveBindings(component) && hyperdriveBindings.length > 0) {
+    wranglerConfig.hyperdrive = hyperdriveBindings;
+  }
+
   // Durable Objects
   if (component === 'ar-lib-core') {
     // ar-lib-core defines all DOs
@@ -379,6 +408,13 @@ export function generateWranglerConfig(
       r2Buckets.push({
         binding: 'DIAGNOSTIC_LOGS',
         bucket_name: resourceIds.r2['DIAGNOSTIC_LOGS']?.name || `${env}-diagnostic-logs`,
+      });
+    }
+
+    if (component === 'ar-management') {
+      r2Buckets.push({
+        binding: 'IMPORT_ARTIFACTS',
+        bucket_name: resourceIds.r2['IMPORT_ARTIFACTS']?.name || `${env}-import-artifacts`,
       });
     }
 
@@ -896,6 +932,17 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       }
     }
 
+    // Hyperdrive
+    if (config.hyperdrive && config.hyperdrive.length > 0) {
+      lines.push('# Hyperdrive');
+      for (const binding of config.hyperdrive) {
+        lines.push(`[[env.${envName}.hyperdrive]]`);
+        lines.push(`binding = "${binding.binding}"`);
+        lines.push(`id = "${binding.id}"`);
+        lines.push('');
+      }
+    }
+
     // Queues
     if (
       (config.queues?.producers && config.queues.producers.length > 0) ||
@@ -1040,6 +1087,17 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         lines.push('[[r2_buckets]]');
         lines.push(`binding = "${r2.binding}"`);
         lines.push(`bucket_name = "${r2.bucket_name}"`);
+        lines.push('');
+      }
+    }
+
+    // Hyperdrive
+    if (config.hyperdrive && config.hyperdrive.length > 0) {
+      lines.push('# Hyperdrive');
+      for (const binding of config.hyperdrive) {
+        lines.push('[[hyperdrive]]');
+        lines.push(`binding = "${binding.binding}"`);
+        lines.push(`id = "${binding.id}"`);
         lines.push('');
       }
     }
@@ -1222,7 +1280,7 @@ export interface WranglerValidationResult {
   valid: boolean;
   mismatches: Array<{
     component: string;
-    type: 'kv' | 'd1';
+    type: 'kv' | 'd1' | 'r2';
     binding: string;
     expected: string;
     actual: string;
@@ -1235,8 +1293,18 @@ export interface WranglerValidationResult {
 export function parseWranglerToml(
   content: string,
   env: string
-): { kv: Record<string, string>; d1: Record<string, string> } {
-  const result = { kv: {} as Record<string, string>, d1: {} as Record<string, string> };
+): {
+  kv: Record<string, string>;
+  d1: Record<string, string>;
+  hyperdrive: Record<string, string>;
+  r2: Record<string, string>;
+} {
+  const result = {
+    kv: {} as Record<string, string>,
+    d1: {} as Record<string, string>,
+    hyperdrive: {} as Record<string, string>,
+    r2: {} as Record<string, string>,
+  };
 
   // Parse KV namespaces: [[env.{env}.kv_namespaces]]
   const kvRegex = new RegExp(
@@ -1256,6 +1324,24 @@ export function parseWranglerToml(
   let d1Match;
   while ((d1Match = d1Regex.exec(content)) !== null) {
     result.d1[d1Match[1]] = d1Match[2];
+  }
+
+  const hyperdriveRegex = new RegExp(
+    `\\[\\[env\\.${env}\\.hyperdrive\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let hyperdriveMatch;
+  while ((hyperdriveMatch = hyperdriveRegex.exec(content)) !== null) {
+    result.hyperdrive[hyperdriveMatch[1]] = hyperdriveMatch[2];
+  }
+
+  const r2Regex = new RegExp(
+    `\\[\\[env\\.${env}\\.r2_buckets\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nbucket_name\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let r2Match;
+  while ((r2Match = r2Regex.exec(content)) !== null) {
+    result.r2[r2Match[1]] = r2Match[2];
   }
 
   return result;
@@ -1311,6 +1397,20 @@ export async function validateWranglerConfigs(
           binding,
           expected,
           actual: id,
+        });
+      }
+    }
+
+    for (const [binding, bucketName] of Object.entries(parsed.r2)) {
+      const expected = lockResourceIds.r2?.[binding]?.name;
+      if (expected && bucketName !== expected) {
+        result.valid = false;
+        result.mismatches.push({
+          component,
+          type: 'r2',
+          binding,
+          expected,
+          actual: bucketName,
         });
       }
     }

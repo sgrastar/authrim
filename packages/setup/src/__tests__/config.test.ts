@@ -165,6 +165,52 @@ describe('parseConfig', () => {
     expect(euConfig.profiles.defaults.storage).toBe('builtin:storage:eu-pii-split');
   });
 
+  it('should accept Hyperdrive reference catalog entries for external storage defaults', () => {
+    const rawConfig = {
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      environment: { prefix: 'dev' },
+      tenant: { name: 'test-tenant' },
+      components: { api: true, loginUi: true },
+      profile: 'basic-op',
+      oidc: {},
+      sharding: {},
+      profiles: {
+        defaults: {
+          storage: 'builtin:storage:external-postgres',
+          audit: 'builtin:audit:standard',
+          residency: 'builtin:residency:default',
+        },
+        registry: {
+          backend: 'kv',
+        },
+        references: {
+          hyperdrive: {
+            'core-primary': {
+              binding: 'HYPERDRIVE_CORE_PRIMARY',
+              id: 'hyperdrive-core-id',
+              driver: 'postgres',
+            },
+            'pii-primary': {
+              binding: 'HYPERDRIVE_PII_PRIMARY',
+              id: 'hyperdrive-pii-id',
+              driver: 'postgres',
+            },
+          },
+        },
+      },
+      features: {},
+      keys: {},
+    };
+
+    const config = parseConfig(rawConfig);
+    expect(config.profiles.references.hyperdrive['core-primary']).toEqual({
+      binding: 'HYPERDRIVE_CORE_PRIMARY',
+      id: 'hyperdrive-core-id',
+      driver: 'postgres',
+    });
+  });
+
   it('should accept seeded audit profiles with generic HTTP sinks', () => {
     const rawConfig = {
       version: '1.0.0',

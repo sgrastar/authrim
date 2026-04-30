@@ -3,6 +3,7 @@ import {
   buildResourceIdsFromLock,
   generateRoutes,
   generateWranglerConfig,
+  parseWranglerToml,
   toToml,
 } from '../core/wrangler.js';
 import type { AuthrimConfig } from '../core/config.js';
@@ -165,6 +166,7 @@ describe('generateRoutes', () => {
       },
       r2: {
         DIAGNOSTIC_LOGS: { name: 'single-logs' },
+        IMPORT_ARTIFACTS: { name: 'single-import-artifacts' },
       },
     } satisfies AuthrimLock;
 
@@ -180,7 +182,110 @@ describe('generateRoutes', () => {
       },
       r2: {
         DIAGNOSTIC_LOGS: { name: 'single-logs' },
+        IMPORT_ARTIFACTS: { name: 'single-import-artifacts' },
       },
+    });
+  });
+
+  it('serializes configured Hyperdrive bindings for non-router workers', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-04-28T00:00:00.000Z',
+      updatedAt: '2026-04-28T00:00:00.000Z',
+      environment: { prefix: 'portable' },
+      urls: {
+        api: { custom: null, auto: 'https://portable-ar-router.example.workers.dev' },
+        loginUi: { custom: null, auto: 'https://portable-ar-login-ui.pages.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://portable-ar-admin-ui.pages.dev', sameAsApi: false },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: true,
+        policy: true,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+      profiles: {
+        defaults: {
+          storage: 'builtin:storage:external-postgres',
+          audit: 'builtin:audit:standard',
+          residency: 'builtin:residency:default',
+        },
+        registry: { backend: 'kv' },
+        references: {
+          hyperdrive: {
+            'core-primary': {
+              binding: 'HYPERDRIVE_CORE_PRIMARY',
+              id: 'hyperdrive-core-id',
+              driver: 'postgres',
+            },
+          },
+        },
+        seed: {
+          storage: [],
+          audit: [],
+          residency: [],
+        },
+      },
+    } satisfies AuthrimConfig;
+
+    const resourceIds = { d1: {}, kv: {} };
+    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    expect(authConfig.hyperdrive).toEqual([
+      { binding: 'HYPERDRIVE_CORE_PRIMARY', id: 'hyperdrive-core-id' },
+    ]);
+    expect(routerConfig.hyperdrive).toBeUndefined();
+
+    const toml = toToml(authConfig, 'portable');
+    expect(toml).toContain('[[env.portable.hyperdrive]]');
+    expect(parseWranglerToml(toml, 'portable').hyperdrive).toEqual({
+      HYPERDRIVE_CORE_PRIMARY: 'hyperdrive-core-id',
     });
   });
 
@@ -664,6 +769,101 @@ describe('generateRoutes', () => {
 
     expect(routerConfig.services).toEqual(
       expect.arrayContaining([{ binding: 'OP_VC', service: 'test-ar-vc' }])
+    );
+  });
+
+  it('binds import artifacts R2 only to ar-management', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      updatedAt: '2026-04-30T00:00:00.000Z',
+      environment: { prefix: 'imports' },
+      urls: {
+        api: { custom: null, auto: 'https://imports-ar-router.example.workers.dev' },
+        loginUi: { custom: null, auto: 'https://imports-ar-login-ui.pages.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://imports-ar-admin-ui.pages.dev', sameAsApi: false },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+        flowStateShards: 32,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: true },
+        email: { configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const resourceIds = {
+      d1: {},
+      kv: {},
+      r2: {
+        AVATARS: { name: 'imports-authrim-avatars' },
+        DIAGNOSTIC_LOGS: { name: 'imports-diagnostic-logs' },
+        IMPORT_ARTIFACTS: { name: 'imports-import-artifacts' },
+      },
+    };
+
+    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
+    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+
+    expect(managementConfig.r2_buckets).toEqual(
+      expect.arrayContaining([
+        {
+          binding: 'IMPORT_ARTIFACTS',
+          bucket_name: 'imports-import-artifacts',
+        },
+      ])
+    );
+    expect(authConfig.r2_buckets).not.toEqual(
+      expect.arrayContaining([
+        {
+          binding: 'IMPORT_ARTIFACTS',
+          bucket_name: 'imports-import-artifacts',
+        },
+      ])
     );
   });
 });

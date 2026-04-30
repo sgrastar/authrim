@@ -121,6 +121,7 @@ export {
 export {
   AUDIT_CANONICAL_LOG_FORMAT_V1,
   buildCanonicalAuditBatch,
+  buildCanonicalAuditArchiveRecordFromEntry,
   buildCanonicalAuditRecord,
   extractAuditEntryFromCanonicalPayload,
 } from './canonical-format';

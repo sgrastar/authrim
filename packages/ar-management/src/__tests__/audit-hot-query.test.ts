@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -66,7 +67,12 @@ import { getAuditHotQuerySupport } from '../audit-hot-query';
 describe('getAuditHotQuerySupport', () => {
   it('supports D1-backed audit profiles', async () => {
     const support = await getAuditHotQuerySupport(
-      { DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard' } as Env,
+      {
+        DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
+        DB: {
+          prepare: vi.fn(),
+        } as unknown as D1Database,
+      } as Env,
       'default'
     );
 

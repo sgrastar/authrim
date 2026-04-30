@@ -3,6 +3,7 @@
 	import {
 		adminJobsAPI,
 		getJobStatusColor,
+		getJobStatusDisplayName,
 		getJobTypeDisplayName,
 		getReportTypeDisplayName,
 		formatJobDuration,
@@ -37,6 +38,15 @@
 	let reportFromDate = $state('');
 	let reportToDate = $state('');
 
+	// Create Import Dialog
+	let showCreateImportDialog = $state(false);
+	let creatingImport = $state(false);
+	let createImportError = $state('');
+	let importFile = $state<File | null>(null);
+	let importSkipHeader = $state(true);
+	let importOnDuplicate = $state<'skip' | 'update' | 'error'>('skip');
+	let importValidateOnly = $state(false);
+
 	// Job Detail Dialog
 	let showJobDetailDialog = $state(false);
 	let selectedJob = $state<Job | null>(null);
@@ -62,6 +72,10 @@
 			result: job.result
 				? {
 						...job.result,
+						logs: job.result.logs.map((entry) => ({
+							...entry,
+							message: sanitizeText(entry.message || '')
+						})),
 						failures: job.result.failures.map((f) => ({
 							...f,
 							error: sanitizeText(f.error || '')
@@ -104,6 +118,13 @@
 				isPolling = true;
 				try {
 					await loadJobs();
+					if (
+						selectedJob &&
+						showJobDetailDialog &&
+						(selectedJob.status === 'pending' || selectedJob.status === 'running')
+					) {
+						await refreshSelectedJob(selectedJob.id);
+					}
 				} catch (e) {
 					// Log polling errors in development for debugging, but don't show to user
 					if (import.meta.env.DEV) {
@@ -133,6 +154,24 @@
 
 	function closeCreateReportDialog() {
 		showCreateReportDialog = false;
+	}
+
+	function openCreateImportDialog() {
+		importFile = null;
+		importSkipHeader = true;
+		importOnDuplicate = 'skip';
+		importValidateOnly = false;
+		createImportError = '';
+		showCreateImportDialog = true;
+	}
+
+	function closeCreateImportDialog() {
+		showCreateImportDialog = false;
+	}
+
+	function handleImportFileChange(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		importFile = input.files?.[0] ?? null;
 	}
 
 	const MAX_DATE_RANGE_DAYS = 730; // 2 years
@@ -193,7 +232,7 @@
 			}
 
 			const job = await adminJobsAPI.createReport(params);
-			jobs = [job, ...jobs];
+			jobs = [sanitizeJob(job), ...jobs];
 			closeCreateReportDialog();
 		} catch (e) {
 			createReportError = e instanceof Error ? e.message : 'Failed to create report job';
@@ -202,14 +241,61 @@
 		}
 	}
 
+	async function handleCreateImport() {
+		createImportError = '';
+		if (!importFile) {
+			createImportError = 'CSV file is required';
+			return;
+		}
+
+		creatingImport = true;
+		try {
+			const upload = await adminJobsAPI.getUploadUrl(
+				importFile.name,
+				importFile.type || 'text/csv',
+				importFile.size
+			);
+			const uploaded = await adminJobsAPI.uploadImportFile(upload.upload_url, importFile);
+			const job = await adminJobsAPI.createUserImport({
+				file_key: uploaded.file_key || upload.file_key,
+				options: {
+					skip_header: importSkipHeader,
+					on_duplicate: importOnDuplicate,
+					validate_only: importValidateOnly
+				}
+			});
+			jobs = [sanitizeJob(job), ...jobs];
+			closeCreateImportDialog();
+		} catch (e) {
+			createImportError = e instanceof Error ? e.message : 'Failed to create import job';
+		} finally {
+			creatingImport = false;
+		}
+	}
+
+	async function refreshSelectedJob(jobId: string) {
+		const updatedJob = sanitizeJob(await adminJobsAPI.get(jobId));
+		if (
+			updatedJob.status === 'completed' ||
+			updatedJob.status === 'partial_failure' ||
+			updatedJob.status === 'failed'
+		) {
+			try {
+				updatedJob.result = await adminJobsAPI.getResult(jobId);
+			} catch {
+				// Result may not exist for infrastructure failures.
+			}
+		}
+		selectedJob = updatedJob;
+	}
+
 	async function viewJobDetail(job: Job) {
-		selectedJob = job;
+		selectedJob = sanitizeJob(job);
 		showJobDetailDialog = true;
 		loadingJobDetail = true;
 
 		try {
-			const updatedJob = await adminJobsAPI.get(job.id);
-			selectedJob = updatedJob;
+			await refreshSelectedJob(job.id);
 		} catch {
 			// Keep the original job data if refresh fails
 		} finally {
@@ -233,6 +319,7 @@
 			}
 		}
 		if (job.status === 'completed') return 100;
+		if (job.status === 'partial_failure') return 100;
 		if (job.status === 'pending') return 0;
 		return 50; // Running without progress info
 	}
@@ -244,6 +331,8 @@
 			case 'running':
 				return 'badge badge-info';
 			case 'pending':
+				return 'badge badge-warning';
+			case 'partial_failure':
 				return 'badge badge-warning';
 			case 'failed':
 				return 'badge badge-danger';
@@ -293,6 +382,8 @@
 		if (event.key === 'Escape') {
 			if (showJobDetailDialog) {
 				closeJobDetailDialog();
+			} else if (showCreateImportDialog) {
+				closeCreateImportDialog();
 			} else if (showCreateReportDialog) {
 				closeCreateReportDialog();
 			}
@@ -317,6 +408,10 @@
 			</p>
 		</div>
 		<div class="page-actions">
+			<button class="btn btn-secondary" onclick={openCreateImportDialog}>
+				<i class="i-ph-upload-simple"></i>
+				Import Users
+			</button>
 			<button class="btn btn-primary" onclick={openCreateReportDialog}>
 				<i class="i-ph-file-text"></i>
 				Generate Report
@@ -338,6 +433,7 @@
 					<option value="pending">Pending</option>
 					<option value="running">Running</option>
 					<option value="completed">Completed</option>
+					<option value="partial_failure">Partial Failure</option>
 					<option value="failed">Failed</option>
 					<option value="cancelled">Cancelled</option>
 				</select>
@@ -373,7 +469,9 @@
 				{#if statusFilter || typeFilter}
 					<p class="empty-state-hint">
 						Current filters:
-						{#if statusFilter}<span class="badge badge-neutral">{statusFilter}</span>{/if}
+						{#if statusFilter}
+							<span class="badge badge-neutral">{getJobStatusDisplayName(statusFilter)}</span>
+						{/if}
 						{#if typeFilter}<span class="badge badge-neutral"
 								>{getJobTypeDisplayName(typeFilter)}</span
 							>{/if}
@@ -417,7 +515,7 @@
 									{#if job.status === 'running'}
 										<span class="pulse-dot"></span>
 									{/if}
-									{job.status}
+									{getJobStatusDisplayName(job.status)}
 								</span>
 							</td>
 							<td>
@@ -447,6 +545,63 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Create Import Dialog -->
+<Modal open={showCreateImportDialog} onClose={closeCreateImportDialog} title="Import Users" size="md">
+	{#if createImportError}
+		<div class="alert alert-error">{createImportError}</div>
+	{/if}
+
+	<div class="form-group">
+		<label for="import-file" class="form-label">CSV File</label>
+		<input
+			id="import-file"
+			type="file"
+			accept=".csv,text/csv"
+			class="form-input"
+			onchange={handleImportFileChange}
+		/>
+		<p class="muted">
+			Expected headers: <code>email</code>, <code>name</code>, <code>given_name</code>,
+			<code>family_name</code>, <code>nickname</code>, <code>preferred_username</code>,
+			<code>picture</code>, <code>email_verified</code>, <code>phone_number</code>,
+			<code>phone_number_verified</code>, <code>user_type</code>, <code>status</code>,
+			<code>lifecycle_state</code>, plus any custom claim keys.
+		</p>
+	</div>
+
+	<div class="filter-row">
+		<div class="form-group">
+			<label for="import-duplicate" class="form-label">On Duplicate</label>
+			<select id="import-duplicate" class="form-select" bind:value={importOnDuplicate}>
+				<option value="skip">Skip existing users</option>
+				<option value="update">Update existing users</option>
+				<option value="error">Fail duplicate rows</option>
+			</select>
+		</div>
+		<div class="form-group">
+			<label for="import-header" class="form-label">CSV Header</label>
+			<select id="import-header" class="form-select" bind:value={importSkipHeader}>
+				<option value={true}>First row is header</option>
+				<option value={false}>Use default column order</option>
+			</select>
+		</div>
+	</div>
+
+	<label class="checkbox-row">
+		<input type="checkbox" bind:checked={importValidateOnly} />
+		<span>Validate only (do not write users)</span>
+	</label>
+
+	{#snippet footer()}
+		<button class="btn btn-secondary" onclick={closeCreateImportDialog} disabled={creatingImport}
+			>Cancel</button
+		>
+		<button class="btn btn-primary" onclick={handleCreateImport} disabled={creatingImport}>
+			{creatingImport ? 'Uploading...' : 'Start Import'}
+		</button>
+	{/snippet}
+</Modal>
 
 <!-- Create Report Dialog -->
 <Modal
@@ -518,7 +673,9 @@
 		<div class="info-grid">
 			<div class="info-card">
 				<span class="info-label">Status</span>
-				<span class={getStatusBadgeClass(selectedJob.status)}>{selectedJob.status}</span>
+				<span class={getStatusBadgeClass(selectedJob.status)}>
+					{getJobStatusDisplayName(selectedJob.status)}
+				</span>
 			</div>
 			<div class="info-card">
 				<span class="info-label">Duration</span>
@@ -576,6 +733,16 @@
 					</div>
 				</div>
 
+				{#if selectedJob.progress}
+					<p class="muted">
+						Processed {selectedJob.progress.processed} of {selectedJob.progress.total}
+						{#if selectedJob.progress.succeeded !== undefined}
+							({selectedJob.progress.succeeded} succeeded / {selectedJob.progress.failed ?? 0}
+							failed / {selectedJob.progress.skipped ?? 0} skipped)
+						{/if}
+					</p>
+				{/if}
+
 				{#if selectedJob.result.failures.length > 0}
 					<div class="failures-section">
 						<h4 class="failures-title">Failures ({selectedJob.result.failures.length})</h4>
@@ -591,6 +758,21 @@
 									... and {selectedJob.result.failures.length - 10} more
 								</div>
 							{/if}
+						</div>
+					</div>
+				{/if}
+
+				{#if selectedJob.result.logs.length > 0}
+					<div class="detail-section">
+						<h4 class="failures-title">Recent Logs</h4>
+						<div class="failures-list">
+							{#each selectedJob.result.logs as entry, i (i)}
+								<div class="failure-item">
+									<strong>{entry.level.toUpperCase()}</strong>
+									{#if entry.row} row {entry.row}:{/if}
+									{entry.message}
+								</div>
+							{/each}
 						</div>
 					</div>
 				{/if}

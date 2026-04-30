@@ -2731,6 +2731,20 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     } catch (error) {
       onProgress(`  ⚠️ Skipped: ${diagnosticBucketName} - ${sanitizeError(error)}`);
     }
+
+    const importArtifactsBucketName = `${env}-import-artifacts`;
+    onProgress(`  ⏳ Creating: ${importArtifactsBucketName}...`);
+
+    try {
+      const result = await createR2Bucket(importArtifactsBucketName);
+      resources.r2.push({
+        binding: 'IMPORT_ARTIFACTS',
+        name: result.name,
+      });
+      onProgress(`  ✅ ${importArtifactsBucketName} created`);
+    } catch (error) {
+      onProgress(`  ⚠️ Skipped: ${importArtifactsBucketName} - ${sanitizeError(error)}`);
+    }
     onProgress('');
   }
 
@@ -2797,7 +2811,7 @@ const AUTHRIM_PATTERNS = {
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs)$/,
+  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts)$/,
   // Pages projects: {env}-ar-admin-ui, {env}-ar-login-ui
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };

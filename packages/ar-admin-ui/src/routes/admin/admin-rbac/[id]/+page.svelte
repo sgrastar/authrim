@@ -23,7 +23,7 @@
 	let showEditDialog = $state(false);
 	let editDisplayName = $state('');
 	let editDescription = $state('');
-	let editPermissions = new SvelteSet<string>();
+	let editPermissions = $state(new SvelteSet<string>());
 	let saving = $state(false);
 
 	// Group permissions by category for display

@@ -36,6 +36,10 @@ import {
   normalizeAuditStorageRoutingTargets,
   targetToBackendId,
 } from '@authrim/ar-lib-core';
+import {
+  buildAuditOperationalPolicy,
+  validateAuditOperationalConstraints,
+} from '../../audit-ops-policy';
 import { getAuditHotQuerySupportForProfile } from '../../audit-hot-query';
 
 // KV key constants
@@ -237,6 +241,12 @@ async function ensureManagedAuditProfile(env: Env): Promise<AuditProfile> {
   return managedProfile;
 }
 
+function validateAuditProfileForEnvironment(env: Env, profile: AuditProfile): string[] {
+  return validateAuditOperationalConstraints(profile, {
+    queueConfigured: Boolean(env.AUDIT_QUEUE),
+  });
+}
+
 async function loadLegacyBatchConfig(env: Env): Promise<LegacyBatchConfig> {
   const defaults = DEFAULT_AUDIT_STORAGE_CONFIG.batchConfig;
 
@@ -335,6 +345,15 @@ async function listAvailableAuditProfiles(env: Env): Promise<
 export async function getAuditStorageConfig(c: Context<{ Bindings: Env }>) {
   const storageView = await buildStorageView(c.env);
   const availableProfiles = await listAvailableAuditProfiles(c.env);
+  const hotQuery = getAuditHotQuerySupportForProfile(c.env, storageView.profile);
+  const operationalPolicy = buildAuditOperationalPolicy({
+    profile: storageView.profile,
+    resolvedRetention: retentionConfigFromProfile(storageView.profile),
+    batchConfig: storageView.batchConfig,
+    queueConfigured: Boolean(c.env.AUDIT_QUEUE),
+    queueArchiveConfigured: Boolean(c.env.AUDIT_ARCHIVE),
+    hotQuery,
+  });
   let retentionConfig: AuditRetentionConfig = retentionConfigFromProfile(storageView.profile);
   let routingRules: AuditStorageRoutingRule[] = [];
   let retentionSource: 'builtin' | 'runtime_profile' = storageView.source;
@@ -377,6 +396,10 @@ export async function getAuditStorageConfig(c: Context<{ Bindings: Env }>) {
     defaults: {
       storage: DEFAULT_AUDIT_STORAGE_CONFIG,
       retention: DEFAULT_RETENTION_CONFIG,
+    },
+    operational_policy: operationalPolicy,
+    queue: {
+      audit_queue: operationalPolicy.queue,
     },
     backend_types: {
       D1: 'Cloudflare D1 (SQLite) - Hot data, fast queries',
@@ -438,6 +461,16 @@ export async function updateAuditStorageConfig(c: Context<{ Bindings: Env }>) {
     }
 
     if (!hasStorageMutation) {
+      const auditErrors = validateAuditProfileForEnvironment(c.env, requestedProfile);
+      if (auditErrors.length > 0) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: auditErrors.join(' '),
+          },
+          400
+        );
+      }
       await setEnvironmentDefaultAuditProfileId(c.env, requestedProfile.id);
       const storageView = await buildStorageView(c.env);
       return c.json({
@@ -558,6 +591,17 @@ export async function updateAuditStorageConfig(c: Context<{ Bindings: Env }>) {
       {
         error: 'invalid_request',
         error_description: errors.join('; '),
+      },
+      400
+    );
+  }
+
+  const auditErrors = validateAuditProfileForEnvironment(c.env, nextProfile);
+  if (auditErrors.length > 0) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: auditErrors.join(' '),
       },
       400
     );
@@ -685,6 +729,17 @@ export async function updateRetentionConfig(c: Context<{ Bindings: Env }>) {
       {
         error: 'invalid_request',
         error_description: errors.join('; '),
+      },
+      400
+    );
+  }
+
+  const auditErrors = validateAuditProfileForEnvironment(c.env, nextProfile);
+  if (auditErrors.length > 0) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: auditErrors.join(' '),
       },
       400
     );
@@ -950,6 +1005,14 @@ export async function deleteRoutingRule(c: Context<{ Bindings: Env }>) {
 export async function triggerRetentionCleanup(c: Context<{ Bindings: Env }>) {
   const { profile } = await getResolvedAuditProfile(c.env);
   const hotQuery = getAuditHotQuerySupportForProfile(c.env, profile);
+  const operationalPolicy = buildAuditOperationalPolicy({
+    profile,
+    resolvedRetention: retentionConfigFromProfile(profile),
+    batchConfig: DEFAULT_AUDIT_STORAGE_CONFIG.batchConfig,
+    queueConfigured: Boolean(c.env.AUDIT_QUEUE),
+    queueArchiveConfigured: Boolean(c.env.AUDIT_ARCHIVE),
+    hotQuery,
+  });
 
   return c.json({
     success: true,
@@ -962,13 +1025,21 @@ export async function triggerRetentionCleanup(c: Context<{ Bindings: Env }>) {
       status: hotQuery.status,
       reason: hotQuery.reason,
     },
+    operational_policy: operationalPolicy,
+    queue: {
+      audit_queue: operationalPolicy.queue,
+    },
     scheduled_cleanup: {
-      event_log: hotQuery.supported ? 'Daily at 02:00 UTC' : null,
-      pii_log: hotQuery.supported ? 'Daily at 03:00 UTC' : null,
+      event_log: operationalPolicy.cleanup.scheduledEventCleanup ? 'Daily at 02:00 UTC' : null,
+      pii_log: operationalPolicy.cleanup.scheduledPiiCleanup ? 'Daily at 03:00 UTC' : null,
     },
     functions: {
-      event_log: hotQuery.supported ? 'cleanupExpiredEventLogs(db, tenantId?, batchSize?)' : null,
-      pii_log: hotQuery.supported ? 'cleanupExpiredPIILogs(db, tenantId?, batchSize?)' : null,
+      event_log: operationalPolicy.cleanup.primaryRetentionDeleteSupported
+        ? 'cleanupExpiredEventLogs(db, tenantId?, batchSize?)'
+        : null,
+      pii_log: operationalPolicy.cleanup.primaryRetentionDeleteSupported
+        ? 'cleanupExpiredPIILogs(db, tenantId?, batchSize?)'
+        : null,
     },
   });
 }
@@ -983,6 +1054,14 @@ export async function getStorageStats(c: Context<{ Bindings: Env }>) {
   const archive = profile.archive ? describeAuditTargetStatus(c.env, profile.archive) : null;
   const sinks = profile.sinks.map((target) => describeAuditTargetStatus(c.env, target));
   const hotQuery = getAuditHotQuerySupportForProfile(c.env, profile);
+  const operationalPolicy = buildAuditOperationalPolicy({
+    profile,
+    resolvedRetention: retentionConfigFromProfile(profile),
+    batchConfig: DEFAULT_AUDIT_STORAGE_CONFIG.batchConfig,
+    queueConfigured: Boolean(c.env.AUDIT_QUEUE),
+    queueArchiveConfigured: Boolean(c.env.AUDIT_ARCHIVE),
+    hotQuery,
+  });
 
   return c.json({
     note: 'Configuration-aware storage status derived from the resolved audit profile.',
@@ -993,16 +1072,14 @@ export async function getStorageStats(c: Context<{ Bindings: Env }>) {
       reason: hotQuery.reason,
       supported: hotQuery.supported,
     },
+    operational_policy: operationalPolicy,
     targets: {
       primary,
       archive,
       sinks,
     },
     queue: {
-      audit_queue: {
-        status: c.env.AUDIT_QUEUE ? 'configured' : 'not_configured',
-        binding: 'AUDIT_QUEUE',
-      },
+      audit_queue: operationalPolicy.queue,
     },
   });
 }

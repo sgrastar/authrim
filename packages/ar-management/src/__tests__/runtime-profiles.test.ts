@@ -55,6 +55,11 @@ function createEnv(kvData: Record<string, string> = {}): Env {
     DB: {} as D1Database,
     AUTHRIM_CONFIG: createMockKV(kvData),
     SETTINGS: createMockKV(),
+    AUDIT_QUEUE: {
+      send: vi.fn(),
+      sendBatch: vi.fn(),
+    },
+    DIAGNOSTIC_LOGS: {} as R2Bucket,
     PROFILE_REGISTRY_BACKEND: 'kv',
     DEFAULT_STORAGE_PROFILE_ID,
     DEFAULT_AUDIT_PROFILE_ID,
@@ -84,12 +89,48 @@ describe('runtime profile admin handlers', () => {
         },
       }),
     });
+    (env as unknown as Record<string, unknown>).HYPERDRIVE_CORE_PRIMARY = {
+      connectionString: 'postgres://core-primary',
+    };
 
     const allRes = await app.request('/api/admin/runtime-profiles?kind=storage', undefined, env);
     expect(allRes.status).toBe(200);
     const allBody = (await allRes.json()) as {
       include_builtins: boolean;
       profiles: { storage: Array<{ id: string }> };
+      reference_status: {
+        storage: Record<
+          string,
+          Array<{
+            path: string;
+            resolution: string;
+            severity: string;
+            activation: string;
+            connectionRef?: string;
+          }>
+        >;
+      };
+      activation_status: {
+        storage: Record<
+          string,
+          { activatable: boolean; state: string; blockingReasons: string[]; warnings: string[] }
+        >;
+      };
+      reference_management: {
+        mode: string;
+        future: string;
+        activationPolicy: string;
+      };
+      reference_catalog: {
+        bindingRefs: {
+          d1: string[];
+          r2: string[];
+          hyperdrive: string[];
+        };
+        connectionRefs: {
+          all: string[];
+        };
+      };
       storage_policy: {
         authCoreSlices: string[];
         slicePolicies: {
@@ -111,6 +152,38 @@ describe('runtime profile admin handlers', () => {
     );
     expect(allBody.profiles.storage.some((profile) => profile.id === 'tenant-a-storage')).toBe(
       true
+    );
+    expect(allBody.reference_status.storage['tenant-a-storage']).toEqual([
+      expect.objectContaining({
+        path: 'slices.custom_claims',
+        resolution: 'reference_only',
+        severity: 'warning',
+        activation: 'blocked',
+        connectionRef: 'tenant-a-core',
+      }),
+    ]);
+    expect(allBody.activation_status.storage['tenant-a-storage']).toEqual(
+      expect.objectContaining({
+        activatable: false,
+        state: 'blocked',
+      })
+    );
+    expect(allBody.reference_management).toEqual(
+      expect.objectContaining({
+        mode: 'setup_only',
+        future: 'admin_ui_planned',
+        activationPolicy: 'save_ok_activate_ng',
+      })
+    );
+    expect(allBody.reference_catalog.bindingRefs.d1).toEqual(expect.arrayContaining(['DB']));
+    expect(allBody.reference_catalog.bindingRefs.r2).toEqual(
+      expect.arrayContaining(['DIAGNOSTIC_LOGS'])
+    );
+    expect(allBody.reference_catalog.bindingRefs.hyperdrive).toEqual(
+      expect.arrayContaining(['HYPERDRIVE_CORE_PRIMARY'])
+    );
+    expect(allBody.reference_catalog.connectionRefs.all).toEqual(
+      expect.arrayContaining(['core-primary', 'tenant-a-core'])
     );
     expect(allBody).toHaveProperty('storage_policy.environmentDefaultStorageProfileId');
     expect(allBody).toHaveProperty(
@@ -212,10 +285,40 @@ describe('runtime profile admin handlers', () => {
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
       profile: { id: string; label: string };
+      reference_status: Array<{
+        path: string;
+        resolution: string;
+        severity: string;
+        activation: string;
+        connectionRef?: string;
+      }>;
+      activation_status: { activatable: boolean; state: string; blockingReasons: string[] };
+      reference_management: { mode: string; activationPolicy: string };
       storage_policy: { tenantOverrideAllowed: boolean };
     };
     expect(getBody.profile.id).toBe('tenant-a-storage');
     expect(getBody.profile.label).toBe('Tenant A Storage Updated');
+    expect(getBody.reference_status).toEqual([
+      expect.objectContaining({
+        path: 'slices.custom_claims',
+        resolution: 'reference_only',
+        severity: 'warning',
+        activation: 'blocked',
+        connectionRef: 'tenant-a-core',
+      }),
+    ]);
+    expect(getBody.activation_status).toEqual(
+      expect.objectContaining({
+        activatable: false,
+        state: 'blocked',
+      })
+    );
+    expect(getBody.reference_management).toEqual(
+      expect.objectContaining({
+        mode: 'setup_only',
+        activationPolicy: 'save_ok_activate_ng',
+      })
+    );
     expect(getBody.storage_policy.tenantOverrideAllowed).toBe(true);
 
     const deleteRes = await app.request(
@@ -347,6 +450,55 @@ describe('runtime profile admin handlers', () => {
     expect(createRes.status).toBe(400);
   });
 
+  it('rejects audit profiles without any delivery target', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const createRes = await app.request(
+      '/api/admin/runtime-profiles/audit/invalid-empty',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'Invalid Empty',
+          primary: null,
+          archive: null,
+          sinks: [],
+        }),
+      },
+      env
+    );
+
+    expect(createRes.status).toBe(400);
+  });
+
+  it('rejects audit profiles with fan-out targets when AUDIT_QUEUE is unavailable', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+    delete (env as Partial<Env>).AUDIT_QUEUE;
+
+    const createRes = await app.request(
+      '/api/admin/runtime-profiles/audit/archive-only',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'Archive Only',
+          primary: null,
+          archive: {
+            type: 'r2',
+            bucketRef: 'DIAGNOSTIC_LOGS',
+            prefix: 'audit/',
+          },
+          sinks: [],
+        }),
+      },
+      env
+    );
+
+    expect(createRes.status).toBe(400);
+  });
+
   it('returns runtime profile defaults and updates them through infrastructure settings', async () => {
     const app = createTestApp();
     const env = createEnv({
@@ -370,9 +522,46 @@ describe('runtime profile admin handlers', () => {
     const beforeBody = (await beforeRes.json()) as {
       defaults: { auditProfileId: string };
       effective: { audit: { id: string } };
+      reference_status: {
+        audit: Array<{
+          path: string;
+          resolution: string;
+          severity: string;
+          activation: string;
+          reference?: string;
+        }>;
+      };
+      activation_status: {
+        audit: { activatable: boolean; state: string };
+      };
+      reference_management: { mode: string; activationPolicy: string };
+      reference_catalog: {
+        bindingRefs: {
+          d1: string[];
+          r2: string[];
+        };
+      };
     };
     expect(beforeBody.defaults.auditProfileId).toBe(DEFAULT_AUDIT_PROFILE_ID);
     expect(beforeBody.effective.audit.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
+    expect(beforeBody.activation_status.audit).toEqual(
+      expect.objectContaining({
+        activatable: true,
+        state: 'ready',
+      })
+    );
+    expect(beforeBody.reference_management.mode).toBe('setup_only');
+    expect(beforeBody.reference_catalog.bindingRefs.d1).toEqual(expect.arrayContaining(['DB']));
+    expect(beforeBody.reference_catalog.bindingRefs.r2).toEqual(
+      expect.arrayContaining(['DIAGNOSTIC_LOGS'])
+    );
+    expect(beforeBody.reference_status.audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'primary',
+        }),
+      ])
+    );
 
     const updateRes = await app.request(
       '/api/admin/runtime-profiles/defaults',
@@ -390,10 +579,214 @@ describe('runtime profile admin handlers', () => {
       updated: string[];
       defaults: { auditProfileId: string };
       effective: { audit: { id: string } };
+      reference_status: {
+        audit: Array<{
+          path: string;
+          resolution: string;
+          severity: string;
+          activation: string;
+          reference?: string;
+        }>;
+      };
+      activation_status: {
+        audit: { activatable: boolean; state: string };
+      };
     };
     expect(updateBody.updated).toContain('infra.default_audit_profile_id');
     expect(updateBody.defaults.auditProfileId).toBe('archive-only');
     expect(updateBody.effective.audit.id).toBe('archive-only');
+    expect(updateBody.activation_status.audit).toEqual(
+      expect.objectContaining({
+        activatable: true,
+        state: 'ready',
+      })
+    );
+    expect(updateBody.reference_status.audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'archive',
+          resolution: 'configured',
+          reference: 'DIAGNOSTIC_LOGS',
+        }),
+      ])
+    );
+  });
+
+  it('allows saving a storage profile with connectionRef but rejects activating it as the default', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const createRes = await app.request(
+      '/api/admin/runtime-profiles/storage/tenant-a-storage',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: 'Tenant A Storage',
+          slices: {
+            custom_claims: {
+              driver: 'postgres',
+              connectionRef: 'tenant-a-core',
+              role: 'core',
+            },
+          },
+        }),
+      },
+      env
+    );
+    expect(createRes.status).toBe(201);
+
+    const updateDefaultsRes = await app.request(
+      '/api/admin/runtime-profiles/defaults',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storageProfileId: 'tenant-a-storage',
+        }),
+      },
+      env
+    );
+
+    expect(updateDefaultsRes.status).toBe(400);
+  });
+
+  it('allows activating an audit profile when connectionRef resolves through a Hyperdrive binding', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:audit:external-audit': JSON.stringify({
+        id: 'external-audit',
+        kind: 'audit',
+        label: 'External Audit',
+        builtin: false,
+        primary: {
+          type: 'postgres',
+          connectionRef: 'audit-primary',
+          dataset: 'event_log',
+        },
+        archive: null,
+        sinks: [],
+      }),
+    });
+    (env as unknown as Record<string, unknown>).HYPERDRIVE_AUDIT_PRIMARY = {
+      connectionString: 'postgres://audit-primary',
+    };
+
+    const getRes = await app.request(
+      '/api/admin/runtime-profiles/audit/external-audit',
+      undefined,
+      env
+    );
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as {
+      reference_status: Array<{ path: string; resolution: string; severity: string; activation: string }>;
+      activation_status: { activatable: boolean; state: string };
+    };
+    expect(getBody.reference_status).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'primary',
+          resolution: 'configured',
+          severity: 'info',
+          activation: 'ready',
+        }),
+      ])
+    );
+    expect(getBody.activation_status).toEqual(
+      expect.objectContaining({
+        activatable: true,
+        state: 'ready',
+      })
+    );
+
+    const defaultsRes = await app.request(
+      '/api/admin/runtime-profiles/defaults',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          auditProfileId: 'external-audit',
+        }),
+      },
+      env
+    );
+    expect(defaultsRes.status).toBe(200);
+  });
+
+  it('allows activating a storage profile when connectionRef resolves through Hyperdrive bindings', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:storage:external-storage': JSON.stringify({
+        id: 'external-storage',
+        kind: 'storage',
+        label: 'External Storage',
+        builtin: false,
+        slices: {
+          users_core: {
+            driver: 'postgres',
+            connectionRef: 'core-primary',
+            role: 'core',
+          },
+          users_pii: {
+            driver: 'postgres',
+            connectionRef: 'pii-primary',
+            role: 'pii',
+          },
+        },
+      }),
+    });
+    (env as unknown as Record<string, unknown>).HYPERDRIVE_CORE_PRIMARY = {
+      connectionString: 'postgres://core-primary',
+    };
+    (env as unknown as Record<string, unknown>).HYPERDRIVE_PII_PRIMARY = {
+      connectionString: 'postgres://pii-primary',
+    };
+
+    const getRes = await app.request(
+      '/api/admin/runtime-profiles/storage/external-storage',
+      undefined,
+      env
+    );
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as {
+      reference_status: Array<{ path: string; resolution: string; severity: string; activation: string }>;
+      activation_status: { activatable: boolean; state: string };
+    };
+    expect(getBody.reference_status).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'slices.users_core',
+          resolution: 'configured',
+          severity: 'info',
+          activation: 'ready',
+        }),
+        expect.objectContaining({
+          path: 'slices.users_pii',
+          resolution: 'configured',
+          severity: 'info',
+          activation: 'ready',
+        }),
+      ])
+    );
+    expect(getBody.activation_status).toEqual(
+      expect.objectContaining({
+        activatable: true,
+        state: 'ready',
+      })
+    );
+
+    const defaultsRes = await app.request(
+      '/api/admin/runtime-profiles/defaults',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storageProfileId: 'external-storage',
+        }),
+      },
+      env
+    );
+    expect(defaultsRes.status).toBe(200);
   });
 
   it('rejects unknown runtime profile defaults', async () => {
@@ -413,6 +806,40 @@ describe('runtime profile admin handlers', () => {
     );
 
     expect(res.status).toBe(404);
+  });
+
+  it('rejects switching defaults to an audit profile that requires AUDIT_QUEUE when it is unavailable', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:audit:archive-only': JSON.stringify({
+        id: 'archive-only',
+        kind: 'audit',
+        label: 'Archive Only',
+        builtin: false,
+        primary: null,
+        archive: {
+          type: 'r2',
+          bucketRef: 'DIAGNOSTIC_LOGS',
+          prefix: 'audit/',
+        },
+        sinks: [],
+      }),
+    });
+    delete (env as Partial<Env>).AUDIT_QUEUE;
+
+    const res = await app.request(
+      '/api/admin/runtime-profiles/defaults',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          auditProfileId: 'archive-only',
+        }),
+      },
+      env
+    );
+
+    expect(res.status).toBe(400);
   });
 
   it('rejects invalid kinds and builtin profile mutation attempts', async () => {

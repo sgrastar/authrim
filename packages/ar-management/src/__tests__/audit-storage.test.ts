@@ -104,6 +104,19 @@ function createTestApp(
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockSettingsKV,
     DB: mockDB,
+    AUDIT_QUEUE: {
+      send: vi.fn(),
+      sendBatch: vi.fn(),
+    },
+    AUDIT_ARCHIVE: {
+      put: vi.fn(),
+      get: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+      head: vi.fn(),
+      createMultipartUpload: vi.fn(),
+      resumeMultipartUpload: vi.fn(),
+    },
     PROFILE_REGISTRY_BACKEND: 'kv',
     DEFAULT_AUDIT_PROFILE_ID: options.defaultAuditProfileId ?? DEFAULT_AUDIT_PROFILE_ID,
     ...options.extraEnv,
@@ -149,6 +162,13 @@ describe('Audit Storage Configuration API', () => {
       expect(body.storage.config.batchConfig).toEqual(DEFAULT_AUDIT_STORAGE_CONFIG.batchConfig);
       expect(body.retention.source).toBe('builtin');
       expect(body.routing_rules.rules).toEqual([]);
+      expect(body.operational_policy.cleanup.mode).toBe('primary_delete_by_retention');
+      expect(body.operational_policy.retry.archiveDelivery).toBe('queue_retry_until_dlq');
+      expect(body.operational_policy.backpressure.mode).toBe('queue_fanout');
+      expect(body.operational_policy.queue.binding).toBe('AUDIT_QUEUE');
+      expect(body.operational_policy.queue.retryLimit).toBe(5);
+      expect(body.operational_policy.queue.archiveBackupStatus).toBe('configured');
+      expect(body.queue.audit_queue.status).toBe('configured');
     });
 
     it('should merge legacy batch config while keeping runtime profile as the source of truth', async () => {
@@ -267,6 +287,43 @@ describe('Audit Storage Configuration API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.config.defaultEventBackend).toBe('audit-hyperdrive');
+    });
+
+    it('rejects fan-out targets when AUDIT_QUEUE is unavailable', async () => {
+      const { app, mockEnv } = createTestApp({
+        extraEnv: {
+          AUDIT_QUEUE: undefined,
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            backends: [
+              {
+                id: 'archive-r2',
+                type: 'R2',
+                enabled: true,
+                priority: 1,
+                r2Config: {
+                  binding: 'DIAGNOSTIC_LOGS',
+                  pathPrefix: 'audit/',
+                },
+              },
+            ],
+            defaultEventBackend: 'd1-core',
+            defaultPiiBackend: 'd1-pii',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.error_description).toContain('AUDIT_QUEUE must be configured');
     });
 
     it('should switch the default audit profile without mutating the managed profile', async () => {
@@ -450,7 +507,23 @@ describe('Audit Storage Configuration API', () => {
 
   describe('PUT /api/admin/settings/audit-storage/retention', () => {
     it('should update retention config', async () => {
-      const mockKV = createMockKV();
+      const managedProfileId = 'managed:audit:settings-default';
+      const mockKV = createMockKV({
+        [`profile-registry:audit:${managedProfileId}`]: JSON.stringify({
+          id: managedProfileId,
+          kind: 'audit',
+          label: 'Managed Audit Profile',
+          builtin: false,
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+          sinks: [],
+          retention: {
+            eventLogRetentionDays: 90,
+            piiLogRetentionDays: 365,
+            archiveBeforeDelete: false,
+          },
+        }),
+      });
       const { app, mockEnv, mockSettingsKV } = createTestApp({ kv: mockKV });
 
       const res = await app.request(
@@ -521,6 +594,28 @@ describe('Audit Storage Configuration API', () => {
 
       // Error format: "must be between X and Y"
       expect(body.error_description).toContain('must be between');
+    });
+
+    it('rejects archiveBeforeDelete when no archive target is configured', async () => {
+      const { app, mockEnv } = createTestApp({
+        defaultAuditProfileId: 'builtin:audit:minimal',
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/retention',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            archiveBeforeDelete: true,
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.error_description).toContain('archiveBeforeDelete requires an archive target');
     });
   });
 
@@ -821,6 +916,7 @@ describe('Audit Storage Configuration API', () => {
       expect(body.note).toBeDefined();
       expect(body.scheduled_cleanup).toBeDefined();
       expect(body.hot_query.status).toBe('supported');
+      expect(body.operational_policy.cleanup.primaryRetentionDeleteSupported).toBe(true);
     });
 
     it('marks archive-only profiles as hot-query unsupported', async () => {
@@ -859,6 +955,7 @@ describe('Audit Storage Configuration API', () => {
       expect(body.profile_id).toBe('archive-only');
       expect(body.hot_query.status).toBe('not_supported');
       expect(body.functions.event_log).toBeNull();
+      expect(body.operational_policy.cleanup.mode).toBe('archive_only');
     });
 
     it('marks postgres primary as supported when a Hyperdrive binding is resolved', async () => {
@@ -902,6 +999,57 @@ describe('Audit Storage Configuration API', () => {
       expect(body.profile_id).toBe('pg-primary');
       expect(body.hot_query.status).toBe('supported');
       expect(body.functions.event_log).toBe('cleanupExpiredEventLogs(db, tenantId?, batchSize?)');
+      expect(body.operational_policy.cleanup.mode).toBe('primary_delete_by_retention');
+    });
+
+    it('surfaces pending archive-before-delete enforcement as an operational warning', async () => {
+      const mockKV = createMockKV({
+        'profile-registry:audit:archive-before-delete': JSON.stringify({
+          id: 'archive-before-delete',
+          kind: 'audit',
+          label: 'Archive Before Delete',
+          builtin: false,
+          primary: {
+            type: 'd1',
+            bindingRef: 'DB',
+            dataset: 'event_log',
+          },
+          archive: {
+            type: 'r2',
+            bucketRef: 'DIAGNOSTIC_LOGS',
+            prefix: 'audit/',
+          },
+          sinks: [],
+          retention: {
+            eventLogRetentionDays: 90,
+            piiLogRetentionDays: 365,
+            archiveBeforeDelete: true,
+          },
+        }),
+      });
+      const { app, mockEnv } = createTestApp({
+        kv: mockKV,
+        defaultAuditProfileId: 'archive-before-delete',
+      });
+
+      const res = await app.request(
+        '/api/admin/settings/audit-storage/cleanup',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.operational_policy.retention.archiveBeforeDelete).toBe(true);
+      expect(body.operational_policy.retention.archiveBeforeDeleteStatus).toBe('enforced');
+      expect(body.operational_policy.retention.note).toContain(
+        'Scheduled retention cleanup rewrites expiring records'
+      );
+      expect(body.operational_policy.warnings).toEqual([]);
     });
   });
 
@@ -927,6 +1075,9 @@ describe('Audit Storage Configuration API', () => {
       expect(body.targets.primary).toBeDefined();
       expect(body.targets.primary.type).toBe('d1');
       expect(body.hot_query.status).toBe('supported');
+      expect(body.operational_policy.deliveryGuarantee.primary).toBe('sync_request_path');
+      expect(body.queue.audit_queue.retryLimit).toBe(5);
+      expect(body.queue.audit_queue.archiveBackupStatus).toBe('configured');
     });
 
     it('returns archive-only stats when the resolved audit profile has no primary store', async () => {
@@ -969,6 +1120,9 @@ describe('Audit Storage Configuration API', () => {
       expect(body.targets.archive.type).toBe('r2');
       expect(body.targets.sinks).toHaveLength(1);
       expect(body.hot_query.status).toBe('not_supported');
+      expect(body.operational_policy.deliveryGuarantee.archive).toBe('best_effort');
+      expect(body.operational_policy.deliveryGuarantee.sink).toBe('best_effort');
+      expect(body.operational_policy.deliveryGuarantee.primary).toBe('none');
     });
 
     it('returns supported hot-query stats for postgres primary when a binding is configured', async () => {
@@ -1009,6 +1163,7 @@ describe('Audit Storage Configuration API', () => {
       expect(body.targets.primary.type).toBe('postgres');
       expect(body.hot_query.status).toBe('supported');
       expect(body.hot_query.supported).toBe(true);
+      expect(body.operational_policy.cleanup.primaryRetentionDeleteSupported).toBe(true);
     });
 
     it('returns pending runtime support for postgres primary without a binding', async () => {
@@ -1043,6 +1198,7 @@ describe('Audit Storage Configuration API', () => {
       expect(body.profile_id).toBe('pg-primary');
       expect(body.hot_query.status).toBe('pending_runtime_support');
       expect(body.hot_query.supported).toBe(false);
+      expect(body.operational_policy.cleanup.mode).toBe('pending_runtime_support');
     });
 
     it('returns supported hot-query status for mysql primary with a Hyperdrive binding', async () => {
@@ -1088,6 +1244,7 @@ describe('Audit Storage Configuration API', () => {
       expect(body.targets.primary.type).toBe('mysql');
       expect(body.hot_query.status).toBe('supported');
       expect(body.hot_query.supported).toBe(true);
+      expect(body.operational_policy.cleanup.primaryRetentionDeleteSupported).toBe(true);
     });
   });
 });

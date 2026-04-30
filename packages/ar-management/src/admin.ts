@@ -57,6 +57,11 @@ import {
   getAuditTimeRange,
   type AuditHotQueryContext,
 } from './audit-hot-query';
+import {
+  getArchiveAuditEventById,
+  getAuditArchiveQuerySupport,
+  listArchiveAuditEvents,
+} from './audit-archive-query';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
 
 export {
@@ -101,6 +106,88 @@ function getCoreAdapter(
   tenantId: string = getTenantIdFromContext(c)
 ): DatabaseAdapter {
   return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+function formatArchiveAuditEntry(
+  entry: {
+    id: string;
+    anonymizedUserId?: string;
+    eventType: string;
+    eventCategory: string;
+    result: string;
+    severity: string;
+    errorCode?: string;
+    errorMessage?: string;
+    clientId?: string;
+    sessionId?: string;
+    requestId?: string;
+    detailsJson?: string;
+    createdAt: number;
+  },
+  userIdMap: Map<string, string>
+) {
+  let metadata: unknown = null;
+  let metadataObject: Record<string, unknown> | null = null;
+
+  if (entry.detailsJson) {
+    try {
+      metadata = JSON.parse(entry.detailsJson) as unknown;
+      if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+        metadataObject = metadata as Record<string, unknown>;
+      }
+    } catch {
+      metadata = null;
+      metadataObject = null;
+    }
+  }
+
+  return {
+    id: entry.id,
+    userId: entry.anonymizedUserId ? (userIdMap.get(entry.anonymizedUserId) ?? null) : null,
+    action: entry.eventType,
+    resourceType:
+      typeof metadataObject?.resourceType === 'string'
+        ? metadataObject.resourceType
+        : typeof metadataObject?.resource_type === 'string'
+          ? metadataObject.resource_type
+          : entry.eventCategory,
+    resourceId:
+      typeof metadataObject?.resourceId === 'string'
+        ? metadataObject.resourceId
+        : typeof metadataObject?.resource_id === 'string'
+          ? metadataObject.resource_id
+          : entry.clientId ?? null,
+    ipAddress:
+      typeof metadataObject?.ipAddress === 'string'
+        ? metadataObject.ipAddress
+        : typeof metadataObject?.ip_address === 'string'
+          ? metadataObject.ip_address
+          : null,
+    userAgent:
+      typeof metadataObject?.userAgent === 'string'
+        ? metadataObject.userAgent
+        : typeof metadataObject?.user_agent === 'string'
+          ? metadataObject.user_agent
+          : null,
+    clientId: entry.clientId ?? null,
+    sessionId: entry.sessionId ?? null,
+    requestId: entry.requestId ?? null,
+    result: entry.result,
+    severity: entry.severity,
+    errorCode: entry.errorCode ?? null,
+    errorMessage: entry.errorMessage ?? null,
+    metadata: metadata && typeof metadata === 'object' ? metadata : null,
+    createdAt: new Date(entry.createdAt).toISOString(),
+  };
+}
+
+async function buildArchiveAuditUserIdMap(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  entries: Array<{ anonymizedUserId?: string }>
+) {
+  const anonymizedIds = [...new Set(entries.map((entry) => entry.anonymizedUserId).filter(Boolean))] as string[];
+  return resolveAuditUserIdMap(c, tenantId, anonymizedIds);
 }
 
 async function resolveAuditUserAnonymizedId(
@@ -1065,11 +1152,6 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
-    if (!hotQuery.supported || !hotQuery.context) {
-      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
-    }
-    const context = hotQuery.context;
-    const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
 
     // Get query parameters
     const page = parseInt(c.req.query('page') || '1', 10);
@@ -1083,6 +1165,58 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const resourceId = c.req.query('resource_id');
     const startDate = c.req.query('start_date'); // ISO 8601 format
     const endDate = c.req.query('end_date'); // ISO 8601 format
+
+    if (!hotQuery.supported || !hotQuery.context) {
+      const archiveQuery = await getAuditArchiveQuerySupport(c.env, tenantId);
+      if (!archiveQuery.supported || !archiveQuery.context) {
+        return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+      }
+
+      const startTimestamp = buildAuditTimestamp(startDate);
+      const endTimestamp = buildAuditTimestamp(endDate);
+      const anonymizedUserId = userId
+        ? await resolveAuditUserAnonymizedId(c, tenantId, userId)
+        : null;
+
+      if (userId && !anonymizedUserId) {
+        return c.json({
+          entries: [],
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+          },
+        });
+      }
+
+      const archiveResult = await listArchiveAuditEvents(archiveQuery.context, {
+        tenantId,
+        page,
+        limit,
+        startTime: startTimestamp == null ? undefined : startTimestamp * 1000,
+        endTime: endTimestamp == null ? undefined : endTimestamp * 1000,
+        eventType: action ?? undefined,
+        anonymizedUserId: anonymizedUserId ?? undefined,
+        resourceType: resourceType ?? undefined,
+        resourceId: resourceId ?? undefined,
+      });
+
+      const userIdMap = await buildArchiveAuditUserIdMap(c, tenantId, archiveResult.entries);
+
+      return c.json({
+        entries: archiveResult.entries.map((entry) => formatArchiveAuditEntry(entry, userIdMap)),
+        pagination: {
+          page,
+          limit,
+          total: archiveResult.total,
+          totalPages: archiveResult.totalPages,
+        },
+      });
+    }
+
+    const context = hotQuery.context;
+    const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
 
     // Build WHERE clause - tenant_id is always first for index usage
     const conditions: string[] = ['tenant_id = ?'];
@@ -1324,11 +1458,6 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const id = c.req.param('id')!;
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
-    if (!hotQuery.supported || !hotQuery.context) {
-      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
-    }
-    const context = hotQuery.context;
-    const { tableName } = getAuditHotQuerySqlSpec(context);
 
     if (!id) {
       return c.json(
@@ -1339,6 +1468,73 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+
+    if (!hotQuery.supported || !hotQuery.context) {
+      const archiveQuery = await getAuditArchiveQuerySupport(c.env, tenantId);
+      if (!archiveQuery.supported || !archiveQuery.context) {
+        return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+      }
+
+      const entry = await getArchiveAuditEventById(archiveQuery.context, tenantId, id);
+      if (!entry) {
+        return c.json(
+          {
+            error: 'not_found',
+            error_description: 'Audit log entry not found',
+          },
+          404
+        );
+      }
+
+      const userIdMap = await buildArchiveAuditUserIdMap(c, tenantId, [entry]);
+      const resolvedUserId = entry.anonymizedUserId
+        ? (userIdMap.get(entry.anonymizedUserId) ?? null)
+        : null;
+      const coreAdapter = getCoreAdapter(c, tenantId);
+      let user = null;
+
+      if (resolvedUserId) {
+        const userCore = await coreAdapter.queryOne<{ id: string }>(
+          'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+          [resolvedUserId, tenantId]
+        );
+
+        if (userCore && hasPIIDatabase(c)) {
+          const piiCtx = createPIIContextFromHono(c, getTenantIdFromContext(c));
+          const piiAdapter = piiCtx.defaultPiiAdapter;
+          const userPII = await piiAdapter.queryOne<{
+            email: string | null;
+            name: string | null;
+            picture: string | null;
+          }>('SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?', [
+            resolvedUserId,
+            tenantId,
+          ]);
+
+          user = {
+            id: userCore.id,
+            email: userPII?.email ?? null,
+            name: userPII?.name ?? null,
+            picture: userPII?.picture ?? null,
+          };
+        } else if (userCore) {
+          user = {
+            id: userCore.id,
+            email: null,
+            name: null,
+            picture: null,
+          };
+        }
+      }
+
+      return c.json({
+        ...formatArchiveAuditEntry(entry, userIdMap),
+        user,
+      });
+    }
+
+    const context = hotQuery.context;
+    const { tableName } = getAuditHotQuerySqlSpec(context);
 
     // Get audit log entry
     const coreAdapter = getCoreAdapter(c, tenantId);

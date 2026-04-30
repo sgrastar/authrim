@@ -12,6 +12,52 @@ export interface RuntimeProfileRecord {
 }
 
 export type RuntimeProfileKind = RuntimeProfileRecord['kind'];
+export type RuntimeProfileReferenceResolution =
+	| 'configured'
+	| 'not_configured'
+	| 'reference_only'
+	| 'inline_config';
+export type RuntimeProfileReferenceSeverity = 'info' | 'warning' | 'error';
+export type RuntimeProfileReferenceActivation = 'ready' | 'warning_only' | 'blocked';
+
+export interface RuntimeProfileReferenceStatusEntry {
+	path: string;
+	type: string;
+	resolution: RuntimeProfileReferenceResolution;
+	severity: RuntimeProfileReferenceSeverity;
+	activation: RuntimeProfileReferenceActivation;
+	bindingRef?: string;
+	connectionRef?: string;
+	reference?: string;
+	reason?: string;
+}
+
+export interface RuntimeProfileActivationStatus {
+	state: 'ready' | 'warning' | 'blocked';
+	activatable: boolean;
+	severity: RuntimeProfileReferenceSeverity;
+	blockingReasons: string[];
+	warnings: string[];
+}
+
+export interface RuntimeProfileReferenceManagementPolicy {
+	mode: 'setup_only';
+	future: 'admin_ui_planned';
+	activationPolicy: 'save_ok_activate_ng';
+	note: string;
+}
+
+export interface RuntimeProfileReferenceCatalog {
+	bindingRefs: {
+		d1: string[];
+		r2: string[];
+		hyperdrive: string[];
+		all: string[];
+	};
+	connectionRefs: {
+		all: string[];
+	};
+}
 
 export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension';
 
@@ -51,6 +97,10 @@ export interface StorageProfileListPolicy {
 
 export interface RuntimeProfileListResponse {
 	profiles: Record<string, RuntimeProfileRecord[]>;
+	reference_status?: Record<string, Record<string, RuntimeProfileReferenceStatusEntry[]>>;
+	activation_status?: Record<string, Record<string, RuntimeProfileActivationStatus>>;
+	reference_management?: RuntimeProfileReferenceManagementPolicy;
+	reference_catalog?: RuntimeProfileReferenceCatalog;
 	storage_policy?: StorageProfileListPolicy;
 }
 
@@ -60,6 +110,15 @@ export interface RuntimeProfileDefaultsResponse {
 		auditProfileId: string;
 		residencyProfileId: string;
 	};
+	effective?: {
+		storage?: RuntimeProfileRecord | null;
+		audit?: RuntimeProfileRecord | null;
+		residency?: RuntimeProfileRecord | null;
+	};
+	reference_status?: Record<string, RuntimeProfileReferenceStatusEntry[]>;
+	activation_status?: Record<string, RuntimeProfileActivationStatus>;
+	reference_management?: RuntimeProfileReferenceManagementPolicy;
+	reference_catalog?: RuntimeProfileReferenceCatalog;
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -87,7 +146,11 @@ export const adminRuntimeProfilesAPI = {
 		return parseResponse<RuntimeProfileDefaultsResponse>(response);
 	},
 
-	async updateDefaults(body: { auditProfileId: string }) {
+	async updateDefaults(body: {
+		storageProfileId?: string;
+		auditProfileId?: string;
+		residencyProfileId?: string;
+	}) {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/runtime-profiles/defaults`, {
 			method: 'PUT',
 			skipTenantHeader: true,
@@ -103,6 +166,10 @@ export const adminRuntimeProfilesAPI = {
 		});
 		return parseResponse<{
 			profile: RuntimeProfileRecord;
+			reference_status?: RuntimeProfileReferenceStatusEntry[];
+			activation_status?: RuntimeProfileActivationStatus;
+			reference_management?: RuntimeProfileReferenceManagementPolicy;
+			reference_catalog?: RuntimeProfileReferenceCatalog;
 			storage_policy?: StorageProfileTenantOverridePolicy;
 		}>(response);
 	},
@@ -114,7 +181,14 @@ export const adminRuntimeProfilesAPI = {
 			includeJsonContentType: true,
 			body: JSON.stringify(body)
 		});
-		return parseResponse<{ created: boolean; profile: RuntimeProfileRecord }>(response);
+		return parseResponse<{
+			created: boolean;
+			profile: RuntimeProfileRecord;
+			reference_status?: RuntimeProfileReferenceStatusEntry[];
+			activation_status?: RuntimeProfileActivationStatus;
+			reference_management?: RuntimeProfileReferenceManagementPolicy;
+			reference_catalog?: RuntimeProfileReferenceCatalog;
+		}>(response);
 	},
 
 	async remove(kind: RuntimeProfileKind, id: string) {

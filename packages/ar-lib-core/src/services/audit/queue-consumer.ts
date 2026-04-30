@@ -203,7 +203,7 @@ async function writeArchiveTarget(
   const adapter = createR2AuditAdapter(bucket, {
     id: `archive:${target.bucketRef}`,
     pathPrefix: target.prefix ?? 'audit',
-    format: 'jsonl',
+    format: 'json',
     eventSerializer: (entry) => buildCanonicalAuditRecord(target, body, entry, 'archive'),
     piiSerializer: (entry) => buildCanonicalAuditRecord(target, body, entry, 'archive'),
   });

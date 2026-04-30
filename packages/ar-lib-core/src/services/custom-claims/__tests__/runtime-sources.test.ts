@@ -141,4 +141,53 @@ describe('resolveCustomClaimRuntimeSourcesFromEnv', () => {
       'storage_profile_connection_not_resolved:core-primary'
     );
   });
+
+  it('resolves storage connectionRef through Hyperdrive bindings', async () => {
+    const env = {
+      DB: { prepare: vi.fn(), batch: vi.fn() } as unknown as D1Database,
+      AUTHRIM_CONFIG: createMockKV({
+        'profile-registry:storage:tenant-a-storage': JSON.stringify({
+          id: 'tenant-a-storage',
+          kind: 'storage',
+          label: 'Tenant A Storage',
+          slices: {
+            custom_claims: {
+              driver: 'postgres',
+              connectionRef: 'core-primary',
+              role: 'core',
+            },
+            registration_fields: {
+              driver: 'postgres',
+              connectionRef: 'core-primary',
+              role: 'core',
+            },
+            custom_pii: {
+              driver: 'postgres',
+              connectionRef: 'pii-primary',
+              role: 'pii',
+            },
+          },
+        }),
+        'settings:tenant:tenant-a:tenant': JSON.stringify({
+          'tenant.storage_profile_id': 'tenant-a-storage',
+        }),
+      }),
+      HYPERDRIVE_CORE_PRIMARY: {
+        connectionString: 'postgres://core-primary',
+      } as Hyperdrive,
+      HYPERDRIVE_PII_PRIMARY: {
+        connectionString: 'postgres://pii-primary',
+      } as Hyperdrive,
+      PROFILE_REGISTRY_BACKEND: 'kv',
+      DEFAULT_STORAGE_PROFILE_ID,
+      DEFAULT_AUDIT_PROFILE_ID,
+      DEFAULT_RESIDENCY_PROFILE_ID,
+    };
+
+    const resolved = await resolveCustomClaimRuntimeSourcesFromEnv(env, 'tenant-a');
+
+    expect((resolved.schemaDb as DatabaseAdapter).getType()).toBe('postgres');
+    expect((resolved.nonPiiDb as DatabaseAdapter).getType()).toBe('postgres');
+    expect((resolved.piiDb as DatabaseAdapter)?.getType()).toBe('postgres');
+  });
 });

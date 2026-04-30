@@ -26,6 +26,12 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
+import {
+  USER_IMPORT_MAX_UPLOAD_BYTES,
+  buildUserImportResultKey,
+  buildUserImportUploadKey,
+  sanitizeUserImportFilename,
+} from './user-import-jobs';
 
 // =============================================================================
 // Types
@@ -53,6 +59,7 @@ interface JobResultSummary {
   total: number;
   succeeded: number;
   failed: number;
+  skipped?: number;
 }
 
 /**
@@ -281,6 +288,14 @@ function formatJob(row: JobRow) {
 interface ParsedJobResult {
   summary?: JobResultSummary;
   failures?: JobFailure[];
+  logs?: Array<{
+    timestamp: string;
+    level: 'info' | 'warn' | 'error';
+    code: string;
+    message: string;
+    row?: number;
+    email?: string;
+  }>;
 }
 
 /**
@@ -289,12 +304,14 @@ interface ParsedJobResult {
 function formatJobResult(row: JobRow) {
   let summary: JobResultSummary | null = null;
   let failures: JobFailure[] = [];
+  let logs: ParsedJobResult['logs'] = [];
 
   if (row.result) {
     try {
       const parsed = JSON.parse(row.result) as ParsedJobResult;
       summary = parsed.summary ?? null;
       failures = parsed.failures ?? [];
+      logs = parsed.logs ?? [];
     } catch {
       // Invalid JSON, ignore
     }
@@ -304,10 +321,23 @@ function formatJobResult(row: JobRow) {
     job_id: row.id,
     summary,
     failures,
+    logs,
     ...(row.result_r2_key && {
-      download_url: row.result_r2_key, // Actual signed URL would be generated
+      download_url: `/api/admin/jobs/${row.id}/result/download`,
     }),
   };
+}
+
+function parseJobConfig(config: string | null): Record<string, unknown> | undefined {
+  if (!config) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(config) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 // =============================================================================
@@ -473,7 +503,7 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
     const adapter = createAdapter(c);
 
     const row = await adapter.queryOne<JobRow>(
-      `SELECT id, tenant_id, job_type, status, progress, error_code, error_message,
+      `SELECT id, tenant_id, job_type, status, progress, config, error_code, error_message,
               created_by, created_at, updated_at, started_at, completed_at, estimated_completion
        FROM admin_jobs
        WHERE id = ? AND tenant_id = ?`,
@@ -484,10 +514,73 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    return c.json(formatJob(row));
+    return c.json({
+      ...formatJob(row),
+      ...(parseJobConfig(row.config) ? { parameters: parseJobConfig(row.config) } : {}),
+    });
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');
     log.error('Failed to get job', { jobId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * GET /api/admin/jobs/:id/result/download
+ * Download full job result artifact from R2
+ */
+export async function adminJobResultDownloadHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const jobId = c.req.param('id')!;
+
+  if (!jobId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  if (!c.env.IMPORT_ARTIFACTS) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+      variables: { resource: 'job_result', id: jobId },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await adapter.queryOne<Pick<JobRow, 'id' | 'tenant_id' | 'job_type' | 'result_r2_key'>>(
+      `SELECT id, tenant_id, job_type, result_r2_key
+       FROM admin_jobs
+       WHERE id = ? AND tenant_id = ?`,
+      [jobId, tenantId]
+    );
+
+    if (!row || !row.result_r2_key) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result', id: jobId },
+      });
+    }
+
+    const object = await c.env.IMPORT_ARTIFACTS.get(row.result_r2_key);
+    if (!object) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result', id: jobId },
+      });
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('Content-Type', headers.get('Content-Type') || 'application/json');
+    headers.set(
+      'Content-Disposition',
+      `attachment; filename="${sanitizeUserImportFilename(`${row.job_type.replace(/[/:]/g, '-')}-${jobId}.json`)}"`
+    );
+    return new Response(object.body, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to download job result', { jobId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -602,6 +695,12 @@ export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env
       size_bytes: number;
     }>();
 
+    if (!c.env.IMPORT_ARTIFACTS) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
+        variables: { reason: 'IMPORT_ARTIFACTS binding is not configured' },
+      });
+    }
+
     // Validate request
     if (!body.filename || typeof body.filename !== 'string') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -609,38 +708,101 @@ export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env
       });
     }
 
-    if (!body.content_type || body.content_type !== 'text/csv') {
+    const allowedCsvTypes = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel']);
+    if (!body.content_type || !allowedCsvTypes.has(body.content_type)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'content_type', reason: 'Only text/csv is supported' },
+        variables: { field: 'content_type', reason: 'Only CSV uploads are supported' },
       });
     }
 
-    // Size limit: 50MB
-    const MAX_SIZE = 50 * 1024 * 1024;
-    if (!body.size_bytes || body.size_bytes > MAX_SIZE) {
+    if (!body.size_bytes || body.size_bytes > USER_IMPORT_MAX_UPLOAD_BYTES) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'size_bytes', reason: `Maximum file size is ${MAX_SIZE} bytes` },
+        variables: {
+          field: 'size_bytes',
+          reason: `Maximum file size is ${USER_IMPORT_MAX_UPLOAD_BYTES} bytes`,
+        },
       });
     }
 
-    // Generate unique key for R2
-    const jobId = crypto.randomUUID();
-    const r2Key = `imports/${tenantId}/${jobId}/${body.filename}`;
+    const uploadId = crypto.randomUUID();
+    const sanitizedFilename = sanitizeUserImportFilename(body.filename);
+    const r2Key = buildUserImportUploadKey(tenantId, uploadId, sanitizedFilename);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-    // Note: Actual R2 presigned URL generation would require R2 bucket binding
-    // For now, return placeholder structure that shows the expected format
-    // Production implementation would use: await c.env.IMPORT_BUCKET.createMultipartUpload(r2Key)
-
     return c.json({
-      upload_url: `https://storage.authrim.com/upload/${r2Key}?signature=placeholder`,
+      upload_url: `/api/admin/jobs/users/import/upload/${uploadId}?filename=${encodeURIComponent(sanitizedFilename)}`,
+      upload_method: 'PUT',
+      file_key: r2Key,
       r2_key: r2Key,
       expires_at: expiresAt.toISOString(),
-      job_id: jobId,
+      upload_id: uploadId,
     });
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');
     log.error('Failed to generate upload URL', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * PUT /api/admin/jobs/users/import/upload/:upload_id
+ * Upload CSV payload to the dedicated import artifact bucket.
+ */
+export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const uploadId = c.req.param('upload_id')!;
+  const filename = c.req.query('filename');
+
+  if (!c.env.IMPORT_ARTIFACTS) {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
+      variables: { reason: 'IMPORT_ARTIFACTS binding is not configured' },
+    });
+  }
+
+  if (!uploadId || !filename) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: !uploadId ? 'upload_id' : 'filename' },
+    });
+  }
+
+  const contentType = c.req.header('Content-Type') || 'text/csv';
+  const allowedCsvTypes = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel']);
+  if (!allowedCsvTypes.has(contentType)) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'content_type', reason: 'Only CSV uploads are supported' },
+    });
+  }
+
+  try {
+    const payload = await c.req.raw.arrayBuffer();
+    if (payload.byteLength === 0 || payload.byteLength > USER_IMPORT_MAX_UPLOAD_BYTES) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'size_bytes',
+          reason: `Maximum file size is ${USER_IMPORT_MAX_UPLOAD_BYTES} bytes`,
+        },
+      });
+    }
+
+    const key = buildUserImportUploadKey(tenantId, uploadId, filename);
+    await c.env.IMPORT_ARTIFACTS.put(key, payload, {
+      httpMetadata: {
+        contentType: 'text/csv',
+      },
+    });
+
+    return c.json(
+      {
+        upload_id: uploadId,
+        file_key: key,
+        r2_key: key,
+        uploaded_bytes: payload.byteLength,
+      },
+      201
+    );
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to upload import artifact', { uploadId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -654,14 +816,35 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
 
   try {
     const body = await c.req.json<{
-      r2_key: string;
+      file_key?: string;
+      r2_key?: string;
       options?: z.infer<typeof ImportOptionsSchema>;
     }>();
 
-    // Validate r2_key
-    if (!body.r2_key || typeof body.r2_key !== 'string') {
+    if (!c.env.IMPORT_ARTIFACTS) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
+        variables: { reason: 'IMPORT_ARTIFACTS binding is not configured' },
+      });
+    }
+
+    const inputKey = body.file_key ?? body.r2_key;
+
+    if (!inputKey || typeof inputKey !== 'string') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'r2_key' },
+        variables: { field: 'file_key' },
+      });
+    }
+
+    if (!inputKey.startsWith(`imports/${tenantId}/`)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'file_key', reason: 'Import artifact does not belong to the tenant' },
+      });
+    }
+
+    const inputObject = await c.env.IMPORT_ARTIFACTS.get(inputKey);
+    if (!inputObject) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'import_artifact', id: inputKey },
       });
     }
 
@@ -697,16 +880,25 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     await adapter.execute(
       `INSERT INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config, input_r2_key,
-        created_by, created_at, updated_at, estimated_completion
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        result_r2_key, created_by, created_at, updated_at, estimated_completion
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         jobId,
         tenantId,
         'users/import',
         'pending',
-        JSON.stringify({ total: 0, processed: 0, succeeded: 0, failed: 0 }),
+        JSON.stringify({
+          total: 0,
+          processed: 0,
+          succeeded: 0,
+          failed: 0,
+          skipped: 0,
+          percentage: 0,
+          stage: options.validate_only ? 'validation' : 'queued',
+        }),
         JSON.stringify(options),
-        body.r2_key,
+        inputKey,
+        buildUserImportResultKey(tenantId, jobId),
         createdBy,
         nowTs,
         nowTs,
@@ -717,7 +909,7 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     // Write audit log
     await createAuditLogFromContext(c, 'job.created', 'job', jobId, {
       job_type: 'users/import',
-      r2_key: body.r2_key,
+      r2_key: inputKey,
       options,
     });
 
