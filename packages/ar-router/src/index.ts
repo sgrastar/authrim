@@ -267,6 +267,8 @@ app.use('*', async (c, next) => {
       'If-None-Match',
       'X-Diagnostic-Session-Id',
       'X-Session-Id',
+      'Idempotency-Key',
+      'Authrim-Step-Up-Receipt',
     ],
     exposeHeaders: [
       'X-RateLimit-Limit',
@@ -302,6 +304,8 @@ app.use(
       '/device', // Device verification page (form submission, CSRF handled by device code)
       '/bc-authorize', // CIBA (client auth)
       '/api/auth/discovery', // Public discovery + discovery-grant endpoints used by Login UI server-side fetches
+      '/auth/step-up', // Step-up orchestration (Bearer/receipt/idempotency-key based)
+      '/me', // Self-service API (Bearer token auth, not cookie CSRF)
       '/api/admin-init-setup', // Initial admin setup has its own CSRF token + origin validation
       '/vci', // OpenID4VCI endpoints (bearer/proof-based, not cookie CSRF)
       '/vp', // OpenID4VP endpoints (protocol callbacks)
@@ -442,6 +446,11 @@ app.post('/userinfo', async (c) => {
   return c.env.OP_USERINFO.fetch(request);
 });
 
+app.all('/api/protected/customer-profiles/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_USERINFO.fetch(request);
+});
+
 /**
  * Direct Authentication API v1 - Route to OP_AUTH worker
  * BetterAuth-style API for custom login pages
@@ -456,6 +465,11 @@ app.post('/userinfo', async (c) => {
  * - /api/v1/auth/direct/token - Exchange auth_code for session/tokens
  */
 app.all('/api/v1/auth/direct/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/api/v1/registration-fields', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
@@ -678,6 +692,31 @@ app.all('/api/admin/*', async (c) => {
   }
 
   // Route all other admin endpoints to OP_MANAGEMENT
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.all('/api/approval-artifacts/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.all('/api/approval-receipts/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.all('/auth/step-up/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.all('/me/devices', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.all('/me/devices/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 

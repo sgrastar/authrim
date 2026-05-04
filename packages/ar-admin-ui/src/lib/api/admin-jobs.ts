@@ -94,6 +94,9 @@ export interface JobResult {
 	summary: JobResultSummary;
 	failures: JobFailure[];
 	logs: JobLogEntry[];
+	artifact_id?: string;
+	available_formats?: Array<'json' | 'csv'>;
+	manifest_url?: string;
 	download_url?: string;
 }
 
@@ -272,6 +275,13 @@ function normalizeResult(raw: Record<string, unknown> | undefined): JobResult | 
 				email: typeof value.email === 'string' ? value.email : undefined
 			};
 		}),
+		artifact_id: typeof raw.artifact_id === 'string' ? raw.artifact_id : undefined,
+		available_formats: Array.isArray(raw.available_formats)
+			? raw.available_formats.filter(
+					(format): format is 'json' | 'csv' => format === 'json' || format === 'csv'
+				)
+			: undefined,
+		manifest_url: typeof raw.manifest_url === 'string' ? raw.manifest_url : undefined,
 		download_url: typeof raw.download_url === 'string' ? raw.download_url : undefined
 	};
 }

@@ -416,6 +416,14 @@ export function generateWranglerConfig(
         binding: 'IMPORT_ARTIFACTS',
         bucket_name: resourceIds.r2['IMPORT_ARTIFACTS']?.name || `${env}-import-artifacts`,
       });
+      r2Buckets.push({
+        binding: 'EXPORT_ARTIFACTS',
+        bucket_name: resourceIds.r2['EXPORT_ARTIFACTS']?.name || `${env}-export-artifacts`,
+      });
+      r2Buckets.push({
+        binding: 'SENSITIVE_DETAILS',
+        bucket_name: resourceIds.r2['SENSITIVE_DETAILS']?.name || `${env}-sensitive-details`,
+      });
     }
 
     if (r2Buckets.length > 0) {
@@ -1255,7 +1263,10 @@ export function generateRoutes(
       );
       break;
     case 'ar-userinfo':
-      routes.push({ pattern: `${domain}/userinfo`, zone_name: zoneName });
+      routes.push(
+        { pattern: `${domain}/userinfo`, zone_name: zoneName },
+        { pattern: `${domain}/api/protected/customer-profiles/*`, zone_name: zoneName }
+      );
       break;
     case 'ar-discovery':
       routes.push(

@@ -156,6 +156,13 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /api/v1/registration-fields to OP_AUTH', async () => {
+        const req = new Request('https://example.com/api/v1/registration-fields');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route /api/sessions/* to OP_AUTH', async () => {
         const req = new Request('https://example.com/api/sessions/status');
         await app.fetch(req, mockEnv);
@@ -204,6 +211,13 @@ describe('Router Worker', () => {
 
       it('should route POST /userinfo to OP_USERINFO', async () => {
         const req = new Request('https://example.com/userinfo', { method: 'POST' });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_USERINFO.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/protected/customer-profiles/* to OP_USERINFO', async () => {
+        const req = new Request('https://example.com/api/protected/customer-profiles/user-123');
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_USERINFO.fetch).toHaveBeenCalledTimes(1);
@@ -329,6 +343,66 @@ describe('Router Worker', () => {
         const req = new Request('https://example.com/api/admin/clients');
         await app.fetch(req, mockEnv);
 
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/approval-artifacts/* to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/approval-artifacts/apc_123/portal');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/approval-receipts/* to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/approval-receipts/adr_123');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /auth/step-up/* to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/auth/step-up/start', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://app.example.test',
+            Authorization: 'Bearer actor-token',
+            'Content-Type': 'application/json',
+            'Idempotency-Key': 'idem-123',
+          },
+          body: JSON.stringify({ step_up_token: 'stu_123' }),
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route self-service /me/devices to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/me/devices?limit=50', {
+          headers: {
+            Origin: 'https://app.example.test',
+            Authorization: 'Bearer user-token',
+          },
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route self-service /me/devices/:id mutations without router CSRF rejection', async () => {
+        const req = new Request('https://example.com/me/devices/ins_123', {
+          method: 'PATCH',
+          headers: {
+            Origin: 'https://app.example.test',
+            Authorization: 'Bearer user-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ display_name: 'My iPhone' }),
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
@@ -475,6 +549,24 @@ describe('Router Worker', () => {
       expect(res.headers.get('Access-Control-Allow-Methods')).toContain('POST');
       expect(res.headers.get('Access-Control-Allow-Headers')).toContain('Content-Type');
       expect(res.headers.get('Access-Control-Allow-Headers')).toContain('Authorization');
+    });
+
+    it('should allow step-up and delegated-write request headers in preflight', async () => {
+      const req = new Request('https://example.com/auth/step-up/actions/action_123/complete', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://app.example.com',
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers':
+            'Content-Type, Authorization, Idempotency-Key, Authrim-Step-Up-Receipt',
+        },
+      });
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(204);
+      const allowHeaders = res.headers.get('Access-Control-Allow-Headers');
+      expect(allowHeaders).toContain('Idempotency-Key');
+      expect(allowHeaders).toContain('Authrim-Step-Up-Receipt');
     });
 
     it('should expose rate limit and ETag headers', async () => {

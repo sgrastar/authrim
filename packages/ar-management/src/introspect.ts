@@ -196,6 +196,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const authorizationDetails = tokenPayload.authorization_details as
     | IntrospectionResponse['authorization_details']
     | undefined;
+  const authrimElevation = tokenPayload.authrim_elevation as
+    | IntrospectionResponse['authrim_elevation']
+    | undefined;
 
   // ========== Introspection Response Cache Check ==========
   // Cache lookup is performed early to skip expensive operations (JWKS, signature verification)
@@ -432,6 +435,8 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     ...(resource && { resource }),
     // RFC 9396: Include authorization_details if present (RAR)
     ...(authorizationDetails && { authorization_details: authorizationDetails }),
+    // Authrim downstream elevation context for high-risk service-side checks
+    ...(authrimElevation && { authrim_elevation: authrimElevation }),
   };
 
   // ========== Cache active=true Response ==========

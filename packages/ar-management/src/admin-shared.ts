@@ -8,6 +8,14 @@ import {
   requireAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core';
+import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
+import {
+  createObjectCatalogEntry,
+  generatePublicArtifactId,
+  getObjectCatalogObjectRecordByPublicArtifactId,
+  type ObjectClass,
+} from '@authrim/ar-lib-core/services/object-catalog';
+import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
 
 export interface ImageTypeInfo {
   mimeType: string;
@@ -112,16 +120,161 @@ export function detectImageType(data: Uint8Array): ImageTypeInfo | null {
   return null;
 }
 
-function getAdminAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
+function getAdminAdapter(c: Context<any, any, any>): DatabaseAdapter {
   return requireAdminDatabaseAdapter(c.env, 'admin-shared');
 }
 
-async function createAdminAuditLog(
-  c: Context<{ Bindings: Env }>,
-  action: string,
-  resourceId: string | null,
-  result: 'success' | 'failure',
-  metadata?: Record<string, unknown>
+const ENCRYPTED_OBJECT_CONTENT_TYPE = 'application/vnd.authrim.object-envelope+json';
+const ADMIN_AUDIT_DETAIL_CONTENT_TYPE = 'application/json';
+const DEFAULT_OBJECT_KEY_VERSION = 1;
+
+interface AdminAuditDetailPayload {
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
+}
+
+function getObjectEncryptionKeyVersion(env: Env): number {
+  const parsed = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION ?? '', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_OBJECT_KEY_VERSION;
+}
+
+function buildAdminAuditDetailObjectKey(
+  tenantId: string,
+  auditLogId: string,
+  createdAt: number
+): string {
+  const createdAtDate = new Date(createdAt);
+  const year = createdAtDate.getUTCFullYear();
+  const month = String(createdAtDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(createdAtDate.getUTCDate()).padStart(2, '0');
+  return `admin-audit/${tenantId}/${year}/${month}/${day}/${auditLogId}.json`;
+}
+
+async function storeAdminAuditDetail(
+  c: Context<any, any, any>,
+  adminAdapter: DatabaseAdapter,
+  tenantId: string,
+  auditLogId: string,
+  detail: AdminAuditDetailPayload,
+  createdAt: number
+): Promise<string | null> {
+  if (!c.env.SENSITIVE_DETAILS || !c.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    return null;
+  }
+
+  const objectClass: ObjectClass = 'admin_audit_detail';
+  const objectKey = buildAdminAuditDetailObjectKey(tenantId, auditLogId, createdAt);
+  const keyVersion = getObjectEncryptionKeyVersion(c.env);
+  const encrypted = await encryptObjectArtifact(JSON.stringify(detail), {
+    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
+    plane: 'SENSITIVE_DETAILS',
+    keyVersion,
+    contentType: ADMIN_AUDIT_DETAIL_CONTENT_TYPE,
+    context: {
+      tenantId,
+      objectKey,
+      objectClass,
+    },
+  });
+  const body = JSON.stringify(encrypted);
+  const bodyBytes = new TextEncoder().encode(body);
+  const checksumBuffer = await crypto.subtle.digest('SHA-256', bodyBytes);
+  const checksumSha256 = Array.from(new Uint8Array(checksumBuffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+
+  await c.env.SENSITIVE_DETAILS.put(objectKey, body, {
+    httpMetadata: { contentType: ENCRYPTED_OBJECT_CONTENT_TYPE },
+  });
+
+  const { catalogId } = await createObjectCatalogEntry(adminAdapter, {
+    tenantId,
+    objectClass,
+    publicArtifactId: generatePublicArtifactId(),
+    createdAt,
+    objects: [
+      {
+        representation: 'canonical_json',
+        objectKind: 'single',
+        bucketBinding: 'SENSITIVE_DETAILS',
+        objectKey,
+        keyVersion,
+        checksumSha256,
+        totalBytes: bodyBytes.byteLength,
+      },
+    ],
+  });
+
+  return catalogId;
+}
+
+export async function loadAdminAuditDetail(
+  c: Context<any, any, any>,
+  adminAdapter: DatabaseAdapter,
+  tenantId: string,
+  detailArtifactId: string | null | undefined,
+  objectCatalogId?: string | null | undefined
+): Promise<AdminAuditDetailPayload | null> {
+  if (!c.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    return null;
+  }
+
+  const fallbackCatalogId =
+    objectCatalogId ?? (detailArtifactId && !detailArtifactId.startsWith('oa_') ? detailArtifactId : null);
+
+  const resolvedCatalogId = detailArtifactId
+    ? (await getObjectCatalogObjectRecordByPublicArtifactId(
+        adminAdapter,
+        detailArtifactId,
+        'canonical_json',
+        0
+      ))?.logical.id ?? null
+    : null;
+
+  const effectiveCatalogId = resolvedCatalogId ?? fallbackCatalogId;
+  const loaded = effectiveCatalogId
+    ? await loadCatalogObjectJson<Partial<AdminAuditDetailPayload>>(adminAdapter, c.env, {
+        tenantId,
+        objectCatalogId: effectiveCatalogId,
+        expectedClass: 'admin_audit_detail',
+        expectedBucketBinding: 'SENSITIVE_DETAILS',
+        allowPlaintextFallback: false,
+      })
+    : null;
+  if (!loaded) {
+    return null;
+  }
+  const parsed = loaded.value;
+
+  return {
+    before:
+      parsed.before && typeof parsed.before === 'object' && !Array.isArray(parsed.before)
+        ? (parsed.before as Record<string, unknown>)
+        : null,
+    after:
+      parsed.after && typeof parsed.after === 'object' && !Array.isArray(parsed.after)
+        ? (parsed.after as Record<string, unknown>)
+        : null,
+    metadata:
+      parsed.metadata && typeof parsed.metadata === 'object' && !Array.isArray(parsed.metadata)
+        ? (parsed.metadata as Record<string, unknown>)
+        : null,
+  };
+}
+
+export async function writeAdminAuditLog(
+  c: Context<any, any, any>,
+  input: {
+    action: string;
+    resourceType: string;
+    resourceId: string | null;
+    result: 'success' | 'failure';
+    severity?: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+    metadata?: Record<string, unknown>;
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+  }
 ): Promise<void> {
   try {
     const adminAdapter = getAdminAdapter(c);
@@ -136,36 +289,61 @@ async function createAdminAuditLog(
       c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
       'unknown';
     const userAgent = c.req.header('User-Agent') || 'unknown';
-    const resourceType = action.startsWith('client.') ? 'client' : 'user';
+    const createdAt = Date.now();
+    const auditLogId = crypto.randomUUID();
+    const detailPayload: AdminAuditDetailPayload = {
+      before: input.before ?? null,
+      after: input.after ?? null,
+      metadata: input.metadata ?? null,
+    };
+    const hasExternalizableDetail = !!(
+      detailPayload.before ||
+      detailPayload.after ||
+      detailPayload.metadata
+    );
+    const detailObjectCatalogId = hasExternalizableDetail
+      ? await storeAdminAuditDetail(c, adminAdapter, tenantId, auditLogId, detailPayload, createdAt)
+      : null;
 
     await auditRepo.createAuditLog({
+      id: auditLogId,
       tenant_id: tenantId,
       admin_user_id: adminAuth?.userId || 'system',
       admin_email: adminAuth?.email ?? undefined,
-      action,
-      resource_type: resourceType,
-      resource_id: resourceId ?? undefined,
-      result,
-      severity: result === 'failure' ? 'warn' : 'info',
+      action: input.action,
+      resource_type: input.resourceType,
+      resource_id: input.resourceId ?? undefined,
+      result: input.result,
+      severity: input.severity ?? (input.result === 'failure' ? 'warn' : 'info'),
       ip_address: ipAddress,
       user_agent: userAgent,
       session_id: adminAuth?.sessionId ?? undefined,
-      metadata: metadata ?? undefined,
+      before: detailObjectCatalogId ? undefined : detailPayload.before ?? undefined,
+      after: detailObjectCatalogId ? undefined : detailPayload.after ?? undefined,
+      metadata: detailObjectCatalogId ? undefined : detailPayload.metadata ?? undefined,
+      detail_object_catalog_id: detailObjectCatalogId ?? undefined,
     });
   } catch (error) {
     const log = getLogger(c).module('ADMIN');
-    log.error('Failed to create admin audit log', { action }, error as Error);
+    log.error('Failed to create admin audit log', { action: input.action }, error as Error);
   }
 }
 
 export function scheduleAdminAuditLog(
-  c: Context<{ Bindings: Env }>,
+  c: Context<any, any, any>,
   action: string,
   resourceId: string | null,
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): void {
-  const promise = createAdminAuditLog(c, action, resourceId, result, metadata);
+  const resourceType = action.startsWith('client.') ? 'client' : 'user';
+  const promise = writeAdminAuditLog(c, {
+    action,
+    resourceType,
+    resourceId,
+    result,
+    metadata,
+  });
   c.executionCtx?.waitUntil(promise);
 }
 

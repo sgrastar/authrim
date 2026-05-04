@@ -56,7 +56,9 @@ export interface Env {
   // R2 Buckets
   AVATARS: R2Bucket;
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
-  IMPORT_ARTIFACTS?: R2Bucket; // Dedicated admin job artifacts (user imports, job result bundles)
+  IMPORT_ARTIFACTS?: R2Bucket; // Dedicated import input artifacts
+  EXPORT_ARTIFACTS?: R2Bucket; // Generated export/output artifacts
+  SENSITIVE_DETAILS?: R2Bucket; // Encrypted sensitive detail payloads (admin audit, webhook payloads, etc.)
 
   // KV Namespaces
   STATE_STORE: KVNamespace;
@@ -181,6 +183,15 @@ export interface Env {
   PII_ENCRYPTION_ALGORITHM?: string; // AES-256-GCM (default), AES-256-CBC, or NONE
   PII_ENCRYPTION_FIELDS?: string; // Comma-separated list of fields to encrypt
   PII_ENCRYPTION_KEY_VERSION?: string; // Key version for rotation (default: 1)
+
+  // Object Artifact Encryption
+  OBJECT_ENCRYPTION_ROOT_KEY?: string; // 32-byte hex string (64 characters) for object plane envelope encryption
+  OBJECT_ENCRYPTION_KEY_VERSION?: string; // Key version for object plane encryption (default: 1)
+
+  // Downstream Grant Service Integration
+  USERINFO_PROTECTED_RESOURCE_AUDIENCE?: string; // Expected audience for protected customer profile reads
+  DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID?: string; // Optional client_id for downstream online introspection
+  DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET?: string; // Optional client_secret for downstream online introspection
 
   // Token Introspection
   ENABLE_INTROSPECTION_STRICT_VALIDATION?: string; // "true" to enable strict audience/client_id validation

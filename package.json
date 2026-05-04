@@ -47,10 +47,13 @@
     "setup:deploy": "tsx packages/setup/src/index.ts deploy",
     "setup:status": "tsx packages/setup/src/index.ts status",
     "setup:info": "tsx packages/setup/src/index.ts info",
-    "setup:validate-generated-env": "tsx test/setup-portability/validate-generated-env.ts",
-    "setup:smoke-generated-api": "tsx test/setup-portability/smoke-generated-api.ts",
-    "setup:smoke-generated-admin-api": "tsx test/setup-portability/smoke-generated-admin-api.ts",
-    "setup:smoke-generated-auth-flow": "tsx test/setup-portability/smoke-generated-auth-flow.ts"
+    "setup:validate-generated-env": "tsx test/environment-validation/validate-generated-env.ts",
+    "setup:smoke-generated-api": "tsx test/environment-validation/smoke-generated-api.ts",
+    "setup:smoke-generated-admin-api": "tsx test/environment-validation/smoke-generated-admin-api.ts",
+    "setup:smoke-generated-auth-flow": "tsx test/environment-validation/smoke-generated-auth-flow.ts",
+    "setup:smoke-generated-approvals": "tsx test/environment-validation/smoke-generated-approvals.ts",
+    "setup:smoke-generated-server-surfaces": "tsx test/environment-validation/smoke-generated-server-surfaces.ts",
+    "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts"
   },
   "workspaces": [
     "packages/*"

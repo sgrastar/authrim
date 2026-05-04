@@ -42,6 +42,14 @@ interface AdminAuditLogEntity extends BaseEntity {
   before_json: string | null;
   after_json: string | null;
   metadata_json: string | null;
+  detail_object_catalog_id: string | null;
+  detail_artifact_id?: string | null;
+}
+
+export interface AdminAuditLogEntryWithDetailReference {
+  entry: AdminAuditLogEntry;
+  detailObjectCatalogId: string | null;
+  detailArtifactId: string | null;
 }
 
 /**
@@ -88,6 +96,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
         'before_json',
         'after_json',
         'metadata_json',
+        'detail_object_catalog_id',
       ],
     });
   }
@@ -99,7 +108,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
    * @returns Created audit log entry
    */
   async createAuditLog(input: AdminAuditLogCreateInput): Promise<AdminAuditLogEntry> {
-    const id = generateId();
+    const id = input.id ?? generateId();
     const now = getCurrentTimestamp();
 
     const entry: AdminAuditLogEntity = {
@@ -121,6 +130,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       before_json: input.before ? JSON.stringify(input.before) : null,
       after_json: input.after ? JSON.stringify(input.after) : null,
       metadata_json: input.metadata ? JSON.stringify(input.metadata) : null,
+      detail_object_catalog_id: input.detail_object_catalog_id ?? null,
       created_at: now,
       updated_at: now,
     };
@@ -130,8 +140,8 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
         id, tenant_id, admin_user_id, admin_email, action,
         resource_type, resource_id, result, error_code, error_message,
         severity, ip_address, user_agent, request_id, session_id,
-        before_json, after_json, metadata_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        before_json, after_json, metadata_json, detail_object_catalog_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
@@ -153,6 +163,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       entry.before_json,
       entry.after_json,
       entry.metadata_json,
+      entry.detail_object_catalog_id,
       entry.created_at,
     ]);
 
@@ -171,6 +182,30 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       [id]
     );
     return row ? this.rowToAuditLog(row) : null;
+  }
+
+  async getAuditLogWithDetailReference(
+    id: string
+  ): Promise<AdminAuditLogEntryWithDetailReference | null> {
+    const row = await this.adapter.queryOne<Record<string, unknown>>(
+      `SELECT aal.*, oc.public_artifact_id AS detail_artifact_id
+       FROM admin_audit_log aal
+       LEFT JOIN object_catalog oc
+         ON oc.id = aal.detail_object_catalog_id
+        AND oc.deleted_at IS NULL
+       WHERE aal.id = ?`,
+      [id]
+    );
+    if (!row) {
+      return null;
+    }
+    return {
+      entry: this.rowToAuditLog(row),
+      detailObjectCatalogId:
+        typeof row.detail_object_catalog_id === 'string' ? row.detail_object_catalog_id : null,
+      detailArtifactId:
+        typeof row.detail_artifact_id === 'string' ? row.detail_artifact_id : null,
+    };
   }
 
   /**
@@ -245,7 +280,20 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
     const total = countResult?.count ?? 0;
 
     // Data query (always order by created_at DESC for audit logs)
-    const dataSql = `SELECT * FROM admin_audit_log ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+    const qualifiedWhereClause = whereClause
+      ? `WHERE ${conditions.map((condition) => `aal.${condition}`).join(' AND ')}`
+      : '';
+
+    const dataSql = `
+      SELECT aal.*, oc.public_artifact_id AS detail_artifact_id
+      FROM admin_audit_log aal
+      LEFT JOIN object_catalog oc
+        ON oc.id = aal.detail_object_catalog_id
+       AND oc.deleted_at IS NULL
+      ${qualifiedWhereClause}
+      ORDER BY aal.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
     const rows = await this.adapter.query<Record<string, unknown>>(dataSql, [
       ...params,
       limit,
@@ -436,6 +484,9 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       before,
       after,
       metadata,
+      has_detail: !!row.detail_object_catalog_id,
+      detail_artifact_id:
+        typeof row.detail_artifact_id === 'string' ? row.detail_artifact_id : null,
       created_at: row.created_at as number,
     };
   }
@@ -489,6 +540,8 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       before,
       after,
       metadata,
+      has_detail: !!entity.detail_object_catalog_id,
+      detail_artifact_id: entity.detail_artifact_id ?? null,
       created_at: entity.created_at,
     };
   }

@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
-import { LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
+import { clearNativeSSOConfigCache, LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
 
 /**
  * Create a mock environment for testing
@@ -24,6 +24,7 @@ describe('Discovery Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
   beforeEach(() => {
+    clearNativeSSOConfigCache();
     app = new Hono<{ Bindings: Env }>();
     app.get('/.well-known/openid-configuration', discoveryHandler);
   });
@@ -209,6 +210,26 @@ describe('Discovery Handler', () => {
       expect(metadata.claims_supported).toContain('iat');
       expect(metadata.claims_supported).toContain('name');
       expect(metadata.claims_supported).toContain('email');
+    });
+
+    it('should expose only the canonical Native SSO discovery field when enabled', async () => {
+      const env = {
+        ...createMockEnv(),
+        NATIVE_SSO_ENABLED: 'true',
+      } as Env;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata & Record<string, unknown>;
+      expect(metadata.native_sso_supported).toBe(true);
+      expect(metadata.native_sso_token_exchange_supported).toBeUndefined();
+      expect(metadata.native_sso_device_secret_supported).toBeUndefined();
     });
 
     it('should support multiple token endpoint auth methods', async () => {

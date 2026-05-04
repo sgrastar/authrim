@@ -17,6 +17,7 @@
 import { Context } from 'hono';
 import type {
   Env,
+  DatabaseAdapter,
   DataExportRequest,
   DataExportSection,
   DataExportFormat,
@@ -25,13 +26,24 @@ import type {
 import {
   createAuthContextFromHono,
   createPIIContextFromHono,
+  ensureDatabaseAdapter,
+  listObjectCatalogObjects,
   getTenantIdFromContext,
   introspectTokenFromContext,
   getSessionStoreBySessionId,
   createOAuthConfigManager,
   getLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  type ObjectCatalogListResult,
+  type ObjectCatalogPhysicalRecord,
+  type ObjectRepresentation,
 } from '@authrim/ar-lib-core';
+import {
+  loadCatalogObjectArtifact,
+  loadCatalogObjectRepresentation,
+} from '@authrim/ar-lib-core/services/object-artifact-store';
 import { getCookie } from 'hono/cookie';
+import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 
 // Default export sections
 const ALL_SECTIONS: DataExportSection[] = [
@@ -41,6 +53,259 @@ const ALL_SECTIONS: DataExportSection[] = [
   'audit_log',
   'passkeys',
 ];
+
+const DATA_EXPORT_DOWNLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+const DATA_EXPORT_PROCESS_BATCH_LIMIT = 3;
+type ExportArtifactFormat = DataExportFormat;
+
+interface ExportArtifactManifestObject {
+  format: ExportArtifactFormat | null;
+  representation: ObjectRepresentation;
+  objectKind: 'single' | 'manifest' | 'chunk';
+  objectIndex: number;
+  totalBytes?: number | null;
+  checksumSha256?: string | null;
+  downloadUrl?: string;
+  chunkUrl?: string;
+}
+
+interface ExportArtifactManifestResponse {
+  artifactId: string;
+  requestId: string;
+  status: string;
+  defaultFormat: ExportArtifactFormat;
+  availableFormats: ExportArtifactFormat[];
+  objectClass: string;
+  expiresAt?: number | null;
+  createdAt: number;
+  objects: ExportArtifactManifestObject[];
+}
+
+interface PendingDataExportRow {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  status: 'pending' | 'processing';
+  format: DataExportFormat;
+  include_sections: string;
+  requested_at: number;
+}
+
+function buildDataExportObjectKey(
+  tenantId: string,
+  requestId: string,
+  format: DataExportFormat
+): string {
+  return `exports/${tenantId}/data-export/${requestId}/artifact.${format === 'csv' ? 'csv' : 'json'}`;
+}
+
+function escapeCsvCell(value: string): string {
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+function flattenCsvRows(
+  rows: string[][],
+  section: string,
+  itemIndex: number | null,
+  fieldPath: string,
+  value: unknown
+): void {
+  if (value === undefined || value === null) {
+    rows.push([section, itemIndex === null ? '' : String(itemIndex), fieldPath, '']);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      rows.push([section, itemIndex === null ? '' : String(itemIndex), fieldPath, '']);
+      return;
+    }
+    value.forEach((entry, index) => {
+      const nextPath = `${fieldPath}[${index}]`;
+      flattenCsvRows(rows, section, itemIndex, nextPath, entry);
+    });
+    return;
+  }
+
+  if (typeof value === 'object') {
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      const nextPath = fieldPath ? `${fieldPath}.${key}` : key;
+      flattenCsvRows(rows, section, itemIndex, nextPath, nestedValue);
+    }
+    return;
+  }
+
+  rows.push([section, itemIndex === null ? '' : String(itemIndex), fieldPath, String(value)]);
+}
+
+function serializeExportDataToCsv(data: ExportedUserData): string {
+  const rows: string[][] = [['section', 'item_index', 'field', 'value']];
+
+  for (const [section, value] of Object.entries(data)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => {
+        flattenCsvRows(rows, section, index, '', entry);
+      });
+      continue;
+    }
+
+    flattenCsvRows(rows, section, null, '', value);
+  }
+
+  return rows.map((row) => row.map(escapeCsvCell).join(',')).join('\n');
+}
+
+function representationForExportFormat(format: ExportArtifactFormat): ObjectRepresentation {
+  return format === 'csv' ? 'csv_projection' : 'canonical_json';
+}
+
+function exportFormatForRepresentation(
+  representation: ObjectRepresentation
+): ExportArtifactFormat | null {
+  if (representation === 'csv_projection') {
+    return 'csv';
+  }
+  if (representation === 'canonical_json') {
+    return 'json';
+  }
+  return null;
+}
+
+function normalizeRequestedExportFormat(value: string | undefined, fallback: ExportArtifactFormat) {
+  if (value === 'csv' || value === 'json') {
+    return value;
+  }
+  return fallback;
+}
+
+async function loadEncryptedExportArtifactRepresentation(
+  adapter: DatabaseAdapter,
+  env: Env,
+  tenantId: string,
+  objectCatalogId: string,
+  representation: ObjectRepresentation = 'canonical_json'
+): Promise<{ content: string; contentType: string } | null> {
+  if (!env.EXPORT_ARTIFACTS || !env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    return null;
+  }
+
+  const artifact = await loadCatalogObjectRepresentation(
+    adapter,
+    env,
+    {
+      tenantId,
+      objectCatalogId,
+      representation,
+      expectedClass: 'user_export',
+      expectedBucketBinding: 'EXPORT_ARTIFACTS',
+      allowPlaintextFallback: false,
+    }
+  );
+  if (!artifact) {
+    return null;
+  }
+
+  return {
+    content: artifact.content,
+    contentType: artifact.contentType,
+  };
+}
+
+async function loadEncryptedExportArtifactChunk(
+  adapter: DatabaseAdapter,
+  env: Env,
+  tenantId: string,
+  objectCatalogId: string,
+  representation: ObjectRepresentation,
+  objectIndex: number
+): Promise<{ content: string; contentType: string } | null> {
+  if (!env.EXPORT_ARTIFACTS || !env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    return null;
+  }
+
+  const artifact = await loadCatalogObjectArtifact(adapter, env, {
+    tenantId,
+    objectCatalogId,
+    representation,
+    objectIndex,
+    expectedClass: 'user_export',
+    expectedBucketBinding: 'EXPORT_ARTIFACTS',
+    allowPlaintextFallback: false,
+  });
+  if (!artifact) {
+    return null;
+  }
+
+  return {
+    content: artifact.content,
+    contentType: artifact.contentType,
+  };
+}
+
+function buildExportArtifactManifestResponse(
+  request: {
+    requestId: string;
+    status: string;
+    format: ExportArtifactFormat;
+    expiresAt?: number | null;
+  },
+  catalog: ObjectCatalogListResult
+): ExportArtifactManifestResponse {
+  const objects = catalog.physical.map<ExportArtifactManifestObject>(
+    (physical: ObjectCatalogPhysicalRecord) => {
+      const format = exportFormatForRepresentation(physical.representation);
+      const manifestObject: ExportArtifactManifestObject = {
+        format,
+        representation: physical.representation,
+        objectKind: physical.objectKind,
+        objectIndex: physical.chunkIndex ?? 0,
+        totalBytes: physical.totalBytes,
+        checksumSha256: physical.checksumSha256,
+      };
+
+      if (physical.objectKind === 'chunk') {
+        manifestObject.chunkUrl =
+          `/api/user/data-export/artifacts/${catalog.logical.publicArtifactId}` +
+          `/chunks/${physical.chunkIndex ?? 0}${format ? `?format=${format}` : ''}`;
+      } else if (format) {
+        manifestObject.downloadUrl =
+          `/api/user/data-export/artifacts/${catalog.logical.publicArtifactId}/download?format=${format}`;
+      }
+
+      return manifestObject;
+    }
+  );
+
+  const availableFormats: ExportArtifactFormat[] = Array.from(
+    new Set(
+      objects
+        .map((object: ExportArtifactManifestObject) => object.format)
+        .filter(
+          (format: ExportArtifactFormat | null): format is ExportArtifactFormat =>
+            format === 'json' || format === 'csv'
+        )
+    )
+  );
+
+  return {
+    artifactId: catalog.logical.publicArtifactId,
+    requestId: request.requestId,
+    status: request.status,
+    defaultFormat: request.format,
+    availableFormats,
+    objectClass: catalog.logical.objectClass,
+    expiresAt: request.expiresAt,
+    createdAt: catalog.logical.createdAt,
+    objects,
+  };
+}
 
 /**
  * Get user ID from request context
@@ -250,11 +515,15 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
       expires_at: number | null;
       file_size: number | null;
       error_message: string | null;
+      object_catalog_id: string | null;
+      public_artifact_id: string | null;
     }>(
-      `SELECT id, status, format, include_sections, requested_at,
-              started_at, completed_at, expires_at, file_size, error_message
-       FROM data_export_requests
-       WHERE id = ? AND user_id = ? AND tenant_id = ?`,
+      `SELECT der.id, der.status, der.format, der.include_sections, der.requested_at,
+              der.started_at, der.completed_at, der.expires_at, der.file_size, der.error_message,
+              der.object_catalog_id, oc.public_artifact_id
+       FROM data_export_requests der
+       LEFT JOIN object_catalog oc ON oc.id = der.object_catalog_id AND oc.deleted_at IS NULL
+       WHERE der.id = ? AND der.user_id = ? AND der.tenant_id = ?`,
       [requestId, userId, tenantId]
     );
 
@@ -272,6 +541,7 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
 
     const response: DataExportRequest = {
       id: request.id,
+      publicArtifactId: request.public_artifact_id ?? undefined,
       userId,
       status: request.status as DataExportRequest['status'],
       format: request.format as DataExportFormat,
@@ -281,6 +551,9 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
       completedAt: request.completed_at ?? undefined,
       expiresAt: request.expires_at ?? undefined,
       fileSize: request.file_size ?? undefined,
+      availableFormats: request.object_catalog_id
+        ? [request.format as DataExportFormat]
+        : undefined,
       errorMessage: request.error_message ?? undefined,
     };
 
@@ -296,6 +569,92 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
       500
     );
   }
+}
+
+interface DataExportDownloadRow {
+  id: string;
+  status: string;
+  format: DataExportFormat;
+  include_sections: string;
+  expires_at: number | null;
+  file_path: string | null;
+  object_catalog_id: string | null;
+  public_artifact_id: string | null;
+}
+
+async function getDataExportRequestById(
+  adapter: DatabaseAdapter,
+  requestId: string,
+  userId: string,
+  tenantId: string
+): Promise<DataExportDownloadRow | null> {
+  return (
+    (await adapter.query<DataExportDownloadRow>(
+      `SELECT der.id, der.status, der.format, der.include_sections, der.expires_at, der.file_path,
+              der.object_catalog_id, oc.public_artifact_id
+         FROM data_export_requests der
+         LEFT JOIN object_catalog oc ON oc.id = der.object_catalog_id AND oc.deleted_at IS NULL
+        WHERE der.id = ? AND der.user_id = ? AND der.tenant_id = ?`,
+      [requestId, userId, tenantId]
+    ))[0] ?? null
+  );
+}
+
+async function getDataExportRequestByArtifactId(
+  adapter: DatabaseAdapter,
+  artifactId: string,
+  userId: string,
+  tenantId: string
+): Promise<DataExportDownloadRow | null> {
+  return (
+    (await adapter.query<DataExportDownloadRow>(
+      `SELECT der.id, der.status, der.format, der.include_sections, der.expires_at, der.file_path,
+              der.object_catalog_id, oc.public_artifact_id
+         FROM data_export_requests der
+         INNER JOIN object_catalog oc ON oc.id = der.object_catalog_id
+        WHERE oc.public_artifact_id = ?
+          AND oc.deleted_at IS NULL
+          AND der.user_id = ?
+          AND der.tenant_id = ?`,
+      [artifactId, userId, tenantId]
+    ))[0] ?? null
+  );
+}
+
+function createExportFilename(format: DataExportFormat): string {
+  return `data-export-${new Date().toISOString().split('T')[0]}.${format}`;
+}
+
+async function createMaterializedExportDownloadResponse(
+  c: Context<{ Bindings: Env }>,
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  request: DataExportDownloadRow,
+  requestedFormat: ExportArtifactFormat
+): Promise<Response | null> {
+  if (!request.object_catalog_id) {
+    return null;
+  }
+
+  const artifact = await loadEncryptedExportArtifactRepresentation(
+    adapter,
+    c.env,
+    tenantId,
+    request.object_catalog_id,
+    representationForExportFormat(requestedFormat)
+  );
+  if (!artifact) {
+    return null;
+  }
+
+  return new Response(artifact.content, {
+    status: 200,
+    headers: {
+      'Content-Type':
+        artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
+      'Content-Disposition': `attachment; filename="${createExportFilename(requestedFormat)}"`,
+    },
+  });
 }
 
 /**
@@ -328,21 +687,8 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
 
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-
-    const result = await authCtx.coreAdapter.query<{
-      status: string;
-      format: string;
-      include_sections: string;
-      expires_at: number | null;
-      file_path: string | null;
-    }>(
-      `SELECT status, format, include_sections, expires_at, file_path
-       FROM data_export_requests
-       WHERE id = ? AND user_id = ? AND tenant_id = ?`,
-      [requestId, userId, tenantId]
-    );
-
-    if (result.length === 0) {
+    const request = await getDataExportRequestById(authCtx.coreAdapter, requestId, userId, tenantId);
+    if (!request) {
       return c.json(
         {
           error: 'not_found',
@@ -351,8 +697,6 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
         404
       );
     }
-
-    const request = result[0];
 
     if (request.status !== 'completed') {
       return c.json(
@@ -376,25 +720,77 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // For async exports, file would be in R2
-    // For now, regenerate the data (sync fallback)
-    const sections = JSON.parse(request.include_sections) as DataExportSection[];
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-
-    const exportedData = await collectExportData(
-      authCtx.coreAdapter,
-      piiCtx?.defaultPiiAdapter ?? null,
-      userId,
-      tenantId,
-      sections
+    const manifestView = c.req.header('X-Authrim-Artifact-View') === 'manifest';
+    const queryAccessor = c.req as { query?: (key: string) => string | undefined };
+    const requestedFormat = normalizeRequestedExportFormat(
+      queryAccessor.query?.('format'),
+      request.format
     );
+    const viewQuery = queryAccessor.query?.('view');
+    if (manifestView || viewQuery === 'manifest') {
+      if (!request.object_catalog_id || !request.public_artifact_id) {
+        return c.json(
+          {
+            error: 'not_supported',
+            error_description: 'Manifest view is only available for materialized exports',
+          },
+          409
+        );
+      }
 
-    // Set appropriate headers
-    const filename = `data-export-${new Date().toISOString().split('T')[0]}.json`;
-    c.header('Content-Type', 'application/json');
-    c.header('Content-Disposition', `attachment; filename="${filename}"`);
+      const catalog = await listObjectCatalogObjects(authCtx.coreAdapter, request.object_catalog_id);
+      if (!catalog) {
+        return c.json(
+          {
+            error: 'not_found',
+            error_description: 'Export artifact manifest not found',
+          },
+          404
+        );
+      }
 
-    return c.json(exportedData);
+      return c.json(
+        buildExportArtifactManifestResponse(
+          {
+            requestId,
+            status: request.status,
+            format: request.format,
+            expiresAt: request.expires_at,
+          },
+          catalog
+        )
+      );
+    }
+
+    if (!request.object_catalog_id) {
+      return c.json(
+        {
+          error: 'not_materialized',
+          error_description:
+            'Completed export does not have a materialized artifact. Retry after background processing or recreate the export request.',
+        },
+        409
+      );
+    }
+
+    const materializedResponse = await createMaterializedExportDownloadResponse(
+      c,
+      authCtx.coreAdapter,
+      tenantId,
+      request,
+      requestedFormat
+    );
+    if (materializedResponse) {
+      return materializedResponse;
+    }
+
+    return c.json(
+      {
+        error: 'not_found',
+        error_description: 'Materialized export artifact not found',
+      },
+      404
+    );
   } catch (error) {
     const log = getLogger(c).module('DATA-EXPORT');
     log.error('Failed to download export', {}, error as Error);
@@ -405,6 +801,444 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
       },
       500
     );
+  }
+}
+
+export async function dataExportArtifactManifestHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = await getUserIdFromContext(c);
+    if (!userId) {
+      return c.json(
+        {
+          error: 'unauthorized',
+          error_description: 'Authentication required',
+        },
+        401
+      );
+    }
+
+    const artifactId = c.req.param('artifactId')!;
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const request = await getDataExportRequestByArtifactId(
+      authCtx.coreAdapter,
+      artifactId,
+      userId,
+      tenantId
+    );
+    if (!request || !request.object_catalog_id || !request.public_artifact_id) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Export artifact not found',
+        },
+        404
+      );
+    }
+
+    const catalog = await listObjectCatalogObjects(authCtx.coreAdapter, request.object_catalog_id);
+    if (!catalog) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Export artifact manifest not found',
+        },
+        404
+      );
+    }
+
+    return c.json(
+      buildExportArtifactManifestResponse(
+        {
+          requestId: request.id,
+          status: request.status,
+          format: request.format,
+          expiresAt: request.expires_at,
+        },
+        catalog
+      )
+    );
+  } catch (error) {
+    const log = getLogger(c).module('DATA-EXPORT');
+    log.error('Failed to get export artifact manifest', {}, error as Error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to get export artifact manifest',
+      },
+      500
+    );
+  }
+}
+
+export async function dataExportArtifactDownloadHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = await getUserIdFromContext(c);
+    if (!userId) {
+      return c.json(
+        {
+          error: 'unauthorized',
+          error_description: 'Authentication required',
+        },
+        401
+      );
+    }
+
+    const artifactId = c.req.param('artifactId')!;
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const request = await getDataExportRequestByArtifactId(
+      authCtx.coreAdapter,
+      artifactId,
+      userId,
+      tenantId
+    );
+    if (!request) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Export artifact not found',
+        },
+        404
+      );
+    }
+
+    if (request.status !== 'completed') {
+      return c.json(
+        {
+          error: 'not_ready',
+          error_description: `Export is ${request.status}`,
+        },
+        409
+      );
+    }
+
+    if (request.expires_at && request.expires_at < Date.now()) {
+      return c.json(
+        {
+          error: 'expired',
+          error_description: 'Export has expired',
+        },
+        410
+      );
+    }
+
+    const requestedFormat = normalizeRequestedExportFormat(
+      (c.req as { query?: (key: string) => string | undefined }).query?.('format'),
+      request.format
+    );
+    const response = await createMaterializedExportDownloadResponse(
+      c,
+      authCtx.coreAdapter,
+      tenantId,
+      request,
+      requestedFormat
+    );
+    if (!response) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Requested artifact representation is not available',
+        },
+        404
+      );
+    }
+
+    return response;
+  } catch (error) {
+    const log = getLogger(c).module('DATA-EXPORT');
+    log.error('Failed to download export artifact', {}, error as Error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to download export artifact',
+      },
+      500
+    );
+  }
+}
+
+export async function dataExportArtifactChunkHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = await getUserIdFromContext(c);
+    if (!userId) {
+      return c.json(
+        {
+          error: 'unauthorized',
+          error_description: 'Authentication required',
+        },
+        401
+      );
+    }
+
+    const artifactId = c.req.param('artifactId')!;
+    const chunkIndex = Number.parseInt(c.req.param('index') || '0', 10);
+    if (!Number.isFinite(chunkIndex) || chunkIndex < 0) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Chunk index must be a non-negative integer',
+        },
+        400
+      );
+    }
+
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const request = await getDataExportRequestByArtifactId(
+      authCtx.coreAdapter,
+      artifactId,
+      userId,
+      tenantId
+    );
+    if (!request || !request.object_catalog_id) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Export artifact not found',
+        },
+        404
+      );
+    }
+
+    if (request.status !== 'completed') {
+      return c.json(
+        {
+          error: 'not_ready',
+          error_description: `Export is ${request.status}`,
+        },
+        409
+      );
+    }
+
+    if (request.expires_at && request.expires_at < Date.now()) {
+      return c.json(
+        {
+          error: 'expired',
+          error_description: 'Export has expired',
+        },
+        410
+      );
+    }
+
+    const requestedFormat = normalizeRequestedExportFormat(
+      (c.req as { query?: (key: string) => string | undefined }).query?.('format'),
+      request.format
+    );
+    const chunkArtifact = await loadEncryptedExportArtifactChunk(
+      authCtx.coreAdapter,
+      c.env,
+      tenantId,
+      request.object_catalog_id,
+      representationForExportFormat(requestedFormat),
+      chunkIndex
+    );
+    if (!chunkArtifact) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Export artifact chunk not found',
+        },
+        404
+      );
+    }
+
+    const chunkMetadata = await loadCatalogObjectRepresentation(
+      authCtx.coreAdapter,
+      c.env,
+      {
+        tenantId,
+        objectCatalogId: request.object_catalog_id,
+        representation: representationForExportFormat(requestedFormat),
+        expectedClass: 'user_export',
+        expectedBucketBinding: 'EXPORT_ARTIFACTS',
+        allowPlaintextFallback: false,
+      }
+    );
+    if (!chunkMetadata) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Export artifact chunk not found',
+        },
+        404
+      );
+    }
+
+    const singleObject = chunkMetadata.physical.find(
+      (entry: ObjectCatalogPhysicalRecord) => entry.objectKind === 'single'
+    );
+    if (singleObject) {
+      if (chunkIndex !== 0) {
+        return c.json(
+          {
+            error: 'not_found',
+            error_description: 'Export artifact chunk not found',
+          },
+          404
+        );
+      }
+
+      return new Response(chunkArtifact.content, {
+        status: 200,
+        headers: {
+          'Content-Type':
+            chunkArtifact.contentType ||
+            (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
+        },
+      });
+    }
+
+    const chunkRecords = chunkMetadata.physical
+      .filter(
+        (entry: ObjectCatalogPhysicalRecord) =>
+          entry.objectKind === 'chunk' && (entry.chunkIndex ?? -1) >= 0
+      )
+      .sort(
+        (left: ObjectCatalogPhysicalRecord, right: ObjectCatalogPhysicalRecord) =>
+          (left.chunkIndex ?? 0) - (right.chunkIndex ?? 0)
+      );
+    if (chunkIndex >= chunkRecords.length) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Export artifact chunk not found',
+        },
+        404
+      );
+    }
+
+    return new Response(chunkArtifact.content, {
+      status: 200,
+      headers: {
+        'Content-Type':
+          chunkArtifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
+      },
+    });
+  } catch (error) {
+    const log = getLogger(c).module('DATA-EXPORT');
+    log.error('Failed to download export artifact chunk', {}, error as Error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to download export artifact chunk',
+      },
+      500
+    );
+  }
+}
+
+export async function processPendingDataExportRequests(
+  env: Env,
+  logger: {
+    info: (message: string, meta?: Record<string, unknown>) => void;
+    error: (message: string, meta?: Record<string, unknown>, err?: Error) => void;
+  }
+): Promise<void> {
+  if (!env.EXPORT_ARTIFACTS) {
+    logger.info('Skipping data export jobs because EXPORT_ARTIFACTS is not configured');
+    return;
+  }
+  if (!env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    logger.info('Skipping data export jobs because OBJECT_ENCRYPTION_ROOT_KEY is not configured');
+    return;
+  }
+
+  const keyVersion = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
+  const rootKeyHex = env.OBJECT_ENCRYPTION_ROOT_KEY;
+  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'management-data-export-jobs');
+  const piiAdapter = ensureDatabaseAdapter(env.DB_PII, 'management-data-export-pii');
+  const pendingRequests = await coreAdapter.query<PendingDataExportRow>(
+    `SELECT id, tenant_id, user_id, status, format, include_sections, requested_at
+       FROM data_export_requests
+      WHERE status IN ('pending', 'processing')
+      ORDER BY requested_at ASC
+      LIMIT ${DATA_EXPORT_PROCESS_BATCH_LIMIT}`
+  );
+
+  for (const request of pendingRequests) {
+    if (request.status === 'pending') {
+      const claimed = await coreAdapter.execute(
+        "UPDATE data_export_requests SET status = 'processing', started_at = ? WHERE id = ? AND status = 'pending'",
+        [Date.now(), request.id]
+      );
+      if ((claimed.rowsAffected ?? 0) === 0) {
+        continue;
+      }
+    }
+
+    try {
+      const sections = JSON.parse(request.include_sections) as DataExportSection[];
+      const exportedData = await collectExportData(
+        coreAdapter,
+        piiAdapter,
+        request.user_id,
+        request.tenant_id,
+        sections
+      );
+
+      const content =
+        request.format === 'csv'
+          ? serializeExportDataToCsv(exportedData)
+          : JSON.stringify(exportedData, null, 2);
+      const contentType = request.format === 'csv' ? 'text/csv' : 'application/json';
+      const filePath = buildDataExportObjectKey(request.tenant_id, request.id, request.format);
+      const now = Date.now();
+      const expiresAt = now + DATA_EXPORT_DOWNLOAD_TTL_MS;
+
+      await coreAdapter.transaction(async (tx) => {
+        const { catalogId, primaryObjectKey } = await materializeEncryptedObjectArtifact(
+          tx as unknown as DatabaseAdapter,
+          env.EXPORT_ARTIFACTS!,
+          {
+            tenantId: request.tenant_id,
+            objectClass: 'user_export',
+            representation: representationForExportFormat(request.format),
+            objectKeyBase: filePath,
+            content,
+            contentType,
+            rootKeyHex,
+            keyVersion,
+          }
+        );
+        await tx.execute(
+          `UPDATE data_export_requests
+              SET status = 'completed',
+                  completed_at = ?,
+                  expires_at = ?,
+                  file_path = ?,
+                  object_catalog_id = ?,
+                  file_size = ?,
+                  error_message = NULL
+            WHERE id = ?`,
+          [
+            now,
+            expiresAt,
+            primaryObjectKey,
+            catalogId,
+            new TextEncoder().encode(content).byteLength,
+            request.id,
+          ]
+        );
+      });
+
+      logger.info('Data export request materialized', {
+        request_id: request.id,
+        tenant_id: request.tenant_id,
+        format: request.format,
+        file_path: filePath,
+      });
+    } catch (error) {
+      await coreAdapter.execute(
+        `UPDATE data_export_requests
+            SET status = 'failed',
+                completed_at = ?,
+                error_message = ?
+          WHERE id = ?`,
+        [Date.now(), error instanceof Error ? error.message : String(error), request.id]
+      );
+      logger.error('Data export request processing failed', { request_id: request.id }, error as Error);
+    }
   }
 }
 

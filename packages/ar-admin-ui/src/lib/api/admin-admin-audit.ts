@@ -14,6 +14,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 export interface AdminAuditLogEntry {
 	id: string;
 	tenant_id: string;
+	detail_artifact_id?: string | null;
 	admin_user_id: string | null;
 	admin_email: string | null;
 	admin_user_name?: string | null;

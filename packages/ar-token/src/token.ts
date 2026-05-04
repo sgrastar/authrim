@@ -31,6 +31,9 @@ import {
   getClientCached,
   loadTenantProfileCached,
   getSystemSettingsCached,
+  requireDedicatedAdminDatabaseAdapter,
+  resolveElevationGrantSubjectToken,
+  ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
 } from '@authrim/ar-lib-core';
 import {
   revokeToken,
@@ -496,10 +499,11 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
 
   // Parse form data
   let formData: Record<string, string>;
+  let parsedBody: Record<string, string | File | (string | File)[]>;
   try {
-    const body = await c.req.parseBody();
+    parsedBody = await c.req.parseBody();
     formData = Object.fromEntries(
-      Object.entries(body).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
+      Object.entries(parsedBody).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
     );
   } catch {
     return c.json(
@@ -526,9 +530,8 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     return await handleCIBAGrant(c, formData);
   } else if (grant_type === 'urn:ietf:params:oauth:grant-type:token-exchange') {
     // RFC 8693: Token Exchange (Feature Flag controlled)
-    // Pass raw body for multi-value parameter support (resource[], audience[])
-    const rawBody = await c.req.parseBody();
-    return await handleTokenExchangeGrant(c, formData, rawBody);
+    // Reuse the initially parsed body so multi-value params are preserved.
+    return await handleTokenExchangeGrant(c, formData, parsedBody);
   } else if (grant_type === 'client_credentials') {
     // RFC 6749 Section 4.4: Client Credentials Grant
     return await handleClientCredentialsGrant(c, formData);
@@ -3495,7 +3498,10 @@ async function handleTokenExchangeGrant(
 
   // Extract parameters
   const subject_token = formData.subject_token;
-  const subject_token_type = formData.subject_token_type as TokenTypeURN | undefined;
+  const subject_token_type = formData.subject_token_type as
+    | TokenTypeURN
+    | typeof ELEVATION_GRANT_SUBJECT_TOKEN_TYPE
+    | undefined;
   const actor_token = formData.actor_token;
   const actor_token_type = formData.actor_token_type as TokenTypeURN | undefined;
   const requestedScope = formData.scope;
@@ -3565,12 +3571,16 @@ async function handleTokenExchangeGrant(
     jwt: 'urn:ietf:params:oauth:token-type:jwt',
     id_token: 'urn:ietf:params:oauth:token-type:id_token',
     refresh_token: 'urn:ietf:params:oauth:token-type:refresh_token',
+    elevation_grant: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
   };
 
   // Build allowed URNs from settings
   const allowedURNs = allowedSubjectTokenTypes
     .map((t) => tokenTypeMap[t] || t)
     .filter((t) => t !== undefined);
+  if (!allowedURNs.includes(ELEVATION_GRANT_SUBJECT_TOKEN_TYPE)) {
+    allowedURNs.push(ELEVATION_GRANT_SUBJECT_TOKEN_TYPE);
+  }
 
   // Check if subject_token_type is allowed
   if (!allowedURNs.includes(subject_token_type)) {
@@ -3714,6 +3724,8 @@ async function handleTokenExchangeGrant(
   const isNativeSSORequest =
     subject_token_type === 'urn:ietf:params:oauth:token-type:id_token' &&
     (actor_token_type as string) === DEVICE_SECRET_TOKEN_TYPE;
+  const isElevationGrantSubjectTokenRequest =
+    subject_token_type === ELEVATION_GRANT_SUBJECT_TOKEN_TYPE;
 
   if (isNativeSSORequest) {
     return handleNativeSSOTokenExchange(
@@ -3922,6 +3934,31 @@ async function handleTokenExchangeGrant(
       },
       400
     );
+  }
+
+  let elevationGrantContext:
+    | Awaited<ReturnType<typeof resolveElevationGrantSubjectToken>>
+    | null = null;
+  if (isElevationGrantSubjectTokenRequest) {
+    try {
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(
+        c.env,
+        'token-exchange-elevation-grant'
+      );
+      elevationGrantContext = await resolveElevationGrantSubjectToken({
+        adapter: adminAdapter,
+        tenantId,
+        requestingClientId: client_id!,
+        tokenPayload: subjectTokenPayload,
+      });
+    } catch (error) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        error instanceof Error ? error.message : 'Invalid elevation grant subject token',
+        400
+      );
+    }
   }
 
   // 7. Audience validation (Cross-tenant escalation prevention)
@@ -4193,6 +4230,8 @@ async function handleTokenExchangeGrant(
         // Only nest 1 level (prevent infinite chains)
         ...(existingAct && !existingAct.act ? { act: existingAct } : {}),
       };
+    } else if (elevationGrantContext) {
+      actClaim = elevationGrantContext.actClaim;
     } else {
       // No actor_token, use client as actor
       actClaim = {
@@ -4271,6 +4310,20 @@ async function handleTokenExchangeGrant(
     client_id: client_id,
     // Add act claim for delegation
     ...(actClaim ? { act: actClaim } : {}),
+    ...(elevationGrantContext && {
+      authorization_details: elevationGrantContext.authorizationDetails,
+      authrim_elevation: {
+        grant_id: elevationGrantContext.grant.public_grant_id,
+        request_id: elevationGrantContext.request.public_request_id,
+        investigation_id: elevationGrantContext.request.investigation_id,
+        target_subject_type: elevationGrantContext.request.target_subject_type,
+        target_subject_id: elevationGrantContext.request.target_subject_id,
+        requester_subject_type: elevationGrantContext.request.requester_subject_type,
+        requester_subject_id: elevationGrantContext.request.requester_subject_id,
+        resource_class: elevationGrantContext.grant.resource_class,
+        redaction_level: elevationGrantContext.grant.redaction_level,
+      },
+    }),
     // Add resource URIs if specified (RFC 8693 §2.2.1)
     ...(resources.length > 0
       ? { resource: resources.length === 1 ? resources[0] : resources }
@@ -4334,6 +4387,7 @@ async function handleTokenExchangeGrant(
     delegationMode,
     hasActorToken: !!actor_token,
     actorSub: actClaim?.sub,
+    elevationGrantId: elevationGrantContext?.grant.public_grant_id,
     targetAudiences,
     audienceSource,
     resourceCount: resources.length,

@@ -9,6 +9,7 @@
  * Environment variables:
  *   BASE_URL             Target Authrim Worker URL (default: https://your-authrim.example.com)
  *   ADMIN_API_SECRET     Admin API secret (required)
+ *   TENANT_ID            Tenant ID for admin API requests (optional)
  *   PASSKEY_USER_COUNT   Number of users to generate (default: 100)
  *   CONCURRENCY          Parallel requests (default: 10)
  *   OUTPUT_DIR           Output directory (default: ../seeds)
@@ -30,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 // Environment variables
 const BASE_URL = process.env.BASE_URL || '';
 const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const TENANT_ID = process.env.TENANT_ID || '';
 const PASSKEY_USER_COUNT = Number.parseInt(process.env.PASSKEY_USER_COUNT || '100', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '10', 10);
 const USER_ID_PREFIX = process.env.USER_ID_PREFIX || 'pk-user';
@@ -45,7 +47,10 @@ if (!ADMIN_API_SECRET) {
   process.exit(1);
 }
 
-const adminAuthHeader = { Authorization: `Bearer ${ADMIN_API_SECRET}` };
+const adminAuthHeader = {
+  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
+};
 
 /**
  * Base64URL encode (without padding)

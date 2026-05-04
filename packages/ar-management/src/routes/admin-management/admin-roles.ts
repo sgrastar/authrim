@@ -16,7 +16,6 @@ type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthC
 import {
   AdminRoleRepository,
   AdminRoleAssignmentRepository,
-  AdminAuditLogRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -25,6 +24,7 @@ import {
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { writeAdminAuditLog } from '../../admin-shared';
 
 // Create router
 export const adminRolesRouter = new Hono<{
@@ -67,21 +67,11 @@ async function createAuditLog(
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const authContext = c.get('adminAuth') as AdminAuthContext;
-  const adapter = getAdminAdapter(c);
-  const auditRepo = new AdminAuditLogRepository(adapter);
-  const tenantId = getTenantIdFromContext(c);
-
-  await auditRepo.createAuditLog({
-    tenant_id: tenantId,
-    admin_user_id: authContext.userId,
-    admin_email: authContext.email,
+  await writeAdminAuditLog(c, {
     action,
-    resource_type: 'admin_role',
-    resource_id: resourceId,
+    resourceType: 'admin_role',
+    resourceId,
     result,
-    ip_address: c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
-    user_agent: c.req.header('user-agent') || undefined,
     metadata,
   });
 }
@@ -435,6 +425,10 @@ adminRolesRouter.get('/permissions/list', async (c) => {
       description: 'Create, update, and delete admin roles',
     },
     { key: ADMIN_PERMISSIONS.ADMIN_AUDIT_READ, description: 'View admin audit logs' },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
+      description: 'View full admin audit detail payloads',
+    },
     { key: ADMIN_PERMISSIONS.IP_ALLOWLIST_READ, description: 'View IP allowlist' },
     { key: ADMIN_PERMISSIONS.IP_ALLOWLIST_WRITE, description: 'Manage IP allowlist' },
     { key: ADMIN_PERMISSIONS.USERS_READ, description: 'View end users' },
@@ -445,6 +439,36 @@ adminRolesRouter.get('/permissions/list', async (c) => {
     { key: ADMIN_PERMISSIONS.CLIENTS_DELETE, description: 'Delete OAuth clients' },
     { key: ADMIN_PERMISSIONS.SETTINGS_READ, description: 'View system settings' },
     { key: ADMIN_PERMISSIONS.SETTINGS_WRITE, description: 'Update system settings' },
+    { key: ADMIN_PERMISSIONS.WEBHOOKS_READ, description: 'View webhook configurations' },
+    { key: ADMIN_PERMISSIONS.WEBHOOKS_WRITE, description: 'Create and update webhooks' },
+    { key: ADMIN_PERMISSIONS.WEBHOOKS_DELETE, description: 'Delete webhooks' },
+    {
+      key: ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ,
+      description: 'View full webhook delivery request/response payloads',
+    },
+    { key: ADMIN_PERMISSIONS.JOBS_READ, description: 'View admin job status and summaries' },
+    { key: ADMIN_PERMISSIONS.JOBS_WRITE, description: 'Create and manage admin jobs' },
+    {
+      key: ADMIN_PERMISSIONS.JOBS_ARTIFACT_READ,
+      description: 'Read full admin job result artifacts and manifests',
+    },
+    { key: ADMIN_PERMISSIONS.APPROVALS_READ, description: 'View approval and elevation requests' },
+    {
+      key: ADMIN_PERMISSIONS.APPROVALS_WRITE,
+      description: 'Create and update approval and elevation requests',
+    },
+    {
+      key: ADMIN_PERMISSIONS.APPROVALS_APPROVE,
+      description: 'Approve or deny approval and elevation requests',
+    },
+    {
+      key: ADMIN_PERMISSIONS.OPERATIONAL_LOGS_READ,
+      description: 'View operational log summaries',
+    },
+    {
+      key: ADMIN_PERMISSIONS.OPERATIONAL_LOGS_DETAIL_READ,
+      description: 'Read full operational log reason detail payloads',
+    },
     { key: ADMIN_PERMISSIONS.TENANT_DOMAINS_READ, description: 'View tenant vanity domains' },
     {
       key: ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE,

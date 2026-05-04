@@ -29,6 +29,8 @@
 	let showDetailDialog = $state(false);
 	let selectedDelivery: WebhookDelivery | null = $state(null);
 	let detailViewMode = $state<'pretty' | 'raw'>('pretty');
+	let detailLoading = $state(false);
+	let detailError = $state('');
 
 	// Replay state
 	let replayingId = $state<string | null>(null);
@@ -105,15 +107,34 @@
 		}
 	}
 
-	function openDetailDialog(delivery: WebhookDelivery) {
+	async function openDetailDialog(delivery: WebhookDelivery) {
 		selectedDelivery = delivery;
 		detailViewMode = 'pretty';
 		showDetailDialog = true;
+		detailLoading = true;
+		detailError = '';
+
+		const webhookId = $page.params.id;
+		if (!webhookId) {
+			detailLoading = false;
+			detailError = 'Webhook ID is required';
+			return;
+		}
+
+		try {
+			selectedDelivery = await adminWebhooksAPI.getDelivery(webhookId, delivery.id);
+		} catch (err) {
+			detailError = err instanceof Error ? err.message : 'Failed to load delivery details';
+		} finally {
+			detailLoading = false;
+		}
 	}
 
 	function closeDetailDialog() {
 		showDetailDialog = false;
 		selectedDelivery = null;
+		detailLoading = false;
+		detailError = '';
 	}
 
 	async function handleReplay(delivery: WebhookDelivery) {
@@ -458,7 +479,36 @@
 				</button>
 			</div>
 
-			{#if selectedDelivery.request_body}
+			{#if detailLoading}
+				<div class="loading-state">
+					<i class="i-ph-circle-notch loading-spinner"></i>
+					<p>Loading delivery details...</p>
+				</div>
+			{:else if detailError}
+				<div class="error-banner">
+					<span>{detailError}</span>
+				</div>
+			{/if}
+
+			{#if selectedDelivery.request_headers && !detailLoading}
+				<div class="payload-section">
+					<div class="payload-header">
+						<h3>Request Headers</h3>
+						<button
+							class="copy-btn"
+							onclick={() => copyToClipboard(JSON.stringify(selectedDelivery?.request_headers || {}, null, 2))}
+							title="Copy masked content"
+						>
+							Copy
+						</button>
+					</div>
+					<pre class="payload-content">{detailViewMode === 'pretty'
+							? formatJson(JSON.stringify(selectedDelivery.request_headers))
+							: truncateContent(maskSensitiveData(JSON.stringify(selectedDelivery.request_headers, null, 2)))}</pre>
+				</div>
+			{/if}
+
+			{#if selectedDelivery.request_body && !detailLoading}
 				<div class="payload-section">
 					<div class="payload-header">
 						<h3>Request Body</h3>
@@ -476,7 +526,7 @@
 				</div>
 			{/if}
 
-			{#if selectedDelivery.response_body}
+			{#if selectedDelivery.response_body && !detailLoading}
 				<div class="payload-section">
 					<div class="payload-header">
 						<h3>Response Body</h3>

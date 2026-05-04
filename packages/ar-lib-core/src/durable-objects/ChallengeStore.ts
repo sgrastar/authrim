@@ -42,6 +42,8 @@ export type ChallengeType =
   | 'passkey_authentication'
   | 'email_code'
   | 'session_token'
+  | 'approval_completion'
+  | 'approval_decision_receipt'
   | 'reauth'
   | 'login'
   | 'consent'

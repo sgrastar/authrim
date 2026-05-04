@@ -35,6 +35,7 @@ const {
   mockD1AdapterQuery,
   mockD1AdapterQueryOne,
   mockD1AdapterExecute,
+  mockGrantRepo,
 } = vi.hoisted(() => ({
   mockCreateAuditLogFromContext: vi.fn(),
   mockCreateAuthContextFromHono: vi.fn(),
@@ -60,6 +61,10 @@ const {
   mockD1AdapterQuery: vi.fn(),
   mockD1AdapterQueryOne: vi.fn(),
   mockD1AdapterExecute: vi.fn(),
+  mockGrantRepo: {
+    getElevationGrantByPublicId: vi.fn(),
+    listActiveElevationGrants: vi.fn(),
+  },
 }));
 
 // Helper to reset all mocks to their default implementation
@@ -106,6 +111,9 @@ function resetMocks() {
   mockD1AdapterQuery.mockReset();
   mockD1AdapterQueryOne.mockReset();
   mockD1AdapterExecute.mockReset();
+  mockGrantRepo.getElevationGrantByPublicId.mockReset();
+  mockGrantRepo.listActiveElevationGrants.mockReset();
+  mockGrantRepo.listActiveElevationGrants.mockResolvedValue([]);
 }
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -119,6 +127,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     decryptValue: mockDecryptValue,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     getLogger: mockGetLogger,
+    requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({
+      query: mockD1AdapterQuery,
+      queryOne: mockD1AdapterQueryOne,
+      execute: mockD1AdapterExecute,
+    })),
     D1Adapter: vi.fn().mockImplementation(function () {
       return {
         query: mockD1AdapterQuery,
@@ -129,6 +142,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createWebhookRegistry: vi.fn().mockImplementation(function () {
       return mockWebhookRegistry;
     }),
+    ElevationGrantRepository: vi.fn(function MockElevationGrantRepository() {
+      return mockGrantRepo;
+    }),
+    loadCatalogObjectJson: actual.loadCatalogObjectJson,
   };
 });
 
@@ -140,8 +157,10 @@ import {
   deleteWebhook,
   testWebhook,
   listWebhookDeliveries,
+  getWebhookDelivery,
   replayWebhookDelivery,
 } from '../routes/settings/webhooks';
+import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
 
 // =============================================================================
 // Test Fixtures
@@ -183,6 +202,39 @@ function createMockDB(): D1Database {
   } as unknown as D1Database;
 }
 
+function createMockBucket(initial: Record<string, string> = {}): R2Bucket {
+  const storage = new Map<string, string>(Object.entries(initial));
+  return {
+    put: vi.fn(async (key: string, value: ArrayBuffer | ArrayBufferView | string) => {
+      const bytes =
+        typeof value === 'string'
+          ? new TextEncoder().encode(value)
+          : value instanceof Uint8Array
+            ? value
+            : value instanceof ArrayBuffer
+              ? new Uint8Array(value)
+              : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      const text = typeof value === 'string' ? value : new TextDecoder().decode(bytes);
+      storage.set(key, text);
+    }),
+    get: vi.fn(async (key: string) => {
+      const value = storage.get(key);
+      if (!value) {
+        return null;
+      }
+      return {
+        text: async () => value,
+        writeHttpMetadata: vi.fn(),
+      };
+    }),
+    delete: vi.fn(),
+    list: vi.fn(),
+    head: vi.fn(),
+    createMultipartUpload: vi.fn(),
+    resumeMultipartUpload: vi.fn(),
+  } as unknown as R2Bucket;
+}
+
 function createMockContext(options: {
   method?: string;
   params?: Record<string, string>;
@@ -193,6 +245,10 @@ function createMockContext(options: {
   tenantId?: string;
   piiEncryptionKey?: string;
   environment?: string;
+  sensitiveDetails?: R2Bucket;
+  objectEncryptionRootKey?: string;
+  objectEncryptionKeyVersion?: string;
+  adminPermissions?: string[];
 }) {
   const mockKV = options.kv ?? createMockKV({});
   const mockDB = options.db ?? createMockDB();
@@ -221,11 +277,20 @@ function createMockContext(options: {
       ISSUER_URL: 'https://op.example.com',
       PII_ENCRYPTION_KEY: options.piiEncryptionKey ?? 'test-encryption-key-32-chars-xx',
       ENVIRONMENT: options.environment ?? 'development',
+      SENSITIVE_DETAILS: options.sensitiveDetails,
+      OBJECT_ENCRYPTION_ROOT_KEY: options.objectEncryptionRootKey,
+      OBJECT_ENCRYPTION_KEY_VERSION: options.objectEncryptionKeyVersion,
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     get: vi.fn().mockImplementation((key: string) => {
       if (key === 'tenantId') return options.tenantId ?? 'test-tenant';
-      if (key === 'adminAuth') return { userId: 'admin-1', authMethod: 'password' };
+      if (key === 'adminAuth') {
+        return {
+          userId: 'admin-1',
+          authMethod: 'password',
+          permissions: options.adminPermissions ?? ['*'],
+        };
+      }
       return undefined;
     }),
     set: vi.fn(),
@@ -1226,6 +1291,268 @@ describe('Webhook Admin API - List Deliveries', () => {
   });
 });
 
+describe('Webhook Admin API - Get Delivery', () => {
+  beforeEach(() => {
+    resetMocks();
+  });
+
+  describe('GET /api/admin/webhooks/:id/deliveries/:deliveryId', () => {
+    it('rejects delivery detail reads without payload permission', async () => {
+      const c = createMockContext({
+        method: 'GET',
+        params: { id: 'webhook-123', deliveryId: 'delivery-123' },
+        adminPermissions: ['admin:webhooks:read'],
+      });
+      mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
+      mockD1AdapterQueryOne.mockResolvedValue({
+        id: 'delivery-123',
+        webhook_id: 'webhook-123',
+        tenant_id: 'test-tenant',
+        event_type: 'user.created',
+        event_id: 'event-123',
+        status: 'failed',
+        status_code: 500,
+        request_headers: '{"Authorization":"***MASKED***"}',
+        request_body: '{"event":"preview"}',
+        response_body: '{"error":"preview"}',
+        error_message: 'Boom',
+        attempts: 2,
+        next_retry_at: null,
+        created_at: 1714550400,
+        completed_at: 1714550401,
+        duration_ms: 250,
+        detail_object_catalog_id: 'catalog-123',
+        detail_artifact_id: 'oa_test',
+      });
+
+      const response = (await getWebhookDelivery(c)) as Response;
+      const { body, status } = await getResponseData(response);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('approval_required');
+    });
+
+    it('loads externalized request and response payloads from SENSITIVE_DETAILS', async () => {
+      const rootKey =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const objectKey =
+        'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const encryptedPayload = await encryptObjectArtifact(
+        JSON.stringify({
+          requestHeaders: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+          requestBody: '{"event":"user.created","email":"alice@example.com"}',
+          responseBody: '{"ok":true}',
+        }),
+        {
+          rootKeyHex: rootKey,
+          plane: 'SENSITIVE_DETAILS',
+          keyVersion: 3,
+          contentType: 'application/json',
+          context: {
+            tenantId: 'test-tenant',
+            objectKey,
+            objectClass: 'webhook_delivery_payload',
+          },
+        }
+      );
+
+      const c = createMockContext({
+        method: 'GET',
+        params: { id: 'webhook-123', deliveryId: 'delivery-123' },
+        sensitiveDetails: createMockBucket({
+          [objectKey]: JSON.stringify(encryptedPayload),
+        }),
+        objectEncryptionRootKey: rootKey,
+        objectEncryptionKeyVersion: '3',
+      });
+      mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
+      mockD1AdapterQueryOne.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM webhook_deliveries')) {
+          return {
+            id: 'delivery-123',
+            webhook_id: 'webhook-123',
+            tenant_id: 'test-tenant',
+            event_type: 'user.created',
+            event_id: 'event-123',
+            status: 'failed',
+            status_code: 500,
+            request_headers: '{"Authorization":"***MASKED***"}',
+            request_body: '{"event":"preview"}',
+            response_body: '{"error":"preview"}',
+            error_message: 'Boom',
+            attempts: 2,
+            next_retry_at: null,
+            created_at: 1714550400,
+            completed_at: 1714550401,
+            duration_ms: 250,
+            detail_object_catalog_id: 'catalog-123',
+            detail_artifact_id: 'oa_test',
+          };
+        }
+        if (sql.includes('FROM object_catalog oc')) {
+          expect([
+            ['oa_test', 'canonical_json', 0],
+            ['catalog-123', 'canonical_json', 0],
+          ]).toContainEqual(params);
+          return {
+            catalog_id: 'catalog-123',
+            public_artifact_id: 'oa_test',
+            tenant_id: 'test-tenant',
+            object_class: 'webhook_delivery_payload',
+            catalog_created_at: 1714550400000,
+            catalog_updated_at: 1714550400000,
+            catalog_deleted_at: null,
+            physical_id: 'physical-123',
+            representation: 'canonical_json',
+            object_kind: 'single',
+            object_index: 0,
+            bucket_binding: 'SENSITIVE_DETAILS',
+            object_key: objectKey,
+            key_version: 3,
+            checksum_sha256: null,
+            total_bytes: 100,
+            physical_created_at: 1714550400000,
+            physical_deleted_at: null,
+          };
+        }
+        return null;
+      });
+
+      const response = (await getWebhookDelivery(c)) as Response;
+      const { body, status } = await getResponseData(response);
+
+      expect(status).toBe(200);
+      expect(body.delivery.request_headers).toEqual({
+        Authorization: 'Bearer token',
+        'Content-Type': 'application/json',
+      });
+      expect(body.delivery.request_body).toContain('"alice@example.com"');
+      expect(body.delivery.response_body).toBe('{"ok":true}');
+      expect(body.delivery.has_detail).toBe(true);
+      expect(body.delivery.detail_artifact_id).toBe('oa_test');
+    });
+
+    it('allows delivery detail reads with a matching elevation grant', async () => {
+      const rootKey =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const objectKey =
+        'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const encryptedPayload = await encryptObjectArtifact(
+        JSON.stringify({
+          requestHeaders: { 'Content-Type': 'application/json' },
+          requestBody: '{"event":"user.created"}',
+          responseBody: '{"ok":true}',
+        }),
+        {
+          rootKeyHex: rootKey,
+          plane: 'SENSITIVE_DETAILS',
+          keyVersion: 3,
+          contentType: 'application/json',
+          context: {
+            tenantId: 'test-tenant',
+            objectKey,
+            objectClass: 'webhook_delivery_payload',
+          },
+        }
+      );
+
+      mockGrantRepo.listActiveElevationGrants.mockResolvedValue([
+        {
+          id: 'grant-1',
+          public_grant_id: 'egr_public_1',
+          approval_request_id: 'req-1',
+          tenant_id: 'test-tenant',
+          status: 'active',
+          target_audience: 'admin_api',
+          resource_class: 'webhook_delivery_payload',
+          redaction_level: 'masked',
+          scope_canonical: '{"version":1}',
+          scope_json: {
+            version: 1,
+            surface: 'webhook_payload',
+            action: 'detail_read',
+            tenant_id: 'test-tenant',
+            resource_class: 'webhook_delivery_payload',
+            resource_ids: ['delivery-123'],
+            detail_classes: ['request_response_payload'],
+          },
+          authorization_details_json: null,
+          requester_subject_type: 'admin_user',
+          requester_subject_id: 'admin-1',
+          actor_subject_type: 'admin_user',
+          actor_subject_id: 'admin-1',
+          issued_at: Date.now(),
+          expires_at: Date.now() + 60000,
+          revoked_at: null,
+          revoke_reason: null,
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      ]);
+
+      const c = createMockContext({
+        method: 'GET',
+        params: { id: 'webhook-123', deliveryId: 'delivery-123' },
+        adminPermissions: ['admin:webhooks:read'],
+        sensitiveDetails: createMockBucket({
+          [objectKey]: JSON.stringify(encryptedPayload),
+        }),
+        objectEncryptionRootKey: rootKey,
+        objectEncryptionKeyVersion: '3',
+      });
+      mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
+      mockD1AdapterQueryOne.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM webhook_deliveries')) {
+          return {
+            id: 'delivery-123',
+            webhook_id: 'webhook-123',
+            tenant_id: 'test-tenant',
+            event_type: 'user.created',
+            event_id: 'event-123',
+            status: 'failed',
+            status_code: 500,
+            request_headers: '{"Content-Type":"application/json"}',
+            request_body: '{"event":"preview"}',
+            response_body: '{"error":"preview"}',
+            error_message: 'Boom',
+            attempts: 2,
+            next_retry_at: null,
+            created_at: 1714550400,
+            completed_at: 1714550401,
+            duration_ms: 250,
+            detail_object_catalog_id: 'catalog-123',
+            detail_artifact_id: 'oa_test',
+          };
+        }
+        return {
+          catalog_id: 'catalog-123',
+          public_artifact_id: 'oa_test',
+          tenant_id: 'test-tenant',
+          object_class: 'webhook_delivery_payload',
+          catalog_created_at: 1714550400000,
+          catalog_updated_at: 1714550400000,
+          catalog_deleted_at: null,
+          physical_id: 'physical-123',
+          representation: 'canonical_json',
+          object_kind: 'single',
+          object_index: 0,
+          bucket_binding: 'SENSITIVE_DETAILS',
+          object_key: objectKey,
+          key_version: 3,
+          checksum_sha256: null,
+          total_bytes: 100,
+          physical_created_at: 1714550400000,
+          physical_deleted_at: null,
+        };
+      });
+
+      const response = (await getWebhookDelivery(c)) as Response;
+      const { status } = await getResponseData(response);
+      expect(status).toBe(200);
+    });
+  });
+});
+
 // =============================================================================
 // Replay Webhook Tests
 // =============================================================================
@@ -1241,6 +1568,21 @@ describe('Webhook Admin API - Replay Delivery', () => {
   });
 
   describe('POST /api/admin/webhooks/:id/replay', () => {
+    it('rejects replay without payload permission', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'webhook-123' },
+        body: { delivery_id: 'delivery-123' },
+        adminPermissions: ['admin:webhooks:write'],
+      });
+
+      const response = (await replayWebhookDelivery(c)) as Response;
+      const { body, status } = await getResponseData(response);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('insufficient_permissions');
+    });
+
     it('should return 400 if webhook ID is missing', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -1347,6 +1689,119 @@ describe('Webhook Admin API - Replay Delivery', () => {
           }),
         })
       );
+    });
+
+    it('replays from externalized delivery payloads and stores pointer-backed previews', async () => {
+      const rootKey =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const objectKey =
+        'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const encryptedPayload = await encryptObjectArtifact(
+        JSON.stringify({
+          requestHeaders: { 'Content-Type': 'application/json' },
+          requestBody: '{"event":"user.created","user_id":"user-1"}',
+          responseBody: null,
+        }),
+        {
+          rootKeyHex: rootKey,
+          plane: 'SENSITIVE_DETAILS',
+          keyVersion: 2,
+          contentType: 'application/json',
+          context: {
+            tenantId: 'test-tenant',
+            objectKey,
+            objectClass: 'webhook_delivery_payload',
+          },
+        }
+      );
+
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'webhook-123' },
+        body: { delivery_id: 'delivery-123' },
+        sensitiveDetails: createMockBucket({
+          [objectKey]: JSON.stringify(encryptedPayload),
+        }),
+        objectEncryptionRootKey: rootKey,
+        objectEncryptionKeyVersion: '2',
+      });
+      mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
+      mockD1AdapterQueryOne.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM webhook_deliveries')) {
+          return {
+            id: 'delivery-123',
+            webhook_id: 'webhook-123',
+            tenant_id: 'test-tenant',
+            event_type: 'user.created',
+            event_id: 'event-123',
+            status: 'failed',
+            request_headers: '{"Content-Type":"application/json"}',
+            request_body: '{"event":"preview"}',
+            response_body: null,
+            attempts: 3,
+            detail_object_catalog_id: 'catalog-123',
+            detail_artifact_id: 'oa_test',
+            created_at: 1714550400,
+            completed_at: null,
+            next_retry_at: null,
+            duration_ms: null,
+            status_code: null,
+            error_message: null,
+          };
+        }
+        if (sql.includes('FROM object_catalog oc')) {
+          return {
+            catalog_id: 'catalog-123',
+            public_artifact_id: 'oa_test',
+            tenant_id: 'test-tenant',
+            object_class: 'webhook_delivery_payload',
+            catalog_created_at: 1714550400000,
+            catalog_updated_at: 1714550400000,
+            catalog_deleted_at: null,
+            physical_id: 'physical-123',
+            representation: 'canonical_json',
+            object_kind: 'single',
+            object_index: 0,
+            bucket_binding: 'SENSITIVE_DETAILS',
+            object_key: objectKey,
+            key_version: 2,
+            checksum_sha256: null,
+            total_bytes: 100,
+            physical_created_at: 1714550400000,
+            physical_deleted_at: null,
+          };
+        }
+        return null;
+      });
+      mockD1AdapterExecute.mockResolvedValue({ success: true });
+
+      const mockFetch = vi.mocked(fetch);
+      mockFetch.mockResolvedValue(new Response('OK', { status: 200 }));
+
+      await replayWebhookDelivery(c);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"user_id":"user-1"'),
+        })
+      );
+      expect(mockD1AdapterExecute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO object_catalog'),
+        expect.any(Array)
+      );
+      expect(mockD1AdapterExecute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO webhook_deliveries'),
+        expect.arrayContaining([
+          expect.any(String),
+        ])
+      );
+      const deliveryInsert = mockD1AdapterExecute.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('INSERT INTO webhook_deliveries')
+      );
+      expect(deliveryInsert?.[1]?.[7]).toContain('"X-Webhook-Replay":"true"');
+      expect(deliveryInsert?.[1]?.[8]).toContain('"event":"user.created"');
+      expect(deliveryInsert?.[1]?.[13]).toEqual(expect.any(String));
     });
 
     it('should generate new signature for replay', async () => {

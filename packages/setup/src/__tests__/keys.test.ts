@@ -90,6 +90,7 @@ describe('generateAllSecrets', () => {
     expect(secrets.keyPair).toBeDefined();
     expect(secrets.keyPair.keyId).toBe('test-key');
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.adminApiSecret).toBeDefined();
     expect(secrets.keyManagerSecret).toBeDefined();
     expect(secrets.setupToken).toBeDefined();
@@ -157,6 +158,7 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'metadata.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'rp_token_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_token.txt'))).toBe(true);
@@ -226,6 +228,9 @@ describe('generateWranglerSecretCommands', () => {
 
     expect(commands).toContain(
       'cat /tmp/keys/public.jwk.json | wrangler secret put PUBLIC_JWK_JSON --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/object_encryption_root_key.txt)" | wrangler secret put OBJECT_ENCRYPTION_ROOT_KEY --env dev'
     );
   });
 });

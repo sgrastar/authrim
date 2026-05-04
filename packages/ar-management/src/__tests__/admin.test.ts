@@ -1962,6 +1962,51 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should create a token-exchange capable service client', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Service Client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          token_exchange_allowed: true,
+          delegation_mode: 'delegation',
+          client_credentials_allowed: true,
+          allowed_subject_token_clients: ['svc-client-a'],
+          allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
+          allowed_scopes: ['openid', 'profile'],
+          default_scope: 'openid profile',
+          default_audience: 'svc://op-userinfo/customer-profile',
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.objectContaining({
+            client_name: 'Service Client',
+            token_exchange_allowed: true,
+            delegation_mode: 'delegation',
+            client_credentials_allowed: true,
+            allowed_subject_token_clients: ['svc-client-a'],
+            allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
+            allowed_scopes: ['openid', 'profile'],
+            default_scope: 'openid profile',
+            default_audience: 'svc://op-userinfo/customer-profile',
+          }),
+        }),
+        201
+      );
+    });
+
     it('should generate client_id and client_secret', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -2081,6 +2126,85 @@ describe('Admin API Handlers', () => {
           client: expect.objectContaining({
             client_id: clientId,
             client_name: 'Updated Client Name',
+          }),
+        })
+      );
+    });
+
+    it('should update token exchange and downstream grant fields', async () => {
+      const clientId = 'client-downstream-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      let queryCount = 0;
+      (mockDB as any)._mockStatement.first.mockImplementation(() => {
+        queryCount++;
+        if (queryCount === 1) {
+          return Promise.resolve({
+            client_id: clientId,
+            client_name: 'Existing Client',
+            redirect_uris: '["https://example.com/callback"]',
+            grant_types: '["authorization_code"]',
+            response_types: '["code"]',
+            token_exchange_allowed: 0,
+            allowed_subject_token_clients: null,
+            allowed_token_exchange_resources: null,
+            delegation_mode: 'none',
+            client_credentials_allowed: 0,
+            allowed_scopes: '["openid"]',
+            default_scope: 'openid',
+            default_audience: null,
+          });
+        }
+        return Promise.resolve({
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+          token_exchange_allowed: 1,
+          allowed_subject_token_clients: '["svc-client-a"]',
+          allowed_token_exchange_resources: '["svc://op-userinfo/customer-profile"]',
+          delegation_mode: 'delegation',
+          client_credentials_allowed: 1,
+          allowed_scopes: '["openid","profile"]',
+          default_scope: 'openid profile',
+          default_audience: 'svc://op-userinfo/customer-profile',
+        });
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          token_exchange_allowed: true,
+          delegation_mode: 'delegation',
+          client_credentials_allowed: true,
+          allowed_subject_token_clients: ['svc-client-a'],
+          allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
+          allowed_scopes: ['openid', 'profile'],
+          default_scope: 'openid profile',
+          default_audience: 'svc://op-userinfo/customer-profile',
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          client: expect.objectContaining({
+            client_id: clientId,
+            token_exchange_allowed: true,
+            delegation_mode: 'delegation',
+            client_credentials_allowed: true,
+            allowed_subject_token_clients: ['svc-client-a'],
+            allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
+            allowed_scopes: ['openid', 'profile'],
+            default_scope: 'openid profile',
+            default_audience: 'svc://op-userinfo/customer-profile',
           }),
         })
       );

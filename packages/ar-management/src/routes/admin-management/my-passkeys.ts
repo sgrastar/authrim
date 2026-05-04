@@ -17,7 +17,6 @@ import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   AdminPasskeyRepository,
-  AdminAuditLogRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -26,6 +25,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
+import { writeAdminAuditLog } from '../../admin-shared';
 import type {
   RegistrationResponseJSON,
   AuthenticatorTransportFuture,
@@ -96,21 +96,11 @@ async function createAuditLog(
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const authContext = c.get('adminAuth') as AdminAuthContext;
-  const adapter = getAdminAdapter(c);
-  const auditRepo = new AdminAuditLogRepository(adapter);
-  const tenantId = getTenantIdFromContext(c);
-
-  await auditRepo.createAuditLog({
-    tenant_id: tenantId,
-    admin_user_id: authContext.userId,
-    admin_email: authContext.email,
+  await writeAdminAuditLog(c, {
     action,
-    resource_type: 'admin_passkey',
-    resource_id: resourceId,
+    resourceType: 'admin_passkey',
+    resourceId,
     result,
-    ip_address: c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
-    user_agent: c.req.header('user-agent') || undefined,
     metadata,
   });
 }

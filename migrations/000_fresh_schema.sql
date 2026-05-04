@@ -145,6 +145,7 @@ CREATE TABLE admin_jobs (
 
   -- R2 key for result file (for completed jobs with large results)
   result_r2_key TEXT,
+  object_catalog_id TEXT,
 
   -- Result summary (JSON, for completed jobs)
   -- { "summary": {...}, "failures": [...] }
@@ -467,9 +468,56 @@ CREATE TABLE data_export_requests (
   completed_at INTEGER,
   expires_at INTEGER,                      -- Download link expiration
   file_path TEXT,                          -- R2 object path (for async exports)
+  object_catalog_id TEXT,                  -- object_catalog pointer for materialized export artifacts
   file_size INTEGER,
   error_message TEXT,
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
+);
+
+CREATE TABLE object_catalog (
+  id TEXT PRIMARY KEY,
+  public_artifact_id TEXT NOT NULL UNIQUE,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  object_class TEXT NOT NULL CHECK (
+    object_class IN (
+      'admin_audit_detail',
+      'webhook_delivery_payload',
+      'operational_log_detail',
+      'user_export',
+      'user_import_input',
+      'user_import_result',
+      'approval_transport_detail'
+    )
+  ),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+
+CREATE TABLE object_catalog_objects (
+  id TEXT PRIMARY KEY,
+  catalog_id TEXT NOT NULL,
+  representation TEXT NOT NULL CHECK (
+    representation IN (
+      'canonical_json',
+      'csv_projection',
+      'ndjson_projection',
+      'zip_bundle'
+    )
+  ),
+  object_kind TEXT NOT NULL CHECK (object_kind IN ('single', 'manifest', 'chunk')),
+  object_index INTEGER NOT NULL DEFAULT 0,
+  bucket_binding TEXT NOT NULL CHECK (
+    bucket_binding IN ('IMPORT_ARTIFACTS', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS')
+  ),
+  object_key TEXT NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  checksum_sha256 TEXT,
+  total_bytes INTEGER,
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER,
+  FOREIGN KEY (catalog_id) REFERENCES object_catalog(id) ON DELETE CASCADE,
+  UNIQUE(catalog_id, representation, object_index)
 );
 
 CREATE TABLE device_codes (
@@ -687,6 +735,7 @@ CREATE TABLE operational_logs (
     action TEXT NOT NULL,        -- 'user.suspend', 'user.lock', etc.
     reason_detail_encrypted TEXT,-- AES-GCM encrypted reason_detail
     encryption_key_version INTEGER NOT NULL DEFAULT 1, -- Code expects this column
+    detail_object_catalog_id TEXT,
     request_id TEXT,             -- X-Request-ID header value
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL, -- When this log should be deleted
@@ -1646,6 +1695,27 @@ CREATE TABLE webhook_delivery_logs (
   FOREIGN KEY (webhook_id) REFERENCES webhook_configs(id) ON DELETE CASCADE
 );
 
+CREATE TABLE webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  event_type TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'failed', 'retrying')),
+  status_code INTEGER,
+  request_headers TEXT,
+  request_body TEXT,
+  response_body TEXT,
+  error_message TEXT,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  next_retry_at INTEGER,
+  created_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  duration_ms INTEGER,
+  detail_object_catalog_id TEXT,
+  FOREIGN KEY (webhook_id) REFERENCES webhook_configs(id) ON DELETE CASCADE
+);
+
 CREATE TABLE websocket_subscriptions (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -1699,6 +1769,9 @@ CREATE INDEX idx_admin_jobs_type ON admin_jobs(
   job_type,
   created_at DESC
 );
+
+CREATE INDEX idx_admin_jobs_object_catalog
+  ON admin_jobs(object_catalog_id);
 
 CREATE INDEX idx_ai_grants_active ON ai_grants(is_active);
 
@@ -1831,6 +1904,24 @@ CREATE INDEX idx_data_export_status
 CREATE INDEX idx_data_export_user
   ON data_export_requests(user_id, status);
 
+CREATE INDEX idx_data_export_object_catalog
+  ON data_export_requests(object_catalog_id);
+
+CREATE INDEX idx_object_catalog_tenant_class_created
+  ON object_catalog(tenant_id, object_class, created_at DESC);
+
+CREATE INDEX idx_object_catalog_deleted_at
+  ON object_catalog(deleted_at);
+
+CREATE INDEX idx_object_catalog_objects_catalog_repr
+  ON object_catalog_objects(catalog_id, representation, object_index);
+
+CREATE INDEX idx_object_catalog_objects_bucket_key
+  ON object_catalog_objects(bucket_binding, object_key);
+
+CREATE INDEX idx_object_catalog_objects_deleted_at
+  ON object_catalog_objects(deleted_at);
+
 CREATE INDEX idx_device_codes_client_id ON device_codes(client_id);
 
 CREATE INDEX idx_device_codes_expires_at ON device_codes(expires_at);
@@ -1910,6 +2001,9 @@ CREATE INDEX idx_odm_version ON org_domain_mappings(domain_hash_version);
 
 CREATE INDEX idx_operational_logs_actor
     ON operational_logs(actor_id);
+
+CREATE INDEX idx_operational_logs_detail_object_catalog
+    ON operational_logs(detail_object_catalog_id);
 
 CREATE INDEX idx_operational_logs_expires
     ON operational_logs(expires_at);
@@ -2228,6 +2322,18 @@ CREATE INDEX idx_webhook_delivery_logs_event ON webhook_delivery_logs(event_id);
 CREATE INDEX idx_webhook_delivery_logs_tenant ON webhook_delivery_logs(tenant_id);
 
 CREATE INDEX idx_webhook_delivery_logs_webhook ON webhook_delivery_logs(webhook_id);
+
+CREATE INDEX idx_webhook_deliveries_detail_object_catalog
+  ON webhook_deliveries(detail_object_catalog_id);
+
+CREATE INDEX idx_webhook_deliveries_status_created
+  ON webhook_deliveries(status, created_at DESC);
+
+CREATE INDEX idx_webhook_deliveries_tenant_created
+  ON webhook_deliveries(tenant_id, created_at DESC);
+
+CREATE INDEX idx_webhook_deliveries_webhook_created
+  ON webhook_deliveries(webhook_id, created_at DESC);
 
 CREATE INDEX idx_ws_subs_active
     ON websocket_subscriptions(is_active);

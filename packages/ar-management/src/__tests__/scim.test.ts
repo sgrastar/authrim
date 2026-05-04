@@ -297,8 +297,10 @@ describe('SCIM 2.0 Endpoints', () => {
               run: vi.fn().mockImplementation(async () => {
                 // Handle INSERT into users_core (PII/Non-PII separation)
                 if (sql.includes('INSERT INTO users_core')) {
-                  // bind() order: id, tenant_id, email_verified, phone_number_verified, password_hash,
-                  // is_active, user_type, external_id, pii_partition, pii_status, created_at, updated_at
+                  // bind() order:
+                  // id, tenant_id, email_verified, phone_number_verified, email_domain_hash,
+                  // password_hash, is_active, user_type, pii_partition, pii_status,
+                  // lifecycle_state, created_at, updated_at, last_login_at
                   const userId = args[0];
                   // Timestamps are stored as Unix seconds (matching D1 database format)
                   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -306,10 +308,10 @@ describe('SCIM 2.0 Endpoints', () => {
                     id: userId,
                     tenant_id: args[1],
                     email_verified: args[2],
-                    active: args[5],
-                    external_id: args[7],
-                    created_at: nowSeconds,
-                    updated_at: nowSeconds,
+                    active: args[6],
+                    external_id: null,
+                    created_at: args[11] ?? nowSeconds,
+                    updated_at: args[12] ?? nowSeconds,
                   });
                   return { success: true };
                 }
@@ -468,21 +470,26 @@ describe('SCIM 2.0 Endpoints', () => {
                 // Handle INSERT/UPDATE/DELETE for PII
                 if (sql.includes('INSERT INTO users_pii')) {
                   // bind() order for INSERT INTO users_pii:
-                  // id, tenant_id, email, name, given_name, family_name, middle_name,
-                  // nickname, preferred_username, profile, picture, website, gender,
-                  // birthdate, zoneinfo, locale, phone_number,
+                  // id, tenant_id, pii_class, email, email_blind_index, phone_number,
+                  // name, given_name, family_name, nickname, preferred_username,
+                  // picture, website, gender, birthdate, locale, zoneinfo,
                   // address_formatted, address_street_address, address_locality,
                   // address_region, address_postal_code, address_country,
-                  // created_at, updated_at
+                  // declared_residence, created_at, updated_at
                   const userId = args[0];
                   const user = mockUsers.get(userId);
                   if (user) {
                     // Update existing user with PII data
-                    user.email = args[2];
-                    user.name = args[3];
-                    user.given_name = args[4];
-                    user.family_name = args[5];
-                    user.preferred_username = args[8];
+                    user.email = args[3];
+                    user.name = args[6];
+                    user.given_name = args[7];
+                    user.family_name = args[8];
+                    user.nickname = args[9];
+                    user.preferred_username = args[10];
+                    user.picture = args[11];
+                    user.website = args[12];
+                    user.locale = args[15];
+                    user.zoneinfo = args[16];
                   }
                   return { success: true };
                 }
@@ -841,6 +848,33 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(
         body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department
       ).toBe('Support');
+    });
+
+    it('should create a user when a required non-PII enterprise field is satisfied', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow({ is_pii: 0, is_required: 1 })];
+
+      const newUser = {
+        schemas: [
+          'urn:ietf:params:scim:schemas:core:2.0:User',
+          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User',
+        ],
+        userName: 'required-non-pii-user',
+        emails: [{ value: 'required.nonpii@example.com', primary: true }],
+        active: true,
+        'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': {
+          department: 'Platform',
+        },
+      };
+
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify(newUser),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as any;
+      expect(body.userName).toBe('required-non-pii-user');
     });
   });
 

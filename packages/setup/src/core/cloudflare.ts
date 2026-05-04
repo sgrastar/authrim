@@ -2745,6 +2745,34 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     } catch (error) {
       onProgress(`  ⚠️ Skipped: ${importArtifactsBucketName} - ${sanitizeError(error)}`);
     }
+
+    const exportArtifactsBucketName = `${env}-export-artifacts`;
+    onProgress(`  ⏳ Creating: ${exportArtifactsBucketName}...`);
+
+    try {
+      const result = await createR2Bucket(exportArtifactsBucketName);
+      resources.r2.push({
+        binding: 'EXPORT_ARTIFACTS',
+        name: result.name,
+      });
+      onProgress(`  ✅ ${exportArtifactsBucketName} created`);
+    } catch (error) {
+      onProgress(`  ⚠️ Skipped: ${exportArtifactsBucketName} - ${sanitizeError(error)}`);
+    }
+
+    const sensitiveDetailsBucketName = `${env}-sensitive-details`;
+    onProgress(`  ⏳ Creating: ${sensitiveDetailsBucketName}...`);
+
+    try {
+      const result = await createR2Bucket(sensitiveDetailsBucketName);
+      resources.r2.push({
+        binding: 'SENSITIVE_DETAILS',
+        name: result.name,
+      });
+      onProgress(`  ✅ ${sensitiveDetailsBucketName} created`);
+    } catch (error) {
+      onProgress(`  ⚠️ Skipped: ${sensitiveDetailsBucketName} - ${sanitizeError(error)}`);
+    }
     onProgress('');
   }
 
@@ -2811,7 +2839,7 @@ const AUTHRIM_PATTERNS = {
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts)$/,
+  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts|export-artifacts|sensitive-details)$/,
   // Pages projects: {env}-ar-admin-ui, {env}-ar-login-ui
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };

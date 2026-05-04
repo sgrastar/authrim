@@ -21,6 +21,7 @@ import {
   AR_ERROR_CODES,
   requireSystemAdmin,
   requireAnyRole,
+  requireAdminPermissions,
   // Native SSO device_secret cleanup
   DeviceSecretRepository,
   isNativeSSOEnabled,
@@ -37,6 +38,7 @@ import {
   getTenantIdFromContext,
   getTenantSettings,
   resolveAuthCorePersistenceAdapterFromEnv,
+  ADMIN_PERMISSIONS,
 } from '@authrim/ar-lib-core';
 import {
   cloudflareEmailPlugin,
@@ -44,6 +46,7 @@ import {
 } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
+import { runObjectArtifactCleanup } from './artifact-cleanup';
 
 // Import handlers
 import { registerHandler } from './register';
@@ -245,12 +248,16 @@ import {
   adminJobGetHandler,
   adminJobResultHandler,
   adminJobResultDownloadHandler,
+  adminJobResultArtifactManifestHandler,
+  adminJobResultArtifactDownloadHandler,
+  adminJobResultArtifactChunkHandler,
   adminJobsImportUploadUrlHandler,
   adminJobsImportUploadHandler,
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
+  registerAdminJobPermissionMiddleware,
 } from './admin-jobs';
 import { processPendingUserImportJobs, USER_IMPORT_MAX_UPLOAD_BYTES } from './user-import-jobs';
 import {
@@ -341,9 +348,13 @@ import {
   postDiscoveryHandler,
 } from './discovery';
 import {
+  dataExportArtifactChunkHandler,
+  dataExportArtifactDownloadHandler,
+  dataExportArtifactManifestHandler,
   dataExportRequestHandler,
   dataExportStatusHandler,
   dataExportDownloadHandler,
+  processPendingDataExportRequests,
 } from './data-export';
 import { getCodeShards, updateCodeShards } from './routes/settings/code-shards';
 import {
@@ -361,6 +372,8 @@ import {
 import { getFlowStateShards, updateFlowStateShards } from './routes/settings/flow-state-shards';
 import { getSessionShards, updateSessionShards } from './routes/settings/session-shards';
 import { getChallengeShards, updateChallengeShards } from './routes/settings/challenge-shards';
+import { approvalArtifactsRouter } from './routes/approval-artifacts';
+import { approvalReceiptsRouter } from './routes/approval-receipts';
 import {
   getPartitionSettings,
   updatePartitionSettings,
@@ -594,6 +607,7 @@ import {
   deleteWebhook,
   testWebhook,
   listWebhookDeliveries,
+  getWebhookDelivery,
   replayWebhookDelivery,
 } from './routes/settings/webhooks';
 import {
@@ -1275,6 +1289,8 @@ app.route('/api/admin', policyRouter);
 // - GET/PATCH/DELETE /api/admin/ip-allowlist/:id - IP entry CRUD
 // - GET /api/admin/admin-audit-log - Admin audit log viewing
 app.route('/api/admin', adminManagementRouter);
+app.route('/api/approval-artifacts', approvalArtifactsRouter);
+app.route('/api/approval-receipts', approvalReceiptsRouter);
 
 // =============================================================================
 // Diagnostic Logging API (Debugging, Troubleshooting, OIDF Conformance)
@@ -1967,24 +1983,57 @@ app.use('/api/admin/webhooks/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require tenant_admin or higher for webhook management
-app.use(
+app.post(
   '/api/admin/webhooks',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+  requireAdminPermissions([ADMIN_PERMISSIONS.WEBHOOKS_WRITE]),
+  createWebhook
 );
-app.use(
-  '/api/admin/webhooks/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+app.get(
+  '/api/admin/webhooks',
+  requireAdminPermissions([ADMIN_PERMISSIONS.WEBHOOKS_READ]),
+  listWebhooks
 );
-
-app.post('/api/admin/webhooks', createWebhook);
-app.get('/api/admin/webhooks', listWebhooks);
-app.get('/api/admin/webhooks/:id', getWebhook);
-app.put('/api/admin/webhooks/:id', updateWebhook);
-app.delete('/api/admin/webhooks/:id', deleteWebhook);
-app.post('/api/admin/webhooks/:id/test', testWebhook);
-app.get('/api/admin/webhooks/:id/deliveries', listWebhookDeliveries);
-app.post('/api/admin/webhooks/:id/replay', replayWebhookDelivery);
+app.get(
+  '/api/admin/webhooks/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.WEBHOOKS_READ]),
+  getWebhook
+);
+app.put(
+  '/api/admin/webhooks/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.WEBHOOKS_WRITE]),
+  updateWebhook
+);
+app.delete(
+  '/api/admin/webhooks/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.WEBHOOKS_DELETE]),
+  deleteWebhook
+);
+app.post(
+  '/api/admin/webhooks/:id/test',
+  requireAdminPermissions([ADMIN_PERMISSIONS.WEBHOOKS_WRITE]),
+  testWebhook
+);
+app.get(
+  '/api/admin/webhooks/:id/deliveries',
+  requireAdminPermissions([ADMIN_PERMISSIONS.WEBHOOKS_READ]),
+  listWebhookDeliveries
+);
+app.get(
+  '/api/admin/webhooks/:id/deliveries/:deliveryId',
+  requireAdminPermissions([
+    ADMIN_PERMISSIONS.WEBHOOKS_READ,
+    ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ,
+  ]),
+  getWebhookDelivery
+);
+app.post(
+  '/api/admin/webhooks/:id/replay',
+  requireAdminPermissions([
+    ADMIN_PERMISSIONS.WEBHOOKS_WRITE,
+    ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ,
+  ]),
+  replayWebhookDelivery
+);
 
 // =============================================================================
 // Logging Configuration API
@@ -2130,9 +2179,7 @@ app.use('/api/admin/jobs/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require tenant_admin or higher for job management
-app.use('/api/admin/jobs', requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin']));
-app.use('/api/admin/jobs/*', requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin']));
+registerAdminJobPermissionMiddleware(app);
 
 app.get('/api/admin/jobs', adminJobsListHandler);
 // Job creation endpoints (must be before :id routes)
@@ -2143,6 +2190,9 @@ app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
+app.get('/api/admin/jobs/artifacts/:artifactId', adminJobResultArtifactManifestHandler);
+app.get('/api/admin/jobs/artifacts/:artifactId/download', adminJobResultArtifactDownloadHandler);
+app.get('/api/admin/jobs/artifacts/:artifactId/chunks/:index', adminJobResultArtifactChunkHandler);
 app.get('/api/admin/jobs/:id/result', adminJobResultHandler); // Must be before :id
 app.get('/api/admin/jobs/:id/result/download', adminJobResultDownloadHandler);
 app.get('/api/admin/jobs/:id', adminJobGetHandler);
@@ -2310,6 +2360,12 @@ app.use('/api/user/data-export/*', async (c, next) => {
 
 // Data export routes
 app.post('/api/user/data-export', dataExportRequestHandler);
+app.get('/api/user/data-export/artifacts/:artifactId', dataExportArtifactManifestHandler);
+app.get('/api/user/data-export/artifacts/:artifactId/download', dataExportArtifactDownloadHandler);
+app.get(
+  '/api/user/data-export/artifacts/:artifactId/chunks/:index',
+  dataExportArtifactChunkHandler
+);
 app.get('/api/user/data-export/:id', dataExportStatusHandler);
 app.get('/api/user/data-export/:id/download', dataExportDownloadHandler);
 
@@ -2775,6 +2831,18 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     await processPendingUserImportJobs(env, log);
   } catch (jobsError) {
     log.error('User import job processing failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processPendingDataExportRequests(env, log);
+  } catch (jobsError) {
+    log.error('Data export job processing failed', {}, jobsError as Error);
+  }
+
+  try {
+    await runObjectArtifactCleanup(env, log);
+  } catch (cleanupError) {
+    log.error('Object artifact cleanup failed', {}, cleanupError as Error);
   }
 }
 

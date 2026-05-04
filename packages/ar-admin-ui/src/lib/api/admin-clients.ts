@@ -20,9 +20,25 @@ export interface Client {
 	redirect_uris: string[];
 	token_endpoint_auth_method: string;
 	scope?: string;
+	contacts?: string[];
+	logo_uri?: string | null;
+	client_uri?: string | null;
+	policy_uri?: string | null;
+	tos_uri?: string | null;
+	is_trusted?: boolean;
+	skip_consent?: boolean;
+	allow_claims_without_scope?: boolean;
 	login_ui_url?: string | null;
 	id_token_signed_response_alg?: string;
 	require_pkce?: boolean;
+	token_exchange_allowed?: boolean;
+	allowed_subject_token_clients?: string[];
+	allowed_token_exchange_resources?: string[];
+	delegation_mode?: 'none' | 'delegation' | 'impersonation';
+	client_credentials_allowed?: boolean;
+	allowed_scopes?: string[];
+	default_scope?: string | null;
+	default_audience?: string | null;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
 	created_at: number;
@@ -55,6 +71,14 @@ export interface CreateClientInput {
 	token_endpoint_auth_method?: string;
 	scope?: string;
 	require_pkce?: boolean;
+	token_exchange_allowed?: boolean;
+	allowed_subject_token_clients?: string[];
+	allowed_token_exchange_resources?: string[];
+	delegation_mode?: 'none' | 'delegation' | 'impersonation';
+	client_credentials_allowed?: boolean;
+	allowed_scopes?: string[];
+	default_scope?: string;
+	default_audience?: string;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
 }
@@ -68,6 +92,14 @@ export interface UpdateClientInput {
 	scope?: string;
 	login_ui_url?: string | null;
 	require_pkce?: boolean;
+	token_exchange_allowed?: boolean;
+	allowed_subject_token_clients?: string[];
+	allowed_token_exchange_resources?: string[];
+	delegation_mode?: 'none' | 'delegation' | 'impersonation';
+	client_credentials_allowed?: boolean;
+	allowed_scopes?: string[];
+	default_scope?: string | null;
+	default_audience?: string | null;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
 }

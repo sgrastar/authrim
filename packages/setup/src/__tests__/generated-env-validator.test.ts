@@ -68,6 +68,8 @@ async function writeGeneratedEnvironment(
     queues: [],
     r2: [
       { binding: 'IMPORT_ARTIFACTS', name: `${env}-import-artifacts` },
+      { binding: 'EXPORT_ARTIFACTS', name: `${env}-export-artifacts` },
+      { binding: 'SENSITIVE_DETAILS', name: `${env}-sensitive-details` },
     ],
   });
 

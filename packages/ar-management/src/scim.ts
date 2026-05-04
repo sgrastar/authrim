@@ -1336,7 +1336,11 @@ app.post('/Users', async (c) => {
   try {
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const coreAdapter = authCtx.coreAdapter;
+    const piiCtx = hasPIIDatabase(c) ? createPIIContextFromHono(c, tenantId) : null;
+    const piiAdapter = piiCtx?.defaultPiiAdapter ?? null;
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
@@ -1345,7 +1349,6 @@ app.post('/Users', async (c) => {
     }
 
     // Check for duplicate userName or email in PII DB via Adapter
-    const tenantId = getTenantIdFromContext(c);
     const primaryEmail =
       scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
 
@@ -1381,12 +1384,6 @@ app.post('/Users', async (c) => {
       internalUser.password_hash = await hashPassword(scimUser.password);
     }
 
-    // Set timestamps
-    const now = new Date().toISOString();
-    const nowUnix = Math.floor(Date.now() / 1000);
-    internalUser.created_at = now;
-    internalUser.updated_at = now;
-
     // Set defaults
     if (!internalUser.email_verified) internalUser.email_verified = 0;
     if (internalUser.active === undefined) internalUser.active = 1;
@@ -1394,74 +1391,79 @@ app.post('/Users', async (c) => {
     // Parse address JSON if provided
     const addressParts = parseAddressParts(internalUser.address_json);
 
-    // Step 1: Insert into users_core with pii_status='pending' via Adapter
-    await coreAdapter.execute(
-      `INSERT INTO users_core (
-        id, tenant_id, email_verified, phone_number_verified, password_hash,
-        is_active, user_type, external_id, pii_partition, pii_status,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'end_user', ?, 'default', 'pending', ?, ?)`,
-      [
-        userId,
-        tenantId,
-        internalUser.email_verified,
-        0, // phone_number_verified
-        internalUser.password_hash,
-        internalUser.active,
-        internalUser.external_id,
-        nowUnix,
-        nowUnix,
-      ]
-    );
+    await authCtx.repositories.userCore.createUser({
+      id: userId,
+      tenant_id: tenantId,
+      email_verified: Boolean(internalUser.email_verified),
+      phone_number_verified: false,
+      password_hash: internalUser.password_hash ?? null,
+      is_active: internalUser.active === undefined ? true : Boolean(internalUser.active),
+      user_type: 'end_user',
+      pii_partition: 'default',
+      pii_status: piiCtx ? 'pending' : 'none',
+    });
 
-    // Step 2: Insert into users_pii (if PII adapter is configured) via Adapter
-    if (piiAdapter) {
-      await piiAdapter.execute(
-        `INSERT INTO users_pii (
-          id, tenant_id, email, name, given_name, family_name, middle_name,
-          nickname, preferred_username, profile, picture, website, gender,
-          birthdate, zoneinfo, locale, phone_number,
-          address_formatted, address_street_address, address_locality,
-          address_region, address_postal_code, address_country,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          userId,
-          tenantId,
-          internalUser.email,
-          internalUser.name,
-          internalUser.given_name,
-          internalUser.family_name,
-          internalUser.middle_name,
-          internalUser.nickname,
-          internalUser.preferred_username,
-          internalUser.profile,
-          internalUser.picture,
-          internalUser.website,
-          null, // gender
-          null, // birthdate
-          internalUser.zoneinfo,
-          internalUser.locale,
-          internalUser.phone_number,
-          addressParts.formatted || null,
-          addressParts.street_address || null,
-          addressParts.locality || null,
-          addressParts.region || null,
-          addressParts.postal_code || null,
-          addressParts.country || null,
-          nowUnix,
-          nowUnix,
-        ]
-      );
+    if (piiCtx) {
+      try {
+        await piiCtx.piiRepositories.userPII.createPII({
+          id: userId,
+          tenant_id: tenantId,
+          pii_class: 'PROFILE',
+          email: internalUser.email!,
+          phone_number: internalUser.phone_number ?? null,
+          name: internalUser.name ?? null,
+          given_name: internalUser.given_name ?? null,
+          family_name: internalUser.family_name ?? null,
+          nickname: internalUser.nickname ?? null,
+          preferred_username: internalUser.preferred_username ?? null,
+          picture: internalUser.picture ?? null,
+          website: internalUser.website ?? null,
+          locale: internalUser.locale ?? null,
+          zoneinfo: internalUser.zoneinfo ?? null,
+          address_formatted: addressParts.formatted ?? null,
+          address_street_address: addressParts.street_address ?? null,
+          address_locality: addressParts.locality ?? null,
+          address_region: addressParts.region ?? null,
+          address_postal_code: addressParts.postal_code ?? null,
+          address_country: addressParts.country ?? null,
+        });
 
-      // Step 3: Update pii_status to 'active' via Adapter
-      await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', [
-        'active',
-        userId,
-      ]);
+        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
+      } catch (piiError) {
+        const log = getLogger(c).module('SCIM');
+        log.error('SCIM create PII insert failed', { action: 'create_user' }, piiError as Error);
+        await authCtx.repositories.userCore.updatePIIStatus(userId, 'failed');
+        throw piiError;
+      }
+    } else {
+      await authCtx.repositories.userCore.updatePIIStatus(userId, 'none');
     }
 
-    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+    try {
+      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+    } catch (customFieldError) {
+      const log = getLogger(c).module('SCIM');
+      log.error(
+        'SCIM create custom claim persistence failed',
+        { action: 'create_user' },
+        customFieldError as Error
+      );
+
+      try {
+        if (piiCtx) {
+          await piiCtx.piiRepositories.userPII.deletePII(userId);
+        }
+        await authCtx.repositories.userCore.delete(userId);
+      } catch (cleanupError) {
+        log.error(
+          'SCIM create rollback failed after custom claim persistence error',
+          { action: 'create_user' },
+          cleanupError as Error
+        );
+      }
+
+      throw customFieldError;
+    }
 
     // Fetch created user from both DBs via Adapter
     const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);

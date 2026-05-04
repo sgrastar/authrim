@@ -83,4 +83,31 @@ describe('ensureLoginUiClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
   });
+
+  it('sends X-Tenant-Id for tenant-scoped admin APIs', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'client-tenant',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://single-ar-router.example.workers.dev',
+      loginUiUrl: 'https://single-ar-login-ui.pages.dev',
+      adminApiSecretPath,
+      tenantId: 'default',
+      maxRetries: 1,
+    });
+
+    expect(result.success).toBe(true);
+    const firstCallHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const secondCallHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(firstCallHeaders['X-Tenant-Id']).toBe('default');
+    expect(secondCallHeaders['X-Tenant-Id']).toBe('default');
+  });
 });

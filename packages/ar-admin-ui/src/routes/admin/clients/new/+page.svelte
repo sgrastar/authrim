@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { adminClientsAPI, type Client, type CreateClientInput } from '$lib/api/admin-clients';
+	import {
+		createPresetClientDownstreamGrantForm,
+		toClientDownstreamGrantCreateInput
+	} from '$lib/admin/client-downstream-grant';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
 
@@ -116,6 +120,7 @@
 	let tokenEndpointAuthMethod = $state('client_secret_basic');
 	let scope = $state('openid profile email');
 	let requirePkce = $state(false);
+	let downstreamGrantForm = $state(createPresetClientDownstreamGrantForm('custom'));
 
 	// CORS settings
 	let tenantSettings = $state<CategorySettings | null>(null);
@@ -228,6 +233,7 @@
 		selectedPreset = preset;
 		grantTypes = [...preset.defaultGrantTypes];
 		requirePkce = preset.pkceRequired;
+		downstreamGrantForm = createPresetClientDownstreamGrantForm(preset.id);
 
 		// Set auth method based on client type
 		if (preset.clientType === 'confidential') {
@@ -294,7 +300,8 @@
 				response_types: responseTypes,
 				token_endpoint_auth_method: tokenEndpointAuthMethod,
 				scope: scope,
-				require_pkce: requirePkce
+				require_pkce: requirePkce,
+				...toClientDownstreamGrantCreateInput(downstreamGrantForm)
 			};
 
 			createdClient = await adminClientsAPI.create(input);
@@ -550,6 +557,122 @@
 									placeholder="openid profile email"
 								/>
 							</div>
+
+							<div class="settings-summary settings-summary-subsection">
+								<h3 class="settings-summary-title">Service & Downstream Grant</h3>
+								<p class="form-hint" style="margin-bottom: 12px;">
+									Use these fields when this client will exchange downstream subject tokens or
+									access protected product resources such as
+									<code>svc://op-userinfo/customer-profile</code>.
+								</p>
+								<div class="advanced-panel" style="padding: 0; border: none;">
+									<div class="form-group">
+										<ToggleSwitch
+											bind:checked={downstreamGrantForm.token_exchange_allowed}
+											label="Enable Token Exchange"
+											description="Allow RFC 8693 token exchange for this client"
+										/>
+									</div>
+
+									<div class="form-group">
+										<ToggleSwitch
+											bind:checked={downstreamGrantForm.client_credentials_allowed}
+											label="Allow Client Credentials"
+											description="Allow this client to authenticate as a service"
+										/>
+									</div>
+
+									<div class="form-group">
+										<label class="form-label" for="delegationMode">Delegation Mode</label>
+										<select
+											id="delegationMode"
+											class="form-select"
+											bind:value={downstreamGrantForm.delegation_mode}
+										>
+											<option value="none">None</option>
+											<option value="delegation">Delegation</option>
+											<option value="impersonation">Impersonation</option>
+										</select>
+										<p class="form-hint">How downstream grants should represent the actor.</p>
+									</div>
+
+									<div class="form-grid">
+										<div class="form-group">
+											<label class="form-label" for="downstreamDefaultAudience">
+												Default Audience
+											</label>
+											<input
+												id="downstreamDefaultAudience"
+												type="text"
+												class="form-input"
+												bind:value={downstreamGrantForm.default_audience}
+												placeholder="svc://op-userinfo/customer-profile"
+											/>
+											<p class="form-hint">Audience used for exchanged downstream access tokens.</p>
+										</div>
+
+										<div class="form-group">
+											<label class="form-label" for="downstreamDefaultScope">Default Scope</label>
+											<input
+												id="downstreamDefaultScope"
+												type="text"
+												class="form-input"
+												bind:value={downstreamGrantForm.default_scope}
+												placeholder="openid profile"
+											/>
+											<p class="form-hint">Applied when a downstream grant does not request scope.</p>
+										</div>
+									</div>
+
+									<div class="form-group">
+										<label class="form-label" for="allowedScopes">Allowed Scopes</label>
+										<input
+											id="allowedScopes"
+											type="text"
+											class="form-input"
+											bind:value={downstreamGrantForm.allowed_scopes}
+											placeholder="openid profile profile_export"
+										/>
+										<p class="form-hint">
+											Space or comma separated. Leave blank to allow any scope.
+										</p>
+									</div>
+
+									<div class="form-grid">
+										<div class="form-group">
+											<label class="form-label" for="allowedSubjectTokenClients">
+												Allowed Subject Token Clients
+											</label>
+											<textarea
+												id="allowedSubjectTokenClients"
+												class="form-input textarea-input"
+												rows="4"
+												bind:value={downstreamGrantForm.allowed_subject_token_clients}
+												placeholder="svc-client-a&#10;svc-client-b"
+											></textarea>
+											<p class="form-hint">
+												One client ID per line. Restricts who can present subject tokens.
+											</p>
+										</div>
+
+										<div class="form-group">
+											<label class="form-label" for="allowedTokenExchangeResources">
+												Allowed Token Exchange Resources
+											</label>
+											<textarea
+												id="allowedTokenExchangeResources"
+												class="form-input textarea-input"
+												rows="4"
+												bind:value={downstreamGrantForm.allowed_token_exchange_resources}
+												placeholder="svc://op-userinfo/customer-profile&#10;svc://op-userinfo/customer-export"
+											></textarea>
+											<p class="form-hint">
+												One audience/resource per line. Restricts downstream resource exchange.
+											</p>
+										</div>
+									</div>
+								</div>
+							</div>
 						</div>
 					{/if}
 				</div>
@@ -713,5 +836,14 @@
 	.cors-hint {
 		margin-top: 8px;
 		color: var(--warning, #f59e0b);
+	}
+
+	.settings-summary-subsection {
+		margin-top: 1rem;
+	}
+
+	.textarea-input {
+		min-height: 112px;
+		resize: vertical;
 	}
 </style>

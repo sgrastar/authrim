@@ -11,7 +11,6 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   AdminAttributeRepository,
   AdminAttributeValueRepository,
-  AdminAuditLogRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -20,6 +19,7 @@ import {
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { writeAdminAuditLog } from '../../admin-shared';
 
 // Define context type
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -63,21 +63,11 @@ async function createAuditLog(
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const authContext = c.get('adminAuth') as AdminAuthContext;
-  const adapter = getAdminAdapter(c);
-  const auditRepo = new AdminAuditLogRepository(adapter);
-  const tenantId = getTenantIdFromContext(c);
-
-  await auditRepo.createAuditLog({
-    tenant_id: tenantId,
-    admin_user_id: authContext.userId,
-    admin_email: authContext.email || 'system',
+  await writeAdminAuditLog(c, {
     action,
-    resource_type: 'admin_attribute',
-    resource_id: resourceId,
+    resourceType: 'admin_attribute',
+    resourceId,
     result,
-    ip_address: c.req.header('CF-Connecting-IP') || undefined,
-    user_agent: c.req.header('User-Agent') || undefined,
     metadata,
   });
 }

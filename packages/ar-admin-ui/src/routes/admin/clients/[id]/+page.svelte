@@ -9,6 +9,14 @@
 		type UpdateClientInput
 	} from '$lib/api/admin-clients';
 	import {
+		buildClientDownstreamGrantFormFromClient,
+		createDefaultClientDownstreamGrantForm,
+		downstreamGrantFormEquals,
+		formatClientListForTextarea,
+		toClientDownstreamGrantUpdateInput,
+		type ClientDownstreamGrantForm
+	} from '$lib/admin/client-downstream-grant';
+	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
 		type CategorySettings,
@@ -27,6 +35,9 @@
 	// Edit mode
 	let isEditing = $state(false);
 	let editForm = $state<UpdateClientInput>({});
+	let downstreamGrantEditForm = $state<ClientDownstreamGrantForm>(
+		createDefaultClientDownstreamGrantForm()
+	);
 	let settingsEditForm = $state<{
 		// General tab
 		pkce_required?: boolean;
@@ -130,6 +141,7 @@
 
 	// Track unsaved changes
 	let initialEditForm = $state<UpdateClientInput | null>(null);
+	let initialDownstreamGrantEditForm = $state<ClientDownstreamGrantForm | null>(null);
 	let initialSettingsEditForm = $state<{
 		// General tab
 		pkce_required?: boolean;
@@ -493,9 +505,16 @@
 	}
 
 	let hasUnsavedChanges = $derived.by(() => {
-		if (!isEditing || !initialEditForm || !initialSettingsEditForm) return false;
+		if (
+			!isEditing ||
+			!initialEditForm ||
+			!initialSettingsEditForm ||
+			!initialDownstreamGrantEditForm
+		)
+			return false;
 		return (
 			!clientFormEquals(editForm, initialEditForm) ||
+			!downstreamGrantFormEquals(downstreamGrantEditForm, initialDownstreamGrantEditForm) ||
 			!settingsFormEquals(settingsEditForm, initialSettingsEditForm)
 		);
 	});
@@ -684,6 +703,7 @@
 			scope: client.scope,
 			require_pkce: client.require_pkce ?? false
 		};
+		downstreamGrantEditForm = buildClientDownstreamGrantFormFromClient(client);
 		// Initialize all Settings API fields
 		settingsEditForm = {
 			// General tab
@@ -787,6 +807,7 @@
 				(clientSettings.values['client.token_endpoint_auth_signing_alg'] as string) ?? 'RS256'
 		};
 		initialEditForm = { ...editForm };
+		initialDownstreamGrantEditForm = { ...downstreamGrantEditForm };
 		initialSettingsEditForm = { ...settingsEditForm };
 		isEditing = true;
 		setTimeout(() => {
@@ -797,8 +818,10 @@
 	function cancelEditing() {
 		isEditing = false;
 		editForm = {};
+		downstreamGrantEditForm = createDefaultClientDownstreamGrantForm();
 		settingsEditForm = {};
 		initialEditForm = null;
+		initialDownstreamGrantEditForm = null;
 		initialSettingsEditForm = null;
 		saveError = '';
 	}
@@ -812,6 +835,7 @@
 			client = normalizeClientArrays(
 				await adminClientsAPI.update(clientId, {
 					...editForm,
+					...toClientDownstreamGrantUpdateInput(downstreamGrantEditForm),
 					login_ui_url: settingsEditForm.login_ui_url?.trim()
 						? settingsEditForm.login_ui_url.trim()
 						: null
@@ -829,8 +853,6 @@
 							'client.par_required': settingsEditForm.par_required,
 							'client.dpop_required': settingsEditForm.dpop_required,
 							'client.dpop_mode': settingsEditForm.dpop_mode,
-							'client.allowed_scopes': settingsEditForm.allowed_scopes,
-							'client.default_scope': settingsEditForm.default_scope,
 							// Tokens tab
 							'client.access_token_ttl': settingsEditForm.access_token_ttl,
 							'client.refresh_token_ttl': settingsEditForm.refresh_token_ttl,
@@ -838,8 +860,6 @@
 							'client.refresh_token_rotation': settingsEditForm.refresh_token_rotation,
 							'client.reuse_refresh_token': settingsEditForm.reuse_refresh_token,
 							'client.dpop_bound_access_tokens': settingsEditForm.dpop_bound_access_tokens,
-							'client.token_exchange_allowed': settingsEditForm.token_exchange_allowed,
-							'client.delegation_mode': settingsEditForm.delegation_mode,
 							// Security tab
 							'client.consent_required': settingsEditForm.consent_required,
 							'client.first_party': settingsEditForm.first_party,
@@ -851,10 +871,8 @@
 							'client.require_auth_time': settingsEditForm.require_auth_time,
 							'client.subject_type': settingsEditForm.subject_type,
 							// Scopes tab
-							'client.default_audience': settingsEditForm.default_audience,
 							'client.allowed_scopes_restriction_enabled':
 								settingsEditForm.allowed_scopes_restriction_enabled,
-							'client.client_credentials_allowed': settingsEditForm.client_credentials_allowed,
 							'client.allow_authorization_code': settingsEditForm.allow_authorization_code,
 							'client.allow_client_credentials': settingsEditForm.allow_client_credentials,
 							'client.allow_refresh_token': settingsEditForm.allow_refresh_token,
@@ -935,6 +953,7 @@
 
 			isEditing = false;
 			initialEditForm = null;
+			initialDownstreamGrantEditForm = null;
 			initialSettingsEditForm = null;
 		} catch (err) {
 			console.error('Failed to update client:', err);
@@ -1310,13 +1329,15 @@
 								<input
 									type="text"
 									class="form-input"
-									bind:value={settingsEditForm.allowed_scopes}
+									bind:value={downstreamGrantEditForm.allowed_scopes}
 									placeholder="openid profile email (space-separated)"
 								/>
-								<p class="form-hint">Scopes allowed for this client (empty = all)</p>
+								<p class="form-hint">
+									Scopes allowed for token exchange and protected resource access (empty = all)
+								</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.allowed_scopes'] || 'All scopes allowed'}
+									{client?.allowed_scopes?.join(' ') || 'All scopes allowed'}
 								</p>
 							{/if}
 						</div>
@@ -1329,13 +1350,13 @@
 								<input
 									type="text"
 									class="form-input"
-									bind:value={settingsEditForm.default_scope}
+									bind:value={downstreamGrantEditForm.default_scope}
 									placeholder="openid profile"
 								/>
 								<p class="form-hint">Default scopes if none requested</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.default_scope'] || 'None'}
+									{client?.default_scope || 'None'}
 								</p>
 							{/if}
 						</div>
@@ -1594,43 +1615,42 @@
 							{/if}
 						</div>
 
-						{#if showAdminSettings}
-							<!-- Token Exchange Allowed -->
-							<div class="form-group">
-								{#if isEditing}
-									<ToggleSwitch
-										bind:checked={settingsEditForm.token_exchange_allowed}
-										label="Token Exchange Allowed"
-										description="Allow token exchange (RFC 8693) for this client"
-									/>
-								{:else}
-									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Token Exchange Allowed</label>
-									<p class="display-text">
-										{clientSettings?.values['client.token_exchange_allowed'] ? 'Yes' : 'No'}
-									</p>
-									<p class="form-hint">Allow token exchange (RFC 8693) for this client</p>
-								{/if}
-							</div>
-
-							<!-- Delegation Mode -->
-							<div class="form-group">
+						<!-- Token Exchange Allowed -->
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={downstreamGrantEditForm.token_exchange_allowed}
+									label="Token Exchange Allowed"
+									description="Allow token exchange (RFC 8693) for this client"
+								/>
+							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Delegation Mode</label>
-								{#if isEditing}
-									<select class="form-select" bind:value={settingsEditForm.delegation_mode}>
-										<option value="delegation">Delegation</option>
-										<option value="impersonation">Impersonation</option>
-									</select>
-									<p class="form-hint">Token exchange delegation mode</p>
-								{:else}
-									<p class="display-text">
-										{clientSettings?.values['client.delegation_mode'] || 'delegation'}
-									</p>
-									<p class="form-hint">Token exchange delegation mode</p>
-								{/if}
-							</div>
-						{/if}
+								<label class="form-label">Token Exchange Allowed</label>
+								<p class="display-text">
+									{client?.token_exchange_allowed ? 'Yes' : 'No'}
+								</p>
+								<p class="form-hint">Allow token exchange (RFC 8693) for this client</p>
+							{/if}
+						</div>
+
+						<!-- Delegation Mode -->
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Delegation Mode</label>
+							{#if isEditing}
+								<select class="form-select" bind:value={downstreamGrantEditForm.delegation_mode}>
+									<option value="none">None</option>
+									<option value="delegation">Delegation</option>
+									<option value="impersonation">Impersonation</option>
+								</select>
+								<p class="form-hint">Token exchange delegation mode</p>
+							{:else}
+								<p class="display-text">
+									{client?.delegation_mode || 'delegation'}
+								</p>
+								<p class="form-hint">Token exchange delegation mode</p>
+							{/if}
+						</div>
 					</div>
 				</section>
 
@@ -1845,27 +1865,27 @@
 					<h2 class="section-title-border">Scope Settings</h2>
 
 					<div class="form-grid">
-						{#if showAdminSettings}
-							<!-- Default Audience -->
-							<div class="form-group">
-								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Default Audience</label>
-								{#if isEditing}
-									<input
-										type="text"
-										class="form-input"
-										bind:value={settingsEditForm.default_audience}
-										placeholder="https://api.example.com"
-									/>
-									<p class="form-hint">Default audience for tokens</p>
-								{:else}
-									<p class="display-text">
-										{clientSettings?.values['client.default_audience'] || 'None'}
-									</p>
-									<p class="form-hint">Default audience for tokens</p>
-								{/if}
-							</div>
+						<!-- Default Audience -->
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Default Audience</label>
+							{#if isEditing}
+								<input
+									type="text"
+									class="form-input"
+									bind:value={downstreamGrantEditForm.default_audience}
+									placeholder="https://api.example.com"
+								/>
+								<p class="form-hint">Default audience for exchanged downstream access tokens</p>
+							{:else}
+								<p class="display-text">
+									{client?.default_audience || 'None'}
+								</p>
+								<p class="form-hint">Default audience for exchanged downstream access tokens</p>
+							{/if}
+						</div>
 
+						{#if showAdminSettings}
 							<!-- Allowed Scopes Restriction Enabled -->
 							<div class="form-group">
 								{#if isEditing}
@@ -1885,25 +1905,79 @@
 									<p class="form-hint">Enable allowed_scopes restriction</p>
 								{/if}
 							</div>
-
-							<!-- Client Credentials Allowed -->
-							<div class="form-group">
-								{#if isEditing}
-									<ToggleSwitch
-										bind:checked={settingsEditForm.client_credentials_allowed}
-										label="Client Credentials Allowed"
-										description="Allow client credentials grant for machine-to-machine"
-									/>
-								{:else}
-									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Client Credentials Allowed</label>
-									<p class="display-text">
-										{clientSettings?.values['client.client_credentials_allowed'] ? 'Yes' : 'No'}
-									</p>
-									<p class="form-hint">Allow client credentials grant for machine-to-machine</p>
-								{/if}
-							</div>
 						{/if}
+
+						<!-- Client Credentials Allowed -->
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={downstreamGrantEditForm.client_credentials_allowed}
+									label="Client Credentials Allowed"
+									description="Allow client credentials grant for machine-to-machine"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Client Credentials Allowed</label>
+								<p class="display-text">
+									{client?.client_credentials_allowed ? 'Yes' : 'No'}
+								</p>
+								<p class="form-hint">Allow client credentials grant for machine-to-machine</p>
+							{/if}
+						</div>
+					</div>
+				</section>
+
+				<section class="section-spacing">
+					<h2 class="section-title-border">Downstream Grant Restrictions</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Allowed Subject Token Clients</label>
+							{#if isEditing}
+								<textarea
+									class="form-input textarea-input"
+									rows="5"
+									bind:value={downstreamGrantEditForm.allowed_subject_token_clients}
+									placeholder="svc-client-a&#10;svc-client-b"
+								></textarea>
+								<p class="form-hint">
+									One client ID per line. Leave blank to allow any subject-token client.
+								</p>
+							{:else}
+								<p class="display-text preformatted-text">
+									{formatClientListForTextarea(client?.allowed_subject_token_clients) ||
+										'Any subject-token client'}
+								</p>
+								<p class="form-hint">
+									Restricts which service clients may present downstream subject tokens.
+								</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Allowed Token Exchange Resources</label>
+							{#if isEditing}
+								<textarea
+									class="form-input textarea-input"
+									rows="5"
+									bind:value={downstreamGrantEditForm.allowed_token_exchange_resources}
+									placeholder="svc://op-userinfo/customer-profile&#10;svc://op-userinfo/customer-export"
+								></textarea>
+								<p class="form-hint">
+									One audience/resource per line. Leave blank to allow any downstream resource.
+								</p>
+							{:else}
+								<p class="display-text preformatted-text">
+									{formatClientListForTextarea(client?.allowed_token_exchange_resources) ||
+										'Any downstream resource'}
+								</p>
+								<p class="form-hint">
+									Restricts which protected resources this client can exchange into.
+								</p>
+							{/if}
+						</div>
 					</div>
 				</section>
 
@@ -3008,6 +3082,16 @@
 	.cors-hint {
 		margin-top: 8px;
 		color: var(--warning, #f59e0b);
+	}
+
+	.textarea-input {
+		min-height: 112px;
+		resize: vertical;
+	}
+
+	.preformatted-text {
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 
 	/* Dark mode support */

@@ -46,6 +46,8 @@
 	// Detail modal
 	let selectedEntry: AdminAuditLogEntry | null = $state(null);
 	let showDetailModal = $state(false);
+	let detailLoading = $state(false);
+	let detailError = $state('');
 
 	async function loadAuditLogs() {
 		loading = true;
@@ -162,14 +164,26 @@
 		return id.substring(0, length) + '...';
 	}
 
-	function openDetail(entry: AdminAuditLogEntry) {
+	async function openDetail(entry: AdminAuditLogEntry) {
 		selectedEntry = entry;
 		showDetailModal = true;
+		detailLoading = true;
+		detailError = '';
+		try {
+			selectedEntry = await adminAdminAuditAPI.get(entry.id);
+		} catch (err) {
+			console.error('Failed to load admin audit log detail:', err);
+			detailError = err instanceof Error ? err.message : 'Failed to load audit log detail';
+		} finally {
+			detailLoading = false;
+		}
 	}
 
 	function closeDetailModal() {
 		showDetailModal = false;
 		selectedEntry = null;
+		detailLoading = false;
+		detailError = '';
 	}
 
 	function formatJsonForDisplay(data: Record<string, unknown> | null): string {
@@ -475,7 +489,14 @@
 	title="Audit Log Entry Details"
 	size="lg"
 >
-	{#if selectedEntry}
+	{#if detailLoading}
+		<div class="loading-state">
+			<i class="i-ph-circle-notch loading-spinner"></i>
+			<p>Loading audit log detail...</p>
+		</div>
+	{:else if detailError}
+		<div class="alert alert-error">{detailError}</div>
+	{:else if selectedEntry}
 		<div class="detail-grid">
 			<div class="detail-item">
 				<span class="detail-label">ID</span>

@@ -29,6 +29,8 @@ export interface LoginUiClientConfig {
   adminApiSecretPath: string;
   /** Progress callback */
   onProgress?: (message: string) => void;
+  /** Optional tenant ID for tenant-scoped admin APIs */
+  tenantId?: string;
   /** Retry delay override for tests/debugging */
   retryDelayMs?: number;
   /** Retry count override for tests/debugging */
@@ -161,7 +163,8 @@ interface ExistingClientInfo {
  */
 async function findExistingClient(
   apiBaseUrl: string,
-  adminSecret: string
+  adminSecret: string,
+  tenantId?: string
 ): Promise<ExistingClientInfo | null> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/clients?search=${encodeURIComponent(LOGIN_UI_CLIENT_NAME)}&limit=10`,
@@ -170,6 +173,7 @@ async function findExistingClient(
       headers: {
         Authorization: `Bearer ${adminSecret}`,
         Accept: 'application/json',
+        ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
       },
     }
   );
@@ -200,7 +204,8 @@ async function findExistingClient(
 async function updateClientToPublic(
   apiBaseUrl: string,
   adminSecret: string,
-  clientId: string
+  clientId: string,
+  tenantId?: string
 ): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/api/admin/clients/${clientId}`, {
     method: 'PUT',
@@ -208,6 +213,7 @@ async function updateClientToPublic(
       Authorization: `Bearer ${adminSecret}`,
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
     body: JSON.stringify({
       token_endpoint_auth_method: 'none',
@@ -229,7 +235,8 @@ async function updateClientToPublic(
 async function createClient(
   apiBaseUrl: string,
   adminSecret: string,
-  loginUiUrl: string
+  loginUiUrl: string,
+  tenantId?: string
 ): Promise<string> {
   const redirectUris = buildRedirectUris(loginUiUrl);
 
@@ -239,6 +246,7 @@ async function createClient(
       Authorization: `Bearer ${adminSecret}`,
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
     body: JSON.stringify({
       client_name: LOGIN_UI_CLIENT_NAME,
@@ -276,6 +284,7 @@ export async function ensureLoginUiClient(
     loginUiUrl,
     adminApiSecretPath,
     onProgress,
+    tenantId,
     retryDelayMs = LOGIN_UI_CLIENT_RETRY_BASE_DELAY_MS,
     maxRetries = LOGIN_UI_CLIENT_MAX_RETRIES,
   } = config;
@@ -288,12 +297,12 @@ export async function ensureLoginUiClient(
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         onProgress?.('Checking for existing Login UI client...');
-        const existingClient = await findExistingClient(apiBaseUrl, adminSecret);
+        const existingClient = await findExistingClient(apiBaseUrl, adminSecret, tenantId);
 
         if (existingClient) {
           if (existingClient.needsMigration) {
             onProgress?.(`Migrating Login UI client to public client: ${existingClient.clientId}`);
-            await updateClientToPublic(apiBaseUrl, adminSecret, existingClient.clientId);
+            await updateClientToPublic(apiBaseUrl, adminSecret, existingClient.clientId, tenantId);
             onProgress?.(
               'Login UI client migrated to public client (token_endpoint_auth_method=none, require_pkce=true)'
             );
@@ -308,7 +317,7 @@ export async function ensureLoginUiClient(
         }
 
         onProgress?.('Creating Login UI OAuth client...');
-        const clientId = await createClient(apiBaseUrl, adminSecret, loginUiUrl);
+        const clientId = await createClient(apiBaseUrl, adminSecret, loginUiUrl, tenantId);
 
         onProgress?.(`Login UI client created: ${clientId}`);
         return {

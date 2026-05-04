@@ -550,7 +550,21 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(adapter, c.env.PII_ENCRYPTION_KEY, {
+        await storeOperationalLog(
+          adapter,
+          {
+            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
+            objectStorage:
+              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
+                ? {
+                    bucket: c.env.SENSITIVE_DETAILS,
+                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
+                    keyVersion:
+                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
+                  }
+                : undefined,
+          },
+          {
           tenantId,
           subjectType: 'user',
           subjectId: userId,
@@ -559,7 +573,8 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
           reasonDetail: body.reason_detail,
           requestId,
           retentionDays,
-        });
+          }
+        );
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for suspend', { userId }, opLogError as Error);
@@ -705,7 +720,21 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(adapter, c.env.PII_ENCRYPTION_KEY, {
+        await storeOperationalLog(
+          adapter,
+          {
+            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
+            objectStorage:
+              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
+                ? {
+                    bucket: c.env.SENSITIVE_DETAILS,
+                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
+                    keyVersion:
+                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
+                  }
+                : undefined,
+          },
+          {
           tenantId,
           subjectType: 'user',
           subjectId: userId,
@@ -714,7 +743,8 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
           reasonDetail: body.reason_detail,
           requestId,
           retentionDays,
-        });
+          }
+        );
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for lock', { userId }, opLogError as Error);
@@ -886,7 +916,21 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(adapter, c.env.PII_ENCRYPTION_KEY, {
+        await storeOperationalLog(
+          adapter,
+          {
+            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
+            objectStorage:
+              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
+                ? {
+                    bucket: c.env.SENSITIVE_DETAILS,
+                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
+                    keyVersion:
+                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
+                  }
+                : undefined,
+          },
+          {
           tenantId,
           subjectType: 'user',
           subjectId: userId,
@@ -895,7 +939,8 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
           reasonDetail: body.reason_detail,
           requestId,
           retentionDays,
-        });
+          }
+        );
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for activate', { userId }, opLogError as Error);

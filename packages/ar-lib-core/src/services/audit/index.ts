@@ -168,4 +168,9 @@ export {
   deleteUserOperationalLogs,
 } from './operational-logs';
 
-export type { OperationalLogEntry, StoreOperationalLogParams } from './operational-logs';
+export type {
+  OperationalLogEntry,
+  StoreOperationalLogParams,
+  OperationalLogObjectStorageOptions,
+  OperationalLogStorageOptions,
+} from './operational-logs';

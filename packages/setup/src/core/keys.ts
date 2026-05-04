@@ -65,6 +65,7 @@ export interface KeyMetadata {
     privateKey: string;
     publicKey: string;
     rpTokenEncryptionKey?: string;
+    objectEncryptionRootKey?: string;
   };
 }
 
@@ -73,6 +74,8 @@ export interface GeneratedSecrets {
   keyPair: KeyPair;
   /** RP Token encryption key (hex encoded) */
   rpTokenEncryptionKey: string;
+  /** Root key for object plane encryption (hex encoded) */
+  objectEncryptionRootKey: string;
   /** Admin API secret */
   adminApiSecret: string;
   /** Key Manager secret */
@@ -177,6 +180,7 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
   return {
     keyPair,
     rpTokenEncryptionKey: generateHexSecret(32), // 256-bit key
+    objectEncryptionRootKey: generateHexSecret(32), // 256-bit key
     adminApiSecret: generateBase64Secret(32), // 256-bit secret
     keyManagerSecret: generateBase64Secret(32), // 256-bit secret
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
@@ -393,6 +397,7 @@ export async function saveKeysToDirectory(
     privateKey: join(targetDir, 'private.pem'),
     publicKey: join(targetDir, 'public.jwk.json'),
     rpTokenEncryptionKey: join(targetDir, 'rp_token_encryption_key.txt'),
+    objectEncryptionRootKey: join(targetDir, 'object_encryption_root_key.txt'),
     adminApiSecret: join(targetDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(targetDir, 'key_manager_secret.txt'),
     setupToken: join(targetDir, 'setup_token.txt'),
@@ -413,6 +418,8 @@ export async function saveKeysToDirectory(
   // Write other secrets
   await writeFile(paths.rpTokenEncryptionKey, secrets.rpTokenEncryptionKey, 'utf-8');
   await chmod(paths.rpTokenEncryptionKey, SENSITIVE_FILE_MODE);
+  await writeFile(paths.objectEncryptionRootKey, secrets.objectEncryptionRootKey, 'utf-8');
+  await chmod(paths.objectEncryptionRootKey, SENSITIVE_FILE_MODE);
   await writeFile(paths.adminApiSecret, secrets.adminApiSecret, 'utf-8');
   await chmod(paths.adminApiSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.keyManagerSecret, secrets.keyManagerSecret, 'utf-8');
@@ -433,6 +440,7 @@ export async function saveKeysToDirectory(
       privateKey: paths.privateKey,
       publicKey: paths.publicKey,
       rpTokenEncryptionKey: paths.rpTokenEncryptionKey,
+      objectEncryptionRootKey: paths.objectEncryptionRootKey,
     },
   };
 
@@ -590,6 +598,10 @@ export function generateWranglerSecretCommands(
   // RP Token encryption key
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'rp_token_encryption_key.txt')})" | wrangler secret put RP_TOKEN_ENCRYPTION_KEY${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'object_encryption_root_key.txt')})" | wrangler secret put OBJECT_ENCRYPTION_ROOT_KEY${envFlag}`
   );
 
   // Admin API secret

@@ -50,3 +50,10 @@ export {
   type AdminPolicyCreateInput,
   type AdminPolicyConditions,
 } from './admin-policy';
+
+// Approval / Elevation Governance
+export {
+  ApprovalRequestRepository,
+  ApprovalRequestApprovalRepository,
+  ElevationGrantRepository,
+} from './admin-approval-request';

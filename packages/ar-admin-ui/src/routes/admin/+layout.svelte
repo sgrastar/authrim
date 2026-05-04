@@ -104,7 +104,8 @@
 		],
 		operations: [
 			{ path: '/admin/scale', label: 'Scale', icon: 'i-ph-chart-bar' },
-			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' }
+			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' },
+			{ path: '/admin/approvals', label: 'Approvals', icon: 'i-ph-checks' }
 		],
 		adminUsers: { path: '/admin/admins', label: 'Admin Users', icon: 'i-ph-user-gear' },
 		adminAccessControl: {
@@ -122,7 +123,8 @@
 		},
 		adminOthers: [
 			{ path: '/admin/ip-allowlist', label: 'IP Allowlist', icon: 'i-ph-shield-check' },
-			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' }
+			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' },
+			{ path: '/admin/operational-logs', label: 'Operational Logs', icon: 'i-ph-scroll' }
 		]
 	};
 

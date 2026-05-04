@@ -29,6 +29,30 @@ import {
   toMilliseconds,
 } from './admin-shared';
 
+const VALID_DELEGATION_MODES = new Set(['none', 'delegation', 'impersonation']);
+
+function validateOptionalStringArrayField(
+  value: unknown,
+  field: string
+): { ok: true; value: string[] | null | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null) {
+    return { ok: true, value: null };
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    return { ok: false, error: `${field} must be an array of strings` };
+  }
+  if (isCharArrayLike(value)) {
+    return {
+      ok: false,
+      error: `${field} appears malformed. Send full values, not character arrays.`,
+    };
+  }
+  return { ok: true, value };
+}
+
 /**
  * Create a new OAuth client.
  * POST /admin/clients
@@ -54,6 +78,14 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope?: boolean;
       allowed_redirect_origins?: string[];
       require_pkce?: boolean;
+      token_exchange_allowed?: boolean;
+      allowed_subject_token_clients?: string[] | null;
+      allowed_token_exchange_resources?: string[] | null;
+      delegation_mode?: 'none' | 'delegation' | 'impersonation';
+      client_credentials_allowed?: boolean;
+      allowed_scopes?: string[] | null;
+      default_scope?: string | null;
+      default_audience?: string | null;
     }>();
 
     if (!body.client_name) {
@@ -118,6 +150,61 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       validatedAllowedOrigins = originsValidation.normalizedOrigins;
     }
 
+    const allowedSubjectTokenClientsValidation = validateOptionalStringArrayField(
+      body.allowed_subject_token_clients,
+      'allowed_subject_token_clients'
+    );
+    if (!allowedSubjectTokenClientsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedSubjectTokenClientsValidation.error,
+        },
+        400
+      );
+    }
+
+    const allowedTokenExchangeResourcesValidation = validateOptionalStringArrayField(
+      body.allowed_token_exchange_resources,
+      'allowed_token_exchange_resources'
+    );
+    if (!allowedTokenExchangeResourcesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedTokenExchangeResourcesValidation.error,
+        },
+        400
+      );
+    }
+
+    const allowedScopesValidation = validateOptionalStringArrayField(
+      body.allowed_scopes,
+      'allowed_scopes'
+    );
+    if (!allowedScopesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedScopesValidation.error,
+        },
+        400
+      );
+    }
+
+    if (
+      body.delegation_mode !== undefined &&
+      !VALID_DELEGATION_MODES.has(body.delegation_mode)
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'delegation_mode must be one of none, delegation, impersonation',
+        },
+        400
+      );
+    }
+
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     const clientSecret =
@@ -149,6 +236,14 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       is_trusted: body.is_trusted || false,
       skip_consent: body.skip_consent || false,
       allow_claims_without_scope: body.allow_claims_without_scope || false,
+      token_exchange_allowed: body.token_exchange_allowed ?? false,
+      allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
+      allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
+      delegation_mode: body.delegation_mode ?? 'delegation',
+      client_credentials_allowed: body.client_credentials_allowed ?? false,
+      allowed_scopes: allowedScopesValidation.value,
+      default_scope: body.default_scope ?? null,
+      default_audience: body.default_audience ?? null,
       allowed_redirect_origins: validatedAllowedOrigins,
       require_pkce: body.require_pkce || false,
     });
@@ -260,6 +355,20 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           is_trusted: client.is_trusted,
           skip_consent: client.skip_consent,
           allow_claims_without_scope: client.allow_claims_without_scope,
+          token_exchange_allowed: client.token_exchange_allowed,
+          allowed_subject_token_clients: client.allowed_subject_token_clients
+            ? parseClientStringArray(client.allowed_subject_token_clients, [])
+            : [],
+          allowed_token_exchange_resources: client.allowed_token_exchange_resources
+            ? parseClientStringArray(client.allowed_token_exchange_resources, [])
+            : [],
+          delegation_mode: client.delegation_mode,
+          client_credentials_allowed: client.client_credentials_allowed,
+          allowed_scopes: client.allowed_scopes
+            ? parseClientStringArray(client.allowed_scopes, [])
+            : [],
+          default_scope: client.default_scope,
+          default_audience: client.default_audience,
           require_pkce: client.require_pkce,
           created_at: client.created_at,
           updated_at: client.updated_at,
@@ -301,6 +410,13 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
         grant_types: parseClientStringArray(client.grant_types, ['authorization_code']),
         response_types: parseClientStringArray(client.response_types, ['code']),
         contacts: client.contacts ? parseClientStringArray(client.contacts, []) : [],
+        allowed_subject_token_clients: client.allowed_subject_token_clients
+          ? parseClientStringArray(client.allowed_subject_token_clients, [])
+          : [],
+        allowed_token_exchange_resources: client.allowed_token_exchange_resources
+          ? parseClientStringArray(client.allowed_token_exchange_resources, [])
+          : [],
+        allowed_scopes: client.allowed_scopes ? parseClientStringArray(client.allowed_scopes, []) : [],
         created_at: toMilliseconds(client.created_at),
         updated_at: toMilliseconds(client.updated_at),
       };
@@ -355,6 +471,13 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
       grant_types: parseClientStringArray(client.grant_types, ['authorization_code']),
       response_types: parseClientStringArray(client.response_types, ['code']),
       contacts: client.contacts ? parseClientStringArray(client.contacts, []) : [],
+      allowed_subject_token_clients: client.allowed_subject_token_clients
+        ? parseClientStringArray(client.allowed_subject_token_clients, [])
+        : [],
+      allowed_token_exchange_resources: client.allowed_token_exchange_resources
+        ? parseClientStringArray(client.allowed_token_exchange_resources, [])
+        : [],
+      allowed_scopes: client.allowed_scopes ? parseClientStringArray(client.allowed_scopes, []) : [],
       created_at: toMilliseconds(client.created_at as number),
       updated_at: toMilliseconds(client.updated_at as number),
     };
@@ -410,6 +533,14 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       require_pkce,
       initiate_login_uri,
       login_ui_url,
+      token_exchange_allowed,
+      allowed_subject_token_clients,
+      allowed_token_exchange_resources,
+      delegation_mode,
+      client_credentials_allowed,
+      allowed_scopes,
+      default_scope,
+      default_audience,
     } = body;
 
     let validatedAllowedOrigins: string[] | undefined;
@@ -517,6 +648,58 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
+    const allowedSubjectTokenClientsValidation = validateOptionalStringArrayField(
+      allowed_subject_token_clients,
+      'allowed_subject_token_clients'
+    );
+    if (!allowedSubjectTokenClientsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedSubjectTokenClientsValidation.error,
+        },
+        400
+      );
+    }
+
+    const allowedTokenExchangeResourcesValidation = validateOptionalStringArrayField(
+      allowed_token_exchange_resources,
+      'allowed_token_exchange_resources'
+    );
+    if (!allowedTokenExchangeResourcesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedTokenExchangeResourcesValidation.error,
+        },
+        400
+      );
+    }
+
+    const allowedScopesValidation = validateOptionalStringArrayField(
+      allowed_scopes,
+      'allowed_scopes'
+    );
+    if (!allowedScopesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedScopesValidation.error,
+        },
+        400
+      );
+    }
+
+    if (delegation_mode !== undefined && !VALID_DELEGATION_MODES.has(delegation_mode)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'delegation_mode must be one of none, delegation, impersonation',
+        },
+        400
+      );
+    }
+
     const hasUpdates = [
       client_name,
       redirect_uris,
@@ -535,6 +718,14 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       require_pkce,
       initiate_login_uri,
       login_ui_url,
+      token_exchange_allowed,
+      allowed_subject_token_clients,
+      allowed_token_exchange_resources,
+      delegation_mode,
+      client_credentials_allowed,
+      allowed_scopes,
+      default_scope,
+      default_audience,
     ].some((v) => v !== undefined);
 
     if (!hasUpdates) {
@@ -562,6 +753,14 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       require_pkce,
       initiate_login_uri,
       login_ui_url,
+      token_exchange_allowed,
+      allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
+      allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
+      delegation_mode,
+      client_credentials_allowed,
+      allowed_scopes: allowedScopesValidation.value,
+      default_scope,
+      default_audience,
     });
 
     const log = getLogger(c).module('ADMIN-CLIENT');
@@ -603,6 +802,15 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           response_types: parseClientStringArray(updatedClient.response_types, ['code']),
           contacts: updatedClient.contacts
             ? parseClientStringArray(updatedClient.contacts, [])
+            : [],
+          allowed_subject_token_clients: updatedClient.allowed_subject_token_clients
+            ? parseClientStringArray(updatedClient.allowed_subject_token_clients, [])
+            : [],
+          allowed_token_exchange_resources: updatedClient.allowed_token_exchange_resources
+            ? parseClientStringArray(updatedClient.allowed_token_exchange_resources, [])
+            : [],
+          allowed_scopes: updatedClient.allowed_scopes
+            ? parseClientStringArray(updatedClient.allowed_scopes, [])
             : [],
         },
       });

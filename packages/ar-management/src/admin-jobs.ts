@@ -14,9 +14,12 @@
  * @packageDocumentation
  */
 
-import type { Context } from 'hono';
+import type { Context, Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  ADMIN_PERMISSIONS,
+  requireAdminPermissions,
+  requireAnyRole,
   createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
@@ -24,14 +27,72 @@ import {
   getTenantIdFromContext,
   createAuditLogFromContext,
   getLogger,
+  listObjectCatalogObjects,
+  type ObjectCatalogListResult,
+  type ObjectCatalogPhysicalRecord,
+  type ObjectRepresentation,
 } from '@authrim/ar-lib-core';
+import {
+  loadCatalogObjectArtifact,
+  loadCatalogObjectRepresentation,
+} from '@authrim/ar-lib-core/services/object-artifact-store';
 import { z } from 'zod';
+import {
+  auditAdminSensitiveRead,
+  requireAdminPermissionOrElevationGrant,
+  type AdminElevationAccessResolution,
+} from './admin-elevation-access';
 import {
   USER_IMPORT_MAX_UPLOAD_BYTES,
   buildUserImportResultKey,
   buildUserImportUploadKey,
   sanitizeUserImportFilename,
 } from './user-import-jobs';
+
+const ADMIN_JOB_MANAGER_ROLES = ['system_admin', 'distributor_admin', 'tenant_admin'];
+
+export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
+  app.use('/api/admin/jobs', requireAnyRole(ADMIN_JOB_MANAGER_ROLES));
+  app.use('/api/admin/jobs/*', requireAnyRole(ADMIN_JOB_MANAGER_ROLES));
+
+  app.use('/api/admin/jobs', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
+  app.use('/api/admin/jobs/users/import/upload-url', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE]));
+  app.use(
+    '/api/admin/jobs/users/import/upload/:upload_id',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use('/api/admin/jobs/users/import', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE]));
+  app.use(
+    '/api/admin/jobs/users/bulk-update',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use(
+    '/api/admin/jobs/reports/generate',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use(
+    '/api/admin/jobs/organizations/:id/bulk-members',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use(
+    '/api/admin/jobs/artifacts/:artifactId',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use(
+    '/api/admin/jobs/artifacts/:artifactId/download',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use(
+    '/api/admin/jobs/artifacts/:artifactId/chunks/:index',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use('/api/admin/jobs/:id/result', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
+  app.use(
+    '/api/admin/jobs/:id/result/download',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use('/api/admin/jobs/:id', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
+}
 
 // =============================================================================
 // Types
@@ -74,6 +135,8 @@ interface JobRow {
   config: string | null;
   input_r2_key: string | null;
   result_r2_key: string | null;
+  object_catalog_id: string | null;
+  public_artifact_id?: string | null;
   result: string | null;
   error_code: string | null;
   error_message: string | null;
@@ -83,6 +146,31 @@ interface JobRow {
   started_at: number | null;
   completed_at: number | null;
   estimated_completion: number | null;
+}
+
+type JobArtifactFormat = 'json' | 'csv';
+
+interface JobArtifactManifestObject {
+  format: JobArtifactFormat | null;
+  representation: ObjectRepresentation;
+  objectKind: 'single' | 'manifest' | 'chunk';
+  objectIndex: number;
+  totalBytes?: number | null;
+  checksumSha256?: string | null;
+  downloadUrl?: string;
+  chunkUrl?: string;
+}
+
+interface JobArtifactManifestResponse {
+  artifactId: string;
+  jobId: string;
+  jobType: string;
+  status: JobStatus;
+  defaultFormat: JobArtifactFormat;
+  availableFormats: JobArtifactFormat[];
+  objectClass: string;
+  createdAt: number;
+  objects: JobArtifactManifestObject[];
 }
 
 // =============================================================================
@@ -135,6 +223,53 @@ const ALLOWED_FILTER_FIELDS = ['status', 'job_type'];
  */
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const USER_IMPORT_ALLOWED_CONTENT_TYPES = new Set([
+  'text/csv',
+  'application/csv',
+  'application/vnd.ms-excel',
+]);
+
+function jobArtifactFormatForRepresentation(
+  representation: ObjectRepresentation
+): JobArtifactFormat | null {
+  if (representation === 'csv_projection') {
+    return 'csv';
+  }
+  if (representation === 'canonical_json') {
+    return 'json';
+  }
+  return null;
+}
+
+function jobArtifactRepresentationForFormat(format: JobArtifactFormat): ObjectRepresentation {
+  return format === 'csv' ? 'csv_projection' : 'canonical_json';
+}
+
+function normalizeRequestedJobArtifactFormat(
+  value: string | undefined,
+  fallback: JobArtifactFormat = 'json'
+): JobArtifactFormat {
+  if (value === 'csv' || value === 'json') {
+    return value;
+  }
+  return fallback;
+}
+
+async function sha256HexFromBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function expectedObjectClassForJobType(jobType: string): 'user_import_result' | null {
+  switch (jobType) {
+    case 'users/import':
+      return 'user_import_result';
+    default:
+      return null;
+  }
+}
 
 // =============================================================================
 // Validation Schemas
@@ -160,6 +295,199 @@ const ListJobsQuerySchema = z.object({
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
   const tenantId = getTenantIdFromContext(c);
   return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+function getJobResultBucket(env: Env): R2Bucket | null {
+  return env.EXPORT_ARTIFACTS ?? null;
+}
+
+async function loadJobResultArtifact(
+  adapter: DatabaseAdapter,
+  env: Env,
+  row: Pick<JobRow, 'tenant_id' | 'object_catalog_id' | 'result_r2_key' | 'job_type'>,
+  options?: {
+    format?: JobArtifactFormat;
+    objectIndex?: number;
+  }
+): Promise<{ content: string; contentType: string } | null> {
+  const resultBucket = getJobResultBucket(env);
+  if (!resultBucket) {
+    return null;
+  }
+
+  if (row.object_catalog_id && env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    const expectedClass = expectedObjectClassForJobType(row.job_type);
+    if (!expectedClass) {
+      return null;
+    }
+    const representation = jobArtifactRepresentationForFormat(options?.format ?? 'json');
+    const loaded =
+      options?.objectIndex !== undefined
+        ? await loadCatalogObjectArtifact(adapter, env, {
+            tenantId: row.tenant_id,
+            objectCatalogId: row.object_catalog_id,
+            representation,
+            objectIndex: options.objectIndex,
+            expectedClass,
+            expectedBucketBinding: 'EXPORT_ARTIFACTS',
+            allowPlaintextFallback: false,
+          })
+        : await loadCatalogObjectRepresentation(adapter, env, {
+            tenantId: row.tenant_id,
+            objectCatalogId: row.object_catalog_id,
+            representation,
+            expectedClass,
+            expectedBucketBinding: 'EXPORT_ARTIFACTS',
+            allowPlaintextFallback: false,
+          });
+    if (loaded) {
+      return {
+        content: loaded.content,
+        contentType: loaded.contentType,
+      };
+    }
+  }
+
+  if (!row.result_r2_key) {
+    return null;
+  }
+
+  const object = await resultBucket.get(row.result_r2_key);
+  if (!object) {
+    return null;
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  return {
+    content: await object.text(),
+    contentType: headers.get('Content-Type') || 'application/json',
+  };
+}
+
+function buildJobResultArtifactFilename(
+  jobType: string,
+  jobId: string,
+  format: JobArtifactFormat
+): string {
+  const extension = format === 'csv' ? 'csv' : 'json';
+  return sanitizeUserImportFilename(`${jobType.replace(/[/:]/g, '-')}-${jobId}.${extension}`);
+}
+
+function buildJobResultManifestResponse(
+  row: Pick<JobRow, 'id' | 'job_type' | 'status'>,
+  catalog: ObjectCatalogListResult
+): JobArtifactManifestResponse {
+  const objects = catalog.physical.map<JobArtifactManifestObject>(
+    (physical: ObjectCatalogPhysicalRecord) => {
+      const format = jobArtifactFormatForRepresentation(physical.representation);
+      const manifestObject: JobArtifactManifestObject = {
+        format,
+        representation: physical.representation,
+        objectKind: physical.objectKind,
+        objectIndex: physical.chunkIndex ?? 0,
+        totalBytes: physical.totalBytes,
+        checksumSha256: physical.checksumSha256,
+      };
+
+      if (physical.objectKind === 'chunk') {
+        manifestObject.chunkUrl =
+          `/api/admin/jobs/artifacts/${catalog.logical.publicArtifactId}` +
+          `/chunks/${physical.chunkIndex ?? 0}${format ? `?format=${format}` : ''}`;
+      } else if (format) {
+        manifestObject.downloadUrl =
+          `/api/admin/jobs/artifacts/${catalog.logical.publicArtifactId}/download?format=${format}`;
+      }
+
+      return manifestObject;
+    }
+  );
+
+  const availableFormats: JobArtifactFormat[] = Array.from(
+    new Set(
+      objects
+        .map((object: JobArtifactManifestObject) => object.format)
+        .filter(
+          (format: JobArtifactFormat | null): format is JobArtifactFormat =>
+            format === 'json' || format === 'csv'
+        )
+    )
+  );
+
+  return {
+    artifactId: catalog.logical.publicArtifactId,
+    jobId: row.id,
+    jobType: row.job_type,
+    status: row.status,
+    defaultFormat: availableFormats[0] ?? 'json',
+    availableFormats,
+    objectClass: catalog.logical.objectClass,
+    createdAt: catalog.logical.createdAt,
+    objects,
+  };
+}
+
+interface JobResultArtifactRow {
+  id: string;
+  tenant_id: string;
+  job_type: string;
+  status: JobStatus;
+  result_r2_key: string | null;
+  object_catalog_id: string | null;
+  public_artifact_id: string | null;
+}
+
+async function getJobResultArtifactRowById(
+  adapter: DatabaseAdapter,
+  jobId: string,
+  tenantId: string
+): Promise<JobResultArtifactRow | null> {
+  return adapter.queryOne<JobResultArtifactRow>(
+    `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result_r2_key,
+            aj.object_catalog_id, oc.public_artifact_id
+       FROM admin_jobs aj
+       LEFT JOIN object_catalog oc ON oc.id = aj.object_catalog_id AND oc.deleted_at IS NULL
+      WHERE aj.id = ? AND aj.tenant_id = ?`,
+    [jobId, tenantId]
+  );
+}
+
+async function getJobResultArtifactRowByArtifactId(
+  adapter: DatabaseAdapter,
+  artifactId: string,
+  tenantId: string
+): Promise<JobResultArtifactRow | null> {
+  return adapter.queryOne<JobResultArtifactRow>(
+    `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result_r2_key,
+            aj.object_catalog_id, oc.public_artifact_id
+       FROM admin_jobs aj
+       INNER JOIN object_catalog oc ON oc.id = aj.object_catalog_id
+      WHERE oc.public_artifact_id = ?
+        AND oc.deleted_at IS NULL
+        AND aj.tenant_id = ?`,
+    [artifactId, tenantId]
+  );
+}
+
+async function requireJobArtifactAccess(
+  c: Context<{ Bindings: Env }>,
+  row: Pick<JobResultArtifactRow, 'id' | 'job_type' | 'object_catalog_id' | 'public_artifact_id'>,
+  artifactId?: string | null
+): Promise<Response | AdminElevationAccessResolution> {
+  const resourceClass = expectedObjectClassForJobType(row.job_type);
+  if (!resourceClass) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+
+  return requireAdminPermissionOrElevationGrant(c as any, {
+    directPermission: ADMIN_PERMISSIONS.JOBS_ARTIFACT_READ,
+    requestSurface: 'admin_jobs',
+    requestedAction: 'artifact_read',
+    resourceClass,
+    resourceIds: [row.id, artifactId ?? row.public_artifact_id, row.object_catalog_id],
+    detailClass: 'job_result_artifact',
+    targetAudience: 'admin_api',
+  });
 }
 
 /**
@@ -322,7 +650,12 @@ function formatJobResult(row: JobRow) {
     summary,
     failures,
     logs,
-    ...(row.result_r2_key && {
+    ...(row.public_artifact_id && {
+      artifact_id: row.public_artifact_id,
+      available_formats: ['json'],
+      manifest_url: `/api/admin/jobs/artifacts/${row.public_artifact_id}`,
+    }),
+    ...((row.object_catalog_id || row.result_r2_key) && {
       download_url: `/api/admin/jobs/${row.id}/result/download`,
     }),
   };
@@ -539,42 +872,85 @@ export async function adminJobResultDownloadHandler(c: Context<{ Bindings: Env }
     });
   }
 
-  if (!c.env.IMPORT_ARTIFACTS) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
-      variables: { resource: 'job_result', id: jobId },
-    });
-  }
-
   try {
     const adapter = createAdapter(c);
-    const row = await adapter.queryOne<Pick<JobRow, 'id' | 'tenant_id' | 'job_type' | 'result_r2_key'>>(
-      `SELECT id, tenant_id, job_type, result_r2_key
-       FROM admin_jobs
-       WHERE id = ? AND tenant_id = ?`,
-      [jobId, tenantId]
-    );
+    const row = await getJobResultArtifactRowById(adapter, jobId, tenantId);
 
-    if (!row || !row.result_r2_key) {
+    if (!row || (!row.result_r2_key && !row.object_catalog_id)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'job_result', id: jobId },
       });
     }
 
-    const object = await c.env.IMPORT_ARTIFACTS.get(row.result_r2_key);
-    if (!object) {
+    const access = await requireJobArtifactAccess(c, row);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const view = c.req.query('view');
+    const requestedFormat =
+      view === 'manifest' ? null : normalizeRequestedJobArtifactFormat(c.req.query('format'));
+    if (view === 'manifest') {
+      if (!row.object_catalog_id || !row.public_artifact_id) {
+        return c.json(
+          {
+            error: 'not_supported',
+            error_description: 'Manifest view is only available for object-backed job results',
+          },
+          409
+        );
+      }
+
+      const catalog = await listObjectCatalogObjects(adapter, row.object_catalog_id);
+      if (!catalog) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+          variables: { resource: 'job_result_manifest', id: jobId },
+        });
+      }
+
+      await auditAdminSensitiveRead(c as any, access, {
+        action: 'admin_job.artifact_manifest_read',
+        resourceType: 'admin_job',
+        resourceId: row.id,
+        metadata: {
+          artifact_id: row.public_artifact_id ?? null,
+          route: 'job_result_manifest',
+        },
+      });
+
+      return c.json(buildJobResultManifestResponse(row, catalog));
+    }
+
+    const artifact = await loadJobResultArtifact(adapter, c.env, row, {
+      format: requestedFormat ?? 'json',
+    });
+    if (!artifact) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'job_result', id: jobId },
       });
     }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_download',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: row.public_artifact_id ?? null,
+        route: 'job_result_download',
+        format: requestedFormat,
+      },
+    });
 
     const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('Content-Type', headers.get('Content-Type') || 'application/json');
+    headers.set(
+      'Content-Type',
+      artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json')
+    );
     headers.set(
       'Content-Disposition',
-      `attachment; filename="${sanitizeUserImportFilename(`${row.job_type.replace(/[/:]/g, '-')}-${jobId}.json`)}"`
+      `attachment; filename="${buildJobResultArtifactFilename(row.job_type, jobId, requestedFormat ?? 'json')}"`
     );
-    return new Response(object.body, {
+    return new Response(artifact.content, {
       status: 200,
       headers,
     });
@@ -603,9 +979,11 @@ export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
     const adapter = createAdapter(c);
 
     const row = await adapter.queryOne<JobRow>(
-      `SELECT id, tenant_id, job_type, status, result, result_r2_key
-       FROM admin_jobs
-       WHERE id = ? AND tenant_id = ?`,
+      `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result, aj.result_r2_key,
+              aj.object_catalog_id, oc.public_artifact_id
+       FROM admin_jobs aj
+       LEFT JOIN object_catalog oc ON oc.id = aj.object_catalog_id AND oc.deleted_at IS NULL
+       WHERE aj.id = ? AND aj.tenant_id = ?`,
       [jobId, tenantId]
     );
 
@@ -635,6 +1013,198 @@ export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');
     log.error('Failed to get job result', { jobId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function adminJobResultArtifactManifestHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const artifactId = c.req.param('artifactId')!;
+
+  if (!artifactId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'artifactId' },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
+    if (!row || !row.object_catalog_id || !row.public_artifact_id) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    const access = await requireJobArtifactAccess(c, row, artifactId);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const catalog = await listObjectCatalogObjects(adapter, row.object_catalog_id);
+    if (!catalog) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_manifest', id: artifactId },
+      });
+    }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_manifest_read',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: artifactId,
+        route: 'artifact_manifest',
+      },
+    });
+
+    return c.json(buildJobResultManifestResponse(row, catalog));
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to get job result artifact manifest', { artifactId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function adminJobResultArtifactDownloadHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const artifactId = c.req.param('artifactId')!;
+
+  if (!artifactId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'artifactId' },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
+    if (!row || (!row.result_r2_key && !row.object_catalog_id)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    const access = await requireJobArtifactAccess(c, row, artifactId);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const requestedFormat = normalizeRequestedJobArtifactFormat(c.req.query('format'));
+    const artifact = await loadJobResultArtifact(adapter, c.env, row, {
+      format: requestedFormat,
+    });
+    if (!artifact) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_download',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: artifactId,
+        route: 'artifact_download',
+        format: requestedFormat,
+      },
+    });
+
+    const headers = new Headers();
+    headers.set(
+      'Content-Type',
+      artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json')
+    );
+    headers.set(
+      'Content-Disposition',
+      `attachment; filename="${buildJobResultArtifactFilename(row.job_type, row.id, requestedFormat)}"`
+    );
+    return new Response(artifact.content, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to download job result artifact', { artifactId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function adminJobResultArtifactChunkHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const artifactId = c.req.param('artifactId')!;
+  const chunkIndex = Number.parseInt(c.req.param('index') || '0', 10);
+
+  if (!artifactId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'artifactId' },
+    });
+  }
+
+  if (!Number.isFinite(chunkIndex) || chunkIndex < 0) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'index', reason: 'Chunk index must be a non-negative integer' },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
+    if (!row || !row.object_catalog_id) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    const access = await requireJobArtifactAccess(c, row, artifactId);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const requestedFormat = normalizeRequestedJobArtifactFormat(c.req.query('format'));
+    const artifact = await loadJobResultArtifact(adapter, c.env, row, {
+      format: requestedFormat,
+      objectIndex: chunkIndex,
+    });
+    if (!artifact) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_chunk', id: `${artifactId}:${chunkIndex}` },
+      });
+    }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_chunk_read',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: artifactId,
+        route: 'artifact_chunk',
+        chunk_index: chunkIndex,
+        format: requestedFormat,
+      },
+    });
+
+    const headers = new Headers();
+    headers.set(
+      'Content-Type',
+      artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json')
+    );
+    headers.set(
+      'Content-Disposition',
+      `attachment; filename="${buildJobResultArtifactFilename(row.job_type, row.id, requestedFormat)}"`
+    );
+    return new Response(artifact.content, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error(
+      'Failed to download job result artifact chunk',
+      { artifactId, chunkIndex },
+      error as Error
+    );
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -693,6 +1263,7 @@ export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env
       filename: string;
       content_type: string;
       size_bytes: number;
+      checksum_sha256?: string;
     }>();
 
     if (!c.env.IMPORT_ARTIFACTS) {
@@ -708,8 +1279,7 @@ export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env
       });
     }
 
-    const allowedCsvTypes = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel']);
-    if (!body.content_type || !allowedCsvTypes.has(body.content_type)) {
+    if (!body.content_type || !USER_IMPORT_ALLOWED_CONTENT_TYPES.has(body.content_type)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'content_type', reason: 'Only CSV uploads are supported' },
       });
@@ -766,8 +1336,7 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
   }
 
   const contentType = c.req.header('Content-Type') || 'text/csv';
-  const allowedCsvTypes = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel']);
-  if (!allowedCsvTypes.has(contentType)) {
+  if (!USER_IMPORT_ALLOWED_CONTENT_TYPES.has(contentType)) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
       variables: { field: 'content_type', reason: 'Only CSV uploads are supported' },
     });
@@ -784,10 +1353,17 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
       });
     }
 
+    const payloadBytes = new Uint8Array(payload);
+    const checksumSha256 = await sha256HexFromBytes(payloadBytes);
     const key = buildUserImportUploadKey(tenantId, uploadId, filename);
     await c.env.IMPORT_ARTIFACTS.put(key, payload, {
       httpMetadata: {
         contentType: 'text/csv',
+      },
+      customMetadata: {
+        checksum_sha256: checksumSha256,
+        uploaded_bytes: String(payload.byteLength),
+        content_type: 'text/csv',
       },
     });
 
@@ -797,6 +1373,8 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
         file_key: key,
         r2_key: key,
         uploaded_bytes: payload.byteLength,
+        checksum_sha256: checksumSha256,
+        content_type: 'text/csv',
       },
       201
     );
@@ -818,6 +1396,9 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     const body = await c.req.json<{
       file_key?: string;
       r2_key?: string;
+      size_bytes?: number;
+      content_type?: string;
+      checksum_sha256?: string;
       options?: z.infer<typeof ImportOptionsSchema>;
     }>();
 
@@ -845,6 +1426,56 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     if (!inputObject) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'import_artifact', id: inputKey },
+      });
+    }
+
+    const metadataHeaders = new Headers();
+    inputObject.writeHttpMetadata(metadataHeaders);
+    const storedContentType = metadataHeaders.get('Content-Type') || 'application/octet-stream';
+    if (!USER_IMPORT_ALLOWED_CONTENT_TYPES.has(storedContentType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'file_key', reason: 'Stored import artifact is not a CSV upload' },
+      });
+    }
+
+    const inputBytes = new Uint8Array(await inputObject.arrayBuffer());
+    if (inputBytes.byteLength === 0 || inputBytes.byteLength > USER_IMPORT_MAX_UPLOAD_BYTES) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'file_key',
+          reason: `Stored import artifact exceeds ${USER_IMPORT_MAX_UPLOAD_BYTES} bytes`,
+        },
+      });
+    }
+
+    const actualChecksumSha256 = await sha256HexFromBytes(inputBytes);
+    const storedMetadata = (
+      inputObject as unknown as {
+        customMetadata?: Record<string, string | undefined>;
+      }
+    ).customMetadata;
+    const storedChecksumSha256 = storedMetadata?.checksum_sha256;
+    if (storedChecksumSha256 && storedChecksumSha256 !== actualChecksumSha256) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'file_key', reason: 'Stored import artifact checksum mismatch' },
+      });
+    }
+    if (body.checksum_sha256 && body.checksum_sha256 !== actualChecksumSha256) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'checksum_sha256', reason: 'Import artifact checksum mismatch' },
+      });
+    }
+    if (body.size_bytes !== undefined && body.size_bytes !== inputBytes.byteLength) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'size_bytes', reason: 'Import artifact size does not match upload receipt' },
+      });
+    }
+    if (body.content_type && body.content_type !== storedContentType) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'content_type',
+          reason: 'Import artifact content type does not match upload receipt',
+        },
       });
     }
 

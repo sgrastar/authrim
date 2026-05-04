@@ -27,6 +27,7 @@ import {
 } from '../../core/paths.js';
 import {
   deployAll,
+  deployWorker,
   uploadSecrets,
   deployAllPages,
   updateLockWithDeployments,
@@ -56,6 +57,10 @@ import {
   ensureLoginUiClient,
   shouldReportLoginUiClientWarning,
 } from '../../core/login-ui-client.js';
+import {
+  configureDownstreamIntrospectionDeployment,
+  resolveDownstreamIntrospectionKeysDir,
+} from '../../core/downstream-introspection-deploy.js';
 import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { resolveIssuerUrl } from '../../core/url-config.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
@@ -113,6 +118,7 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
     { file: 'private.pem', name: 'PRIVATE_KEY_PEM' },
     { file: 'public.jwk.json', name: 'PUBLIC_JWK_JSON' },
     { file: 'rp_token_encryption_key.txt', name: 'RP_TOKEN_ENCRYPTION_KEY' },
+    { file: 'object_encryption_root_key.txt', name: 'OBJECT_ENCRYPTION_ROOT_KEY' },
     { file: 'admin_api_secret.txt', name: 'ADMIN_API_SECRET' },
     { file: 'key_manager_secret.txt', name: 'KEY_MANAGER_SECRET' },
     { file: 'cloudflare_api_token.txt', name: 'CLOUDFLARE_API_TOKEN' },
@@ -377,9 +383,25 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     process.exit(1);
   }
   console.log(chalk.cyan(`Lock: ${lockPath}`));
+  let currentLock = lock;
 
   // Determine what to deploy
   let componentsToDeply: WorkerComponent[] | undefined;
+  let resolvedKeysDir: string | null = null;
+
+  const getResolvedKeysDir = (): string => {
+    if (resolvedKeysDir) {
+      return resolvedKeysDir;
+    }
+
+    resolvedKeysDir = resolveDownstreamIntrospectionKeysDir({
+      env,
+      rootDir: baseDir,
+      keysDir: options.keysDir || config.keys.secretsPath,
+      keysBaseDir: process.cwd(),
+    });
+    return resolvedKeysDir;
+  };
 
   if (options.component) {
     // Deploy single component
@@ -617,18 +639,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Upload secrets first (if not skipped)
   if (!options.skipSecrets && !options.component) {
-    // Determine keys directory using 3-tier fallback search
-    let keysDir: string;
-    const foundKeys = findKeysDirectory({ env, sourceDir: baseDir, keysBaseDir: process.cwd() });
-    if (foundKeys) {
-      keysDir = foundKeys.path;
-    } else if (structureType === 'new') {
-      const envPaths = getEnvironmentPaths({ baseDir, env });
-      keysDir = envPaths.keys;
-    } else {
-      // Legacy: use secretsPath from config or default
-      keysDir = config.keys.secretsPath || getLegacyPaths(baseDir, env).keys;
-    }
+    const keysDir = getResolvedKeysDir();
 
     if (existsSync(keysDir)) {
       console.log(chalk.bold('📦 Uploading secrets...\n'));
@@ -728,9 +739,45 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Update lock file with deployment results
   if (!options.dryRun && summary.successCount > 0) {
-    const updatedLock = updateLockWithDeployments(lock, summary.results);
-    await saveLockFile(updatedLock, lockPath);
+    currentLock = updateLockWithDeployments(currentLock, summary.results);
+    await saveLockFile(currentLock, lockPath);
     console.log(chalk.gray(`\nLock file updated: ${lockPath}`));
+  }
+
+  const shouldConfigureDownstreamIntrospectionClient =
+    !options.dryRun &&
+    !options.skipSecrets &&
+    summary.failedCount === 0 &&
+    (!options.component || options.component === 'ar-userinfo');
+
+  if (shouldConfigureDownstreamIntrospectionClient) {
+    const keysDir = getResolvedKeysDir();
+    const downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+      env,
+      rootDir,
+      keysDir,
+      apiBaseUrl: config.urls?.api?.custom || config.urls?.api?.auto,
+      tenantId: config.tenant?.name,
+      dryRun: options.dryRun,
+      onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+    });
+
+    if (downstreamSetupResult.success && downstreamSetupResult.redeployResult?.deployedAt) {
+      currentLock = updateLockWithDeployments(currentLock, [downstreamSetupResult.redeployResult]);
+      await saveLockFile(currentLock, lockPath);
+      console.log(
+        chalk.green(`  ✓ ${downstreamSetupResult.redeployResult.workerName} redeployed successfully`)
+      );
+    } else if (!downstreamSetupResult.success) {
+      console.log(
+        chalk.yellow(
+          `\n⚠️  Downstream introspection client setup skipped: ${downstreamSetupResult.error}`
+        )
+      );
+      for (const error of downstreamSetupResult.secretUploadErrors ?? []) {
+        console.log(chalk.red(`  • ${error}`));
+      }
+    }
   }
 
   // Deploy Pages UI (if enabled and not skipped)
@@ -778,6 +825,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         apiBaseUrl,
         loginUiUrl,
         adminApiSecretPath,
+        tenantId: config.tenant?.name,
         onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
       });
 

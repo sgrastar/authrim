@@ -16,7 +16,6 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 import {
   AdminIpAllowlistRepository,
-  AdminAuditLogRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -25,6 +24,7 @@ import {
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { writeAdminAuditLog } from '../../admin-shared';
 
 // Create router
 export const ipAllowlistRouter = new Hono<{
@@ -67,22 +67,12 @@ async function createAuditLog(
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const authContext = c.get('adminAuth') as AdminAuthContext;
-  const adapter = getAdminAdapter(c);
-  const auditRepo = new AdminAuditLogRepository(adapter);
-  const tenantId = getTenantIdFromContext(c);
-
-  await auditRepo.createAuditLog({
-    tenant_id: tenantId,
-    admin_user_id: authContext.userId,
-    admin_email: authContext.email,
+  await writeAdminAuditLog(c, {
     action,
-    resource_type: 'admin_ip_allowlist',
-    resource_id: resourceId,
+    resourceType: 'admin_ip_allowlist',
+    resourceId,
     result,
     severity: 'warn', // IP changes are security-sensitive
-    ip_address: c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
-    user_agent: c.req.header('user-agent') || undefined,
     metadata,
   });
 }

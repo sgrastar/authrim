@@ -20,6 +20,11 @@ import {
   ADMIN_PERMISSIONS,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import {
+  auditAdminSensitiveRead,
+  requireAdminPermissionOrElevationGrant,
+} from '../../admin-elevation-access';
+import { loadAdminAuditDetail } from '../../admin-shared';
 
 // Define context type with adminAuth variable
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -145,13 +150,41 @@ adminAuditRouter.get('/:id', async (c) => {
     const adapter = getAdminAdapter(c);
     const auditRepo = new AdminAuditLogRepository(adapter);
     const userRepo = new AdminUserRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
-    const log = await auditRepo.getAuditLog(id);
+    const logRecord = await auditRepo.getAuditLogWithDetailReference(id);
 
-    if (!log) {
+    if (!logRecord) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    const access = await requireAdminPermissionOrElevationGrant(c as AdminContext, {
+      directPermission: ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
+      requestSurface: 'admin_audit',
+      requestedAction: 'detail_read',
+      resourceClass: 'admin_audit_detail',
+      resourceIds: [id, logRecord.detailArtifactId, logRecord.detailObjectCatalogId],
+      detailClass: 'before_after_metadata',
+      targetAudience: 'admin_api',
+    });
+    if (access instanceof Response) {
+      return access;
+    }
+    const detail = await loadAdminAuditDetail(
+      c,
+      adapter,
+      tenantId,
+      logRecord.detailArtifactId,
+      logRecord.detailObjectCatalogId
+    );
+    const log = detail
+      ? {
+          ...logRecord.entry,
+          before: detail.before,
+          after: detail.after,
+          metadata: detail.metadata,
+        }
+      : logRecord.entry;
 
     // Enrich with admin user info
     let adminUser: {
@@ -170,6 +203,15 @@ adminAuditRouter.get('/:id', async (c) => {
         };
       }
     }
+
+    await auditAdminSensitiveRead(c as AdminContext, access, {
+      action: 'admin_audit.detail_read',
+      resourceType: 'admin_audit_log',
+      resourceId: id,
+      metadata: {
+        target_admin_user_id: log.admin_user_id,
+      },
+    });
 
     // Return log with enriched admin user info
     return c.json({

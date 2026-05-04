@@ -12,7 +12,9 @@ describe('user-import-jobs helpers', () => {
     expect(buildUserImportUploadKey('tenant-a', 'upload-1', '../users import?.csv')).toBe(
       'imports/tenant-a/upload-1/..-users-import-.csv'
     );
-    expect(buildUserImportResultKey('tenant-a', 'job-1')).toBe('imports/tenant-a/job-1/result.json');
+    expect(buildUserImportResultKey('tenant-a', 'job-1')).toBe(
+      'exports/tenant-a/users-import/job-1/result.json'
+    );
   });
 
   it('parses header-based CSV with quoted fields', () => {

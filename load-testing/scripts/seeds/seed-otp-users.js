@@ -9,6 +9,7 @@
  * Environment variables:
  *   BASE_URL           Target Authrim Worker URL (default: https://your-authrim.example.com)
  *   ADMIN_API_SECRET   Admin API secret (required)
+ *   TENANT_ID          Tenant ID for admin API requests (optional)
  *   OTP_USER_COUNT     Number of users to generate (default: 500)
  *   CONCURRENCY        Parallel requests (default: 20)
  *   OUTPUT_DIR         Output directory (default: ../seeds)
@@ -33,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 // Environment variables
 const BASE_URL = process.env.BASE_URL || '';
 const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const TENANT_ID = process.env.TENANT_ID || '';
 const OTP_USER_COUNT = Number.parseInt(process.env.OTP_USER_COUNT || '500', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '20', 10);
 const USER_PREFIX = process.env.USER_PREFIX || 'otp-bench';
@@ -48,7 +50,10 @@ if (!ADMIN_API_SECRET) {
   process.exit(1);
 }
 
-const adminAuthHeader = { Authorization: `Bearer ${ADMIN_API_SECRET}` };
+const adminAuthHeader = {
+  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
+};
 
 /**
  * Fetch with timeout

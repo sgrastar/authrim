@@ -597,6 +597,88 @@ describe('Token Introspection Endpoint', () => {
       );
     });
 
+    it('returns downstream elevation details for exchanged break-glass tokens', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        ...sampleTokenPayload,
+        authorization_details: [
+          {
+            type: 'authrim_break_glass',
+            grant_id: 'egr_public_1',
+            request_id: 'apr_public_1',
+            investigation_id: 'inv_123',
+            request_surface: 'service_data',
+            requested_action: 'detail_read',
+            resource_class: 'customer_profile',
+            resource_ids: ['user-123'],
+            detail_classes: ['profile_export'],
+            dataset: 'profiles',
+            audience: 'https://service.example.com',
+            redaction_level: 'masked',
+            target_subject_type: 'user',
+            target_subject_id: 'user-123',
+            requester_subject_type: 'admin_user',
+            requester_subject_id: 'admin-1',
+            ticket_reference: null,
+            reference: null,
+            policy_preset: 'technical_debug_default',
+            reuse_scope: 'request',
+            partial_access_allowed: false,
+          },
+        ],
+        authrim_elevation: {
+          grant_id: 'egr_public_1',
+          request_id: 'apr_public_1',
+          investigation_id: 'inv_123',
+          target_subject_type: 'user',
+          target_subject_id: 'user-123',
+          requester_subject_type: 'admin_user',
+          requester_subject_id: 'admin-1',
+          resource_class: 'customer_profile',
+          redaction_level: 'masked',
+        },
+      });
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          active: true,
+          authorization_details: [
+            expect.objectContaining({
+              type: 'authrim_break_glass',
+              grant_id: 'egr_public_1',
+            }),
+          ],
+          authrim_elevation: expect.objectContaining({
+            grant_id: 'egr_public_1',
+            request_id: 'apr_public_1',
+            investigation_id: 'inv_123',
+            resource_class: 'customer_profile',
+            redaction_level: 'masked',
+          }),
+        })
+      );
+    });
+
     it('should return active=false for invalid token format', async () => {
       const c = createMockContext({
         headers: {

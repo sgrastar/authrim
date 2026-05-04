@@ -12,6 +12,7 @@ export * from './types/jit-config';
 export * from './types/token-claim-rules';
 export * from './types/check-api';
 export * from './types/runtime-profile';
+export * from './types/approval';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -179,7 +180,18 @@ export * from './services/settings-history';
 export * from './services/auth-core-persistence-context';
 export * from './services/consent-store';
 export * from './services/refresh-token-family-index';
+export * from './services/object-artifact-crypto';
+export * from './services/object-artifact-store';
+export * from './services/object-catalog';
 export * from './services/storage-boundary-policy';
+export * from './services/approval-governance';
+export * from './services/downstream-elevation-grant';
+export * from './services/downstream-elevation-grant-client';
+export * from './services/downstream-grant-protected-resource';
+export * from './services/downstream-grant-protected-resource-client';
+export * from './services/downstream-grant-protected-resource-redaction';
+export * from './services/product-protected-resources';
+export * from './services/admin-role-templates';
 
 // Error System (Phase 10 - SDK public types)
 // Note: Exported with namespace to avoid conflicts with legacy error types
@@ -251,6 +263,9 @@ export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/user-store-runtime-sources';
 export * from './services/refresh-token-family-store';
+
+// Repositories
+export * from './repositories/admin';
 
 // Audit Logging (Phase 10 - Unified Audit System)
 export * from './services/audit';

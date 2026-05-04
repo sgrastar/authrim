@@ -10,6 +10,23 @@ import type { AuthrimConfig } from '../core/config.js';
 import type { AuthrimLock } from '../core/lock.js';
 
 describe('generateRoutes', () => {
+  it('exposes protected customer profile routes on ar-userinfo', () => {
+    const routes = generateRoutes('ar-userinfo', 'auth.example.com', 'example.com');
+
+    expect(routes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pattern: 'auth.example.com/userinfo',
+          zone_name: 'example.com',
+        }),
+        expect.objectContaining({
+          pattern: 'auth.example.com/api/protected/customer-profiles/*',
+          zone_name: 'example.com',
+        }),
+      ])
+    );
+  });
+
   it('adds Cloudflare Email Service bindings only to ar-auth and ar-management', () => {
     const config = {
       version: '1.0.0',
@@ -843,6 +860,8 @@ describe('generateRoutes', () => {
         AVATARS: { name: 'imports-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'imports-diagnostic-logs' },
         IMPORT_ARTIFACTS: { name: 'imports-import-artifacts' },
+        EXPORT_ARTIFACTS: { name: 'imports-export-artifacts' },
+        SENSITIVE_DETAILS: { name: 'imports-sensitive-details' },
       },
     };
 
@@ -855,6 +874,14 @@ describe('generateRoutes', () => {
           binding: 'IMPORT_ARTIFACTS',
           bucket_name: 'imports-import-artifacts',
         },
+        {
+          binding: 'EXPORT_ARTIFACTS',
+          bucket_name: 'imports-export-artifacts',
+        },
+        {
+          binding: 'SENSITIVE_DETAILS',
+          bucket_name: 'imports-sensitive-details',
+        },
       ])
     );
     expect(authConfig.r2_buckets).not.toEqual(
@@ -862,6 +889,14 @@ describe('generateRoutes', () => {
         {
           binding: 'IMPORT_ARTIFACTS',
           bucket_name: 'imports-import-artifacts',
+        },
+        {
+          binding: 'EXPORT_ARTIFACTS',
+          bucket_name: 'imports-export-artifacts',
+        },
+        {
+          binding: 'SENSITIVE_DETAILS',
+          bucket_name: 'imports-sensitive-details',
         },
       ])
     );

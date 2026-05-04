@@ -395,11 +395,10 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // OIDC Back-Channel Logout 1.0 (configurable via KV)
     backchannel_logout_supported: logoutConfig.backchannel.enabled,
     backchannel_logout_session_supported: logoutConfig.backchannel.enabled,
-    // OIDC Native SSO 1.0 (draft-07) - conditionally included when enabled
+    // OIDC Native SSO - conditionally included when enabled
     ...(nativeSSOEnabled
       ? {
-          native_sso_token_exchange_supported: true,
-          native_sso_device_secret_supported: true,
+          native_sso_supported: true,
         }
       : {}),
     // ID-JAG (Identity Assertion Authorization Grant) - conditionally included when enabled

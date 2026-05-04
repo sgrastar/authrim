@@ -563,6 +563,28 @@ async function validateDeployWranglers(
       }
     }
 
+    const expectedExportArtifacts = lock.r2?.EXPORT_ARTIFACTS?.name;
+    if (component === 'ar-management' && expectedExportArtifacts) {
+      if (parsed.r2.EXPORT_ARTIFACTS !== expectedExportArtifacts) {
+        pushDetail(
+          check,
+          'fail',
+          `${component}: EXPORT_ARTIFACTS expected=${expectedExportArtifacts} actual=${parsed.r2.EXPORT_ARTIFACTS ?? '(missing)'}`
+        );
+      }
+    }
+
+    const expectedSensitiveDetails = lock.r2?.SENSITIVE_DETAILS?.name;
+    if (component === 'ar-management' && expectedSensitiveDetails) {
+      if (parsed.r2.SENSITIVE_DETAILS !== expectedSensitiveDetails) {
+        pushDetail(
+          check,
+          'fail',
+          `${component}: SENSITIVE_DETAILS expected=${expectedSensitiveDetails} actual=${parsed.r2.SENSITIVE_DETAILS ?? '(missing)'}`
+        );
+      }
+    }
+
     if (PROFILE_AWARE_COMPONENTS.includes(component)) {
       const vars = parseWranglerVars(content, env);
       for (const [key, value] of Object.entries(expectedProfileVars(config))) {

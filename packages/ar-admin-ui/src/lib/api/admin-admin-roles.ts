@@ -281,7 +281,61 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 	{
 		category: 'Admin Audit',
 		description: 'View Admin audit logs',
-		permissions: [{ key: 'admin:admin_audit:read', description: 'View Admin audit logs' }]
+		permissions: [
+			{ key: 'admin:admin_audit:read', description: 'View Admin audit logs' },
+			{
+				key: 'admin:admin_audit:detail:read',
+				description: 'Read full Admin audit detail payloads'
+			}
+		]
+	},
+	{
+		category: 'Approvals',
+		description: 'Manage approval and elevation workflows',
+		permissions: [
+			{ key: 'admin:approvals:read', description: 'View approval requests' },
+			{ key: 'admin:approvals:write', description: 'Create and update approval requests' },
+			{ key: 'admin:approvals:approve', description: 'Approve or deny approval steps' },
+			{ key: 'admin:approvals:*', description: 'Full approval workflow access' }
+		]
+	},
+	{
+		category: 'Jobs',
+		description: 'Manage async admin jobs and their output artifacts',
+		permissions: [
+			{ key: 'admin:jobs:read', description: 'View job status and summaries' },
+			{ key: 'admin:jobs:write', description: 'Create and manage jobs' },
+			{
+				key: 'admin:jobs:artifact:read',
+				description: 'Read full job result artifacts and chunks'
+			},
+			{ key: 'admin:jobs:*', description: 'Full job management access' }
+		]
+	},
+	{
+		category: 'Operational Logs',
+		description: 'Read short-retention reason detail records',
+		permissions: [
+			{ key: 'admin:operational_logs:read', description: 'View operational log summaries' },
+			{
+				key: 'admin:operational_logs:detail:read',
+				description: 'Read full operational log reason detail payloads'
+			},
+			{ key: 'admin:operational_logs:*', description: 'Full operational log access' }
+		]
+	},
+	{
+		category: 'Webhooks',
+		description: 'Manage webhooks and read delivery payloads',
+		permissions: [
+			{ key: 'admin:webhooks:read', description: 'View webhook configurations' },
+			{ key: 'admin:webhooks:write', description: 'Create and update webhooks' },
+			{ key: 'admin:webhooks:delete', description: 'Delete webhooks' },
+			{
+				key: 'admin:webhooks:payload:read',
+				description: 'Read full webhook delivery request/response payloads'
+			}
+		]
 	},
 	{
 		category: 'IP Allowlist',

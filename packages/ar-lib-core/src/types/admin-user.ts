@@ -367,6 +367,10 @@ export interface AdminAuditLogEntry {
   after: Record<string, unknown> | null;
   /** Additional metadata */
   metadata: Record<string, unknown> | null;
+  /** Whether full detail is stored in the object plane */
+  has_detail: boolean;
+  /** Public artifact identifier for externalized detail payloads */
+  detail_artifact_id?: string | null;
   /** Timestamp (Unix milliseconds) */
   created_at: number;
 }
@@ -375,6 +379,7 @@ export interface AdminAuditLogEntry {
  * Admin audit log creation input
  */
 export interface AdminAuditLogCreateInput {
+  id?: string;
   tenant_id?: string;
   admin_user_id?: string;
   admin_email?: string;
@@ -392,6 +397,7 @@ export interface AdminAuditLogCreateInput {
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  detail_object_catalog_id?: string;
 }
 
 // =============================================================================
@@ -538,7 +544,34 @@ export const ADMIN_PERMISSIONS = {
 
   // Admin audit log (Admin operations in DB_ADMIN)
   ADMIN_AUDIT_READ: 'admin:admin_audit:read',
+  ADMIN_AUDIT_DETAIL_READ: 'admin:admin_audit:detail:read',
   ADMIN_AUDIT_ALL: 'admin:admin_audit:*',
+
+  // Webhook management
+  WEBHOOKS_READ: 'admin:webhooks:read',
+  WEBHOOKS_WRITE: 'admin:webhooks:write',
+  WEBHOOKS_DELETE: 'admin:webhooks:delete',
+  WEBHOOKS_PAYLOAD_READ: 'admin:webhooks:payload:read',
+  WEBHOOKS_ALL: 'admin:webhooks:*',
+
+  // Admin jobs / artifacts
+  JOBS_READ: 'admin:jobs:read',
+  JOBS_WRITE: 'admin:jobs:write',
+  JOBS_ARTIFACT_READ: 'admin:jobs:artifact:read',
+  JOBS_ALL: 'admin:jobs:*',
+
+  // Approval / elevation workflows
+  APPROVALS_READ: 'admin:approvals:read',
+  APPROVALS_DETAIL_READ: 'admin:approvals:detail:read',
+  APPROVALS_WRITE: 'admin:approvals:write',
+  APPROVALS_APPROVE: 'admin:approvals:approve',
+  APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
+  APPROVALS_ALL: 'admin:approvals:*',
+
+  // Operational logs
+  OPERATIONAL_LOGS_READ: 'admin:operational_logs:read',
+  OPERATIONAL_LOGS_DETAIL_READ: 'admin:operational_logs:detail:read',
+  OPERATIONAL_LOGS_ALL: 'admin:operational_logs:*',
 
   // Security settings
   SECURITY_READ: 'admin:security:read',

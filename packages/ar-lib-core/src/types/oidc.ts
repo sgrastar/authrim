@@ -79,9 +79,8 @@ export interface OIDCProviderMetadata {
   display_values_supported?: string[];
   op_policy_uri?: string;
   op_tos_uri?: string;
-  // OIDC Native SSO 1.0 (draft-07)
-  native_sso_token_exchange_supported?: boolean;
-  native_sso_device_secret_supported?: boolean;
+  // OIDC Native SSO
+  native_sso_supported?: boolean;
   // RFC 9396: Rich Authorization Requests (RAR)
   authorization_details_types_supported?: string[];
 }
@@ -576,6 +575,26 @@ export interface IntrospectionResponse {
   resource?: string;
   // RFC 9396: Rich Authorization Requests
   authorization_details?: AuthorizationDetails[];
+  // Authrim downstream elevation context
+  authrim_elevation?: {
+    grant_id: string;
+    request_id: string;
+    investigation_id: string;
+    target_subject_type: string;
+    target_subject_id: string;
+    requester_subject_type: string;
+    requester_subject_id: string;
+    resource_class: string;
+    redaction_level: string;
+    target_audience?: string | null;
+    scope?: {
+      audience?: string | null;
+      dataset?: string | null;
+      resource_ids?: string[];
+      detail_classes?: string[];
+      partial_access_allowed?: boolean;
+    };
+  };
 }
 
 /**

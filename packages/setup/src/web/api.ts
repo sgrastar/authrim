@@ -88,6 +88,10 @@ import {
 import { completeInitialSetup } from '../core/admin.js';
 import { resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
+import {
+  configureDownstreamIntrospectionDeployment,
+  resolveDownstreamIntrospectionKeysDir,
+} from '../core/downstream-introspection-deploy.js';
 import { appendFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 
@@ -318,6 +322,65 @@ async function saveEmailBootstrapFiles(
     await writeFile(envPaths.keyFiles.resendApiKey, options.apiKey.trim());
     await chmod(envPaths.keyFiles.resendApiKey, 0o600);
   }
+}
+
+function resolveWebDeploymentKeysDir(rootDir: string, env: string): string {
+  return resolveDownstreamIntrospectionKeysDir({
+    env,
+    rootDir,
+    keysBaseDir: process.cwd(),
+  });
+}
+
+async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
+  env: string;
+  rootDir: string;
+  config?: Partial<AuthrimConfig> | null;
+  components: string[];
+  dryRun?: boolean;
+}): Promise<void> {
+  const { env, rootDir, config, components, dryRun } = options;
+  if (dryRun || !components.includes('ar-userinfo')) {
+    return;
+  }
+
+  const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+  const downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+    env,
+    rootDir,
+    keysDir,
+    apiBaseUrl: config?.urls?.api?.custom || config?.urls?.api?.auto,
+    tenantId: config?.tenant?.name,
+    dryRun,
+    onProgress: addProgress,
+  });
+
+  if (!downstreamSetupResult.success) {
+    addProgress(
+      `⚠️ Downstream introspection client setup skipped: ${downstreamSetupResult.error ?? 'Unknown error'}`
+    );
+    for (const error of downstreamSetupResult.secretUploadErrors ?? []) {
+      addProgress(`⚠️ ${error}`);
+    }
+    return;
+  }
+
+  if (!downstreamSetupResult.redeployResult?.deployedAt) {
+    return;
+  }
+
+  const { loadLockFileAuto } = await import('../core/lock.js');
+  const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+
+  if (!currentLock || !lockPath) {
+    addProgress('⚠️ Downstream introspection setup completed, but lock file was not available');
+    return;
+  }
+
+  const updatedLock = updateLockWithDeployments(currentLock, [downstreamSetupResult.redeployResult]);
+  await saveLockFile(updatedLock, lockPath);
+  addProgress(`✓ ${downstreamSetupResult.redeployResult.workerName} redeployed successfully`);
+  addProgress(`Lock file updated: ${lockPath}`);
 }
 
 function clearProgress(): void {
@@ -1360,6 +1423,7 @@ export function createApiRoutes(): Hono {
             { file: join(keysDir, 'private.pem'), name: 'PRIVATE_KEY_PEM' },
             { file: join(keysDir, 'public.jwk.json'), name: 'PUBLIC_JWK_JSON' },
             { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
+            { file: join(keysDir, 'object_encryption_root_key.txt'), name: 'OBJECT_ENCRYPTION_ROOT_KEY' },
             { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
             { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
             { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
@@ -1483,6 +1547,16 @@ export function createApiRoutes(): Hono {
 
         state.deployResults = summary.results;
 
+        if (summary.failedCount === 0) {
+          await maybeConfigureDownstreamIntrospectionForWebDeploy({
+            env,
+            rootDir: resolve(rootDir),
+            config: cfg,
+            components: enabledComponents ?? [],
+            dryRun,
+          });
+        }
+
         // Deploy Pages (ar-login-ui, ar-admin-ui) if loginUi or adminUi is enabled
         let pagesSummary = null;
         // Note: cfg is already loaded above (from state.config or config.json file)
@@ -1517,6 +1591,7 @@ export function createApiRoutes(): Hono {
               apiBaseUrl,
               loginUiUrl,
               adminApiSecretPath,
+              tenantId: cfg?.tenant?.name,
               onProgress: addProgress,
             });
 
@@ -2332,6 +2407,15 @@ export function createApiRoutes(): Hono {
           addProgress(`Lock file updated: ${lockPath}`);
         }
 
+        if (summary.failedCount === 0) {
+          await maybeConfigureDownstreamIntrospectionForWebDeploy({
+            env,
+            rootDir: resolve(rootDir),
+            config,
+            components: componentsToUpdate,
+          });
+        }
+
         state.status = summary.failedCount === 0 ? 'complete' : 'error';
 
         if (summary.failedCount === 0) {
@@ -2487,6 +2571,7 @@ export function createApiRoutes(): Hono {
                 apiBaseUrl,
                 loginUiUrl,
                 adminApiSecretPath,
+                tenantId: cfg?.tenant?.name,
                 onProgress: addProgress,
               });
 
@@ -2682,6 +2767,16 @@ export function createApiRoutes(): Hono {
             } catch (lockError) {
               addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
             }
+          }
+
+          if (result.success) {
+            await maybeConfigureDownstreamIntrospectionForWebDeploy({
+              env,
+              rootDir,
+              config: cfg,
+              components: [componentName],
+              dryRun,
+            });
           }
 
           if (result.success) {

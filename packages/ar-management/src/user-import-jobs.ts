@@ -1,6 +1,8 @@
 import {
+  decryptObjectArtifact,
   type DatabaseAdapter,
   type Env,
+  encryptObjectArtifact,
   type UpdateUserCoreInput,
   type UpdateUserPIIInput,
   UserCoreRepository,
@@ -14,17 +16,20 @@ import {
   syncUserLifecycleState,
   validateCustomClaimWrite,
 } from '@authrim/ar-lib-core';
+import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
 import {
   ADMIN_USER_CREATE_RESERVED_FIELDS,
   extractCustomClaimInput,
   VALID_USER_LIFECYCLE_STATES,
 } from './admin-shared';
+import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 
 export const USER_IMPORT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const USER_IMPORT_BATCH_SIZE = 100;
 
 const IMPORT_RESULT_FAILURE_PREVIEW_LIMIT = 25;
 const IMPORT_RESULT_LOG_PREVIEW_LIMIT = 40;
+const ENCRYPTED_OBJECT_CONTENT_TYPE = 'application/vnd.authrim.object-envelope+json';
 
 const USER_IMPORT_DEFAULT_HEADERS = [
   'email',
@@ -110,6 +115,7 @@ interface UserImportJobRow {
   config: string | null;
   input_r2_key: string | null;
   result_r2_key: string | null;
+  object_catalog_id: string | null;
   created_at: number;
 }
 
@@ -206,7 +212,7 @@ export function buildUserImportUploadKey(
 }
 
 export function buildUserImportResultKey(tenantId: string, jobId: string): string {
-  return `imports/${tenantId}/${jobId}/result.json`;
+  return `exports/${tenantId}/users-import/${jobId}/result.json`;
 }
 
 export function parseUserImportCsv(
@@ -776,15 +782,46 @@ function parseProgress(progress: string | null): JobProgressState {
 }
 
 async function loadImportArtifact(
+  env: Env,
+  adapter: DatabaseAdapter,
   bucket: R2Bucket,
   key: string,
   job: UserImportJobRow,
   options: UserImportJobOptions
 ): Promise<ImportJobArtifact> {
+  if (job.object_catalog_id && env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    const loaded = await loadCatalogObjectJson<ImportJobArtifact>(
+      adapter,
+      env,
+      {
+        tenantId: job.tenant_id,
+        objectCatalogId: job.object_catalog_id,
+        expectedClass: 'user_import_result',
+        expectedBucketBinding: 'EXPORT_ARTIFACTS',
+        allowPlaintextFallback: false,
+      }
+    );
+    if (loaded) {
+      return loaded.value;
+    }
+  }
+
   const existing = await bucket.get(key);
   if (existing) {
     try {
       const text = await existing.text();
+      if (text.startsWith('{') && text.includes('"ciphertext"') && env.OBJECT_ENCRYPTION_ROOT_KEY) {
+        const envelope = JSON.parse(text) as Parameters<typeof decryptObjectArtifact>[0];
+        const decrypted = await decryptObjectArtifact(envelope, {
+          rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
+          context: {
+            tenantId: job.tenant_id,
+            objectKey: key,
+            objectClass: 'user_import_result',
+          },
+        });
+        return JSON.parse(decrypted) as ImportJobArtifact;
+      }
       return JSON.parse(text) as ImportJobArtifact;
     } catch {
       // Fall through and rebuild cleanly.
@@ -808,13 +845,73 @@ async function loadImportArtifact(
   };
 }
 
-async function saveImportArtifact(bucket: R2Bucket, key: string, artifact: ImportJobArtifact) {
+async function saveImportArtifact(
+  env: Env,
+  adapter: DatabaseAdapter,
+  bucket: R2Bucket,
+  key: string,
+  job: UserImportJobRow,
+  artifact: ImportJobArtifact,
+  options?: {
+    materializeCatalog?: boolean;
+  }
+): Promise<{ objectCatalogId: string | null; publicArtifactId: string | null }> {
   artifact.updated_at = nowIso();
-  await bucket.put(key, JSON.stringify(artifact, null, 2), {
+  const payload = JSON.stringify(artifact, null, 2);
+
+  if (env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    const keyVersion = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
+    if (options?.materializeCatalog) {
+      const created = await materializeEncryptedObjectArtifact(adapter, bucket, {
+        tenantId: job.tenant_id,
+        objectClass: 'user_import_result',
+        representation: 'canonical_json',
+        objectKeyBase: key,
+        content: payload,
+        contentType: 'application/json',
+        rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
+        keyVersion,
+      });
+      return {
+        objectCatalogId: created.catalogId,
+        publicArtifactId: created.publicArtifactId,
+      };
+    }
+
+    const envelope = await encryptObjectArtifact(payload, {
+      rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
+      plane: 'EXPORT_ARTIFACTS',
+      keyVersion,
+      contentType: 'application/json',
+      context: {
+        tenantId: job.tenant_id,
+        objectKey: key,
+        objectClass: 'user_import_result',
+      },
+    });
+    const envelopeJson = JSON.stringify(envelope);
+    await bucket.put(key, envelopeJson, {
+      httpMetadata: {
+        contentType: ENCRYPTED_OBJECT_CONTENT_TYPE,
+      },
+    });
+
+    return {
+      objectCatalogId: job.object_catalog_id ?? null,
+      publicArtifactId: null,
+    };
+  }
+
+  await bucket.put(key, payload, {
     httpMetadata: {
       contentType: 'application/json',
     },
   });
+
+  return {
+    objectCatalogId: job.object_catalog_id ?? null,
+    publicArtifactId: null,
+  };
 }
 
 function previewResultPayload(artifact: ImportJobArtifact) {
@@ -857,7 +954,8 @@ function createFailureEntry(
 async function processUserImportJob(
   env: Env,
   coreAdapter: DatabaseAdapter,
-  bucket: R2Bucket,
+  inputBucket: R2Bucket,
+  resultBucket: R2Bucket,
   job: UserImportJobRow,
   logger: {
     info: (message: string, meta?: Record<string, unknown>) => void;
@@ -868,7 +966,7 @@ async function processUserImportJob(
     throw new Error('input_r2_key is missing');
   }
 
-  const inputObject = await bucket.get(job.input_r2_key);
+  const inputObject = await inputBucket.get(job.input_r2_key);
   if (!inputObject) {
     throw new Error(`Import source not found: ${job.input_r2_key}`);
   }
@@ -879,7 +977,8 @@ async function processUserImportJob(
   const parsed = parseUserImportCsv(csvText, { skip_header: options.skip_header });
   const progress = parseProgress(job.progress);
   const runtime = await createUserImportRuntime(env, job.tenant_id);
-  const artifact = await loadImportArtifact(bucket, resultKey, job, options);
+  const artifact = await loadImportArtifact(env, coreAdapter, resultBucket, resultKey, job, options);
+  let currentObjectCatalogId = job.object_catalog_id;
 
   const totalRows = parsed.records.length;
   artifact.summary.total = totalRows;
@@ -965,7 +1064,16 @@ async function processUserImportJob(
     skipped,
   };
 
-  await saveImportArtifact(bucket, resultKey, artifact);
+  const initialPointer = await saveImportArtifact(
+    env,
+    coreAdapter,
+    resultBucket,
+    resultKey,
+    { ...job, object_catalog_id: currentObjectCatalogId },
+    artifact,
+    { materializeCatalog: false }
+  );
+  currentObjectCatalogId = initialPointer.objectCatalogId ?? currentObjectCatalogId;
 
   if (processed < totalRows) {
     const nextProgress = computeProgress({
@@ -979,11 +1087,12 @@ async function processUserImportJob(
     });
 
     await coreAdapter.execute(
-      'UPDATE admin_jobs SET progress = ?, result = ?, result_r2_key = ?, updated_at = ? WHERE id = ?',
+      'UPDATE admin_jobs SET progress = ?, result = ?, result_r2_key = ?, object_catalog_id = COALESCE(?, object_catalog_id), updated_at = ? WHERE id = ?',
       [
         JSON.stringify(nextProgress),
         JSON.stringify(previewResultPayload(artifact)),
         resultKey,
+        currentObjectCatalogId,
         Math.floor(Date.now() / 1000),
         job.id,
       ]
@@ -999,7 +1108,16 @@ async function processUserImportJob(
   }
 
   artifact.completed_at = nowIso();
-  await saveImportArtifact(bucket, resultKey, artifact);
+  const finalPointer = await saveImportArtifact(
+    env,
+    coreAdapter,
+    resultBucket,
+    resultKey,
+    { ...job, object_catalog_id: currentObjectCatalogId },
+    artifact,
+    { materializeCatalog: true }
+  );
+  currentObjectCatalogId = finalPointer.objectCatalogId ?? currentObjectCatalogId;
 
   const completedTs = Math.floor(Date.now() / 1000);
   const finalProgress = computeProgress({
@@ -1014,13 +1132,14 @@ async function processUserImportJob(
 
   await coreAdapter.execute(
     `UPDATE admin_jobs
-     SET status = ?, progress = ?, result = ?, result_r2_key = ?, completed_at = ?, updated_at = ?
+     SET status = ?, progress = ?, result = ?, result_r2_key = ?, object_catalog_id = COALESCE(?, object_catalog_id), completed_at = ?, updated_at = ?
      WHERE id = ?`,
     [
       finalStatus,
       JSON.stringify(finalProgress),
       JSON.stringify(previewResultPayload(artifact)),
       resultKey,
+      currentObjectCatalogId,
       completedTs,
       completedTs,
       job.id,
@@ -1042,9 +1161,14 @@ export async function processPendingUserImportJobs(
     error: (message: string, meta?: Record<string, unknown>, err?: Error) => void;
   }
 ): Promise<void> {
-  const bucket = env.IMPORT_ARTIFACTS;
-  if (!bucket) {
+  const inputBucket = env.IMPORT_ARTIFACTS;
+  if (!inputBucket) {
     logger.info('Skipping user import jobs because IMPORT_ARTIFACTS is not configured');
+    return;
+  }
+  const resultBucket = env.EXPORT_ARTIFACTS;
+  if (!resultBucket) {
+    logger.info('Skipping user import jobs because EXPORT_ARTIFACTS is not configured');
     return;
   }
 
@@ -1053,7 +1177,7 @@ export async function processPendingUserImportJobs(
     'management-user-import-jobs'
   );
   const pendingJobs = await coreAdapter.query<UserImportJobRow>(
-    `SELECT id, tenant_id, status, progress, config, input_r2_key, result_r2_key, created_at
+    `SELECT id, tenant_id, status, progress, config, input_r2_key, result_r2_key, object_catalog_id, created_at
      FROM admin_jobs
      WHERE job_type = 'users/import' AND status IN ('pending', 'processing')
      ORDER BY created_at ASC
@@ -1074,7 +1198,7 @@ export async function processPendingUserImportJobs(
     }
 
     try {
-      await processUserImportJob(env, coreAdapter, bucket, job, logger);
+      await processUserImportJob(env, coreAdapter, inputBucket, resultBucket, job, logger);
     } catch (error) {
       const failedTs = Math.floor(Date.now() / 1000);
       await coreAdapter.execute(
