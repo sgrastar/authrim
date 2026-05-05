@@ -30,6 +30,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       issuerSignedJwt: 'mock-jwt',
       disclosures: ['disclosure1', 'disclosure2'],
     }),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
     D1Adapter: class {
       constructor() {}
     },

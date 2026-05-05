@@ -24,9 +24,32 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
+  DeviceSecretRepository,
+  createPhase1ErrorDetails,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import {
+  evaluateDeviceSecretRevokePolicy,
+  type DeviceSecretPolicyErrorCode,
+} from './device-secret-policy';
+
+function deviceSecretPolicyErrorResponse(
+  c: Context<{ Bindings: Env }>,
+  code: DeviceSecretPolicyErrorCode,
+  description: string
+): Response {
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  return c.json(
+    {
+      error: 'access_denied',
+      error_description: description,
+      error_details: createPhase1ErrorDetails(code),
+    },
+    403
+  );
+}
 
 /**
  * Token Revocation Endpoint Handler
@@ -53,7 +76,11 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const token = formData.token;
-  const token_type_hint = formData.token_type_hint as 'access_token' | 'refresh_token' | undefined;
+  const token_type_hint = formData.token_type_hint as
+    | 'access_token'
+    | 'refresh_token'
+    | 'device_secret'
+    | undefined;
 
   // Extract client credentials from either form data or Authorization header
   let client_id = formData.client_id;
@@ -146,9 +173,66 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   // Track if this is a public client for token ownership verification
   const isPublicClient = !clientMetadata.client_secret_hash;
+  const log = getLogger(c).module('REVOKE');
+
+  if (token_type_hint === 'device_secret') {
+    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
+    const deviceSecret = await deviceSecretRepo.findByRawSecret(token);
+    const nowMs = Date.now();
+
+    if (
+      !deviceSecret ||
+      deviceSecret.is_active !== 1 ||
+      deviceSecret.revoked_at ||
+      deviceSecret.expires_at <= nowMs
+    ) {
+      log.info('Inactive or unknown device secret revoke requested', {
+        action: 'revoke',
+        type: 'device_secret',
+        clientId: client_id,
+        isPublicClient,
+      });
+      return c.body(null, 200);
+    }
+
+    const deviceSecretPolicy = evaluateDeviceSecretRevokePolicy(clientMetadata, {
+      clientId: deviceSecret.client_id,
+      trustGroupId: deviceSecret.trust_group_id,
+    });
+    if (!deviceSecretPolicy.allowed) {
+      log.warn('Device secret revoke denied by caller policy', {
+        action: 'revoke',
+        type: 'device_secret',
+        clientId: client_id,
+        callerClass: deviceSecretPolicy.callerClass,
+        code: deviceSecretPolicy.code,
+      });
+      return deviceSecretPolicyErrorResponse(
+        c,
+        deviceSecretPolicy.code,
+        deviceSecretPolicy.description
+      );
+    }
+
+    const revokeReason =
+      deviceSecretPolicy.callerClass === 'native_public_client' ? 'logout' : 'token_revocation';
+    await deviceSecretRepo.revoke(deviceSecret.id, revokeReason);
+
+    log.info('Device secret revoke requested', {
+      action: 'revoke',
+      type: 'device_secret',
+      clientId: client_id,
+      targetClientId: deviceSecret.client_id,
+      targetInstallationId: deviceSecret.installation_id ?? deviceSecret.id,
+      isPublicClient,
+      callerClass: deviceSecretPolicy.callerClass,
+      revokeReason,
+    });
+
+    return c.body(null, 200);
+  }
 
   // Parse token to extract claims (without verification yet)
-  const log = getLogger(c).module('REVOKE');
   let tokenPayload;
   try {
     tokenPayload = parseToken(token);
@@ -342,7 +426,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
 interface BatchRevokeTokenItem {
   token: string;
-  token_type_hint?: 'access_token' | 'refresh_token';
+  token_type_hint?: 'access_token' | 'refresh_token' | 'device_secret';
 }
 
 interface BatchRevokeRequest {
@@ -427,7 +511,8 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
     if (
       item.token_type_hint &&
       item.token_type_hint !== 'access_token' &&
-      item.token_type_hint !== 'refresh_token'
+      item.token_type_hint !== 'refresh_token' &&
+      item.token_type_hint !== 'device_secret'
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -502,6 +587,12 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
           : '***';
 
       try {
+        if (item.token_type_hint === 'device_secret') {
+          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
+          await deviceSecretRepo.revokeByRawSecret(item.token, 'batch_token_revocation');
+          return { token_hint: tokenHint, status: 'revoked' };
+        }
+
         // Parse token to extract claims
         const tokenPayload = parseToken(item.token);
         const jti = tokenPayload.jti as string;

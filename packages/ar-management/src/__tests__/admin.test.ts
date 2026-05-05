@@ -2007,6 +2007,56 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should create client policy metadata for Phase 1 flows', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Native Wallet',
+          redirect_uris: ['https://example.com/callback'],
+          application_type: 'native',
+          trust_group: 'wallet-suite',
+          browser_public_client_mode: 'cookie_fallback',
+          browser_refresh_token_policy: 'dpop_bound',
+          native_sso_enabled: true,
+          native_channel_allowed: true,
+          allowed_channels: ['native'],
+          device_secret_revoke_enabled: true,
+          device_secret_revoke_trust_groups: ['wallet-suite'],
+          device_secret_introspection_enabled: true,
+          device_secret_introspection_trust_groups: ['wallet-suite'],
+          default_resource: 'svc://wallet-api',
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.objectContaining({
+            application_type: 'native',
+            trust_group: 'wallet-suite',
+            browser_public_client_mode: 'cookie_fallback',
+            browser_refresh_token_policy: 'dpop_bound',
+            native_sso_enabled: true,
+            native_channel_allowed: true,
+            allowed_channels: ['native'],
+            device_secret_revoke_enabled: true,
+            device_secret_revoke_trust_groups: ['wallet-suite'],
+            device_secret_introspection_enabled: true,
+            device_secret_introspection_trust_groups: ['wallet-suite'],
+            default_resource: 'svc://wallet-api',
+          }),
+        }),
+        201
+      );
+    });
+
     it('should generate client_id and client_secret', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -2075,9 +2125,91 @@ describe('Admin API Handlers', () => {
         400
       );
     });
+
+    it('should reject legacy app_suite in admin client create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Legacy Client',
+          redirect_uris: ['https://example.com/callback'],
+          app_suite: 'wallet-suite',
+        },
+      });
+
+      const res = await adminClientCreateHandler(c);
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json).toMatchObject({
+        error: 'legacy_app_suite_not_supported',
+        error_uri:
+          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_details: expect.objectContaining({
+          code: 'legacy_app_suite_not_supported',
+          severity: 'fatal',
+        }),
+      });
+    });
+
+    it('should reject multiple trust_group assignments in admin client create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Invalid Trust Group Client',
+          redirect_uris: ['https://example.com/callback'],
+          trust_group: ['wallet-a', 'wallet-b'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'trust_group must be a string or null',
+        }),
+        400
+      );
+    });
   });
 
   describe('adminClientUpdateHandler', () => {
+    it('should reject legacy app_suite in admin client update', async () => {
+      const clientId = 'legacy-client-update';
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          app_suite: 'wallet-suite',
+        },
+        db: mockDB,
+      });
+
+      const res = await adminClientUpdateHandler(c);
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json).toMatchObject({
+        error: 'legacy_app_suite_not_supported',
+        error_uri:
+          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_details: expect.objectContaining({
+          code: 'legacy_app_suite_not_supported',
+          severity: 'fatal',
+        }),
+      });
+    });
+
     it('should update client fields', async () => {
       const clientId = 'client-to-update';
       const mockDB = createMockDB({
@@ -2205,6 +2337,89 @@ describe('Admin API Handlers', () => {
             allowed_scopes: ['openid', 'profile'],
             default_scope: 'openid profile',
             default_audience: 'svc://op-userinfo/customer-profile',
+          }),
+        })
+      );
+    });
+
+    it('should update Phase 1 client policy metadata', async () => {
+      const clientId = 'client-policy-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      let queryCount = 0;
+      (mockDB as any)._mockStatement.first.mockImplementation(() => {
+        queryCount++;
+        if (queryCount === 1) {
+          return Promise.resolve({
+            client_id: clientId,
+            client_name: 'Existing Client',
+            redirect_uris: '["https://example.com/callback"]',
+            grant_types: '["authorization_code"]',
+            response_types: '["code"]',
+          });
+        }
+        return Promise.resolve({
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+          application_type: 'native',
+          trust_group: 'wallet-suite',
+          trust_group_id: 'wallet-suite',
+          browser_public_client_mode: 'strict',
+          browser_refresh_token_policy: 'disabled',
+          native_sso_enabled: 0,
+          native_channel_allowed: 1,
+          allowed_channels: '["browser","native"]',
+          device_secret_revoke_enabled: 1,
+          device_secret_revoke_trust_groups: '["wallet-suite"]',
+          device_secret_introspection_enabled: 0,
+          device_secret_introspection_trust_groups: '["wallet-suite"]',
+          default_resource: 'svc://wallet-api',
+        });
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          application_type: 'native',
+          trust_group: 'wallet-suite',
+          browser_public_client_mode: 'strict',
+          browser_refresh_token_policy: 'disabled',
+          native_sso_enabled: false,
+          native_channel_allowed: true,
+          allowed_channels: ['browser', 'native'],
+          device_secret_revoke_enabled: true,
+          device_secret_revoke_trust_groups: ['wallet-suite'],
+          device_secret_introspection_enabled: false,
+          device_secret_introspection_trust_groups: ['wallet-suite'],
+          default_resource: 'svc://wallet-api',
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          client: expect.objectContaining({
+            application_type: 'native',
+            trust_group: 'wallet-suite',
+            browser_public_client_mode: 'strict',
+            browser_refresh_token_policy: 'disabled',
+            native_sso_enabled: false,
+            native_channel_allowed: true,
+            allowed_channels: ['browser', 'native'],
+            device_secret_revoke_enabled: true,
+            device_secret_revoke_trust_groups: ['wallet-suite'],
+            device_secret_introspection_enabled: false,
+            device_secret_introspection_trust_groups: ['wallet-suite'],
+            default_resource: 'svc://wallet-api',
           }),
         })
       );

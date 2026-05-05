@@ -78,6 +78,7 @@ export interface ClientSettings {
   'client.allowed_scopes': string;
   'client.default_scope': string;
   'client.default_audience': string;
+  'client.default_resource': string;
   'client.allowed_scopes_restriction_enabled': boolean;
   'client.client_credentials_allowed': boolean;
 
@@ -93,6 +94,12 @@ export interface ClientSettings {
   // Application Settings
   'client.application_type': string;
   'client.sector_identifier_uri': string;
+  'client.trust_group': string;
+  'client.native_sso_enabled': boolean;
+  'client.native_channel_allowed': boolean;
+  'client.allowed_channels': string;
+  'client.browser_public_client_mode': '' | 'strict' | 'cookie_fallback' | 'legacy';
+  'client.browser_refresh_token_policy': 'disabled' | 'dpop_bound';
 
   // Authentication Requirements
   'client.default_max_age': number;
@@ -486,6 +493,16 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     description: 'Default audience for tokens',
     visibility: 'admin',
   },
+  'client.default_resource': {
+    key: 'client.default_resource',
+    type: 'string',
+    default: '',
+    envKey: 'CLIENT_DEFAULT_RESOURCE',
+    label: 'Default Resource',
+    description:
+      'Default resource target for access tokens when the token request omits resource/audience.',
+    visibility: 'admin',
+  },
   'client.allowed_scopes_restriction_enabled': {
     key: 'client.allowed_scopes_restriction_enabled',
     type: 'boolean',
@@ -589,6 +606,66 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     envKey: 'CLIENT_SECTOR_IDENTIFIER_URI',
     label: 'Sector Identifier URI',
     description: 'URI for pairwise subject identifier calculation',
+    visibility: 'admin',
+  },
+  'client.trust_group': {
+    key: 'client.trust_group',
+    type: 'string',
+    default: '',
+    envKey: 'CLIENT_TRUST_GROUP',
+    label: 'Trust Group',
+    description:
+      'Tenant-scoped trust group identifier for explicit cross-client Native SSO opt-in.',
+    visibility: 'admin',
+  },
+  'client.native_sso_enabled': {
+    key: 'client.native_sso_enabled',
+    type: 'boolean',
+    default: true,
+    envKey: 'CLIENT_NATIVE_SSO_ENABLED',
+    label: 'Native SSO Enabled',
+    description:
+      'Enable same-client Native SSO for eligible native clients. Set false to explicitly disable.',
+    visibility: 'admin',
+  },
+  'client.native_channel_allowed': {
+    key: 'client.native_channel_allowed',
+    type: 'boolean',
+    default: true,
+    envKey: 'CLIENT_NATIVE_CHANNEL_ALLOWED',
+    label: 'Native Channel Allowed',
+    description: 'Allow native-channel Direct Auth and Native SSO flows for this client.',
+    visibility: 'admin',
+  },
+  'client.allowed_channels': {
+    key: 'client.allowed_channels',
+    type: 'string',
+    default: '',
+    envKey: 'CLIENT_ALLOWED_CHANNELS',
+    label: 'Allowed Channels',
+    description:
+      'Optional comma-separated Direct Auth channels. Empty uses the application_type default policy.',
+    visibility: 'admin',
+  },
+  'client.browser_public_client_mode': {
+    key: 'client.browser_public_client_mode',
+    type: 'enum',
+    default: '',
+    envKey: 'CLIENT_BROWSER_PUBLIC_CLIENT_MODE',
+    label: 'Browser Public Client Mode',
+    description:
+      'Optional client override for browser public client DPoP/browser-token behavior. Empty inherits the tenant default.',
+    enum: ['', 'strict', 'cookie_fallback', 'legacy'],
+    visibility: 'admin',
+  },
+  'client.browser_refresh_token_policy': {
+    key: 'client.browser_refresh_token_policy',
+    type: 'enum',
+    default: 'disabled',
+    envKey: 'CLIENT_BROWSER_REFRESH_TOKEN_POLICY',
+    label: 'Browser Refresh Token Policy',
+    description: 'Refresh token issuance policy for browser public clients.',
+    enum: ['disabled', 'dpop_bound'],
     visibility: 'admin',
   },
 
@@ -811,6 +888,7 @@ export const CLIENT_DEFAULTS: ClientSettings = {
   'client.allowed_scopes': '',
   'client.default_scope': '',
   'client.default_audience': '',
+  'client.default_resource': '',
   'client.allowed_scopes_restriction_enabled': false,
   'client.client_credentials_allowed': false,
   'client.logo_uri': '',
@@ -822,6 +900,12 @@ export const CLIENT_DEFAULTS: ClientSettings = {
   'client.login_ui_url': '',
   'client.application_type': 'web',
   'client.sector_identifier_uri': '',
+  'client.trust_group': '',
+  'client.native_sso_enabled': true,
+  'client.native_channel_allowed': true,
+  'client.allowed_channels': '',
+  'client.browser_public_client_mode': '',
+  'client.browser_refresh_token_policy': 'disabled',
   'client.default_max_age': 0,
   'client.default_acr_values': '',
   'client.require_auth_time': false,

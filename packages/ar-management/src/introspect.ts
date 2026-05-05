@@ -21,16 +21,44 @@ import {
   parseBasicAuth,
   getKeyByKid,
   verifyClientSecretHash,
+  DeviceSecretRepository,
+  createPhase1ErrorDetails,
+  getDeviceSecretInstallationId,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
 import { getIntrospectionCacheConfig } from './routes/settings/introspection-cache';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import {
+  evaluateDeviceSecretIntrospectionPolicy,
+  type DeviceSecretPolicyErrorCode,
+} from './device-secret-policy';
 
 // Introspection Response Cache
 // Key format: introspect_cache:{sha256(jti)}
 // Only active=true responses are cached; revocation always checked fresh
 const INTROSPECT_CACHE_KEY_PREFIX = 'introspect_cache:';
+
+function deviceSecretPolicyErrorResponse(
+  c: Context<{ Bindings: Env }>,
+  code: DeviceSecretPolicyErrorCode,
+  description: string
+): Response {
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  return c.json(
+    {
+      error: 'access_denied',
+      error_description: description,
+      error_details: createPhase1ErrorDetails(code),
+    },
+    403
+  );
+}
+
+function normalizeDeviceSecretPlatform(platform: string | undefined): string {
+  return platform && platform.length > 0 ? platform : 'unknown';
+}
 
 /**
  * Generate cache key for introspection response
@@ -70,7 +98,11 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const token = formData.token;
-  const token_type_hint = formData.token_type_hint as 'access_token' | 'refresh_token' | undefined;
+  const token_type_hint = formData.token_type_hint as
+    | 'access_token'
+    | 'refresh_token'
+    | 'device_secret'
+    | undefined;
 
   // Extract client credentials from either form data or Authorization header
   let client_id = formData.client_id;
@@ -152,9 +184,78 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     }
     // Authentication successful via client_secret
   }
+  // Public clients can be identified for device_secret policy evaluation, but
+  // the policy below denies public-client introspection before any token lookup.
+  else if (token_type_hint === 'device_secret' && !clientMetadata.client_secret_hash) {
+    // Continue to caller-class policy evaluation.
+  }
   // No valid authentication method provided
   else {
     return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+  }
+
+  if (token_type_hint === 'device_secret') {
+    const preliminaryPolicy = evaluateDeviceSecretIntrospectionPolicy(clientMetadata, {
+      clientId: client_id,
+    });
+    if (!preliminaryPolicy.allowed) {
+      return deviceSecretPolicyErrorResponse(
+        c,
+        preliminaryPolicy.code,
+        preliminaryPolicy.description
+      );
+    }
+
+    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
+    const deviceSecret = await deviceSecretRepo.findByRawSecret(token);
+    const nowMs = Date.now();
+
+    if (
+      !deviceSecret ||
+      deviceSecret.is_active !== 1 ||
+      deviceSecret.revoked_at ||
+      deviceSecret.expires_at <= nowMs
+    ) {
+      return c.json<IntrospectionResponse>({ active: false });
+    }
+
+    const deviceSecretPolicy = evaluateDeviceSecretIntrospectionPolicy(clientMetadata, {
+      clientId: deviceSecret.client_id,
+      trustGroupId: deviceSecret.trust_group_id,
+    });
+    if (!deviceSecretPolicy.allowed) {
+      return deviceSecretPolicyErrorResponse(
+        c,
+        deviceSecretPolicy.code,
+        deviceSecretPolicy.description
+      );
+    }
+
+    const targetClientId = deviceSecret.client_id ?? client_id;
+    const targetClient =
+      targetClientId === client_id
+        ? clientRecord
+        : await authCtx.repositories.client.findByClientId(targetClientId);
+    const platform = normalizeDeviceSecretPlatform(deviceSecret.device_platform);
+    const displayName = deviceSecret.device_name ?? '';
+
+    return c.json<IntrospectionResponse>({
+      active: true,
+      token_type: 'device_secret',
+      client_id: targetClientId,
+      sub: deviceSecret.user_id,
+      iss: issuerUrl,
+      jti: deviceSecret.id,
+      exp: Math.floor(deviceSecret.expires_at / 1000),
+      iat: Math.floor(deviceSecret.created_at / 1000),
+      installation_id: getDeviceSecretInstallationId(deviceSecret),
+      ...(targetClient?.client_name && { app_display_name: targetClient.client_name }),
+      platform,
+      display_name: displayName,
+      ...(displayName.length === 0 && {
+        fallback_display_name: platform === 'unknown' ? 'Native device' : `${platform} device`,
+      }),
+    });
   }
 
   // Parse token to extract claims (without verification yet)

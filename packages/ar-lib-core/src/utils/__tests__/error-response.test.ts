@@ -13,6 +13,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import {
+  createCompatibilityError,
+  createCompatibilityErrorResponse,
+  getCompatibilityErrorUri,
+} from '../errors';
 
 /**
  * Standard OAuth 2.0 error codes (RFC 6749 Section 5.2)
@@ -157,6 +162,44 @@ function checkNoSensitiveDataLeakage(response: unknown): {
 }
 
 describe('Error Response Consistency', () => {
+  describe('Compatibility Errors', () => {
+    it('builds stable absolute HTTPS error_uri values', () => {
+      expect(getCompatibilityErrorUri('legacy_endpoint_not_supported')).toBe(
+        'https://docs.authrim.com/errors/error-codes#legacy-endpoint-not-supported'
+      );
+    });
+
+    it('creates OAuth-compatible compatibility errors', () => {
+      const error = createCompatibilityError('legacy_endpoint_not_supported', 404);
+
+      expect(error.error).toBe('legacy_endpoint_not_supported');
+      expect(error.statusCode).toBe(404);
+      expect(error.error_uri).toBe(
+        'https://docs.authrim.com/errors/error-codes#legacy-endpoint-not-supported'
+      );
+    });
+
+    it('serializes fatal metadata for runtime compatibility responses', async () => {
+      const response = createCompatibilityErrorResponse('legacy_endpoint_not_supported', 404);
+      const body = await response.json() as {
+        error: string;
+        error_uri: string;
+        error_details: { code: string; severity: string; retryable: boolean };
+      };
+
+      expect(response.status).toBe(404);
+      expect(body.error).toBe('legacy_endpoint_not_supported');
+      expect(body.error_uri).toBe(
+        'https://docs.authrim.com/errors/error-codes#legacy-endpoint-not-supported'
+      );
+      expect(body.error_details).toMatchObject({
+        code: 'legacy_endpoint_not_supported',
+        severity: 'fatal',
+        retryable: false,
+      });
+    });
+  });
+
   describe('OAuth 2.0 Error Codes (RFC 6749)', () => {
     it.each(OAUTH_ERROR_CODES)('should recognize %s as valid OAuth error code', (code) => {
       const errorResponse: ErrorResponse = {

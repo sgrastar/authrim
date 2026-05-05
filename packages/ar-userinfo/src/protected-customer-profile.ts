@@ -1,18 +1,36 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env, CachedUser, IntrospectionResponse } from '@authrim/ar-lib-core';
+import type {
+  Env,
+  CachedUser,
+  IntrospectionResponse,
+  DelegatedWriteAudit,
+  UpdateUserPIIInput,
+} from '@authrim/ar-lib-core';
 import {
   buildRequestIssuerUrl,
+  consumeStepUpReceipt,
+  createDelegatedWriteEnvelopeErrorResponse,
   createDownstreamGrantProtectedResourceMiddleware,
   createDownstreamGrantServiceAuthorizer,
   createPIIContextFromHono,
+  createStepUpErrorResponse,
+  createStepUpOperationHash,
   getCachedUser,
   getDownstreamGrantProtectedResourceContext,
   getDownstreamGrantRedactionLevel,
   getPublicKeyByKid,
   getProductProtectedResourceDefinition,
+  introspectTokenFromContext,
+  invalidateUserCache,
+  issueStepUpToken,
+  parseDelegatedWriteEnvelope,
   projectDownstreamGrantProtectedResource,
+  requiredIdempotencyMiddleware,
   resolveProductProtectedResourceAudience,
+  StepUpFlowError,
+  UserPIIRepository,
+  DelegatedWriteEnvelopeError,
   type DownstreamGrantProtectedResourceProjector,
   type DownstreamGrantServiceAuthorizer,
   type ApprovalRedactionLevel,
@@ -112,6 +130,29 @@ export interface ProtectedCustomerProfileRouteOptions {
     tenantId: string;
     userId: string;
   }) => Promise<ProtectedCustomerProfileResource | null>;
+  validateDelegatedWriteActor?: (input: {
+    c: Context<{ Bindings: Env }>;
+    subjectUserId: string;
+  }) => Promise<DelegatedWriteActorContext | Response>;
+  updateProfile?: (input: {
+    c: Context<{ Bindings: Env }>;
+    tenantId: string;
+    subjectUserId: string;
+    actor: DelegatedWriteActorContext;
+    update: UpdateUserPIIInput;
+    audit?: DelegatedWriteAudit;
+  }) => Promise<ProtectedCustomerProfileResource | null>;
+}
+
+export interface DelegatedWriteActorContext {
+  actorId: string;
+  claims: Record<string, unknown>;
+}
+
+export interface CustomerProfileDelegatedWriteOperationInput {
+  subjectUserId: string;
+  input: unknown;
+  audit?: DelegatedWriteAudit;
 }
 
 function decodeJwtHeader(token: string): { kid?: string } | null {
@@ -217,6 +258,300 @@ async function loadProtectedCustomerProfileFromEnv(input: {
     return null;
   }
   return mapCachedUserToProtectedCustomerProfile(cachedUser, input.tenantId);
+}
+
+function noStoreJson(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      Pragma: 'no-cache',
+    },
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function invalidDelegatedWriteRequest(message: string, field?: string): Response {
+  return noStoreJson(
+    {
+      error: 'invalid_request',
+      error_description: message,
+      ...(field ? { field } : {}),
+    },
+    400
+  );
+}
+
+function readNullableString(
+  input: Record<string, unknown>,
+  field: string
+): string | null | undefined | Response {
+  if (!Object.prototype.hasOwnProperty.call(input, field)) {
+    return undefined;
+  }
+  const value = input[field];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return invalidDelegatedWriteRequest(`input.${field} must be a string or null`, `input.${field}`);
+  }
+  return value;
+}
+
+function readRequiredString(
+  input: Record<string, unknown>,
+  field: string
+): string | undefined | Response {
+  if (!Object.prototype.hasOwnProperty.call(input, field)) {
+    return undefined;
+  }
+  const value = input[field];
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return invalidDelegatedWriteRequest(`input.${field} must be a non-empty string`, `input.${field}`);
+  }
+  return value;
+}
+
+function normalizeAddressUpdate(value: unknown): Partial<UpdateUserPIIInput> | Response {
+  if (value === undefined) {
+    return {};
+  }
+  if (value === null) {
+    return {
+      address_formatted: null,
+      address_street_address: null,
+      address_locality: null,
+      address_region: null,
+      address_postal_code: null,
+      address_country: null,
+    };
+  }
+  if (!isRecord(value)) {
+    return invalidDelegatedWriteRequest('input.address must be an object or null', 'input.address');
+  }
+
+  const allowed = new Set([
+    'formatted',
+    'street_address',
+    'locality',
+    'region',
+    'postal_code',
+    'country',
+  ]);
+  for (const field of Object.keys(value)) {
+    if (!allowed.has(field)) {
+      return invalidDelegatedWriteRequest(
+        `Unknown input.address field: ${field}`,
+        `input.address.${field}`
+      );
+    }
+  }
+
+  const update: Partial<UpdateUserPIIInput> = {};
+  type NullableStringUpdateField = Exclude<keyof UpdateUserPIIInput, 'pii_class'>;
+  const mapping: Array<[string, NullableStringUpdateField]> = [
+    ['formatted', 'address_formatted'],
+    ['street_address', 'address_street_address'],
+    ['locality', 'address_locality'],
+    ['region', 'address_region'],
+    ['postal_code', 'address_postal_code'],
+    ['country', 'address_country'],
+  ];
+  for (const [source, target] of mapping) {
+    const normalized = readNullableString(value, source);
+    if (normalized instanceof Response) {
+      return normalized;
+    }
+    if (normalized !== undefined) {
+      (update as Record<string, string | null>)[target] = normalized;
+    }
+  }
+  return update;
+}
+
+function normalizeCustomerProfileUpdateInput(input: unknown): UpdateUserPIIInput | Response {
+  if (!isRecord(input)) {
+    return invalidDelegatedWriteRequest('input must be an object', 'input');
+  }
+
+  const allowed = new Set([
+    'email',
+    'phone_number',
+    'name',
+    'given_name',
+    'family_name',
+    'nickname',
+    'preferred_username',
+    'picture',
+    'website',
+    'gender',
+    'birthdate',
+    'locale',
+    'zoneinfo',
+    'address',
+  ]);
+  for (const field of Object.keys(input)) {
+    if (!allowed.has(field)) {
+      return invalidDelegatedWriteRequest(`Unknown input field: ${field}`, `input.${field}`);
+    }
+  }
+
+  const update: UpdateUserPIIInput = {};
+  const email = readRequiredString(input, 'email');
+  if (email instanceof Response) return email;
+  if (email !== undefined) update.email = email;
+
+  type NullableStringUpdateField = Exclude<keyof UpdateUserPIIInput, 'pii_class'>;
+  const directStringFields: Array<[string, NullableStringUpdateField]> = [
+    ['phone_number', 'phone_number'],
+    ['name', 'name'],
+    ['given_name', 'given_name'],
+    ['family_name', 'family_name'],
+    ['nickname', 'nickname'],
+    ['preferred_username', 'preferred_username'],
+    ['picture', 'picture'],
+    ['website', 'website'],
+    ['gender', 'gender'],
+    ['birthdate', 'birthdate'],
+    ['locale', 'locale'],
+    ['zoneinfo', 'zoneinfo'],
+  ];
+  for (const [source, target] of directStringFields) {
+    const normalized = readNullableString(input, source);
+    if (normalized instanceof Response) {
+      return normalized;
+    }
+    if (normalized !== undefined) {
+      (update as Record<string, string | null>)[target] = normalized;
+    }
+  }
+
+  const addressUpdate = normalizeAddressUpdate(input.address);
+  if (addressUpdate instanceof Response) {
+    return addressUpdate;
+  }
+  Object.assign(update, addressUpdate);
+
+  if (Object.keys(update).length === 0) {
+    return invalidDelegatedWriteRequest('input must include at least one profile field', 'input');
+  }
+  return update;
+}
+
+export function createCustomerProfileDelegatedWriteOperation(
+  input: CustomerProfileDelegatedWriteOperationInput
+): Record<string, unknown> {
+  return {
+    resource: 'customer_profile',
+    action: 'update',
+    method: 'PATCH',
+    path: '/api/protected/customer-profiles/users/{subject_user_id}',
+    subject_user_id: input.subjectUserId,
+    input: input.input,
+    audit: input.audit ?? null,
+  };
+}
+
+async function validateDelegatedWriteActorFromContext(input: {
+  c: Context<{ Bindings: Env }>;
+}): Promise<DelegatedWriteActorContext | Response> {
+  const introspection = await introspectTokenFromContext(input.c);
+  if (!introspection.valid) {
+    const error = introspection.error;
+    if (error?.wwwAuthenticate) {
+      input.c.header('WWW-Authenticate', error.wwwAuthenticate);
+    }
+    return noStoreJson(
+      {
+        error: error?.error ?? 'invalid_token',
+        error_description: error?.error_description ?? 'The access token is invalid',
+      },
+      error?.statusCode ?? 401
+    );
+  }
+
+  const claims = (introspection.claims ?? {}) as Record<string, unknown>;
+  const actorId = typeof claims.sub === 'string' ? claims.sub : '';
+  if (!actorId) {
+    return noStoreJson(
+      {
+        error: 'invalid_token',
+        error_description: 'Access token must contain an actor subject',
+      },
+      401
+    );
+  }
+  return { actorId, claims };
+}
+
+function rejectProductElevationToken(actor: DelegatedWriteActorContext): Response | null {
+  if (
+    actor.claims.authrim_elevation !== undefined ||
+    actor.claims.token_use === 'elevation_grant_subject'
+  ) {
+    return noStoreJson(
+      {
+        error: 'access_denied',
+        error_description:
+          'Product-specific downstream elevation grant tokens are not accepted for standard delegated write.',
+      },
+      403
+    );
+  }
+  return null;
+}
+
+async function updateProtectedCustomerProfileFromEnv(input: {
+  c: Context<{ Bindings: Env }>;
+  tenantId: string;
+  subjectUserId: string;
+  update: UpdateUserPIIInput;
+}): Promise<ProtectedCustomerProfileResource | null> {
+  const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
+  const repository = new UserPIIRepository(piiCtx.defaultPiiAdapter);
+  const updated = await repository.updatePII(
+    input.subjectUserId,
+    input.update,
+    piiCtx.defaultPiiAdapter
+  );
+  if (!updated) {
+    return null;
+  }
+  await invalidateUserCache(input.c.env, input.subjectUserId);
+  return loadProtectedCustomerProfileFromEnv({
+    c: input.c,
+    tenantId: input.tenantId,
+    userId: input.subjectUserId,
+  });
+}
+
+function stepUpFlowErrorToResponse(error: StepUpFlowError): Response {
+  if (!error.detailCode) {
+    return noStoreJson(
+      {
+        error: error.error,
+        error_description: error.message,
+      },
+      error.httpStatus
+    );
+  }
+  return createStepUpErrorResponse(
+    {
+      error: error.error,
+      error_description: error.message,
+      code: error.detailCode,
+      ...(error.statusObject ? { status: error.statusObject } : {}),
+      ...(error.inputState ? { input_state: error.inputState } : {}),
+      ...(error.stepUp ? { step_up: error.stepUp } : {}),
+      ...(error.nextAction ? { next_action: error.nextAction } : {}),
+    },
+    error.httpStatus === 404 ? 400 : error.httpStatus
+  );
 }
 
 function maskEmail(email: string | null): string | null {
@@ -393,6 +728,150 @@ export function createProtectedCustomerProfileRouter(
   options: ProtectedCustomerProfileRouteOptions = {}
 ) {
   const router = new Hono<{ Bindings: Env }>();
+
+  router.use('/users/:userId', async (c, next) => {
+    if (c.req.method !== 'PATCH') {
+      return next();
+    }
+    const validator = options.validateDelegatedWriteActor ?? validateDelegatedWriteActorFromContext;
+    const actorResult = await validator({
+      c,
+      subjectUserId: c.req.param('userId')!,
+    });
+    if (actorResult instanceof Response) {
+      return actorResult;
+    }
+    const elevationRejection = rejectProductElevationToken(actorResult);
+    if (elevationRejection) {
+      return elevationRejection;
+    }
+    (c as any).set('delegatedWriteActor', actorResult);
+    (c as any).set('adminAuth', { userId: actorResult.actorId });
+    return next();
+  });
+
+  router.patch(
+    '/users/:userId',
+    requiredIdempotencyMiddleware({ ttlSeconds: 300, redactFields: [] }),
+    async (c) => {
+      const actor = (c as any).get('delegatedWriteActor') as
+        | DelegatedWriteActorContext
+        | undefined;
+      if (!actor) {
+        return noStoreJson(
+          {
+            error: 'server_error',
+            error_description: 'Delegated write actor context is unavailable.',
+          },
+          500
+        );
+      }
+
+      const subjectUserId = c.req.param('userId')!;
+      const body = await c.req.json().catch(() => null);
+      let envelope;
+      try {
+        envelope = parseDelegatedWriteEnvelope(body);
+      } catch (error) {
+        if (error instanceof DelegatedWriteEnvelopeError) {
+          return createDelegatedWriteEnvelopeErrorResponse(error);
+        }
+        return invalidDelegatedWriteRequest('Delegated write body is invalid');
+      }
+
+      const update = normalizeCustomerProfileUpdateInput(envelope.input);
+      if (update instanceof Response) {
+        return update;
+      }
+
+      const idempotencyKey = c.req.header('Idempotency-Key') ?? undefined;
+      const operationHash = await createStepUpOperationHash(
+        createCustomerProfileDelegatedWriteOperation({
+          subjectUserId,
+          input: envelope.input,
+          audit: envelope.audit,
+        })
+      );
+      const tenantId = getTenantIdFromContext(c);
+      const receipt = c.req.header('Authrim-Step-Up-Receipt');
+      if (!receipt) {
+        const stepUp = await issueStepUpToken(c.env, {
+          tenantId,
+          actorId: actor.actorId,
+          subjectId: subjectUserId,
+          operationHash,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        });
+        return createStepUpErrorResponse(
+          {
+            error: 'step_up_required',
+            error_description: 'Step-up is required for this delegated write.',
+            code: 'step_up_required',
+            step_up: stepUp,
+          },
+          403
+        );
+      }
+
+      try {
+        await consumeStepUpReceipt(c.env, {
+          tenantId,
+          actorId: actor.actorId,
+          subjectId: subjectUserId,
+          operationHash,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+          receipt,
+        });
+      } catch (error) {
+        if (error instanceof StepUpFlowError) {
+          return stepUpFlowErrorToResponse(error);
+        }
+        return createStepUpErrorResponse(
+          {
+            error: 'step_up_required',
+            error_description: 'Step-up receipt is invalid or expired.',
+            code: 'step_up_required',
+          },
+          403
+        );
+      }
+
+      const updater = options.updateProfile ?? updateProtectedCustomerProfileFromEnv;
+      const updated = await updater({
+        c,
+        tenantId,
+        subjectUserId,
+        actor,
+        update,
+        audit: envelope.audit,
+      });
+      if (!updated) {
+        return noStoreJson(
+          {
+            error: 'not_found',
+            error_description: 'Customer profile was not found.',
+          },
+          404
+        );
+      }
+
+      const include = new Set(
+        (c.req.query('include') ?? '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      );
+
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        customer_profile: buildRawProfile(updated),
+        ...(include.has('actor') ? { actor: { id: actor.actorId } } : {}),
+        ...(include.has('subject') ? { subject: { id: subjectUserId } } : {}),
+        ...(include.has('audit') && envelope.audit ? { audit: envelope.audit } : {}),
+      });
+    }
+  );
 
   router.use(
     '/:userId',

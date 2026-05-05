@@ -232,6 +232,20 @@ describe('Discovery Handler', () => {
       expect(metadata.native_sso_device_secret_supported).toBeUndefined();
     });
 
+    it('should expose Phase 1 DPoP signing algorithms', async () => {
+      const env = createMockEnv();
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.dpop_signing_alg_values_supported).toEqual(['ES256', 'PS256', 'EdDSA']);
+    });
+
     it('should support multiple token endpoint auth methods', async () => {
       const env = createMockEnv();
       const response = await app.request(

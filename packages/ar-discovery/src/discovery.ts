@@ -3,6 +3,7 @@ import type { Env, OIDCProviderMetadata, LogoutConfig, TenantProfile } from '@au
 import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
+  ALLOWED_DPOP_ALGS,
   buildRequestIssuerUrl,
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
@@ -343,7 +344,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
     code_challenge_methods_supported: ['S256'],
     // RFC 9449: DPoP (Demonstrating Proof of Possession) support
-    dpop_signing_alg_values_supported: ['RS256', 'ES256'],
+    dpop_signing_alg_values_supported: [...ALLOWED_DPOP_ALGS],
     // RFC 9101 (JAR): Request Object support
     request_parameter_supported: true,
     request_uri_parameter_supported: true,

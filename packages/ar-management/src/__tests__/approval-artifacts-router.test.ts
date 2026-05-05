@@ -1154,7 +1154,22 @@ describe('approval artifacts router', () => {
 
     expect(res.status).toBe(409);
     const payload = (await res.json()) as any;
-    expect(payload.error).toBe('approval_step_up_required');
+    expect(payload.error).toBe('step_up_required');
+    expect(payload.error_details).toEqual(
+      expect.objectContaining({
+        code: 'step_up_required',
+        retryable: false,
+      })
+    );
+    expect(payload.status).toEqual(
+      expect.objectContaining({
+        action_id: 'apc_1',
+        status: 'pending',
+        preferred_method: { method: 'passkey' },
+      })
+    );
+    expect(payload.error_uri).toBeUndefined();
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
     expect(mockConsumeApprovalCompletionArtifact).not.toHaveBeenCalled();
   });
 
@@ -1188,7 +1203,75 @@ describe('approval artifacts router', () => {
 
     expect(res.status).toBe(409);
     const payload = (await res.json()) as any;
-    expect(payload.error).toBe('approval_step_up_required');
+    expect(payload.error).toBe('step_up_required');
+    expect(payload.error_details?.code).toBe('step_up_required');
+    expect(payload.status).toEqual(
+      expect.objectContaining({
+        action_id: 'apc_1',
+        status: 'pending',
+        preferred_method: { method: 'email_otp' },
+      })
+    );
+    expect(payload.error_uri).toBeUndefined();
+  });
+
+  it('returns retryable Step-Up details for an invalid approval OTP', async () => {
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({
+        method: 'email_otp',
+        transport_channel: 'owner@example.com',
+      })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({
+        side: 'customer_data_owner',
+        subject_type: 'customer_delegate',
+        subject_id: 'owner-1',
+        method: 'email_otp',
+        transport_channel: 'owner@example.com',
+      })
+    );
+    mockVerifyApprovalOtpChallenge.mockRejectedValueOnce(new Error('Invalid approval OTP code'));
+
+    const app = createApp();
+    const res = await app.request(
+      '/api/approval-artifacts/apc_1/otp/verify',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          code: '000000',
+        }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as any;
+    expect(payload.error).toBe('invalid_step_up_input');
+    expect(payload.error_details).toEqual(
+      expect.objectContaining({
+        code: 'invalid_step_up_input',
+        retryable: true,
+        field: 'code',
+      })
+    );
+    expect(payload.input_state).toEqual(
+      expect.objectContaining({
+        field: 'code',
+        method: 'email_otp',
+      })
+    );
+    expect(payload.status).toEqual(
+      expect.objectContaining({
+        action_id: 'apc_1',
+        status: 'pending',
+      })
+    );
+    expect(payload.error_uri).toBeUndefined();
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
   });
 
   it('allows denial without a completion assertion for step-up methods', async () => {

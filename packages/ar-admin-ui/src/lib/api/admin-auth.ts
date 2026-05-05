@@ -59,7 +59,7 @@ export class AuthError extends Error {
 }
 
 /**
- * Session status response from /api/admin/sessions/me
+ * Session status response from /api/admin/me/session
  */
 export interface SessionStatus {
 	active: boolean;
@@ -153,7 +153,7 @@ export const adminAuthAPI = {
 
 	/**
 	 * Check current session status
-	 * GET /api/admin/sessions/me
+	 * GET /api/admin/me/session
 	 *
 	 * Returns:
 	 * - SessionStatus if authenticated with admin role
@@ -161,7 +161,7 @@ export const adminAuthAPI = {
 	 * - throws AuthError with 'forbidden' code if session exists but no admin role
 	 */
 	async checkSession(): Promise<SessionStatus | null> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/sessions/me`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/session`, {
 			skipTenantHeader: true,
 			credentials: 'include',
 			headers: buildHeaders()

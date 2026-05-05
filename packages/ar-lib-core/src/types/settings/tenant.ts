@@ -29,6 +29,9 @@ export interface TenantSettings {
   'tenant.audit_profile_id': string;
   'tenant.residency_profile_id': string;
 
+  // Browser Public Client Defaults
+  'tenant.browser_public_client_mode': 'strict' | 'cookie_fallback' | 'legacy';
+
   // Branding
   'tenant.name': string;
   'tenant.logo_uri': string;
@@ -143,6 +146,17 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
       'Optional residency profile ID override for this tenant. Empty means inherit the environment default.',
     visibility: 'admin',
   },
+  'tenant.browser_public_client_mode': {
+    key: 'tenant.browser_public_client_mode',
+    type: 'enum',
+    default: 'cookie_fallback',
+    envKey: 'TENANT_BROWSER_PUBLIC_CLIENT_MODE',
+    label: 'Browser Public Client Mode',
+    description:
+      'Default hosted/built-in browser behavior. Custom browser SDK clients default to strict unless configured otherwise.',
+    enum: ['strict', 'cookie_fallback', 'legacy'],
+    visibility: 'admin',
+  },
 
   // Branding
   'tenant.name': {
@@ -255,6 +269,7 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.storage_profile_id': '',
   'tenant.audit_profile_id': '',
   'tenant.residency_profile_id': '',
+  'tenant.browser_public_client_mode': 'cookie_fallback',
   // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',

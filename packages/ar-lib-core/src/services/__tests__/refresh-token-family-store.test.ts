@@ -4,6 +4,7 @@ import {
   createRefreshTokenFamily,
   getRefreshTokenRotatorStubByJti,
 } from '../refresh-token-family-store';
+import { getRefreshToken } from '../../utils/refresh-token-store';
 import { buildRefreshTokenRotatorInstanceName } from '../../utils/refresh-token-sharding';
 
 describe('refresh-token-family-store', () => {
@@ -32,6 +33,7 @@ describe('refresh-token-family-store', () => {
       clientId: 'client_123',
       scope: 'openid offline_access',
       ttl: 3600,
+      resourceAudience: 'svc://api',
     });
 
     expect(result.jti).toMatch(/^v\d+_\d+_rt_/);
@@ -48,9 +50,33 @@ describe('refresh-token-family-store', () => {
       clientId: 'client_123',
       scope: 'openid offline_access',
       ttl: 3600,
+      resourceAudience: 'svc://api',
       generation: result.resolution.generation,
       shardIndex: result.resolution.shardIndex,
     });
+  });
+
+  it('returns refresh family resource audience from durable metadata', async () => {
+    const validateRpc = vi.fn().mockResolvedValue({
+      valid: true,
+      family: {
+        allowed_scope: 'openid offline_access',
+        expires_at: Date.now() + 3600_000,
+        resource_aud: ['svc://api', 'svc://admin'],
+      },
+    });
+    (env.REFRESH_TOKEN_ROTATOR.get as any).mockReturnValue({ validateRpc });
+
+    const result = await getRefreshToken(
+      env,
+      'user_123',
+      1,
+      'client_123',
+      'g1:wnam:7:rt_abc123'
+    );
+
+    expect(result?.resource_aud).toEqual(['svc://api', 'svc://admin']);
+    expect(validateRpc).toHaveBeenCalledWith('user_123', 1, 'client_123');
   });
 
   it('resolves an existing rotator stub from a sharded refresh token JTI', () => {

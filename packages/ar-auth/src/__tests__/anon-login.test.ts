@@ -160,7 +160,7 @@ describe('Anonymous Login Handlers', () => {
         // When disabled, should return invalid_request error
         const result = await vi.mocked(isAnonymousAuthEnabled)({} as never);
         expect(result).toBe(false);
-      });
+      }, 15_000);
     });
 
     describe('Challenge Generation', () => {

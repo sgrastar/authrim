@@ -251,6 +251,22 @@ const mockPiiQuery = vi.fn();
 const mockPiiExecute = vi.fn();
 const mockPiiDb = Symbol('PII_DB');
 
+function createMockDatabaseAdapter(query: typeof mockDbQuery, execute: typeof mockDbExecute) {
+  return {
+    query,
+    queryOne: vi.fn(async (sql: string, params?: unknown[]) => {
+      const rows = await query(sql, params);
+      return Array.isArray(rows) ? (rows[0] ?? null) : null;
+    }),
+    execute,
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn(),
+  };
+}
+
 function createMockKV(): KVNamespace & { _store: Map<string, string> } {
   const store = new Map<string, string>();
   return {
@@ -290,7 +306,7 @@ function createMockContext(options: {
       header: vi.fn().mockReturnValue(null),
     },
     env: {
-      DB: {} as D1Database,
+      DB: createMockDatabaseAdapter(mockDbQuery, mockDbExecute),
       DB_PII: mockPiiDb,
       SETTINGS: mockKV,
       AUTHRIM_CONFIG: mockKV,
@@ -726,7 +742,13 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(201);
-      expect(mockDbExecute.mock.calls[0][1].slice(-4)).toEqual([0, 0, 0, null]);
+      expect(mockDbExecute.mock.calls[0][1].slice(-5)).toEqual([
+        0,
+        0,
+        0,
+        null,
+        'employee_id',
+      ]);
     });
   });
 
@@ -1165,11 +1187,12 @@ describe('Custom Claims Admin API', () => {
       mockDbQuery
         .mockResolvedValueOnce([createSchemaRow()]) // fetch existing
         .mockResolvedValueOnce([]) // no conflict
+        .mockResolvedValueOnce([createSchemaRow({ field_key: 'emp_id' })]) // normalize active_field_key
         .mockResolvedValueOnce([createSchemaRow({ field_key: 'emp_id' })]); // fetch updated
       mockDbExecute
+        .mockResolvedValue({ rowsAffected: 1 })
         .mockResolvedValueOnce({ rowsAffected: 1 }) // CAS: mark renaming
-        .mockResolvedValueOnce({ rowsAffected: 5 }) // update user_custom_fields
-        .mockResolvedValueOnce({ rowsAffected: 1 }); // atomic update
+        .mockResolvedValueOnce({ rowsAffected: 5 }); // update user_custom_fields
 
       const c = createMockContext({
         method: 'PATCH',
@@ -1338,6 +1361,7 @@ describe('Custom Claims Admin API', () => {
       // Non-PII: check remaining then update
       mockDbQuery
         .mockResolvedValueOnce([{ count: 3 }]) // remaining count
+        .mockResolvedValueOnce([createSchemaRow({ field_key: 'new_field' })]) // normalize active_field_key
         .mockResolvedValueOnce([createSchemaRow({ field_key: 'new_field' })]); // fetch updated
       mockDbExecute
         .mockResolvedValueOnce({ rowsAffected: 1 }) // CAS: mark renaming

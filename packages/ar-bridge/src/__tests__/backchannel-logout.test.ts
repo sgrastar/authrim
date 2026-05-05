@@ -64,6 +64,9 @@ const {
 
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  resolveAuthCorePersistenceAdapterFromEnv: vi
+    .fn()
+    .mockResolvedValue(new MockD1Adapter({ db: {} })),
   getSessionStoreBySessionId: vi.fn(() => ({
     stub: {
       fetch: mockSessionFetch,

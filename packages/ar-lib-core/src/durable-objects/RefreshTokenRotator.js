@@ -35,6 +35,19 @@ const STORAGE_PREFIX = {
     FAMILY: 'f:', // f:{userId} → TokenFamilyV2
     META: 'm:', // m:migrated → boolean, m:generation → number, m:shardIndex → number
 };
+function normalizeResourceAudience(value) {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((item) => typeof item === 'string' && item.trim().length > 0)) {
+        const normalized = value.map((item) => item.trim());
+        return normalized.length === 1 ? normalized[0] : normalized;
+    }
+    return undefined;
+}
 /**
  * RefreshTokenRotator Durable Object (V2)
  *
@@ -251,6 +264,7 @@ export class RefreshTokenRotator extends DurableObject {
         }
         const now = Date.now();
         const expiresAt = now + request.ttl * 1000;
+        const resourceAudience = normalizeResourceAudience(request.resourceAudience);
         const family = {
             version: 1,
             last_jti: request.jti,
@@ -259,6 +273,7 @@ export class RefreshTokenRotator extends DurableObject {
             user_id: request.userId,
             client_id: request.clientId,
             allowed_scope: request.scope,
+            ...(resourceAudience && { resource_aud: resourceAudience }),
         };
         // Store in memory and persistent storage
         this.families.set(request.userId, family);
@@ -269,7 +284,12 @@ export class RefreshTokenRotator extends DurableObject {
             familyKey: request.userId,
             userId: request.userId,
             clientId: request.clientId,
-            metadata: { scope: request.scope, generation: this.generation, shardIndex: this.shardIndex },
+            metadata: {
+                scope: request.scope,
+                resourceAudience: family.resource_aud,
+                generation: this.generation,
+                shardIndex: this.shardIndex,
+            },
             timestamp: now,
         });
         // Response format consistent with rotate endpoint
@@ -278,6 +298,7 @@ export class RefreshTokenRotator extends DurableObject {
             newJti: family.last_jti,
             expiresIn: request.ttl,
             allowedScope: family.allowed_scope,
+            ...(family.resource_aud && { resourceAudience: family.resource_aud }),
         };
     }
     /**
@@ -404,6 +425,7 @@ export class RefreshTokenRotator extends DurableObject {
             newJti,
             expiresIn: Math.floor((family.expires_at - now) / 1000),
             allowedScope: request.requestedScope || family.allowed_scope,
+            ...(family.resource_aud && { resourceAudience: family.resource_aud }),
         };
     }
     /**
@@ -621,6 +643,9 @@ export class RefreshTokenRotator extends DurableObject {
                     clientId: body.clientId,
                     scope: body.scope,
                     ttl: body.ttl || this.DEFAULT_TTL,
+                    ...(body.resourceAudience !== undefined && {
+                        resourceAudience: body.resourceAudience,
+                    }),
                     ...(body.generation !== undefined &&
                         body.shardIndex !== undefined && {
                         generation: body.generation,

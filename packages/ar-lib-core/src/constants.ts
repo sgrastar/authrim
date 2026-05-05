@@ -260,6 +260,7 @@ export const SIGNING_ALGS = {
   ES256: 'ES256',
   ES384: 'ES384',
   ES512: 'ES512',
+  EdDSA: 'EdDSA',
   HS256: 'HS256',
   HS384: 'HS384',
   HS512: 'HS512',
@@ -288,10 +289,10 @@ export const ALLOWED_ASYMMETRIC_ALGS = [
 ] as const;
 
 /**
- * Allowed DPoP signing algorithms per discovery.ts
- * A subset of asymmetric algorithms supported for DPoP proofs
+ * Allowed DPoP signing algorithms for Phase 1.
+ * Keep discovery metadata and server-side validation in sync.
  */
-export const ALLOWED_DPOP_ALGS = ['RS256', 'ES256'] as const;
+export const ALLOWED_DPOP_ALGS = ['ES256', 'PS256', 'EdDSA'] as const;
 
 /**
  * HTTP Status Codes (commonly used in OIDC)

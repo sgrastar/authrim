@@ -12,6 +12,7 @@ export type TenantSettingsCategory =
   | 'login-ui'
   | 'login-methods'
   | 'feature-flags'
+  | 'step-up'
   | 'login-entry'
   | 'tenant-discovery-ui';
 

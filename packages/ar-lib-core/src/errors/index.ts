@@ -70,6 +70,35 @@ export {
   getErrorDefinitionBySlug,
 } from './codes';
 
+export {
+  PHASE1_ERROR_DETAIL_CODES,
+  PHASE1_ERROR_DETAIL_DEFINITIONS,
+  getPhase1ErrorDetailDefinition,
+  createPhase1ErrorDetails,
+  type Phase1ErrorDetailCode,
+  type NativeSSOErrorDetailCode,
+  type DeviceSecretPolicyErrorDetailCode,
+  type CompatibilityErrorDetailCode,
+  type Phase1ErrorDetailDefinition,
+  type Phase1ErrorDetailDefinitions,
+  type Phase1ErrorDetails,
+  type Phase1ErrorDetailsOverrides,
+  type Phase1ErrorDetailSeverity,
+  type Phase1ErrorDetailUserAction,
+} from './details';
+
+export {
+  createStepUpErrorBody,
+  createStepUpErrorResponse,
+  type CreateStepUpErrorBodyInput,
+  type StepUpActionStatus,
+  type StepUpErrorDetailCode,
+  type StepUpErrorResponseBody,
+  type StepUpInputState,
+  type StepUpPreferredMethod,
+  type StepUpStatusObject,
+} from './step-up';
+
 // ============================================
 // Factory
 // ============================================

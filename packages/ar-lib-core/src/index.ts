@@ -57,6 +57,7 @@ export * from './utils/id';
 export * from './utils/d1-retry';
 export * from './utils/device-flow';
 export * from './utils/ciba';
+export * from './utils/delegated-write';
 export * from './utils/dpop';
 export * from './utils/errors';
 export * from './utils/issuer';
@@ -122,6 +123,7 @@ export * from './utils/rar-validation';
 
 // Native SSO (OIDC Native SSO 1.0)
 export * from './utils/native-sso-config';
+export * from './utils/native-sso-installation';
 
 // Consent Versioning (GDPR Article 7 - Informed Consent)
 export * from './utils/consent-versioning';
@@ -185,6 +187,7 @@ export * from './services/object-artifact-store';
 export * from './services/object-catalog';
 export * from './services/storage-boundary-policy';
 export * from './services/approval-governance';
+export * from './services/step-up';
 export * from './services/downstream-elevation-grant';
 export * from './services/downstream-elevation-grant-client';
 export * from './services/downstream-grant-protected-resource';
@@ -192,6 +195,7 @@ export * from './services/downstream-grant-protected-resource-client';
 export * from './services/downstream-grant-protected-resource-redaction';
 export * from './services/product-protected-resources';
 export * from './services/admin-role-templates';
+export * from './services/logout-device-secret-revocation';
 
 // Error System (Phase 10 - SDK public types)
 // Note: Exported with namespace to avoid conflicts with legacy error types
@@ -216,8 +220,31 @@ export {
   AR_ERROR_CODES,
   RFC_ERROR_CODES,
   ERROR_DEFINITIONS,
+  PHASE1_ERROR_DETAIL_CODES,
+  PHASE1_ERROR_DETAIL_DEFINITIONS,
+  getPhase1ErrorDetailDefinition,
+  createPhase1ErrorDetails,
   type RFCErrorCode,
   type ARErrorCode,
+  type Phase1ErrorDetailCode,
+  type NativeSSOErrorDetailCode,
+  type DeviceSecretPolicyErrorDetailCode,
+  type CompatibilityErrorDetailCode,
+  type Phase1ErrorDetailDefinition,
+  type Phase1ErrorDetailDefinitions,
+  type Phase1ErrorDetails,
+  type Phase1ErrorDetailsOverrides,
+  type Phase1ErrorDetailSeverity,
+  type Phase1ErrorDetailUserAction,
+  createStepUpErrorBody,
+  createStepUpErrorResponse,
+  type CreateStepUpErrorBodyInput,
+  type StepUpActionStatus,
+  type StepUpErrorDetailCode,
+  type StepUpErrorResponseBody,
+  type StepUpInputState,
+  type StepUpPreferredMethod,
+  type StepUpStatusObject,
 } from './errors';
 export { configureFactory, createError, createRFCError, Errors } from './errors';
 export {

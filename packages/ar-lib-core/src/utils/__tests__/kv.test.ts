@@ -7,6 +7,7 @@ import {
   getNonce,
   deleteNonce,
   getClient,
+  putClient,
   getCachedConsent,
 } from '../kv';
 import type { Env } from '../../types/env';
@@ -190,6 +191,97 @@ describe('KV Utilities', () => {
       expect(retrieved?.redirect_uris).toEqual(['http://localhost:3000/callback']);
     });
 
+    it('should preserve Phase 1 client policy metadata from D1', async () => {
+      const clientId = 'phase1-policy-client';
+      const dbResult = {
+        client_id: clientId,
+        client_secret_hash: null,
+        client_name: 'Phase 1 Policy Client',
+        application_type: 'native',
+        trust_group: 'wallet-suite',
+        trust_group_id: 'wallet-suite',
+        browser_public_client_mode: 'cookie_fallback',
+        browser_refresh_token_policy: 'dpop_bound',
+        native_sso_enabled: 1,
+        native_channel_allowed: 1,
+        allowed_channels: JSON.stringify(['native']),
+        device_secret_revoke_enabled: 1,
+        device_secret_revoke_trust_groups: JSON.stringify(['wallet-suite']),
+        device_secret_introspection_enabled: 0,
+        device_secret_introspection_trust_groups: JSON.stringify(['wallet-suite']),
+        default_resource: 'svc://wallet-api',
+        redirect_uris: JSON.stringify(['http://localhost:3000/callback']),
+        grant_types: JSON.stringify(['authorization_code']),
+        response_types: JSON.stringify(['code']),
+        scope: 'openid profile',
+        token_endpoint_auth_method: 'none',
+        contacts: null,
+        logo_uri: null,
+        client_uri: null,
+        policy_uri: null,
+        tos_uri: null,
+        jwks_uri: null,
+        jwks: null,
+        subject_type: 'public',
+        sector_identifier_uri: null,
+        id_token_signed_response_alg: null,
+        userinfo_signed_response_alg: null,
+        request_object_signing_alg: null,
+        allow_claims_without_scope: 0,
+        token_exchange_allowed: 0,
+        allowed_subject_token_clients: null,
+        allowed_token_exchange_resources: null,
+        delegation_mode: 'delegation',
+        client_credentials_allowed: 0,
+        allowed_scopes: null,
+        default_scope: null,
+        default_audience: null,
+        initiate_login_uri: null,
+        registration_access_token_hash: null,
+        post_logout_redirect_uris: null,
+        backchannel_logout_uri: null,
+        backchannel_logout_session_required: 0,
+        frontchannel_logout_uri: null,
+        frontchannel_logout_session_required: 0,
+        software_id: null,
+        software_version: null,
+        requestable_scopes: null,
+        backchannel_token_delivery_mode: null,
+        backchannel_client_notification_endpoint: null,
+        backchannel_authentication_request_signing_alg: null,
+        backchannel_user_code_parameter: 0,
+        allowed_redirect_origins: null,
+        require_pkce: 0,
+        tenant_id: 'default',
+        created_at: 1234567890,
+        updated_at: 1234567890,
+      };
+
+      (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue(dbResult),
+      });
+
+      const retrieved = await getClient(env, clientId, env.DB);
+
+      expect(retrieved).toMatchObject({
+        client_id: clientId,
+        application_type: 'native',
+        trust_group: 'wallet-suite',
+        trust_group_id: 'wallet-suite',
+        browser_public_client_mode: 'cookie_fallback',
+        browser_refresh_token_policy: 'dpop_bound',
+        native_sso_enabled: true,
+        native_channel_allowed: true,
+        allowed_channels: ['native'],
+        device_secret_revoke_enabled: true,
+        device_secret_revoke_trust_groups: ['wallet-suite'],
+        device_secret_introspection_enabled: false,
+        device_secret_introspection_trust_groups: ['wallet-suite'],
+        default_resource: 'svc://wallet-api',
+      });
+    });
+
     it('should return client from cache when available', async () => {
       const clientId = 'cached-client';
       const cachedData = {
@@ -215,6 +307,7 @@ describe('KV Utilities', () => {
         post_logout_redirect_uris: undefined,
         requestable_scopes: undefined,
         allowed_redirect_origins: undefined,
+        allowed_channels: undefined,
       };
 
       expect(retrieved).toEqual(expectedNormalized);
@@ -238,6 +331,44 @@ describe('KV Utilities', () => {
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.response_types).toEqual(['code']);
+    });
+
+    it('should fail runtime client config containing legacy app_suite', async () => {
+      const clientId = 'legacy-app-suite-client';
+      const cachedData = {
+        client_id: clientId,
+        client_name: 'Legacy App Suite Client',
+        redirect_uris: ['http://example.com/callback'],
+        app_suite: 'wallet-suite',
+      };
+
+      await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
+
+      await expect(getClient(env, clientId, env.DB)).rejects.toMatchObject({
+        error: 'legacy_app_suite_not_supported',
+        error_uri:
+          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        statusCode: 400,
+      });
+      expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
+    it('should normalize client metadata before write-through caching', async () => {
+      const clientId = 'write-through-normalized-client';
+
+      await putClient(env, {
+        client_id: clientId,
+        client_name: 'Write-Through Client',
+        redirect_uris: 'http://example.com/callback' as unknown as string[],
+      });
+
+      const cached = await clientsCacheKV.get(`tenant:default:client:${clientId}`);
+      expect(JSON.parse(cached ?? '{}')).toMatchObject({
+        client_id: clientId,
+        redirect_uris: ['http://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+      });
     });
 
     it('should normalize double-encoded response_types from D1', async () => {

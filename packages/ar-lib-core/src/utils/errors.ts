@@ -7,9 +7,64 @@
 
 import type { Context } from 'hono';
 import { ERROR_CODES, HTTP_STATUS } from '../constants';
+import {
+  createPhase1ErrorDetails,
+  type CompatibilityErrorDetailCode,
+} from '../errors/details';
 import { createLogger } from './logger';
 
 const log = createLogger().module('OIDC_ERROR');
+
+export type CompatibilityErrorCode = CompatibilityErrorDetailCode;
+
+const COMPATIBILITY_ERROR_DESCRIPTIONS: Record<CompatibilityErrorCode, string> = {
+  legacy_app_suite_not_supported:
+    'Legacy app_suite configuration is no longer supported. Use trust_group instead.',
+  legacy_native_sso_discovery_unsupported:
+    'Legacy Native SSO discovery fields are no longer supported.',
+  legacy_endpoint_not_supported:
+    'This legacy endpoint is no longer supported in Authrim Phase 1.',
+  legacy_passkey_error_unsupported:
+    'Legacy passkey error names are no longer supported. Use the canonical Phase 1 passkey errors.',
+};
+
+export const COMPATIBILITY_ERROR_URI_BASE = 'https://docs.authrim.com/errors/error-codes';
+
+export function getCompatibilityErrorUri(code: CompatibilityErrorCode): string {
+  return `${COMPATIBILITY_ERROR_URI_BASE}#${code.replace(/_/g, '-')}`;
+}
+
+export function createCompatibilityError(
+  code: CompatibilityErrorCode,
+  statusCode: number = HTTP_STATUS.BAD_REQUEST
+): OIDCError {
+  return new OIDCError(
+    code,
+    COMPATIBILITY_ERROR_DESCRIPTIONS[code],
+    statusCode,
+    getCompatibilityErrorUri(code)
+  );
+}
+
+export function createCompatibilityErrorResponse(
+  code: CompatibilityErrorCode,
+  statusCode: number = HTTP_STATUS.BAD_REQUEST
+): Response {
+  const error = createCompatibilityError(code, statusCode);
+  const body = {
+    ...error.toJSON(),
+    error_details: createPhase1ErrorDetails(code),
+  };
+
+  return new Response(JSON.stringify(body), {
+    status: statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      Pragma: 'no-cache',
+    },
+  });
+}
 
 /**
  * OIDC Error class

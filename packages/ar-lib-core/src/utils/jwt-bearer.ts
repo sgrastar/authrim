@@ -24,6 +24,7 @@ export interface JWTBearerAssertion extends JWTPayload {
   iat: number; // Issued at time
   jti?: string; // JWT ID (unique identifier for replay protection)
   scope?: string; // Optional scope claim
+  resource?: string | string[]; // Optional requested target resource
 }
 
 /**
@@ -40,6 +41,12 @@ export interface TrustedIssuer {
   allowed_subjects?: string[];
   /** Allowed scopes for this issuer */
   allowed_scopes?: string[];
+  /** Default resource audience for access tokens issued through this trusted issuer */
+  default_resource?: string;
+  /** Legacy fallback while migrating older JWT bearer issuer configuration */
+  default_audience?: string;
+  /** Allowed target resources/audiences for access tokens issued through this trusted issuer */
+  allowed_resources?: string[];
 }
 
 /**
@@ -259,6 +266,11 @@ export function parseTrustedIssuers(envVar?: string): Map<string, TrustedIssuer>
     return issuers;
   }
 
+  const trimmed = envVar.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return parseTrustedIssuersJson(trimmed);
+  }
+
   const entries = envVar.split(',');
   for (const entry of entries) {
     // Split on : only when followed by http:// or https://
@@ -275,4 +287,61 @@ export function parseTrustedIssuers(envVar?: string): Map<string, TrustedIssuer>
   }
 
   return issuers;
+}
+
+function parseTrustedIssuersJson(envVar: string): Map<string, TrustedIssuer> {
+  const issuers = new Map<string, TrustedIssuer>();
+
+  try {
+    const parsed = JSON.parse(envVar) as unknown;
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : isRecord(parsed)
+        ? Object.entries(parsed).map(([issuer, config]) => ({
+            ...(isRecord(config) ? config : {}),
+            issuer,
+          }))
+        : [];
+
+    for (const entry of entries) {
+      if (!isRecord(entry) || typeof entry.issuer !== 'string' || entry.issuer.length === 0) {
+        continue;
+      }
+
+      issuers.set(entry.issuer, {
+        issuer: entry.issuer,
+        ...(isRecord(entry.jwks) && Array.isArray(entry.jwks.keys) && {
+          jwks: entry.jwks as TrustedIssuer['jwks'],
+        }),
+        ...(typeof entry.jwks_uri === 'string' && { jwks_uri: entry.jwks_uri }),
+        ...(isStringArray(entry.allowed_subjects) && {
+          allowed_subjects: entry.allowed_subjects,
+        }),
+        ...(isStringArray(entry.allowed_scopes) && {
+          allowed_scopes: entry.allowed_scopes,
+        }),
+        ...(typeof entry.default_resource === 'string' &&
+          entry.default_resource.length > 0 && { default_resource: entry.default_resource }),
+        ...(typeof entry.default_audience === 'string' &&
+          entry.default_audience.length > 0 && { default_audience: entry.default_audience }),
+        ...(isStringArray(entry.allowed_resources) && {
+          allowed_resources: entry.allowed_resources,
+        }),
+      });
+    }
+  } catch (error) {
+    log.warn('Failed to parse TRUSTED_JWT_ISSUERS JSON configuration', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return issuers;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }

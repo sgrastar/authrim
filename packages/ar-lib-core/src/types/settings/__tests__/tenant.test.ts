@@ -19,4 +19,14 @@ describe('TENANT_SETTINGS_META', () => {
     expect(TENANT_DEFAULTS['tenant.audit_profile_id']).toBe('');
     expect(TENANT_DEFAULTS['tenant.residency_profile_id']).toBe('');
   });
+
+  it('defines the browser public client mode tenant default', () => {
+    expect(TENANT_SETTINGS_META['tenant.browser_public_client_mode'].visibility).toBe('admin');
+    expect(TENANT_SETTINGS_META['tenant.browser_public_client_mode'].enum).toEqual([
+      'strict',
+      'cookie_fallback',
+      'legacy',
+    ]);
+    expect(TENANT_DEFAULTS['tenant.browser_public_client_mode']).toBe('cookie_fallback');
+  });
 });

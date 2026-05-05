@@ -685,7 +685,7 @@ describe('UserInfo Integration Tests', () => {
 
       const res = await app.fetch(req, mockEnv);
 
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
     });
   });
 

@@ -312,5 +312,25 @@ describe('JWT Bearer Flow Utilities', () => {
       expect(result.size).toBe(1);
       expect(result.has('https://service.example.com')).toBe(true);
     });
+
+    it('should parse JSON trusted issuer target resource policy', () => {
+      const envVar = JSON.stringify([
+        {
+          issuer: 'https://service.example.com',
+          jwks_uri: 'https://service.example.com/jwks',
+          default_resource: 'svc://service-api',
+          allowed_resources: ['svc://service-api', 'svc://admin-api'],
+          allowed_scopes: ['api:read'],
+        },
+      ]);
+
+      const result = parseTrustedIssuers(envVar);
+
+      const issuer = result.get('https://service.example.com');
+      expect(issuer?.jwks_uri).toBe('https://service.example.com/jwks');
+      expect(issuer?.default_resource).toBe('svc://service-api');
+      expect(issuer?.allowed_resources).toEqual(['svc://service-api', 'svc://admin-api']);
+      expect(issuer?.allowed_scopes).toEqual(['api:read']);
+    });
   });
 });

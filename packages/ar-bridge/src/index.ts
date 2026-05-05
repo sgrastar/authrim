@@ -52,7 +52,7 @@ import {
   handleUnlinkIdentity,
   handleListLinkedIdentities,
 } from './handlers/link';
-import { handleHandoffVerify } from './handlers/handoff';
+import { handleHandoffFinalize, handleHandoffVerify } from './handlers/handoff';
 
 // Import admin handlers
 import {
@@ -177,6 +177,8 @@ app.post('/auth/external/:provider/backchannel-logout', handleBackchannelLogout)
 // Handoff token verification (for SSO across multiple RPs)
 app.post('/auth/external/handoff/verify', handleHandoffVerify);
 app.post('/api/external/handoff/verify', handleHandoffVerify); // Alternative path
+app.post('/auth/external/handoff/finalize', handleHandoffFinalize);
+app.post('/api/external/handoff/finalize', handleHandoffFinalize); // Alternative path
 
 // =============================================================================
 // Authenticated Endpoints (require session)

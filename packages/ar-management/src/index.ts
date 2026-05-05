@@ -38,6 +38,7 @@ import {
   getTenantIdFromContext,
   getTenantSettings,
   resolveAuthCorePersistenceAdapterFromEnv,
+  createCompatibilityErrorResponse,
   ADMIN_PERMISSIONS,
 } from '@authrim/ar-lib-core';
 import {
@@ -374,6 +375,7 @@ import { getSessionShards, updateSessionShards } from './routes/settings/session
 import { getChallengeShards, updateChallengeShards } from './routes/settings/challenge-shards';
 import { approvalArtifactsRouter } from './routes/approval-artifacts';
 import { approvalReceiptsRouter } from './routes/approval-receipts';
+import { stepUpRouter } from './routes/step-up';
 import {
   getPartitionSettings,
   updatePartitionSettings,
@@ -599,6 +601,11 @@ import {
   revokeAllUserDeviceSecrets,
   cleanupExpiredDeviceSecrets,
 } from './routes/device-secrets';
+import {
+  listMyDevicesHandler,
+  updateMyDeviceHandler,
+  deleteMyDeviceHandler,
+} from './self-service-devices';
 import {
   createWebhook,
   listWebhooks,
@@ -948,6 +955,16 @@ app.post('/revoke', revokeHandler);
 // Batch Token Revocation endpoint (RFC 7009 extension)
 app.post('/revoke/batch', batchRevokeHandler);
 
+// Self-service device inventory
+app.get('/me/devices', listMyDevicesHandler);
+app.patch('/me/devices/:id', updateMyDeviceHandler);
+app.delete('/me/devices/:id', deleteMyDeviceHandler);
+
+// Removed Admin API endpoint compatibility surface
+app.get('/api/admin/sessions/me', () =>
+  createCompatibilityErrorResponse('legacy_endpoint_not_supported', 404)
+);
+
 // CSRF protection for Admin API - validates Origin/Referer on state-changing requests
 // Applied before auth to reject CSRF attempts early (defense-in-depth with SameSite cookies + CORS)
 // Skips Bearer token requests (server-to-server API calls are not vulnerable to CSRF)
@@ -1017,10 +1034,10 @@ app.put('/api/admin/clients/:id', adminClientUpdateHandler);
 app.delete('/api/admin/clients/:id', adminClientDeleteHandler);
 
 // Admin UI Session endpoints (Phase 1 - Authentication)
-// - GET /api/admin/sessions/me - Check current session status with role validation (401/403/200)
+// - GET /api/admin/me/session - Check current session status with role validation (401/403/200)
 // - POST /api/admin/logout - Admin logout with Origin check (CSRF protection)
-// Note: sessions/me must be registered BEFORE sessions/:id to avoid route conflict
-app.get('/api/admin/sessions/me', adminSessionStatusHandler);
+// Note: me/session must be registered BEFORE sessions/:id to avoid route conflict
+app.get('/api/admin/me/session', adminSessionStatusHandler);
 app.post('/api/admin/logout', adminLogoutHandler);
 
 // Admin Session Management endpoints (RESTful naming)
@@ -1291,6 +1308,7 @@ app.route('/api/admin', policyRouter);
 app.route('/api/admin', adminManagementRouter);
 app.route('/api/approval-artifacts', approvalArtifactsRouter);
 app.route('/api/approval-receipts', approvalReceiptsRouter);
+app.route('/auth/step-up', stepUpRouter);
 
 // =============================================================================
 // Diagnostic Logging API (Debugging, Troubleshooting, OIDF Conformance)

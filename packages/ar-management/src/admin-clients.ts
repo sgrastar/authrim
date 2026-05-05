@@ -5,6 +5,7 @@ import {
   createAuthContextFromHono,
   D1Adapter,
   createErrorResponse,
+  createCompatibilityErrorResponse,
   AR_ERROR_CODES,
   validateAllowedOrigins,
   createAuditLogFromContext,
@@ -29,7 +30,33 @@ import {
   toMilliseconds,
 } from './admin-shared';
 
+type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
+type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
+type AdminBrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+type AdminClientChannel = 'browser' | 'native' | 'server';
+
 const VALID_DELEGATION_MODES = new Set(['none', 'delegation', 'impersonation']);
+const VALID_APPLICATION_TYPES = new Set<AdminClientApplicationType>([
+  'web',
+  'native',
+  'spa',
+  'service',
+]);
+const VALID_BROWSER_PUBLIC_CLIENT_MODES = new Set<AdminBrowserPublicClientMode>([
+  'strict',
+  'cookie_fallback',
+  'legacy',
+]);
+const VALID_BROWSER_REFRESH_TOKEN_POLICIES = new Set<AdminBrowserRefreshTokenPolicy>([
+  'disabled',
+  'dpop_bound',
+]);
+const VALID_CLIENT_CHANNELS = new Set<AdminClientChannel>(['browser', 'native', 'server']);
+const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
+  'app_suite',
+  'trust_group_id',
+  'allow_cross_client_native_sso',
+]);
 
 function validateOptionalStringArrayField(
   value: unknown,
@@ -51,6 +78,96 @@ function validateOptionalStringArrayField(
     };
   }
   return { ok: true, value };
+}
+
+function findUnsupportedLegacyClientField(body: Record<string, unknown>): string | null {
+  for (const field of UNSUPPORTED_LEGACY_CLIENT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(body, field)) {
+      return field;
+    }
+  }
+  return null;
+}
+
+function validateOptionalStringField(
+  value: unknown,
+  field: string
+): { ok: true; value: string | null | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'string') {
+    return { ok: false, error: `${field} must be a string or null` };
+  }
+  const trimmed = value.trim();
+  return { ok: true, value: trimmed.length > 0 ? trimmed : null };
+}
+
+function validateOptionalEnumField<T extends string>(
+  value: unknown,
+  field: string,
+  validValues: Set<T>
+): { ok: true; value: T | null | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null || value === '') {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'string' || !validValues.has(value as T)) {
+    return {
+      ok: false,
+      error: `${field} must be one of ${Array.from(validValues).join(', ')}`,
+    };
+  }
+  return { ok: true, value: value as T };
+}
+
+function validateOptionalBooleanField(
+  value: unknown,
+  field: string
+): { ok: true; value: boolean | null | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'boolean') {
+    return { ok: false, error: `${field} must be a boolean or null` };
+  }
+  return { ok: true, value };
+}
+
+function validateOptionalChannelArrayField(
+  value: unknown,
+  field: string
+):
+  | { ok: true; value: AdminClientChannel[] | null | undefined }
+  | { ok: false; error: string } {
+  const validation = validateOptionalStringArrayField(value, field);
+  if (!validation.ok) {
+    return validation;
+  }
+  if (validation.value === undefined || validation.value === null) {
+    return { ok: true, value: validation.value };
+  }
+  const invalid = validation.value.find(
+    (channel) => !VALID_CLIENT_CHANNELS.has(channel as AdminClientChannel)
+  );
+  if (invalid) {
+    return {
+      ok: false,
+      error: `${field} must contain only browser, native, server`,
+    };
+  }
+  return {
+    ok: true,
+    value: validation.value as AdminClientChannel[],
+  };
 }
 
 /**
@@ -78,6 +195,17 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope?: boolean;
       allowed_redirect_origins?: string[];
       require_pkce?: boolean;
+      application_type?: string;
+      trust_group?: string | null;
+      browser_public_client_mode?: string | null;
+      browser_refresh_token_policy?: string | null;
+      native_sso_enabled?: boolean | null;
+      native_channel_allowed?: boolean | null;
+      allowed_channels?: string[] | null;
+      device_secret_revoke_enabled?: boolean | null;
+      device_secret_revoke_trust_groups?: string[] | null;
+      device_secret_introspection_enabled?: boolean | null;
+      device_secret_introspection_trust_groups?: string[] | null;
       token_exchange_allowed?: boolean;
       allowed_subject_token_clients?: string[] | null;
       allowed_token_exchange_resources?: string[] | null;
@@ -86,7 +214,25 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allowed_scopes?: string[] | null;
       default_scope?: string | null;
       default_audience?: string | null;
+      default_resource?: string | null;
     }>();
+
+    const unsupportedLegacyField = findUnsupportedLegacyClientField(
+      body as Record<string, unknown>
+    );
+    if (unsupportedLegacyField) {
+      if (unsupportedLegacyField === 'app_suite') {
+        return createCompatibilityErrorResponse('legacy_app_suite_not_supported', 400);
+      }
+
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: `${unsupportedLegacyField} is not supported in Phase 1 runtime client configuration. Use trust_group for cross-client Native SSO.`,
+        },
+        400
+      );
+    }
 
     if (!body.client_name) {
       return c.json(
@@ -192,6 +338,174 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const applicationTypeValidation = validateOptionalEnumField(
+      body.application_type,
+      'application_type',
+      VALID_APPLICATION_TYPES
+    );
+    if (!applicationTypeValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: applicationTypeValidation.error,
+        },
+        400
+      );
+    }
+
+    const trustGroupValidation = validateOptionalStringField(body.trust_group, 'trust_group');
+    if (!trustGroupValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: trustGroupValidation.error,
+        },
+        400
+      );
+    }
+
+    const browserPublicClientModeValidation = validateOptionalEnumField(
+      body.browser_public_client_mode,
+      'browser_public_client_mode',
+      VALID_BROWSER_PUBLIC_CLIENT_MODES
+    );
+    if (!browserPublicClientModeValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: browserPublicClientModeValidation.error,
+        },
+        400
+      );
+    }
+
+    const browserRefreshTokenPolicyValidation = validateOptionalEnumField(
+      body.browser_refresh_token_policy,
+      'browser_refresh_token_policy',
+      VALID_BROWSER_REFRESH_TOKEN_POLICIES
+    );
+    if (!browserRefreshTokenPolicyValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: browserRefreshTokenPolicyValidation.error,
+        },
+        400
+      );
+    }
+
+    const nativeSsoEnabledValidation = validateOptionalBooleanField(
+      body.native_sso_enabled,
+      'native_sso_enabled'
+    );
+    if (!nativeSsoEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: nativeSsoEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const nativeChannelAllowedValidation = validateOptionalBooleanField(
+      body.native_channel_allowed,
+      'native_channel_allowed'
+    );
+    if (!nativeChannelAllowedValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: nativeChannelAllowedValidation.error,
+        },
+        400
+      );
+    }
+
+    const allowedChannelsValidation = validateOptionalChannelArrayField(
+      body.allowed_channels,
+      'allowed_channels'
+    );
+    if (!allowedChannelsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedChannelsValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretRevokeEnabledValidation = validateOptionalBooleanField(
+      body.device_secret_revoke_enabled,
+      'device_secret_revoke_enabled'
+    );
+    if (!deviceSecretRevokeEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretRevokeEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretRevokeTrustGroupsValidation = validateOptionalStringArrayField(
+      body.device_secret_revoke_trust_groups,
+      'device_secret_revoke_trust_groups'
+    );
+    if (!deviceSecretRevokeTrustGroupsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretRevokeTrustGroupsValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretIntrospectionEnabledValidation = validateOptionalBooleanField(
+      body.device_secret_introspection_enabled,
+      'device_secret_introspection_enabled'
+    );
+    if (!deviceSecretIntrospectionEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretIntrospectionEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretIntrospectionTrustGroupsValidation = validateOptionalStringArrayField(
+      body.device_secret_introspection_trust_groups,
+      'device_secret_introspection_trust_groups'
+    );
+    if (!deviceSecretIntrospectionTrustGroupsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretIntrospectionTrustGroupsValidation.error,
+        },
+        400
+      );
+    }
+
+    const defaultResourceValidation = validateOptionalStringField(
+      body.default_resource,
+      'default_resource'
+    );
+    if (!defaultResourceValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: defaultResourceValidation.error,
+        },
+        400
+      );
+    }
+
     if (
       body.delegation_mode !== undefined &&
       !VALID_DELEGATION_MODES.has(body.delegation_mode)
@@ -215,6 +529,18 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       client_name: body.client_name,
       client_secret_hash: clientSecretHash,
       tenant_id: tenantId,
+      application_type: applicationTypeValidation.value ?? 'web',
+      trust_group: trustGroupValidation.value,
+      browser_public_client_mode: browserPublicClientModeValidation.value,
+      browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value ?? 'disabled',
+      native_sso_enabled: nativeSsoEnabledValidation.value,
+      native_channel_allowed: nativeChannelAllowedValidation.value,
+      allowed_channels: allowedChannelsValidation.value,
+      device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
+      device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
+      device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
+      device_secret_introspection_trust_groups:
+        deviceSecretIntrospectionTrustGroupsValidation.value,
       redirect_uris: body.redirect_uris,
       grant_types: body.grant_types || ['authorization_code'],
       response_types: body.response_types || ['code'],
@@ -244,6 +570,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allowed_scopes: allowedScopesValidation.value,
       default_scope: body.default_scope ?? null,
       default_audience: body.default_audience ?? null,
+      default_resource: defaultResourceValidation.value,
       allowed_redirect_origins: validatedAllowedOrigins,
       require_pkce: body.require_pkce || false,
     });
@@ -252,6 +579,27 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       client_id: client.client_id,
       client_secret_hash: client.client_secret_hash ?? undefined,
       client_name: client.client_name,
+      application_type: client.application_type ?? undefined,
+      trust_group: client.trust_group ?? undefined,
+      trust_group_id: client.trust_group_id ?? undefined,
+      browser_public_client_mode: client.browser_public_client_mode ?? undefined,
+      browser_refresh_token_policy: client.browser_refresh_token_policy,
+      native_sso_enabled: client.native_sso_enabled ?? undefined,
+      native_channel_allowed: client.native_channel_allowed ?? undefined,
+      allowed_channels: client.allowed_channels
+        ? (parseClientStringArray(client.allowed_channels, []) as Array<
+            'browser' | 'native' | 'server'
+          >)
+        : undefined,
+      device_secret_revoke_enabled: client.device_secret_revoke_enabled ?? undefined,
+      device_secret_revoke_trust_groups: client.device_secret_revoke_trust_groups
+        ? parseClientStringArray(client.device_secret_revoke_trust_groups, [])
+        : undefined,
+      device_secret_introspection_enabled:
+        client.device_secret_introspection_enabled ?? undefined,
+      device_secret_introspection_trust_groups: client.device_secret_introspection_trust_groups
+        ? parseClientStringArray(client.device_secret_introspection_trust_groups, [])
+        : undefined,
       redirect_uris: parseClientStringArray(client.redirect_uris, []),
       grant_types: parseClientStringArray(client.grant_types, ['authorization_code']),
       response_types: parseClientStringArray(client.response_types, ['code']),
@@ -286,6 +634,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         : undefined,
       default_scope: client.default_scope ?? undefined,
       default_audience: client.default_audience ?? undefined,
+      default_resource: client.default_resource ?? undefined,
       backchannel_token_delivery_mode: client.backchannel_token_delivery_mode ?? undefined,
       backchannel_client_notification_endpoint:
         client.backchannel_client_notification_endpoint ?? undefined,
@@ -340,6 +689,23 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           client_id: client.client_id,
           client_secret: clientSecret,
           client_name: client.client_name,
+          application_type: client.application_type,
+          trust_group: client.trust_group,
+          browser_public_client_mode: client.browser_public_client_mode,
+          browser_refresh_token_policy: client.browser_refresh_token_policy,
+          native_sso_enabled: client.native_sso_enabled,
+          native_channel_allowed: client.native_channel_allowed,
+          allowed_channels: client.allowed_channels
+            ? parseClientStringArray(client.allowed_channels, [])
+            : [],
+          device_secret_revoke_enabled: client.device_secret_revoke_enabled,
+          device_secret_revoke_trust_groups: client.device_secret_revoke_trust_groups
+            ? parseClientStringArray(client.device_secret_revoke_trust_groups, [])
+            : [],
+          device_secret_introspection_enabled: client.device_secret_introspection_enabled,
+          device_secret_introspection_trust_groups: client.device_secret_introspection_trust_groups
+            ? parseClientStringArray(client.device_secret_introspection_trust_groups, [])
+            : [],
           redirect_uris: parseClientStringArray(client.redirect_uris, []),
           grant_types: parseClientStringArray(client.grant_types, ['authorization_code']),
           response_types: parseClientStringArray(client.response_types, ['code']),
@@ -369,6 +735,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
             : [],
           default_scope: client.default_scope,
           default_audience: client.default_audience,
+          default_resource: client.default_resource,
           require_pkce: client.require_pkce,
           created_at: client.created_at,
           updated_at: client.updated_at,
@@ -417,6 +784,9 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
           ? parseClientStringArray(client.allowed_token_exchange_resources, [])
           : [],
         allowed_scopes: client.allowed_scopes ? parseClientStringArray(client.allowed_scopes, []) : [],
+        allowed_channels: client.allowed_channels
+          ? parseClientStringArray(client.allowed_channels, [])
+          : [],
         created_at: toMilliseconds(client.created_at),
         updated_at: toMilliseconds(client.updated_at),
       };
@@ -478,6 +848,9 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
         ? parseClientStringArray(client.allowed_token_exchange_resources, [])
         : [],
       allowed_scopes: client.allowed_scopes ? parseClientStringArray(client.allowed_scopes, []) : [],
+      allowed_channels: client.allowed_channels
+        ? parseClientStringArray(client.allowed_channels, [])
+        : [],
       created_at: toMilliseconds(client.created_at as number),
       updated_at: toMilliseconds(client.updated_at as number),
     };
@@ -515,6 +888,23 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const body = await c.req.json();
+    const unsupportedLegacyField = findUnsupportedLegacyClientField(
+      body as Record<string, unknown>
+    );
+    if (unsupportedLegacyField) {
+      if (unsupportedLegacyField === 'app_suite') {
+        return createCompatibilityErrorResponse('legacy_app_suite_not_supported', 400);
+      }
+
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: `${unsupportedLegacyField} is not supported in Phase 1 runtime client configuration. Use trust_group for cross-client Native SSO.`,
+        },
+        400
+      );
+    }
+
     const {
       client_name,
       redirect_uris,
@@ -533,6 +923,17 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       require_pkce,
       initiate_login_uri,
       login_ui_url,
+      application_type,
+      trust_group,
+      browser_public_client_mode,
+      browser_refresh_token_policy,
+      native_sso_enabled,
+      native_channel_allowed,
+      allowed_channels,
+      device_secret_revoke_enabled,
+      device_secret_revoke_trust_groups,
+      device_secret_introspection_enabled,
+      device_secret_introspection_trust_groups,
       token_exchange_allowed,
       allowed_subject_token_clients,
       allowed_token_exchange_resources,
@@ -541,6 +942,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       allowed_scopes,
       default_scope,
       default_audience,
+      default_resource,
     } = body;
 
     let validatedAllowedOrigins: string[] | undefined;
@@ -690,6 +1092,174 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const applicationTypeValidation = validateOptionalEnumField(
+      application_type,
+      'application_type',
+      VALID_APPLICATION_TYPES
+    );
+    if (!applicationTypeValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: applicationTypeValidation.error,
+        },
+        400
+      );
+    }
+
+    const trustGroupValidation = validateOptionalStringField(trust_group, 'trust_group');
+    if (!trustGroupValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: trustGroupValidation.error,
+        },
+        400
+      );
+    }
+
+    const browserPublicClientModeValidation = validateOptionalEnumField(
+      browser_public_client_mode,
+      'browser_public_client_mode',
+      VALID_BROWSER_PUBLIC_CLIENT_MODES
+    );
+    if (!browserPublicClientModeValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: browserPublicClientModeValidation.error,
+        },
+        400
+      );
+    }
+
+    const browserRefreshTokenPolicyValidation = validateOptionalEnumField(
+      browser_refresh_token_policy,
+      'browser_refresh_token_policy',
+      VALID_BROWSER_REFRESH_TOKEN_POLICIES
+    );
+    if (!browserRefreshTokenPolicyValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: browserRefreshTokenPolicyValidation.error,
+        },
+        400
+      );
+    }
+
+    const nativeSsoEnabledValidation = validateOptionalBooleanField(
+      native_sso_enabled,
+      'native_sso_enabled'
+    );
+    if (!nativeSsoEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: nativeSsoEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const nativeChannelAllowedValidation = validateOptionalBooleanField(
+      native_channel_allowed,
+      'native_channel_allowed'
+    );
+    if (!nativeChannelAllowedValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: nativeChannelAllowedValidation.error,
+        },
+        400
+      );
+    }
+
+    const allowedChannelsValidation = validateOptionalChannelArrayField(
+      allowed_channels,
+      'allowed_channels'
+    );
+    if (!allowedChannelsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: allowedChannelsValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretRevokeEnabledValidation = validateOptionalBooleanField(
+      device_secret_revoke_enabled,
+      'device_secret_revoke_enabled'
+    );
+    if (!deviceSecretRevokeEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretRevokeEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretRevokeTrustGroupsValidation = validateOptionalStringArrayField(
+      device_secret_revoke_trust_groups,
+      'device_secret_revoke_trust_groups'
+    );
+    if (!deviceSecretRevokeTrustGroupsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretRevokeTrustGroupsValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretIntrospectionEnabledValidation = validateOptionalBooleanField(
+      device_secret_introspection_enabled,
+      'device_secret_introspection_enabled'
+    );
+    if (!deviceSecretIntrospectionEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretIntrospectionEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const deviceSecretIntrospectionTrustGroupsValidation = validateOptionalStringArrayField(
+      device_secret_introspection_trust_groups,
+      'device_secret_introspection_trust_groups'
+    );
+    if (!deviceSecretIntrospectionTrustGroupsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: deviceSecretIntrospectionTrustGroupsValidation.error,
+        },
+        400
+      );
+    }
+
+    const defaultResourceValidation = validateOptionalStringField(
+      default_resource,
+      'default_resource'
+    );
+    if (!defaultResourceValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: defaultResourceValidation.error,
+        },
+        400
+      );
+    }
+
     if (delegation_mode !== undefined && !VALID_DELEGATION_MODES.has(delegation_mode)) {
       return c.json(
         {
@@ -718,6 +1288,17 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       require_pkce,
       initiate_login_uri,
       login_ui_url,
+      application_type,
+      trust_group,
+      browser_public_client_mode,
+      browser_refresh_token_policy,
+      native_sso_enabled,
+      native_channel_allowed,
+      allowed_channels,
+      device_secret_revoke_enabled,
+      device_secret_revoke_trust_groups,
+      device_secret_introspection_enabled,
+      device_secret_introspection_trust_groups,
       token_exchange_allowed,
       allowed_subject_token_clients,
       allowed_token_exchange_resources,
@@ -726,6 +1307,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       allowed_scopes,
       default_scope,
       default_audience,
+      default_resource,
     ].some((v) => v !== undefined);
 
     if (!hasUpdates) {
@@ -753,6 +1335,18 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       require_pkce,
       initiate_login_uri,
       login_ui_url,
+      application_type: applicationTypeValidation.value,
+      trust_group: trustGroupValidation.value,
+      browser_public_client_mode: browserPublicClientModeValidation.value,
+      browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
+      native_sso_enabled: nativeSsoEnabledValidation.value,
+      native_channel_allowed: nativeChannelAllowedValidation.value,
+      allowed_channels: allowedChannelsValidation.value,
+      device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
+      device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
+      device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
+      device_secret_introspection_trust_groups:
+        deviceSecretIntrospectionTrustGroupsValidation.value,
       token_exchange_allowed,
       allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
       allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
@@ -761,6 +1355,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       allowed_scopes: allowedScopesValidation.value,
       default_scope,
       default_audience,
+      default_resource: defaultResourceValidation.value,
     });
 
     const log = getLogger(c).module('ADMIN-CLIENT');
@@ -812,6 +1407,16 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           allowed_scopes: updatedClient.allowed_scopes
             ? parseClientStringArray(updatedClient.allowed_scopes, [])
             : [],
+          allowed_channels: updatedClient.allowed_channels
+            ? parseClientStringArray(updatedClient.allowed_channels, [])
+            : [],
+          device_secret_revoke_trust_groups: updatedClient.device_secret_revoke_trust_groups
+            ? parseClientStringArray(updatedClient.device_secret_revoke_trust_groups, [])
+            : [],
+          device_secret_introspection_trust_groups:
+            updatedClient.device_secret_introspection_trust_groups
+              ? parseClientStringArray(updatedClient.device_secret_introspection_trust_groups, [])
+              : [],
         },
       });
     }

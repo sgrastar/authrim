@@ -33,45 +33,75 @@
 		// Client-side state validation is optional and skipped here
 
 		try {
-			const authConfig = getAuthConfig();
-
-			// Verify handoff token with Authrim AS (via EXTERNAL_IDP worker)
-			const response = await fetch(`${authConfig.issuer}/auth/external/handoff/verify`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({
-					handoff_token: handoffToken,
-					state: state,
-					client_id: authConfig.clientId
-				})
-			});
-
-			if (!response.ok) {
-				const data = await response.json().catch(() => ({}));
-				console.error('[Authrim] Handoff verification failed:', data);
-				errorCode = data.error || 'handoff_verification_failed';
-				errorMessage = data.error_description || 'Handoff token verification failed';
+			if (!state) {
+				errorCode = 'missing_state';
+				errorMessage = 'Handoff state is missing';
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
 					reason: errorCode,
 					flow: 'smart-handoff',
-					context: { status: response.status }
+					context: { mode: 'cookie-only' }
 				});
 				return;
 			}
 
-			const tokenData = await response.json();
+			const authConfig = getAuthConfig();
+			const finalizeResponse = await fetch(`${API_BASE_URL}/auth/external/handoff/finalize`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				credentials: 'include',
+				body: JSON.stringify({
+					handoff_token: handoffToken,
+					state,
+					client_id: authConfig.clientId
+				})
+			});
 
-			// Store session (same pattern as Passkey login)
-			if (tokenData.session && tokenData.user) {
-				auth.login(tokenData.session.id, {
-					userId: tokenData.user.id,
-					email: tokenData.user.email,
-					name: tokenData.user.name
+			if (!finalizeResponse.ok) {
+				const data = await finalizeResponse.json().catch(() => ({}));
+				errorCode = data.error || 'handoff_finalize_failed';
+				errorMessage =
+					data.error_description || 'Handoff session could not be finalized securely';
+				status = 'error';
+				getDiagnosticLogger()?.logAuthDecision({
+					decision: 'deny',
+					reason: errorCode,
+					flow: 'smart-handoff',
+					context: { mode: 'cookie-only', status: finalizeResponse.status }
 				});
+				return;
+			}
+
+			const finalizeData = await finalizeResponse.json().catch(() => ({}));
+			if ('access_token' in finalizeData || 'refresh_token' in finalizeData) {
+				errorCode = 'handoff_finalize_invalid_response';
+				errorMessage = 'Handoff finalize returned token material unexpectedly';
+				status = 'error';
+				getDiagnosticLogger()?.logAuthDecision({
+					decision: 'deny',
+					reason: errorCode,
+					flow: 'smart-handoff',
+					context: { mode: 'cookie-only' }
+				});
+				return;
+			}
+
+			await auth.refreshFromSession();
+
+			if (!auth.checkAuth()) {
+				errorCode = 'handoff_cookie_session_missing';
+				errorMessage = 'Handoff session could not be restored from the secure session cookie';
+				status = 'error';
+				getDiagnosticLogger()?.logAuthDecision({
+					decision: 'deny',
+					reason: errorCode,
+					flow: 'smart-handoff',
+					context: { mode: 'cookie-only' }
+				});
+				return;
 			}
 
 			// Clean up session storage (except oauth_return_url, used below)
@@ -82,8 +112,9 @@
 
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'allow',
-				reason: 'handoff_verification_success',
-				flow: 'smart-handoff'
+				reason: 'handoff_cookie_session_success',
+				flow: 'smart-handoff',
+				context: { mode: 'cookie-only' }
 			});
 
 			status = 'success';

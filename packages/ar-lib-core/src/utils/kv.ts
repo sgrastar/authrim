@@ -17,6 +17,7 @@ import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from './logger';
+import { createCompatibilityError, OIDCError } from './errors';
 import { getCacheTTL } from './cache-config';
 import { getDefaultTenantId } from './issuer';
 import {
@@ -639,6 +640,12 @@ function normalizeOptionalStringArray(value: unknown): string[] | undefined {
 }
 
 function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
+  if (
+    Object.prototype.hasOwnProperty.call(client as unknown as Record<string, unknown>, 'app_suite')
+  ) {
+    throw createCompatibilityError('legacy_app_suite_not_supported');
+  }
+
   return {
     ...client,
     redirect_uris: normalizeStringArray(client.redirect_uris, []),
@@ -655,6 +662,15 @@ function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
     post_logout_redirect_uris: normalizeOptionalStringArray(client.post_logout_redirect_uris),
     requestable_scopes: normalizeOptionalStringArray(client.requestable_scopes),
     allowed_redirect_origins: normalizeOptionalStringArray(client.allowed_redirect_origins),
+    device_secret_revoke_trust_groups: normalizeOptionalStringArray(
+      client.device_secret_revoke_trust_groups
+    ),
+    device_secret_introspection_trust_groups: normalizeOptionalStringArray(
+      client.device_secret_introspection_trust_groups
+    ),
+    allowed_channels: normalizeOptionalStringArray(client.allowed_channels) as
+      | Array<'browser' | 'native' | 'server'>
+      | undefined,
   };
 }
 
@@ -691,6 +707,13 @@ export async function getClient(
     try {
       return normalizeClientMetadata(JSON.parse(cached) as ClientMetadata);
     } catch (error) {
+      if (
+        error instanceof OIDCError &&
+        error.error === 'legacy_app_suite_not_supported'
+      ) {
+        throw error;
+      }
+
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
       log.error('Failed to parse cached client data', {}, error as Error);
@@ -736,6 +759,7 @@ export async function getClient(
     allowed_scopes: string | null;
     default_scope: string | null;
     default_audience: string | null;
+    default_resource: string | null;
     // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
     initiate_login_uri: string | null;
     // RFC 7592: Client Configuration Endpoint
@@ -761,6 +785,18 @@ export async function getClient(
     require_pkce: number | null;
     // Multi-tenant support
     tenant_id: string;
+    application_type: string | null;
+    trust_group: string | null;
+    trust_group_id: string | null;
+    browser_public_client_mode: string | null;
+    browser_refresh_token_policy: string | null;
+    native_sso_enabled: number | null;
+    native_channel_allowed: number | null;
+    allowed_channels: string | null;
+    device_secret_revoke_enabled: number | null;
+    device_secret_revoke_trust_groups: string | null;
+    device_secret_introspection_enabled: number | null;
+    device_secret_introspection_trust_groups: string | null;
     created_at: number;
     updated_at: number;
   }>('SELECT * FROM oauth_clients WHERE client_id = ?', [clientId]);
@@ -775,6 +811,41 @@ export async function getClient(
     client_id: result.client_id,
     client_secret_hash: result.client_secret_hash ?? undefined,
     client_name: result.client_name ?? undefined,
+    application_type: result.application_type ?? undefined,
+    trust_group: result.trust_group ?? undefined,
+    trust_group_id: result.trust_group_id ?? undefined,
+    browser_public_client_mode:
+      (result.browser_public_client_mode as 'strict' | 'cookie_fallback' | 'legacy' | null) ??
+      undefined,
+    browser_refresh_token_policy:
+      (result.browser_refresh_token_policy as 'disabled' | 'dpop_bound' | null) ?? 'disabled',
+    native_sso_enabled:
+      result.native_sso_enabled === null || result.native_sso_enabled === undefined
+        ? undefined
+        : result.native_sso_enabled === 1,
+    native_channel_allowed:
+      result.native_channel_allowed === null || result.native_channel_allowed === undefined
+        ? undefined
+        : result.native_channel_allowed === 1,
+    allowed_channels: normalizeOptionalStringArray(result.allowed_channels) as
+      | Array<'browser' | 'native' | 'server'>
+      | undefined,
+    device_secret_revoke_enabled:
+      result.device_secret_revoke_enabled === null ||
+      result.device_secret_revoke_enabled === undefined
+        ? undefined
+        : result.device_secret_revoke_enabled === 1,
+    device_secret_revoke_trust_groups: normalizeOptionalStringArray(
+      result.device_secret_revoke_trust_groups
+    ),
+    device_secret_introspection_enabled:
+      result.device_secret_introspection_enabled === null ||
+      result.device_secret_introspection_enabled === undefined
+        ? undefined
+        : result.device_secret_introspection_enabled === 1,
+    device_secret_introspection_trust_groups: normalizeOptionalStringArray(
+      result.device_secret_introspection_trust_groups
+    ),
     redirect_uris: normalizeStringArray(result.redirect_uris, []),
     grant_types: normalizeStringArray(result.grant_types, ['authorization_code']),
     response_types: normalizeStringArray(result.response_types, ['code']),
@@ -810,6 +881,7 @@ export async function getClient(
     allowed_scopes: normalizeOptionalStringArray(result.allowed_scopes),
     default_scope: result.default_scope ?? undefined,
     default_audience: result.default_audience ?? undefined,
+    default_resource: result.default_resource ?? undefined,
     // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
     initiate_login_uri: result.initiate_login_uri ?? undefined,
     // RFC 7592: Client Configuration Endpoint (hash only, not exposed)
@@ -871,9 +943,10 @@ export async function getClient(
 export async function putClient(env: Env, clientData: ClientMetadata): Promise<void> {
   const cacheKey = buildKVKey('client', clientData.client_id);
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientData.client_id);
+  const normalizedClientData = normalizeClientMetadata(clientData);
 
   try {
-    await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(clientData), {
+    await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(normalizedClientData), {
       expirationTtl: cacheTtl,
     });
     log.debug('Client data cached to KV (Write-Through)');

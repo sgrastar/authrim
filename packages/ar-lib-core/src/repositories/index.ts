@@ -78,6 +78,8 @@ export {
   DeviceSecretRepository,
   type CreateDeviceSecretResult,
   type DeviceSecretCreateOptions,
+  DeviceInstallationRepository,
+  type FindDeviceInstallationsOptions,
 } from './core';
 
 // PII repositories

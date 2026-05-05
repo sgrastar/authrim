@@ -8,11 +8,17 @@ function createMockDB(options: { tenantRow?: { id: string } | null } = {}) {
   const { tenantRow = null } = options;
 
   return {
-    prepare: vi.fn().mockImplementation(() => ({
+    prepare: vi.fn().mockImplementation((sql: string) => ({
       bind: vi.fn().mockReturnValue({
         first: vi.fn().mockResolvedValue(tenantRow),
+        all: vi.fn().mockResolvedValue({ results: tenantRow ? [tenantRow] : [] }),
+        run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
       }),
+      first: vi.fn().mockResolvedValue(sql === 'SELECT 1' ? { ok: 1 } : tenantRow),
+      all: vi.fn().mockResolvedValue({ results: tenantRow ? [tenantRow] : [] }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
     })),
+    batch: vi.fn().mockResolvedValue([]),
   } as unknown as D1Database;
 }
 

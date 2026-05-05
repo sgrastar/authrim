@@ -36,7 +36,12 @@ const log = createLogger().module('DeviceSecret');
  */
 interface DeviceSecretRow {
   id: string;
+  installation_id?: string | null;
   tenant_id: string;
+  client_id?: string | null;
+  trust_group_id?: string | null;
+  source_installation_id?: string | null;
+  source_client_id?: string | null;
   user_id: string;
   session_id: string;
   secret_hash: string;
@@ -63,6 +68,17 @@ const MAX_DEVICE_SECRET_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Default max device secrets per user */
 const DEFAULT_MAX_SECRETS_PER_USER = 10;
+
+function isMissingInstallationMetadataColumnsError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('installation_id') ||
+    message.includes('client_id') ||
+    message.includes('trust_group_id') ||
+    message.includes('source_installation_id') ||
+    message.includes('source_client_id')
+  );
+}
 
 /**
  * Result of device secret creation
@@ -106,6 +122,11 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
       softDeleteField: 'is_active',
       allowedFields: [
         'tenant_id',
+        'installation_id',
+        'client_id',
+        'trust_group_id',
+        'source_installation_id',
+        'source_client_id',
         'user_id',
         'session_id',
         'secret_hash',
@@ -225,7 +246,12 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
 
     const entity: DeviceSecret = {
       id: generateId(),
+      installation_id: input.installation_id ?? `inst_${generateId()}`,
       tenant_id: input.tenant_id ?? 'default',
+      client_id: input.client_id,
+      trust_group_id: input.trust_group_id,
+      source_installation_id: input.source_installation_id,
+      source_client_id: input.source_client_id,
       user_id: input.user_id,
       session_id: input.session_id,
       secret_hash: secretHash,
@@ -244,15 +270,21 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
     // Insert into database
     const sql = `
       INSERT INTO device_secrets (
-        id, tenant_id, user_id, session_id, secret_hash,
+        id, installation_id, tenant_id, client_id, trust_group_id,
+        source_installation_id, source_client_id, user_id, session_id, secret_hash,
         device_name, device_platform, created_at, updated_at,
         expires_at, last_used_at, use_count, revoked_at, revoke_reason, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    await this.adapter.execute(sql, [
+    const params = [
       entity.id,
+      entity.installation_id,
       entity.tenant_id,
+      entity.client_id ?? null,
+      entity.trust_group_id ?? null,
+      entity.source_installation_id ?? null,
+      entity.source_client_id ?? null,
       entity.user_id,
       entity.session_id,
       entity.secret_hash,
@@ -266,7 +298,46 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
       entity.revoked_at ?? null,
       entity.revoke_reason ?? null,
       entity.is_active,
-    ]);
+    ];
+
+    try {
+      await this.adapter.execute(sql, params);
+    } catch (error) {
+      if (!isMissingInstallationMetadataColumnsError(error)) {
+        throw error;
+      }
+
+      entity.installation_id = entity.id;
+      log.warn('device_secrets installation metadata columns missing; using legacy id fallback', {
+        action: 'NativeSSO',
+      });
+      await this.adapter.execute(
+        `
+          INSERT INTO device_secrets (
+            id, tenant_id, user_id, session_id, secret_hash,
+            device_name, device_platform, created_at, updated_at,
+            expires_at, last_used_at, use_count, revoked_at, revoke_reason, is_active
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          entity.id,
+          entity.tenant_id,
+          entity.user_id,
+          entity.session_id,
+          entity.secret_hash,
+          entity.device_name ?? null,
+          entity.device_platform ?? null,
+          entity.created_at,
+          entity.updated_at,
+          entity.expires_at,
+          entity.last_used_at ?? null,
+          entity.use_count,
+          entity.revoked_at ?? null,
+          entity.revoke_reason ?? null,
+          entity.is_active,
+        ]
+      );
+    }
 
     return {
       secret: rawSecret,
@@ -361,6 +432,64 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
         updated_at: now,
       },
     };
+  }
+
+  /**
+   * Find a device secret by its raw secret without recording usage.
+   *
+   * Used by RFC 7662 introspection and RFC 7009 revocation. The raw secret is
+   * hashed internally so callers do not need to know storage details.
+   */
+  async findByRawSecret(deviceSecret: string): Promise<DeviceSecret | null> {
+    const secretHash = await this.hashDeviceSecret(deviceSecret);
+    const sql = `
+      SELECT * FROM device_secrets
+      WHERE secret_hash = ?
+      LIMIT 1
+    `;
+
+    const row = await this.adapter.queryOne<DeviceSecretRow>(sql, [secretHash]);
+    return row ? this.rowToEntity(row) : null;
+  }
+
+  /**
+   * Find a device secret by canonical installation id, falling back to legacy row id.
+   */
+  async findByInstallationId(
+    installationId: string,
+    tenantId: string = 'default'
+  ): Promise<DeviceSecret | null> {
+    try {
+      const row = await this.adapter.queryOne<DeviceSecretRow>(
+        `
+          SELECT * FROM device_secrets
+          WHERE tenant_id = ? AND installation_id = ?
+          LIMIT 1
+        `,
+        [tenantId, installationId]
+      );
+      if (row) {
+        return this.rowToEntity(row);
+      }
+    } catch (error) {
+      if (!isMissingInstallationMetadataColumnsError(error)) {
+        throw error;
+      }
+    }
+    return this.findById(installationId);
+  }
+
+  /**
+   * Revoke a device secret by its raw secret value.
+   */
+  async revokeByRawSecret(deviceSecret: string, reason?: string): Promise<boolean> {
+    const entity = await this.findByRawSecret(deviceSecret);
+    if (!entity) {
+      await this.addSecurityDelay();
+      return false;
+    }
+
+    return this.revoke(entity.id, reason ?? 'token_revocation');
   }
 
   /**
@@ -633,7 +762,12 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
   private rowToEntity(row: DeviceSecretRow): DeviceSecret {
     return {
       id: row.id,
+      installation_id: row.installation_id ?? row.id,
       tenant_id: row.tenant_id,
+      client_id: row.client_id ?? undefined,
+      trust_group_id: row.trust_group_id ?? undefined,
+      source_installation_id: row.source_installation_id ?? undefined,
+      source_client_id: row.source_client_id ?? undefined,
       user_id: row.user_id,
       session_id: row.session_id,
       secret_hash: row.secret_hash,

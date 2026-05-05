@@ -41,6 +41,7 @@ export async function storeRefreshToken(
     clientId: data.client_id,
     scope: data.scope || '',
     ttl: refreshTokenTTL,
+    ...(data.resource_aud && { resourceAudience: data.resource_aud }),
     ...(parsedJti.generation > 0 &&
       parsedJti.shardIndex !== null && {
         generation: parsedJti.generation,
@@ -90,6 +91,7 @@ export async function getRefreshToken(
       client_id: clientId,
       sub: userId,
       scope: result.family.allowed_scope || '',
+      resource_aud: result.family.resource_aud,
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
       familyId: `${userId}:${clientId}`,

@@ -31,13 +31,18 @@ let mockKeyData: {
 function createMockEnv(listData: typeof mockListData | null = mockListData): Env {
   return {
     DB: {
-      prepare: vi.fn().mockReturnValue({
+      prepare: vi.fn().mockImplementation((sql: string) => ({
         bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue(listData),
+          first: vi
+            .fn()
+            .mockResolvedValue(sql.includes('FROM status_lists') ? listData : null),
         }),
-      }),
+      })),
+      batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
-    AUTHRIM_CONFIG: {} as KVNamespace,
+    AUTHRIM_CONFIG: {
+      get: vi.fn().mockResolvedValue(null),
+    } as unknown as KVNamespace,
     VP_REQUEST_STORE: {} as DurableObjectNamespace,
     CREDENTIAL_OFFER_STORE: {} as DurableObjectNamespace,
     KEY_MANAGER: {

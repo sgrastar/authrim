@@ -626,10 +626,14 @@ describe('Check API Authentication Middleware', () => {
 
     it('should handle DB error gracefully', async () => {
       const db = {
-        prepare: vi.fn().mockReturnValue({
-          bind: vi.fn().mockReturnThis(),
-          all: vi.fn().mockRejectedValue(new Error('DB connection failed')),
-        }),
+        query: vi.fn().mockRejectedValue(new Error('DB connection failed')),
+        queryOne: vi.fn(),
+        execute: vi.fn(),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: vi.fn(),
+        close: vi.fn(),
       } as unknown as CheckAuthContext['db'];
       const ctx: CheckAuthContext = { db };
 

@@ -42,6 +42,18 @@ vi.mock('@authrim/ar-lib-core', async () => {
     validateIdTokenHint: vi.fn(),
     validatePostLogoutRedirectUri: vi.fn(),
     validateLogoutParameters: vi.fn(),
+    DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE: 'group',
+    normalizeDeviceSecretLogoutScope: vi.fn((scope: string | undefined) =>
+      scope === 'local' || scope === 'group' || scope === 'global' ? scope : 'group'
+    ),
+    revokeDeviceSecretsForLogoutScope: vi.fn().mockResolvedValue({
+      scope: 'group',
+      tenantId: 'default',
+      sessionIds: [],
+      revokedDeviceSecrets: 0,
+      revokedInstallations: 0,
+      matchedInstallations: 0,
+    }),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),

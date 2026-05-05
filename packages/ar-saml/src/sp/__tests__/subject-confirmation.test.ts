@@ -162,18 +162,22 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
           return {
             bind: vi.fn().mockReturnThis(),
             first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockResolvedValue({ results: [] }),
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
+        batch: vi.fn().mockResolvedValue([]),
       } as unknown as Env['DB'],
       DB_PII: {
         prepare: vi.fn().mockImplementation(function () {
           return {
             bind: vi.fn().mockReturnThis(),
             first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockResolvedValue({ results: [] }),
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
+        batch: vi.fn().mockResolvedValue([]),
       } as unknown as Env['DB_PII'],
       SAML_REQUEST_STORE: {
         idFromName: vi.fn().mockReturnValue('mock-store-id'),

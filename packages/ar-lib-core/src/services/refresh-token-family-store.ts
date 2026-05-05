@@ -38,6 +38,7 @@ export interface CreateRefreshTokenFamilyInput {
   clientId: string;
   scope: string;
   ttl: number;
+  resourceAudience?: string | string[];
 }
 
 export interface CreateRefreshTokenFamilyResult {
@@ -116,6 +117,7 @@ export async function createRefreshTokenFamily(
     clientId: input.clientId,
     scope: input.scope,
     ttl: input.ttl,
+    ...(input.resourceAudience && { resourceAudience: input.resourceAudience }),
     generation: shardConfig.currentGeneration,
     shardIndex,
   });

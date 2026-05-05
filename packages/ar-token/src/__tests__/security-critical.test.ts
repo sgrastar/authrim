@@ -941,6 +941,78 @@ describe('Security-Critical Tests', () => {
         expect(body.error).toBe('invalid_dpop_proof');
       });
 
+      it('should return DPoP-Nonce when replay validation requires a nonce retry', async () => {
+        const client = createFAPIClient();
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockExtractDPoPProof.mockReturnValue('replayed-dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({
+          valid: false,
+          error: 'use_dpop_nonce',
+          error_description: 'DPoP proof jti has already been used',
+        });
+
+        const ctx = createMockContext({
+          method: 'POST',
+          headers: {
+            DPoP: 'replayed-dpop-proof',
+          },
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: 'https://app.example.com/callback',
+            client_id: client.client_id,
+          },
+          env: mockEnv,
+        });
+
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{ error: string; error_description: string }>(
+          response
+        );
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('use_dpop_nonce');
+        expect(body.error_description).toContain('jti');
+        expect(response.headers.get('DPoP-Nonce')).toMatch(/^[A-Za-z0-9_-]+$/);
+      });
+
+      it('should allow tenant policy to disable DPoP nonce challenges', async () => {
+        const client = createFAPIClient();
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({
+          'security.dpop_nonce_enabled': false,
+        });
+        mocks.mockExtractDPoPProof.mockReturnValue('replayed-dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({
+          valid: false,
+          error: 'use_dpop_nonce',
+          error_description: 'DPoP proof jti has already been used',
+        });
+
+        const ctx = createMockContext({
+          method: 'POST',
+          headers: {
+            DPoP: 'replayed-dpop-proof',
+          },
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: 'https://app.example.com/callback',
+            client_id: client.client_id,
+          },
+          env: mockEnv,
+        });
+
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{ error: string }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_dpop_proof');
+        expect(response.headers.get('DPoP-Nonce')).toBeNull();
+      });
+
       it('should reject DPoP proof with mismatched htm (HTTP method)', async () => {
         const client = createFAPIClient();
 
@@ -1599,6 +1671,110 @@ describe('Security-Critical Tests', () => {
 
         expect(response.status).toBe(200);
         expect(body.scope).toBe('openid profile');
+      });
+    });
+
+    describe('Refresh Token Resource Audience Validation', () => {
+      it('should use durable refresh family resource audience instead of the JWT fallback', async () => {
+        const client = createConfidentialClient({
+          allowed_token_exchange_resources: ['svc://original-api'],
+          default_resource: 'svc://current-default',
+        });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+          resource_aud: 'svc://jwt-fallback',
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          resource_aud: 'svc://jwt-fallback',
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+          resource_aud: 'svc://original-api',
+        });
+        mocks.mockParseRefreshTokenJti.mockReturnValue({
+          generation: 1,
+          shardIndex: 0,
+          randomPart: 'abc',
+        });
+
+        const rotateRpcMock = vi.fn().mockResolvedValue({
+          newJti: 'rt-new-jti',
+          newVersion: 2,
+        });
+        mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+          rotateRpc: rotateRpcMock,
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: refreshTokenJWT,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        const accessTokenClaims = mocks.mockCreateAccessToken.mock.calls[0]?.[0] as
+          | Record<string, unknown>
+          | undefined;
+        const refreshTokenClaims = mocks.mockCreateRefreshToken.mock.calls[0]?.[0] as
+          | Record<string, unknown>
+          | undefined;
+
+        expect(response.status).toBe(200);
+        expect(accessTokenClaims?.aud).toBe('svc://original-api');
+        expect(refreshTokenClaims?.resource_aud).toBe('svc://original-api');
+      });
+
+      it('should reject refresh when the original resource audience is no longer allowed', async () => {
+        const client = createConfidentialClient({
+          allowed_token_exchange_resources: ['svc://still-allowed'],
+          default_resource: 'svc://current-default',
+        });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+          resource_aud: 'svc://revoked-api',
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          resource_aud: 'svc://revoked-api',
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+          resource_aud: 'svc://revoked-api',
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: refreshTokenJWT,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        const body = await parseJsonResponse<{ error: string }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_target');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       });
     });
 

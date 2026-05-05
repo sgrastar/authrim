@@ -26,6 +26,7 @@ import {
   getDefaultTenantId,
   getTenantIdFromContext,
   createErrorResponse,
+  createCompatibilityErrorResponse,
   AR_ERROR_CODES,
   getLogger,
   createLogger,
@@ -147,6 +148,28 @@ function validateRegistrationRequest(
   }
 
   const data = body as Partial<ClientRegistrationRequest>;
+  const rawData = body as Record<string, unknown>;
+
+  for (const unsupportedField of [
+    'app_suite',
+    'trust_group',
+    'trust_group_id',
+    'allow_cross_client_native_sso',
+    'device_secret_revoke_enabled',
+    'device_secret_revoke_trust_groups',
+    'device_secret_introspection_enabled',
+    'device_secret_introspection_trust_groups',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(rawData, unsupportedField)) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `${unsupportedField} is not supported in public runtime client registration. Use managed trust_group assignment instead.`,
+        },
+      };
+    }
+  }
 
   // Validate redirect_uris (required)
   if (
@@ -803,6 +826,9 @@ async function storeClient(
       client_id, client_secret_hash, client_name, redirect_uris,
       grant_types, response_types, scope, logo_uri,
       client_uri, policy_uri, tos_uri, contacts,
+      application_type, trust_group, trust_group_id,
+      browser_public_client_mode, browser_refresh_token_policy,
+      native_sso_enabled, native_channel_allowed, allowed_channels,
       subject_type, sector_identifier_uri,
       token_endpoint_auth_method, is_trusted, skip_consent,
       allow_claims_without_scope,
@@ -818,7 +844,7 @@ async function storeClient(
       initiate_login_uri, registration_access_token_hash,
       software_id, software_version, requestable_scopes,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -833,6 +859,14 @@ async function storeClient(
       metadata.policy_uri || null,
       metadata.tos_uri || null,
       metadata.contacts ? JSON.stringify(metadata.contacts) : null,
+      metadata.application_type || 'web',
+      metadata.trust_group || null,
+      metadata.trust_group_id || metadata.trust_group || null,
+      metadata.browser_public_client_mode || null,
+      metadata.browser_refresh_token_policy || 'disabled',
+      metadata.native_sso_enabled === undefined ? null : metadata.native_sso_enabled ? 1 : 0,
+      metadata.native_channel_allowed === undefined ? null : metadata.native_channel_allowed ? 1 : 0,
+      metadata.allowed_channels ? JSON.stringify(metadata.allowed_channels) : null,
       metadata.subject_type || 'public',
       metadata.sector_identifier_uri || null,
       metadata.token_endpoint_auth_method || 'client_secret_basic',
@@ -907,6 +941,10 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Parse request body
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+
+    if (body && Object.prototype.hasOwnProperty.call(body, 'app_suite')) {
+      return createCompatibilityErrorResponse('legacy_app_suite_not_supported', 400);
+    }
 
     // Validate registration request
     // Allow localhost HTTP webhooks only in development environment

@@ -6,34 +6,31 @@
  *
  * Flow:
  * 1. start: Generate challenge, store with code_challenge, return challenge_id + WebAuthn/email options
- * 2. finish: Verify credential, verify PKCE, return auth_code (60s TTL, single-use)
- * 3. token: Verify auth_code + code_verifier, issue session/tokens
+ * 2. finish: Verify credential, verify PKCE, return direct_auth_artifact (60s TTL, single-use)
+ * 3. token: Legacy token exchange endpoint returns a Phase 1 compatibility error
  *
  * Security:
  * - PKCE required for all flows
- * - auth_code: 60 second TTL, single-use
+ * - Direct Auth artifact: 60 second TTL, single-use
  * - Challenge: 5 minute TTL, atomic consumption
  * - Origin validation via CORS allowlist
- * - No direct token return (auth_code intermediate step)
+ * - No direct token return (artifact intermediate step)
  */
 
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
-import {
-  createRefreshTokenFamily,
-  getRefreshTokenRotatorStubByJti,
-} from '@authrim/ar-lib-core/services/refresh-token-family-store';
+import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   isAllowedOrigin,
   parseAllowedOrigins,
-  getSessionStoreForNewSession,
   getSessionStoreBySessionId,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getDefaultTenantId,
   getTenantIdFromContext,
+  buildDOInstanceName,
   getTenantSettings,
   generateId,
   generateUserIdFromSettings,
@@ -58,14 +55,17 @@ import {
   getSessionCookieSameSite,
   // KV Client Cache
   getClient,
+  // Native SSO logout propagation
+  isNativeSSOEnabled,
+  normalizeDeviceSecretLogoutScope,
+  revokeDeviceSecretsForLogoutScope,
   // Refresh Token
-  createRefreshToken,
   listRefreshTokenFamiliesByUser,
   expireRefreshTokenFamiliesByUser,
+  createCompatibilityErrorResponse,
   // Tenant domain resolution
   resolveTenantFromEmailDomain,
 } from '@authrim/ar-lib-core';
-import { getRequestIssuer } from './issuer';
 import {
   applyInvitationAssignments,
   consumeInvitationUse,
@@ -97,7 +97,6 @@ import {
 } from './utils/email-code-utils';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import { getPluginContext } from '@authrim/ar-lib-core';
-import { importPKCS8 } from 'jose';
 import {
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
@@ -110,65 +109,41 @@ const CHALLENGE_TTL = 5 * 60; // 5 minutes
 const AUTH_CODE_TTL = 60; // 60 seconds
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
+const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
 
-// Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
-const signingKeyCache = new Map<
-  string,
-  {
-    privateKey: CryptoKey;
-    kid: string;
-    timestamp: number;
-    version: string;
-  }
->();
-const KEY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+type DirectAuthChannel = 'browser' | 'native' | 'server';
 
-/**
- * Get signing key from per-tenant KeyManager DO (with per-tenant caching).
- * Checks KV version signal to detect cross-worker emergency rotations.
- */
-async function getSigningKeyFromKeyManager(
-  env: Env,
-  tenantId: string
-): Promise<{ privateKey: CryptoKey; kid: string }> {
-  const now = Date.now();
-  const cached = signingKeyCache.get(tenantId);
+function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
+  return channel === 'browser' || channel === 'native' || channel === 'server';
+}
 
-  // Check cache — if within TTL, verify KV version to detect emergency rotation
-  if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
-    const currentVersion =
-      (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
-    if (currentVersion === cached.version) {
-      return { privateKey: cached.privateKey, kid: cached.kid };
-    }
-    // Version mismatch: emergency rotation detected — fall through to refresh
+type DirectAuthClientChannelMetadata = {
+  application_type?: unknown;
+  allowed_channels?: unknown;
+  native_channel_allowed?: unknown;
+};
+
+export function isDirectAuthClientChannelAllowed(
+  client: DirectAuthClientChannelMetadata,
+  channel: DirectAuthChannel
+): boolean {
+  if (channel === 'native' && client.native_channel_allowed === false) {
+    return false;
   }
 
-  // Fetch from per-tenant KeyManager DO
-  if (!env.KEY_MANAGER) {
-    throw new Error('KEY_MANAGER binding not available');
+  if (Array.isArray(client.allowed_channels) && client.allowed_channels.length > 0) {
+    return client.allowed_channels.includes(channel);
   }
 
-  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-  const keyManager = env.KEY_MANAGER.get(keyManagerId);
-
-  // Get active key via RPC
-  let keyData = await keyManager.getActiveKeyWithPrivateRpc();
-
-  if (!keyData) {
-    // No active key, generate and activate one
-    keyData = await keyManager.rotateKeysWithPrivateRpc();
+  if (channel === 'native') {
+    return client.application_type === 'native';
   }
 
-  // Import private key
-  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+  if (client.application_type === 'native') {
+    return false;
+  }
 
-  // Fetch current version for cache coherence
-  const version =
-    (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
-
-  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
-  return { privateKey, kid: keyData.kid };
+  return true;
 }
 
 // WebAuthn transport types
@@ -313,26 +288,28 @@ async function verifyPKCE(codeVerifier: string, codeChallenge: string): Promise<
   return timingSafeEqual(computed, codeChallenge);
 }
 
-/**
- * Validate client_id exists and optionally verify origin
- * Note: This function is defined but not currently used in handlers.
- * It can be enabled for stricter client validation when needed.
- */
-async function _validateClientId(
+async function validateDirectAuthClient(
   c: Context<{ Bindings: Env }>,
   clientId: string,
+  channel: DirectAuthChannel,
   origin?: string | null
 ): Promise<{ valid: boolean; errorResponse?: Response }> {
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
 
-  // Find client by client_id using KV cache (with D1 fallback)
   const client = await getClient(c.env, clientId, authCtx.coreAdapter);
 
   if (!client) {
     return {
       valid: false,
       errorResponse: await createErrorResponse(c, AR_ERROR_CODES.CLIENT_INVALID),
+    };
+  }
+
+  if (!isDirectAuthClientChannelAllowed(client, channel)) {
+    return {
+      valid: false,
+      errorResponse: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE),
     };
   }
 
@@ -445,11 +422,36 @@ async function validateSession(
  */
 async function generateAuthCode(
   env: Env,
+  tenantId: string,
   userId: string,
   codeChallenge: string,
   metadata?: Record<string, unknown>
 ): Promise<string> {
   const authCode = crypto.randomUUID();
+  const clientId = typeof metadata?.client_id === 'string' ? metadata.client_id : undefined;
+  const scope = typeof metadata?.scope === 'string' ? metadata.scope : 'openid profile email';
+
+  if (!clientId) {
+    throw new Error('Direct Auth artifact requires client_id binding');
+  }
+
+  const authCodeStoreId = env.AUTH_CODE_STORE.idFromName(
+    buildDOInstanceName('auth-code', tenantId)
+  );
+  const authCodeStore = env.AUTH_CODE_STORE.get(authCodeStoreId);
+
+  await authCodeStore.storeCodeRpc({
+    code: authCode,
+    clientId,
+    redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
+    userId,
+    scope,
+    codeChallenge,
+    codeChallengeMethod: 'S256',
+    authTime: Math.floor(Date.now() / 1000),
+    acr: 'urn:mace:incommon:iap:bronze',
+  });
+
   const challengeStore = await getChallengeStoreByChallengeId(env, authCode);
 
   await challengeStore.storeChallengeRpc({
@@ -467,44 +469,6 @@ async function generateAuthCode(
   return authCode;
 }
 
-/**
- * Consume auth_code and verify PKCE
- */
-async function consumeAuthCode(
-  env: Env,
-  authCode: string,
-  codeVerifier: string
-): Promise<{
-  userId: string;
-  metadata?: Record<string, unknown>;
-} | null> {
-  const challengeStore = await getChallengeStoreByChallengeId(env, authCode);
-
-  try {
-    const challengeData = (await challengeStore.consumeChallengeRpc({
-      id: `direct_auth:${authCode}`,
-      type: 'direct_auth_code',
-    })) as {
-      userId: string;
-      challenge: string;
-      metadata?: Record<string, unknown>;
-    };
-
-    // Verify PKCE
-    const isValidPKCE = await verifyPKCE(codeVerifier, challengeData.challenge);
-    if (!isValidPKCE) {
-      return null;
-    }
-
-    return {
-      userId: challengeData.userId,
-      metadata: challengeData.metadata,
-    };
-  } catch {
-    return null;
-  }
-}
-
 // ===== Passkey Login Handlers =====
 
 /**
@@ -519,20 +483,30 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       client_id: string;
       code_challenge: string;
       code_challenge_method: CodeChallengeMethod;
+      channel: DirectAuthChannel;
+      scope?: string;
       email?: string; // Optional: for allowCredentials filtering
     }>();
 
-    const { client_id, code_challenge, code_challenge_method, email } = body;
+    const { client_id, code_challenge, code_challenge_method, channel, scope, email } = body;
 
     // Validate required fields
-    if (!client_id || !code_challenge || code_challenge_method !== 'S256') {
+    if (!client_id || !code_challenge || code_challenge_method !== 'S256' || !channel) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'client_id, code_challenge, code_challenge_method=S256' },
+        variables: { field: 'client_id, code_challenge, code_challenge_method=S256, channel' },
       });
+    }
+    if (!isDirectAuthChannel(channel)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
+    const clientValidation = await validateDirectAuthClient(c, client_id, channel, originHeader);
+    if (!clientValidation.valid) {
+      return clientValidation.errorResponse as Response;
+    }
+
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
@@ -597,6 +571,9 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       metadata: {
         code_challenge,
         client_id,
+        channel,
+        scope,
+        transaction_id: challengeId,
         email: email || null,
         origin: originHeader,
         rpID,
@@ -635,14 +612,18 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       challenge_id: string;
       credential: AuthenticationResponseJSON;
       code_verifier: string;
+      channel: DirectAuthChannel;
     }>();
 
-    const { challenge_id, credential, code_verifier } = body;
+    const { challenge_id, credential, code_verifier, channel } = body;
 
-    if (!challenge_id || !credential || !code_verifier) {
+    if (!challenge_id || !credential || !code_verifier || !channel) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'challenge_id, credential, code_verifier' },
+        variables: { field: 'challenge_id, credential, code_verifier, channel' },
       });
+    }
+    if (!isDirectAuthChannel(channel)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Consume challenge atomically
@@ -653,6 +634,9 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       metadata?: {
         code_challenge: string;
         client_id: string;
+        channel: DirectAuthChannel;
+        scope?: string;
+        transaction_id?: string;
         email?: string;
         origin: string;
         rpID: string;
@@ -674,6 +658,9 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       challengeData.metadata?.code_challenge || ''
     );
     if (!isValidPKCE) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+    }
+    if (challengeData.metadata?.channel !== channel) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
 
@@ -762,11 +749,15 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     // Generate auth_code
     const authCode = await generateAuthCode(
       c.env,
+      tenantId,
       passkey.user_id,
       challengeData.metadata?.code_challenge || '',
       {
         method: 'passkey',
         client_id: challengeData.metadata?.client_id,
+        channel,
+        scope: challengeData.metadata?.scope,
+        transaction_id: challengeData.metadata?.transaction_id || challenge_id,
         passkey_id: passkey.id,
       }
     );
@@ -783,7 +774,8 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     }).catch(() => {});
 
     return c.json({
-      auth_code: authCode,
+      direct_auth_artifact: authCode,
+      expires_in: AUTH_CODE_TTL,
     });
   } catch (error) {
     log.error('Direct passkey login finish error', {
@@ -810,6 +802,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       display_name?: string;
       code_challenge: string;
       code_challenge_method: CodeChallengeMethod;
+      channel: DirectAuthChannel;
+      scope?: string;
       authenticator_type?: 'platform' | 'cross-platform' | 'any';
       resident_key?: 'required' | 'preferred' | 'discouraged';
       user_verification?: 'required' | 'preferred' | 'discouraged';
@@ -821,19 +815,31 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       display_name,
       code_challenge,
       code_challenge_method,
+      channel,
+      scope,
       authenticator_type = 'any',
       resident_key = 'required',
       user_verification = 'required',
     } = body;
 
-    if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256') {
+    if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256' || !channel) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'client_id, email, code_challenge, code_challenge_method=S256' },
+        variables: {
+          field: 'client_id, email, code_challenge, code_challenge_method=S256, channel',
+        },
       });
+    }
+    if (!isDirectAuthChannel(channel)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate Origin
     const originHeader = c.req.header('origin');
+    const clientValidation = await validateDirectAuthClient(c, client_id, channel, originHeader);
+    if (!clientValidation.valid) {
+      return clientValidation.errorResponse as Response;
+    }
+
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
@@ -966,6 +972,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       metadata: {
         code_challenge,
         client_id,
+        channel,
+        scope,
         origin: originHeader,
         rpID,
         challenge_id: challengeId,
@@ -1017,14 +1025,18 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       challenge_id: string;
       credential: RegistrationResponseJSON;
       code_verifier: string;
+      channel: DirectAuthChannel;
     }>();
 
-    const { challenge_id, credential, code_verifier } = body;
+    const { challenge_id, credential, code_verifier, channel } = body;
 
-    if (!challenge_id || !credential || !code_verifier) {
+    if (!challenge_id || !credential || !code_verifier || !channel) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'challenge_id, credential, code_verifier' },
+        variables: { field: 'challenge_id, credential, code_verifier, channel' },
       });
+    }
+    if (!isDirectAuthChannel(channel)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Find user by challenge_id from metadata
@@ -1063,6 +1075,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       metadata?: {
         code_challenge: string;
         client_id: string;
+        channel: DirectAuthChannel;
+        scope?: string;
         origin: string;
         rpID: string;
       };
@@ -1083,6 +1097,9 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       challengeData.metadata?.code_challenge || ''
     );
     if (!isValidPKCE) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+    }
+    if (challengeData.metadata?.channel !== channel) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
 
@@ -1152,18 +1169,23 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     // Generate auth_code
     const authCode = await generateAuthCode(
       c.env,
+      tenantId,
       userId,
       challengeData.metadata?.code_challenge || '',
       {
         method: 'passkey_signup',
         client_id: challengeData.metadata?.client_id,
+        channel,
+        scope: challengeData.metadata?.scope,
+        transaction_id: challenge_id,
         passkey_id: passkeyId,
         is_new_user: isNewUser,
       }
     );
 
     return c.json({
-      auth_code: authCode,
+      direct_auth_artifact: authCode,
+      expires_in: AUTH_CODE_TTL,
       is_new_user: isNewUser,
     });
   } catch (error) {
@@ -1190,6 +1212,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       email: string;
       code_challenge: string;
       code_challenge_method: CodeChallengeMethod;
+      channel: DirectAuthChannel;
+      scope?: string;
       locale?: string;
       invite_token?: string;
       custom_fields?: Record<string, unknown>;
@@ -1200,15 +1224,32 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       email,
       code_challenge,
       code_challenge_method,
+      channel,
+      scope,
       locale,
       invite_token,
       custom_fields,
     } = body;
 
-    if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256') {
+    if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256' || !channel) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'client_id, email, code_challenge, code_challenge_method=S256' },
+        variables: {
+          field: 'client_id, email, code_challenge, code_challenge_method=S256, channel',
+        },
       });
+    }
+    if (!isDirectAuthChannel(channel)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const clientValidation = await validateDirectAuthClient(
+      c,
+      client_id,
+      channel,
+      c.req.header('origin')
+    );
+    if (!clientValidation.valid) {
+      return clientValidation.errorResponse as Response;
     }
 
     // Email validation
@@ -1259,7 +1300,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
       // If invitation is restricted to a specific email, enforce it
-      if (invitation.invited_email && invitation.invited_email.toLowerCase() !== email.toLowerCase()) {
+      if (
+        invitation.invited_email &&
+        invitation.invited_email.toLowerCase() !== email.toLowerCase()
+      ) {
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
@@ -1375,6 +1419,9 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       metadata: {
         code_challenge,
         client_id,
+        channel,
+        scope,
+        transaction_id: attemptId,
         email_hash: emailHash,
         issued_at: issuedAt,
         // Invite metadata (present only when signup is via invitation)
@@ -1476,14 +1523,18 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       attempt_id: string;
       code: string;
       code_verifier: string;
+      channel: DirectAuthChannel;
     }>();
 
-    const { attempt_id, code, code_verifier } = body;
+    const { attempt_id, code, code_verifier, channel } = body;
 
-    if (!attempt_id || !code || !code_verifier) {
+    if (!attempt_id || !code || !code_verifier || !channel) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'attempt_id, code, code_verifier' },
+        variables: { field: 'attempt_id, code, code_verifier, channel' },
       });
+    }
+    if (!isDirectAuthChannel(channel)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate code format
@@ -1538,6 +1589,9 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     if (!isValidPKCE) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
+    if (challengeData.metadata?.channel !== channel) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+    }
 
     // Verify code hash
     const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
@@ -1579,7 +1633,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     if (inviteId && inviteToken) {
       const inviteNow = Math.floor(now / 1000);
       try {
-        const invitation = await findActiveInvitationByToken(authCtx.coreAdapter, inviteToken, inviteNow);
+        const invitation = await findActiveInvitationByToken(
+          authCtx.coreAdapter,
+          inviteToken,
+          inviteNow
+        );
         if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
           log.warn('Invitation metadata no longer matches an active tenant invitation', {
             invite_id: inviteId,
@@ -1623,10 +1681,17 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Save custom registration fields if present
-    const customFields = challengeData.metadata?.custom_fields as Record<string, unknown> | undefined;
+    const customFields = challengeData.metadata?.custom_fields as
+      | Record<string, unknown>
+      | undefined;
     if (customFields) {
       try {
-        await persistRegistrationFieldValuesFromEnv(c.env, tenantId, challengeData.userId, customFields);
+        await persistRegistrationFieldValuesFromEnv(
+          c.env,
+          tenantId,
+          challengeData.userId,
+          customFields
+        );
       } catch (persistError) {
         log.warn(
           'Failed to persist registration field values',
@@ -1639,11 +1704,15 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     // Generate auth_code
     const authCode = await generateAuthCode(
       c.env,
+      tenantId,
       challengeData.userId,
       challengeData.metadata?.code_challenge || '',
       {
         method: 'email_code',
         client_id: challengeData.metadata?.client_id,
+        channel,
+        scope: challengeData.metadata?.scope,
+        transaction_id: challengeData.metadata?.transaction_id || attempt_id,
         is_new_user: isNewUser,
       }
     );
@@ -1660,7 +1729,8 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }).catch(() => {});
 
     return c.json({
-      auth_code: authCode,
+      direct_auth_artifact: authCode,
+      expires_in: AUTH_CODE_TTL,
       is_new_user: isNewUser,
     });
   } catch (error) {
@@ -1678,250 +1748,13 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
  * Token Exchange
  * POST /api/v1/auth/direct/token
  *
- * Exchange auth_code for session/tokens
+ * Legacy Direct Auth token endpoint.
+ *
+ * Phase 1 uses the canonical OAuth token endpoint with the
+ * direct-auth-finish grant. This legacy endpoint must not issue tokens.
  */
 export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('DIRECT-AUTH');
-
-  try {
-    const body = await c.req.json<{
-      grant_type: 'authorization_code';
-      code: string;
-      client_id: string;
-      code_verifier: string;
-      provider_id?: string;
-      request_refresh_token?: boolean;
-    }>();
-
-    const { grant_type, code, client_id, code_verifier, provider_id, request_refresh_token } = body;
-
-    if (grant_type !== 'authorization_code' || !code || !client_id || !code_verifier) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'grant_type=authorization_code, code, client_id, code_verifier' },
-      });
-    }
-
-    // Consume and verify auth_code
-    const authCodeData = await consumeAuthCode(c.env, code, code_verifier);
-
-    if (!authCodeData) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
-    }
-
-    const { userId, metadata } = authCodeData;
-
-    // Verify client_id matches
-    if (!metadata?.client_id || metadata.client_id !== client_id) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
-    }
-
-    // Verify provider_id matches when code is bound to an external provider
-    const allowedProviders = new Set<string>();
-    if (metadata?.provider_id) allowedProviders.add(String(metadata.provider_id));
-    if (metadata?.provider_slug) allowedProviders.add(String(metadata.provider_slug));
-    if (metadata?.provider) allowedProviders.add(String(metadata.provider));
-    if (allowedProviders.size > 0) {
-      if (!provider_id || !allowedProviders.has(provider_id)) {
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
-      }
-    }
-
-    // Get user info
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(userId);
-
-    if (!userCore || !userCore.is_active) {
-      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
-    }
-
-    let userPII: { email: string | null; name: string | null } = { email: null, name: null };
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiResult = await piiCtx.piiRepositories.userPII.findById(userId);
-      if (piiResult) {
-        userPII = { email: piiResult.email, name: piiResult.name || null };
-      }
-    }
-
-    // Detect platform
-    const originHeader = c.req.header('origin');
-    const userAgent = c.req.header('User-Agent');
-    const platform = detectPlatform(originHeader, userAgent);
-
-    // Create session
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
-      c.env,
-      getTenantIdFromContext(c)
-    );
-    const sessionTTL = 24 * 60 * 60; // 24 hours
-
-    try {
-      const authMethod = typeof metadata?.method === 'string' ? metadata.method : 'unknown';
-      await sessionStore.createSessionRpc(sessionId, userId, sessionTTL, {
-        email: userPII.email,
-        name: userPII.name,
-        amr: [authMethod],
-        acr: 'urn:mace:incommon:iap:bronze',
-        client_id,
-        platform,
-      });
-    } catch (error) {
-      log.error('Failed to create session', {
-        action: 'session_create',
-        errorType: error instanceof Error ? error.name : 'Unknown',
-      });
-      return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
-    }
-
-    // Generate tokens
-    // For web platform, use session cookie
-    // For mobile (request_refresh_token), return refresh_token
-    const accessToken = sessionId; // Session ID acts as access token for now
-    const expiresIn = sessionTTL;
-
-    // Set session cookie for web (SameSite determined dynamically based on origin configuration)
-    setCookie(c, 'authrim_session', sessionId, {
-      path: '/',
-      httpOnly: true,
-      secure: true,
-      sameSite: getSessionCookieSameSite(c.env),
-      maxAge: sessionTTL,
-    });
-
-    // Publish session event
-    publishEvent(c, {
-      type: SESSION_EVENTS.USER_CREATED,
-      tenantId,
-      data: {
-        sessionId,
-        userId,
-        ttlSeconds: sessionTTL,
-      } satisfies SessionEventData,
-    }).catch(() => {});
-
-    // Audit log
-    const ipAddress =
-      c.req.header('CF-Connecting-IP') ||
-      c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
-      c.req.header('X-Real-IP') ||
-      'unknown';
-
-    const auditPromise = createAuditLog(c.env, {
-      tenantId,
-      userId,
-      action: 'user.login',
-      resource: 'session',
-      resourceId: sessionId,
-      ipAddress,
-      userAgent: userAgent || 'unknown',
-      metadata: JSON.stringify({
-        method: metadata?.method || 'direct_auth',
-        client_id,
-      }),
-      severity: 'info',
-    }).catch(() => {});
-    c.executionCtx?.waitUntil(auditPromise);
-
-    // Build response
-    const response: {
-      token_type: 'Bearer';
-      access_token: string;
-      expires_in: number;
-      refresh_token?: string;
-      id_token?: string;
-      scope?: string;
-      session_established: boolean;
-      session?: {
-        id: string;
-        userId: string;
-        createdAt: string;
-        expiresAt: string;
-      };
-      user?: {
-        id: string;
-        email?: string | null;
-        name?: string | null;
-        emailVerified?: boolean;
-      };
-    } = {
-      token_type: 'Bearer',
-      access_token: accessToken,
-      expires_in: expiresIn,
-      session_established: true,
-      session: {
-        id: sessionId,
-        userId,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + sessionTTL * 1000).toISOString(),
-      },
-      user: {
-        id: userId,
-        email: userPII.email,
-        name: userPII.name,
-        emailVerified: userCore.email_verified,
-      },
-    };
-
-    // Add refresh_token if requested (for mobile/SPA)
-    if (request_refresh_token && c.env.REFRESH_TOKEN_ROTATOR) {
-      try {
-        // Get signing key from KeyManager
-        const { privateKey, kid } = await getSigningKeyFromKeyManager(
-          c.env,
-          getTenantIdFromContext(c)
-        );
-
-        const familyResult = await createRefreshTokenFamily(c.env, {
-          userId,
-          clientId: client_id,
-          scope: 'openid profile email',
-          ttl: REFRESH_TOKEN_TTL,
-        });
-        const refreshTokenJti = familyResult.jti;
-
-        // Create refresh token JWT with rtv (Refresh Token Version) claim
-        const refreshTokenResult = await createRefreshToken(
-          {
-            iss: getRequestIssuer(c),
-            sub: userId,
-            aud: client_id,
-            client_id,
-            scope: familyResult.family.allowedScope,
-          },
-          privateKey,
-          kid,
-          familyResult.family.expiresIn,
-          familyResult.family.newJti,
-          familyResult.family.version
-        );
-
-        response.refresh_token = refreshTokenResult.token;
-
-        log.info('Refresh token issued', {
-          action: 'refresh_token_issued',
-          userId,
-          clientId: client_id,
-          jti: refreshTokenJti,
-        });
-      } catch (error) {
-        // Log error but don't fail the request - session is still valid
-        log.error('Failed to generate refresh token', {
-          action: 'refresh_token_error',
-          errorType: error instanceof Error ? error.name : 'Unknown',
-        });
-        // Continue without refresh token
-      }
-    }
-
-    return c.json(response);
-  } catch (error) {
-    log.error('Direct token error', {
-      action: 'token',
-      errorType: error instanceof Error ? error.name : 'Unknown',
-    });
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
+  return createCompatibilityErrorResponse('legacy_endpoint_not_supported', 400);
 }
 
 // ===== Passkey Register Handlers (Authenticated User) =====
@@ -2341,18 +2174,31 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
       .json<{
         client_id?: string;
         revoke_tokens?: boolean;
+        logout_scope?: string;
       }>()
-      .catch(() => ({ client_id: undefined, revoke_tokens: false }));
+      .catch(() => ({ client_id: undefined, revoke_tokens: false, logout_scope: undefined }));
 
-    const { revoke_tokens } = body;
+    const { client_id, revoke_tokens } = body;
+    const logoutScope = normalizeDeviceSecretLogoutScope(body.logout_scope);
 
     // Get session from cookie or Authorization header
     const sessionId = getSessionIdFromRequest(c);
 
     if (sessionId) {
+      let session: Session | null = null;
+
       // Invalidate session from SessionStore
       if (isShardedSessionId(sessionId)) {
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+
+        try {
+          session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+        } catch (error) {
+          log.warn('Failed to load session before logout', {
+            action: 'logout_session_load',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+        }
 
         try {
           await sessionStore.invalidateSessionRpc(sessionId);
@@ -2364,18 +2210,46 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
       }
 
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
+
+      const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
+      if (nativeSSOEnabled) {
+        try {
+          const result = await revokeDeviceSecretsForLogoutScope({
+            adapter: authCtx.coreAdapter,
+            tenantId,
+            sessionIds: [sessionId],
+            userId: session?.userId,
+            clientId: client_id,
+            scope: logoutScope,
+            reason: 'logout',
+            callerAuthMode: 'access_token',
+          });
+
+          if (result.revokedDeviceSecrets > 0 || result.revokedInstallations > 0) {
+            log.info('Revoked device secrets on Direct Auth logout', {
+              action: 'direct_logout_device_secret_revoke',
+              revokedCount: result.revokedDeviceSecrets,
+              revokedInstallations: result.revokedInstallations,
+              logoutScope: result.scope,
+              trustGroupId: result.trustGroupId,
+              targetClientId: result.clientId,
+            });
+          }
+        } catch (error) {
+          log.warn('Failed to revoke device secrets on logout', {
+            action: 'direct_logout_device_secret_revoke_error',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+        }
+      }
+
       // Revoke refresh tokens for this user if requested
       if (revoke_tokens && c.env.REFRESH_TOKEN_ROTATOR) {
         try {
-          // Get session to get user ID
-          const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
-          const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
-
           if (session?.userId) {
             // Query all active token families for this user from D1
-            const tenantId = getTenantIdFromContext(c);
-            const authCtx = createAuthContextFromHono(c, tenantId);
-
             // Find all active token families for this user
             const families = await listRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
               tenantId,

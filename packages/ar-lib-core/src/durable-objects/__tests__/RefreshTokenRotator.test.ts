@@ -164,6 +164,28 @@ describe('RefreshTokenRotator V2', () => {
 
       expect(body.version).toBe(1);
     });
+
+    it('should persist original resource audience in token family metadata', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'resource-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        scope: 'openid',
+        ttl: 2592000,
+        resourceAudience: ['svc://api', 'svc://admin'],
+      });
+
+      const validation = await rotator.validateRpc('user_123', 1, 'client_1');
+      const rotation = await rotator.rotateRpc({
+        incomingVersion: 1,
+        incomingJti: 'resource-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+      });
+
+      expect(validation.family?.resource_aud).toEqual(['svc://api', 'svc://admin']);
+      expect(rotation.resourceAudience).toEqual(['svc://api', 'svc://admin']);
+    });
   });
 
   describe('Atomic Token Rotation', () => {

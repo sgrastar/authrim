@@ -50,6 +50,11 @@ export type DelegationMode = 'none' | 'delegation' | 'impersonation';
  */
 export type CIBADeliveryMode = 'poll' | 'ping' | 'push';
 
+export type ClientApplicationType = 'web' | 'native' | 'spa' | 'service';
+export type ClientChannel = 'browser' | 'native' | 'server';
+export type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
+export type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+
 /**
  * OAuth Client entity
  */
@@ -60,6 +65,18 @@ export interface OAuthClient {
   client_secret_hash: string | null;
   client_name: string;
   tenant_id: string;
+  application_type: ClientApplicationType | null;
+  trust_group: string | null;
+  trust_group_id: string | null;
+  browser_public_client_mode: BrowserPublicClientMode | null;
+  browser_refresh_token_policy: BrowserRefreshTokenPolicy;
+  native_sso_enabled: boolean | null;
+  native_channel_allowed: boolean | null;
+  allowed_channels: string | null; // JSON array
+  device_secret_revoke_enabled: boolean | null;
+  device_secret_revoke_trust_groups: string | null; // JSON array
+  device_secret_introspection_enabled: boolean | null;
+  device_secret_introspection_trust_groups: string | null; // JSON array
 
   // OAuth 2.0 / OIDC metadata
   redirect_uris: string; // JSON array
@@ -98,6 +115,7 @@ export interface OAuthClient {
   allowed_scopes: string | null; // JSON array
   default_scope: string | null;
   default_audience: string | null;
+  default_resource: string | null;
 
   // CIBA settings
   backchannel_token_delivery_mode: CIBADeliveryMode | null;
@@ -158,6 +176,18 @@ export interface CreateClientInput {
   client_secret_hash?: string | null;
   client_name: string;
   tenant_id?: string;
+  application_type?: ClientApplicationType | null;
+  trust_group?: string | null;
+  trust_group_id?: string | null;
+  browser_public_client_mode?: BrowserPublicClientMode | null;
+  browser_refresh_token_policy?: BrowserRefreshTokenPolicy | null;
+  native_sso_enabled?: boolean | null;
+  native_channel_allowed?: boolean | null;
+  allowed_channels?: ClientChannel[] | null;
+  device_secret_revoke_enabled?: boolean | null;
+  device_secret_revoke_trust_groups?: string[] | null;
+  device_secret_introspection_enabled?: boolean | null;
+  device_secret_introspection_trust_groups?: string[] | null;
   redirect_uris: string[];
   grant_types?: string[];
   response_types?: string[];
@@ -184,6 +214,7 @@ export interface CreateClientInput {
   allowed_scopes?: string[] | null;
   default_scope?: string | null;
   default_audience?: string | null;
+  default_resource?: string | null;
   backchannel_token_delivery_mode?: CIBADeliveryMode | null;
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
@@ -232,6 +263,18 @@ export interface UpdateClientInput {
   is_trusted?: boolean;
   skip_consent?: boolean;
   allow_claims_without_scope?: boolean;
+  application_type?: ClientApplicationType | null;
+  trust_group?: string | null;
+  trust_group_id?: string | null;
+  browser_public_client_mode?: BrowserPublicClientMode | null;
+  browser_refresh_token_policy?: BrowserRefreshTokenPolicy | null;
+  native_sso_enabled?: boolean | null;
+  native_channel_allowed?: boolean | null;
+  allowed_channels?: ClientChannel[] | null;
+  device_secret_revoke_enabled?: boolean | null;
+  device_secret_revoke_trust_groups?: string[] | null;
+  device_secret_introspection_enabled?: boolean | null;
+  device_secret_introspection_trust_groups?: string[] | null;
   token_exchange_allowed?: boolean;
   allowed_subject_token_clients?: string[] | null;
   allowed_token_exchange_resources?: string[] | null;
@@ -240,6 +283,7 @@ export interface UpdateClientInput {
   allowed_scopes?: string[] | null;
   default_scope?: string | null;
   default_audience?: string | null;
+  default_resource?: string | null;
   backchannel_token_delivery_mode?: CIBADeliveryMode | null;
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
@@ -303,6 +347,22 @@ export class ClientRepository {
       client_secret_hash: input.client_secret_hash ?? null,
       client_name: input.client_name,
       tenant_id: input.tenant_id || 'default',
+      application_type: input.application_type ?? 'web',
+      trust_group: input.trust_group ?? null,
+      trust_group_id: input.trust_group_id ?? input.trust_group ?? null,
+      browser_public_client_mode: input.browser_public_client_mode ?? null,
+      browser_refresh_token_policy: input.browser_refresh_token_policy ?? 'disabled',
+      native_sso_enabled: input.native_sso_enabled ?? null,
+      native_channel_allowed: input.native_channel_allowed ?? null,
+      allowed_channels: input.allowed_channels ? JSON.stringify(input.allowed_channels) : null,
+      device_secret_revoke_enabled: input.device_secret_revoke_enabled ?? null,
+      device_secret_revoke_trust_groups: input.device_secret_revoke_trust_groups
+        ? JSON.stringify(input.device_secret_revoke_trust_groups)
+        : null,
+      device_secret_introspection_enabled: input.device_secret_introspection_enabled ?? null,
+      device_secret_introspection_trust_groups: input.device_secret_introspection_trust_groups
+        ? JSON.stringify(input.device_secret_introspection_trust_groups)
+        : null,
       redirect_uris: JSON.stringify(input.redirect_uris),
       grant_types: JSON.stringify(input.grant_types || ['authorization_code']),
       response_types: JSON.stringify(input.response_types || ['code']),
@@ -335,6 +395,7 @@ export class ClientRepository {
       allowed_scopes: input.allowed_scopes ? JSON.stringify(input.allowed_scopes) : null,
       default_scope: input.default_scope ?? null,
       default_audience: input.default_audience ?? null,
+      default_resource: input.default_resource ?? null,
       backchannel_token_delivery_mode: input.backchannel_token_delivery_mode ?? null,
       backchannel_client_notification_endpoint:
         input.backchannel_client_notification_endpoint ?? null,
@@ -369,6 +430,11 @@ export class ClientRepository {
     await this.adapter.execute(
       `INSERT INTO oauth_clients (
         client_id, client_secret_hash, client_name, tenant_id,
+        application_type, trust_group, trust_group_id,
+        browser_public_client_mode, browser_refresh_token_policy,
+        native_sso_enabled, native_channel_allowed, allowed_channels,
+        device_secret_revoke_enabled, device_secret_revoke_trust_groups,
+        device_secret_introspection_enabled, device_secret_introspection_trust_groups,
         redirect_uris, grant_types, response_types, scope,
         logo_uri, client_uri, policy_uri, tos_uri, contacts,
         post_logout_redirect_uris, subject_type, sector_identifier_uri,
@@ -377,6 +443,7 @@ export class ClientRepository {
         token_exchange_allowed, allowed_subject_token_clients,
         allowed_token_exchange_resources, delegation_mode,
         client_credentials_allowed, allowed_scopes, default_scope, default_audience,
+        default_resource,
         backchannel_token_delivery_mode, backchannel_client_notification_endpoint,
         backchannel_authentication_request_signing_alg, backchannel_user_code_parameter,
         userinfo_signed_response_alg,
@@ -387,12 +454,32 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
         client.client_name,
         client.tenant_id,
+        client.application_type,
+        client.trust_group,
+        client.trust_group_id,
+        client.browser_public_client_mode,
+        client.browser_refresh_token_policy,
+        client.native_sso_enabled === null ? null : client.native_sso_enabled ? 1 : 0,
+        client.native_channel_allowed === null ? null : client.native_channel_allowed ? 1 : 0,
+        client.allowed_channels,
+        client.device_secret_revoke_enabled === null
+          ? null
+          : client.device_secret_revoke_enabled
+            ? 1
+            : 0,
+        client.device_secret_revoke_trust_groups,
+        client.device_secret_introspection_enabled === null
+          ? null
+          : client.device_secret_introspection_enabled
+            ? 1
+            : 0,
+        client.device_secret_introspection_trust_groups,
         client.redirect_uris,
         client.grant_types,
         client.response_types,
@@ -419,6 +506,7 @@ export class ClientRepository {
         client.allowed_scopes,
         client.default_scope,
         client.default_audience,
+        client.default_resource,
         client.backchannel_token_delivery_mode,
         client.backchannel_client_notification_endpoint,
         client.backchannel_authentication_request_signing_alg,
@@ -550,6 +638,78 @@ export class ClientRepository {
       updates.push('allow_claims_without_scope = ?');
       params.push(input.allow_claims_without_scope ? 1 : 0);
     }
+    if (input.application_type !== undefined) {
+      updates.push('application_type = ?');
+      params.push(input.application_type);
+    }
+    if (input.trust_group !== undefined) {
+      updates.push('trust_group = ?');
+      params.push(input.trust_group);
+      updates.push('trust_group_id = ?');
+      params.push(input.trust_group);
+    }
+    if (input.trust_group_id !== undefined) {
+      updates.push('trust_group_id = ?');
+      params.push(input.trust_group_id);
+    }
+    if (input.browser_public_client_mode !== undefined) {
+      updates.push('browser_public_client_mode = ?');
+      params.push(input.browser_public_client_mode);
+    }
+    if (input.browser_refresh_token_policy !== undefined) {
+      updates.push('browser_refresh_token_policy = ?');
+      params.push(input.browser_refresh_token_policy ?? 'disabled');
+    }
+    if (input.native_sso_enabled !== undefined) {
+      updates.push('native_sso_enabled = ?');
+      params.push(input.native_sso_enabled === null ? null : input.native_sso_enabled ? 1 : 0);
+    }
+    if (input.native_channel_allowed !== undefined) {
+      updates.push('native_channel_allowed = ?');
+      params.push(
+        input.native_channel_allowed === null ? null : input.native_channel_allowed ? 1 : 0
+      );
+    }
+    if (input.allowed_channels !== undefined) {
+      updates.push('allowed_channels = ?');
+      params.push(input.allowed_channels ? JSON.stringify(input.allowed_channels) : null);
+    }
+    if (input.device_secret_revoke_enabled !== undefined) {
+      updates.push('device_secret_revoke_enabled = ?');
+      params.push(
+        input.device_secret_revoke_enabled === null
+          ? null
+          : input.device_secret_revoke_enabled
+            ? 1
+            : 0
+      );
+    }
+    if (input.device_secret_revoke_trust_groups !== undefined) {
+      updates.push('device_secret_revoke_trust_groups = ?');
+      params.push(
+        input.device_secret_revoke_trust_groups
+          ? JSON.stringify(input.device_secret_revoke_trust_groups)
+          : null
+      );
+    }
+    if (input.device_secret_introspection_enabled !== undefined) {
+      updates.push('device_secret_introspection_enabled = ?');
+      params.push(
+        input.device_secret_introspection_enabled === null
+          ? null
+          : input.device_secret_introspection_enabled
+            ? 1
+            : 0
+      );
+    }
+    if (input.device_secret_introspection_trust_groups !== undefined) {
+      updates.push('device_secret_introspection_trust_groups = ?');
+      params.push(
+        input.device_secret_introspection_trust_groups
+          ? JSON.stringify(input.device_secret_introspection_trust_groups)
+          : null
+      );
+    }
     if (input.token_exchange_allowed !== undefined) {
       updates.push('token_exchange_allowed = ?');
       params.push(input.token_exchange_allowed ? 1 : 0);
@@ -589,6 +749,10 @@ export class ClientRepository {
     if (input.default_audience !== undefined) {
       updates.push('default_audience = ?');
       params.push(input.default_audience);
+    }
+    if (input.default_resource !== undefined) {
+      updates.push('default_resource = ?');
+      params.push(input.default_resource);
     }
     if (input.backchannel_token_delivery_mode !== undefined) {
       updates.push('backchannel_token_delivery_mode = ?');
@@ -852,9 +1016,29 @@ export class ClientRepository {
   private mapFromDb(row: OAuthClient): OAuthClient {
     return {
       ...row,
+      application_type: row.application_type ?? 'web',
+      browser_refresh_token_policy: row.browser_refresh_token_policy ?? 'disabled',
       is_trusted: Boolean(row.is_trusted),
       skip_consent: Boolean(row.skip_consent),
       allow_claims_without_scope: Boolean(row.allow_claims_without_scope),
+      native_sso_enabled:
+        row.native_sso_enabled === null || row.native_sso_enabled === undefined
+          ? null
+          : Boolean(row.native_sso_enabled),
+      native_channel_allowed:
+        row.native_channel_allowed === null || row.native_channel_allowed === undefined
+          ? null
+          : Boolean(row.native_channel_allowed),
+      device_secret_revoke_enabled:
+        row.device_secret_revoke_enabled === null ||
+        row.device_secret_revoke_enabled === undefined
+          ? null
+          : Boolean(row.device_secret_revoke_enabled),
+      device_secret_introspection_enabled:
+        row.device_secret_introspection_enabled === null ||
+        row.device_secret_introspection_enabled === undefined
+          ? null
+          : Boolean(row.device_secret_introspection_enabled),
       token_exchange_allowed: Boolean(row.token_exchange_allowed),
       client_credentials_allowed: Boolean(row.client_credentials_allowed),
       backchannel_user_code_parameter: Boolean(row.backchannel_user_code_parameter),

@@ -13,6 +13,7 @@ const {
   mockValidateCustomClaimWrite,
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
+  mockCreateAuditLog,
   MockD1Adapter,
   sqlTracker,
 } =
@@ -39,6 +40,7 @@ const {
       lifecycleState: 'active',
       missingRequiredFields: [],
     });
+    const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
 
     // Create a class that wraps the mock functions and tracks calls
     // The class determines binding type from the db option's _isPii marker
@@ -75,6 +77,7 @@ const {
       mockValidateCustomClaimWrite: validateCustomClaimWriteMock,
       mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
       mockSyncUserLifecycleState: syncUserLifecycleStateMock,
+      mockCreateAuditLog: createAuditLogMock,
       MockD1Adapter: D1AdapterClass,
       sqlTracker: tracker,
     };
@@ -84,6 +87,14 @@ const {
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
   ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
+  createLogger: () => ({
+    module: () => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    }),
+  }),
   getDefaultTenantId: vi.fn(() => 'default'),
   createRuleEvaluator: vi.fn(() => ({
     evaluate: vi.fn().mockResolvedValue({
@@ -118,6 +129,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   validateCustomClaimWrite: mockValidateCustomClaimWrite,
   persistCustomClaimWrite: mockPersistCustomClaimWrite,
   syncUserLifecycleState: mockSyncUserLifecycleState,
+  createAuditLog: mockCreateAuditLog,
   resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
     storageProfile: {
       id: 'builtin:storage:standard',
@@ -323,6 +335,7 @@ describe('Identity Stitching Service', () => {
 
         expect(linkedIdentityStore.updateLinkedIdentity).toHaveBeenCalledWith(
           env,
+          'default',
           'existing-linked-id',
           expect.objectContaining({
             tokens: mockTokens,
@@ -596,11 +609,15 @@ describe('Identity Stitching Service', () => {
           linkingUserId: 'existing-user-456',
         });
 
-        // Verify audit log was inserted via D1Adapter.execute
-        const auditLogCall = sqlTracker.coreDb.find(
-          (c) => c.method === 'execute' && c.sql.includes('audit_log')
+        expect(mockCreateAuditLog).toHaveBeenCalledWith(
+          env,
+          expect.objectContaining({
+            userId: 'existing-user-456',
+            action: 'identity_linked',
+            resource: 'linked_identity',
+            resourceId: 'linked-id-123',
+          })
         );
-        expect(auditLogCall).toBeDefined();
       });
     });
   });

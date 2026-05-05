@@ -75,6 +75,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isValidDID: vi.fn((did: string) => {
       return did.startsWith('did:') && did.split(':').length >= 3;
     }),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
     D1Adapter: class {
       constructor() {}
     },

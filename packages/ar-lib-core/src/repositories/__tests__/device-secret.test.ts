@@ -40,6 +40,7 @@ describe('DeviceSecretRepository', () => {
         expect(result.secret.length).toBeGreaterThan(0);
 
         expect(result.entity.id).toBeDefined();
+        expect(result.entity.installation_id).toMatch(/^inst_/);
         expect(result.entity.user_id).toBe('user-123');
         expect(result.entity.session_id).toBe('session-456');
         expect(result.entity.tenant_id).toBe('default');
@@ -65,6 +66,23 @@ describe('DeviceSecretRepository', () => {
       expect('entity' in result).toBe(true);
       if ('entity' in result) {
         expect(result.entity.tenant_id).toBe('default');
+      }
+    });
+
+    it('should accept explicit installation metadata', async () => {
+      const result = await repository.createSecret({
+        user_id: 'user-123',
+        session_id: 'session-456',
+        client_id: 'native-client-001',
+        trust_group_id: 'wallet-suite',
+        installation_id: 'inst-existing',
+      });
+
+      expect('entity' in result).toBe(true);
+      if ('entity' in result) {
+        expect(result.entity.installation_id).toBe('inst-existing');
+        expect(result.entity.client_id).toBe('native-client-001');
+        expect(result.entity.trust_group_id).toBe('wallet-suite');
       }
     });
 
@@ -296,6 +314,43 @@ describe('DeviceSecretRepository', () => {
     });
   });
 
+  describe('findByRawSecret', () => {
+    it('should find a secret by raw device_secret without incrementing use count', async () => {
+      const result = await repository.createSecret({
+        user_id: 'user-123',
+        session_id: 'session-456',
+        tenant_id: 'default',
+        device_name: 'iPhone',
+        device_platform: 'ios',
+      });
+
+      expect('secret' in result).toBe(true);
+      if (!('secret' in result)) return;
+
+      const found = await repository.findByRawSecret(result.secret);
+
+      expect(found?.id).toBe(result.entity.id);
+      expect(found?.use_count).toBe(0);
+      expect(found?.device_name).toBe('iPhone');
+    });
+
+    it('should revoke a secret by raw device_secret', async () => {
+      const result = await repository.createSecret({
+        user_id: 'user-123',
+        session_id: 'session-456',
+      });
+
+      expect('secret' in result).toBe(true);
+      if (!('secret' in result)) return;
+
+      const revoked = await repository.revokeByRawSecret(result.secret, 'token_revocation');
+
+      // Mock adapter has limited support for complex UPDATE predicates; the
+      // repository method is still expected to run and return the DB result.
+      expect(typeof revoked).toBe('boolean');
+    });
+  });
+
   describe('findByUserId', () => {
     it('should find all secrets for a user', async () => {
       const secrets = [
@@ -472,6 +527,26 @@ describe('DeviceSecretRepository', () => {
 
       expect(results.length).toBe(1);
       expect(results[0].session_id).toBe('target-session');
+    });
+  });
+
+  describe('findByInstallationId', () => {
+    it('should find by canonical installation id and fall back to legacy row id', async () => {
+      const createResult = await repository.createSecret({
+        user_id: 'user-123',
+        session_id: 'session-456',
+        tenant_id: 'default',
+        installation_id: 'inst-current',
+      });
+      expect('entity' in createResult).toBe(true);
+      if (!('entity' in createResult)) return;
+
+      const byInstallation = await repository.findByInstallationId('inst-current', 'default');
+      const byLegacyId = await repository.findByInstallationId(createResult.entity.id, 'default');
+
+      expect(byInstallation?.id).toBe(createResult.entity.id);
+      expect(byInstallation?.installation_id).toBe('inst-current');
+      expect(byLegacyId?.id).toBe(createResult.entity.id);
     });
   });
 

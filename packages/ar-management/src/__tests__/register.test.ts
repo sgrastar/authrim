@@ -800,6 +800,63 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('application_type');
     });
+
+    it('should reject legacy app_suite in public registration', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        app_suite: 'wallet-suite',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json).toMatchObject({
+        error: 'legacy_app_suite_not_supported',
+        error_uri:
+          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_details: expect.objectContaining({
+          code: 'legacy_app_suite_not_supported',
+          severity: 'fatal',
+        }),
+      });
+    });
+
+    it('should reject managed trust group fields in public registration', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        trust_group_id: 'wallet-suite',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('trust_group_id is not supported');
+    });
   });
 
   describe('Validation - grant_types', () => {

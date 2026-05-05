@@ -48,6 +48,7 @@ const createMockContext = (
           first: vi.fn().mockResolvedValue(null),
         }),
       }),
+      batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
     AUTHRIM_CONFIG: {
       get: vi.fn().mockResolvedValue(null),

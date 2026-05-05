@@ -27,6 +27,7 @@ const {
   mockValidateCustomClaimWrite,
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
+  mockCreateAuditLog,
   MockD1Adapter,
   sqlTracker,
   mockJoinOrganization,
@@ -84,6 +85,7 @@ const {
     lifecycleState: 'active',
     missingRequiredFields: [],
   });
+  const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
 
   // D1Adapter class mock
   class D1AdapterClass {
@@ -126,6 +128,7 @@ const {
     mockValidateCustomClaimWrite: validateCustomClaimWriteMock,
     mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
     mockSyncUserLifecycleState: syncUserLifecycleStateMock,
+    mockCreateAuditLog: createAuditLogMock,
     MockD1Adapter: D1AdapterClass,
     sqlTracker: tracker,
     mockJoinOrganization: joinOrgMock,
@@ -137,6 +140,14 @@ const {
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
   ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
+  createLogger: () => ({
+    module: () => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    }),
+  }),
   createRuleEvaluator: vi.fn(() => mockRuleEvaluator),
   resolveOrgByDomainHash: mockResolveOrgByDomainHash,
   resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
@@ -153,6 +164,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   validateCustomClaimWrite: mockValidateCustomClaimWrite,
   persistCustomClaimWrite: mockPersistCustomClaimWrite,
   syncUserLifecycleState: mockSyncUserLifecycleState,
+  createAuditLog: mockCreateAuditLog,
   resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
     storageProfile: {
       id: 'builtin:storage:standard',

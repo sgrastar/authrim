@@ -10,9 +10,12 @@ import {
   adminAuthMiddleware,
   createErrorResponse,
   AR_ERROR_CODES,
+  createStepUpErrorResponse,
   type ApprovalDecisionStatus,
   type ApprovalTransportMethod,
   type ApprovalApproverSubjectType,
+  type StepUpInputState,
+  type StepUpStatusObject,
   requireDedicatedAdminDatabaseAdapter,
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
@@ -223,6 +226,25 @@ function resolveCompletionRequirementsFromState(state: PendingApprovalArtifactSt
       relation_source: state.approval.relation_source,
     },
   });
+}
+
+function buildApprovalStepUpStatus(
+  state: PendingApprovalArtifactState,
+  status: StepUpStatusObject['status'] = 'pending'
+): StepUpStatusObject {
+  return {
+    action_id: state.artifact.artifact_id,
+    status,
+    ...(state.artifact.method
+      ? {
+          preferred_method: {
+            method: state.artifact.method,
+          },
+        }
+      : {}),
+    expires_at: new Date(state.artifact.expires_at).toISOString(),
+    expires_at_unix: Math.floor(state.artifact.expires_at / 1000),
+  };
 }
 
 approvalArtifactsRouter.post('/:artifactId/reauth/assert', adminAuthMiddleware({}), async (c) => {
@@ -558,9 +580,11 @@ approvalArtifactsRouter.post('/:artifactId/passkey/verify', async (c) => {
 });
 
 approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
+  let stepUpState: PendingApprovalArtifactState | null = null;
   try {
     const body = ApprovalArtifactOtpVerifySchema.parse(await c.req.json());
     const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    stepUpState = state;
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -609,6 +633,27 @@ approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
           reason: error.issues[0]?.message || 'Invalid OTP verification payload',
         },
       });
+    }
+    if (
+      stepUpState &&
+      error instanceof Error &&
+      error.message.startsWith('Invalid approval OTP')
+    ) {
+      const inputState: StepUpInputState = {
+        field: 'code',
+        method: stepUpState.artifact.method,
+      };
+      return createStepUpErrorResponse(
+        {
+          error: 'invalid_step_up_input',
+          error_description: 'Approval OTP verification failed.',
+          code: 'invalid_step_up_input',
+          field: 'code',
+          input_state: inputState,
+          status: buildApprovalStepUpStatus(stepUpState),
+        },
+        400
+      );
     }
     return c.json(
       {
@@ -1002,20 +1047,25 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
     const completionMode = resolveApprovalCompletionMode(previewArtifact.method);
     if (completionMode === 'step_up_required' && body.decision === 'approved') {
       if (!body.completion_assertion) {
-        return c.json(
+        return createStepUpErrorResponse(
           {
-            error: 'approval_step_up_required',
+            error: 'step_up_required',
             error_description:
               'This completion flow requires a method-bound step-up assertion before the artifact can be consumed.',
+            code: 'step_up_required',
+            status: buildApprovalStepUpStatus(state),
           },
           409
         );
       }
       if (body.completion_assertion.method !== previewArtifact.method) {
-        return c.json(
+        return createStepUpErrorResponse(
           {
-            error: 'approval_completion_method_mismatch',
+            error: 'invalid_step_up_input',
             error_description: 'The completion assertion method does not match the artifact method.',
+            code: 'invalid_step_up_input',
+            field: 'completion_assertion.method',
+            status: buildApprovalStepUpStatus(state),
           },
           409
         );
@@ -1025,10 +1075,18 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         body.completion_assertion.actor_subject_id &&
         body.completion_assertion.actor_subject_id !== previewArtifact.approver_subject_id
       ) {
-        return c.json(
+        return createStepUpErrorResponse(
           {
-            error: 'approval_completion_actor_mismatch',
+            error: 'invalid_step_up_input',
             error_description: 'The completion assertion actor does not match the intended approver.',
+            code: 'invalid_step_up_input',
+            field: 'completion_assertion.actor_subject_id',
+            details: {
+              retryable: false,
+              user_action: 'reauthenticate',
+              severity: 'error',
+            },
+            status: buildApprovalStepUpStatus(state, 'failed'),
           },
           403
         );
@@ -1037,10 +1095,18 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         body.completion_assertion.actor_subject_type &&
         body.completion_assertion.actor_subject_type !== previewArtifact.approver_subject_type
       ) {
-        return c.json(
+        return createStepUpErrorResponse(
           {
-            error: 'approval_completion_actor_mismatch',
+            error: 'invalid_step_up_input',
             error_description: 'The completion assertion actor does not match the intended approver.',
+            code: 'invalid_step_up_input',
+            field: 'completion_assertion.actor_subject_type',
+            details: {
+              retryable: false,
+              user_action: 'reauthenticate',
+              severity: 'error',
+            },
+            status: buildApprovalStepUpStatus(state, 'failed'),
           },
           403
         );

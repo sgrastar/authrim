@@ -28,6 +28,7 @@ import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from '../utils/logger';
 import { getDefaultTenantId } from '../utils/issuer';
+import { createPhase1ErrorDetails } from '../errors/details';
 
 const log = createLogger().module('IDEMPOTENCY');
 
@@ -57,6 +58,8 @@ export interface IdempotencyConfig {
   ttlSeconds?: number;
   /** Fields to redact from cached responses (PII protection) */
   redactFields?: string[];
+  /** Whether Idempotency-Key is required instead of best-effort */
+  required?: boolean;
 }
 
 /**
@@ -196,6 +199,15 @@ export function idempotencyMiddleware(
     // Check for Idempotency-Key header
     const idempotencyKey = c.req.header('Idempotency-Key');
     if (!idempotencyKey) {
+      if (config?.required) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Idempotency-Key header is required',
+          },
+          400
+        );
+      }
       // No idempotency key, proceed normally
       return next();
     }
@@ -258,6 +270,7 @@ export function idempotencyMiddleware(
             {
               error: 'idempotency_conflict',
               error_description: 'Idempotency-Key already used with different request body',
+              error_details: createPhase1ErrorDetails('idempotency_conflict'),
             },
             409
           );
@@ -374,6 +387,15 @@ export function idempotencyMiddleware(
       }
     }
   };
+}
+
+export function requiredIdempotencyMiddleware(
+  config?: Omit<IdempotencyConfig, 'required'>
+): MiddlewareHandler<{ Bindings: Env }> {
+  return idempotencyMiddleware({
+    ...config,
+    required: true,
+  });
 }
 
 /**
