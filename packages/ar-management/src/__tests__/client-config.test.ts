@@ -167,4 +167,56 @@ describe('client-config update handler', () => {
     expect(requestCache.clients.has('client-123')).toBe(false);
     expect(mocked.getClientCached).toHaveBeenCalledTimes(3);
   });
+
+  it('rejects backchannel logout URIs that target internal addresses', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        backchannel_logout_uri: 'https://169.254.169.254/latest/meta-data',
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; error_description: string };
+    expect(body.error).toBe('invalid_client_metadata');
+    expect(body.error_description).toContain('internal addresses');
+  });
+
+  it('rejects jwks_uri values that target internal addresses', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        jwks_uri: 'https://169.254.169.254/latest/meta-data',
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; error_description: string };
+    expect(body.error).toBe('invalid_client_metadata');
+    expect(body.error_description).toContain('internal addresses');
+  });
 });

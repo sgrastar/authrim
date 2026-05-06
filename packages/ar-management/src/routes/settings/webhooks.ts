@@ -30,6 +30,7 @@ import {
   getLogger,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  validateWebhookUrl,
   type WebhookConfigWithScope,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -401,6 +402,10 @@ function createRegistry(c: Context<{ Bindings: Env }>) {
   });
 }
 
+function validateWebhookDispatchUrl(c: Context<{ Bindings: Env }>, url: string): boolean {
+  return validateWebhookUrl(url, c.env.ENVIRONMENT === 'development').valid;
+}
+
 /**
  * Validate create webhook request
  */
@@ -745,6 +750,15 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
     const webhook = await registry.get(tenantId, webhookId);
     if (!webhook) {
       return c.json({ error: 'not_found', error_description: 'Webhook not found' }, 404);
+    }
+    if (!validateWebhookDispatchUrl(c, webhook.url)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Configured webhook URL is not safe to call',
+        },
+        400
+      );
     }
 
     // Build test payload
@@ -1245,6 +1259,15 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
     const webhook = await registry.get(tenantId, webhookId);
     if (!webhook) {
       return c.json({ error: 'not_found', error_description: 'Webhook not found' }, 404);
+    }
+    if (!validateWebhookDispatchUrl(c, webhook.url)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Configured webhook URL is not safe to call',
+        },
+        400
+      );
     }
 
     // Fetch the original delivery

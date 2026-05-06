@@ -135,7 +135,8 @@ describe('object-catalog helpers', () => {
       },
       query: async (_sql: string, params?: unknown[]) => {
         if (_sql.includes('FROM object_catalog_objects oco') && _sql.includes('oco.deleted_at IS NOT NULL')) {
-          const bucketBinding = params?.[0];
+          const hasBucketBindingFilter = _sql.includes('AND oco.bucket_binding = ?');
+          const bucketBinding = hasBucketBindingFilter ? params?.[0] : undefined;
           return state.physical
             .filter(
               (row) =>

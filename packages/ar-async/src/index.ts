@@ -35,7 +35,6 @@ app.use(
     origin: (origin) => origin, // Allow all origins for discovery
     allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
   })
 );
 

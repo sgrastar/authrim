@@ -33,6 +33,7 @@ import {
   // Cache key builder
   buildKVKey,
   getTenantIdFromContext,
+  validateWebhookUrl,
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
@@ -67,6 +68,33 @@ function validateSecureUri(uri: string, fieldName: string): string | null {
   } catch {
     return `${fieldName} must be a valid URI`;
   }
+}
+
+/**
+ * Validate server-to-server callback URIs that Authrim will actively fetch.
+ *
+ * These need the normal OIDC URI checks plus SSRF protection because they are
+ * outbound requests from Authrim infrastructure.
+ */
+function validateOutboundCallbackUri(uri: string, fieldName: string): string | null {
+  const result = validateWebhookUrl(uri, true);
+  if (result.valid) {
+    return null;
+  }
+
+  if (result.error === 'Webhook URL must use HTTPS') {
+    return `${fieldName} must use HTTPS (except localhost for development)`;
+  }
+
+  if (result.error === 'Fragment identifiers are not allowed in webhook URLs') {
+    return `${fieldName} must not contain fragment identifiers`;
+  }
+
+  if (result.error === 'Invalid URL format') {
+    return `${fieldName} must be a valid URI`;
+  }
+
+  return `${fieldName} cannot point to internal addresses`;
 }
 
 /**
@@ -159,6 +187,21 @@ function validateUpdateRequest(
     }
   }
 
+  // Validate jwks_uri if provided. This URI is fetched server-side later, so
+  // reject internal/metadata targets at configuration time as well.
+  if (body.jwks_uri !== undefined) {
+    if (typeof body.jwks_uri !== 'string') {
+      return {
+        error: 'invalid_client_metadata',
+        error_description: 'jwks_uri must be a string',
+      };
+    }
+    const error = validateOutboundCallbackUri(body.jwks_uri, 'jwks_uri');
+    if (error) {
+      return { error: 'invalid_client_metadata', error_description: error };
+    }
+  }
+
   // Validate redirect_uris if provided
   if (body.redirect_uris !== undefined) {
     const error = validateRedirectUris(body.redirect_uris);
@@ -175,7 +218,7 @@ function validateUpdateRequest(
         error_description: 'backchannel_logout_uri must be a string',
       };
     }
-    const error = validateSecureUri(body.backchannel_logout_uri, 'backchannel_logout_uri');
+    const error = validateOutboundCallbackUri(body.backchannel_logout_uri, 'backchannel_logout_uri');
     if (error) {
       return { error: 'invalid_client_metadata', error_description: error };
     }

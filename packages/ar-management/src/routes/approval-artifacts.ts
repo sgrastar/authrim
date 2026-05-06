@@ -390,7 +390,7 @@ approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
       })),
     });
 
-    const challengeId = `${state.artifact.artifact_id}:pk:${Math.random().toString(36).slice(2, 10)}`;
+    const challengeId = `${state.artifact.artifact_id}:pk:${crypto.randomUUID()}`;
     const originHeader = c.req.header('origin') ?? null;
     await c.env.AUTHRIM_CONFIG.put(
       `approval_passkey:challenge:${challengeId}`,

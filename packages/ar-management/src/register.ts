@@ -46,6 +46,19 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
+function formatOutboundCallbackUriError(fieldName: string, error?: string): string {
+  if (error === 'Webhook URL must use HTTPS') {
+    return `${fieldName} must use HTTPS (except http://localhost for development)`;
+  }
+  if (error === 'Fragment identifiers are not allowed in webhook URLs') {
+    return `${fieldName} must not contain fragment identifiers`;
+  }
+  if (error === 'Invalid URL format') {
+    return `Invalid ${fieldName}`;
+  }
+  return `${fieldName} cannot point to internal addresses`;
+}
+
 /**
  * Validate sector_identifier_uri content (OIDC Core 8.1)
  * Fetches the URI and verifies that all redirect_uris are included in the returned JSON array
@@ -238,7 +251,7 @@ function validateRegistrationRequest(
   }
 
   // Validate optional URI fields
-  const uriFields = ['client_uri', 'logo_uri', 'tos_uri', 'policy_uri', 'jwks_uri'];
+  const uriFields = ['client_uri', 'logo_uri', 'tos_uri', 'policy_uri'];
   for (const field of uriFields) {
     const value = data[field as keyof ClientRegistrationRequest];
     if (value !== undefined) {
@@ -263,6 +276,29 @@ function validateRegistrationRequest(
           },
         };
       }
+    }
+  }
+
+  if (data.jwks_uri !== undefined) {
+    if (typeof data.jwks_uri !== 'string') {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'jwks_uri must be a string',
+        },
+      };
+    }
+
+    const uriValidation = validateWebhookUrl(data.jwks_uri, true);
+    if (!uriValidation.valid) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: formatOutboundCallbackUriError('jwks_uri', uriValidation.error),
+        },
+      };
     }
   }
 
@@ -514,40 +550,16 @@ function validateRegistrationRequest(
       };
     }
 
-    try {
-      const parsed = new URL(data.backchannel_logout_uri);
-
-      // HTTPS required (allow http://localhost for development)
-      if (
-        parsed.protocol !== 'https:' &&
-        !(parsed.protocol === 'http:' && parsed.hostname === 'localhost')
-      ) {
-        return {
-          valid: false,
-          error: {
-            error: 'invalid_client_metadata',
-            error_description:
-              'backchannel_logout_uri must use HTTPS (except http://localhost for development)',
-          },
-        };
-      }
-
-      // Fragment identifier not allowed
-      if (parsed.hash) {
-        return {
-          valid: false,
-          error: {
-            error: 'invalid_client_metadata',
-            error_description: 'backchannel_logout_uri must not contain fragment identifiers',
-          },
-        };
-      }
-    } catch {
+    const uriValidation = validateWebhookUrl(data.backchannel_logout_uri, true);
+    if (!uriValidation.valid) {
       return {
         valid: false,
         error: {
           error: 'invalid_client_metadata',
-          error_description: `Invalid backchannel_logout_uri: ${data.backchannel_logout_uri}`,
+          error_description: formatOutboundCallbackUriError(
+            'backchannel_logout_uri',
+            uriValidation.error
+          ),
         },
       };
     }

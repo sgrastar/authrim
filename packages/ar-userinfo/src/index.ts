@@ -62,7 +62,6 @@ app.use(
     ],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
-    credentials: true,
   })
 );
 

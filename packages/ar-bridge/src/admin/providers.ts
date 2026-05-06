@@ -11,6 +11,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
+  validateWebhookUrl,
 } from '@authrim/ar-lib-core';
 import {
   listAllProviders,
@@ -51,6 +52,14 @@ import {
 } from '../providers/apple';
 import { encrypt, getEncryptionKey } from '../utils/crypto';
 
+const OUTBOUND_PROVIDER_URL_FIELDS = [
+  ['issuer', 'issuer'],
+  ['authorization_endpoint', 'authorizationEndpoint'],
+  ['token_endpoint', 'tokenEndpoint'],
+  ['userinfo_endpoint', 'userinfoEndpoint'],
+  ['jwks_uri', 'jwksUri'],
+] as const;
+
 /**
  * Verify admin authentication
  */
@@ -63,6 +72,30 @@ function verifyAdmin(c: Context<{ Bindings: Env }>): boolean {
   const token = authHeader.slice(7);
   // Use timing-safe comparison to prevent timing attacks
   return !!c.env.ADMIN_API_SECRET && timingSafeEqual(token, c.env.ADMIN_API_SECRET);
+}
+
+function validateProviderOutboundUrl(
+  c: Context<{ Bindings: Env }>,
+  value: unknown,
+  field: string
+): Response | Promise<Response> | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field, reason: 'must be a string' },
+    });
+  }
+
+  const result = validateWebhookUrl(value, c.env.ENVIRONMENT === 'development');
+  if (result.valid) {
+    return null;
+  }
+
+  return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+    variables: { field, reason: 'must be an external HTTPS URL' },
+  });
 }
 
 /**
@@ -300,6 +333,21 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
     const defaultButtonColorDark = (defaults.buttonColorDark as string | undefined) || undefined;
     const defaultButtonText = (defaults.buttonText as string | undefined) || undefined;
 
+    const effectiveProviderUrls = {
+      issuer: body.issuer || defaultIssuer,
+      authorizationEndpoint:
+        body.authorization_endpoint || (defaults.authorizationEndpoint as string | undefined),
+      tokenEndpoint: body.token_endpoint || (defaults.tokenEndpoint as string | undefined),
+      userinfoEndpoint: body.userinfo_endpoint || (defaults.userinfoEndpoint as string | undefined),
+      jwksUri: body.jwks_uri || (defaults.jwksUri as string | undefined),
+    };
+    for (const [field, key] of OUTBOUND_PROVIDER_URL_FIELDS) {
+      const validationResponse = validateProviderOutboundUrl(c, effectiveProviderUrls[key], field);
+      if (validationResponse) {
+        return validationResponse;
+      }
+    }
+
     const provider = await createProvider(c.env, {
       tenantId: body.tenant_id || getTenantIdFromContext(c),
       slug: body.slug,
@@ -307,13 +355,13 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
       providerType: body.provider_type || 'oidc',
       enabled: body.enabled !== false,
       priority: body.priority || 0,
-      issuer: body.issuer || defaultIssuer,
+      issuer: effectiveProviderUrls.issuer,
       clientId: body.client_id,
       clientSecretEncrypted,
-      authorizationEndpoint: body.authorization_endpoint,
-      tokenEndpoint: body.token_endpoint,
-      userinfoEndpoint: body.userinfo_endpoint,
-      jwksUri: body.jwks_uri,
+      authorizationEndpoint: effectiveProviderUrls.authorizationEndpoint,
+      tokenEndpoint: effectiveProviderUrls.tokenEndpoint,
+      userinfoEndpoint: effectiveProviderUrls.userinfoEndpoint,
+      jwksUri: effectiveProviderUrls.jwksUri,
       scopes: body.scopes || defaultScopes,
       tokenEndpointAuthMethod: body.token_endpoint_auth_method,
       attributeMapping: body.attribute_mapping || defaultAttributeMapping,
@@ -430,6 +478,19 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
 
     // Build updates object
     const updates: Record<string, unknown> = {};
+    const updateUrlFields = [
+      ['issuer', body.issuer],
+      ['authorization_endpoint', body.authorization_endpoint],
+      ['token_endpoint', body.token_endpoint],
+      ['userinfo_endpoint', body.userinfo_endpoint],
+      ['jwks_uri', body.jwks_uri],
+    ] as const;
+    for (const [field, value] of updateUrlFields) {
+      const validationResponse = validateProviderOutboundUrl(c, value, field);
+      if (validationResponse) {
+        return validationResponse;
+      }
+    }
 
     if (body.slug !== undefined) updates.slug = body.slug;
     if (body.name !== undefined) updates.name = body.name;

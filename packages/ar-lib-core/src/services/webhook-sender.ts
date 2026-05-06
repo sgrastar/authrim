@@ -19,6 +19,7 @@
 
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { createLogger } from '../utils/logger';
+import { validateWebhookUrl } from '../utils/ssrf-protection';
 
 const log = createLogger().module('WEBHOOK-SENDER');
 
@@ -211,6 +212,16 @@ export function timingSafeEqual(a: string, b: string): boolean {
 export async function sendWebhook(params: SendWebhookParams): Promise<WebhookSendResult> {
   const timestamp = Math.floor(Date.now() / 1000);
   const deliveryId = crypto.randomUUID();
+  const urlValidation = validateWebhookUrl(params.url);
+
+  if (!urlValidation.valid) {
+    return {
+      success: false,
+      error: 'Invalid webhook URL',
+      retryable: false,
+      deliveryId,
+    };
+  }
 
   try {
     const headers: Record<string, string> = {

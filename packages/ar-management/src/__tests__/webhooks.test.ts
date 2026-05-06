@@ -1025,6 +1025,32 @@ describe('Webhook Admin API - Test Webhook', () => {
       expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
 
+    it('should reject unsafe stored webhook URLs before fetch', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'webhook-123' },
+      });
+      mockWebhookRegistry.get.mockResolvedValue(
+        createWebhookEntry({
+          id: 'webhook-123',
+          url: 'https://169.254.169.254/latest/meta-data',
+        })
+      );
+
+      const mockFetch = vi.mocked(fetch);
+
+      await testWebhook(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('not safe'),
+        }),
+        400
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('should send test webhook and return success', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -1627,6 +1653,31 @@ describe('Webhook Admin API - Replay Delivery', () => {
       await replayWebhookDelivery(c);
 
       expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
+    });
+
+    it('should reject unsafe stored webhook URLs before replay lookup', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'webhook-123' },
+        body: { delivery_id: 'delivery-123' },
+      });
+      mockWebhookRegistry.get.mockResolvedValue(
+        createWebhookEntry({
+          id: 'webhook-123',
+          url: 'https://169.254.169.254/latest/meta-data',
+        })
+      );
+
+      await replayWebhookDelivery(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('not safe'),
+        }),
+        400
+      );
+      expect(mockD1AdapterQueryOne).not.toHaveBeenCalled();
     });
 
     it('should only allow replay of failed or retrying deliveries', async () => {

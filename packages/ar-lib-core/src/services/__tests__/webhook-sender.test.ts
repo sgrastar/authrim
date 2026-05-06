@@ -221,6 +221,20 @@ describe('sendWebhook', () => {
     const [, options] = mockFetch.mock.calls[0];
     expect(options.headers['X-Custom-Header']).toBe('custom-value');
   });
+
+  it('should reject internal webhook URLs before fetch', async () => {
+    const result = await sendWebhook({
+      url: 'https://169.254.169.254/latest/meta-data',
+      payload: '{}',
+      signature: 'sig',
+      timeoutMs: 30000,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Invalid webhook URL');
+    expect(result.retryable).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('Retry Logic', () => {

@@ -97,6 +97,20 @@ vi.mock('@authrim/ar-lib-core', () => {
     getTenantIdFromContext: vi.fn((c: { get?: (key: string) => string | undefined }) => {
       return c.get?.('tenantId') || 'default';
     }),
+    validateWebhookUrl: vi.fn((value: string) => {
+      try {
+        const url = new URL(value);
+        if (url.protocol !== 'https:' && url.hostname !== 'localhost') {
+          return { valid: false, error: 'Webhook URL must use HTTPS' };
+        }
+        if (url.hostname === '169.254.169.254' || url.hostname === '127.0.0.1') {
+          return { valid: false, error: 'Blocked IP range' };
+        }
+        return { valid: true, parsedUrl: url };
+      } catch {
+        return { valid: false, error: 'Invalid URL format' };
+      }
+    }),
   };
 });
 
@@ -307,6 +321,24 @@ describe('Admin Provider API', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string };
       expect(body.error).toBe('invalid_request');
+    });
+
+    it('should reject provider endpoints that target internal addresses', async () => {
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Internal Provider',
+          client_id: 'test-client-id',
+          client_secret: 'test-secret',
+          issuer: 'https://example.com',
+          token_endpoint: 'https://169.254.169.254/token',
+        },
+      });
+
+      const response = await handleAdminCreateProvider(ctx as never);
+
+      expect(response.status).toBe(400);
+      expect(providerStore.createProvider).not.toHaveBeenCalled();
     });
 
     it('should apply Google template defaults', async () => {
@@ -524,6 +556,19 @@ describe('Admin Provider API', () => {
       await handleAdminUpdateProvider(ctx as never);
 
       expect(cryptoUtils.encrypt).toHaveBeenCalledWith('new-plain-secret', 'mock-encryption-key');
+    });
+
+    it('should reject unsafe endpoint updates', async () => {
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: { jwks_uri: 'https://169.254.169.254/jwks.json' },
+      });
+
+      const response = await handleAdminUpdateProvider(ctx as never);
+
+      expect(response.status).toBe(400);
+      expect(providerStore.updateProvider).not.toHaveBeenCalled();
     });
 
     it('should validate Microsoft tenantType on update', async () => {

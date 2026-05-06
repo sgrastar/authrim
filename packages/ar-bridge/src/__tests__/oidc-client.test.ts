@@ -15,6 +15,20 @@ vi.mock('@authrim/ar-lib-core', () => ({
       debug: vi.fn(),
     }),
   }),
+  validateWebhookUrl: vi.fn((value: string) => {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'https:') {
+        return { valid: false, error: 'Webhook URL must use HTTPS' };
+      }
+      if (url.hostname === '169.254.169.254' || url.hostname === '127.0.0.1') {
+        return { valid: false, error: 'Blocked IP range' };
+      }
+      return { valid: true, parsedUrl: url };
+    } catch {
+      return { valid: false, error: 'Invalid URL format' };
+    }
+  }),
 }));
 
 import { OIDCRPClient } from '../clients/oidc-client';
@@ -171,6 +185,16 @@ describe('OIDCRPClient', () => {
       await expect(client.discover()).rejects.toThrow(
         'Failed to fetch OIDC discovery document: 404'
       );
+    });
+
+    it('should reject internal issuer URLs before discovery fetch', async () => {
+      const client = new OIDCRPClient({
+        ...mockConfig,
+        issuer: 'https://169.254.169.254',
+      });
+
+      await expect(client.discover()).rejects.toThrow('issuer is not safe to fetch');
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 

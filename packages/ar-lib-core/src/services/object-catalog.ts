@@ -514,6 +514,23 @@ export async function listDeletedObjectCatalogObjects(
     limit?: number;
   }
 ): Promise<DeletedObjectCatalogPhysicalRecord[]> {
+  const params: unknown[] = [];
+  const bucketPredicate = options?.bucketBinding ? 'AND oco.bucket_binding = ?' : '';
+  if (options?.bucketBinding) {
+    params.push(options.bucketBinding);
+  }
+  const deletedBeforePredicate = options?.deletedBefore
+    ? 'AND COALESCE(oco.deleted_at, oc.deleted_at) <= ?'
+    : '';
+  if (options?.deletedBefore) {
+    params.push(options.deletedBefore);
+  }
+  const limit =
+    typeof options?.limit === 'number' && Number.isSafeInteger(options.limit) && options.limit > 0
+      ? Math.min(options.limit, 1000)
+      : 100;
+  params.push(limit);
+
   const rows = await adapter.query<{
     physical_id: string;
     catalog_id: string;
@@ -542,17 +559,11 @@ export async function listDeletedObjectCatalogObjects(
      FROM object_catalog_objects oco
      INNER JOIN object_catalog oc ON oc.id = oco.catalog_id
      WHERE oco.deleted_at IS NOT NULL
-       ${options?.bucketBinding ? 'AND oco.bucket_binding = ?' : ''}
-       ${options?.deletedBefore ? 'AND COALESCE(oco.deleted_at, oc.deleted_at) <= ?' : ''}
+       ${bucketPredicate}
+       ${deletedBeforePredicate}
      ORDER BY oco.deleted_at ASC, oco.object_index ASC
-     LIMIT ${options?.limit ?? 100}`,
-    options?.bucketBinding && options?.deletedBefore
-      ? [options.bucketBinding, options.deletedBefore]
-      : options?.bucketBinding
-        ? [options.bucketBinding]
-        : options?.deletedBefore
-          ? [options.deletedBefore]
-          : undefined
+     LIMIT ?`,
+    params
   );
 
   return rows

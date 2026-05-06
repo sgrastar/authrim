@@ -12,9 +12,16 @@
 import * as jose from 'jose';
 import type { ProviderMetadata, TokenResponse, UserInfo, UpstreamProvider } from '../types';
 import { generateCodeChallenge } from '../utils/pkce';
-import { createLogger, type DiagnosticLogger } from '@authrim/ar-lib-core';
+import { createLogger, validateWebhookUrl, type DiagnosticLogger } from '@authrim/ar-lib-core';
 
 const log = createLogger().module('OIDC-CLIENT');
+
+function assertSafeProviderFetchUrl(url: string, field: string): void {
+  const validation = validateWebhookUrl(url);
+  if (!validation.valid) {
+    throw new Error(`${field} is not safe to fetch`);
+  }
+}
 
 export interface OIDCRPClientConfig {
   issuer: string;
@@ -131,6 +138,7 @@ export class OIDCRPClient {
     }
 
     const discoveryUrl = `${this.config.issuer}/.well-known/openid-configuration`;
+    assertSafeProviderFetchUrl(discoveryUrl, 'issuer');
     const response = await fetch(discoveryUrl);
 
     if (!response.ok) {
@@ -398,6 +406,7 @@ export class OIDCRPClient {
       body.set('client_secret', this.config.clientSecret);
     }
 
+    assertSafeProviderFetchUrl(tokenEndpoint, 'token_endpoint');
     const response = await fetch(tokenEndpoint, {
       method: 'POST',
       headers,
@@ -440,6 +449,7 @@ export class OIDCRPClient {
     }
 
     const jwksUri = await this.getJwksUri();
+    assertSafeProviderFetchUrl(jwksUri, 'jwks_uri');
     const response = await fetch(jwksUri);
 
     if (!response.ok) {
@@ -901,6 +911,7 @@ export class OIDCRPClient {
       throw new Error('Userinfo endpoint not available');
     }
 
+    assertSafeProviderFetchUrl(userinfoEndpoint, 'userinfo_endpoint');
     const response = await fetch(userinfoEndpoint, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -949,6 +960,7 @@ export class OIDCRPClient {
       client_secret: this.config.clientSecret,
     });
 
+    assertSafeProviderFetchUrl(tokenEndpoint, 'token_endpoint');
     const response = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: {

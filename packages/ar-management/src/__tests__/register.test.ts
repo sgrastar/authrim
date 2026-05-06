@@ -1372,4 +1372,58 @@ describe('Dynamic Client Registration Handler', () => {
       );
     });
   });
+
+  describe('Validation - backchannel_logout_uri', () => {
+    it('should reject backchannel_logout_uri that targets internal addresses', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        backchannel_logout_uri: 'https://169.254.169.254/latest/meta-data',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('internal addresses');
+    });
+  });
+
+  describe('Validation - jwks_uri', () => {
+    it('should reject jwks_uri that targets internal addresses', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        jwks_uri: 'https://169.254.169.254/latest/meta-data',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('internal addresses');
+    });
+  });
 });
