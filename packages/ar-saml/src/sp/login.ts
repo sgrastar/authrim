@@ -140,21 +140,19 @@ async function storeAuthnRequest(
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(`issuer:${idpEntityId}`);
   const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
-  await samlRequestStore.fetch(
-    new Request('https://saml-request-store/store', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId,
-        issuer: `${issuerUrl}/saml/sp`,
-        destination: issuerUrl,
-        binding: 'post',
-        type: 'authn_request',
-        relayState: returnUrl,
-        expiresAt: Date.now() + 300 * 1000, // 5 minutes
-      }),
-    })
-  );
+  await samlRequestStore.fetch('https://saml-request-store/store', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requestId,
+      issuer: `${issuerUrl}/saml/sp`,
+      destination: issuerUrl,
+      binding: 'post',
+      type: 'authn_request',
+      relayState: returnUrl,
+      expiresAt: Date.now() + 300 * 1000, // 5 minutes
+    }),
+  });
 }
 
 /**

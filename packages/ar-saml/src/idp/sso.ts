@@ -313,11 +313,9 @@ async function checkUserAuthentication(
 
   try {
     const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionId);
-    const response = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'GET',
-      })
-    );
+    const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
+      method: 'GET',
+    });
 
     if (!response.ok) {
       return null;
@@ -341,23 +339,21 @@ async function storeAuthnRequest(
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(`issuer:${authnRequest.issuer}`);
   const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
-  await samlRequestStore.fetch(
-    new Request('https://saml-request-store/store', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: authnRequest.id,
-        issuer: authnRequest.issuer,
-        destination: authnRequest.destination,
-        acsUrl: authnRequest.assertionConsumerServiceURL,
-        binding: 'post', // Default response binding
-        type: 'authn_request',
-        data: authnRequest,
-        relayState,
-        expiresAt: Date.now() + DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000,
-      }),
-    })
-  );
+  await samlRequestStore.fetch('https://saml-request-store/store', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requestId: authnRequest.id,
+      issuer: authnRequest.issuer,
+      destination: authnRequest.destination,
+      acsUrl: authnRequest.assertionConsumerServiceURL,
+      binding: 'post', // Default response binding
+      type: 'authn_request',
+      data: authnRequest,
+      relayState,
+      expiresAt: Date.now() + DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000,
+    }),
+  });
 }
 
 /**

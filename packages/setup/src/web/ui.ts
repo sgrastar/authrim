@@ -6537,17 +6537,9 @@ export function getHtmlTemplate(
       // admin-db uses the same region as pii-db (both contain sensitive data)
       const adminRegion = piiRegion;
 
-      const coreLi = document.createElement('li');
-      coreLi.innerHTML = coreDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(coreRegion.location, coreRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(coreLi);
-
-      const piiLi = document.createElement('li');
-      piiLi.innerHTML = piiDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(piiRegion.location, piiRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(piiLi);
-
-      const adminLi = document.createElement('li');
-      adminLi.innerHTML = adminDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(adminRegion.location, adminRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(adminLi);
+      appendDatabasePreviewItem(d1List, coreDbName, getRegionLabel(coreRegion.location, coreRegion.jurisdiction));
+      appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
+      appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
 
       resources.kv.forEach(name => {
         const li = document.createElement('li');
@@ -6560,6 +6552,16 @@ export function getHtmlTemplate(
         li.textContent = name;
         keysList.appendChild(li);
       });
+    }
+
+    function appendDatabasePreviewItem(list, dbName, regionLabel) {
+      const li = document.createElement('li');
+      li.appendChild(document.createTextNode(dbName + ' '));
+      const regionSpan = document.createElement('span');
+      regionSpan.style.cssText = 'color: var(--text-muted); font-size: 0.85em;';
+      regionSpan.textContent = '(' + regionLabel + ')';
+      li.appendChild(regionSpan);
+      list.appendChild(li);
     }
 
     // Update provision button state based on completion status

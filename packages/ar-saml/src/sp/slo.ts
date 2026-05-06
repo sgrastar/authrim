@@ -293,11 +293,9 @@ async function terminateSessionByNameId(
     if (sessionIndex && isShardedSessionId(sessionIndex)) {
       try {
         const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionIndex);
-        const response = await sessionStore.fetch(
-          new Request(`https://session-store/session/${sessionIndex}`, {
-            method: 'DELETE',
-          })
-        );
+        const response = await sessionStore.fetch(`https://session-store/session/${sessionIndex}`, {
+          method: 'DELETE',
+        });
         if (response.ok) {
           log.info('Terminated session', { sessionIndex });
           return;

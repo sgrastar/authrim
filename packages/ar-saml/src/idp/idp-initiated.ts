@@ -127,11 +127,9 @@ async function checkUserAuthentication(
 
   try {
     const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionId);
-    const response = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'GET',
-      })
-    );
+    const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
+      method: 'GET',
+    });
 
     if (!response.ok) {
       return null;

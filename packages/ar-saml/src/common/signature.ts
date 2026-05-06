@@ -549,10 +549,11 @@ async function importPublicKeyFromCertificate(pem: string): Promise<CryptoKey> {
 
   // Extract SubjectPublicKeyInfo from the X.509 certificate
   const spki = extractSubjectPublicKeyInfo(certDer);
+  const spkiBytes = Uint8Array.from(spki);
 
   return crypto.subtle.importKey(
     'spki',
-    spki,
+    spkiBytes,
     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     true,
     ['verify']

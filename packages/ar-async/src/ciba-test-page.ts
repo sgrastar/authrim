@@ -274,11 +274,54 @@ export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
     </div>
   </div>
 
-  <script>
-    let authReqId = null;
-    let pollInterval = null;
+	  <script>
+	    let authReqId = null;
+	    let pollInterval = null;
+	    const htmlEscapes = {
+	      '&': '&amp;',
+	      '<': '&lt;',
+	      '>': '&gt;',
+	      '"': '&quot;',
+	      "'": '&#39;'
+	    };
 
-    // Step 1: Initiate CIBA Request
+	    function escapeHtml(value) {
+	      return String(value ?? '').replace(/[&<>"']/g, (ch) => htmlEscapes[ch]);
+	    }
+
+	    function redactSensitiveFields(value) {
+	      if (Array.isArray(value)) {
+	        return value.map(redactSensitiveFields);
+	      }
+	      if (!value || typeof value !== 'object') {
+	        return value;
+	      }
+
+	      const redacted = {};
+	      for (const [key, nestedValue] of Object.entries(value)) {
+	        const normalizedKey = key.toLowerCase();
+	        if (
+	          normalizedKey.includes('token') ||
+	          normalizedKey.includes('secret') ||
+	          normalizedKey === 'authorization'
+	        ) {
+	          redacted[key] = '[redacted]';
+	        } else {
+	          redacted[key] = redactSensitiveFields(nestedValue);
+	        }
+	      }
+	      return redacted;
+	    }
+
+	    function formatJsonForHtml(data) {
+	      return escapeHtml(JSON.stringify(redactSensitiveFields(data), null, 2));
+	    }
+
+	    function responseErrorText(data) {
+	      return escapeHtml(data.error_description || data.error || 'Unknown error');
+	    }
+
+	    // Step 1: Initiate CIBA Request
     document.getElementById('cibaForm').addEventListener('submit', async (e) => {
       e.preventDefault();
 
@@ -311,18 +354,18 @@ export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
 
         if (response.ok) {
           authReqId = data.auth_req_id;
-          responseDiv.className = 'response success show';
-          responseDiv.innerHTML = \`
-            <strong>✅ CIBA Request Initiated Successfully!</strong>
-            <pre>\${JSON.stringify(data, null, 2)}</pre>
-          \`;
+	          responseDiv.className = 'response success show';
+	          responseDiv.innerHTML = \`
+	            <strong>✅ CIBA Request Initiated Successfully!</strong>
+	            <pre>\${formatJsonForHtml(data)}</pre>
+	          \`;
           pollBtn.disabled = false;
         } else {
-          responseDiv.className = 'response error show';
-          responseDiv.innerHTML = \`
-            <strong>❌ Error:</strong> \${data.error_description || data.error}
-            <pre>\${JSON.stringify(data, null, 2)}</pre>
-          \`;
+	          responseDiv.className = 'response error show';
+	          responseDiv.innerHTML = \`
+	            <strong>❌ Error:</strong> \${responseErrorText(data)}
+	            <pre>\${formatJsonForHtml(data)}</pre>
+	          \`;
         }
       } catch (error) {
         console.error('CIBA initiation error:', error);
@@ -376,11 +419,11 @@ export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
           if (response.ok && data.access_token) {
             // Success!
             clearInterval(pollInterval);
-            pollResponse.className = 'response success show';
-            pollResponse.innerHTML = \`
-              <strong>✅ Tokens Received!</strong>
-              <pre>\${JSON.stringify(data, null, 2)}</pre>
-            \`;
+	            pollResponse.className = 'response success show';
+	            pollResponse.innerHTML = \`
+	              <strong>✅ Tokens Received!</strong>
+	              <pre>\${formatJsonForHtml(data)}</pre>
+	            \`;
             pollBtn.innerHTML = 'Tokens Received';
           } else if (data.error === 'authorization_pending') {
             // Still waiting
@@ -407,11 +450,11 @@ export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
           } else {
             // Other error
             clearInterval(pollInterval);
-            pollResponse.className = 'response error show';
-            pollResponse.innerHTML = \`
-              <strong>❌ Error:</strong> \${data.error_description || data.error}
-              <pre>\${JSON.stringify(data, null, 2)}</pre>
-            \`;
+	            pollResponse.className = 'response error show';
+	            pollResponse.innerHTML = \`
+	              <strong>❌ Error:</strong> \${responseErrorText(data)}
+	              <pre>\${formatJsonForHtml(data)}</pre>
+	            \`;
             pollBtn.innerHTML = 'Error Occurred';
             pollBtn.disabled = false;
           }

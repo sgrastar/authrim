@@ -706,9 +706,10 @@ async function validateInResponseTo(
     const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
     const response = await samlRequestStore.fetch(
-      new Request(`https://saml-request-store/consume/${inResponseTo}`, {
+      `https://saml-request-store/consume/${inResponseTo}`,
+      {
         method: 'POST',
-      })
+      }
     );
 
     return response.ok;
@@ -906,21 +907,19 @@ async function findOrCreateUser(
 async function createSession(env: Env, userId: string, tenantId: string): Promise<string> {
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env, tenantId);
 
-  const response = await sessionStore.fetch(
-    new Request('https://session-store/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId,
-        userId,
-        ttl: 3600, // 1 hour
-        data: {
-          amr: ['saml'],
-          acr: 'urn:mace:incommon:iap:bronze',
-        },
-      }),
-    })
-  );
+  const response = await sessionStore.fetch('https://session-store/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId,
+      userId,
+      ttl: 3600, // 1 hour
+      data: {
+        amr: ['saml'],
+        acr: 'urn:mace:incommon:iap:bronze',
+      },
+    }),
+  });
 
   if (!response.ok) {
     throw new Error('Session creation failed');
