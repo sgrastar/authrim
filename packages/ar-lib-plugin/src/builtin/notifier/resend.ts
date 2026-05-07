@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { readResponseTextWithLimit, safeFetch } from '@authrim/ar-lib-core';
 import type {
   AuthrimPlugin,
   PluginContext,
@@ -21,6 +22,10 @@ import type {
 } from '../../core/types';
 import { CapabilityRegistry } from '../../core/registry';
 import { NOTIFIER_SECURITY_DEFAULTS, renderTemplate } from './types';
+
+const MAX_RESEND_HEALTH_RESPONSE_BYTES = 64 * 1024;
+const MAX_RESEND_SEND_RESPONSE_BYTES = 64 * 1024;
+const MAX_RESEND_ERROR_RESPONSE_BYTES = 16 * 1024;
 
 // =============================================================================
 // Configuration Schema
@@ -210,18 +215,15 @@ export const resendEmailPlugin: AuthrimPlugin<ResendNotifierConfig> = {
     try {
       // Resend doesn't have a dedicated health endpoint,
       // so we check if the API is reachable by fetching domains
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(`${config.apiEndpoint}/domains`, {
+      const response = await safeFetch(`${config.apiEndpoint}/domains`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${config.apiKey}`,
         },
-        signal: controller.signal,
+        requireHttps: true,
+        timeoutMs: 5000,
+        maxResponseSize: MAX_RESEND_HEALTH_RESPONSE_BYTES,
       });
-
-      clearTimeout(timeoutId);
 
       if (response.ok || response.status === 401) {
         // 401 means API is reachable but key might be invalid
@@ -389,24 +391,23 @@ async function sendEmail(
   request: ResendEmailRequest,
   config: ResendNotifierConfig
 ): Promise<SendResult> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
-
   try {
-    const response = await fetch(`${config.apiEndpoint}/emails`, {
+    const response = await safeFetch(`${config.apiEndpoint}/emails`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
-      signal: controller.signal,
+      requireHttps: true,
+      timeoutMs: config.timeoutMs,
+      maxResponseSize: MAX_RESEND_SEND_RESPONSE_BYTES,
     });
 
-    clearTimeout(timeoutId);
-
     if (response.ok) {
-      const result = (await response.json()) as ResendEmailResponse;
+      const result = JSON.parse(
+        await readResponseTextWithLimit(response, MAX_RESEND_SEND_RESPONSE_BYTES)
+      ) as ResendEmailResponse;
       return {
         success: true,
         messageId: result.id,
@@ -415,7 +416,7 @@ async function sendEmail(
     }
 
     // Handle error response
-    const errorBody = await response.text();
+    const errorBody = await readResponseTextWithLimit(response, MAX_RESEND_ERROR_RESPONSE_BYTES);
     let errorMessage = `Resend API error: ${response.status}`;
     let errorCode: string | undefined;
     let retryable = false;
@@ -437,8 +438,8 @@ async function sendEmail(
       errorCode,
       retryable,
     };
-  } finally {
-    clearTimeout(timeoutId);
+  } catch (error) {
+    throw error;
   }
 }
 

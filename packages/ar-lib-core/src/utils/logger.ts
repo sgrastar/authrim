@@ -30,6 +30,8 @@ export interface LoggerConfig {
   format: LogFormat;
   /** If true, hash userId in logs for privacy (default: false) */
   hashUserId: boolean;
+  /** If true, include error stack traces in logs (default: false) */
+  includeErrorStack?: boolean;
   /** Per-tenant level overrides (optional) */
   tenantOverrides?: Record<string, { level?: LogLevel }>;
 }
@@ -41,6 +43,7 @@ export const DEFAULT_LOGGER_CONFIG: LoggerConfig = {
   level: 'info',
   format: 'json',
   hashUserId: false,
+  includeErrorStack: false,
 };
 
 /**
@@ -228,6 +231,13 @@ export function createLogger(
       effectiveUserId = undefined; // Don't log raw userId
     }
 
+    const errorPayload = error
+      ? {
+          message: error.message,
+          ...(effectiveConfig.includeErrorStack === true ? { stack: error.stack } : {}),
+        }
+      : undefined;
+
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
@@ -242,12 +252,7 @@ export function createLogger(
       ...(ctx.action && { action: ctx.action }),
       ...(ctx.durationMs !== undefined && { durationMs: ctx.durationMs }),
       ...extra,
-      ...(error && {
-        error: {
-          message: error.message,
-          stack: error.stack,
-        },
-      }),
+      ...(errorPayload && { error: errorPayload }),
     };
 
     const output = formatLogEntry(entry, effectiveConfig.format);

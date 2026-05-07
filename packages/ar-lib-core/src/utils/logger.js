@@ -15,6 +15,7 @@ export const DEFAULT_LOGGER_CONFIG = {
     level: 'info',
     format: 'json',
     hashUserId: false,
+    includeErrorStack: false,
 };
 /**
  * Log level numeric values for filtering.
@@ -113,6 +114,12 @@ export function createLogger(baseContext = {}, config) {
             userIdHash = hashUserIdForLog(effectiveUserId);
             effectiveUserId = undefined; // Don't log raw userId
         }
+        const errorPayload = error
+            ? {
+                message: error.message,
+                ...(effectiveConfig.includeErrorStack === true ? { stack: error.stack } : {}),
+            }
+            : undefined;
         const entry = {
             timestamp: new Date().toISOString(),
             level,
@@ -127,12 +134,7 @@ export function createLogger(baseContext = {}, config) {
             ...(ctx.action && { action: ctx.action }),
             ...(ctx.durationMs !== undefined && { durationMs: ctx.durationMs }),
             ...extra,
-            ...(error && {
-                error: {
-                    message: error.message,
-                    stack: error.stack,
-                },
-            }),
+            ...(errorPayload && { error: errorPayload }),
         };
         const output = formatLogEntry(entry, effectiveConfig.format);
         // Use appropriate console method based on level

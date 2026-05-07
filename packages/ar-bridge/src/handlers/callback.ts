@@ -37,6 +37,7 @@ import {
   // Errors
   AR_ERROR_CODES,
   createErrorResponse,
+  safeFetchJson,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
@@ -639,8 +640,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         );
       }
 
-      // Log for debugging but return a generic message
-      log.error('Unexpected error in callback', { stack: error.stack });
+      log.error('Unexpected error in callback', {});
       return redirectWithError(
         c,
         ExternalIdPErrorCode.CALLBACK_FAILED,
@@ -960,22 +960,15 @@ async function fetchGitHubPrimaryEmail(
   allowUnverified: boolean = false
 ): Promise<{ email: string; verified: boolean } | null> {
   try {
-    const response = await fetch(GITHUB_USER_EMAILS_ENDPOINT, {
+    const emails = await safeFetchJson<GitHubEmail[]>(GITHUB_USER_EMAILS_ENDPOINT, {
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
-
-    if (!response.ok) {
-      // Security: Only log HTTP status code (safe), not response body (may contain user data)
-      const log = createLogger().module('CALLBACK');
-      log.warn('GitHub /user/emails failed', { status: response.status });
-      return null;
-    }
-
-    const emails: GitHubEmail[] = await response.json();
 
     // Find primary email
     const primaryEmail = emails.find((e) => e.primary);
@@ -1054,15 +1047,10 @@ async function fetchFacebookUserInfo(
       url.searchParams.set('appsecret_proof', proof);
     }
 
-    const response = await fetch(url.toString());
-
-    if (!response.ok) {
-      const log = createLogger().module('CALLBACK');
-      log.warn('Facebook /me failed', { status: response.status });
-      return null;
-    }
-
-    const data: Record<string, unknown> = await response.json();
+    const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
+    });
     return data;
   } catch (error) {
     const log = createLogger().module('CALLBACK');
@@ -1118,19 +1106,13 @@ async function fetchTwitterUserInfo(
       url.searchParams.set('expansions', quirks.expansions);
     }
 
-    const response = await fetch(url.toString(), {
+    const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
     });
-
-    if (!response.ok) {
-      const log = createLogger().module('CALLBACK');
-      log.warn('Twitter /users/me failed', { status: response.status });
-      return null;
-    }
-
-    const data: Record<string, unknown> = await response.json();
     return data;
   } catch (error) {
     const log = createLogger().module('CALLBACK');

@@ -15,11 +15,13 @@ import {
   buildLogoutRequest,
   buildLogoutResponse,
   encodeForRedirectBinding,
+  parseLogoutRequestPost,
   parseLogoutRequestRedirect,
   parseLogoutResponseRedirect,
   type LogoutRequestOptions,
   type LogoutResponseOptions,
 } from '../slo-messages';
+import { SAML_MESSAGE_LIMITS } from '../message-limits';
 import { signRedirectBinding, verifyRedirectBindingSignature } from '../signature';
 
 // Test private key (same as signature-security.test.ts)
@@ -346,6 +348,38 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
       const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
 
       expect(() => parseLogoutRequestRedirect(base64)).toThrow();
+    });
+
+    it('should reject redirect messages that inflate beyond the XML limit', () => {
+      const oversizedXml = `<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  ID="_oversized"
+  Version="2.0"
+  IssueInstant="${new Date().toISOString()}">
+  <saml:Issuer>${'a'.repeat(SAML_MESSAGE_LIMITS.redirectInflatedChars + 1)}</saml:Issuer>
+  <saml:NameID>user@example.com</saml:NameID>
+</samlp:LogoutRequest>`;
+      const encoded = encodeForRedirectBinding(oversizedXml);
+      const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+
+      expect(() => parseLogoutRequestRedirect(base64)).toThrow(
+        'SAML LogoutRequest exceeds maximum inflated size'
+      );
+    });
+
+    it('should reject POST messages that exceed the decoded XML limit', () => {
+      const oversizedXml = `<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  ID="_oversized"
+  Version="2.0"
+  IssueInstant="${new Date().toISOString()}">
+  <saml:Issuer>${'a'.repeat(SAML_MESSAGE_LIMITS.postDecodedChars + 1)}</saml:Issuer>
+  <saml:NameID>user@example.com</saml:NameID>
+</samlp:LogoutRequest>`;
+
+      expect(() => parseLogoutRequestPost(btoa(oversizedXml))).toThrow(
+        'SAML LogoutRequest exceeds maximum decoded size'
+      );
     });
 
     it('should reject unsupported signature algorithm', async () => {

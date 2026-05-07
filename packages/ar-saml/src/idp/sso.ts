@@ -24,17 +24,20 @@ import {
   getTenantIdFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
-import * as pako from 'pako';
 import {
   parseXml,
   findElement,
   getAttribute,
   getTextContent,
-  base64Decode,
   generateSAMLId,
   nowAsDateTime,
   offsetDateTime,
 } from '../common/xml-utils';
+import {
+  decodePostBindingMessage,
+  inflateRedirectBindingMessage,
+  parsePostBindingFormDataWithLimit,
+} from '../common/message-limits';
 import {
   SAML_NAMESPACES,
   STATUS_CODES,
@@ -162,11 +165,7 @@ async function parseRedirectBinding(c: Context<{ Bindings: Env }>): Promise<{
   }
 
   // Decode: URL decode -> Base64 decode -> Inflate (deflate decompress)
-  const base64Decoded = base64Decode(samlRequest);
-  const inflated = pako.inflateRaw(
-    Uint8Array.from(base64Decoded, (c) => c.charCodeAt(0)),
-    { to: 'string' }
-  );
+  const inflated = inflateRedirectBindingMessage(samlRequest, 'SAML AuthnRequest');
 
   return {
     authnRequest: parseAuthnRequestXml(inflated),
@@ -181,7 +180,7 @@ async function parsePostBinding(c: Context<{ Bindings: Env }>): Promise<{
   authnRequest: SAMLAuthnRequest;
   relayState?: string;
 }> {
-  const formData = await c.req.formData();
+  const formData = await parsePostBindingFormDataWithLimit(c.req);
   const samlRequest = formData.get('SAMLRequest') as string;
   const relayState = (formData.get('RelayState') as string) || undefined;
 
@@ -190,7 +189,7 @@ async function parsePostBinding(c: Context<{ Bindings: Env }>): Promise<{
   }
 
   // Decode: Base64 decode only (no compression for POST binding)
-  const xmlString = base64Decode(samlRequest);
+  const xmlString = decodePostBindingMessage(samlRequest, 'SAML AuthnRequest');
 
   return {
     authnRequest: parseAuthnRequestXml(xmlString),

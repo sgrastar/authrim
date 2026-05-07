@@ -20,6 +20,7 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { createLogger } from '../utils/logger';
 import { validateWebhookUrl } from '../utils/ssrf-protection';
+import { readResponseTextPreview, safeFetch } from '../utils/url-security';
 
 const log = createLogger().module('WEBHOOK-SENDER');
 
@@ -234,11 +235,13 @@ export async function sendWebhook(params: SendWebhookParams): Promise<WebhookSen
       ...params.customHeaders,
     };
 
-    const response = await fetch(params.url, {
+    const response = await safeFetch(params.url, {
       method: 'POST',
       headers,
       body: params.payload,
-      signal: AbortSignal.timeout(params.timeoutMs),
+      requireHttps: true,
+      timeoutMs: params.timeoutMs,
+      maxResponseSize: 64 * 1024,
     });
 
     // 200-299 = success
@@ -252,7 +255,7 @@ export async function sendWebhook(params: SendWebhookParams): Promise<WebhookSen
 
     // 400 Bad Request = receiver rejected (do not retry)
     if (response.status === 400) {
-      const errorBody = await response.text().catch(() => '');
+      const errorBody = await readResponseTextPreview(response, 1024).catch(() => '');
       return {
         success: false,
         statusCode: response.status,

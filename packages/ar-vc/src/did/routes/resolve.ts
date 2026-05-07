@@ -23,11 +23,16 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   DIDDocumentCacheRepository,
   safeFetch,
+  readResponseTextWithLimit,
   getLogger,
   createLogger,
 } from '@authrim/ar-lib-core';
 
 const standaloneLog = createLogger().module('VC-DID-RESOLVER');
+
+const MAX_DID_LENGTH = 4096;
+const MAX_DID_KEY_ENCODED_LENGTH = 512;
+const MAX_DID_WEB_DOCUMENT_SIZE = 512 * 1024;
 
 /**
  * Multicodec identifiers for supported key types
@@ -113,9 +118,15 @@ export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Re
     if (!did) {
       return c.json(createErrorResult('invalidDid', 'DID is required'), 400);
     }
+    if (did.length > MAX_DID_LENGTH) {
+      return c.json(createErrorResult('invalidDid', 'DID is too large'), 400);
+    }
 
     // URL decode if needed
     const decodedDid = decodeURIComponent(did);
+    if (decodedDid.length > MAX_DID_LENGTH) {
+      return c.json(createErrorResult('invalidDid', 'DID is too large'), 400);
+    }
 
     // Validate DID format
     if (!isValidDID(decodedDid)) {
@@ -188,7 +199,7 @@ async function resolveDidWeb(did: string): Promise<Record<string, unknown> | nul
       headers: { Accept: 'application/did+json, application/json' },
       requireHttps: true, // did:web requires HTTPS
       timeoutMs: 10000, // 10 second timeout
-      maxResponseSize: 512 * 1024, // 512 KB max for DID documents
+      maxResponseSize: MAX_DID_WEB_DOCUMENT_SIZE,
     });
 
     if (!response.ok) {
@@ -196,8 +207,7 @@ async function resolveDidWeb(did: string): Promise<Record<string, unknown> | nul
       return null;
     }
 
-    // Parse response with size limit already enforced by safeFetch
-    const text = await response.text();
+    const text = await readResponseTextWithLimit(response, MAX_DID_WEB_DOCUMENT_SIZE);
 
     // SECURITY: Explicitly handle JSON parse errors for better error messages
     try {
@@ -244,6 +254,11 @@ async function resolveDidWeb(did: string): Promise<Record<string, unknown> | nul
 async function resolveDidKey(did: string): Promise<Record<string, unknown> | null> {
   // did:key format: did:key:<multibase-encoded-public-key>
   const multibaseKey = did.replace('did:key:', '');
+
+  if (multibaseKey.length > MAX_DID_KEY_ENCODED_LENGTH) {
+    standaloneLog.warn('did:key too large', { keyLength: multibaseKey.length });
+    return null;
+  }
 
   if (!multibaseKey.startsWith('z')) {
     // Only base58btc (z prefix) is commonly used
@@ -360,7 +375,12 @@ function readVarint(data: Uint8Array): { value: number; bytesRead: number } {
  * Convert bytes to base64url string
  */
 function bytesToBase64url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes))
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+
+  return btoa(binary)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/[=]/g, '');

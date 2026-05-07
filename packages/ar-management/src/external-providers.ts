@@ -9,7 +9,12 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  readResponseTextWithLimit,
+} from '@authrim/ar-lib-core';
 
 /**
  * Base URL path for external IdP admin API in ar-bridge
@@ -325,6 +330,7 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
           'User-Agent': 'Authrim OIDC Discovery/1.0',
         },
         redirect: 'manual', // Handle redirects explicitly for SSRF protection
+        signal: AbortSignal.timeout(10000),
       });
 
       if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -378,11 +384,11 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       return c.json({ error: 'Response too large' }, 400);
     }
 
-    // Read response with size limit
-    const responseText = await response.text();
-    if (responseText.length > MAX_DISCOVERY_RESPONSE_SIZE) {
+    let responseText: string;
+    try {
+      responseText = await readResponseTextWithLimit(response, MAX_DISCOVERY_RESPONSE_SIZE);
+    } catch {
       log.warn('OIDC discovery response too large', {
-        size: responseText.length,
         url: discoveryUrl,
       });
       return c.json({ error: 'Response too large' }, 400);

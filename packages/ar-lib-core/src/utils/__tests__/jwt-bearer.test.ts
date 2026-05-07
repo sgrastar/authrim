@@ -82,6 +82,17 @@ describe('JWT Bearer Flow Utilities', () => {
       expect(result.error_description).toContain('not trusted');
     });
 
+    it('should reject oversized assertions before decoding', async () => {
+      const trustedIssuers = new Map<string, TrustedIssuer>();
+      const assertion = ['e30', 'x'.repeat(17 * 1024), 'sig'].join('.');
+
+      const result = await validateJWTBearerAssertion(assertion, audience, trustedIssuers);
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('invalid_grant');
+      expect(result.error_description).toContain('too large');
+    });
+
     it('should reject assertion with wrong audience', async () => {
       const wrongAudience = 'https://wrong-audience.example.com';
 

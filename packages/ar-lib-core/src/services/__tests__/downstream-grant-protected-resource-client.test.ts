@@ -179,6 +179,7 @@ describe('downstream protected resource client helpers', () => {
         },
         subjectToken: 'subject-token',
         audience: 'svc://customer-portal',
+        introspectionMode: 'never',
         authorization: {
           expectedAudience: 'svc://customer-portal',
           requiredResourceClass: 'customer_profile',
@@ -192,5 +193,79 @@ describe('downstream protected resource client helpers', () => {
     ).rejects.toBeInstanceOf(DownstreamGrantProtectedResourceAccessError);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects oversized protected resource responses with the default parser', async () => {
+    const accessToken = createTestJwt({
+      authorization_details: [
+        {
+          type: DOWNSTREAM_GRANT_AUTHORIZATION_DETAIL_TYPE,
+          grant_id: 'egr_public_1',
+          request_id: 'apr_public_1',
+          investigation_id: 'inv_123',
+          request_surface: 'service_data',
+          requested_action: 'detail_read',
+          resource_class: 'customer_profile',
+          resource_ids: ['profile-1'],
+          detail_classes: ['profile_export'],
+          audience: 'svc://customer-portal',
+          redaction_level: 'masked',
+          target_subject_type: 'user',
+          target_subject_id: 'user-1',
+          requester_subject_type: 'admin_user',
+          requester_subject_id: 'admin-1',
+          policy_preset: 'technical_debug_default',
+          reuse_scope: 'request',
+          partial_access_allowed: false,
+        },
+      ],
+      act: {
+        sub: 'admin_user:admin-1',
+        client_id: 'svc-client-1',
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: accessToken,
+            token_type: 'Bearer',
+            expires_in: 300,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response('x'.repeat(128), {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      );
+
+    await expect(
+      fetchProtectedResourceWithDownstreamGrant({
+        tokenEndpoint: 'https://auth.example.com/token',
+        client: {
+          clientId: 'svc-client-1',
+          clientSecret: 'svc-secret',
+        },
+        subjectToken: 'subject-token',
+        audience: 'svc://customer-portal',
+        introspectionMode: 'never',
+        authorization: {
+          expectedAudience: 'svc://customer-portal',
+          requiredResourceClass: 'customer_profile',
+          requiredResourceId: 'profile-1',
+          requiredDetailClass: 'profile_export',
+        },
+        resourceUrl: 'https://service.example.com/profiles/profile-1',
+        resourceFetchImpl: fetchMock as unknown as typeof fetch,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        resourceMaxResponseSize: 16,
+      })
+    ).rejects.toThrow('Response body exceeds limit');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

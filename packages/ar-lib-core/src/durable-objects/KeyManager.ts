@@ -23,9 +23,11 @@ import { generateECKeySet, type ECAlgorithm, type ECCurve } from '../utils/ec-ke
 import { timingSafeEqual } from '../utils/crypto';
 import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
+import { readRequestJsonWithLimit } from '../utils/body-limits';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('DO-KEY-MANAGER');
+const MAX_KEY_MANAGER_JSON_BODY_BYTES = 64 * 1024;
 
 /**
  * Stored key metadata (RSA)
@@ -1198,7 +1200,10 @@ export class KeyManager extends DurableObject<Env> {
 
       // POST /config - Update configuration
       if (path === '/config' && request.method === 'POST') {
-        const body = await request.json();
+        const body = await readRequestJsonWithLimit<Partial<KeyRotationConfig>>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
         await this.updateConfig(body as Partial<KeyRotationConfig>);
 
         return new Response(JSON.stringify({ success: true }), {
@@ -1208,7 +1213,10 @@ export class KeyManager extends DurableObject<Env> {
 
       // POST /emergency-rotate - Emergency key rotation (immediate revocation)
       if (path === '/emergency-rotate' && request.method === 'POST') {
-        const body = (await request.json()) as { reason: string };
+        const body = await readRequestJsonWithLimit<{ reason: string }>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
 
         if (!body.reason || body.reason.length < 10) {
           return new Response(
@@ -1426,7 +1434,10 @@ export class KeyManager extends DurableObject<Env> {
           );
         }
 
-        const body = (await request.json()) as { reason: string };
+        const body = await readRequestJsonWithLimit<{ reason: string }>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
 
         if (!body.reason || body.reason.length < 10) {
           return new Response(

@@ -27,6 +27,9 @@ import { materializeEncryptedObjectArtifact } from './object-artifact-materializ
 export const USER_IMPORT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const USER_IMPORT_BATCH_SIZE = 100;
 
+const USER_IMPORT_MAX_RESULT_ARTIFACT_BYTES = 10 * 1024 * 1024;
+const USER_IMPORT_MAX_FAILURE_DETAILS = 1000;
+const USER_IMPORT_MAX_LOG_ENTRIES = 2000;
 const IMPORT_RESULT_FAILURE_PREVIEW_LIMIT = 25;
 const IMPORT_RESULT_LOG_PREVIEW_LIMIT = 40;
 const ENCRYPTED_OBJECT_CONTENT_TYPE = 'application/vnd.authrim.object-envelope+json';
@@ -49,6 +52,44 @@ const USER_IMPORT_DEFAULT_HEADERS = [
 
 const USER_IMPORT_ALLOWED_STATUSES = new Set(['active', 'suspended', 'locked']);
 const USER_IMPORT_ALLOWED_TYPES = new Set(['end_user', 'admin', 'm2m', 'anonymous']);
+
+async function readR2ObjectTextWithLimit(object: R2ObjectBody, maxBytes: number): Promise<string> {
+  if (typeof object.size === 'number' && object.size > maxBytes) {
+    throw new Error(`Object exceeds maximum size: ${object.size} > ${maxBytes} bytes`);
+  }
+  if (!object.body) {
+    return object.text();
+  }
+
+  const reader = object.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        void reader.cancel().catch(() => {});
+        throw new Error(`Object exceeds maximum size: ${totalBytes} > ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
 
 const IMPORT_RESERVED_FIELDS = new Set<string>([
   ...ADMIN_USER_CREATE_RESERVED_FIELDS,
@@ -809,7 +850,7 @@ async function loadImportArtifact(
   const existing = await bucket.get(key);
   if (existing) {
     try {
-      const text = await existing.text();
+      const text = await readR2ObjectTextWithLimit(existing, USER_IMPORT_MAX_RESULT_ARTIFACT_BYTES);
       if (text.startsWith('{') && text.includes('"ciphertext"') && env.OBJECT_ENCRYPTION_ROOT_KEY) {
         const envelope = JSON.parse(text) as Parameters<typeof decryptObjectArtifact>[0];
         const decrypted = await decryptObjectArtifact(envelope, {
@@ -935,6 +976,15 @@ function pushLog(
     timestamp: nowIso(),
     ...entry,
   });
+  if (artifact.logs.length > USER_IMPORT_MAX_LOG_ENTRIES) {
+    artifact.logs.splice(0, artifact.logs.length - USER_IMPORT_MAX_LOG_ENTRIES);
+  }
+}
+
+function pushFailure(artifact: ImportJobArtifact, failure: ImportJobFailure): void {
+  if (artifact.failures.length < USER_IMPORT_MAX_FAILURE_DETAILS) {
+    artifact.failures.push(failure);
+  }
 }
 
 function createFailureEntry(
@@ -971,7 +1021,7 @@ async function processUserImportJob(
     throw new Error(`Import source not found: ${job.input_r2_key}`);
   }
 
-  const csvText = await inputObject.text();
+  const csvText = await readR2ObjectTextWithLimit(inputObject, USER_IMPORT_MAX_UPLOAD_BYTES);
   const options = parseJobOptions(job.config);
   const resultKey = job.result_r2_key ?? buildUserImportResultKey(job.tenant_id, job.id);
   const parsed = parseUserImportCsv(csvText, { skip_header: options.skip_header });
@@ -1041,7 +1091,7 @@ async function processUserImportJob(
       processed += 1;
       failed += 1;
       const failure = createFailureEntry(rowNumber, record, error);
-      artifact.failures.push(failure);
+      pushFailure(artifact, failure);
       pushLog(artifact, {
         level: 'error',
         code: failure.error_code,

@@ -21,6 +21,12 @@ import type { StatusListKeyResolver } from '../status-list';
 const mockSafeFetch = vi.fn();
 vi.mock('../../utils/url-security', () => ({
   safeFetch: (...args: unknown[]) => mockSafeFetch(...args),
+  safeFetchJson: async (...args: unknown[]) => {
+    const response = await mockSafeFetch(...args);
+    return response.json();
+  },
+  readResponseTextWithLimit: async (response: Response) =>
+    typeof response.text === 'function' ? response.text() : JSON.stringify(await response.json()),
   isInternalUrl: () => false,
 }));
 

@@ -7,7 +7,7 @@
 import type { Env } from '../../types';
 import {
   decodeBase64Url,
-  safeFetch,
+  safeFetchJson,
   createLogger,
   getDefaultTenantId,
   buildIssuerUrl,
@@ -15,6 +15,10 @@ import {
 import { createVCConfigManager } from '../../utils/vc-config';
 
 const log = createLogger().module('VCI-TOKEN');
+
+const MAX_VCI_ACCESS_TOKEN_SIZE = 8 * 1024;
+const MAX_VCI_PROOF_JWT_SIZE = 8 * 1024;
+const MAX_EXTERNAL_JWKS_SIZE = 256 * 1024;
 
 export interface TokenValidationResult {
   valid: boolean;
@@ -91,6 +95,10 @@ export async function validateVCIAccessToken(
   expectedIssuerOverride?: string
 ): Promise<TokenValidationResult> {
   try {
+    if (accessToken.length > MAX_VCI_ACCESS_TOKEN_SIZE) {
+      return { valid: false, error: 'Token too large' };
+    }
+
     // Parse JWT without full verification (signature verification should use JWKS)
     const parts = accessToken.split('.');
     if (parts.length !== 3) {
@@ -211,20 +219,12 @@ async function verifyTokenSignature(
     // For external issuers, fetch their JWKS
     // This is a simplified implementation - production should cache JWKS
     const jwksUri = `${payload.iss}/.well-known/jwks.json`;
-    // Use safeFetch for SSRF protection, timeout, and response size limits
-    const jwksResponse = await safeFetch(jwksUri, {
+    const jwks = await safeFetchJson<{ keys: Array<{ kid?: string; kty: string }> }>(jwksUri, {
       headers: { Accept: 'application/json' },
       requireHttps: true,
       timeoutMs: 10000,
-      maxResponseSize: 256 * 1024, // 256 KB max for JWKS
+      maxResponseSize: MAX_EXTERNAL_JWKS_SIZE,
     });
-    if (!jwksResponse.ok) {
-      log.error('Failed to fetch external JWKS', {});
-      return false;
-    }
-
-    const text = await jwksResponse.text();
-    const jwks = JSON.parse(text) as { keys: Array<{ kid?: string; kty: string }> };
     const key = header.kid ? jwks.keys.find((k) => k.kid === header.kid) : jwks.keys[0];
 
     if (!key) {
@@ -257,6 +257,10 @@ export async function validateProofOfPossession(
   }
 
   try {
+    if (proof.jwt.length > MAX_VCI_PROOF_JWT_SIZE) {
+      return { valid: false, error: 'Proof too large' };
+    }
+
     const parts = proof.jwt.split('.');
     if (parts.length !== 3) {
       return { valid: false, error: 'Invalid JWT format' };

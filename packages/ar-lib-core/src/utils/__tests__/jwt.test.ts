@@ -215,6 +215,12 @@ describe('JWT Utilities', () => {
     it('should throw error for invalid JWT format', () => {
       expect(() => parseToken('invalid.jwt')).toThrow('Invalid JWT format');
     });
+
+    it('should reject oversized JWTs before decoding', () => {
+      const token = ['e30', 'x'.repeat(17 * 1024), 'sig'].join('.');
+
+      expect(() => parseToken(token)).toThrow('exceeds maximum size');
+    });
   });
 
   describe('importPrivateKeyFromPEM', () => {

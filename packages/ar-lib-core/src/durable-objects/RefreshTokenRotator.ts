@@ -29,7 +29,10 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { createAuditLog } from '../utils/audit-log';
+import { readRequestJsonWithLimit } from '../utils/body-limits';
 import { createLogger, type Logger } from '../utils/logger';
+
+const MAX_ROTATOR_JSON_BODY_BYTES = 512 * 1024;
 
 /**
  * Token Family V2 - Minimal state for high-performance rotation
@@ -825,7 +828,10 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       if (path === '/family' && request.method === 'POST') {
         let body: Partial<CreateFamilyRequestV3>;
         try {
-          body = (await request.json()) as Partial<CreateFamilyRequestV3>;
+          body = await readRequestJsonWithLimit<Partial<CreateFamilyRequestV3>>(
+            request,
+            MAX_ROTATOR_JSON_BODY_BYTES
+          );
         } catch {
           return new Response(
             JSON.stringify({
@@ -873,7 +879,10 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
       // POST /rotate - Rotate refresh token (V2)
       if (path === '/rotate' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<RotateTokenRequestV2>;
+        const body = await readRequestJsonWithLimit<Partial<RotateTokenRequestV2>>(
+          request,
+          MAX_ROTATOR_JSON_BODY_BYTES
+        );
 
         if (
           body.incomingVersion === undefined ||
@@ -932,7 +941,10 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
       // POST /revoke-family - Revoke token family
       if (path === '/revoke-family' && request.method === 'POST') {
-        const body = (await request.json()) as { userId: string; reason?: string };
+        const body = await readRequestJsonWithLimit<{ userId: string; reason?: string }>(
+          request,
+          MAX_ROTATOR_JSON_BODY_BYTES
+        );
 
         if (!body.userId) {
           return new Response(
@@ -950,7 +962,10 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
       // POST /revoke - Revoke single token by JTI (RFC 7009)
       if (path === '/revoke' && request.method === 'POST') {
-        const body = (await request.json()) as { jti: string; reason?: string };
+        const body = await readRequestJsonWithLimit<{ jti: string; reason?: string }>(
+          request,
+          MAX_ROTATOR_JSON_BODY_BYTES
+        );
 
         if (!body.jti) {
           return new Response(
@@ -968,7 +983,10 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
       // POST /batch-revoke - Batch revoke multiple tokens
       if (path === '/batch-revoke' && request.method === 'POST') {
-        const body = (await request.json()) as { jtis: string[]; reason?: string };
+        const body = await readRequestJsonWithLimit<{ jtis: string[]; reason?: string }>(
+          request,
+          MAX_ROTATOR_JSON_BODY_BYTES
+        );
 
         if (!body.jtis || !Array.isArray(body.jtis)) {
           return new Response(

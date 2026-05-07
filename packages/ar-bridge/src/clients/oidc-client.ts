@@ -12,7 +12,14 @@
 import * as jose from 'jose';
 import type { ProviderMetadata, TokenResponse, UserInfo, UpstreamProvider } from '../types';
 import { generateCodeChallenge } from '../utils/pkce';
-import { createLogger, validateWebhookUrl, type DiagnosticLogger } from '@authrim/ar-lib-core';
+import {
+  createLogger,
+  readResponseTextWithLimit,
+  safeFetch,
+  safeFetchJson,
+  validateWebhookUrl,
+  type DiagnosticLogger,
+} from '@authrim/ar-lib-core';
 
 const log = createLogger().module('OIDC-CLIENT');
 
@@ -139,13 +146,18 @@ export class OIDCRPClient {
 
     const discoveryUrl = `${this.config.issuer}/.well-known/openid-configuration`;
     assertSafeProviderFetchUrl(discoveryUrl, 'issuer');
-    const response = await fetch(discoveryUrl);
+    const response = await safeFetch(discoveryUrl, {
+      timeoutMs: 10000,
+      maxResponseSize: 64 * 1024,
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch OIDC discovery document: ${response.status}`);
     }
 
-    const metadata: ProviderMetadata = await response.json();
+    const metadata = JSON.parse(
+      await readResponseTextWithLimit(response, 64 * 1024)
+    ) as ProviderMetadata;
 
     // OIDC Discovery 1.0 Section 4.3: Validate issuer
     // The issuer value returned MUST be identical to the Issuer URL used to retrieve the configuration
@@ -407,10 +419,12 @@ export class OIDCRPClient {
     }
 
     assertSafeProviderFetchUrl(tokenEndpoint, 'token_endpoint');
-    const response = await fetch(tokenEndpoint, {
+    const response = await safeFetch(tokenEndpoint, {
       method: 'POST',
       headers,
       body: body.toString(),
+      timeoutMs: 10000,
+      maxResponseSize: 64 * 1024,
     });
 
     if (!response.ok) {
@@ -420,7 +434,9 @@ export class OIDCRPClient {
       throw new Error(`Token exchange failed: HTTP ${response.status}`);
     }
 
-    const tokens: TokenResponse = await response.json();
+    const tokens = JSON.parse(
+      await readResponseTextWithLimit(response, 64 * 1024)
+    ) as TokenResponse;
     return {
       tokens,
       requestContext: {
@@ -450,13 +466,10 @@ export class OIDCRPClient {
 
     const jwksUri = await this.getJwksUri();
     assertSafeProviderFetchUrl(jwksUri, 'jwks_uri');
-    const response = await fetch(jwksUri);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch JWKS: ${response.status}`);
-    }
-
-    const jwks: jose.JSONWebKeySet = await response.json();
+    const jwks = await safeFetchJson<jose.JSONWebKeySet>(jwksUri, {
+      timeoutMs: 5000,
+      maxResponseSize: 256 * 1024,
+    });
     this.jwks = jwks;
     this.jwksLastFetch = now;
     return this.jwks;
@@ -912,17 +925,21 @@ export class OIDCRPClient {
     }
 
     assertSafeProviderFetchUrl(userinfoEndpoint, 'userinfo_endpoint');
-    const response = await fetch(userinfoEndpoint, {
+    const response = await safeFetch(userinfoEndpoint, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      timeoutMs: 10000,
+      maxResponseSize: 64 * 1024,
     });
 
     if (!response.ok) {
       throw new Error(`Userinfo request failed: ${response.status}`);
     }
 
-    const userInfo: Record<string, unknown> = await response.json();
+    const userInfo = JSON.parse(
+      await readResponseTextWithLimit(response, 64 * 1024)
+    ) as Record<string, unknown>;
 
     // Validate sub claim is present (OIDC Core Section 5.3.2 - REQUIRED)
     if (
@@ -961,23 +978,27 @@ export class OIDCRPClient {
     });
 
     assertSafeProviderFetchUrl(tokenEndpoint, 'token_endpoint');
-    const response = await fetch(tokenEndpoint, {
+    const response = await safeFetch(tokenEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: body.toString(),
+      timeoutMs: 10000,
+      maxResponseSize: 64 * 1024,
     });
 
     if (!response.ok) {
       // Consume body to properly close connection (body may contain sensitive data from provider)
-      await response.text();
+      await readResponseTextWithLimit(response, 16 * 1024).catch(() => {});
       // Security: Only log HTTP status code (safe), not response body
       log.error('Token refresh failed', { status: response.status });
       throw new Error(`Token refresh failed: HTTP ${response.status}`);
     }
 
-    const tokens: TokenResponse = await response.json();
+    const tokens = JSON.parse(
+      await readResponseTextWithLimit(response, 64 * 1024)
+    ) as TokenResponse;
     return tokens;
   }
 }

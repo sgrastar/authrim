@@ -250,4 +250,28 @@ describe('downstream elevation grant client helpers', () => {
       errorCode: 'invalid_target',
     });
   });
+
+  it('rejects oversized token exchange responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('x'.repeat(128), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+    );
+
+    await expect(
+      exchangeDownstreamGrantSubjectToken({
+        tokenEndpoint: 'https://auth.example.com/token',
+        client: {
+          clientId: 'svc-client-1',
+          clientSecret: 'svc-secret',
+        },
+        subjectToken: 'subject-token',
+        fetchImpl: fetchMock as typeof fetch,
+        maxResponseSize: 16,
+      })
+    ).rejects.toThrow('Response body exceeds limit');
+  });
 });

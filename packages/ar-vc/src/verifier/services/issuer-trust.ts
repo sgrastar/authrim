@@ -7,7 +7,7 @@
 import type { Env } from '../../types';
 import {
   importECPublicKey,
-  safeFetch,
+  safeFetchJson,
   resolveDID,
   createLogger,
   buildIssuerUrl,
@@ -115,19 +115,12 @@ export async function getIssuerPublicKey(
  * Fetch public key from JWKS URI
  */
 async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
-  // Use safeFetch for SSRF protection, timeout, and response size limits
-  const response = await safeFetch(jwksUri, {
+  const jwks = await safeFetchJson<{ keys: JWK[] }>(jwksUri, {
     headers: { Accept: 'application/json' },
     requireHttps: true,
     timeoutMs: 10000,
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch JWKS: ${response.status}`);
-  }
-
-  const text = await response.text();
-  const jwks = JSON.parse(text) as { keys: JWK[] };
 
   // Find a signing key (ES256, ES384, or ES512)
   const signingKey = jwks.keys.find(

@@ -15,6 +15,11 @@
 
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import {
+  fetchWithTimeout,
+  readResponseJsonWithLimit,
+  readResponseTextWithLimit,
+} from './http-limits.js';
 
 // =============================================================================
 // Types
@@ -166,7 +171,7 @@ async function findExistingClient(
   adminSecret: string,
   tenantId?: string
 ): Promise<ExistingClientInfo | null> {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${apiBaseUrl}/api/admin/clients?search=${encodeURIComponent(LOGIN_UI_CLIENT_NAME)}&limit=10`,
     {
       method: 'GET',
@@ -179,11 +184,11 @@ async function findExistingClient(
   );
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error');
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(`Failed to check Login UI client (${response.status}): ${errorBody}`);
   }
 
-  const data = (await response.json()) as AdminClientListResponse;
+  const data = await readResponseJsonWithLimit<AdminClientListResponse>(response);
   const existing = data.clients?.find(
     (c) => c.client_name === LOGIN_UI_CLIENT_NAME && c.is_trusted === true
   );
@@ -207,7 +212,7 @@ async function updateClientToPublic(
   clientId: string,
   tenantId?: string
 ): Promise<void> {
-  const response = await fetch(`${apiBaseUrl}/api/admin/clients/${clientId}`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients/${clientId}`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${adminSecret}`,
@@ -222,7 +227,7 @@ async function updateClientToPublic(
   });
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error');
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
       `Failed to update Login UI client to public client (${response.status}): ${errorBody}`
     );
@@ -240,7 +245,7 @@ async function createClient(
 ): Promise<string> {
   const redirectUris = buildRedirectUris(loginUiUrl);
 
-  const response = await fetch(`${apiBaseUrl}/api/admin/clients`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${adminSecret}`,
@@ -262,11 +267,11 @@ async function createClient(
   });
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error');
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(`Failed to create Login UI client (${response.status}): ${errorBody}`);
   }
 
-  const data = (await response.json()) as AdminClientCreateResponse;
+  const data = await readResponseJsonWithLimit<AdminClientCreateResponse>(response);
   return data.client.client_id;
 }
 

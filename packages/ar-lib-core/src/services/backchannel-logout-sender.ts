@@ -29,6 +29,7 @@ import type {
 } from '../types/logout';
 import type { SessionClientWithDetails } from '../repositories/core/session-client';
 import { createLogger } from '../utils/logger';
+import { readResponseTextPreview, safeFetch } from '../utils/url-security';
 
 const log = createLogger().module('BACKCHANNEL-LOGOUT');
 
@@ -130,14 +131,16 @@ export async function sendLogoutToken(
   const startTime = Date.now();
 
   try {
-    const response = await fetch(params.backchannelLogoutUri, {
+    const response = await safeFetch(params.backchannelLogoutUri, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Cache-Control': 'no-store',
       },
       body: `logout_token=${encodeURIComponent(params.logoutToken)}`,
-      signal: AbortSignal.timeout(params.timeoutMs),
+      requireHttps: true,
+      timeoutMs: params.timeoutMs,
+      maxResponseSize: 64 * 1024,
     });
 
     const duration_ms = Date.now() - startTime;
@@ -149,7 +152,7 @@ export async function sendLogoutToken(
 
     // 400 Bad Request = RP rejected the token (do not retry)
     if (response.status === 400) {
-      const errorBody = await response.text().catch(() => '');
+      const errorBody = await readResponseTextPreview(response, 1024).catch(() => '');
       return {
         success: false,
         statusCode: response.status,

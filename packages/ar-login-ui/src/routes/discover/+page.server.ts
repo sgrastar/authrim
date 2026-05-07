@@ -9,6 +9,7 @@ import {
 } from '../../lib/discovery-entry';
 import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discovery-session';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const MAX_DISCOVERY_RESPONSE_BYTES = 256 * 1024;
 
 type DiscoveryMode = 'email' | 'tenant_code' | 'tenant_slug' | 'invite_token' | 'app_hint';
 
@@ -74,11 +75,29 @@ async function resolveDiscovery(
 	});
 
 	if (!response.ok) {
-		const error = (await response.json().catch(() => ({}))) as { message?: string };
+		const error: { message?: string } = await readJsonWithLimit<{ message?: string }>(response).catch(
+			() => ({})
+		);
 		throw new Error(error.message || 'Failed to resolve tenant');
 	}
 
-	return (await response.json()) as DiscoveryResponse;
+	return readJsonWithLimit<DiscoveryResponse>(response);
+}
+
+async function readJsonWithLimit<T>(response: Response): Promise<T> {
+	const contentLength = response.headers.get('content-length');
+	if (contentLength) {
+		const parsed = Number.parseInt(contentLength, 10);
+		if (Number.isFinite(parsed) && parsed > MAX_DISCOVERY_RESPONSE_BYTES) {
+			throw new Error('Discovery response is too large');
+		}
+	}
+
+	const text = await response.text();
+	if (new TextEncoder().encode(text).byteLength > MAX_DISCOVERY_RESPONSE_BYTES) {
+		throw new Error('Discovery response is too large');
+	}
+	return JSON.parse(text) as T;
 }
 
 function setRememberedTenantCookie(

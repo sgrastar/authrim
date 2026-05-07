@@ -30,6 +30,8 @@ import {
   getLogger,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  readResponseTextPreview,
+  safeFetch,
   validateWebhookUrl,
   type WebhookConfigWithScope,
   type Env,
@@ -811,22 +813,18 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
     let responseBody: string | null = null;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), webhook.timeoutMs || 30000);
-
-      response = await fetch(webhook.url, {
+      response = await safeFetch(webhook.url, {
         method: 'POST',
         headers,
         body: JSON.stringify(testPayload),
-        signal: controller.signal,
+        requireHttps: true,
+        timeoutMs: webhook.timeoutMs || 30000,
+        maxResponseSize: 64 * 1024,
       });
-
-      clearTimeout(timeoutId);
 
       // Try to read response body (limited to first 1KB)
       try {
-        const text = await response.text();
-        responseBody = text.slice(0, 1024);
+        responseBody = await readResponseTextPreview(response, 1024);
       } catch {
         responseBody = null;
       }
@@ -1375,22 +1373,18 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
     let responseBody: string | null = null;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), webhook.timeoutMs || 30000);
-
-      response = await fetch(webhook.url, {
+      response = await safeFetch(webhook.url, {
         method: 'POST',
         headers,
         body: JSON.stringify(replayPayload),
-        signal: controller.signal,
+        requireHttps: true,
+        timeoutMs: webhook.timeoutMs || 30000,
+        maxResponseSize: 64 * 1024,
       });
-
-      clearTimeout(timeoutId);
 
       // Read response body (limited)
       try {
-        const text = await response.text();
-        responseBody = text.slice(0, 1024);
+        responseBody = await readResponseTextPreview(response, 1024);
       } catch {
         responseBody = null;
       }

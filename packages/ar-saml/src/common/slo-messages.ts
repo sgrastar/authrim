@@ -18,8 +18,12 @@ import {
   findElements,
   getAttribute,
   getTextContent,
-  base64Decode,
 } from './xml-utils';
+import {
+  bytesToBinaryString,
+  decodePostBindingMessage,
+  inflateRedirectBindingMessage,
+} from './message-limits';
 import type { NameIDFormat } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 
@@ -231,7 +235,7 @@ export function buildLogoutResponse(options: LogoutResponseOptions): string {
  * Parse LogoutRequest from HTTP-POST binding (Base64)
  */
 export function parseLogoutRequestPost(samlRequestBase64: string): ParsedLogoutRequest {
-  const xml = base64Decode(samlRequestBase64);
+  const xml = decodePostBindingMessage(samlRequestBase64, 'SAML LogoutRequest');
   return parseLogoutRequestXml(xml);
 }
 
@@ -239,13 +243,7 @@ export function parseLogoutRequestPost(samlRequestBase64: string): ParsedLogoutR
  * Parse LogoutRequest from HTTP-Redirect binding (Deflate + Base64)
  */
 export function parseLogoutRequestRedirect(samlRequestEncoded: string): ParsedLogoutRequest {
-  const base64Decoded = base64Decode(samlRequestEncoded);
-  const inflated = pako.inflateRaw(
-    Uint8Array.from(base64Decoded, (c) => c.charCodeAt(0)),
-    {
-      to: 'string',
-    }
-  );
+  const inflated = inflateRedirectBindingMessage(samlRequestEncoded, 'SAML LogoutRequest');
   return parseLogoutRequestXml(inflated);
 }
 
@@ -322,7 +320,7 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
  * Parse LogoutResponse from HTTP-POST binding (Base64)
  */
 export function parseLogoutResponsePost(samlResponseBase64: string): ParsedLogoutResponse {
-  const xml = base64Decode(samlResponseBase64);
+  const xml = decodePostBindingMessage(samlResponseBase64, 'SAML LogoutResponse');
   return parseLogoutResponseXml(xml);
 }
 
@@ -330,13 +328,7 @@ export function parseLogoutResponsePost(samlResponseBase64: string): ParsedLogou
  * Parse LogoutResponse from HTTP-Redirect binding (Deflate + Base64)
  */
 export function parseLogoutResponseRedirect(samlResponseEncoded: string): ParsedLogoutResponse {
-  const base64Decoded = base64Decode(samlResponseEncoded);
-  const inflated = pako.inflateRaw(
-    Uint8Array.from(base64Decoded, (c) => c.charCodeAt(0)),
-    {
-      to: 'string',
-    }
-  );
+  const inflated = inflateRedirectBindingMessage(samlResponseEncoded, 'SAML LogoutResponse');
   return parseLogoutResponseXml(inflated);
 }
 
@@ -405,7 +397,7 @@ export function encodeForPostBinding(xml: string): string {
  */
 export function encodeForRedirectBinding(xml: string): string {
   const deflated = pako.deflateRaw(xml);
-  return btoa(String.fromCharCode(...deflated))
+  return btoa(bytesToBinaryString(deflated))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/[=]+$/, '');

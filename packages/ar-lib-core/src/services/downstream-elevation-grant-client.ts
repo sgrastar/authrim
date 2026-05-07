@@ -8,6 +8,9 @@ import {
   evaluateDownstreamGrantServiceAuthorizationHeader,
   evaluateDownstreamGrantServiceIntrospection,
 } from './downstream-elevation-grant';
+import { readResponseTextWithLimit } from '../utils/url-security';
+
+const DEFAULT_DOWNSTREAM_GRANT_RESPONSE_SIZE = 64 * 1024;
 
 export type DownstreamGrantClientAuthenticationMethod =
   | 'client_secret_basic'
@@ -23,6 +26,7 @@ export interface DownstreamGrantClientRequestOptions {
   fetchImpl?: typeof fetch;
   headers?: HeadersInit;
   signal?: AbortSignal;
+  maxResponseSize?: number;
 }
 
 export type DownstreamGrantSubjectTokenType =
@@ -131,8 +135,8 @@ function applyClientAuthenticationToBody(
   }
 }
 
-async function parseJsonResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
+async function parseJsonResponse(response: Response, maxResponseSize: number): Promise<unknown> {
+  const text = await readResponseTextWithLimit(response, maxResponseSize);
   if (!text) {
     return null;
   }
@@ -144,8 +148,12 @@ async function parseJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
-async function assertOkJsonResponse<T>(response: Response, operation: string): Promise<T> {
-  const body = await parseJsonResponse(response);
+async function assertOkJsonResponse<T>(
+  response: Response,
+  operation: string,
+  maxResponseSize: number
+): Promise<T> {
+  const body = await parseJsonResponse(response, maxResponseSize);
   if (!response.ok) {
     const record =
       typeof body === 'object' && body !== null && !Array.isArray(body)
@@ -200,7 +208,8 @@ export async function exchangeDownstreamGrantSubjectToken(
   });
   const tokenResponse = await assertOkJsonResponse<TokenExchangeResponse>(
     response,
-    'Downstream grant token exchange'
+    'Downstream grant token exchange',
+    input.maxResponseSize ?? DEFAULT_DOWNSTREAM_GRANT_RESPONSE_SIZE
   );
   const tokenType = tokenResponse.token_type ?? 'Bearer';
 
@@ -231,7 +240,11 @@ export async function introspectDownstreamGrantToken(
     body: params.toString(),
     signal: input.signal,
   });
-  return assertOkJsonResponse<IntrospectionResponse>(response, 'Downstream grant introspection');
+  return assertOkJsonResponse<IntrospectionResponse>(
+    response,
+    'Downstream grant introspection',
+    input.maxResponseSize ?? DEFAULT_DOWNSTREAM_GRANT_RESPONSE_SIZE
+  );
 }
 
 export async function exchangeAndEvaluateDownstreamGrant(
@@ -275,6 +288,7 @@ export async function exchangeAndEvaluateDownstreamGrant(
     fetchImpl: input.fetchImpl,
     headers: input.headers,
     signal: input.signal,
+    maxResponseSize: input.maxResponseSize,
   });
   const finalAuthorization = evaluateDownstreamGrantServiceIntrospection({
     response: introspectionResponse,

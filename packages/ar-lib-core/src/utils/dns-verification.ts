@@ -7,6 +7,8 @@
  * @packageDocumentation
  */
 
+import { safeFetchJson } from './url-security';
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -119,26 +121,15 @@ export async function queryDnsTxtRecords(
   url.searchParams.set('name', domain);
   url.searchParams.set('type', 'TXT');
 
-  // Create abort controller for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-
   try {
-    const response = await fetch(url.toString(), {
+    const data = await safeFetchJson<DohResponse>(url.toString(), {
       method: 'GET',
       headers: {
         Accept: 'application/dns-json',
       },
-      signal: controller.signal,
+      timeoutMs: timeout,
+      maxResponseSize: 64 * 1024,
     });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`DoH query failed: ${response.status} ${response.statusText}`);
-    }
-
-    const data: DohResponse = await response.json();
 
     // Check for NXDOMAIN or other errors
     if (data.Status !== 0) {
@@ -161,11 +152,6 @@ export async function queryDnsTxtRecords(
       return value;
     });
   } catch (error) {
-    clearTimeout(timeoutId);
-
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`DNS query timed out after ${timeout}ms`);
-    }
     throw error;
   }
 }

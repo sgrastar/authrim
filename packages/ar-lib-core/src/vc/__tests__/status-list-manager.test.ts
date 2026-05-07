@@ -116,12 +116,31 @@ describe('StatusListManager', () => {
       expect(list.purpose).toBe('suspension');
     });
 
+    it('should reject capacity values above the supported maximum', async () => {
+      await expect(manager.createStatusList('tenant1', 'revocation', 1048577)).rejects.toThrow(
+        'Status list capacity must be between'
+      );
+    });
+
     it('should create encoded bitstring', async () => {
       const list = await manager.createStatusList('tenant1', 'revocation');
 
       expect(list.encoded_list).toBeTruthy();
       // Should be base64url encoded
       expect(list.encoded_list).toMatch(/^[A-Za-z0-9_-]+$/);
+    });
+  });
+
+  describe('decode bounds', () => {
+    it('should reject oversized stored encoded lists', async () => {
+      const list = await manager.createStatusList('tenant1', 'revocation', 8);
+      const stored = repository.getAll().find((candidate) => candidate.id === list.id);
+      expect(stored).toBeDefined();
+      stored!.encoded_list = 'A'.repeat(2048);
+
+      await expect(manager.getStatus(list.id, 0)).rejects.toThrow(
+        'Encoded status list exceeds maximum size'
+      );
     });
   });
 

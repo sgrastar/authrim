@@ -25,6 +25,7 @@ import type {
 import {
   timingSafeEqual,
   validateExternalUrl,
+  safeFetchText,
   createAuthContextFromHono,
   resolveAuthCorePersistenceAdapterFromEnv,
   createErrorResponse,
@@ -364,12 +365,14 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
-      // Fetch metadata from URL
-      const response = await fetch(body.metadataUrl);
-      if (!response.ok) {
+      try {
+        metadataXml = await safeFetchText(body.metadataUrl, {
+          timeoutMs: 10000,
+          maxResponseSize: 1024 * 1024,
+        });
+      } catch {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
-      metadataXml = await response.text();
     } else {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'metadataXml or metadataUrl' },

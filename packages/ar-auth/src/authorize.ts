@@ -60,6 +60,7 @@ import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
 import type { PublicJWK, JWKS } from '@authrim/ar-lib-core';
 import { isSigningJWK, isEncryptionJWK } from '@authrim/ar-lib-core';
+import { safeFetchJson } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
 import {
   generateSecureRandomString,
@@ -1143,18 +1144,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             }
 
             try {
-              const jwksResponse = await fetch(clientResult.jwks_uri);
-              if (!jwksResponse.ok) {
-                return c.json(
-                  {
-                    error: 'invalid_request_object',
-                    error_description: 'Failed to fetch client jwks_uri',
-                  },
-                  400
-                );
-              }
-
-              const jwks = (await jwksResponse.json()) as JWKS;
+              const jwks = await safeFetchJson<JWKS>(clientResult.jwks_uri, {
+                timeoutMs: 5000,
+                maxResponseSize: 256 * 1024,
+              });
               const signingKey = jwks.keys.find((key) => isSigningJWK(key));
 
               if (!signingKey) {
@@ -3999,12 +3992,10 @@ async function createJARMResponse(
         }
 
         // Fetch JWKS from jwks_uri
-        const jwksResponse = await fetch(client.jwks_uri);
-        if (!jwksResponse.ok) {
-          throw new Error('Failed to fetch client jwks_uri');
-        }
-
-        const jwks = (await jwksResponse.json()) as JWKS;
+        const jwks = await safeFetchJson<JWKS>(client.jwks_uri, {
+          timeoutMs: 5000,
+          maxResponseSize: 256 * 1024,
+        });
         const encKey = jwks.keys.find((key) => isEncryptionJWK(key));
 
         if (!encKey) {

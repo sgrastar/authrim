@@ -39,8 +39,8 @@ import {
   findElements,
   getAttribute,
   getTextContent,
-  base64Decode,
 } from '../common/xml-utils';
+import { decodePostBindingMessage, parsePostBindingFormDataWithLimit } from '../common/message-limits';
 import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { verifyXmlSignature, hasSignature } from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
@@ -55,7 +55,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
 
   try {
     // Parse POST data
-    const formData = await c.req.formData();
+    const formData = await parsePostBindingFormDataWithLimit(c.req);
     const samlResponse = formData.get('SAMLResponse') as string;
     const relayState = formData.get('RelayState') as string | null;
 
@@ -66,7 +66,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     }
 
     // Decode SAML Response
-    const responseXml = base64Decode(samlResponse);
+    const responseXml = decodePostBindingMessage(samlResponse, 'SAML Response');
 
     // Parse and validate Response
     const { issuer, assertion, inResponseTo } = parseAndValidateResponse(responseXml, issuerUrl);

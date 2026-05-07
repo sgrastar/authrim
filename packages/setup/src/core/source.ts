@@ -12,6 +12,7 @@ import { join, dirname } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { extract } from 'tar';
+import { fetchWithTimeout, readResponseJsonWithLimit } from './http-limits.js';
 
 // =============================================================================
 // Types
@@ -50,6 +51,7 @@ export interface DownloadOptions {
 const DEFAULT_REPOSITORY = 'sgrastar/authrim';
 const DEFAULT_BRANCH = 'main';
 const GITHUB_API_BASE = 'https://api.github.com';
+const MAX_SOURCE_TARBALL_BYTES = 250 * 1024 * 1024;
 
 // =============================================================================
 // GitHub API Helpers
@@ -62,11 +64,11 @@ export async function getLatestRelease(
   repository: string = DEFAULT_REPOSITORY
 ): Promise<string | null> {
   try {
-    const response = await fetch(`${GITHUB_API_BASE}/repos/${repository}/releases/latest`);
+    const response = await fetchWithTimeout(`${GITHUB_API_BASE}/repos/${repository}/releases/latest`);
     if (!response.ok) {
       return null;
     }
-    const data = (await response.json()) as { tag_name?: string };
+    const data = await readResponseJsonWithLimit<{ tag_name?: string }>(response);
     return data.tag_name || null;
   } catch {
     return null;
@@ -81,11 +83,11 @@ export async function getCommitHash(
   gitRef: string = DEFAULT_BRANCH
 ): Promise<string | null> {
   try {
-    const response = await fetch(`${GITHUB_API_BASE}/repos/${repository}/commits/${gitRef}`);
+    const response = await fetchWithTimeout(`${GITHUB_API_BASE}/repos/${repository}/commits/${gitRef}`);
     if (!response.ok) {
       return null;
     }
-    const data = (await response.json()) as { sha?: string };
+    const data = await readResponseJsonWithLimit<{ sha?: string }>(response);
     return data.sha || null;
   } catch {
     return null;
@@ -97,11 +99,11 @@ export async function getCommitHash(
  */
 export async function getAvailableTags(repository: string = DEFAULT_REPOSITORY): Promise<string[]> {
   try {
-    const response = await fetch(`${GITHUB_API_BASE}/repos/${repository}/tags`);
+    const response = await fetchWithTimeout(`${GITHUB_API_BASE}/repos/${repository}/tags`);
     if (!response.ok) {
       return [];
     }
-    const data = (await response.json()) as Array<{ name: string }>;
+    const data = await readResponseJsonWithLimit<Array<{ name: string }>>(response);
     return data.map((tag) => tag.name);
   } catch {
     return [];
@@ -223,11 +225,11 @@ export async function downloadTarball(options: DownloadOptions): Promise<SourceI
   onProgress?.(`Downloading tarball from ${tarballUrl}...`);
 
   try {
-    const response = await fetch(tarballUrl);
+    const response = await fetchWithTimeout(tarballUrl, {}, 120000);
     if (!response.ok) {
       // Try as a tag instead
       const tagUrl = `https://github.com/${repository}/archive/refs/tags/${gitRef}.tar.gz`;
-      const tagResponse = await fetch(tagUrl);
+      const tagResponse = await fetchWithTimeout(tagUrl, {}, 120000);
       if (!tagResponse.ok) {
         throw new Error(`Failed to download: ${response.status} ${response.statusText}`);
       }
@@ -257,6 +259,16 @@ async function extractTarball(
   try {
     onProgress?.('Extracting tarball...');
 
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) {
+      const parsed = Number.parseInt(contentLength, 10);
+      if (Number.isFinite(parsed) && parsed > MAX_SOURCE_TARBALL_BYTES) {
+        throw new Error(
+          `Source tarball exceeds maximum size: ${parsed} > ${MAX_SOURCE_TARBALL_BYTES} bytes`
+        );
+      }
+    }
+
     // Extract to temp directory
     const body = response.body;
     if (!body) {
@@ -265,10 +277,25 @@ async function extractTarball(
 
     // Use tar to extract
     // Convert web ReadableStream to Node.js Readable
-    const { Readable } = await import('node:stream');
+    const { Readable, Transform } = await import('node:stream');
     const nodeReadable = Readable.fromWeb(body as import('node:stream/web').ReadableStream);
+    let downloadedBytes = 0;
+    const limitStream = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        downloadedBytes += chunk.byteLength;
+        if (downloadedBytes > MAX_SOURCE_TARBALL_BYTES) {
+          callback(
+            new Error(
+              `Source tarball exceeds maximum size: ${downloadedBytes} > ${MAX_SOURCE_TARBALL_BYTES} bytes`
+            )
+          );
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
 
-    await pipeline(nodeReadable, createGunzip(), extract({ cwd: tempDir }));
+    await pipeline(nodeReadable, limitStream, createGunzip(), extract({ cwd: tempDir }));
 
     // Find the extracted directory (GitHub archives have a single root directory)
     const entries = await readdir(tempDir);

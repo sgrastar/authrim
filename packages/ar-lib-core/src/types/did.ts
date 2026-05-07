@@ -351,7 +351,7 @@ async function resolveDidWeb(did: string): Promise<DIDDocument> {
   }
 
   // Import safeFetch dynamically to avoid circular dependency
-  const { safeFetch } = await import('../utils/url-security');
+  const { readResponseTextWithLimit, safeFetch } = await import('../utils/url-security');
 
   const response = await safeFetch(url, {
     headers: { Accept: 'application/did+json, application/json' },
@@ -364,7 +364,7 @@ async function resolveDidWeb(did: string): Promise<DIDDocument> {
     throw new Error(`Failed to fetch DID document: ${response.status}`);
   }
 
-  const text = await response.text();
+  const text = await readResponseTextWithLimit(response, 512 * 1024);
   const document = JSON.parse(text) as DIDDocument;
 
   // Validate basic structure

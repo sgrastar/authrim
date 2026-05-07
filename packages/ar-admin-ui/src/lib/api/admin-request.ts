@@ -1,6 +1,7 @@
 import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+const MAX_ADMIN_API_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function getSessionId(): string | null {
 	if (typeof localStorage !== 'undefined') {
@@ -71,9 +72,19 @@ export async function adminFetch(
 		...rest
 	} = options;
 
-	return fetch(input, {
+	const response = await fetch(input, {
 		...rest,
 		credentials: rest.credentials ?? 'include',
 		headers: buildAdminHeaders(headers, { tenantId, includeJsonContentType, skipTenantHeader })
 	});
+
+	const contentLength = response.headers.get('content-length');
+	if (contentLength) {
+		const parsed = Number.parseInt(contentLength, 10);
+		if (Number.isFinite(parsed) && parsed > MAX_ADMIN_API_RESPONSE_BYTES) {
+			throw new Error('Admin API response is too large');
+		}
+	}
+
+	return response;
 }

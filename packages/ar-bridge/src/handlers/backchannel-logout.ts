@@ -20,6 +20,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   resolveAuthCorePersistenceAdapterFromEnv,
+  safeFetchJson,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -129,11 +130,15 @@ async function validateLogoutToken(
 ): Promise<LogoutTokenClaims> {
   // Fetch JWKS from provider
   const jwksUri = provider.jwksUri || `${provider.issuer}/.well-known/jwks.json`;
-  const jwksResponse = await fetch(jwksUri);
-  if (!jwksResponse.ok) {
-    throw new Error(`Failed to fetch JWKS from ${jwksUri}`);
+  let jwks: jose.JSONWebKeySet;
+  try {
+    jwks = await safeFetchJson<jose.JSONWebKeySet>(jwksUri, {
+      timeoutMs: 5000,
+      maxResponseSize: 256 * 1024,
+    });
+  } catch {
+    throw new Error('Failed to fetch provider JWKS');
   }
-  const jwks: jose.JSONWebKeySet = await jwksResponse.json();
   const JWKS = jose.createLocalJWKSet(jwks);
 
   // Verify signature and decode

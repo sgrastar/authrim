@@ -1,6 +1,11 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  fetchWithTimeout,
+  readResponseJsonWithLimit,
+  readResponseTextWithLimit,
+} from './http-limits.js';
 
 export interface DownstreamIntrospectionClientConfig {
   apiBaseUrl: string;
@@ -103,7 +108,7 @@ async function findClientByName(
   adminSecret: string,
   tenantId?: string
 ): Promise<{ clientId: string } | null> {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${apiBaseUrl}/api/admin/clients?search=${encodeURIComponent(DOWNSTREAM_INTROSPECTION_CLIENT_NAME)}&limit=10`,
     {
       method: 'GET',
@@ -112,13 +117,13 @@ async function findClientByName(
   );
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error');
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
       `Failed to check downstream introspection client (${response.status}): ${errorBody}`
     );
   }
 
-  const data = (await response.json()) as AdminClientListResponse;
+  const data = await readResponseJsonWithLimit<AdminClientListResponse>(response);
   const existing = data.clients?.find(
     (client) => client.client_name === DOWNSTREAM_INTROSPECTION_CLIENT_NAME
   );
@@ -138,7 +143,7 @@ async function getClientById(
   clientId: string,
   tenantId?: string
 ): Promise<boolean> {
-  const response = await fetch(`${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`, {
     method: 'GET',
     headers: buildAdminHeaders(adminSecret, tenantId),
   });
@@ -148,7 +153,7 @@ async function getClientById(
   }
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error');
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
       `Failed to read downstream introspection client (${response.status}): ${errorBody}`
     );
@@ -163,7 +168,7 @@ async function regenerateClientSecret(
   clientId: string,
   tenantId?: string
 ): Promise<string> {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}/regenerate-secret`,
     {
       method: 'POST',
@@ -173,13 +178,13 @@ async function regenerateClientSecret(
   );
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error');
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
       `Failed to regenerate downstream introspection client secret (${response.status}): ${errorBody}`
     );
   }
 
-  const data = (await response.json()) as AdminClientRegenerateSecretResponse;
+  const data = await readResponseJsonWithLimit<AdminClientRegenerateSecretResponse>(response);
   if (!data.client_secret) {
     throw new Error('Downstream introspection client secret regeneration returned no secret');
   }
@@ -195,7 +200,7 @@ async function createClient(
   clientId: string;
   clientSecret: string;
 }> {
-  const response = await fetch(`${apiBaseUrl}/api/admin/clients`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients`, {
     method: 'POST',
     headers: buildAdminHeaders(adminSecret, tenantId),
     body: JSON.stringify({
@@ -213,13 +218,13 @@ async function createClient(
   });
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'Unknown error');
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
       `Failed to create downstream introspection client (${response.status}): ${errorBody}`
     );
   }
 
-  const data = (await response.json()) as AdminClientCreateResponse;
+  const data = await readResponseJsonWithLimit<AdminClientCreateResponse>(response);
   const clientId = data.client?.client_id;
   const clientSecret = data.client?.client_secret;
 

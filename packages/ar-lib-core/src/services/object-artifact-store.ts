@@ -1,5 +1,6 @@
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
+import { readR2ObjectTextWithLimit } from '../utils/body-limits';
 import { decryptObjectArtifact } from './object-artifact-crypto';
 import {
   type ObjectCatalogBucketBinding,
@@ -12,6 +13,8 @@ import {
   isObjectKind,
   isObjectRepresentation,
 } from './object-catalog';
+
+const MAX_CATALOG_OBJECT_ARTIFACT_BYTES = 10 * 1024 * 1024;
 
 export interface LoadCatalogObjectArtifactOptions {
   tenantId: string;
@@ -304,7 +307,7 @@ export async function loadCatalogObjectArtifact(
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   const rawContentType = headers.get('Content-Type') || 'application/octet-stream';
-  const rawPayload = await object.text();
+  const rawPayload = await readR2ObjectTextWithLimit(object, MAX_CATALOG_OBJECT_ARTIFACT_BYTES);
   if (record.physical.checksumSha256) {
     const actualChecksum = await sha256Hex(rawPayload);
     if (actualChecksum !== record.physical.checksumSha256) {
@@ -384,7 +387,7 @@ export async function loadPublicCatalogObjectArtifact(
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   const rawContentType = headers.get('Content-Type') || 'application/octet-stream';
-  const rawPayload = await object.text();
+  const rawPayload = await readR2ObjectTextWithLimit(object, MAX_CATALOG_OBJECT_ARTIFACT_BYTES);
   if (record.physical.checksumSha256) {
     const actualChecksum = await sha256Hex(rawPayload);
     if (actualChecksum !== record.physical.checksumSha256) {

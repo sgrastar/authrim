@@ -12,6 +12,8 @@ import {
   getTenantIdFromContext,
   hasAdminPermission,
   invalidateTenantVanityDomainCache,
+  readResponseTextWithLimit,
+  safeFetch,
   type DatabaseSource,
 } from '@authrim/ar-lib-core';
 
@@ -157,7 +159,7 @@ async function callCloudflare<T>(
     throw new Error('CLOUDFLARE_API_TOKEN is not configured');
   }
 
-  const response = await fetch(
+  const response = await safeFetch(
     `https://api.cloudflare.com/client/v4/zones/${zoneId}/custom_hostnames${path}`,
     {
       ...init,
@@ -166,9 +168,14 @@ async function callCloudflare<T>(
         'Content-Type': 'application/json',
         ...(init?.headers ?? {}),
       },
+      requireHttps: true,
+      timeoutMs: 10000,
+      maxResponseSize: 128 * 1024,
     }
   );
-  const body = (await response.json().catch(() => null)) as CloudflareResponse<T> | null;
+  const body = (await readResponseTextWithLimit(response, 128 * 1024)
+    .then((text) => JSON.parse(text))
+    .catch(() => null)) as CloudflareResponse<T> | null;
   if (!response.ok || !body?.success) {
     const message = body?.errors?.map((error) => error.message).filter(Boolean).join(', ');
     throw new Error(message || `Cloudflare API failed with HTTP ${response.status}`);

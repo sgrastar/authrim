@@ -7,7 +7,7 @@
  */
 
 import { CompactEncrypt, compactDecrypt, importJWK, type JWK } from 'jose';
-import { isInternalUrl } from './url-security';
+import { isInternalUrl, safeFetchJson } from './url-security';
 import { createLogger } from './logger';
 
 const log = createLogger().module('JWE');
@@ -214,11 +214,10 @@ export async function getClientPublicKey(
         return null;
       }
 
-      const response = await fetch(clientMetadata.jwks_uri);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch JWKS: ${response.status}`);
-      }
-      const jwks = (await response.json()) as { keys: JWK[] };
+      const jwks = await safeFetchJson<{ keys: JWK[] }>(clientMetadata.jwks_uri, {
+        timeoutMs: 5000,
+        maxResponseSize: 256 * 1024,
+      });
       const key = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
       return key || null;
     } catch (error) {

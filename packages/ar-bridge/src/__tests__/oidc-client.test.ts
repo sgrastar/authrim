@@ -29,6 +29,23 @@ vi.mock('@authrim/ar-lib-core', () => ({
       return { valid: false, error: 'Invalid URL format' };
     }
   }),
+  safeFetch: vi.fn((url: string, options?: RequestInit) => fetch(url, options)),
+  safeFetchJson: vi.fn(async (url: string, options?: RequestInit) => {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  }),
+  readResponseTextWithLimit: vi.fn(async (response: Response & { json?: () => Promise<unknown> }) => {
+    if (typeof response.text === 'function') {
+      return response.text();
+    }
+    if (typeof response.json === 'function') {
+      return JSON.stringify(await response.json());
+    }
+    return '';
+  }),
 }));
 
 import { OIDCRPClient } from '../clients/oidc-client';
@@ -152,7 +169,11 @@ describe('OIDCRPClient', () => {
       const metadata = await client.discover();
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://accounts.google.com/.well-known/openid-configuration'
+        'https://accounts.google.com/.well-known/openid-configuration',
+        expect.objectContaining({
+          maxResponseSize: 64 * 1024,
+          timeoutMs: 10000,
+        })
       );
       expect(metadata.authorization_endpoint).toBe(mockDiscoveryDoc.authorization_endpoint);
       expect(metadata.token_endpoint).toBe(mockDiscoveryDoc.token_endpoint);

@@ -94,6 +94,11 @@ export interface StatusListRepository {
 const DEFAULT_CAPACITY = 131072;
 
 /**
+ * Maximum supported capacity: 1048576 = 128KB (1 bit per status)
+ */
+const MAX_CAPACITY = 1048576;
+
+/**
  * Maximum retry attempts for race condition recovery
  */
 const MAX_ALLOCATION_RETRIES = 3;
@@ -120,12 +125,19 @@ function generateListId(tenantId: string, purpose: StatusListPurpose): string {
   return `sl_${purpose.charAt(0)}_${tenantId.substring(0, 8)}_${timestamp}_${random}`;
 }
 
+function byteCountForCapacity(capacity: number): number {
+  if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > MAX_CAPACITY) {
+    throw new Error(`Status list capacity must be between 1 and ${MAX_CAPACITY}`);
+  }
+  return Math.ceil(capacity / 8);
+}
+
 /**
  * Create an empty bitstring encoded as base64url + gzip
  */
 async function createEmptyBitstring(capacity: number): Promise<string> {
   // Create zero-filled bitstring (capacity bits = capacity/8 bytes)
-  const byteCount = Math.ceil(capacity / 8);
+  const byteCount = byteCountForCapacity(capacity);
   const bitstring = new Uint8Array(byteCount);
 
   // Compress with gzip
@@ -168,12 +180,21 @@ async function createEmptyBitstring(capacity: number): Promise<string> {
 /**
  * Decode base64url encoded gzip compressed bitstring
  */
-async function decodeBitstring(encoded: string): Promise<Uint8Array> {
+async function decodeBitstring(encoded: string, capacity: number): Promise<Uint8Array> {
+  const maxBytes = byteCountForCapacity(capacity);
+  const maxEncodedLength = Math.ceil((maxBytes * 4) / 3) + 1024;
+  if (encoded.length > maxEncodedLength) {
+    throw new Error('Encoded status list exceeds maximum size');
+  }
+
   // Add padding if needed
   const padded = encoded + '==='.slice(0, (4 - (encoded.length % 4)) % 4);
   const decoded = Uint8Array.from(atob(padded.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
     c.charCodeAt(0)
   );
+  if (decoded.length > maxBytes + 1024) {
+    throw new Error('Compressed status list exceeds maximum size');
+  }
 
   // Check for GZIP magic bytes
   if (decoded.length >= 2 && decoded[0] === 0x1f && decoded[1] === 0x8b) {
@@ -187,17 +208,23 @@ async function decodeBitstring(encoded: string): Promise<Uint8Array> {
     })();
 
     const chunks: Uint8Array[] = [];
+    let totalLength = 0;
     const readPromise = (async () => {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (value) chunks.push(value);
+        if (!value) continue;
+        totalLength += value.length;
+        if (totalLength > maxBytes) {
+          await reader.cancel().catch(() => {});
+          throw new Error('Decoded status list exceeds maximum size');
+        }
+        chunks.push(value);
       }
     })();
 
     await Promise.all([writePromise, readPromise]);
 
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const result = new Uint8Array(totalLength);
     let offset = 0;
     for (const chunk of chunks) {
@@ -205,6 +232,10 @@ async function decodeBitstring(encoded: string): Promise<Uint8Array> {
       offset += chunk.length;
     }
     return result;
+  }
+
+  if (decoded.length > maxBytes) {
+    throw new Error('Decoded status list exceeds maximum size');
   }
 
   return decoded;
@@ -459,7 +490,7 @@ export class StatusListManager {
     }
 
     // Decode bitstring
-    const bitstring = await decodeBitstring(list.encoded_list);
+    const bitstring = await decodeBitstring(list.encoded_list, list.capacity);
 
     // Update status
     setStatusAtIndex(bitstring, index, status);
@@ -534,7 +565,7 @@ export class StatusListManager {
       throw new Error(`Status list not found: ${listId}`);
     }
 
-    const bitstring = await decodeBitstring(list.encoded_list);
+    const bitstring = await decodeBitstring(list.encoded_list, list.capacity);
     return getStatusAtIndex(bitstring, index) as StatusValue;
   }
 

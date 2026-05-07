@@ -9,8 +9,11 @@
 import { jwtVerify, importJWK, type JWK, type JWTPayload } from 'jose';
 import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
 import { createLogger } from './logger';
+import { safeFetchJson } from './url-security';
 
 const log = createLogger().module('JWT_BEARER');
+const MAX_JWT_BEARER_ASSERTION_SIZE_BYTES = 16 * 1024;
+const MAX_JWT_BEARER_SEGMENT_SIZE_BYTES = 8 * 1024;
 
 /**
  * JWT Bearer Assertion Claims
@@ -75,6 +78,15 @@ export async function validateJWTBearerAssertion(
   trustedIssuers: Map<string, TrustedIssuer>
 ): Promise<JWTBearerValidationResult> {
   try {
+    const sizeError = validateAssertionSize(assertion);
+    if (sizeError) {
+      return {
+        valid: false,
+        error: 'invalid_grant',
+        error_description: sizeError,
+      };
+    }
+
     // Step 1: Parse JWT header to get issuer (from claims, not header)
     // We need to decode without verification first to get the issuer
     const parts = assertion.split('.');
@@ -174,11 +186,10 @@ export async function validateJWTBearerAssertion(
     } else if (trustedIssuer.jwks_uri) {
       // Fetch JWKS from URI
       try {
-        const response = await fetch(trustedIssuer.jwks_uri);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch JWKS: ${response.status}`);
-        }
-        const jwks = (await response.json()) as { keys: JWK[] };
+        const jwks = await safeFetchJson<{ keys: JWK[] }>(trustedIssuer.jwks_uri, {
+          timeoutMs: 5000,
+          maxResponseSize: 256 * 1024,
+        });
         if (jwks.keys && jwks.keys.length > 0) {
           publicKey = jwks.keys[0];
         }
@@ -249,6 +260,20 @@ export async function validateJWTBearerAssertion(
       error_description: 'Failed to validate JWT assertion',
     };
   }
+}
+
+function validateAssertionSize(assertion: string): string | null {
+  if (new TextEncoder().encode(assertion).byteLength > MAX_JWT_BEARER_ASSERTION_SIZE_BYTES) {
+    return 'JWT assertion is too large';
+  }
+
+  for (const segment of assertion.split('.')) {
+    if (new TextEncoder().encode(segment).byteLength > MAX_JWT_BEARER_SEGMENT_SIZE_BYTES) {
+      return 'JWT assertion segment is too large';
+    }
+  }
+
+  return null;
 }
 
 /**

@@ -34,6 +34,7 @@ import {
   validateAllowedOrigins,
   // Simple Logout Webhook (Authrim Extension)
   validateWebhookUrl,
+  safeFetchJson,
   encryptValue,
   // RFC 7592: Token hashing for registration_access_token
   arrayBufferToBase64Url,
@@ -79,23 +80,13 @@ async function validateSectorIdentifierContent(
       return { valid: false, error: ssrfError };
     }
 
-    const response = await fetch(sectorUri, {
+    const content = (await safeFetchJson<unknown>(sectorUri, {
       headers: {
         Accept: 'application/json',
       },
-    });
-
-    if (!response.ok) {
-      return {
-        valid: false,
-        error: {
-          error: 'invalid_client_metadata',
-          error_description: `Failed to fetch sector_identifier_uri: HTTP ${response.status}`,
-        },
-      };
-    }
-
-    const content = (await response.json()) as unknown;
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
+    })) as unknown;
 
     if (!Array.isArray(content)) {
       return {

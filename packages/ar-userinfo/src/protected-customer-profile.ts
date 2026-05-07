@@ -26,6 +26,7 @@ import {
   issueStepUpToken,
   parseDelegatedWriteEnvelope,
   projectDownstreamGrantProtectedResource,
+  readResponseTextWithLimit,
   requiredIdempotencyMiddleware,
   resolveProductProtectedResourceAudience,
   StepUpFlowError,
@@ -704,13 +705,16 @@ async function introspectProtectedCustomerProfileToken(input: {
       token: input.token,
       token_type_hint: 'access_token',
     }).toString(),
+    signal: AbortSignal.timeout(5000),
   });
 
   if (!response.ok) {
     throw new Error(`Introspection failed with status ${response.status}`);
   }
 
-  return (await response.json()) as IntrospectionResponse;
+  return JSON.parse(
+    await readResponseTextWithLimit(response, 16 * 1024)
+  ) as IntrospectionResponse;
 }
 
 export function createProtectedCustomerProfileAuthorizer(

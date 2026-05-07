@@ -40,6 +40,7 @@ import {
   type ParsedLogoutRequest,
   type ParsedLogoutResponse,
 } from '../common/slo-messages';
+import { parsePostBindingFormDataWithLimit } from '../common/message-limits';
 import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import { STATUS_CODES, DEFAULTS } from '../common/constants';
 import { signXml, verifyXmlSignature, hasSignature } from '../common/signature';
@@ -76,7 +77,7 @@ async function handlePostBinding(
   env: Env,
   issuerUrl: string
 ): Promise<Response> {
-  const formData = await c.req.formData();
+  const formData = await parsePostBindingFormDataWithLimit(c.req);
   const samlRequest = formData.get('SAMLRequest') as string | null;
   const samlResponse = formData.get('SAMLResponse') as string | null;
   const relayState = formData.get('RelayState') as string | null;

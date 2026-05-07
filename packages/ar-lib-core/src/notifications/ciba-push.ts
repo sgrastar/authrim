@@ -12,7 +12,7 @@
  * - HTTPS required: Ensures secure transport (configurable for dev)
  */
 
-import { safeFetch, isInternalUrl } from '../utils/url-security';
+import { safeFetch, isInternalUrl, readResponseTextPreview } from '../utils/url-security';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('CIBA_PUSH');
@@ -87,7 +87,7 @@ export async function sendPushModeTokens(
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = await readResponseTextPreview(response, 1024);
       log.error('Push mode token delivery failed', {
         status: response.status,
         statusText: response.statusText,

@@ -26,6 +26,7 @@ import {
   buildCanonicalAuditBatch,
   buildCanonicalAuditRecord,
 } from './canonical-format';
+import { safeFetch } from '../../utils/url-security';
 
 export interface AuditQueueConsumerEnv {
   /** Core database (non-PII) for event_log */
@@ -268,10 +269,12 @@ async function deliverHttpSink(
     headers.Authorization = `Bearer ${authToken}`;
   }
 
-  const response = await fetch(parsedUrl.toString(), {
+  const response = await safeFetch(parsedUrl.toString(), {
     method: target.method ?? 'POST',
     headers,
     body: JSON.stringify(buildCanonicalAuditBatch(target, body, 'http')),
+    timeoutMs: 10000,
+    maxResponseSize: 64 * 1024,
   });
 
   if (!response.ok) {

@@ -8,6 +8,10 @@ import {
   type ExchangeAndEvaluateDownstreamGrantInput,
   type ExchangeAndEvaluateDownstreamGrantResult,
 } from './downstream-elevation-grant-client';
+import { readResponseTextWithLimit } from '../utils/url-security';
+
+const DEFAULT_DOWNSTREAM_RESOURCE_RESPONSE_SIZE = 1024 * 1024;
+const DEFAULT_DOWNSTREAM_RESOURCE_ERROR_PREVIEW_SIZE = 16 * 1024;
 
 export interface FetchDownstreamProtectedResourceInput<
   TResponse = unknown,
@@ -18,6 +22,7 @@ export interface FetchDownstreamProtectedResourceInput<
   resourceRequest?: Omit<RequestInit, 'headers' | 'signal'> & {
     headers?: HeadersInit;
   };
+  resourceMaxResponseSize?: number;
   parseResponse?: (response: Response) => Promise<TParsed>;
 }
 
@@ -48,12 +53,16 @@ function getResourceFetchImpl(fetchImpl?: typeof fetch): typeof fetch {
   return fetchImpl ?? fetch;
 }
 
-async function parseDefaultProtectedResourceResponse<T>(response: Response): Promise<T> {
+async function parseDefaultProtectedResourceResponse<T>(
+  response: Response,
+  maxResponseSize: number
+): Promise<T> {
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  const text = await readResponseTextWithLimit(response, maxResponseSize);
   if (contentType.includes('application/json')) {
-    return (await response.json()) as T;
+    return (text ? JSON.parse(text) : null) as T;
   }
-  return (await response.text()) as T;
+  return text as T;
 }
 
 export async function fetchProtectedResourceWithDownstreamGrant<
@@ -86,12 +95,19 @@ export async function fetchProtectedResourceWithDownstreamGrant<
     throw new DownstreamGrantClientError({
       message: `Downstream protected resource fetch failed with status ${response.status}`,
       status: response.status,
-      responseBody: await response.clone().text(),
+      responseBody: await readResponseTextWithLimit(
+        response.clone(),
+        DEFAULT_DOWNSTREAM_RESOURCE_ERROR_PREVIEW_SIZE
+      ).catch(() => null),
     });
   }
 
-  const parser = input.parseResponse ?? parseDefaultProtectedResourceResponse<TParsed>;
-  const resourceData = await parser(response.clone());
+  const resourceData = input.parseResponse
+    ? await input.parseResponse(response.clone())
+    : await parseDefaultProtectedResourceResponse<TParsed>(
+        response.clone(),
+        input.resourceMaxResponseSize ?? DEFAULT_DOWNSTREAM_RESOURCE_RESPONSE_SIZE
+      );
 
   return {
     exchange,
