@@ -9,9 +9,9 @@ const config = {
 	preprocess: sequence([vitePreprocess(), preprocessMeltUI()]),
 
 	kit: {
-		// Cloudflare Pages adapter configuration
+		// Cloudflare Workers static-assets adapter configuration
 		adapter: adapter({
-			// Cloudflare Pages specific options
+			// Route all requests through the generated Worker when no static asset matches.
 			routes: {
 				include: ['/*'],
 				exclude: ['<all>']

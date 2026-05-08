@@ -564,12 +564,38 @@
 		}
 	}
 
+	function buildWebOriginRegistry(uris: string[], existing = client?.web_origin_registry) {
+		const byOrigin = new Map<
+			string,
+			NonNullable<Client['web_origin_registry']>['origins'][number]
+		>();
+		for (const entry of existing?.origins ?? []) {
+			byOrigin.set(entry.origin, entry);
+		}
+		for (const uri of uris) {
+			const origin = extractOrigin(uri);
+			if (!origin || byOrigin.has(origin)) continue;
+			byOrigin.set(origin, {
+				origin,
+				cors: { allowed: true },
+				handoff_allowed: true,
+				iframe_allowed: false
+			});
+		}
+		return { origins: [...byOrigin.values()] };
+	}
+
 	/**
 	 * Check if an origin is in the CORS allowlist (with wildcard support)
 	 */
 	function isOriginInCors(redirectUri: string): boolean {
 		const origin = extractOrigin(redirectUri);
 		if (!origin) return false;
+
+		const registryOrigins = client?.web_origin_registry?.origins ?? [];
+		if (registryOrigins.some((entry) => entry.origin === origin && entry.cors?.allowed !== false)) {
+			return true;
+		}
 
 		for (const pattern of allowedOrigins) {
 			const normalizedPattern = pattern.trim();
@@ -600,32 +626,31 @@
 	 */
 	async function addToCors(redirectUri: string) {
 		const origin = extractOrigin(redirectUri);
-		if (!origin || !tenantSettings) return;
+		if (!origin || !client) return;
 
 		addingToCors = redirectUri;
 		try {
-			// Get current allowed_origins
-			const current = (tenantSettings.values['tenant.allowed_origins'] as string) || '';
-			const origins = current
-				? current
-						.split(',')
-						.map((o) => o.trim())
-						.filter((o) => o.length > 0)
-				: [];
-
-			// Add if not already present
-			if (!origins.includes(origin)) {
-				origins.push(origin);
-				await adminSettingsAPI.updateSettings('tenant', {
-					ifMatch: tenantSettings.version,
-					set: { 'tenant.allowed_origins': origins.join(',') }
-				});
-				// Reload tenant settings
-				tenantSettings = await adminSettingsAPI.getSettings('tenant');
-			}
+			const existingOrigins = client.web_origin_registry?.origins ?? [];
+			const origins = existingOrigins.some((entry) => entry.origin === origin)
+				? existingOrigins
+				: [
+						...existingOrigins,
+						{
+							origin,
+							cors: { allowed: true },
+							handoff_allowed: true,
+							iframe_allowed: false
+						}
+					];
+			client = normalizeClientArrays(
+				await adminClientsAPI.update(clientId, {
+					web_origin_registry: { origins }
+				})
+			);
+			return;
 		} catch (err) {
-			console.error('Failed to add to CORS:', err);
-			error = err instanceof Error ? err.message : 'Failed to add to CORS';
+			console.error('Failed to add to web origin registry:', err);
+			error = err instanceof Error ? err.message : 'Failed to update web origin registry';
 		} finally {
 			addingToCors = null;
 		}
@@ -772,13 +797,13 @@
 			// Metadata tab
 			logo_uri: (clientSettings.values['client.logo_uri'] as string) ?? '',
 			contacts: (clientSettings.values['client.contacts'] as string) ?? '',
-				tos_uri: (clientSettings.values['client.tos_uri'] as string) ?? '',
-				policy_uri: (clientSettings.values['client.policy_uri'] as string) ?? '',
-				client_uri: (clientSettings.values['client.client_uri'] as string) ?? '',
-				initiate_login_uri: (clientSettings.values['client.initiate_login_uri'] as string) ?? '',
-				login_ui_url:
-					client.login_ui_url ?? (clientSettings.values['client.login_ui_url'] as string) ?? '',
-				application_type: (clientSettings.values['client.application_type'] as string) ?? 'web',
+			tos_uri: (clientSettings.values['client.tos_uri'] as string) ?? '',
+			policy_uri: (clientSettings.values['client.policy_uri'] as string) ?? '',
+			client_uri: (clientSettings.values['client.client_uri'] as string) ?? '',
+			initiate_login_uri: (clientSettings.values['client.initiate_login_uri'] as string) ?? '',
+			login_ui_url:
+				client.login_ui_url ?? (clientSettings.values['client.login_ui_url'] as string) ?? '',
+			application_type: (clientSettings.values['client.application_type'] as string) ?? 'web',
 			sector_identifier_uri:
 				(clientSettings.values['client.sector_identifier_uri'] as string) ?? '',
 			// Advanced tab
@@ -835,6 +860,7 @@
 			client = normalizeClientArrays(
 				await adminClientsAPI.update(clientId, {
 					...editForm,
+					web_origin_registry: buildWebOriginRegistry(editForm.redirect_uris ?? []),
 					...toClientDownstreamGrantUpdateInput(downstreamGrantEditForm),
 					login_ui_url: settingsEditForm.login_ui_url?.trim()
 						? settingsEditForm.login_ui_url.trim()
@@ -928,23 +954,23 @@
 						saveError = `Warning: Some settings could not be saved: ${rejectedKeys}`;
 					}
 
-						// Reload client settings to get the new version
-						clientSettings = syncClientSettingsWithClient(
-							await scopedSettingsAPI.getClientSettings(clientId, 'client'),
-							client
-						);
-					} catch (err) {
-						if (err instanceof SettingsConflictError) {
-							saveError = `設定が他のユーザーによって更新されました。現在の設定を確認して再度お試しください。(Current version: ${err.currentVersion})`;
-							// Reload settings to show current state
-							try {
-								clientSettings = syncClientSettingsWithClient(
-									await scopedSettingsAPI.getClientSettings(clientId, 'client'),
-									client
-								);
-							} catch (reloadErr) {
-								console.error('Failed to reload settings after conflict:', reloadErr);
-							}
+					// Reload client settings to get the new version
+					clientSettings = syncClientSettingsWithClient(
+						await scopedSettingsAPI.getClientSettings(clientId, 'client'),
+						client
+					);
+				} catch (err) {
+					if (err instanceof SettingsConflictError) {
+						saveError = `設定が他のユーザーによって更新されました。現在の設定を確認して再度お試しください。(Current version: ${err.currentVersion})`;
+						// Reload settings to show current state
+						try {
+							clientSettings = syncClientSettingsWithClient(
+								await scopedSettingsAPI.getClientSettings(clientId, 'client'),
+								client
+							);
+						} catch (reloadErr) {
+							console.error('Failed to reload settings after conflict:', reloadErr);
+						}
 						return;
 					}
 					throw err;
@@ -1412,14 +1438,14 @@
 									<span class="uri-text">{uri}</span>
 									{#if tenantSettings}
 										{#if isOriginInCors(uri)}
-											<span class="badge badge-success">CORS OK</span>
+											<span class="badge badge-success">Origin OK</span>
 										{:else}
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={() => addToCors(uri)}
 												disabled={addingToCors === uri}
 											>
-												{addingToCors === uri ? 'Adding...' : 'Add to CORS'}
+												{addingToCors === uri ? 'Adding...' : 'Add Origin'}
 											</button>
 										{/if}
 									{/if}
@@ -1428,8 +1454,8 @@
 						</ul>
 						{#if tenantSettings && client.redirect_uris.some((uri) => !isOriginInCors(uri))}
 							<p class="form-hint cors-hint">
-								Some redirect URIs are not in the CORS allowlist. Direct Auth API calls from these
-								origins may fail.
+								Some redirect URI origins are not in this client's web origin registry. Direct Auth
+								and browser handoff calls from these origins may fail.
 							</p>
 						{/if}
 					{:else}
@@ -2407,12 +2433,10 @@
 									localhost.
 								</p>
 							{:else}
-									<p class="display-text">
-										{client?.login_ui_url || 'Not configured'}
-									</p>
-								<p class="form-hint">
-									Client-specific login UI base URL (overrides global UI_URL)
+								<p class="display-text">
+									{client?.login_ui_url || 'Not configured'}
 								</p>
+								<p class="form-hint">Client-specific login UI base URL (overrides global UI_URL)</p>
 							{/if}
 						</div>
 

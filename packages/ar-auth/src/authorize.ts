@@ -94,6 +94,48 @@ import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 
+const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
+const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
+const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
+
+function clampHandoffArtifactTtlSeconds(value: number): number {
+  return Math.min(
+    MAX_HANDOFF_ARTIFACT_TTL_SECONDS,
+    Math.max(MIN_HANDOFF_ARTIFACT_TTL_SECONDS, value)
+  );
+}
+
+function parseHandoffArtifactTtlSeconds(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return clampHandoffArtifactTtlSeconds(Math.trunc(value));
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return clampHandoffArtifactTtlSeconds(Math.trunc(parsed));
+    }
+  }
+  return undefined;
+}
+
+function resolveHandoffArtifactTtlSeconds(
+  c: Context<{ Bindings: Env }>,
+  clientMetadata: Record<string, unknown>
+): number {
+  const clientTtl =
+    parseHandoffArtifactTtlSeconds(clientMetadata.handoff_artifact_ttl_seconds) ??
+    parseHandoffArtifactTtlSeconds(clientMetadata.handoff_artifact_ttl);
+  if (clientTtl !== undefined) {
+    return clientTtl;
+  }
+
+  return (
+    parseHandoffArtifactTtlSeconds(
+      (c.env as unknown as Record<string, unknown>).HANDOFF_ARTIFACT_TTL_SECONDS
+    ) ?? DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS
+  );
+}
+
 // ===== Key Caching for Performance Optimization =====
 // Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
 const signingKeyCache = new Map<
@@ -2047,6 +2089,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let sessionUserId: string | undefined;
   let authTime: number | undefined;
   let sessionAcr: string | undefined;
+  let sessionAmr: string[] | undefined;
   let isAnonymousSession: boolean = false;
 
   // Check for existing session (cookie)
@@ -2089,6 +2132,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           sessionUserId = session.userId;
           // Check if this is an anonymous session (architecture-decisions.md §17)
           isAnonymousSession = session.data?.is_anonymous === true;
+          if (typeof session.data?.acr === 'string' && session.data.acr.length > 0) {
+            sessionAcr = session.data.acr;
+          }
+          if (Array.isArray(session.data?.amr)) {
+            const normalizedAmr = session.data.amr.filter(
+              (method): method is string => typeof method === 'string' && method.length > 0
+            );
+            if (normalizedAmr.length > 0) {
+              sessionAmr = normalizedAmr;
+            }
+          }
           // Don't set authTime from session if this is a confirmed re-authentication
           // (it will be set later based on prompt parameter)
           if (_confirmed !== 'true') {
@@ -2268,6 +2322,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sessionUserId = idTokenPayload.sub as string;
         authTime = idTokenPayload.auth_time as number;
         sessionAcr = idTokenPayload.acr as string;
+        if (Array.isArray(idTokenPayload.amr)) {
+          const normalizedAmr = idTokenPayload.amr.filter(
+            (method): method is string => typeof method === 'string' && method.length > 0
+          );
+          if (normalizedAmr.length > 0) {
+            sessionAmr = normalizedAmr;
+          }
+        }
         log.info('id_token_hint verified successfully', {
           action: 'id_token_hint_verify',
           sub: sessionUserId,
@@ -2447,12 +2509,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const handoffToken = crypto.randomUUID();
         const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken);
 
+        const handoffArtifactTtlSeconds = resolveHandoffArtifactTtlSeconds(
+          c,
+          clientMetadata as unknown as Record<string, unknown>
+        );
+
         await handoffStore.storeChallengeRpc({
           id: `handoff:${handoffToken}`,
           type: 'handoff',
           userId: sessionUserId!,
           challenge: sessionId!,
-          ttl: 30, // 30 seconds
+          ttl: handoffArtifactTtlSeconds,
           metadata: {
             client_id: validClientId,
             state,
@@ -2513,6 +2580,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         login_hint,
         sessionUserId,
         authTime, // Preserve original auth_time
+        issuer: getRequestIssuer(c),
+        session_mode:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? 'token_session'
+            : 'managed_browser_session',
+        handoff_methods:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? ['dpop_token_verify']
+            : ['cookie_session_finalize'],
+        allowed_redirect_origins: clientMetadata?.allowed_redirect_origins ?? [],
+        iframe_allowed:
+          (clientMetadata as unknown as { iframe_allowed?: boolean } | null)?.iframe_allowed ===
+          true,
+        tenant_id: tenantId,
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
         cancel_uri: validatedCancelUri,
@@ -2577,6 +2658,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         display,
         ui_locales,
         login_hint,
+        session_mode:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? 'token_session'
+            : 'managed_browser_session',
+        handoff_methods:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? ['dpop_token_verify']
+            : ['cookie_session_finalize'],
+        allowed_redirect_origins: clientMetadata?.allowed_redirect_origins ?? [],
+        iframe_allowed:
+          (clientMetadata as unknown as { iframe_allowed?: boolean } | null)?.iframe_allowed ===
+          true,
         // Client metadata for login page display (OIDC Dynamic OP requirement)
         client_name: clientMetadata?.client_name || client_id,
         logo_uri: clientMetadata?.logo_uri,
@@ -3210,6 +3303,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         claims,
         authTime: currentAuthTime,
         acr: selectedAcr,
+        amr: sessionAmr,
         dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
         sid: sessionId, // OIDC Session Management: Session ID for RP-Initiated Logout
         authorizationDetails: authorization_details, // RFC 9396 RAR
@@ -3312,6 +3406,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Add acr claim if acr_values was requested (OIDC Core 2: SHOULD return acr)
       if (selectedAcr) {
         idTokenClaims.acr = selectedAcr;
+      }
+      if (sessionAmr?.length) {
+        idTokenClaims.amr = sessionAmr;
       }
 
       // OIDC Core 5.4: For response_type=id_token (no access token), scope-based claims

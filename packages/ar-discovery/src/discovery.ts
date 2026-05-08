@@ -307,6 +307,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'at_hash',
       'auth_time', // OIDC Core: Authentication timestamp
       'acr', // OIDC Core: Authentication Context Class Reference
+      'amr', // OIDC Core: Authentication Methods References
       // OIDC Native SSO 1.0: ds_hash (conditionally included when enabled)
       ...(nativeSSOEnabled ? ['ds_hash'] : []),
       // Profile scope claims (OIDC Core 5.4)

@@ -6,6 +6,7 @@
  */
 
 import { buildDiagnosticHeaders, API_BASE_URL } from '$lib/api/client';
+import { authrimFetch } from '$lib/authrim/fetch';
 
 // =============================================================================
 // Types
@@ -94,8 +95,8 @@ export async function fetchLoginMethods(): Promise<{
 	const timeoutId = setTimeout(() => controller.abort(), 15000);
 
 	try {
-		const url = `${API_BASE_URL}/api/auth/login-methods`;
-		const response = await fetch(url, {
+		const response = await authrimFetch('/api/auth/login-methods', {
+			baseUrl: API_BASE_URL,
 			method: 'GET',
 			headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
 			signal: controller.signal

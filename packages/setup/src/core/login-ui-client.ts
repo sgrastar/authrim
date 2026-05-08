@@ -20,6 +20,7 @@ import {
   readResponseJsonWithLimit,
   readResponseTextWithLimit,
 } from './http-limits.js';
+import { buildBrowserClientMetadata } from './browser-client-metadata.js';
 
 // =============================================================================
 // Types
@@ -28,7 +29,7 @@ import {
 export interface LoginUiClientConfig {
   /** API base URL (e.g., https://prod-ar-router.workers.dev) */
   apiBaseUrl: string;
-  /** Login UI URL (e.g., https://prod-ar-login-ui.pages.dev) */
+  /** Login UI URL (e.g., https://prod-ar-login-ui.workers.dev) */
   loginUiUrl: string;
   /** Path to admin_api_secret.txt */
   adminApiSecretPath: string;
@@ -104,8 +105,10 @@ interface AdminClientListResponse {
     grant_types: string[];
     is_trusted?: boolean;
     skip_consent?: boolean;
-    token_endpoint_auth_method?: string;
-    require_pkce?: boolean;
+  token_endpoint_auth_method?: string;
+  require_pkce?: boolean;
+  browser_public_client_mode?: string;
+  browser_refresh_token_policy?: string;
   }>;
   pagination: {
     total: number;
@@ -197,8 +200,10 @@ async function findExistingClient(
 
   return {
     clientId: existing.client_id,
-    needsMigration:
-      existing.token_endpoint_auth_method !== 'none' || existing.require_pkce !== true,
+  needsMigration:
+      existing.token_endpoint_auth_method !== 'none' ||
+      existing.require_pkce !== true ||
+      existing.browser_refresh_token_policy !== 'disabled',
   };
 }
 
@@ -223,6 +228,8 @@ async function updateClientToPublic(
     body: JSON.stringify({
       token_endpoint_auth_method: 'none',
       require_pkce: true,
+      browser_public_client_mode: 'cookie_fallback',
+      browser_refresh_token_policy: 'disabled',
     }),
   });
 
@@ -253,17 +260,13 @@ async function createClient(
       Accept: 'application/json',
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
-    body: JSON.stringify({
-      client_name: LOGIN_UI_CLIENT_NAME,
-      redirect_uris: redirectUris,
-      grant_types: ['authorization_code'],
-      response_types: ['code'],
-      scope: 'openid profile email',
-      is_trusted: true,
-      skip_consent: true,
-      token_endpoint_auth_method: 'none',
-      require_pkce: true,
-    }),
+    body: JSON.stringify(
+      buildBrowserClientMetadata({
+        clientName: LOGIN_UI_CLIENT_NAME,
+        redirectUris,
+        sessionProfile: 'managed_browser_session',
+      })
+    ),
   });
 
   if (!response.ok) {

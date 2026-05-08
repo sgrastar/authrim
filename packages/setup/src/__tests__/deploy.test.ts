@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execa } from 'execa';
-import { buildPagesUiBuildEnv, deployAll, deployWorker } from '../core/deploy.js';
+import { buildUiWorkerBuildEnv, deployAll, deployWorker } from '../core/deploy.js';
 
 vi.mock('execa', () => ({
   execa: vi.fn(),
@@ -45,9 +45,9 @@ afterEach(() => {
   }
 });
 
-describe('buildPagesUiBuildEnv', () => {
+describe('buildUiWorkerBuildEnv', () => {
   it('strips leaked PUBLIC_* values and injects the runtime API base URL', () => {
-    const result = buildPagesUiBuildEnv(
+    const result = buildUiWorkerBuildEnv(
       {
         KEEP_ME: '1',
         PUBLIC_API_BASE_URL: 'https://stale.example.com',
@@ -65,7 +65,7 @@ describe('buildPagesUiBuildEnv', () => {
   });
 
   it('prefers package-local env files over shell PUBLIC_* variables', () => {
-    const result = buildPagesUiBuildEnv(
+    const result = buildUiWorkerBuildEnv(
       {
         PUBLIC_API_BASE_URL: 'https://shell.example.com',
         PUBLIC_LOGIN_UI_CLIENT_ID: 'client-from-shell',

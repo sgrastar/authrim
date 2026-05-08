@@ -153,8 +153,8 @@ const ko: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI 배포 방법',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Cloudflare Pages에 배포 (권장)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Cloudflare Workers에 배포 (권장)',
   'ui.customOption': '사용자 정의 도메인',
   'ui.customDesc': '자체 호스팅 사용',
   'ui.skipOption': '건너뛰기',
@@ -748,7 +748,7 @@ const ko: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': '로그인 UI',
-  'web.config.loginUiDesc': 'Cloudflare Pages에 배포되는 사전 구축된 인증 UI.',
+  'web.config.loginUiDesc': 'Cloudflare Workers에 배포되는 사전 구축된 인증 UI.',
   'web.config.adminUi': '관리자 UI',
   'web.config.adminUiDesc': '사용자, 클라이언트 및 설정을 위한 관리 대시보드.',
 
@@ -757,9 +757,9 @@ const ko: Translations = {
   'web.url.apiDomain': 'API 도메인',
   'web.url.apiDomainHint': 'workers.dev 서브도메인을 사용하려면 비워두세요',
   'web.url.loginDomain': '로그인 UI 도메인',
-  'web.url.loginDomainHint': 'pages.dev 서브도메인을 사용하려면 비워두세요',
+  'web.url.loginDomainHint': 'workers.dev 서브도메인을 사용하려면 비워두세요',
   'web.url.adminDomain': '관리자 UI 도메인',
-  'web.url.adminDomainHint': 'pages.dev 서브도메인을 사용하려면 비워두세요',
+  'web.url.adminDomainHint': 'workers.dev 서브도메인을 사용하려면 비워두세요',
 
   // Web UI Database
   'web.db.title': '데이터베이스 구성',
@@ -918,7 +918,7 @@ const ko: Translations = {
   'web.section.apiDomain': 'API / 발급자 도메인',
   'web.section.uiDomains': 'UI 도메인 (선택 사항)',
   'web.section.uiDomainsHint':
-    '로그인/관리자 UI용 사용자 정의 도메인. 각각 독립적으로 설정할 수 있습니다. Cloudflare Pages 기본값을 사용하려면 비워두세요.',
+    '로그인/관리자 UI용 사용자 정의 도메인. 각각 독립적으로 설정할 수 있습니다. Cloudflare Workers 기본값을 사용하려면 비워두세요.',
   'web.section.corsHint':
     'CORS: 로그인/관리자 UI에서 API로의 교차 출처 요청은 자동으로 허용됩니다.',
   'web.section.configPreview': '구성 미리보기',
@@ -930,7 +930,7 @@ const ko: Translations = {
   'web.preview.issuerUrl': '발급자 URL:',
   'web.preview.loginUi': '로그인 UI:',
   'web.preview.adminUi': '관리자 UI:',
-  'web.preview.pagesUrl': '로그인 UI (Pages):',
+  'web.preview.pagesUrl': '로그인 UI (Worker):',
   'web.preview.tenantDiscover': '테넌트 선택 (공통 입구):',
   'web.preview.adminAccess': '관리자 UI 접속:',
   'web.preview.firstTenant': '{{name}} (기본 테넌트)',
@@ -1059,7 +1059,7 @@ const ko: Translations = {
   'web.envDetail.kvNamespaces': 'KV 네임스페이스',
   'web.envDetail.queues': '큐',
   'web.envDetail.r2Buckets': 'R2 버킷',
-  'web.envDetail.pagesProjects': 'Pages 프로젝트',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '모든 Workers 업데이트',
@@ -1080,9 +1080,9 @@ const ko: Translations = {
   'web.envDetail.action': '작업',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'UI 업데이트 (Pages)',
+  'web.envDetail.uiUpdate': 'UI 업데이트 (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Admin UI 또는 Login UI를 개별적으로 업데이트합니다. 이들은 Cloudflare Pages에 배포됩니다.',
+    'Admin UI 또는 Login UI를 개별적으로 업데이트합니다. 이들은 Cloudflare Workers에 배포됩니다.',
   'web.envDetail.updateNow': '업데이트',
 
   // Web UI Delete Section
@@ -1095,7 +1095,7 @@ const ko: Translations = {
   'web.delete.kvNamespaces': 'KV 네임스페이스',
   'web.delete.queues': '큐',
   'web.delete.r2Buckets': 'R2 버킷',
-  'web.delete.pagesProjects': 'Pages 프로젝트',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': '취소',
   'web.delete.confirmBtn': '선택 항목 삭제',
 

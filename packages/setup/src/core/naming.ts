@@ -177,16 +177,6 @@ export function getAutoWorkerUrl(
   return `https://${getWorkerName(env, component)}.${accountSubdomain}.workers.dev`;
 }
 
-/**
- * Generate auto URL for Pages (pages.dev domain)
- *
- * @example
- * getAutoPagesUrl('prod', 'ar-login-ui') => 'https://prod-ar-login-ui.pages.dev'
- */
-export function getAutoPagesUrl(env: string, projectName: string): string {
-  return `https://${env}-${projectName}.pages.dev`;
-}
-
 // =============================================================================
 // Deployment Order
 // =============================================================================

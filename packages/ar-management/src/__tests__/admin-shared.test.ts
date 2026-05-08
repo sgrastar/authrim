@@ -182,6 +182,13 @@ function createMockBucket(initial: Record<string, StoredObject> = {}) {
           return null;
         }
         return {
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(object.body);
+              controller.close();
+            },
+          }),
+          size: object.body.byteLength,
           text: async () => new TextDecoder().decode(object.body),
           writeHttpMetadata(headers: Headers) {
             if (object.contentType) {

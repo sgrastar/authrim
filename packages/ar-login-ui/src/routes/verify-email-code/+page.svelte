@@ -3,14 +3,24 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { emailCodeAPI } from '$lib/api/client';
+	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { auth } from '$lib/stores/auth';
+	import { isValidRedirectUrl } from '$lib/utils/url-validation';
 	import { createPinInput, melt } from '@melt-ui/svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import {
+		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
+		LOGIN_UI_SESSION_STORAGE_KEYS,
+		consumeLoginUiSessionItem,
+		getLoginUiSessionItem,
+		removeLoginUiSessionItems
+	} from '$lib/authrim/storage-keys';
 
 	let email = $state('');
 	let inviteToken = $state('');
+	let authorizationChallengeId = $state('');
 	let error = $state('');
 	let success = $state('');
 	let loading = $state(false);
@@ -19,9 +29,22 @@
 	let canResend = $state(false);
 	let intervalId: number | null = null;
 
+	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
+		return messageForApiError(apiError, {
+			unknown: () => $LL.error_unknown(),
+			invalidRequest: () => $LL.error_invalid_request(),
+			accessDenied: () => $LL.error_access_denied(),
+			serverError: () => $LL.error_server_error(),
+			loginRequired: () => $LL.error_login_required(),
+			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
+		});
+	}
+
 	function getStoredCustomFields(): Record<string, unknown> | undefined {
 		try {
-			const raw = sessionStorage.getItem('signup_custom_fields');
+			const raw =
+				getLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields) ??
+				consumeLoginUiSessionItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.signupCustomFields);
 			if (!raw) {
 				return undefined;
 			}
@@ -59,6 +82,7 @@
 		// Get email and invite_token from URL parameters
 		email = $page.url.searchParams.get('email') || '';
 		inviteToken = $page.url.searchParams.get('invite_token') || '';
+		authorizationChallengeId = $page.url.searchParams.get('challenge_id') || '';
 
 		// If no email, redirect to login
 		if (!email) {
@@ -113,15 +137,16 @@
 		loading = true;
 
 		try {
-			const { data, error: apiError } = await emailCodeAPI.verify({
+			const { data: verifyData, error: apiError } = await emailCodeAPI.verify({
 				code: verifyCode,
-				email
+				email,
+				authorizationChallengeId: authorizationChallengeId || undefined
 			});
 
 			if (apiError) {
 				// Use generic error message for all failures to avoid
 				// leaking session state information (e.g., session_mismatch)
-				error = $LL.emailCode_errorInvalid();
+				error = getApiErrorMessage(apiError);
 				// Clear the input on error
 				value.set([]);
 				return;
@@ -130,36 +155,23 @@
 			// Success
 			success = $LL.emailCode_success();
 			try {
-				sessionStorage.removeItem('signup_custom_fields');
+				removeLoginUiSessionItems([
+					LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.signupCustomFields
+				]);
 			} catch {
 				// Non-fatal
 			}
 
-			// Store session and update auth store
-			if (data?.sessionId) {
-				auth.login(data.sessionId, {
-					userId: data.userId,
-					email: data.user?.email || email,
-					name: data.user?.name || undefined
-				});
-			}
+			// Restore authenticated state from the HttpOnly managed session cookie.
+			await auth.refreshFromSession();
 
-			// Apply invitation if present
-			if (inviteToken && data?.userId) {
-				try {
-					await fetch('/api/v1/invitations/use', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ token: inviteToken, user_id: data.userId })
-					});
-				} catch {
-					// Non-fatal: proceed regardless
-				}
-			}
-
-			// Redirect to home after delay
+			// Redirect after delay. OAuth/OIDC challenges resume /authorize via the server-provided URL.
 			setTimeout(() => {
-				window.location.href = '/';
+				window.location.href =
+					verifyData?.redirect_url && isValidRedirectUrl(verifyData.redirect_url)
+						? verifyData.redirect_url
+						: '/';
 			}, 2000);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
@@ -176,11 +188,12 @@
 		try {
 			const { error: apiError } = await emailCodeAPI.send({
 				email,
+				invite_token: inviteToken || undefined,
 				custom_fields: getStoredCustomFields()
 			});
 
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to resend code');
+				throw new Error(getApiErrorMessage(apiError));
 			}
 
 			// Clear the input

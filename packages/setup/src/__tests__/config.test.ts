@@ -57,11 +57,11 @@ describe('AuthrimConfigSchema', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://prod-ar-login-ui.pages.dev',
+          auto: 'https://prod-ar-login-ui.workers.dev',
         },
         adminUi: {
           custom: null,
-          auto: 'https://prod-ar-admin-ui.pages.dev',
+          auto: 'https://prod-ar-admin-ui.workers.dev',
         },
       },
       oidc: {},

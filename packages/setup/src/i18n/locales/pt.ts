@@ -156,8 +156,8 @@ const pt: Translations = {
 
   // UI deployment
   'ui.prompt': 'Método de implantação da UI',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Implantar no Cloudflare Pages (recomendado)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Implantar no Cloudflare Workers (recomendado)',
   'ui.customOption': 'Domínio personalizado',
   'ui.customDesc': 'Usar sua própria hospedagem',
   'ui.skipOption': 'Pular',
@@ -758,7 +758,7 @@ const pt: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI de Login',
-  'web.config.loginUiDesc': 'UI de autenticação pré-construída implantada no Cloudflare Pages.',
+  'web.config.loginUiDesc': 'UI de autenticação pré-construída implantada no Cloudflare Workers.',
   'web.config.adminUi': 'UI de Admin',
   'web.config.adminUiDesc': 'Painel de gerenciamento para usuários, clientes e configurações.',
 
@@ -767,9 +767,9 @@ const pt: Translations = {
   'web.url.apiDomain': 'Domínio API',
   'web.url.apiDomainHint': 'Deixe vazio para usar subdomínio workers.dev',
   'web.url.loginDomain': 'Domínio UI de Login',
-  'web.url.loginDomainHint': 'Deixe vazio para usar subdomínio pages.dev',
+  'web.url.loginDomainHint': 'Deixe vazio para usar subdomínio workers.dev',
   'web.url.adminDomain': 'Domínio UI de Admin',
-  'web.url.adminDomainHint': 'Deixe vazio para usar subdomínio pages.dev',
+  'web.url.adminDomainHint': 'Deixe vazio para usar subdomínio workers.dev',
 
   // Web UI Database
   'web.db.title': 'Configuração do Banco de Dados',
@@ -936,7 +936,7 @@ const pt: Translations = {
   'web.section.apiDomain': 'Domínio API / Emissor',
   'web.section.uiDomains': 'Domínios UI (Opcional)',
   'web.section.uiDomainsHint':
-    'Domínios personalizados para UIs de Login/Admin. Cada um pode ser configurado independentemente. Deixe vazio para usar padrão do Cloudflare Pages.',
+    'Domínios personalizados para UIs de Login/Admin. Cada um pode ser configurado independentemente. Deixe vazio para usar padrão do Cloudflare Workers.',
   'web.section.corsHint':
     'CORS: Requisições cross-origin de UI de Login/Admin para API são permitidas automaticamente.',
   'web.section.configPreview': 'Prévia da Configuração',
@@ -948,7 +948,7 @@ const pt: Translations = {
   'web.preview.issuerUrl': 'URL do Emissor:',
   'web.preview.loginUi': 'UI de Login:',
   'web.preview.adminUi': 'UI de Admin:',
-  'web.preview.pagesUrl': 'UI de Login (Pages):',
+  'web.preview.pagesUrl': 'UI de Login (Worker):',
   'web.preview.tenantDiscover': 'Seleção de Tenant (Entrada Comum):',
   'web.preview.adminAccess': 'Acesso à UI de Admin:',
   'web.preview.firstTenant': '{{name}} (Tenant Principal)',
@@ -1082,7 +1082,7 @@ const pt: Translations = {
   'web.envDetail.kvNamespaces': 'Namespaces KV',
   'web.envDetail.queues': 'Filas',
   'web.envDetail.r2Buckets': 'Buckets R2',
-  'web.envDetail.pagesProjects': 'Projetos Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Atualizar todos os Workers',
@@ -1103,9 +1103,9 @@ const pt: Translations = {
   'web.envDetail.action': 'Ação',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Atualizar UI (Pages)',
+  'web.envDetail.uiUpdate': 'Atualizar UI (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Atualizar Admin UI ou Login UI individualmente. Estes são implantados no Cloudflare Pages.',
+    'Atualizar Admin UI ou Login UI individualmente. Estes são implantados no Cloudflare Workers.',
   'web.envDetail.updateNow': 'Atualizar',
 
   // Web UI Delete Section
@@ -1119,7 +1119,7 @@ const pt: Translations = {
   'web.delete.kvNamespaces': 'Namespaces KV',
   'web.delete.queues': 'Filas',
   'web.delete.r2Buckets': 'Buckets R2',
-  'web.delete.pagesProjects': 'Projetos Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Cancelar',
   'web.delete.confirmBtn': 'Excluir Selecionados',
 

@@ -61,7 +61,7 @@ import {
   getLocalVersion,
 } from '../../core/source.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
-import { buildUrlsConfig, getPagesDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
+import { buildUrlsConfig, getUiWorkersDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
 import { generateRandomTenantId, isValidTenantId } from '../../core/tenant-id.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 
@@ -1694,7 +1694,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(
     `    ${t('infra.api')}        ${chalk.gray(getWorkersDevUrl(envPrefix + '-ar-router'))}`
   );
-  console.log(`    ${t('infra.ui')}         ${chalk.gray(getPagesDevUrl(envPrefix + '-ar-ui'))}`);
+  console.log(`    ${t('infra.ui')}         ${chalk.gray(getUiWorkersDevUrl(envPrefix + '-ar-ui'))}`);
   console.log('');
 
   // Step 5: Tenant configuration
@@ -2990,8 +2990,8 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
   if (!config.urls) {
     config.urls = {
       api: { custom: null, auto: getWorkersDevUrl(env + '-ar-router') },
-      loginUi: { custom: null, auto: getPagesDevUrl(env + '-ar-login-ui'), sameAsApi: false },
-      adminUi: { custom: null, auto: getPagesDevUrl(env + '-ar-admin-ui'), sameAsApi: false },
+      loginUi: { custom: null, auto: getUiWorkersDevUrl(env + '-ar-login-ui'), sameAsApi: false },
+      adminUi: { custom: null, auto: getUiWorkersDevUrl(env + '-ar-admin-ui'), sameAsApi: false },
     };
   }
 
@@ -3032,12 +3032,12 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
   }
 
   const loginUiDomain = await input({
-    message: 'Login UI domain (leave empty for pages.dev)',
+    message: 'Login UI domain (leave empty for workers.dev)',
     default: stripProtocol(config.urls.loginUi?.custom),
   });
 
   const adminUiDomain = await input({
-    message: 'Admin UI domain (leave empty for pages.dev)',
+    message: 'Admin UI domain (leave empty for workers.dev)',
     default: stripProtocol(config.urls.adminUi?.custom),
   });
 

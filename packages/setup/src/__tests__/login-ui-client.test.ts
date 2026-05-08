@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ensureLoginUiClient } from '../core/login-ui-client.js';
+import { buildBrowserClientMetadata } from '../core/browser-client-metadata.js';
 
 function textResponse(body: string, status: number): Response {
   return new Response(body, {
@@ -66,7 +67,7 @@ describe('ensureLoginUiClient', () => {
 
     const resultPromise = ensureLoginUiClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      loginUiUrl: 'https://single-ar-login-ui.pages.dev',
+      loginUiUrl: 'https://single-ar-login-ui.workers.dev',
       adminApiSecretPath,
       onProgress: (message) => progress.push(message),
       retryDelayMs: 1,
@@ -98,7 +99,7 @@ describe('ensureLoginUiClient', () => {
 
     const result = await ensureLoginUiClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      loginUiUrl: 'https://single-ar-login-ui.pages.dev',
+      loginUiUrl: 'https://single-ar-login-ui.workers.dev',
       adminApiSecretPath,
       tenantId: 'default',
       maxRetries: 1,
@@ -109,5 +110,76 @@ describe('ensureLoginUiClient', () => {
     const secondCallHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
     expect(firstCallHeaders['X-Tenant-Id']).toBe('default');
     expect(secondCallHeaders['X-Tenant-Id']).toBe('default');
+  });
+
+  it('creates the built-in Login UI client with browser refresh tokens disabled', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'client-login-ui',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    await ensureLoginUiClient({
+      apiBaseUrl: 'https://single-ar-router.example.workers.dev',
+      loginUiUrl: 'https://login.example.test',
+      adminApiSecretPath,
+      maxRetries: 1,
+    });
+
+    const createBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(createBody).toMatchObject({
+      token_endpoint_auth_method: 'none',
+      require_pkce: true,
+      browser_public_client_mode: 'cookie_fallback',
+      browser_refresh_token_policy: 'disabled',
+      web_origin_registry: {
+        origins: [
+          {
+            origin: 'https://login.example.test',
+            cors: { allowed: true },
+            handoff_allowed: true,
+            iframe_allowed: false,
+          },
+        ],
+      },
+    });
+    expect(createBody).not.toHaveProperty('dpop_bound_access_tokens');
+  });
+
+  it('builds token_session browser client metadata with DPoP-bound refresh token opt-in', () => {
+    expect(
+      buildBrowserClientMetadata({
+        clientName: 'Browser Token App',
+        redirectUris: ['https://app.example.test/callback'],
+        allowedRedirectOrigins: ['https://app.example.test'],
+        sessionProfile: 'token_session',
+      })
+    ).toMatchObject({
+      client_name: 'Browser Token App',
+      token_endpoint_auth_method: 'none',
+      require_pkce: true,
+      browser_public_client_mode: 'strict',
+      browser_refresh_token_policy: 'dpop_bound',
+      dpop_bound_access_tokens: true,
+      allowed_redirect_origins: ['https://app.example.test'],
+      web_origin_registry: {
+        origins: [
+          {
+            origin: 'https://app.example.test',
+            cors: { allowed: true },
+            handoff_allowed: true,
+            iframe_allowed: false,
+          },
+        ],
+      },
+    });
   });
 });

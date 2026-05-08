@@ -13,8 +13,8 @@ describe('generated api smoke helpers', () => {
     const config = createDefaultConfig('single');
     config.urls = {
       api: { custom: null, auto: 'https://single-ar-router.example.workers.dev' },
-      loginUi: { custom: null, auto: 'https://single-login.pages.dev', sameAsApi: false },
-      adminUi: { custom: null, auto: 'https://single-admin.pages.dev', sameAsApi: false },
+      loginUi: { custom: null, auto: 'https://single-login.workers.dev', sameAsApi: false },
+      adminUi: { custom: null, auto: 'https://single-admin.workers.dev', sameAsApi: false },
     };
 
     expect(buildApiSmokeBaseUrl(config)).toBe('https://single-ar-router.example.workers.dev');

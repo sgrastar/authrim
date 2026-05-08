@@ -25,8 +25,8 @@ export function getWorkersDevUrl(workerName: string, workersSubdomain?: string |
   return `https://${workerName}.workers.dev`;
 }
 
-export function getPagesDevUrl(projectName: string): string {
-  return `https://${projectName}.pages.dev`;
+export function getUiWorkersDevUrl(workerName: string, workersSubdomain?: string | null): string {
+  return getWorkersDevUrl(workerName, workersSubdomain);
 }
 
 export function stripTrailingSlash(url: string): string {
@@ -125,7 +125,7 @@ export function resolveSharedLoginUiBaseUrl(
     return stripTrailingSlash(loginUiUrl);
   }
 
-  return getPagesDevUrl(`${options.env}-ar-login-ui`);
+  return getUiWorkersDevUrl(`${options.env}-ar-login-ui`, options.workersSubdomain);
 }
 
 export function resolveLoginUiEntryUrl(
@@ -150,7 +150,7 @@ export function resolveAdminUiEntryUrl(
   const adminUiUrl = config?.urls?.adminUi?.custom || config?.urls?.adminUi?.auto;
   const adminBaseUrl = adminUiUrl
     ? stripTrailingSlash(adminUiUrl)
-    : getPagesDevUrl(`${options.env}-ar-admin-ui`);
+    : getUiWorkersDevUrl(`${options.env}-ar-admin-ui`, options.workersSubdomain);
   return `${adminBaseUrl}/admin/info`;
 }
 
@@ -209,12 +209,12 @@ export function buildUrlsConfig(options: BuildUrlsConfigOptions): UrlsConfig {
     },
     loginUi: {
       custom: loginUiCustomUrl,
-      auto: existingUrls?.loginUi?.auto || getPagesDevUrl(`${env}-ar-login-ui`),
+      auto: existingUrls?.loginUi?.auto || getUiWorkersDevUrl(`${env}-ar-login-ui`, workersSubdomain),
       sameAsApi: apiCustomUrl !== null && loginUiCustomUrl === apiCustomUrl,
     },
     adminUi: {
       custom: adminUiCustomUrl,
-      auto: existingUrls?.adminUi?.auto || getPagesDevUrl(`${env}-ar-admin-ui`),
+      auto: existingUrls?.adminUi?.auto || getUiWorkersDevUrl(`${env}-ar-admin-ui`, workersSubdomain),
       sameAsApi: apiCustomUrl !== null && adminUiCustomUrl === apiCustomUrl,
     },
   };

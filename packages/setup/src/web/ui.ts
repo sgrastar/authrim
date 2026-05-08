@@ -3138,14 +3138,14 @@ export function getHtmlTemplate(
         <h4>🖥️ <span data-i18n="web.section.uiDomains">UI Domains (Optional)</span></h4>
         <div class="section-hint" data-i18n="web.section.uiDomainsHint">
           Custom domains for Login/Admin UIs. Each can be set independently.
-          Leave empty to use Cloudflare Pages default.
+          Leave empty to use the UI Worker default.
         </div>
 
         <div class="domain-row" id="login-domain-row">
           <span class="domain-label" data-i18n="web.domain.loginUi">Login UI</span>
           <div class="domain-input-wrapper">
             <input type="text" id="login-domain" placeholder="login.example.com" data-i18n-placeholder="web.form.loginDomainPlaceholder">
-            <span class="domain-default" id="login-default">{env}-ar-login-ui.pages.dev</span>
+            <span class="domain-default" id="login-default">{env}-ar-login-ui.workers.dev</span>
           </div>
         </div>
 
@@ -3153,7 +3153,7 @@ export function getHtmlTemplate(
           <span class="domain-label" data-i18n="web.domain.adminUi">Admin UI</span>
           <div class="domain-input-wrapper">
             <input type="text" id="admin-domain" placeholder="admin.example.com" data-i18n-placeholder="web.form.adminDomainPlaceholder">
-            <span class="domain-default" id="admin-default">{env}-ar-admin-ui.pages.dev</span>
+            <span class="domain-default" id="admin-default">{env}-ar-admin-ui.workers.dev</span>
           </div>
         </div>
 
@@ -3187,22 +3187,22 @@ export function getHtmlTemplate(
           <!-- テナント別カード (JS で描画) -->
           <div id="preview-mt-rows" aria-live="polite"></div>
 
-          <!-- Login UI Pages URL (実際の Pages deployment 先) -->
+          <!-- Login UI Worker URL -->
           <div class="infra-item" id="preview-login-pages-row" style="margin-top: 0.25rem;">
-            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI (Pages):</span>
-            <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.pages.dev</span>
+            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI (Worker):</span>
+            <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.workers.dev</span>
           </div>
 
           <!-- テナント選択 共通入り口 -->
           <div class="infra-item" id="preview-tenant-discover-row" style="margin-top: 0.25rem;">
             <span class="infra-label" data-i18n="web.preview.tenantDiscover">テナント選択 (共通入り口):</span>
-            <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.pages.dev/discover</span>
+            <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.workers.dev/discover</span>
           </div>
 
           <!-- Admin UI アクセス先 -->
           <div class="infra-item" id="preview-admin-access-row">
             <span class="infra-label" data-i18n="web.preview.adminAccess">Admin UI Access:</span>
-            <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.pages.dev/admin</span>
+            <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.workers.dev/admin</span>
           </div>
 
           <!-- 無効設定の警告 (条件に合致した時のみ表示) -->
@@ -3216,11 +3216,11 @@ export function getHtmlTemplate(
         <!-- シングルテナント用 Login UI / Admin UI 行 (multi-tenant=off 時のみ表示) -->
         <div class="infra-item" id="preview-login-row">
           <span class="infra-label" data-i18n="web.preview.loginUi">Login UI:</span>
-          <span class="infra-value" id="preview-login">{env}-ar-login-ui.pages.dev</span>
+          <span class="infra-value" id="preview-login">{env}-ar-login-ui.workers.dev</span>
         </div>
         <div class="infra-item" id="preview-admin-row">
           <span class="infra-label" data-i18n="web.preview.adminUi">Admin UI:</span>
-          <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.pages.dev</span>
+          <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.workers.dev</span>
         </div>
       </div>
 
@@ -3820,10 +3820,10 @@ export function getHtmlTemplate(
         <!-- UI Update Section (Admin UI, Login UI) -->
         <div class="resource-section" id="ui-update-section" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
           <div class="resource-section-title">
-            📱 <span data-i18n="web.envDetail.uiUpdate">Update UI (Pages)</span>
+            📱 <span data-i18n="web.envDetail.uiUpdate">Update UI (Workers)</span>
           </div>
           <p style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;" data-i18n="web.envDetail.uiUpdateDesc">
-            Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.
+            Update Admin UI or Login UI individually. These are deployed to Cloudflare Workers.
           </p>
 
           <!-- UI Components -->
@@ -3832,7 +3832,7 @@ export function getHtmlTemplate(
             <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
               <div>
                 <div style="font-weight: 600;">🖥️ Admin UI</div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-admin-ui • Cloudflare Pages</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-admin-ui • Cloudflare Worker</div>
               </div>
               <button class="btn-primary btn-sm" id="btn-update-admin-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
                 🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
@@ -3843,7 +3843,7 @@ export function getHtmlTemplate(
             <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
               <div>
                 <div style="font-weight: 600;">🔐 Login UI</div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-login-ui • Cloudflare Pages</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-login-ui • Cloudflare Worker</div>
               </div>
               <button class="btn-primary btn-sm" id="btn-update-login-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
                 🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
@@ -3890,10 +3890,10 @@ export function getHtmlTemplate(
           <div class="resource-list" id="detail-r2-list"></div>
         </div>
 
-        <!-- Pages Projects -->
+        <!-- Legacy Pages Projects -->
         <div class="resource-section" id="detail-pages-section">
           <div class="resource-section-title">
-            📄 <span data-i18n="web.envDetail.pagesProjects">Pages Projects</span> <span class="count" id="detail-pages-count">(0)</span>
+            📄 <span data-i18n="web.envDetail.pagesProjects">Legacy Pages Projects</span> <span class="count" id="detail-pages-count">(0)</span>
           </div>
           <div class="resource-list" id="detail-pages-list"></div>
         </div>
@@ -3967,7 +3967,7 @@ export function getHtmlTemplate(
           <label class="checkbox-item delete-option">
             <input type="checkbox" id="delete-pages" checked>
             <span>
-              <strong data-i18n="web.delete.pagesProjects">Pages Projects</strong>
+              <strong data-i18n="web.delete.pagesProjects">Legacy Pages Projects</strong>
               <small id="delete-pages-count">(0 projects)</small>
             </span>
           </label>
@@ -5214,9 +5214,12 @@ export function getHtmlTemplate(
       const workersDomain = workersSubdomain
         ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
         : env + '-ar-router.workers.dev';
-      // Note: Pages uses {project}.pages.dev format (no account subdomain, unlike Workers)
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
+      const loginUiWorkerDomain = workersSubdomain
+        ? env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-login-ui.workers.dev';
+      const adminUiWorkerDomain = workersSubdomain
+        ? env + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-admin-ui.workers.dev';
 
       // Issuer URL
       // Note: Tenant subdomain is only supported with custom domains, NOT workers.dev
@@ -5250,10 +5253,10 @@ export function getHtmlTemplate(
         previewLogin.textContent = 'https://' + loginDomain;
         previewLogin.style.color = '';
       } else {
-        previewLogin.textContent = 'https://' + loginPagesDomain;
+        previewLogin.textContent = 'https://' + loginUiWorkerDomain;
         previewLogin.style.color = '';
       }
-      document.getElementById('login-default').textContent = loginPagesDomain;
+      document.getElementById('login-default').textContent = loginUiWorkerDomain;
 
       // Admin UI - check if component is enabled (in custom mode)
       const adminUiEnabled = document.getElementById('comp-admin-ui').checked;
@@ -5265,10 +5268,10 @@ export function getHtmlTemplate(
         previewAdmin.textContent = 'https://' + adminDomain;
         previewAdmin.style.color = '';
       } else {
-        previewAdmin.textContent = 'https://' + adminPagesDomain;
+        previewAdmin.textContent = 'https://' + adminUiWorkerDomain;
         previewAdmin.style.color = '';
       }
-      document.getElementById('admin-default').textContent = adminPagesDomain;
+      document.getElementById('admin-default').textContent = adminUiWorkerDomain;
 
       // === マルチテナント拡張プレビュー ===
       const previewMtSection = document.getElementById('preview-multi-tenant-section');
@@ -5325,15 +5328,15 @@ export function getHtmlTemplate(
         mtRowsContainer.appendChild(makeBlock(t('web.preview.firstTenant', { name: tenantName }), firstBase));
         mtRowsContainer.appendChild(makeBlock(t('web.preview.otherTenants'), otherBase));
 
-        // Login UI Pages URL (全テナント共通の Pages デプロイ先)
+        // Login UI Worker URL (shared by all tenants)
         const loginPagesRow = document.getElementById('preview-login-pages-row');
         const tenantDiscoverRow = document.getElementById('preview-tenant-discover-row');
         if (loginUiEnabled) {
           loginPagesRow.style.display = '';
           document.getElementById('preview-login-pages').textContent =
-            'https://' + loginPagesDomain + '  ' + t('web.preview.allTenantsShared');
+            'https://' + loginUiWorkerDomain + '  ' + t('web.preview.allTenantsShared');
           // テナント選択画面: カスタムドメインが設定されていればそちらを優先
-          const loginUiBase = loginDomain ? loginDomain : loginPagesDomain;
+          const loginUiBase = loginDomain ? loginDomain : loginUiWorkerDomain;
           tenantDiscoverRow.style.display = '';
           document.getElementById('preview-tenant-discover').textContent =
             'https://' + loginUiBase + '/discover';
@@ -5353,7 +5356,7 @@ export function getHtmlTemplate(
           } else if (adminDomain) {
             adminAccessEl.textContent = 'https://' + adminDomain + '/admin';
           } else {
-            adminAccessEl.textContent = 'https://' + adminPagesDomain + '/admin';
+            adminAccessEl.textContent = 'https://' + adminUiWorkerDomain + '/admin';
           }
         } else {
           adminAccessRow.style.display = 'none';
@@ -6211,9 +6214,11 @@ export function getHtmlTemplate(
           }
           // Login UI URL for setup page (setup page is in Login UI, not API)
           const loginUiEnabled = config.components?.loginUi !== false;
-          const loginPagesDomain = config.env + '-ar-login-ui.pages.dev';
+          const loginUiWorkerDomain = workersSubdomain
+            ? config.env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+            : config.env + '-ar-login-ui.workers.dev';
           const loginUiUrl = loginUiEnabled
-            ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain)
+            ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginUiWorkerDomain)
             : null;
 
           output.textContent += '  API URL: ' + apiUrl + '\\n';
@@ -6294,7 +6299,7 @@ export function getHtmlTemplate(
       const env = config.env;
       const completeEnv = {
         env,
-        pages: [
+        workers: [
           ...(config.components?.loginUi === false ? [] : [{ name: env + '-ar-login-ui' }]),
           ...(config.components?.adminUi === false ? [] : [{ name: env + '-ar-admin-ui' }]),
         ],
@@ -6601,8 +6606,12 @@ export function getHtmlTemplate(
       const workersDomain = workersSubdomain
         ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
         : env + '-ar-router.workers.dev';
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
+      const loginUiWorkerDomain = workersSubdomain
+        ? env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-login-ui.workers.dev';
+      const adminUiWorkerDomain = workersSubdomain
+        ? env + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-admin-ui.workers.dev';
 
       // Build config in AuthrimConfigSchema format
       const configToSave = {
@@ -6621,11 +6630,11 @@ export function getHtmlTemplate(
           },
           loginUi: {
             custom: config.loginUiDomain || null,
-            auto: 'https://' + loginPagesDomain,
+            auto: 'https://' + loginUiWorkerDomain,
           },
           adminUi: {
             custom: config.adminUiDomain || null,
-            auto: 'https://' + adminPagesDomain,
+            auto: 'https://' + adminUiWorkerDomain,
           },
         },
         tenant: {
@@ -6987,8 +6996,8 @@ export function getHtmlTemplate(
       return row;
     }
 
-    function hasPagesProject(env, projectName) {
-      return (env.pages || []).some((page) => page && page.name === projectName);
+    function hasUiWorker(env, workerName) {
+      return (env.workers || []).some((worker) => worker && worker.name === workerName);
     }
 
     function resolveEnvDetailIssuerUrl(env, config) {
@@ -7012,8 +7021,11 @@ export function getHtmlTemplate(
 
     function resolveEnvDetailSharedLoginBase(env, config) {
       const envName = env.env;
+      const fallbackLoginWorkerUrl = workersSubdomain
+        ? 'https://' + envName + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : 'https://' + envName + '-ar-login-ui.workers.dev';
       return stripTrailingSlash(
-        config?.urls?.loginUi?.custom || config?.urls?.loginUi?.auto || ('https://' + envName + '-ar-login-ui.pages.dev')
+        config?.urls?.loginUi?.custom || config?.urls?.loginUi?.auto || fallbackLoginWorkerUrl
       );
     }
 
@@ -7021,12 +7033,15 @@ export function getHtmlTemplate(
       const envName = env.env;
       const loginProjectName = envName + '-ar-login-ui';
       const adminProjectName = envName + '-ar-admin-ui';
-      const loginUiDeployed = hasPagesProject(env, loginProjectName);
-      const adminUiDeployed = hasPagesProject(env, adminProjectName);
+      const loginUiDeployed = hasUiWorker(env, loginProjectName);
+      const adminUiDeployed = hasUiWorker(env, adminProjectName);
       const multiTenantConfigured = isMultiTenantConfigured(config);
       const issuerUrl = resolveEnvDetailIssuerUrl(env, config);
       const discoveryUrl = issuerUrl + '/.well-known/openid-configuration';
       const loginSharedBaseUrl = resolveEnvDetailSharedLoginBase(env, config);
+      const fallbackAdminWorkerUrl = workersSubdomain
+        ? 'https://' + envName + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : 'https://' + envName + '-ar-admin-ui.workers.dev';
       const loginEntryUrl = loginUiDeployed
         ? (
             multiTenantConfigured || config?.urls?.loginUi?.sameAsApi === true
@@ -7041,11 +7056,11 @@ export function getHtmlTemplate(
         ? (
             config?.urls?.adminUi?.sameAsApi === true
               ? issuerUrl
-              : stripTrailingSlash(
-                  config?.urls?.adminUi?.custom ||
-                    config?.urls?.adminUi?.auto ||
-                    ('https://' + envName + '-ar-admin-ui.pages.dev')
-                )
+	              : stripTrailingSlash(
+	                  config?.urls?.adminUi?.custom ||
+	                    config?.urls?.adminUi?.auto ||
+	                    fallbackAdminWorkerUrl
+	                )
           ) + '/admin/info'
         : null;
       const notDeployed = t('web.envDetail.notDeployed') || 'Not Deployed';
@@ -7526,7 +7541,7 @@ export function getHtmlTemplate(
       }
     }
 
-    // Update UI component (Pages)
+    // Update UI component (Workers)
     async function updateUIComponent(componentName) {
       if (!currentEnvForUpdate) {
         alert('No environment selected');
@@ -7554,7 +7569,7 @@ export function getHtmlTemplate(
       };
 
       addLog('Updating ' + componentName + ' for ' + currentEnvForUpdate + '...');
-      addLog('This may take a few minutes (building and deploying to Pages)...');
+      addLog('This may take a few minutes (building and deploying to Workers)...');
 
       try {
         const response = await api('/deploy/component/' + encodeURIComponent(componentName), {

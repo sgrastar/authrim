@@ -18,12 +18,12 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
       },
       loginUi: {
         custom: null,
-        auto: 'https://test-ar-login-ui.pages.dev',
+        auto: 'https://test-ar-login-ui.workers.dev',
         sameAsApi: false,
       },
       adminUi: {
         custom: null,
-        auto: 'https://test-ar-admin-ui.pages.dev',
+        auto: 'https://test-ar-admin-ui.workers.dev',
         sameAsApi: false,
       },
     },
@@ -93,7 +93,7 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
 }
 
 describe('resolveUiDeploymentSettings', () => {
-  it('uses same-origin proxy mode for pages.dev UIs against a custom API domain', () => {
+  it('uses same-origin proxy mode for UI Workers against a custom API domain', () => {
     const config = createConfig({
       urls: {
         api: {
@@ -102,12 +102,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -153,7 +153,7 @@ describe('resolveUiDeploymentSettings', () => {
     expect(admin.runtimeApiBackendUrl).toBe('https://test.authrim.com');
   });
 
-  it('uses Service Binding proxy mode for workers.dev API and pages.dev Login UI', () => {
+  it('uses Service Binding proxy mode for workers.dev API and Login UI Worker', () => {
     const config = createConfig({
       urls: {
         api: {
@@ -162,12 +162,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -187,7 +187,7 @@ describe('resolveUiDeploymentSettings', () => {
     });
 
     expect(login.apiBaseUrl).toBe('https://test-ar-router.example.workers.dev');
-    expect(login.uiUrl).toBe('https://test-ar-login-ui.pages.dev');
+    expect(login.uiUrl).toBe('https://test-ar-login-ui.workers.dev');
     expect(login.useRelativeApi).toBe(true);
     expect(login.needsProxy).toBe(true);
     expect(login.serviceBindingName).toBe('AR_ROUTER');
@@ -210,12 +210,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: 'https://login.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: 'https://admin.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -261,12 +261,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: 'https://auth.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: true,
         },
         adminUi: {
           custom: 'https://auth.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: true,
         },
       },
@@ -300,12 +300,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -340,12 +340,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },

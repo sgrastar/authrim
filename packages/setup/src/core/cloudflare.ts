@@ -326,7 +326,7 @@ export interface SetupCapabilityDiagnostics {
   zoneReadAvailable: boolean;
   accessibleZoneCount: number;
   dnsReadAvailable: boolean;
-  pagesReadAvailable: boolean;
+  uiWorkersApiAvailable: boolean;
 }
 
 export interface SetupCapabilityEstimate {
@@ -358,7 +358,7 @@ export function deriveSetupCapabilityEstimate(
     diagnostics.accessibleZoneCount > 0;
   const multiTenant = customDomain && diagnostics.dnsReadAvailable;
   const nakedDomain = multiTenant;
-  const pages = workersDeploy && diagnostics.tokenAvailable && diagnostics.pagesReadAvailable;
+  const pages = workersDeploy && diagnostics.tokenAvailable && diagnostics.uiWorkersApiAvailable;
 
   return {
     workersDeploy,
@@ -401,7 +401,7 @@ export function deriveSetupCapabilityStatuses(
   let pages: SetupCapabilityStatus;
   if (workersDeploy === 'ng') {
     pages = 'ng';
-  } else if (diagnostics.pagesReadAvailable) {
+  } else if (diagnostics.uiWorkersApiAvailable) {
     pages = 'ok';
   } else {
     pages = 'review';
@@ -429,7 +429,7 @@ export async function getSetupCapabilityDiagnostics(
     zoneReadAvailable: false,
     accessibleZoneCount: 0,
     dnsReadAvailable: false,
-    pagesReadAvailable: false,
+    uiWorkersApiAvailable: false,
   };
 
   if (!wranglerInstalled || !auth.isLoggedIn) {
@@ -479,15 +479,15 @@ export async function getSetupCapabilityDiagnostics(
 
   if (auth.accountId) {
     try {
-      const pagesResponse = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${auth.accountId}/pages/projects?per_page=1`,
+      const workersResponse = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${auth.accountId}/workers/scripts`,
         {
           headers: {
             Authorization: `Bearer ${tokenInfo.token}`,
           },
         }
       );
-      baseDiagnostics.pagesReadAvailable = pagesResponse.ok;
+      baseDiagnostics.uiWorkersApiAvailable = workersResponse.ok;
     } catch {
       // Keep default false; this is an estimate only.
     }
@@ -2834,13 +2834,13 @@ export function toResourceIds(resources: ProvisionedResources): {
  */
 const AUTHRIM_PATTERNS = {
   worker:
-    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy)$/,
+    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
   d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
   r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts|export-artifacts|sensitive-details)$/,
-  // Pages projects: {env}-ar-admin-ui, {env}-ar-login-ui
+  // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
 
@@ -2929,7 +2929,7 @@ export async function listQueues(): Promise<Array<{ name: string; id?: string }>
 }
 
 /**
- * List Pages projects
+ * List legacy Pages projects
  */
 export async function listPagesProjects(): Promise<Array<{ name: string }>> {
   try {
@@ -2966,7 +2966,7 @@ export async function listPagesProjects(): Promise<Array<{ name: string }>> {
 }
 
 /**
- * Delete a Pages project
+ * Delete a legacy Pages project
  */
 export async function deletePagesProject(name: string): Promise<boolean> {
   try {
@@ -3142,21 +3142,21 @@ export async function detectEnvironments(
     progress(`  ⚠️ Could not scan R2: ${error instanceof Error ? error.message : error}`);
   }
 
-  progress('Scanning Pages projects...');
+  progress('Scanning legacy Pages projects...');
   try {
     const pagesProjects = await listPagesProjects();
     for (const project of pagesProjects) {
       const match = project.name.match(AUTHRIM_PATTERNS.pages);
       if (match) {
         const env = match[1].toLowerCase();
-        // Only attach Pages to environments that already have Workers or D1
+        // Only attach legacy Pages projects to environments that already have Workers or D1
         if (environments.has(env)) {
           environments.get(env)!.pages.push({ name: project.name });
         }
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan Pages: ${error instanceof Error ? error.message : error}`);
+    progress(`  ⚠️ Could not scan legacy Pages projects: ${error instanceof Error ? error.message : error}`);
   }
 
   // Filter: only keep environments that have actual Workers or D1 databases
@@ -3395,9 +3395,9 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress('');
   }
 
-  // Delete Pages projects
+  // Delete legacy Pages projects
   if (deletePages && envInfo.pages.length > 0) {
-    onProgress(`📄 Deleting Pages Projects (${envInfo.pages.length})...`);
+    onProgress(`📄 Deleting legacy Pages Projects (${envInfo.pages.length})...`);
     for (const project of envInfo.pages) {
       onProgress(`  ⏳ Deleting: ${project.name}...`);
       const success = await deletePagesProject(project.name);
@@ -3405,7 +3405,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         deleted.pages.push(project.name);
         onProgress(`  ✅ ${project.name}`);
       } else {
-        errors.push(`Failed to delete Pages: ${project.name}`);
+        errors.push(`Failed to delete legacy Pages project: ${project.name}`);
         onProgress(`  ❌ ${project.name}`);
       }
     }

@@ -104,6 +104,7 @@ export * from './utils/do-retry';
 export * from './utils/url-security';
 export * from './utils/body-limits';
 export * from './utils/basic-auth';
+export * from './utils/web-origin-registry';
 export * from './utils/jwks-cache';
 export * from './utils/tenant-settings';
 export * from './utils/email-domain-hash';

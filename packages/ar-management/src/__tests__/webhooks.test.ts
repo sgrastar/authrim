@@ -222,7 +222,15 @@ function createMockBucket(initial: Record<string, string> = {}): R2Bucket {
       if (!value) {
         return null;
       }
+      const body = new TextEncoder().encode(value);
       return {
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        }),
+        size: body.byteLength,
         text: async () => value,
         writeHttpMetadata: vi.fn(),
       };

@@ -63,8 +63,8 @@ function getUiConfig(config: AuthrimConfig, component: UiComponent) {
 
 function getFallbackUiUrl(env: string, component: UiComponent): string {
   return component === 'ar-login-ui'
-    ? `https://${env}-ar-login-ui.pages.dev`
-    : `https://${env}-ar-admin-ui.pages.dev`;
+    ? `https://${env}-ar-login-ui.workers.dev`
+    : `https://${env}-ar-admin-ui.workers.dev`;
 }
 
 export function resolveUiDeploymentSettings(
@@ -102,7 +102,7 @@ export function resolveUiDeploymentSettings(
     isWithinBaseDomain(uiOrigin.hostname, configuredBaseDomain);
 
   // Use relative same-origin API calls whenever the UI is colocated with the API
-  // or when Pages needs to proxy requests to avoid cross-site cookie/CSP issues.
+  // or when the UI Worker needs to proxy requests to avoid cross-site cookie/CSP issues.
   const needsProxy = !sameOrigin && !sameConfiguredSite;
   const useRelativeApi = sameOrigin || needsProxy;
 

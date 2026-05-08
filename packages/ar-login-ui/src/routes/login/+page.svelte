@@ -3,6 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, externalIdpAPI, loginChallengeAPI } from '$lib/api/client';
+	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import {
 		isValidRedirectUrl,
 		isValidImageUrl,
@@ -13,6 +14,7 @@
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
 	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 
@@ -47,6 +49,7 @@
 	}
 	let clientInfo = $state<ClientInfo | null>(null);
 	let clientInfoLoading = $state(false);
+	let authorizationChallengeId = $state('');
 
 	// External IdP error
 	function getExternalIdpErrorMessage(
@@ -148,6 +151,7 @@
 
 		// Fetch login methods + challenge data in parallel
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
+		authorizationChallengeId = urlChallengeId || '';
 		const urlLoginHint = $page.url.searchParams.get('login_hint');
 		if (urlLoginHint) {
 			email = urlLoginHint;
@@ -212,6 +216,17 @@
 		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 	}
 
+	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
+		return messageForApiError(apiError, {
+			unknown: () => $LL.error_unknown(),
+			invalidRequest: () => $LL.error_invalid_request(),
+			accessDenied: () => $LL.error_access_denied(),
+			serverError: () => $LL.error_server_error(),
+			loginRequired: () => $LL.error_login_required(),
+			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
+		});
+	}
+
 	async function handlePasskeyLogin() {
 		if (authActionLoading) return;
 		error = '';
@@ -220,7 +235,7 @@
 		try {
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({});
 			if (optionsError) {
-				throw new Error(optionsError.error_description || 'Failed to get authentication options');
+				throw new Error(getApiErrorMessage(optionsError));
 			}
 
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -228,22 +243,21 @@
 
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin({
 				challengeId: optionsData!.challengeId,
-				credential
+				credential,
+				authorizationChallengeId: authorizationChallengeId || undefined
 			});
 
 			if (verifyError) {
-				throw new Error(verifyError.error_description || 'Authentication verification failed');
+				throw new Error(getApiErrorMessage(verifyError));
 			}
 
-			if (verifyData!.sessionId) {
-				auth.login(verifyData!.sessionId, {
-					userId: verifyData!.userId,
-					email: verifyData!.user.email,
-					name: verifyData!.user.name || undefined
-				});
-			}
+			await auth.refreshFromSession();
 
-			window.location.href = '/';
+			if (verifyData?.redirect_url && isValidRedirectUrl(verifyData.redirect_url)) {
+				window.location.href = verifyData.redirect_url;
+			} else {
+				window.location.href = '/';
+			}
 		} catch (err) {
 			error =
 				err instanceof Error ? err.message : 'An error occurred during passkey authentication';
@@ -269,9 +283,13 @@
 		try {
 			const { error: apiError } = await emailCodeAPI.send({ email });
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to send verification code');
+				throw new Error(getApiErrorMessage(apiError));
 			}
-			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}`;
+			const params = new URLSearchParams({ email });
+			if (authorizationChallengeId) {
+				params.set('challenge_id', authorizationChallengeId);
+			}
+			window.location.href = `/verify-email-code?${params.toString()}`;
 		} catch (err) {
 			error =
 				err instanceof Error ? err.message : 'An error occurred while sending verification code';
@@ -285,33 +303,17 @@
 		externalIdpLoading = providerId;
 		try {
 			const redirectUri = `${window.location.origin}/callback`;
-			const { url, codeVerifier } = await externalIdpAPI.startLogin(providerId, redirectUri);
+			const { url } = await externalIdpAPI.startLogin(providerId, redirectUri);
 
 			if (!isValidRedirectUrl(url)) {
 				throw new Error('Invalid redirect URL from identity provider');
 			}
 
-			// Store code_verifier and provider_id in sessionStorage for callback
+			// Provider ID is diagnostic-only; the managed LoginUI flow does not store PKCE secrets.
 			try {
-				sessionStorage.setItem('pkce_code_verifier', codeVerifier);
-				sessionStorage.setItem('oauth_provider_id', providerId);
-
-				// Verify storage succeeded (defensive check)
-				const storedValue = sessionStorage.getItem('pkce_code_verifier');
-				if (storedValue !== codeVerifier) {
-					throw new Error('Failed to verify stored PKCE verifier');
-				}
-
-				console.debug('PKCE verifier and provider ID stored successfully');
+				setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId, providerId);
 			} catch (storageError) {
-				console.error('Failed to store PKCE verifier:', storageError);
-				if (storageError instanceof DOMException && storageError.name === 'QuotaExceededError') {
-					error = $LL.callback_errorStorageQuotaExceeded();
-				} else {
-					error = $LL.callback_errorStorageUnavailable();
-				}
-				externalIdpLoading = null;
-				return;
+				console.warn('Failed to store external provider diagnostic state:', storageError);
 			}
 
 			// Redirect to external IdP

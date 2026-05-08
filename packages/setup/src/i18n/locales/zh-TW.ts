@@ -153,8 +153,8 @@ const zhTW: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI 部署方式',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': '部署到 Cloudflare Pages（推薦）',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': '部署到 Cloudflare Workers（推薦）',
   'ui.customOption': '自訂網域',
   'ui.customDesc': '使用自己的主機',
   'ui.skipOption': '跳過',
@@ -737,7 +737,7 @@ const zhTW: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': '登入 UI',
-  'web.config.loginUiDesc': '部署到 Cloudflare Pages 的預建驗證 UI。',
+  'web.config.loginUiDesc': '部署到 Cloudflare Workers 的預建驗證 UI。',
   'web.config.adminUi': '管理 UI',
   'web.config.adminUiDesc': '用於管理使用者、用戶端和設定的管理儀表板。',
 
@@ -746,9 +746,9 @@ const zhTW: Translations = {
   'web.url.apiDomain': 'API 網域',
   'web.url.apiDomainHint': '留空以使用 workers.dev 子網域',
   'web.url.loginDomain': '登入 UI 網域',
-  'web.url.loginDomainHint': '留空以使用 pages.dev 子網域',
+  'web.url.loginDomainHint': '留空以使用 workers.dev 子網域',
   'web.url.adminDomain': '管理 UI 網域',
-  'web.url.adminDomainHint': '留空以使用 pages.dev 子網域',
+  'web.url.adminDomainHint': '留空以使用 workers.dev 子網域',
 
   // Web UI Database
   'web.db.title': '資料庫配置',
@@ -903,7 +903,7 @@ const zhTW: Translations = {
   'web.section.apiDomain': 'API / 發行者網域',
   'web.section.uiDomains': 'UI 網域（選用）',
   'web.section.uiDomainsHint':
-    '登入/管理 UI 的自訂網域。可分別設定。留空以使用 Cloudflare Pages 預設值。',
+    '登入/管理 UI 的自訂網域。可分別設定。留空以使用 Cloudflare Workers 預設值。',
   'web.section.corsHint': 'CORS：從登入/管理 UI 到 API 的跨來源請求會自動允許。',
   'web.section.configPreview': '配置預覽',
   'web.section.resourceNames': '資源名稱',
@@ -914,7 +914,7 @@ const zhTW: Translations = {
   'web.preview.issuerUrl': '發行者 URL：',
   'web.preview.loginUi': '登入 UI：',
   'web.preview.adminUi': '管理 UI：',
-  'web.preview.pagesUrl': '登入 UI (Pages)：',
+  'web.preview.pagesUrl': '登入 UI (Worker)：',
   'web.preview.tenantDiscover': '租戶選擇（公共入口）：',
   'web.preview.adminAccess': '管理 UI 存取位址：',
   'web.preview.firstTenant': '{{name}}（主租戶）',
@@ -1036,7 +1036,7 @@ const zhTW: Translations = {
   'web.envDetail.kvNamespaces': 'KV 命名空間',
   'web.envDetail.queues': '佇列',
   'web.envDetail.r2Buckets': 'R2 儲存貯體',
-  'web.envDetail.pagesProjects': 'Pages 專案',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '更新所有 Workers',
@@ -1057,8 +1057,8 @@ const zhTW: Translations = {
   'web.envDetail.action': '操作',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': '更新 UI（Pages）',
-  'web.envDetail.uiUpdateDesc': '單獨更新 Admin UI 或 Login UI。這些部署在 Cloudflare Pages 上。',
+  'web.envDetail.uiUpdate': '更新 UI（Workers）',
+  'web.envDetail.uiUpdateDesc': '單獨更新 Admin UI 或 Login UI。這些部署在 Cloudflare Workers 上。',
   'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
@@ -1071,7 +1071,7 @@ const zhTW: Translations = {
   'web.delete.kvNamespaces': 'KV 命名空間',
   'web.delete.queues': '佇列',
   'web.delete.r2Buckets': 'R2 儲存貯體',
-  'web.delete.pagesProjects': 'Pages 專案',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': '取消',
   'web.delete.confirmBtn': '刪除所選項目',
 

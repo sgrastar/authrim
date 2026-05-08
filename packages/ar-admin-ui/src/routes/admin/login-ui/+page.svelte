@@ -233,8 +233,14 @@
 			throw new Error('Origin cannot be empty.');
 		}
 
+		// Admin UI exposes web_origin_registry semantics; the current backend stores
+		// these entries in tenant allowed origins until rp_origin_registry exists.
 		if (trimmed.includes('*')) {
-			if (!/^https?:\/\/[^/?#]+$/i.test(trimmed)) {
+			if (
+				!/^https:\/\/\*\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::\d{1,5})?$/i.test(
+					trimmed
+				)
+			) {
 				throw new Error(
 					`Invalid wildcard origin "${value}". Use a host-only pattern such as https://*.example.com.`
 				);

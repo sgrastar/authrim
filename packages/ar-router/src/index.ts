@@ -43,9 +43,9 @@ interface Env {
 
   // UI Proxy configuration (optional)
   // When enabled, routes UI paths through the router for same-domain deployment
-  /** Login UI Pages URL (e.g., https://dev-ar-login-ui.pages.dev) */
+  /** Login UI Worker URL (e.g., https://login.example.com) */
   AR_LOGIN_UI_URL?: string;
-  /** Admin UI Pages URL (e.g., https://dev-ar-admin-ui.pages.dev) */
+  /** Admin UI Worker URL (e.g., https://admin.example.com) */
   AR_ADMIN_UI_URL?: string;
   /** Enable Login UI proxy (true/false) */
   ENABLE_LOGIN_UI_PROXY?: string;
@@ -69,14 +69,85 @@ const LOGIN_UI_PATHS = [
   '/callback',
 ];
 
+const BEARER_TOKEN_TRANSPORT_UNSUPPORTED = 'bearer_token_transport_unsupported';
+
+const BEARER_TOKEN_CANONICAL_PATHS = [
+  '/authorize',
+  '/token',
+  '/userinfo',
+  '/introspect',
+  '/revoke',
+  '/register',
+  '/clients',
+  '/par',
+  '/device_authorization',
+  '/bc-authorize',
+  '/auth/step-up',
+  '/me',
+  '/api/admin',
+  '/api/auth',
+  '/api/ciba',
+  '/api/device',
+  '/api/internal',
+  '/api/v1/auth/direct',
+  '/api/sessions',
+  '/api/protected',
+  '/vci',
+  '/vp',
+  '/scim/v2',
+];
+
+function isBearerTokenCanonicalPath(path: string): boolean {
+  return BEARER_TOKEN_CANONICAL_PATHS.some(
+    (canonicalPath) => path === canonicalPath || path.startsWith(`${canonicalPath}/`)
+  );
+}
+
+function bearerTokenTransportError(): Response {
+  return Response.json(
+    {
+      error: 'invalid_request',
+      error_description:
+        'Bearer tokens must be sent in the Authorization header for this endpoint.',
+      error_details: {
+        code: BEARER_TOKEN_TRANSPORT_UNSUPPORTED,
+      },
+    },
+    {
+      status: 400,
+      headers: {
+        'Cache-Control': 'no-store',
+        Pragma: 'no-cache',
+      },
+    }
+  );
+}
+
+async function requestHasFormBearerToken(request: Request): Promise<boolean> {
+  const contentType = request.headers.get('Content-Type')?.toLowerCase() ?? '';
+  if (
+    !contentType.includes('application/x-www-form-urlencoded') &&
+    !contentType.includes('multipart/form-data')
+  ) {
+    return false;
+  }
+
+  try {
+    const formData = await request.clone().formData();
+    return formData.has('access_token');
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Proxy request to Cloudflare Pages
+ * Proxy request to a UI Worker.
  * Maintains all headers, query params, and body.
- * Rewrites Origin/Referer headers to match the Pages target so that
+ * Rewrites Origin/Referer headers to match the UI Worker target so that
  * SvelteKit CSRF protection (which compares Origin vs event.url.origin)
  * does not reject proxied state-changing requests.
  */
-async function proxyToPages(request: Request, baseUrl: string, path: string): Promise<Response> {
+async function proxyToUiWorker(request: Request, baseUrl: string, path: string): Promise<Response> {
   const targetUrl = new URL(path, baseUrl);
   targetUrl.search = new URL(request.url).search;
 
@@ -151,7 +222,7 @@ app.use('*', async (c, next) => {
     path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||
-    // UI proxy paths - Pages handles its own headers
+    // UI proxy paths - UI Workers handle their own headers
     path.startsWith('/setup') ||
     path.startsWith('/admin') ||
     path.startsWith('/discover') ||
@@ -203,7 +274,7 @@ app.use('*', async (c, next) => {
  * - Per CORS spec, when credentials: true, origin cannot be '*'
  * - If ALLOWED_ORIGINS is set, validates against whitelist with credentials enabled
  * - If not set, uses '*' with credentials disabled (safe default for public APIs)
- * - Supports wildcards (e.g., https://*.pages.dev)
+ * - Supports wildcards (e.g., https://*.example.com)
  */
 app.use('*', async (c, next) => {
   let allowedOriginsStr: string | null = null;
@@ -280,6 +351,25 @@ app.use('*', async (c, next) => {
     maxAge: 86400,
     credentials: allowCredentials,
   })(c, next);
+});
+
+app.use('*', async (c, next) => {
+  if (!isBearerTokenCanonicalPath(c.req.path)) {
+    return next();
+  }
+
+  // Canonical Authrim endpoints only accept bearer tokens via Authorization headers.
+  // Query/form token transport is deferred to explicit outbound legacy adapters, not inbound APIs.
+  const url = new URL(c.req.url);
+  if (url.searchParams.has('access_token')) {
+    return bearerTokenTransportError();
+  }
+
+  if (await requestHasFormBearerToken(c.req.raw)) {
+    return bearerTokenTransportError();
+  }
+
+  return next();
 });
 
 // CSRF protection (defense-in-depth at the router level)
@@ -828,7 +918,7 @@ app.all('/api/admin-init-setup/*', async (c) => {
 });
 
 /**
- * UI Proxy endpoints - Proxy to Cloudflare Pages
+ * UI Proxy endpoints - proxy to UI Workers
  * When enabled, serves UI from the same domain as the API
  *
  * Admin UI Proxy (ENABLE_ADMIN_UI_PROXY=true):
@@ -842,7 +932,7 @@ app.all('/api/admin-init-setup/*', async (c) => {
 app.all('/admin/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
     const path = c.req.path;
-    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, path);
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, path);
   }
   // If proxy not enabled, return 404
   return c.json(
@@ -859,7 +949,7 @@ app.all('/admin/*', async (c) => {
 // After passkey registration, ar-auth redirects to /setup/complete
 app.all('/setup/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
-    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
   }
   return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
@@ -867,7 +957,7 @@ app.all('/setup/*', async (c) => {
 // Admin UI proxy - exact /admin path (redirect to /admin/)
 app.get('/admin', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
-    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, '/admin');
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, '/admin');
   }
   return c.json(
     {
@@ -883,7 +973,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
   // Handle exact path
   app.all(uiPath, async (c) => {
     if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-      return proxyToPages(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
+      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
     }
     return c.json(
       {
@@ -898,7 +988,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
   // Handle paths with trailing content (e.g., /login/*, /signup/*)
   app.all(`${uiPath}/*`, async (c) => {
     if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-      return proxyToPages(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
+      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
     }
     return c.json(
       {
@@ -914,7 +1004,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
 // This handles /geo/* paths for WorldMap GeoJSON data (Admin UI only)
 app.get('/geo/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
-    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
   }
   return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
@@ -953,7 +1043,7 @@ app.all('/_app/*', async (c) => {
 
   // Try each UI in order, return first successful response
   for (const ui of uisToTry) {
-    const response = await proxyToPages(c.req.raw.clone(), ui.url, c.req.path);
+    const response = await proxyToUiWorker(c.req.raw.clone(), ui.url, c.req.path);
     if (response.ok) {
       return response;
     }
@@ -990,7 +1080,7 @@ app.onError((err, c) => {
 // This must be registered after all API routes to avoid conflicts
 app.get('/', async (c) => {
   if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-    return proxyToPages(c.req.raw, c.env.AR_LOGIN_UI_URL, '/');
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, '/');
   }
   // Return basic API info when Login UI proxy is not enabled
   return c.json({

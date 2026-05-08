@@ -3,6 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, externalIdpAPI } from '$lib/api/client';
+	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import {
 		fetchRegistrationFields,
 		type RegistrationField
@@ -12,6 +13,12 @@
 	import { fetchLoginMethods, type SocialProvider } from '$lib/api/login-methods';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
+	import {
+		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
+		LOGIN_UI_SESSION_STORAGE_KEYS,
+		removeLoginUiSessionItems,
+		setLoginUiSessionItem
+	} from '$lib/authrim/storage-keys';
 	import { onMount } from 'svelte';
 
 	// ---------------------------------------------------------------------------
@@ -50,6 +57,17 @@
 	);
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+
+	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
+		return messageForApiError(apiError, {
+			unknown: () => $LL.error_unknown(),
+			invalidRequest: () => $LL.error_invalid_request(),
+			accessDenied: () => $LL.error_access_denied(),
+			serverError: () => $LL.error_server_error(),
+			loginRequired: () => $LL.error_login_required(),
+			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
+		});
+	}
 
 	// ---------------------------------------------------------------------------
 	// Lifecycle
@@ -207,7 +225,7 @@
 			});
 
 			if (optionsError) {
-				throw new Error(optionsError.error_description || 'Failed to get registration options');
+				throw new Error(getApiErrorMessage(optionsError));
 			}
 			if (!optionsData?.options) {
 				throw new Error('Invalid response from server: missing options');
@@ -223,17 +241,11 @@
 			});
 
 			if (verifyError) {
-				throw new Error(verifyError.error_description || 'Registration verification failed');
+				throw new Error(getApiErrorMessage(verifyError));
 			}
 
-			// Save session after successful registration
-			if (verifyData?.sessionId) {
-				auth.login(verifyData.sessionId, {
-					userId: verifyData.userId,
-					email: verifyData.user.email,
-					name: verifyData.user.name || undefined
-				});
-			}
+			// Restore authenticated state from the HttpOnly managed session cookie.
+			await auth.refreshFromSession();
 
 			// Apply invitation if present (passkey flow: server doesn't see invite_token during registration)
 			if (inviteToken && verifyData?.userId) {
@@ -252,7 +264,10 @@
 			}
 
 			try {
-				sessionStorage.removeItem('signup_custom_fields');
+				removeLoginUiSessionItems([
+					LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.signupCustomFields
+				]);
 			} catch {
 				// Non-fatal
 			}
@@ -277,20 +292,27 @@
 			const { error: apiError } = await emailCodeAPI.send({
 				email,
 				name,
+				invite_token: inviteToken || undefined,
 				custom_fields: submittedCustomFields
 			});
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to send verification code');
+				throw new Error(getApiErrorMessage(apiError));
 			}
 			// Persist custom field values for post-verification saving
 			if (Object.keys(submittedCustomFields).length > 0) {
 				try {
-					sessionStorage.setItem('signup_custom_fields', JSON.stringify(submittedCustomFields));
+					setLoginUiSessionItem(
+						LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+						JSON.stringify(submittedCustomFields)
+					);
 				} catch {
 					// Non-fatal
 				}
 			} else {
-				sessionStorage.removeItem('signup_custom_fields');
+				removeLoginUiSessionItems([
+					LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.signupCustomFields
+				]);
 			}
 			let verifyQs = `email=${encodeURIComponent(email)}`;
 			if (inviteToken) verifyQs += `&invite_token=${encodeURIComponent(inviteToken)}`;
@@ -307,24 +329,17 @@
 		externalIdpLoading = providerId;
 		try {
 			const redirectUri = `${window.location.origin}/callback`;
-			const { url, codeVerifier } = await externalIdpAPI.startLogin(providerId, redirectUri);
+			const { url } = await externalIdpAPI.startLogin(providerId, redirectUri);
 
 			if (!isValidRedirectUrl(url)) {
 				throw new Error('Invalid redirect URL from identity provider');
 			}
 
-			// Store code_verifier in sessionStorage for callback
+			// Provider ID is diagnostic-only; the managed LoginUI flow does not store PKCE secrets.
 			try {
-				sessionStorage.setItem('pkce_code_verifier', codeVerifier);
+				setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId, providerId);
 			} catch (storageError) {
-				console.error('Failed to store PKCE verifier:', storageError);
-				if (storageError instanceof DOMException && storageError.name === 'QuotaExceededError') {
-					error = $LL.callback_errorStorageQuotaExceeded();
-				} else {
-					error = $LL.callback_errorStorageUnavailable();
-				}
-				externalIdpLoading = null;
-				return;
+				console.warn('Failed to store external provider diagnostic state:', storageError);
 			}
 
 			// Redirect to external IdP

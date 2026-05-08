@@ -50,8 +50,8 @@ The `CLOUDFLARE_API_TOKEN` requires the following permissions:
 - **Workers Scripts**: Edit
 - **Workers KV Storage**: Edit
 - **D1**: Edit
-- **Cloudflare Pages**: Edit (if deploying UI)
 - **Account Settings**: Read (for Workers subdomain lookup)
+- **Workers Routes**: Edit (if configuring custom UI routes)
 
 ### How to Create the Token
 

@@ -43,6 +43,7 @@ export interface AuthorizationCode {
   claims?: string; // OIDC claims parameter (JSON string)
   authTime?: number; // OIDC auth_time (authentication timestamp)
   acr?: string; // OIDC acr (Authentication Context Class Reference)
+  amr?: string[]; // OIDC amr (Authentication Methods References)
   cHash?: string; // OIDC c_hash for hybrid flows (RFC 3.3.2.11)
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449) - binds code to DPoP key
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -71,6 +72,7 @@ export interface StoreCodeRequest {
   claims?: string;
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -101,6 +103,7 @@ export interface ConsumeCodeResponse {
   claims?: string;
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -508,6 +511,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       claims: request.claims,
       authTime: request.authTime,
       acr: request.acr,
+      amr: request.amr,
       cHash: request.cHash,
       dpopJkt: request.dpopJkt,
       sid: request.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -604,6 +608,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         claims: stored.claims,
         authTime: stored.authTime,
         acr: stored.acr,
+        amr: stored.amr,
         cHash: stored.cHash,
         dpopJkt: stored.dpopJkt,
         sid: stored.sid,
@@ -664,6 +669,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       claims: stored.claims,
       authTime: stored.authTime,
       acr: stored.acr,
+      amr: stored.amr,
       cHash: stored.cHash,
       dpopJkt: stored.dpopJkt,
       sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout

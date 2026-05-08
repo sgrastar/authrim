@@ -208,6 +208,9 @@ describe('Discovery Handler', () => {
       expect(metadata.claims_supported).toContain('aud');
       expect(metadata.claims_supported).toContain('exp');
       expect(metadata.claims_supported).toContain('iat');
+      expect(metadata.claims_supported).toContain('auth_time');
+      expect(metadata.claims_supported).toContain('acr');
+      expect(metadata.claims_supported).toContain('amr');
       expect(metadata.claims_supported).toContain('name');
       expect(metadata.claims_supported).toContain('email');
     });

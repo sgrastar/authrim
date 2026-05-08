@@ -78,6 +78,7 @@ import {
   directPasskeyRegisterFinishHandler,
   directEmailCodeSendHandler,
   directEmailCodeVerifyHandler,
+  directSessionCreateHandler,
   directTokenHandler,
   directSessionHandler,
   directLogoutHandler,
@@ -348,6 +349,7 @@ app.post('/auth/consent', consentPostHandler);
 
 // Login Challenge endpoints (for OIDC Dynamic OP conformance - logo_uri, policy_uri, tos_uri display)
 app.get('/api/auth/login-challenges', loginChallengeGetHandler);
+app.get('/auth/login-challenge', loginChallengeGetHandler);
 
 // Session Management endpoints (RESTful naming)
 app.post('/api/sessions', issueSessionTokenHandler); // Issue new session token
@@ -485,6 +487,7 @@ app.post('/api/v1/auth/direct/email-code/verify', directEmailCodeVerifyHandler);
 app.post('/api/v1/auth/direct/token', directTokenHandler);
 
 // Session endpoint
+app.post('/api/v1/auth/direct/session', directSessionCreateHandler);
 app.get('/api/v1/auth/direct/session', directSessionHandler);
 
 // Logout endpoint

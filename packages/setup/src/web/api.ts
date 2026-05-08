@@ -70,14 +70,14 @@ import {
   deployAll,
   uploadSecrets,
   buildApiPackages,
-  deployAllPages,
-  deployPagesComponent,
+  deployAllUiWorkers,
+  deployUiWorkerComponent,
   deployWorker,
   DEFAULT_INTER_DEPLOY_DELAY_MS,
-  PAGES_COMPONENTS,
+  UI_WORKER_COMPONENTS,
   updateLockWithDeployments,
   type DeployResult,
-  type PagesComponent,
+  type UiWorkerComponent,
 } from '../core/deploy.js';
 import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
 import {
@@ -1557,11 +1557,11 @@ export function createApiRoutes(): Hono {
           });
         }
 
-        // Deploy Pages (ar-login-ui, ar-admin-ui) if loginUi or adminUi is enabled
-        let pagesSummary = null;
+        // Deploy UI Workers (ar-login-ui, ar-admin-ui) if loginUi or adminUi is enabled.
+        let uiWorkersSummary = null;
         // Note: cfg is already loaded above (from state.config or config.json file)
         if (cfg?.components?.loginUi || cfg?.components?.adminUi) {
-          addProgress('Deploying Login/Admin UI to Cloudflare Pages...');
+          addProgress('Deploying Login/Admin UI to Cloudflare Workers...');
 
           // Determine the API base URL for the UI to connect to
           // Priority: custom API domain > workers.dev domain
@@ -1575,7 +1575,7 @@ export function createApiRoutes(): Hono {
             const loginUiUrl =
               cfg?.urls?.loginUi?.custom ||
               cfg?.urls?.loginUi?.auto ||
-              `https://${env}-ar-login-ui.pages.dev`;
+              `https://${env}-ar-login-ui.workers.dev`;
             const foundKeys = findKeysDirectory({
               env,
               sourceDir: rootDir,
@@ -1619,7 +1619,7 @@ export function createApiRoutes(): Hono {
             apiBaseUrl,
           });
 
-          pagesSummary = await deployAllPages(
+          uiWorkersSummary = await deployAllUiWorkers(
             {
               env,
               rootDir: resolve(rootDir),
@@ -1647,16 +1647,16 @@ export function createApiRoutes(): Hono {
             }
           );
 
-          if (pagesSummary.failedCount === 0) {
-            addProgress('✓ All UI packages deployed to Pages');
-            for (const result of pagesSummary.results) {
+          if (uiWorkersSummary.failedCount === 0) {
+            addProgress('✓ All UI packages deployed to Workers');
+            for (const result of uiWorkersSummary.results) {
               addProgress(`  • ${result.component}: ${result.projectName}`);
             }
           } else {
             addProgress(
-              `✗ Pages deployment: ${pagesSummary.successCount}/${pagesSummary.results.length} succeeded`
+              `✗ UI Worker deployment: ${uiWorkersSummary.successCount}/${uiWorkersSummary.results.length} succeeded`
             );
-            for (const result of pagesSummary.results) {
+            for (const result of uiWorkersSummary.results) {
               if (!result.success) {
                 addProgress(`  ✗ ${result.component}: ${result.error}`);
               }
@@ -1665,7 +1665,7 @@ export function createApiRoutes(): Hono {
         }
 
         const workersSuccess = summary.failedCount === 0;
-        const pagesSuccess = pagesSummary ? pagesSummary.failedCount === 0 : true;
+        const uiWorkersSuccess = uiWorkersSummary ? uiWorkersSummary.failedCount === 0 : true;
 
         // Update lock file with deployed workers information
         if (workersSuccess && !dryRun && summary.successCount > 0) {
@@ -1784,7 +1784,7 @@ export function createApiRoutes(): Hono {
 
         if (
           workersSuccess &&
-          pagesSuccess &&
+          uiWorkersSuccess &&
           migrationsSuccess &&
           initialTenantSuccess &&
           initialAdminRolesSuccess &&
@@ -1796,9 +1796,9 @@ export function createApiRoutes(): Hono {
           state.status = 'error';
           if (!workersSuccess) {
             state.error = `${summary.failedCount} components failed to deploy`;
-          } else if (!pagesSuccess) {
-            const failedPages = pagesSummary?.results.filter((r) => !r.success) ?? [];
-            state.error = `Pages deployment failed: ${failedPages.map((r) => `${r.component}: ${r.error}`).join(', ')}`;
+          } else if (!uiWorkersSuccess) {
+            const failedUiWorkers = uiWorkersSummary?.results.filter((r) => !r.success) ?? [];
+            state.error = `UI Worker deployment failed: ${failedUiWorkers.map((r) => `${r.component}: ${r.error}`).join(', ')}`;
           } else if (!migrationsSuccess) {
             const errors = [];
             if (migrationsResult?.core.error) errors.push(`core: ${migrationsResult.core.error}`);
@@ -1822,13 +1822,13 @@ export function createApiRoutes(): Hono {
         return c.json({
           success:
             workersSuccess &&
-            pagesSuccess &&
+            uiWorkersSuccess &&
             migrationsSuccess &&
             initialTenantSuccess &&
             initialAdminRolesSuccess &&
             runtimeProfileSeedSuccess,
           summary,
-          pagesResult: pagesSummary,
+          uiWorkersResult: uiWorkersSummary,
           migrationsResult,
           initialTenantResult,
           initialAdminRolesResult,
@@ -2475,7 +2475,7 @@ export function createApiRoutes(): Hono {
   // Apply session validation to component deploy
   api.use('/deploy/component/*', validateSession);
 
-  // Deploy a single component (worker or Pages UI)
+  // Deploy a single component (worker or UI Worker)
   api.post('/deploy/component/:name', async (c) => {
     return withLock(async () => {
       try {
@@ -2495,22 +2495,22 @@ export function createApiRoutes(): Hono {
         clearProgress();
         addProgress(`Deploying component: ${componentName}`);
 
-        // Check if it's a Pages component (UI) or Worker component
-        const isPagesComponent = PAGES_COMPONENTS.includes(componentName as PagesComponent);
+        // Check if it's a UI Worker component or API Worker component.
+        const isUiWorkerComponent = UI_WORKER_COMPONENTS.includes(componentName as UiWorkerComponent);
         const isWorkerComponent = WORKER_COMPONENTS.includes(componentName as WorkerComponent);
 
-        if (!isPagesComponent && !isWorkerComponent) {
+        if (!isUiWorkerComponent && !isWorkerComponent) {
           state.status = 'error';
           return c.json(
             {
               success: false,
-              error: `Unknown component: ${componentName}. Valid components: ${[...WORKER_COMPONENTS, ...PAGES_COMPONENTS].join(', ')}`,
+              error: `Unknown component: ${componentName}. Valid components: ${[...WORKER_COMPONENTS, ...UI_WORKER_COMPONENTS].join(', ')}`,
             },
             400
           );
         }
 
-        // Load config for API URL (needed for Pages deployment)
+        // Load config for API URL (needed for UI Worker deployment)
         const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
         let cfg = state.config;
@@ -2530,9 +2530,9 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        if (isPagesComponent) {
-          // Deploy Pages component (ar-admin-ui or ar-login-ui)
-          // deployPagesComponent is already imported at the top
+        if (isUiWorkerComponent) {
+          // Deploy UI Worker component (ar-admin-ui or ar-login-ui).
+          // deployUiWorkerComponent is kept as an internal compatibility alias.
 
           // Build first (unless skipped)
           if (!skipBuild && !dryRun) {
@@ -2555,7 +2555,7 @@ export function createApiRoutes(): Hono {
               const loginUiUrl =
                 cfg?.urls?.loginUi?.custom ||
                 cfg?.urls?.loginUi?.auto ||
-                `https://${env}-ar-login-ui.pages.dev`;
+                `https://${env}-ar-login-ui.workers.dev`;
               const foundKeys = findKeysDirectory({
                 env,
                 sourceDir: rootDir,
@@ -2588,13 +2588,13 @@ export function createApiRoutes(): Hono {
             }
 
             const uiSettings = resolveUiDeploymentSettings({
-              component: componentName as PagesComponent,
+              component: componentName as UiWorkerComponent,
               config: cfg as AuthrimConfig,
               apiBaseUrl,
               loginUiClientId,
             });
 
-            const result = await deployPagesComponent(componentName as PagesComponent, {
+            const result = await deployUiWorkerComponent(componentName as UiWorkerComponent, {
               env,
               rootDir,
               dryRun,
@@ -2611,7 +2611,7 @@ export function createApiRoutes(): Hono {
               return c.json({
                 success: true,
                 component: componentName,
-                type: 'pages',
+                type: 'ui-worker',
                 projectName: result.projectName,
                 deployedAt: result.deployedAt,
               });
@@ -2621,7 +2621,7 @@ export function createApiRoutes(): Hono {
                 {
                   success: false,
                   component: componentName,
-                  type: 'pages',
+                  type: 'ui-worker',
                   error: result.error,
                 },
                 500
@@ -2629,14 +2629,14 @@ export function createApiRoutes(): Hono {
             }
           }
 
-          // Dry run for Pages
+          // Dry run for UI Worker
           state.status = 'complete';
           return c.json({
             success: true,
             component: componentName,
-            type: 'pages',
+            type: 'ui-worker',
             dryRun: true,
-            message: `Would deploy ${componentName} to Pages`,
+            message: `Would deploy ${componentName} to Workers`,
           });
         } else {
           // Deploy Worker component
@@ -2814,12 +2814,12 @@ export function createApiRoutes(): Hono {
   // Get list of all deployable components
   api.get('/components', async (c) => {
     const { WORKER_COMPONENTS } = await import('../core/naming.js');
-    const { PAGES_COMPONENTS } = await import('../core/deploy.js');
+    const { UI_WORKER_COMPONENTS } = await import('../core/deploy.js');
 
     return c.json({
       workers: WORKER_COMPONENTS,
-      pages: PAGES_COMPONENTS,
-      all: [...WORKER_COMPONENTS, ...PAGES_COMPONENTS],
+      uiWorkers: UI_WORKER_COMPONENTS,
+      all: [...WORKER_COMPONENTS, ...UI_WORKER_COMPONENTS],
     });
   });
 

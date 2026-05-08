@@ -21,7 +21,7 @@ const en = {
 	dialog_cancel: 'Cancel',
 	dialog_confirm: 'Confirm',
 	dialog_close: 'Close',
-	//footer_stack: 'SvelteKit v5 + UnoCSS + Melt UI + Cloudflare Pages',
+	//footer_stack: 'SvelteKit v5 + UnoCSS + Melt UI + Cloudflare Workers',
 	footer_stack: 'Powered by Authrim',
 	language_switch: 'Switch Language',
 	language_english: 'English',

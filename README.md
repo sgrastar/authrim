@@ -199,7 +199,7 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | Layer          | Technology               | Version   | Purpose                        |
 | -------------- | ------------------------ | --------- | ------------------------------ |
 | **Framework**  | SvelteKit + Svelte       | 2.x / 5.x | Modern reactive framework      |
-| **Deployment** | Cloudflare Pages         | -         | Global CDN                     |
+| **Deployment** | Cloudflare Workers static assets | - | UI Workers and global edge delivery |
 | **CSS**        | UnoCSS                   | 66.x      | Utility-first CSS              |
 | **Components** | Melt UI                  | 0.86.x    | Headless, accessible           |
 | **i18n**       | typesafe-i18n            | 5.x       | Type-safe internationalization |

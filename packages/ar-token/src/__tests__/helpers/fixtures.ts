@@ -315,6 +315,7 @@ export interface TestAuthCodeData {
   claims?: string; // JSON string
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string;
   dpopJkt?: string;
   sid?: string;

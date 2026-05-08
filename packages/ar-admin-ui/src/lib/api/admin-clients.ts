@@ -41,8 +41,27 @@ export interface Client {
 	default_audience?: string | null;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
+	web_origin_registry?: WebOriginRegistry;
 	created_at: number;
 	updated_at: number;
+}
+
+export interface WebOriginRegistry {
+	origins: WebOriginRegistryEntry[];
+}
+
+export interface WebOriginRegistryEntry {
+	origin: string;
+	client_ids?: string[];
+	cors?: {
+		allowed?: boolean;
+	};
+	csp?: {
+		frame_ancestors?: string[];
+	};
+	handoff_allowed?: boolean;
+	iframe_allowed?: boolean;
+	environment?: string;
 }
 
 export interface ClientListResponse {
@@ -81,6 +100,7 @@ export interface CreateClientInput {
 	default_audience?: string;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
+	web_origin_registry?: WebOriginRegistry;
 }
 
 export interface UpdateClientInput {
@@ -102,6 +122,7 @@ export interface UpdateClientInput {
 	default_audience?: string | null;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
+	web_origin_registry?: WebOriginRegistry | null;
 }
 
 export interface ClientUsage {

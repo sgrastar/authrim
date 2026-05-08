@@ -81,7 +81,7 @@ program
   .option('--dry-run', 'Show what would be deployed without actually deploying')
   .option('--skip-secrets', 'Skip uploading secrets')
   .option('--skip-build', 'Skip building packages')
-  .option('--skip-ui', 'Skip UI deployment to Cloudflare Pages')
+  .option('--skip-ui', 'Skip UI deployment to Cloudflare Workers')
   .option('--skip-migrations', 'Skip D1 database migrations')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
@@ -114,7 +114,7 @@ program
 
     const { isWranglerInstalled, checkAuth } = await import('./core/cloudflare.js');
     const { WORKER_COMPONENTS } = await import('./core/naming.js');
-    const { deployWorker, deployPagesComponent, buildApiPackages, PAGES_COMPONENTS } =
+    const { deployWorker, deployUiWorkerComponent, buildApiPackages, UI_WORKER_COMPONENTS } =
       await import('./core/deploy.js');
     const { loadLockFileAuto, saveLockFile } = await import('./core/lock.js');
     const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
@@ -126,18 +126,18 @@ program
     const { env, component: componentName, skipBuild, dryRun, yes } = options;
 
     // Validate component name
-    const isPagesComponent = (PAGES_COMPONENTS as readonly string[]).includes(componentName);
+    const isUiWorkerComponent = (UI_WORKER_COMPONENTS as readonly string[]).includes(componentName);
     const isWorkerComponent = (WORKER_COMPONENTS as readonly string[]).includes(componentName);
 
-    if (!isPagesComponent && !isWorkerComponent) {
+    if (!isUiWorkerComponent && !isWorkerComponent) {
       console.error(chalk.red(`Unknown component: ${componentName}`));
       console.log(chalk.yellow('\nAvailable components:'));
       console.log(chalk.cyan('\n  Workers:'));
       for (const w of WORKER_COMPONENTS) {
         console.log(chalk.gray(`    • ${w}`));
       }
-      console.log(chalk.cyan('\n  UI (Pages):'));
-      for (const p of PAGES_COMPONENTS) {
+      console.log(chalk.cyan('\n  UI Workers:'));
+      for (const p of UI_WORKER_COMPONENTS) {
         console.log(chalk.gray(`    • ${p}`));
       }
       process.exit(1);
@@ -162,7 +162,7 @@ program
     spinner.succeed(`Logged in as ${auth.email || 'unknown'}`);
 
     const baseDir = findAuthrimBaseDir(process.cwd());
-    const componentType = isPagesComponent ? 'Pages UI' : 'Worker';
+    const componentType = isUiWorkerComponent ? 'UI Worker' : 'Worker';
 
     console.log(chalk.cyan(`\nComponent:   ${componentName}`));
     console.log(chalk.cyan(`Type:        ${componentType}`));
@@ -183,7 +183,7 @@ program
       }
     }
 
-    // Load config for API URL (needed for Pages deployment)
+    // Load config for API URL (needed for UI Worker deployment)
     const resolved = resolvePaths({ baseDir, env });
     let cfg: AuthrimConfig | null = null;
     try {
@@ -199,8 +199,8 @@ program
       // Config is optional for worker deployment
     }
 
-    if (isPagesComponent) {
-      // Deploy Pages component
+    if (isUiWorkerComponent) {
+      // Deploy UI Worker component.
       if (!skipBuild && !dryRun) {
         const buildSpinner = ora(`Building ${componentName}...`).start();
         const uiDir = join(baseDir, 'packages', componentName);
@@ -222,7 +222,7 @@ program
               ?.custom ||
             (cfg as { urls?: { loginUi?: { custom?: string; auto?: string } } })?.urls?.loginUi
               ?.auto ||
-            `https://${env}-ar-login-ui.pages.dev`;
+            `https://${env}-ar-login-ui.workers.dev`;
           const foundKeys = findKeysDirectory({
             env,
             sourceDir: baseDir,
@@ -258,7 +258,7 @@ program
           loginUiClientId,
         });
 
-        const result = await deployPagesComponent(componentName as 'ar-admin-ui' | 'ar-login-ui', {
+        const result = await deployUiWorkerComponent(componentName as 'ar-admin-ui' | 'ar-login-ui', {
           env,
           rootDir: resolve(baseDir),
           dryRun: dryRun || false,

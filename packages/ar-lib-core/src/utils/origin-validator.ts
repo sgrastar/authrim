@@ -7,7 +7,7 @@ import { extractOrigin } from './session-state';
 
 /**
  * Check if an origin matches an allowed pattern
- * Supports exact matches and wildcard patterns (e.g., https://*.example.com)
+ * Supports exact matches and single-label subdomain wildcards (e.g., https://*.example.com)
  *
  * @param origin - The origin to validate (e.g., "https://example.com")
  * @param allowedPatterns - Array of allowed origin patterns
@@ -32,7 +32,7 @@ export function isAllowedOrigin(origin: string | undefined, allowedPatterns: str
     // Wildcard match (e.g., https://*.pages.dev)
     if (normalizedPattern.includes('*')) {
       const regex = patternToRegex(normalizedPattern);
-      if (regex.test(normalizedOrigin)) {
+      if (regex?.test(normalizedOrigin)) {
         return true;
       }
     }
@@ -42,20 +42,19 @@ export function isAllowedOrigin(origin: string | undefined, allowedPatterns: str
 }
 
 /**
- * Convert a wildcard pattern to a regex
- * Supports: https://*.example.com, https://subdomain.*.example.com
+ * Convert a wildcard pattern to a regex.
+ * Only supports HTTPS single-label subdomain wildcards such as https://*.example.com.
  *
  * @param pattern - Pattern with wildcards
  * @returns RegExp for matching
  */
-function patternToRegex(pattern: string): RegExp {
-  // Escape special regex characters except *
-  const escaped = pattern
-    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    // Replace * with regex pattern for subdomain
-    .replace(/\*/g, '[a-z0-9]([a-z0-9-]*[a-z0-9])?');
+function patternToRegex(pattern: string): RegExp | null {
+  if (!/^https:\/\/\*\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::\d{1,5})?$/i.test(pattern)) {
+    return null;
+  }
 
-  return new RegExp(`^${escaped}$`, 'i');
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped.replace('*', '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?')}$`, 'i');
 }
 
 /**

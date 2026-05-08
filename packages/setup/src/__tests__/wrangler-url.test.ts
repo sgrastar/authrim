@@ -236,16 +236,16 @@ describe('generateEnvVars - ar-router', () => {
 
     // AR_ADMIN_UI_URL is set only when adminSameAsApi=true
     if (adminSameAsApi) {
-      const adminPagesUrl = scenario.config.adminUiAuto ?? scenario.config.adminUiCustom;
-      expect(vars['AR_ADMIN_UI_URL']).toBe(adminPagesUrl ?? undefined);
+      const adminUiWorkerUrl = scenario.config.adminUiAuto ?? scenario.config.adminUiCustom;
+      expect(vars['AR_ADMIN_UI_URL']).toBe(adminUiWorkerUrl ?? undefined);
     } else {
       expect(vars['AR_ADMIN_UI_URL']).toBeUndefined();
     }
 
     // AR_LOGIN_UI_URL is set only when loginSameAsApi=true
     if (loginProxyEnabled) {
-      const loginPagesUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
-      expect(vars['AR_LOGIN_UI_URL']).toBe(loginPagesUrl ?? undefined);
+      const loginUiWorkerUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
+      expect(vars['AR_LOGIN_UI_URL']).toBe(loginUiWorkerUrl ?? undefined);
     } else {
       expect(vars['AR_LOGIN_UI_URL']).toBeUndefined();
     }
@@ -296,12 +296,12 @@ describe('multi-tenant login UI canonical routing', () => {
         },
         loginUi: {
           custom: 'https://login.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: 'https://admin.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -365,7 +365,7 @@ describe('multi-tenant login UI canonical routing', () => {
     expect(authVars['UI_URL']).toBe('https://test.authrim.com');
     expect(authVars['COOKIE_SAME_SITE']).toBe('Lax');
     expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('true');
-    expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.pages.dev');
+    expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.workers.dev');
   });
 });
 
@@ -404,12 +404,12 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -490,12 +490,12 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },

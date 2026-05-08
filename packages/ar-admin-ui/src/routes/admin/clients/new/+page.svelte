@@ -146,12 +146,31 @@
 		}
 	}
 
+	function buildWebOriginRegistry(uris: string[]): CreateClientInput['web_origin_registry'] {
+		const origins = [
+			...new Set(uris.map((uri) => extractOrigin(uri)).filter((origin) => origin.length > 0))
+		];
+		return {
+			origins: origins.map((origin) => ({
+				origin,
+				cors: { allowed: true },
+				handoff_allowed: true,
+				iframe_allowed: false
+			}))
+		};
+	}
+
 	/**
 	 * Check if an origin is in the CORS allowlist (with wildcard support)
 	 */
 	function isOriginInCors(redirectUri: string): boolean {
 		const origin = extractOrigin(redirectUri);
 		if (!origin) return false;
+
+		const registryOrigins = createdClient?.web_origin_registry?.origins ?? [];
+		if (registryOrigins.some((entry) => entry.origin === origin && entry.cors?.allowed !== false)) {
+			return true;
+		}
 
 		for (const pattern of allowedOrigins) {
 			const normalizedPattern = pattern.trim();
@@ -182,10 +201,29 @@
 	 */
 	async function addToCors(redirectUri: string) {
 		const origin = extractOrigin(redirectUri);
-		if (!origin || !tenantSettings) return;
+		if (!origin) return;
 
 		addingToCors = redirectUri;
 		try {
+			if (createdClient) {
+				const existingOrigins = createdClient.web_origin_registry?.origins ?? [];
+				const origins = existingOrigins.some((entry) => entry.origin === origin)
+					? existingOrigins
+					: [
+							...existingOrigins,
+							{
+								origin,
+								cors: { allowed: true },
+								handoff_allowed: true,
+								iframe_allowed: false
+							}
+						];
+				createdClient = await adminClientsAPI.update(createdClient.client_id, {
+					web_origin_registry: { origins }
+				});
+				return;
+			}
+			if (!tenantSettings) return;
 			// Get current allowed_origins
 			const current = (tenantSettings.values['tenant.allowed_origins'] as string) || '';
 			const origins = current
@@ -301,6 +339,7 @@
 				token_endpoint_auth_method: tokenEndpointAuthMethod,
 				scope: scope,
 				require_pkce: requirePkce,
+				web_origin_registry: buildWebOriginRegistry(validRedirectUris),
 				...toClientDownstreamGrantCreateInput(downstreamGrantForm)
 			};
 
@@ -620,7 +659,9 @@
 												bind:value={downstreamGrantForm.default_scope}
 												placeholder="openid profile"
 											/>
-											<p class="form-hint">Applied when a downstream grant does not request scope.</p>
+											<p class="form-hint">
+												Applied when a downstream grant does not request scope.
+											</p>
 										</div>
 									</div>
 
@@ -741,21 +782,21 @@
 			{#if createdClient.redirect_uris.length > 0}
 				<div class="form-group">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
-					<label class="form-label">Redirect URIs - CORS Status</label>
+					<label class="form-label">Redirect URIs - Browser Origin Status</label>
 					<ul class="uri-list">
 						{#each createdClient.redirect_uris as uri (uri)}
 							<li class="uri-item uri-item-with-cors">
 								<span class="uri-text">{uri}</span>
 								{#if tenantSettings}
 									{#if isOriginInCors(uri)}
-										<span class="badge badge-success">CORS OK</span>
+										<span class="badge badge-success">Origin OK</span>
 									{:else}
 										<button
 											class="btn btn-secondary btn-sm"
 											onclick={() => addToCors(uri)}
 											disabled={addingToCors === uri}
 										>
-											{addingToCors === uri ? 'Adding...' : 'Add to CORS'}
+											{addingToCors === uri ? 'Adding...' : 'Add Origin'}
 										</button>
 									{/if}
 								{:else}
@@ -766,8 +807,9 @@
 					</ul>
 					{#if tenantSettings && createdClient.redirect_uris.some((uri) => !isOriginInCors(uri))}
 						<p class="form-hint cors-hint">
-							Some redirect URIs are not in the CORS allowlist. Direct Auth API calls from these
-							origins may fail. Click "Add to CORS" to allow them.
+							Some redirect URI origins are not in this client's web origin registry. Direct Auth
+							and browser handoff calls from these origins may fail. Click "Add to CORS" to allow
+							them.
 						</p>
 					{/if}
 				</div>

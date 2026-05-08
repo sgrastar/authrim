@@ -156,8 +156,8 @@ const id: Translations = {
 
   // UI deployment
   'ui.prompt': 'Metode deployment UI',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Deploy ke Cloudflare Pages (disarankan)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Deploy ke Cloudflare Workers (disarankan)',
   'ui.customOption': 'Domain kustom',
   'ui.customDesc': 'Gunakan hosting Anda sendiri',
   'ui.skipOption': 'Lewati',
@@ -752,7 +752,7 @@ const id: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI Login',
-  'web.config.loginUiDesc': 'UI autentikasi siap pakai yang dideploy ke Cloudflare Pages.',
+  'web.config.loginUiDesc': 'UI autentikasi siap pakai yang dideploy ke Cloudflare Workers.',
   'web.config.adminUi': 'UI Admin',
   'web.config.adminUiDesc': 'Dashboard manajemen untuk pengguna, klien, dan pengaturan.',
 
@@ -761,9 +761,9 @@ const id: Translations = {
   'web.url.apiDomain': 'Domain API',
   'web.url.apiDomainHint': 'Kosongkan untuk menggunakan subdomain workers.dev',
   'web.url.loginDomain': 'Domain UI Login',
-  'web.url.loginDomainHint': 'Kosongkan untuk menggunakan subdomain pages.dev',
+  'web.url.loginDomainHint': 'Kosongkan untuk menggunakan subdomain workers.dev',
   'web.url.adminDomain': 'Domain UI Admin',
-  'web.url.adminDomainHint': 'Kosongkan untuk menggunakan subdomain pages.dev',
+  'web.url.adminDomainHint': 'Kosongkan untuk menggunakan subdomain workers.dev',
 
   // Web UI Database
   'web.db.title': 'Konfigurasi Database',
@@ -927,7 +927,7 @@ const id: Translations = {
   'web.section.apiDomain': 'Domain API / Issuer',
   'web.section.uiDomains': 'Domain UI (Opsional)',
   'web.section.uiDomainsHint':
-    'Domain kustom untuk UI Login/Admin. Masing-masing dapat diatur secara independen. Kosongkan untuk menggunakan default Cloudflare Pages.',
+    'Domain kustom untuk UI Login/Admin. Masing-masing dapat diatur secara independen. Kosongkan untuk menggunakan default Cloudflare Workers.',
   'web.section.corsHint':
     'CORS: Permintaan cross-origin dari UI Login/Admin ke API diizinkan secara otomatis.',
   'web.section.configPreview': 'Pratinjau Konfigurasi',
@@ -939,7 +939,7 @@ const id: Translations = {
   'web.preview.issuerUrl': 'URL Issuer:',
   'web.preview.loginUi': 'UI Login:',
   'web.preview.adminUi': 'UI Admin:',
-  'web.preview.pagesUrl': 'UI Login (Pages):',
+  'web.preview.pagesUrl': 'UI Login (Worker):',
   'web.preview.tenantDiscover': 'Pilihan Tenant (Pintu Masuk Umum):',
   'web.preview.adminAccess': 'Akses UI Admin:',
   'web.preview.firstTenant': '{{name}} (Tenant Utama)',
@@ -1073,7 +1073,7 @@ const id: Translations = {
   'web.envDetail.kvNamespaces': 'KV Namespace',
   'web.envDetail.queues': 'Queue',
   'web.envDetail.r2Buckets': 'Bucket R2',
-  'web.envDetail.pagesProjects': 'Proyek Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Perbarui semua Workers',
@@ -1094,9 +1094,9 @@ const id: Translations = {
   'web.envDetail.action': 'Tindakan',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Perbarui UI (Pages)',
+  'web.envDetail.uiUpdate': 'Perbarui UI (Worker)',
   'web.envDetail.uiUpdateDesc':
-    'Perbarui Admin UI atau Login UI secara individual. Ini dideploy ke Cloudflare Pages.',
+    'Perbarui Admin UI atau Login UI secara individual. Ini dideploy ke Cloudflare Workers.',
   'web.envDetail.updateNow': 'Perbarui',
 
   // Web UI Delete Section
@@ -1110,7 +1110,7 @@ const id: Translations = {
   'web.delete.kvNamespaces': 'KV Namespace',
   'web.delete.queues': 'Queue',
   'web.delete.r2Buckets': 'Bucket R2',
-  'web.delete.pagesProjects': 'Proyek Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Batal',
   'web.delete.confirmBtn': 'Hapus yang Dipilih',
 

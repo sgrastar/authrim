@@ -11,16 +11,21 @@ const callbackSource = readFileSync(
 
 describe('hosted handoff callback contract', () => {
 	it('uses cookie-only finalize instead of the JSON token verification path', () => {
-		expect(callbackSource).toContain('/auth/external/handoff/finalize');
-		expect(callbackSource).not.toContain('/auth/external/handoff/verify');
+		expect(callbackSource).toContain('/handoff/finalize');
+		expect(callbackSource).not.toContain('/handoff/verify');
 		expect(callbackSource).not.toContain('verifyToken(');
+		expect(callbackSource).not.toContain('/api/v1/auth/direct/token');
 	});
 
 	it('sends cookies, rejects token material, and restores auth from the cookie session', () => {
-		expect(callbackSource).toContain("credentials: 'include'");
-		expect(callbackSource).toContain("'access_token' in finalizeData");
-		expect(callbackSource).toContain("'refresh_token' in finalizeData");
+		expect(callbackSource).toContain('authrimFetch');
+		expect(callbackSource).toContain('assertNoBrowserTokenMaterial');
 		expect(callbackSource).toContain('auth.refreshFromSession()');
 		expect(callbackSource).toContain('handoff_cookie_session_success');
+	});
+
+	it('does not fall back to browser-side authorization code token exchange', () => {
+		expect(callbackSource).toContain('external_handoff_required');
+		expect(callbackSource).toContain('token-capable SDK client');
 	});
 });

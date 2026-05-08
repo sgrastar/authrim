@@ -3,7 +3,7 @@ import {
   buildInitialAdminSetupUrl,
   buildUrlsConfig,
   ensureHttps,
-  getPagesDevUrl,
+  getUiWorkersDevUrl,
   getWorkersDevUrl,
   resolveAdminUiEntryUrl,
   resolveIssuerUrl,
@@ -21,12 +21,12 @@ describe('url-config helpers', () => {
     expect(ensureHttps(null)).toBeNull();
   });
 
-  it('builds workers.dev and pages.dev URLs', () => {
+  it('builds workers.dev and UI workers.dev URLs', () => {
     expect(getWorkersDevUrl('prod-ar-router')).toBe('https://prod-ar-router.workers.dev');
     expect(getWorkersDevUrl('prod-ar-router', 'acct-subdomain')).toBe(
       'https://prod-ar-router.acct-subdomain.workers.dev'
     );
-    expect(getPagesDevUrl('prod-ar-admin-ui')).toBe('https://prod-ar-admin-ui.pages.dev');
+    expect(getUiWorkersDevUrl('prod-ar-admin-ui')).toBe('https://prod-ar-admin-ui.workers.dev');
   });
 
   it('auto-detects sameAsApi for login and admin UI', () => {
@@ -65,12 +65,12 @@ describe('url-config helpers', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://prod-ar-login-ui.pages.dev',
+          auto: 'https://prod-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://prod-ar-admin-ui.pages.dev',
+          auto: 'https://prod-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -96,13 +96,13 @@ describe('url-config helpers', () => {
           auto: 'https://mt-ar-router.example.workers.dev',
         },
         loginUi: {
-          custom: 'https://mt-ar-login-ui.pages.dev',
-          auto: 'https://mt-ar-login-ui.pages.dev',
+          custom: 'https://mt-ar-login-ui.workers.dev',
+          auto: 'https://mt-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
-          custom: 'https://mt-ar-admin-ui.pages.dev',
-          auto: 'https://mt-ar-admin-ui.pages.dev',
+          custom: 'https://mt-ar-admin-ui.workers.dev',
+          auto: 'https://mt-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -116,10 +116,10 @@ describe('url-config helpers', () => {
       'https://first.multi-tenant.authrim.com/login'
     );
     expect(resolveTenantDiscoverUrl(config, { env: 'mt' })).toBe(
-      'https://mt-ar-login-ui.pages.dev/discover'
+      'https://mt-ar-login-ui.workers.dev/discover'
     );
     expect(resolveAdminUiEntryUrl(config, { env: 'mt' })).toBe(
-      'https://mt-ar-admin-ui.pages.dev/admin/info'
+      'https://mt-ar-admin-ui.workers.dev/admin/info'
     );
   });
 
@@ -155,12 +155,12 @@ describe('url-config helpers', () => {
         },
         loginUi: {
           custom: 'https://login.example.com',
-          auto: 'https://prod-ar-login-ui.pages.dev',
+          auto: 'https://prod-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: 'https://admin.example.com',
-          auto: 'https://prod-ar-admin-ui.pages.dev',
+          auto: 'https://prod-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },

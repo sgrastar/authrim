@@ -151,7 +151,9 @@ function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
   return channel === 'browser' || channel === 'native' || channel === 'server';
 }
 
-function getClientTrustGroup(clientMetadata: ClientMetadata | null | undefined): string | undefined {
+function getClientTrustGroup(
+  clientMetadata: ClientMetadata | null | undefined
+): string | undefined {
   if (!clientMetadata) {
     return undefined;
   }
@@ -224,7 +226,12 @@ function resolveAccessTokenAudience(
     rejectResourceAudienceMismatch?: boolean;
   } = {}
 ):
-  | { ok: true; audience: AccessTokenAudience; targets: string[]; source: AccessTokenAudienceSource }
+  | {
+      ok: true;
+      audience: AccessTokenAudience;
+      targets: string[];
+      source: AccessTokenAudienceSource;
+    }
   | { ok: false; description: string } {
   const resources = normalizeTargetParameter(input.resource);
   const audiences = normalizeTargetParameter(input.audience);
@@ -353,8 +360,7 @@ async function resolveBrowserPublicClientMode(
   }
 
   const authrimSettings = await getTenantSettings(c.env.AUTHRIM_CONFIG, tenantId, 'tenant');
-  const settings =
-    authrimSettings ?? (await getTenantSettings(c.env.SETTINGS, tenantId, 'tenant'));
+  const settings = authrimSettings ?? (await getTenantSettings(c.env.SETTINGS, tenantId, 'tenant'));
   const tenantMode = settings?.['tenant.browser_public_client_mode'];
   if (isValidBrowserPublicClientMode(tenantMode)) {
     return tenantMode;
@@ -363,9 +369,7 @@ async function resolveBrowserPublicClientMode(
   return TENANT_DEFAULTS['tenant.browser_public_client_mode'];
 }
 
-function getBrowserRefreshTokenPolicy(
-  clientMetadata: ClientMetadata
-): BrowserRefreshTokenPolicy {
+function getBrowserRefreshTokenPolicy(clientMetadata: ClientMetadata): BrowserRefreshTokenPolicy {
   return clientMetadata.browser_refresh_token_policy === 'dpop_bound' ? 'dpop_bound' : 'disabled';
 }
 
@@ -743,6 +747,7 @@ interface AuthCodeStoreResponse {
   claims?: string; // JSON string of claims parameter
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -879,7 +884,10 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
   try {
     parsedBody = await c.req.parseBody();
     formData = Object.fromEntries(
-      Object.entries(parsedBody).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
+      Object.entries(parsedBody).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? value : '',
+      ])
     );
   } catch {
     return c.json(
@@ -1158,7 +1166,12 @@ async function handleAuthorizationCodeGrant(
     : undefined;
 
   if (isBrowserPublicClientRequest && browserPublicClientMode === 'strict' && !dpopProof) {
-    return oauthError(c, 'invalid_request', 'DPoP proof is required for strict browser clients', 400);
+    return oauthError(
+      c,
+      'invalid_request',
+      'DPoP proof is required for strict browser clients',
+      400
+    );
   }
 
   if ((fapiRequiresDpop || clientRequiresDpop) && !dpopProof) {
@@ -1288,6 +1301,9 @@ async function handleAuthorizationCodeGrant(
       state: consumedData.state,
       auth_time: consumedData.authTime || Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
       acr: consumedData.acr, // OIDC Core: Authentication Context Class Reference
+      amr: Array.isArray(consumedData.amr)
+        ? consumedData.amr.filter((method): method is string => typeof method === 'string')
+        : undefined, // OIDC Core: Authentication Methods References
       claims: consumedData.claims,
       dpopJkt: consumedData.dpopJkt, // DPoP JWK thumbprint for binding verification
       sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -1818,6 +1834,7 @@ async function handleAuthorizationCodeGrant(
     at_hash: atHash, // OIDC spec requirement for code flow
     auth_time: authCodeData.auth_time, // OIDC Core Section 2: Time when End-User authentication occurred
     ...(authCodeData.acr && { acr: authCodeData.acr }),
+    ...(authCodeData.amr?.length && { amr: authCodeData.amr }),
     ...(authCodeData.sid && { sid: authCodeData.sid }), // OIDC Session Management: Session ID for RP-Initiated Logout
     ...(dsHash && { ds_hash: dsHash }), // OIDC Native SSO 1.0: Device Secret Hash
     // Phase 1 RBAC: Add RBAC claims to ID token
@@ -1949,9 +1966,7 @@ async function handleAuthorizationCodeGrant(
       // V2/V3: Register with RefreshTokenRotator first to get version
       // V3: Uses sharded DO instances for horizontal scaling
       let rtv: number = 1; // Default version for new family
-      let familyResult:
-        | Awaited<ReturnType<typeof createRefreshTokenFamily>>
-        | undefined;
+      let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
 
       if (c.env.REFRESH_TOKEN_ROTATOR) {
         try {
@@ -4641,9 +4656,8 @@ async function handleTokenExchangeGrant(
     );
   }
 
-  let elevationGrantContext:
-    | Awaited<ReturnType<typeof resolveElevationGrantSubjectToken>>
-    | null = null;
+  let elevationGrantContext: Awaited<ReturnType<typeof resolveElevationGrantSubjectToken>> | null =
+    null;
   if (isElevationGrantSubjectTokenRequest) {
     try {
       const adminAdapter = requireDedicatedAdminDatabaseAdapter(
@@ -5409,10 +5423,7 @@ async function handleNativeSSOTokenExchange(
   // Get verification key from header
   const idTokenKid = idTokenHeader.kid;
   if (!idTokenKid) {
-    return exchangeInvalidGrant(
-      'ID token is missing kid in header',
-      'id_token_signature_invalid'
-    );
+    return exchangeInvalidGrant('ID token is missing kid in header', 'id_token_signature_invalid');
   }
 
   const expectedIssuer = getRequestIssuer(c);
@@ -5436,20 +5447,13 @@ async function handleNativeSSOTokenExchange(
 
   // Verify ID Token signature
   try {
-    const publicKey = await getVerificationKeyFromJWKS(
-      c.env,
-      tenantId,
-      idTokenKid
-    );
+    const publicKey = await getVerificationKeyFromJWKS(c.env, tenantId, idTokenKid);
     await verifyToken(idToken, publicKey, expectedIssuer, {
       skipAudienceCheck: true, // We validate audience ourselves
     });
   } catch (error) {
     log.error('ID token verification failed', { action: 'NativeSSO' }, error as Error);
-    return exchangeInvalidGrant(
-      'ID token verification failed',
-      'id_token_signature_invalid'
-    );
+    return exchangeInvalidGrant('ID token verification failed', 'id_token_signature_invalid');
   }
 
   // Check ID Token expiration
@@ -5734,12 +5738,7 @@ async function handleNativeSSOTokenExchange(
   let refreshTokenJti: string | undefined;
   let refreshTokenExpiryMetadata: RefreshTokenExpiryMetadata | undefined;
   try {
-    const tenantProfile = await loadTenantProfileCached(
-      c,
-      c.env.AUTHRIM_CONFIG,
-      c.env,
-      tenantId
-    );
+    const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
 
     if (tenantProfile.allows_refresh_token !== false) {
       const refreshTokenClaims = {

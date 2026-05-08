@@ -742,6 +742,29 @@ CREATE TABLE oauth_clients (
 CREATE INDEX idx_oauth_clients_trust_group ON oauth_clients(tenant_id, trust_group);
 CREATE INDEX idx_oauth_clients_application_type ON oauth_clients(tenant_id, application_type);
 
+CREATE TABLE web_origin_registry (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  client_id TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  cors_allowed INTEGER NOT NULL DEFAULT 1,
+  csp_frame_ancestors TEXT,
+  handoff_allowed INTEGER NOT NULL DEFAULT 1,
+  iframe_allowed INTEGER NOT NULL DEFAULT 0,
+  environment TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, client_id, origin)
+);
+
+CREATE INDEX idx_web_origin_registry_client
+  ON web_origin_registry(tenant_id, client_id, is_active);
+
+CREATE INDEX idx_web_origin_registry_origin
+  ON web_origin_registry(tenant_id, origin, is_active);
+
 CREATE TABLE operational_logs (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,

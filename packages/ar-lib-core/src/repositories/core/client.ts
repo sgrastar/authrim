@@ -66,6 +66,8 @@ export interface OAuthClient {
   client_name: string;
   tenant_id: string;
   application_type: ClientApplicationType | null;
+  // Internal storage name for the public/Admin "application_group" concept.
+  // The trust_group fields remain the security-boundary identifiers until a schema rename.
   trust_group: string | null;
   trust_group_id: string | null;
   browser_public_client_mode: BrowserPublicClientMode | null;
@@ -143,6 +145,7 @@ export interface OAuthClient {
   // ==========================================================================
   /**
    * Allowed origins for custom redirect URIs (error_uri, cancel_uri).
+   * This is the internal storage precursor for the public/Admin "web_origin_registry" surface.
    * JSON array of origin strings (e.g., '["https://app.example.com"]').
    * Same-origin with redirect_uri is always allowed without registration.
    * Note: This is an Authrim extension, not OIDC standard.
@@ -177,6 +180,7 @@ export interface CreateClientInput {
   client_name: string;
   tenant_id?: string;
   application_type?: ClientApplicationType | null;
+  // Public/Admin APIs should translate application_group to these internal trust_group fields.
   trust_group?: string | null;
   trust_group_id?: string | null;
   browser_public_client_mode?: BrowserPublicClientMode | null;
@@ -225,6 +229,7 @@ export interface CreateClientInput {
   backchannel_logout_session_required?: boolean;
   frontchannel_logout_uri?: string | null;
   frontchannel_logout_session_required?: boolean;
+  // Public/Admin APIs should translate web_origin_registry membership to this internal origin list.
   // Custom Redirect URIs (Authrim Extension)
   allowed_redirect_origins?: string[] | null;
   // RFC 7591: Dynamic Client Registration
@@ -264,6 +269,7 @@ export interface UpdateClientInput {
   skip_consent?: boolean;
   allow_claims_without_scope?: boolean;
   application_type?: ClientApplicationType | null;
+  // Public/Admin APIs should translate application_group to these internal trust_group fields.
   trust_group?: string | null;
   trust_group_id?: string | null;
   browser_public_client_mode?: BrowserPublicClientMode | null;
@@ -294,6 +300,7 @@ export interface UpdateClientInput {
   backchannel_logout_session_required?: boolean;
   frontchannel_logout_uri?: string | null;
   frontchannel_logout_session_required?: boolean;
+  // Public/Admin APIs should translate web_origin_registry membership to this internal origin list.
   // Custom Redirect URIs (Authrim Extension)
   allowed_redirect_origins?: string[] | null;
   // RFC 7591: Dynamic Client Registration

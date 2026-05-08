@@ -105,6 +105,7 @@ export interface Env {
   ALLOWED_ORIGINS?: string; // Comma-separated list of allowed origins (CORS + WebAuthn RP ID)
   ACCESS_TOKEN_EXPIRY: string; // Access token lifetime in seconds (default: 3600)
   AUTH_CODE_EXPIRY: string; // Authorization code lifetime in seconds (default: 60, OAuth 2.0 BCP)
+  HANDOFF_ARTIFACT_TTL_SECONDS?: string; // Handoff artifact lifetime in seconds (default: 60, clamped 30-300)
   STATE_EXPIRY: string; // OAuth state parameter lifetime in seconds (default: 300)
   NONCE_EXPIRY: string; // OIDC nonce lifetime in seconds (default: 300)
   REFRESH_TOKEN_EXPIRY: string; // Refresh token lifetime in seconds (default: 7776000 = 90 days)
@@ -124,6 +125,7 @@ export interface Env {
   ENABLE_CONFORMANCE_MODE?: string; // "true" to enable built-in forms instead of external UI
   OAUTH_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at tenant level (default: "false")
   CLIENT_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at client level (default: "false")
+  ENABLE_IFRAME_OIDC_AUTH?: string; // "true" to allow iframe-based OIDC auth after tenant/client origin opt-in
 
   // API & Versioning
   ENABLE_API_VERSIONING?: string; // "false" to disable API versioning middleware (default: enabled)

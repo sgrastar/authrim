@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildPagesUiBuildEnv } from '../core/deploy.js';
+import { buildUiWorkerBuildEnv } from '../core/deploy.js';
 
-describe('buildPagesUiBuildEnv', () => {
+describe('buildUiWorkerBuildEnv', () => {
   it('strips leaked UI env vars when package-local .env should win', () => {
-    const buildEnv = buildPagesUiBuildEnv(
+    const buildEnv = buildUiWorkerBuildEnv(
       {
         PATH: '/usr/bin',
         PUBLIC_API_BASE_URL: 'https://leaked.example.com',
@@ -27,7 +27,7 @@ describe('buildPagesUiBuildEnv', () => {
   });
 
   it('injects the requested API URL only for legacy fallback builds', () => {
-    const buildEnv = buildPagesUiBuildEnv(
+    const buildEnv = buildUiWorkerBuildEnv(
       {
         PATH: '/usr/bin',
         PUBLIC_API_BASE_URL: 'https://stale.example.com',

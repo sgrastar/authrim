@@ -1,6 +1,6 @@
 /**
  * Handoff Token Verification Handler
- * POST /api/v1/auth/handoff/verify
+ * POST /handoff/verify
  *
  * RPがハンドオフトークンを検証し、RP専用のアクセストークンを発行する
  *
@@ -56,6 +56,47 @@ type HandoffSessionResult = {
     emailVerified: boolean;
   };
 };
+
+const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
+const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
+const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
+
+function clampHandoffArtifactTtlSeconds(value: number): number {
+  return Math.min(
+    MAX_HANDOFF_ARTIFACT_TTL_SECONDS,
+    Math.max(MIN_HANDOFF_ARTIFACT_TTL_SECONDS, value)
+  );
+}
+
+function parseHandoffArtifactTtlSeconds(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return clampHandoffArtifactTtlSeconds(Math.trunc(value));
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return clampHandoffArtifactTtlSeconds(Math.trunc(parsed));
+    }
+  }
+  return undefined;
+}
+
+function resolveHandoffArtifactTtlSeconds(
+  c: Context<{ Bindings: Env }>,
+  client: Record<string, unknown>
+): number {
+  const clientTtl =
+    parseHandoffArtifactTtlSeconds(client.handoff_artifact_ttl_seconds) ??
+    parseHandoffArtifactTtlSeconds(client.handoff_artifact_ttl);
+  if (clientTtl !== undefined) {
+    return clientTtl;
+  }
+
+  const envTtl = parseHandoffArtifactTtlSeconds(
+    (c.env as unknown as Record<string, unknown>).HANDOFF_ARTIFACT_TTL_SECONDS
+  );
+  return envTtl ?? DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS;
+}
 
 function handoffOAuthError(
   c: Context<{ Bindings: Env }>,
@@ -260,6 +301,25 @@ async function createHandoffSession(
       expected: 'handoff',
       received: handoffData.metadata?.aud,
       client_id,
+    });
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  }
+
+  const createdAt = handoffData.metadata?.created_at;
+  const artifactTtlSeconds = resolveHandoffArtifactTtlSeconds(
+    c,
+    client as unknown as Record<string, unknown>
+  );
+  if (
+    typeof createdAt !== 'number' ||
+    !Number.isFinite(createdAt) ||
+    createdAt + artifactTtlSeconds * 1000 <= Date.now()
+  ) {
+    log.warn('Expired or malformed handoff artifact', {
+      client_id,
+      createdAt,
+      artifactTtlSeconds,
+      ip: clientIp,
     });
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }

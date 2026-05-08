@@ -319,6 +319,12 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       name: userName,
       expires_at: session.expiresAt,
       created_at: session.createdAt,
+      auth_time:
+        typeof session.data?.authTime === 'number'
+          ? session.data.authTime
+          : Math.floor(session.createdAt / 1000),
+      ...(typeof session.data?.acr === 'string' && { acr: session.data.acr }),
+      ...(Array.isArray(session.data?.amr) && { amr: session.data.amr }),
     });
   } catch (error) {
     log.error('Session status error', { action: 'status' }, error as Error);

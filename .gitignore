@@ -29,6 +29,8 @@ dist/
 .DS_Store
 /packages/ui/project.inlang/project_id
 private/
+# Phase 2 planning docs are internal and live under private/docs.
+docs/proposals/phase2-loginui-sdk-workers.md
 
 # Test coverage
 coverage/

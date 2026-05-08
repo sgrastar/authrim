@@ -94,15 +94,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         };
       }
       return {
-          auditProfile: {
-            id: 'builtin:audit:standard',
-            kind: 'audit',
-            label: 'Standard Audit',
-            builtin: true,
-            primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-            archive: null,
-            sinks: [],
-          },
+        auditProfile: {
+          id: 'builtin:audit:standard',
+          kind: 'audit',
+          label: 'Standard Audit',
+          builtin: true,
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+        },
       };
     }),
     PostgresAdapter: vi.fn().mockImplementation(function MockPostgresAdapter(config: unknown) {
@@ -184,7 +184,9 @@ function createSqlAwareMockDB(
           return statement;
         }),
         first: vi.fn(async () => (await handler(sql, boundParams, 'first')) ?? null),
-        all: vi.fn(async () => ({ results: ((await handler(sql, boundParams, 'all')) ?? []) as any[] })),
+        all: vi.fn(async () => ({
+          results: ((await handler(sql, boundParams, 'all')) ?? []) as any[],
+        })),
         run: vi.fn(async () => (await handler(sql, boundParams, 'run')) ?? { success: true }),
       };
       return statement;
@@ -583,7 +585,6 @@ describe('Admin API Handlers', () => {
       expect(body.profile_id).toBe('custom:audit:postgres-primary');
       expect(body.hot_query_status).toBe('pending_runtime_support');
     });
-
   });
 
   describe('adminUserActivityLogHandler', () => {
@@ -625,7 +626,11 @@ describe('Admin API Handlers', () => {
       const response = await adminUserActivityLogHandler(c);
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
-        data: Array<{ action: string; details: Record<string, unknown>; ip_address: string | null }>;
+        data: Array<{
+          action: string;
+          details: Record<string, unknown>;
+          ip_address: string | null;
+        }>;
       };
 
       expect(body.data).toHaveLength(1);
@@ -921,9 +926,8 @@ describe('Admin API Handlers', () => {
       );
 
       expect(
-        (mockDB as any).prepare.mock.calls.some(
-          ([sql]: [string]) =>
-            sql.includes('FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?')
+        (mockDB as any).prepare.mock.calls.some(([sql]: [string]) =>
+          sql.includes('FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?')
         )
       ).toBe(true);
     });
@@ -1613,11 +1617,21 @@ describe('Admin API Handlers', () => {
 
       expect(piiSqls).toContainEqual(expect.stringContaining('INSERT INTO users_pii_tombstone'));
       expect(piiSqls).toContainEqual(expect.stringContaining('DELETE FROM users_pii WHERE id = ?'));
-      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM subject_org_membership'));
-      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM passkeys WHERE user_id = ?'));
-      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM sessions WHERE user_id = ?'));
-      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM session_clients WHERE session_id = ?'));
-      expect(coreSqls).toContainEqual(expect.stringContaining('DELETE FROM user_roles WHERE user_id = ?'));
+      expect(coreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM subject_org_membership')
+      );
+      expect(coreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM passkeys WHERE user_id = ?')
+      );
+      expect(coreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM sessions WHERE user_id = ?')
+      );
+      expect(coreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM session_clients WHERE session_id = ?')
+      );
+      expect(coreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM user_roles WHERE user_id = ?')
+      );
       expect(coreUpdateSql).toContain('status = ?');
       expect(coreUpdateSql).toContain('lifecycle_state = ?');
       expect(coreUpdateParams).toEqual(
@@ -1636,7 +1650,10 @@ describe('Admin API Handlers', () => {
     it('should load email from users_pii by id and tenant_id before enqueuing email', async () => {
       const userId = 'user-mail-1';
       const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
-        if (op === 'first' && sql.includes('SELECT * FROM users_core WHERE id = ? AND is_active = 1')) {
+        if (
+          op === 'first' &&
+          sql.includes('SELECT * FROM users_core WHERE id = ? AND is_active = 1')
+        ) {
           return {
             id: userId,
             tenant_id: 'default',
@@ -2126,6 +2143,34 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should reject invalid web_origin_registry before creating the client', async () => {
+      const mockDB = createMockDB({});
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Origin Registry Client',
+          redirect_uris: ['https://example.com/callback'],
+          web_origin_registry: {
+            origins: [{ origin: 'https://example.com/path' }],
+          },
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('Invalid web_origin_registry origins'),
+        }),
+        400
+      );
+      expect(mockDB.prepare).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO oauth_clients')
+      );
+    });
+
     it('should reject legacy app_suite in admin client create', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -2142,8 +2187,7 @@ describe('Admin API Handlers', () => {
       const json = await res.json();
       expect(json).toMatchObject({
         error: 'legacy_app_suite_not_supported',
-        error_uri:
-          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_uri: 'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
         error_details: expect.objectContaining({
           code: 'legacy_app_suite_not_supported',
           severity: 'fatal',
@@ -2201,8 +2245,7 @@ describe('Admin API Handlers', () => {
       const json = await res.json();
       expect(json).toMatchObject({
         error: 'legacy_app_suite_not_supported',
-        error_uri:
-          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_uri: 'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
         error_details: expect.objectContaining({
           code: 'legacy_app_suite_not_supported',
           severity: 'fatal',

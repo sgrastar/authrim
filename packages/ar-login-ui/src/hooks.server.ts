@@ -2,7 +2,7 @@
  * SvelteKit Server Hooks
  *
  * Provides server-side middleware for:
- * - Same-origin proxying for Pages deployments
+ * - Same-origin proxying for UI Worker deployments
  * - Security headers (CSP, HSTS, COOP, CORP, etc.)
  * - CSRF protection via Origin/Referer header validation
  * - Accept-Language based locale detection

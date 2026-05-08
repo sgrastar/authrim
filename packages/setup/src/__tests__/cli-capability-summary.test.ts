@@ -13,7 +13,7 @@ function createDiagnostics(
     zoneReadAvailable: true,
     accessibleZoneCount: 1,
     dnsReadAvailable: true,
-    pagesReadAvailable: true,
+    uiWorkersApiAvailable: true,
     ...overrides,
   };
 }
@@ -34,7 +34,7 @@ describe('buildCliCapabilityRows', () => {
     const summary = buildCliCapabilityRows(
       createDiagnostics({
         zoneReadAvailable: false,
-        pagesReadAvailable: false,
+        uiWorkersApiAvailable: false,
       }),
       'en'
     );

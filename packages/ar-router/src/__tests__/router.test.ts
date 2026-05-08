@@ -33,6 +33,7 @@ const createMockEnv = () => ({
   OP_MANAGEMENT: createMockFetcher('OP_MANAGEMENT'),
   OP_ASYNC: createMockFetcher('OP_ASYNC'),
   OP_SAML: createMockFetcher('OP_SAML'),
+  EXTERNAL_IDP: createMockFetcher('EXTERNAL_IDP'),
 });
 
 describe('Router Worker', () => {
@@ -582,6 +583,48 @@ describe('Router Worker', () => {
     });
   });
 
+  describe('Bearer Token Transport', () => {
+    it('should reject query access_token on canonical Authrim endpoints', async () => {
+      const req = new Request('https://example.com/userinfo?access_token=leaked-token');
+      const res = await app.fetch(req, mockEnv);
+      const body = (await res.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_details?.code).toBe('bearer_token_transport_unsupported');
+      expect(mockEnv.OP_USERINFO.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject form access_token on canonical Authrim endpoints', async () => {
+      const req = new Request('https://example.com/userinfo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'access_token=leaked-token',
+      });
+      const res = await app.fetch(req, mockEnv);
+      const body = (await res.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_details?.code).toBe('bearer_token_transport_unsupported');
+      expect(mockEnv.OP_USERINFO.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should not apply query access_token rejection to external IdP callbacks', async () => {
+      const req = new Request('https://example.com/auth/external/github/callback?access_token=provider-token');
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('404 Handling', () => {
     it('should return 404 for unknown paths', async () => {
       const req = new Request('https://example.com/unknown/path');
@@ -732,7 +775,7 @@ describe('Router Worker', () => {
         BASE_DOMAIN: 'example.com',
         DEFAULT_TENANT_ID: 'first',
         ENABLE_LOGIN_UI_PROXY: 'true',
-        AR_LOGIN_UI_URL: 'https://example-login.pages.dev',
+        AR_LOGIN_UI_URL: 'https://login-ui.example.com',
       };
 
       const req = new Request('https://example.com/discover?/resolve', {

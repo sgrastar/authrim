@@ -154,6 +154,8 @@ function validateRegistrationRequest(
   const data = body as Partial<ClientRegistrationRequest>;
   const rawData = body as Record<string, unknown>;
 
+  // Public runtime registration does not accept internal trust_group fields.
+  // Managed application_group assignment is performed by Admin/setup surfaces.
   for (const unsupportedField of [
     'app_suite',
     'trust_group',
@@ -169,7 +171,7 @@ function validateRegistrationRequest(
         valid: false,
         error: {
           error: 'invalid_client_metadata',
-          error_description: `${unsupportedField} is not supported in public runtime client registration. Use managed trust_group assignment instead.`,
+          error_description: `${unsupportedField} is not supported in public runtime client registration. Use managed application_group assignment instead.`,
         },
       };
     }
@@ -752,6 +754,7 @@ function validateRegistrationRequest(
 
   // ==========================================================================
   // Custom Redirect URIs (Authrim Extension)
+  // Public web_origin_registry membership is currently stored as allowed_redirect_origins.
   // x_allowed_redirect_origins: Array of origins for error_uri/cancel_uri
   // ==========================================================================
   const allowedOrigins = (data as Record<string, unknown>).x_allowed_redirect_origins;

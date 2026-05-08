@@ -40,12 +40,12 @@ describe('generateRoutes', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://emailtest-ar-login-ui.pages.dev',
+          auto: 'https://emailtest-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://emailtest-ar-admin-ui.pages.dev',
+          auto: 'https://emailtest-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -212,8 +212,8 @@ describe('generateRoutes', () => {
       environment: { prefix: 'portable' },
       urls: {
         api: { custom: null, auto: 'https://portable-ar-router.example.workers.dev' },
-        loginUi: { custom: null, auto: 'https://portable-ar-login-ui.pages.dev', sameAsApi: false },
-        adminUi: { custom: null, auto: 'https://portable-ar-admin-ui.pages.dev', sameAsApi: false },
+        loginUi: { custom: null, auto: 'https://portable-ar-login-ui.workers.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://portable-ar-admin-ui.workers.dev', sameAsApi: false },
       },
       tenant: {
         name: 'default',
@@ -319,12 +319,12 @@ describe('generateRoutes', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://queuephase4-ar-login-ui.pages.dev',
+          auto: 'https://queuephase4-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://queuephase4-ar-admin-ui.pages.dev',
+          auto: 'https://queuephase4-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -452,12 +452,12 @@ describe('generateRoutes', () => {
         },
         loginUi: {
           custom: 'https://conformance.authrim.com',
-          auto: 'https://conformance-ar-login-ui.pages.dev',
+          auto: 'https://conformance-ar-login-ui.workers.dev',
           sameAsApi: true,
         },
         adminUi: {
           custom: 'https://conformance.authrim.com',
-          auto: 'https://conformance-ar-admin-ui.pages.dev',
+          auto: 'https://conformance-ar-admin-ui.workers.dev',
           sameAsApi: true,
         },
       },
@@ -544,12 +544,12 @@ describe('generateRoutes', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -633,12 +633,12 @@ describe('generateRoutes', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -719,12 +719,12 @@ describe('generateRoutes', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -797,8 +797,8 @@ describe('generateRoutes', () => {
       environment: { prefix: 'imports' },
       urls: {
         api: { custom: null, auto: 'https://imports-ar-router.example.workers.dev' },
-        loginUi: { custom: null, auto: 'https://imports-ar-login-ui.pages.dev', sameAsApi: false },
-        adminUi: { custom: null, auto: 'https://imports-ar-admin-ui.pages.dev', sameAsApi: false },
+        loginUi: { custom: null, auto: 'https://imports-ar-login-ui.workers.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://imports-ar-admin-ui.workers.dev', sameAsApi: false },
       },
       tenant: {
         name: 'default',

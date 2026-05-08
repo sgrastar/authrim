@@ -21,8 +21,8 @@ describe('generated server-surface smoke', () => {
     const config = createDefaultConfig(env);
     config.urls = {
       api: { custom: null, auto: 'https://single-ar-router.example.workers.dev' },
-      loginUi: { custom: null, auto: 'https://single-login.pages.dev', sameAsApi: false },
-      adminUi: { custom: null, auto: 'https://single-admin.pages.dev', sameAsApi: false },
+      loginUi: { custom: null, auto: 'https://single-login.workers.dev', sameAsApi: false },
+      adminUi: { custom: null, auto: 'https://single-admin.workers.dev', sameAsApi: false },
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));

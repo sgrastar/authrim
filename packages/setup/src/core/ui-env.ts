@@ -25,7 +25,7 @@ export interface UiEnvConfig {
   /** API base URL for UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   PUBLIC_API_BASE_URL: string;
   /**
-   * Public fallback backend URL for the Pages proxy.
+   * Public fallback backend URL for the UI Worker proxy.
    * Used when the runtime API_BACKEND_URL secret is missing or stale.
    */
   PUBLIC_API_PROXY_BACKEND_URL?: string;

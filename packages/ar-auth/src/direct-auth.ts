@@ -25,6 +25,7 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreBySessionId,
+  getSessionStoreForNewSession,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
@@ -55,6 +56,7 @@ import {
   getSessionCookieSameSite,
   // KV Client Cache
   getClient,
+  getWebOriginRegistry,
   // Native SSO logout propagation
   isNativeSSOEnabled,
   normalizeDeviceSecretLogoutScope,
@@ -63,6 +65,9 @@ import {
   listRefreshTokenFamiliesByUser,
   expireRefreshTokenFamiliesByUser,
   createCompatibilityErrorResponse,
+  generateBrowserState,
+  BROWSER_STATE_COOKIE_NAME,
+  getBrowserStateCookieSameSite,
   // Tenant domain resolution
   resolveTenantFromEmailDomain,
 } from '@authrim/ar-lib-core';
@@ -112,6 +117,18 @@ const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
 const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
 
 type DirectAuthChannel = 'browser' | 'native' | 'server';
+
+type AuthorizationChallengeType = 'login' | 'reauth';
+
+interface AuthorizationChallengeContinuation {
+  redirectUrl: string;
+  type: AuthorizationChallengeType;
+}
+
+interface AuthorizationChallengeData {
+  userId?: string;
+  metadata?: Record<string, unknown>;
+}
 
 function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
   return channel === 'browser' || channel === 'native' || channel === 'server';
@@ -288,6 +305,126 @@ async function verifyPKCE(codeVerifier: string, codeChallenge: string): Promise<
   return timingSafeEqual(computed, codeChallenge);
 }
 
+function metadataString(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function buildAuthorizeContinuationUrl(
+  metadata: Record<string, unknown>,
+  authTime: number,
+  fallbackIssuer: string
+): string {
+  const issuer = metadataString(metadata, 'issuer') || fallbackIssuer;
+  const authorizeUrl = new URL('/authorize', issuer);
+  const params = new URLSearchParams();
+  for (const key of [
+    'response_type',
+    'client_id',
+    'redirect_uri',
+    'scope',
+    'state',
+    'nonce',
+    'code_challenge',
+    'code_challenge_method',
+    'claims',
+    'response_mode',
+    'max_age',
+    'prompt',
+    'acr_values',
+    'id_token_hint',
+    'display',
+    'ui_locales',
+    'login_hint',
+    'error_uri',
+    'cancel_uri',
+  ]) {
+    const value = metadataString(metadata, key);
+    if (value) {
+      params.set(key, value);
+    }
+  }
+
+  params.set('_confirmed', 'true');
+  params.set('_auth_time', String(authTime));
+
+  const sessionUserId = metadataString(metadata, 'sessionUserId');
+  if (sessionUserId) {
+    params.set('_session_user_id', sessionUserId);
+  }
+
+  authorizeUrl.search = params.toString();
+  return authorizeUrl.toString();
+}
+
+async function consumeAuthorizationChallengeContinuation(
+  env: Env,
+  challengeId: string,
+  authenticatedUserId: string,
+  authTime: number,
+  fallbackIssuer: string
+): Promise<AuthorizationChallengeContinuation | { error: Response }> {
+  const challengeStore = await getChallengeStoreByChallengeId(env, challengeId);
+  let challengeData: AuthorizationChallengeData;
+  let type: AuthorizationChallengeType;
+
+  try {
+    challengeData = (await challengeStore.consumeChallengeRpc({
+      id: challengeId,
+      type: 'login',
+      challenge: challengeId,
+    })) as AuthorizationChallengeData;
+    type = 'login';
+  } catch {
+    try {
+      challengeData = (await challengeStore.consumeChallengeRpc({
+        id: challengeId,
+        type: 'reauth',
+        challenge: challengeId,
+      })) as AuthorizationChallengeData;
+      type = 'reauth';
+    } catch {
+      return {
+        error: new Response(
+          JSON.stringify({
+            error: 'invalid_request',
+            error_description: 'Authorization challenge is invalid or expired',
+          }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        ),
+      };
+    }
+  }
+
+  const metadata = challengeData.metadata || {};
+  const expectedUserId =
+    type === 'reauth'
+      ? metadataString(metadata, 'sessionUserId') || challengeData.userId
+      : undefined;
+  if (expectedUserId && expectedUserId !== authenticatedUserId) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: 'access_denied',
+          error_description: 'Authenticated user does not match the re-authentication challenge',
+        }),
+        {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      ),
+    };
+  }
+
+  return {
+    type,
+    redirectUrl: buildAuthorizeContinuationUrl(metadata, authTime, fallbackIssuer),
+  };
+}
+
 async function validateDirectAuthClient(
   c: Context<{ Bindings: Env }>,
   clientId: string,
@@ -313,10 +450,20 @@ async function validateDirectAuthClient(
     };
   }
 
-  // Validate origin if provided and client has allowed_redirect_origins
-  if (origin && client.allowed_redirect_origins) {
-    const allowedOrigins = client.allowed_redirect_origins;
-    if (allowedOrigins.length > 0 && !allowedOrigins.includes(origin)) {
+  // Browser Direct Auth uses web_origin_registry as the canonical origin allowlist.
+  // allowed_redirect_origins is only a legacy fallback for deployments without registry rows.
+  if (origin) {
+    const registry = await getWebOriginRegistry(
+      c.env,
+      tenantId,
+      clientId,
+      authCtx.coreAdapter
+    ).catch(() => ({ origins: [] }));
+    const allowedOrigins =
+      registry.origins.length > 0
+        ? registry.origins.filter((entry) => entry.handoff_allowed).map((entry) => entry.origin)
+        : (client.allowed_redirect_origins ?? []);
+    if (allowedOrigins.length > 0 && !isAllowedOrigin(origin, allowedOrigins)) {
       return {
         valid: false,
         errorResponse: await createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS),
@@ -1745,6 +1892,235 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
 // ===== Token Exchange Handler =====
 
 /**
+ * Managed Browser Session Finish
+ * POST /api/v1/auth/direct/session
+ *
+ * Redeems a canonical Direct Auth artifact into an Authrim-managed
+ * HttpOnly browser session. This is the built-in LoginUI/BFF-style path:
+ * no OAuth/OIDC token material is returned to browser JavaScript.
+ */
+export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DIRECT-AUTH');
+
+  try {
+    const body = await c.req.json<{
+      direct_auth_artifact: string;
+      client_id: string;
+      code_verifier: string;
+      channel: DirectAuthChannel;
+      provider_id?: string;
+      authorization_challenge_id?: string;
+    }>();
+
+    const {
+      direct_auth_artifact,
+      client_id,
+      code_verifier,
+      channel,
+      provider_id,
+      authorization_challenge_id,
+    } = body;
+
+    if (!direct_auth_artifact || !client_id || !code_verifier || !channel) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'direct_auth_artifact, client_id, code_verifier, and channel are required',
+        },
+        400
+      );
+    }
+
+    if (channel !== 'browser') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'managed browser session finish requires channel=browser',
+        },
+        400
+      );
+    }
+
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, direct_auth_artifact);
+    let artifactData: {
+      challenge: string;
+      userId: string;
+      metadata?: Record<string, unknown>;
+    };
+
+    try {
+      artifactData = (await challengeStore.consumeChallengeRpc({
+        id: `direct_auth:${direct_auth_artifact}`,
+        type: 'direct_auth_code',
+      })) as typeof artifactData;
+    } catch (error) {
+      log.warn('Direct Auth session artifact consume failed', {
+        action: 'direct_auth_session_finish',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Direct Auth artifact is invalid or expired',
+        },
+        400
+      );
+    }
+
+    const metadata = artifactData.metadata || {};
+    if (metadata.client_id !== client_id) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Direct Auth artifact client binding mismatch',
+        },
+        400
+      );
+    }
+
+    if (metadata.channel !== channel) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Direct Auth artifact channel binding mismatch',
+        },
+        400
+      );
+    }
+
+    const allowedProviders = new Set<string>();
+    for (const key of ['provider_id', 'provider_slug', 'provider']) {
+      const value = metadata[key];
+      if (typeof value === 'string' && value) {
+        allowedProviders.add(value);
+      }
+    }
+    if (allowedProviders.size > 0 && (!provider_id || !allowedProviders.has(provider_id))) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Direct Auth artifact provider binding mismatch',
+        },
+        400
+      );
+    }
+
+    const pkceValid = await verifyPKCE(code_verifier, artifactData.challenge);
+    if (!pkceValid) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Direct Auth artifact PKCE verification failed',
+        },
+        400
+      );
+    }
+
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const userCore = await authCtx.repositories.userCore.findById(artifactData.userId);
+    if (!userCore || !userCore.is_active) {
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    }
+
+    let userPII: { email: string; name: string | null } = { email: '', name: null };
+    if (hasPIIDatabase(c)) {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiResult = await piiCtx.piiRepositories.userPII.findById(artifactData.userId);
+      if (piiResult) {
+        userPII = { email: piiResult.email, name: piiResult.name || null };
+      }
+    }
+
+    const sessionTTL = 24 * 60 * 60;
+    const now = Date.now();
+    const authTime = Math.floor(now / 1000);
+    const amr = [typeof metadata.method === 'string' ? metadata.method : 'direct_auth'];
+    const acr = 'urn:mace:incommon:iap:bronze';
+
+    let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
+    if (authorization_challenge_id) {
+      const continuation = await consumeAuthorizationChallengeContinuation(
+        c.env,
+        authorization_challenge_id,
+        artifactData.userId,
+        authTime,
+        new URL(c.req.url).origin
+      );
+      if ('error' in continuation) {
+        return continuation.error;
+      }
+      authorizationContinuation = continuation;
+    }
+
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
+
+    await sessionStore.createSessionRpc(sessionId, artifactData.userId, sessionTTL, {
+      email: userPII.email || null,
+      name: userPII.name,
+      amr,
+      acr,
+      authTime,
+      client_id,
+      direct_auth_channel: channel,
+    });
+
+    const isSecure = new URL(c.req.url).protocol === 'https:';
+    setCookie(c, 'authrim_session', sessionId, {
+      path: '/',
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: getSessionCookieSameSite(c.env),
+      maxAge: sessionTTL,
+    });
+
+    const browserState = await generateBrowserState(sessionId);
+    setCookie(c, BROWSER_STATE_COOKIE_NAME, browserState, {
+      path: '/',
+      secure: isSecure,
+      sameSite: getBrowserStateCookieSameSite(c.env),
+      maxAge: sessionTTL,
+    });
+
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    return c.json({
+      ok: true,
+      expires_in: sessionTTL,
+      session: {
+        userId: artifactData.userId,
+        createdAt: now,
+        expiresAt: now + sessionTTL * 1000,
+        authTime,
+        acr,
+        amr,
+      },
+      user: {
+        id: artifactData.userId,
+        email: userPII.email,
+        name: userPII.name,
+      },
+      ...(authorizationContinuation
+        ? {
+            authorization: {
+              challenge_id: authorization_challenge_id,
+              type: authorizationContinuation.type,
+            },
+            redirect_url: authorizationContinuation.redirectUrl,
+          }
+        : {}),
+    });
+  } catch (error) {
+    log.error('Direct Auth session finish error', {
+      action: 'direct_auth_session_finish',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
  * Token Exchange
  * POST /api/v1/auth/direct/token
  *
@@ -2179,7 +2555,9 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
       .catch(() => ({ client_id: undefined, revoke_tokens: false, logout_scope: undefined }));
 
     const { client_id, revoke_tokens } = body;
-    const logoutScope = normalizeDeviceSecretLogoutScope(body.logout_scope);
+    const logoutScope = body.logout_scope
+      ? normalizeDeviceSecretLogoutScope(body.logout_scope)
+      : 'local';
 
     // Get session from cookie or Authorization header
     const sessionId = getSessionIdFromRequest(c);

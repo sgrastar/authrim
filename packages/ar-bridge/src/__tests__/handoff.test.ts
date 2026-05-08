@@ -82,7 +82,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
 
 import { handleHandoffFinalize, handleHandoffVerify } from '../handlers/handoff';
 
-function createContext(url = 'https://issuer.example.com/auth/external/handoff/verify') {
+function createContext(url = 'https://issuer.example.com/handoff/verify') {
   const headers = new Headers({
     Origin: 'https://rp.example.com',
     DPoP: 'dpop-proof',
@@ -201,7 +201,7 @@ describe('handleHandoffVerify', () => {
     expect(mocks.validateDPoPProof).toHaveBeenCalledWith(
       'dpop-proof',
       'POST',
-      'https://issuer.example.com/auth/external/handoff/verify',
+      'https://issuer.example.com/handoff/verify',
       undefined,
       expect.any(Object),
       'client-123',
@@ -220,7 +220,7 @@ describe('handleHandoffVerify', () => {
 
   it('returns session and user extensions only for include=session,user', async () => {
     const response = await handleHandoffVerify(
-      createContext('https://issuer.example.com/auth/external/handoff/verify?include=session,user')
+      createContext('https://issuer.example.com/handoff/verify?include=session,user')
     );
     const body = (await response.json()) as Record<string, any>;
 
@@ -237,9 +237,51 @@ describe('handleHandoffVerify', () => {
     });
   });
 
+  it('rejects handoff artifacts older than the default TTL', async () => {
+    mocks.consumeChallengeRpc.mockResolvedValueOnce({
+      challenge: 'shard-session-123',
+      userId: 'user-123',
+      metadata: {
+        client_id: 'client-123',
+        state: 'state-123',
+        aud: 'handoff',
+        created_at: Date.now() - 61_000,
+      },
+    });
+
+    const response = await handleHandoffVerify(createContext());
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('auth_invalid_code');
+    expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('honors a clamped client handoff artifact TTL policy', async () => {
+    mocks.findClientByClientId.mockResolvedValueOnce({
+      redirect_uris: JSON.stringify(['https://rp.example.com/callback']),
+      handoff_artifact_ttl_seconds: 120,
+    });
+    mocks.consumeChallengeRpc.mockResolvedValueOnce({
+      challenge: 'shard-session-123',
+      userId: 'user-123',
+      metadata: {
+        client_id: 'client-123',
+        state: 'state-123',
+        aud: 'handoff',
+        created_at: Date.now() - 61_000,
+      },
+    });
+
+    const response = await handleHandoffVerify(createContext());
+
+    expect(response.status).toBe(200);
+    expect(mocks.createSessionRpc).toHaveBeenCalled();
+  });
+
   it('rejects unsupported include values', async () => {
     const response = await handleHandoffVerify(
-      createContext('https://issuer.example.com/auth/external/handoff/verify?include=user,session')
+      createContext('https://issuer.example.com/handoff/verify?include=user,session')
     );
     const body = (await response.json()) as { error: string; error_description: string };
 
@@ -251,7 +293,7 @@ describe('handleHandoffVerify', () => {
 
   it('finalizes cookie-only handoff without returning an access token', async () => {
     const response = await handleHandoffFinalize(
-      createContext('https://issuer.example.com/auth/external/handoff/finalize')
+      createContext('https://issuer.example.com/handoff/finalize')
     );
     const body = (await response.json()) as Record<string, unknown>;
     const setCookie = response.headers.get('set-cookie') ?? '';
@@ -294,10 +336,10 @@ describe('handleHandoffVerify', () => {
       .mockRejectedValueOnce(new Error('already consumed'));
 
     const first = await handleHandoffFinalize(
-      createContext('https://issuer.example.com/auth/external/handoff/finalize')
+      createContext('https://issuer.example.com/handoff/finalize')
     );
     const second = await handleHandoffFinalize(
-      createContext('https://issuer.example.com/auth/external/handoff/finalize')
+      createContext('https://issuer.example.com/handoff/finalize')
     );
     const secondBody = (await second.json()) as { error: string };
 

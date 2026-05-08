@@ -157,8 +157,8 @@ const es: Translations = {
 
   // UI deployment
   'ui.prompt': 'Método de despliegue de UI',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Desplegar en Cloudflare Pages (recomendado)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Desplegar en Cloudflare Workers (recomendado)',
   'ui.customOption': 'Dominio personalizado',
   'ui.customDesc': 'Usar tu propio hosting',
   'ui.skipOption': 'Omitir',
@@ -760,7 +760,7 @@ const es: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI de Inicio de Sesión',
-  'web.config.loginUiDesc': 'UI de autenticación pre-construida desplegada en Cloudflare Pages.',
+  'web.config.loginUiDesc': 'UI de autenticación pre-construida desplegada en Cloudflare Workers.',
   'web.config.adminUi': 'UI de Administración',
   'web.config.adminUiDesc': 'Panel de gestión para usuarios, clientes y configuración.',
 
@@ -769,9 +769,9 @@ const es: Translations = {
   'web.url.apiDomain': 'Dominio API',
   'web.url.apiDomainHint': 'Dejar vacío para usar subdominio workers.dev',
   'web.url.loginDomain': 'Dominio UI de Inicio de Sesión',
-  'web.url.loginDomainHint': 'Dejar vacío para usar subdominio pages.dev',
+  'web.url.loginDomainHint': 'Dejar vacío para usar subdominio workers.dev',
   'web.url.adminDomain': 'Dominio UI de Administración',
-  'web.url.adminDomainHint': 'Dejar vacío para usar subdominio pages.dev',
+  'web.url.adminDomainHint': 'Dejar vacío para usar subdominio workers.dev',
 
   // Web UI Database
   'web.db.title': 'Configuración de Base de Datos',
@@ -940,7 +940,7 @@ const es: Translations = {
   'web.section.apiDomain': 'Dominio API / Emisor',
   'web.section.uiDomains': 'Dominios UI (Opcional)',
   'web.section.uiDomainsHint':
-    'Dominios personalizados para UIs de Login/Admin. Cada uno puede configurarse independientemente. Dejar vacío para usar predeterminado de Cloudflare Pages.',
+    'Dominios personalizados para UIs de Login/Admin. Cada uno puede configurarse independientemente. Dejar vacío para usar predeterminado de Cloudflare Workers.',
   'web.section.corsHint':
     'CORS: Las solicitudes cross-origin desde UI de Login/Admin a API se permiten automáticamente.',
   'web.section.configPreview': 'Vista Previa de Configuración',
@@ -952,7 +952,7 @@ const es: Translations = {
   'web.preview.issuerUrl': 'URL del Emisor:',
   'web.preview.loginUi': 'UI de Inicio de Sesión:',
   'web.preview.adminUi': 'UI de Admin:',
-  'web.preview.pagesUrl': 'UI de Inicio de Sesión (Pages):',
+  'web.preview.pagesUrl': 'UI de Inicio de Sesión (Worker):',
   'web.preview.tenantDiscover': 'Selección de Tenant (Entrada Común):',
   'web.preview.adminAccess': 'Acceso a la UI de Admin:',
   'web.preview.firstTenant': '{{name}} (Tenant Principal)',
@@ -1087,7 +1087,7 @@ const es: Translations = {
   'web.envDetail.kvNamespaces': 'Namespaces KV',
   'web.envDetail.queues': 'Colas',
   'web.envDetail.r2Buckets': 'Buckets R2',
-  'web.envDetail.pagesProjects': 'Proyectos de Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Actualizar todos los Workers',
@@ -1108,9 +1108,9 @@ const es: Translations = {
   'web.envDetail.action': 'Acción',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Actualizar UI (Pages)',
+  'web.envDetail.uiUpdate': 'Actualizar UI (Worker)',
   'web.envDetail.uiUpdateDesc':
-    'Actualizar Admin UI o Login UI individualmente. Estos se despliegan en Cloudflare Pages.',
+    'Actualizar Admin UI o Login UI individualmente. Estos se despliegan en Cloudflare Workers.',
   'web.envDetail.updateNow': 'Actualizar',
 
   // Web UI Delete Section
@@ -1124,7 +1124,7 @@ const es: Translations = {
   'web.delete.kvNamespaces': 'Namespaces KV',
   'web.delete.queues': 'Colas',
   'web.delete.r2Buckets': 'Buckets R2',
-  'web.delete.pagesProjects': 'Proyectos de Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Cancelar',
   'web.delete.confirmBtn': 'Eliminar Seleccionados',
 

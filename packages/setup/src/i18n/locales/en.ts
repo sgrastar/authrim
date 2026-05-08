@@ -155,8 +155,8 @@ const en: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI deployment method',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Deploy to Cloudflare Pages (recommended)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Deploy to Cloudflare Workers (recommended)',
   'ui.customOption': 'Custom domain',
   'ui.customDesc': 'Use your own hosting',
   'ui.skipOption': 'Skip',
@@ -750,7 +750,7 @@ const en: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'Login UI',
-  'web.config.loginUiDesc': 'Pre-built authentication UI deployed to Cloudflare Pages.',
+  'web.config.loginUiDesc': 'Pre-built authentication UI deployed to Cloudflare Workers.',
   'web.config.adminUi': 'Admin UI',
   'web.config.adminUiDesc': 'Management dashboard for users, clients, and settings.',
 
@@ -759,9 +759,9 @@ const en: Translations = {
   'web.url.apiDomain': 'API Domain',
   'web.url.apiDomainHint': 'Leave empty to use workers.dev subdomain',
   'web.url.loginDomain': 'Login UI Domain',
-  'web.url.loginDomainHint': 'Leave empty to use pages.dev subdomain',
+  'web.url.loginDomainHint': 'Leave empty to use workers.dev subdomain',
   'web.url.adminDomain': 'Admin UI Domain',
-  'web.url.adminDomainHint': 'Leave empty to use pages.dev subdomain',
+  'web.url.adminDomainHint': 'Leave empty to use workers.dev subdomain',
 
   // Web UI Database
   'web.db.title': 'Database Configuration',
@@ -925,7 +925,7 @@ const en: Translations = {
   'web.section.apiDomain': 'API / Issuer Domain',
   'web.section.uiDomains': 'UI Domains (Optional)',
   'web.section.uiDomainsHint':
-    'Custom domains for Login/Admin UIs. Each can be set independently. Leave empty to use Cloudflare Pages default.',
+    'Custom domains for Login/Admin UIs. Each can be set independently. Leave empty to use Cloudflare Workers default.',
   'web.section.corsHint':
     'CORS: Cross-origin requests from Login/Admin UI to API are automatically allowed.',
   'web.section.configPreview': 'Configuration Preview',
@@ -937,7 +937,7 @@ const en: Translations = {
   'web.preview.issuerUrl': 'Issuer URL:',
   'web.preview.loginUi': 'Login UI:',
   'web.preview.adminUi': 'Admin UI:',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.pagesUrl': 'Login UI (Worker):',
   'web.preview.tenantDiscover': 'Tenant Selection (Common Entry):',
   'web.preview.adminAccess': 'Admin UI Access:',
   'web.preview.firstTenant': '{{name}} (Primary Tenant)',
@@ -1067,7 +1067,7 @@ const en: Translations = {
   'web.envDetail.kvNamespaces': 'KV Namespaces',
   'web.envDetail.queues': 'Queues',
   'web.envDetail.r2Buckets': 'R2 Buckets',
-  'web.envDetail.pagesProjects': 'Pages Projects',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
   'web.envDetail.emailSettings': 'Email Settings',
   'web.envDetail.emailDesc':
     'Enable Cloudflare Email Service later for this environment. This updates .authrim, regenerates wrangler bindings, uploads email secrets, and redeploys ar-auth and ar-management.',
@@ -1117,9 +1117,9 @@ const en: Translations = {
   'web.envDetail.action': 'Action',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Update UI (Pages)',
+  'web.envDetail.uiUpdate': 'Update UI (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.',
+    'Update Admin UI or Login UI individually. These are deployed to Cloudflare Workers.',
   'web.envDetail.updateNow': 'Update',
 
   // Web UI Delete Section
@@ -1133,7 +1133,7 @@ const en: Translations = {
   'web.delete.kvNamespaces': 'KV Namespaces',
   'web.delete.queues': 'Queues',
   'web.delete.r2Buckets': 'R2 Buckets',
-  'web.delete.pagesProjects': 'Pages Projects',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Cancel',
   'web.delete.confirmBtn': 'Delete Selected',
 

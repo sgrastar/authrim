@@ -8,7 +8,15 @@
 	import { getAuthConfig } from '$lib/auth';
 	import { auth } from '$lib/stores/auth';
 	import { API_BASE_URL } from '$lib/api/client';
+	import { authrimFetch } from '$lib/authrim/fetch';
+	import { assertNoBrowserTokenMaterial } from '$lib/authrim/session-profile';
 	import { getDiagnosticLogger } from '$lib/stores/diagnostic';
+	import {
+		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
+		LOGIN_UI_SESSION_STORAGE_KEYS,
+		consumeLoginUiSessionItem,
+		removeLoginUiSessionItems
+	} from '$lib/authrim/storage-keys';
 
 	let status = $state<'processing' | 'success' | 'error'>('processing');
 	let errorMessage = $state('');
@@ -47,12 +55,12 @@
 			}
 
 			const authConfig = getAuthConfig();
-			const finalizeResponse = await fetch(`${API_BASE_URL}/auth/external/handoff/finalize`, {
+			const finalizeResponse = await authrimFetch('/handoff/finalize', {
+				baseUrl: API_BASE_URL,
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
 				},
-				credentials: 'include',
 				body: JSON.stringify({
 					handoff_token: handoffToken,
 					state,
@@ -76,7 +84,9 @@
 			}
 
 			const finalizeData = await finalizeResponse.json().catch(() => ({}));
-			if ('access_token' in finalizeData || 'refresh_token' in finalizeData) {
+			try {
+				assertNoBrowserTokenMaterial(finalizeData, 'handoff finalize');
+			} catch {
 				errorCode = 'handoff_finalize_invalid_response';
 				errorMessage = 'Handoff finalize returned token material unexpectedly';
 				status = 'error';
@@ -104,9 +114,12 @@
 				return;
 			}
 
-			// Clean up session storage (except oauth_return_url, used below)
-			sessionStorage.removeItem('pkce_code_verifier');
-			sessionStorage.removeItem('oauth_provider_id');
+			// Clean up external login diagnostic state. The managed LoginUI flow never stores PKCE secrets.
+			removeLoginUiSessionItems([
+				LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId,
+				LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalProviderId,
+				LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.pkceCodeVerifier
+			]);
 
 			console.log('[Authrim] Handoff login successful');
 
@@ -120,8 +133,10 @@
 			status = 'success';
 
 			// Redirect to stored return URL or home
-			const storedReturnUrl = sessionStorage.getItem('oauth_return_url');
-			sessionStorage.removeItem('oauth_return_url');
+			const storedReturnUrl = consumeLoginUiSessionItem(
+				LOGIN_UI_SESSION_STORAGE_KEYS.externalReturnUrl,
+				[LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalReturnUrl]
+			);
 			const returnUrl =
 				storedReturnUrl && isValidReturnUrl(storedReturnUrl) ? storedReturnUrl : '/';
 
@@ -160,143 +175,40 @@
 			return;
 		}
 
-		// Extract authorization code and state
+		// Built-in LoginUI is the managed browser session surface. It accepts
+		// handoff_token callbacks and does not exchange OAuth code responses in JS.
 		const code = params.get('code');
-		const state = params.get('state');
-
-		if (!code) {
-			errorCode = 'missing_code';
-			errorMessage = $LL.callback_errorMissingCode();
-			status = 'error';
-			return;
-		}
-
-		// Retrieve code_verifier and provider_id from sessionStorage (Client ↔ Authrim PKCE)
-		// Note: state validation is performed server-side (ar-bridge)
-		let codeVerifier: string | null = null;
-		let providerId: string | null = null;
-
-		try {
-			codeVerifier = sessionStorage.getItem('pkce_code_verifier');
-			providerId = sessionStorage.getItem('oauth_provider_id');
-
-			if (codeVerifier) {
-				// Clean up OAuth session data immediately after reading
-				sessionStorage.removeItem('pkce_code_verifier');
-				sessionStorage.removeItem('oauth_provider_id');
-			} else {
-				// Log debug info when code_verifier is not found
-				console.warn('PKCE code_verifier not found in sessionStorage');
-				const debugInfo = {
-					hasCode: !!code,
-					hasState: !!state,
-					origin: window.location.origin,
-					referrer: document.referrer,
-					hasProviderId: !!providerId
-				};
-				console.debug('OAuth callback debug info:', debugInfo);
+		if (code) {
+			let providerId: string | null = null;
+			try {
+				providerId = consumeLoginUiSessionItem(
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId,
+					[LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalProviderId]
+				);
+				removeLoginUiSessionItems([
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.pkceCodeVerifier,
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalReturnUrl,
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalReturnUrl
+				]);
+			} catch {
+				// Storage cleanup is best-effort after an unsupported callback shape.
 			}
-		} catch (storageError) {
-			console.error('Failed to access session storage:', storageError);
-			errorCode = 'storage_unavailable';
-			errorMessage = $LL.callback_errorStorageUnavailable();
-			status = 'error';
-			return;
-		}
-
-		// PKCE code_verifier is required for external IdP login
-		if (!codeVerifier) {
-			errorCode = 'missing_code_verifier';
-			errorMessage = $LL.callback_errorMissingCodeVerifier();
-			status = 'error';
-			return;
-		}
-
-		try {
-			// バックエンドAPI直接呼び出し（Passkeyと同じパターン）
-			const authConfig = getAuthConfig();
-
-			const requestBody: {
-				grant_type: 'authorization_code';
-				code: string;
-				client_id: string;
-				code_verifier: string;
-				provider_id?: string;
-			} = {
-				grant_type: 'authorization_code',
-				code,
-				client_id: authConfig.clientId,
-				code_verifier: codeVerifier
-			};
-
-			// Add provider_id for external IdP logins
-			if (providerId) {
-				requestBody.provider_id = providerId;
-			}
-
-			const response = await fetch(`${API_BASE_URL}/api/v1/auth/direct/token`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(requestBody)
-			});
-
-			if (!response.ok) {
-				const data = await response.json().catch(() => ({}));
-				errorCode = data.error || 'callback_failed';
-				errorMessage = data.error_description || $LL.callback_errorExchangeFailed();
-				status = 'error';
-				getDiagnosticLogger()?.logAuthDecision({
-					decision: 'deny',
-					reason: errorCode,
-					flow: 'authorization_code',
-					context: { status: response.status, provider_id: providerId ?? undefined }
-				});
-				return;
-			}
-
-			const tokenData = await response.json();
-
-			// auth.login()でセッション保存（Passkeyと同じパターン）
-			if (tokenData.session && tokenData.user) {
-				auth.login(tokenData.session.id, {
-					userId: tokenData.user.id,
-					email: tokenData.user.email,
-					name: tokenData.user.name
-				});
-			}
-
-			getDiagnosticLogger()?.logAuthDecision({
-				decision: 'allow',
-				reason: 'token_exchange_success',
-				flow: 'authorization_code',
-				context: { provider_id: providerId ?? undefined }
-			});
-
-			status = 'success';
-
-			// Redirect to the stored return URL or home
-			const storedReturnUrl = sessionStorage.getItem('oauth_return_url');
-			sessionStorage.removeItem('oauth_return_url');
-			// SECURITY: Only allow same-origin return URLs to prevent open redirect
-			const returnUrl =
-				storedReturnUrl && isValidReturnUrl(storedReturnUrl) ? storedReturnUrl : '/';
-
-			setTimeout(() => {
-				window.location.href = returnUrl;
-			}, 1000);
-		} catch (error) {
-			console.error('Token exchange error:', error);
-			errorCode = 'network_error';
-			errorMessage = $LL.callback_errorNetwork();
+			errorCode = 'external_handoff_required';
+			errorMessage =
+				'This Login UI requires cookie-session handoff. Enable external IdP SSO/handoff for this provider or use a token-capable SDK client.';
 			status = 'error';
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'deny',
-				reason: 'network_error',
-				flow: 'authorization_code'
+				reason: errorCode,
+				flow: 'authorization_code',
+				context: { provider_id: providerId ?? undefined }
 			});
+			return;
 		}
+
+		errorCode = 'missing_handoff_token';
+		errorMessage = $LL.callback_errorMissingCode();
+		status = 'error';
 	});
 
 	function getErrorMessage(code: string): string {

@@ -2,14 +2,14 @@
  * SvelteKit Server Hooks for Safari ITP Compatibility
  *
  * This hook proxies /api/* requests to the backend API server.
- * By proxying through the same origin (pages.dev -> pages.dev),
+ * By proxying through the same UI Worker origin,
  * Safari's ITP (Intelligent Tracking Prevention) won't block cookies.
  *
  * Without this proxy:
- *   Browser (pages.dev) -> API (workers.dev) = Cross-site, cookies blocked by Safari ITP
+ *   Browser (UI Worker) -> API (workers.dev) = Cross-site, cookies blocked by Safari ITP
  *
  * With this proxy:
- *   Browser (pages.dev) -> SvelteKit Server (pages.dev) -> API (workers.dev) = Same-site, cookies work
+ *   Browser (UI Worker) -> SvelteKit Server (UI Worker) -> API (workers.dev) = Same-site, cookies work
  *
  * To disable the proxy (e.g., when using custom domains on the same site):
  *   Set API_BACKEND_URL to an empty or invalid value in the deployment env
@@ -248,7 +248,7 @@ function buildProxyResponse(response: Response): Response {
 		}
 
 		// Handle Set-Cookie specially: remove Domain attribute
-		// This allows the cookie to be set on the proxy's origin (pages.dev)
+		// This allows the cookie to be set on the proxy's UI Worker origin
 		// instead of the backend's origin (workers.dev)
 		if (lowerKey === 'set-cookie') {
 			// Remove Domain attribute from Set-Cookie
@@ -304,7 +304,7 @@ function handleProxyError(error: unknown): Response {
 }
 
 const apiProxy: Handle = async ({ event, resolve }) => {
-	// Get platform environment (Cloudflare Pages provides this)
+	// Get platform environment (Cloudflare Workers provides this)
 	const platformEnv = getPlatformEnv(event);
 
 	// Only proxy /api/* requests
@@ -335,7 +335,7 @@ const apiProxy: Handle = async ({ event, resolve }) => {
 	}
 
 	if (arRouter) {
-		// === Service Binding path (Cloudflare Pages production) ===
+		// === Service Binding path (Cloudflare Workers production) ===
 		// AR_ROUTER binding routes internally — no workers.dev needed.
 		const apiPublicUrl = getApiPublicUrl(platformEnv) ?? 'https://api-internal';
 		const forwardedHost = new URL(apiPublicUrl).host;

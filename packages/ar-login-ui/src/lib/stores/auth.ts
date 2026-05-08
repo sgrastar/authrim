@@ -11,6 +11,9 @@ export interface AuthUser {
 	userId: string;
 	email: string;
 	name?: string;
+	authTime?: number;
+	acr?: string;
+	amr?: string[];
 }
 
 interface AuthState {
@@ -27,6 +30,9 @@ async function fetchUserInfoFromSession(): Promise<{
 	sub: string;
 	email?: string;
 	name?: string;
+	authTime?: number;
+	acr?: string;
+	amr?: string[];
 } | null> {
 	try {
 		const url = `${API_BASE_URL}/api/sessions/status`;
@@ -40,7 +46,12 @@ async function fetchUserInfoFromSession(): Promise<{
 				return {
 					sub: data.user_id,
 					email: data.email,
-					name: data.name
+					name: data.name,
+					authTime: typeof data.auth_time === 'number' ? data.auth_time : undefined,
+					acr: typeof data.acr === 'string' ? data.acr : undefined,
+					amr: Array.isArray(data.amr)
+						? data.amr.filter((method: unknown): method is string => typeof method === 'string')
+						: undefined
 				};
 			}
 		}
@@ -139,7 +150,10 @@ function createAuthStore() {
 					user: {
 						userId,
 						email: userEmail,
-						name: userName || undefined
+						name: userName || undefined,
+						authTime: userInfo.authTime,
+						acr: userInfo.acr,
+						amr: userInfo.amr
 					}
 				});
 			} else {

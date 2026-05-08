@@ -28,7 +28,7 @@ const urlOrHostname = z
 export const UrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
   custom: urlOrHostname.nullable().optional(),
-  /** Auto-generated URL (workers.dev or pages.dev) */
+  /** Auto-generated Workers URL */
   auto: urlOrHostname.optional(),
   /** Cloudflare zone ID for custom domain (populated during setup) */
   zoneId: z.string().nullable().optional(),
@@ -39,12 +39,12 @@ export const UrlConfigSchema = z.object({
 export const UiUrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
   custom: urlOrHostname.nullable().optional(),
-  /** Auto-generated URL (workers.dev or pages.dev) */
+  /** Auto-generated Workers URL */
   auto: urlOrHostname.optional(),
   /**
    * Whether to serve this UI from the same domain as the API via proxy
    * - true: UI is proxied through ar-router (e.g., https://api.example.com/admin)
-   * - false: UI is served from its own Pages URL (e.g., https://admin.pages.dev)
+   * - false: UI is served from its own UI Worker URL (e.g., https://admin.example.workers.dev)
    */
   sameAsApi: z.boolean().default(false),
 });

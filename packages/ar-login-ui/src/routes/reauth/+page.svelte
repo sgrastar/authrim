@@ -115,7 +115,8 @@
 
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin({
 				challengeId: optionsData!.challengeId,
-				credential
+				credential,
+				authorizationChallengeId: challengeId || undefined
 			});
 
 			if (verifyError) {

@@ -20,6 +20,12 @@ import {
   putClient,
   buildKVKey,
   getClient,
+  getWebOriginRegistry,
+  replaceWebOriginRegistry,
+  validateWebOriginRegistryPayload,
+  invalidateWebOriginRegistryCache,
+  type WebOriginRegistryDocument,
+  type WebOriginRegistryWritePayload,
 } from '@authrim/ar-lib-core';
 import {
   parseClientStringArray,
@@ -145,9 +151,7 @@ function validateOptionalBooleanField(
 function validateOptionalChannelArrayField(
   value: unknown,
   field: string
-):
-  | { ok: true; value: AdminClientChannel[] | null | undefined }
-  | { ok: false; error: string } {
+): { ok: true; value: AdminClientChannel[] | null | undefined } | { ok: false; error: string } {
   const validation = validateOptionalStringArrayField(value, field);
   if (!validation.ok) {
     return validation;
@@ -168,6 +172,80 @@ function validateOptionalChannelArrayField(
     ok: true,
     value: validation.value as AdminClientChannel[],
   };
+}
+
+function validateWebOriginRegistryField(
+  value: unknown
+): { ok: true; value: WebOriginRegistryWritePayload | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null) {
+    return { ok: true, value: { origins: [] } };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: 'web_origin_registry must be an object or null' };
+  }
+
+  const payload = value as { origins?: unknown };
+  if (!Array.isArray(payload.origins)) {
+    return { ok: false, error: 'web_origin_registry.origins must be an array' };
+  }
+
+  for (const originEntry of payload.origins) {
+    if (typeof originEntry === 'string') {
+      continue;
+    }
+    if (typeof originEntry !== 'object' || originEntry === null || Array.isArray(originEntry)) {
+      return {
+        ok: false,
+        error: 'web_origin_registry.origins entries must be origin strings or objects',
+      };
+    }
+
+    const entry = originEntry as {
+      origin?: unknown;
+      cors?: { allowed?: unknown };
+      csp?: { frame_ancestors?: unknown };
+      handoff_allowed?: unknown;
+      iframe_allowed?: unknown;
+      environment?: unknown;
+    };
+    if (typeof entry.origin !== 'string') {
+      return { ok: false, error: 'web_origin_registry origin object requires origin string' };
+    }
+    if (entry.cors?.allowed !== undefined && typeof entry.cors.allowed !== 'boolean') {
+      return { ok: false, error: 'web_origin_registry.cors.allowed must be boolean' };
+    }
+    if (
+      entry.csp?.frame_ancestors !== undefined &&
+      (!Array.isArray(entry.csp.frame_ancestors) ||
+        entry.csp.frame_ancestors.some((ancestor) => typeof ancestor !== 'string'))
+    ) {
+      return { ok: false, error: 'web_origin_registry.csp.frame_ancestors must be string[]' };
+    }
+    if (entry.handoff_allowed !== undefined && typeof entry.handoff_allowed !== 'boolean') {
+      return { ok: false, error: 'web_origin_registry.handoff_allowed must be boolean' };
+    }
+    if (entry.iframe_allowed !== undefined && typeof entry.iframe_allowed !== 'boolean') {
+      return { ok: false, error: 'web_origin_registry.iframe_allowed must be boolean' };
+    }
+    if (
+      entry.environment !== undefined &&
+      entry.environment !== null &&
+      typeof entry.environment !== 'string'
+    ) {
+      return { ok: false, error: 'web_origin_registry.environment must be string or null' };
+    }
+  }
+
+  return { ok: true, value: payload as WebOriginRegistryWritePayload };
+}
+
+function webOriginRegistryFromAllowedOrigins(
+  origins: string[] | undefined
+): WebOriginRegistryWritePayload | undefined {
+  return origins === undefined ? undefined : { origins };
 }
 
 /**
@@ -193,9 +271,13 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       is_trusted?: boolean;
       skip_consent?: boolean;
       allow_claims_without_scope?: boolean;
+      // allowed_redirect_origins is retained for custom redirect URI compatibility.
+      // web_origin_registry is the source of truth for browser handoff/CORS/iframe metadata.
       allowed_redirect_origins?: string[];
+      web_origin_registry?: WebOriginRegistryWritePayload | null;
       require_pkce?: boolean;
       application_type?: string;
+      // Admin/API "application_group" maps to the internal trust_group security boundary.
       trust_group?: string | null;
       browser_public_client_mode?: string | null;
       browser_refresh_token_policy?: string | null;
@@ -296,6 +378,32 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       validatedAllowedOrigins = originsValidation.normalizedOrigins;
     }
 
+    const webOriginRegistryValidation = validateWebOriginRegistryField(body.web_origin_registry);
+    if (!webOriginRegistryValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: webOriginRegistryValidation.error,
+        },
+        400
+      );
+    }
+    const webOriginRegistryPayload =
+      webOriginRegistryValidation.value ??
+      webOriginRegistryFromAllowedOrigins(validatedAllowedOrigins);
+    if (webOriginRegistryPayload) {
+      const payloadValidation = validateWebOriginRegistryPayload(webOriginRegistryPayload);
+      if (!payloadValidation.valid) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: payloadValidation.error,
+          },
+          400
+        );
+      }
+    }
+
     const allowedSubjectTokenClientsValidation = validateOptionalStringArrayField(
       body.allowed_subject_token_clients,
       'allowed_subject_token_clients'
@@ -353,6 +461,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // This is the Admin API translation boundary from public application_group semantics
+    // to the current internal trust_group storage fields.
     const trustGroupValidation = validateOptionalStringField(body.trust_group, 'trust_group');
     if (!trustGroupValidation.ok) {
       return c.json(
@@ -506,10 +616,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (
-      body.delegation_mode !== undefined &&
-      !VALID_DELEGATION_MODES.has(body.delegation_mode)
-    ) {
+    if (body.delegation_mode !== undefined && !VALID_DELEGATION_MODES.has(body.delegation_mode)) {
       return c.json(
         {
           error: 'invalid_request',
@@ -575,6 +682,28 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       require_pkce: body.require_pkce || false,
     });
 
+    let webOriginRegistry: WebOriginRegistryDocument = { origins: [] };
+    if (webOriginRegistryPayload) {
+      try {
+        webOriginRegistry = await replaceWebOriginRegistry(
+          authCtx.coreAdapter,
+          tenantId,
+          client.client_id,
+          webOriginRegistryPayload
+        );
+        await invalidateWebOriginRegistryCache(c.env, tenantId, client.client_id);
+      } catch (error) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description:
+              error instanceof Error ? error.message : 'Invalid web_origin_registry',
+          },
+          400
+        );
+      }
+    }
+
     await putClient(c.env, {
       client_id: client.client_id,
       client_secret_hash: client.client_secret_hash ?? undefined,
@@ -595,8 +724,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       device_secret_revoke_trust_groups: client.device_secret_revoke_trust_groups
         ? parseClientStringArray(client.device_secret_revoke_trust_groups, [])
         : undefined,
-      device_secret_introspection_enabled:
-        client.device_secret_introspection_enabled ?? undefined,
+      device_secret_introspection_enabled: client.device_secret_introspection_enabled ?? undefined,
       device_secret_introspection_trust_groups: client.device_secret_introspection_trust_groups
         ? parseClientStringArray(client.device_secret_introspection_trust_groups, [])
         : undefined,
@@ -736,6 +864,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           default_scope: client.default_scope,
           default_audience: client.default_audience,
           default_resource: client.default_resource,
+          web_origin_registry: webOriginRegistry,
           require_pkce: client.require_pkce,
           created_at: client.created_at,
           updated_at: client.updated_at,
@@ -783,7 +912,9 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
         allowed_token_exchange_resources: client.allowed_token_exchange_resources
           ? parseClientStringArray(client.allowed_token_exchange_resources, [])
           : [],
-        allowed_scopes: client.allowed_scopes ? parseClientStringArray(client.allowed_scopes, []) : [],
+        allowed_scopes: client.allowed_scopes
+          ? parseClientStringArray(client.allowed_scopes, [])
+          : [],
         allowed_channels: client.allowed_channels
           ? parseClientStringArray(client.allowed_channels, [])
           : [],
@@ -835,6 +966,12 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const { client_secret_hash: _excluded, ...clientWithoutHash } = client;
+    const webOriginRegistry = await getWebOriginRegistry(
+      c.env,
+      tenantId,
+      clientId,
+      authCtx.coreAdapter
+    );
     const formattedClient = {
       ...clientWithoutHash,
       redirect_uris: parseClientStringArray(client.redirect_uris, []),
@@ -847,10 +984,13 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
       allowed_token_exchange_resources: client.allowed_token_exchange_resources
         ? parseClientStringArray(client.allowed_token_exchange_resources, [])
         : [],
-      allowed_scopes: client.allowed_scopes ? parseClientStringArray(client.allowed_scopes, []) : [],
+      allowed_scopes: client.allowed_scopes
+        ? parseClientStringArray(client.allowed_scopes, [])
+        : [],
       allowed_channels: client.allowed_channels
         ? parseClientStringArray(client.allowed_channels, [])
         : [],
+      web_origin_registry: webOriginRegistry,
       created_at: toMilliseconds(client.created_at as number),
       updated_at: toMilliseconds(client.updated_at as number),
     };
@@ -920,6 +1060,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent,
       allow_claims_without_scope,
       allowed_redirect_origins,
+      web_origin_registry,
       require_pkce,
       initiate_login_uri,
       login_ui_url,
@@ -969,6 +1110,32 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           );
         }
         validatedAllowedOrigins = originsValidation.normalizedOrigins;
+      }
+    }
+
+    const webOriginRegistryValidation = validateWebOriginRegistryField(web_origin_registry);
+    if (!webOriginRegistryValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: webOriginRegistryValidation.error,
+        },
+        400
+      );
+    }
+    const webOriginRegistryPayload =
+      webOriginRegistryValidation.value ??
+      webOriginRegistryFromAllowedOrigins(validatedAllowedOrigins);
+    if (webOriginRegistryPayload) {
+      const payloadValidation = validateWebOriginRegistryPayload(webOriginRegistryPayload);
+      if (!payloadValidation.valid) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: payloadValidation.error,
+          },
+          400
+        );
       }
     }
 
@@ -1270,7 +1437,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const hasUpdates = [
+    const hasClientUpdates = [
       client_name,
       redirect_uris,
       grant_types,
@@ -1309,6 +1476,8 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       default_audience,
       default_resource,
     ].some((v) => v !== undefined);
+    const hasRegistryUpdate = webOriginRegistryPayload !== undefined;
+    const hasUpdates = hasClientUpdates || hasRegistryUpdate;
 
     if (!hasUpdates) {
       return c.json({
@@ -1317,46 +1486,73 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const updatedClient = await authCtx.repositories.client.update(clientId, {
-      client_name,
-      redirect_uris,
-      grant_types,
-      response_types,
-      token_endpoint_auth_method,
-      scope,
-      logo_uri,
-      client_uri,
-      policy_uri,
-      tos_uri,
-      is_trusted,
-      skip_consent,
-      allow_claims_without_scope,
-      allowed_redirect_origins: validatedAllowedOrigins,
-      require_pkce,
-      initiate_login_uri,
-      login_ui_url,
-      application_type: applicationTypeValidation.value,
-      trust_group: trustGroupValidation.value,
-      browser_public_client_mode: browserPublicClientModeValidation.value,
-      browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
-      native_sso_enabled: nativeSsoEnabledValidation.value,
-      native_channel_allowed: nativeChannelAllowedValidation.value,
-      allowed_channels: allowedChannelsValidation.value,
-      device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
-      device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
-      device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
-      device_secret_introspection_trust_groups:
-        deviceSecretIntrospectionTrustGroupsValidation.value,
-      token_exchange_allowed,
-      allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
-      allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
-      delegation_mode,
-      client_credentials_allowed,
-      allowed_scopes: allowedScopesValidation.value,
-      default_scope,
-      default_audience,
-      default_resource: defaultResourceValidation.value,
-    });
+    const updatedClient = hasClientUpdates
+      ? await authCtx.repositories.client.update(clientId, {
+          client_name,
+          redirect_uris,
+          grant_types,
+          response_types,
+          token_endpoint_auth_method,
+          scope,
+          logo_uri,
+          client_uri,
+          policy_uri,
+          tos_uri,
+          is_trusted,
+          skip_consent,
+          allow_claims_without_scope,
+          allowed_redirect_origins: validatedAllowedOrigins,
+          require_pkce,
+          initiate_login_uri,
+          login_ui_url,
+          application_type: applicationTypeValidation.value,
+          trust_group: trustGroupValidation.value,
+          browser_public_client_mode: browserPublicClientModeValidation.value,
+          browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
+          native_sso_enabled: nativeSsoEnabledValidation.value,
+          native_channel_allowed: nativeChannelAllowedValidation.value,
+          allowed_channels: allowedChannelsValidation.value,
+          device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
+          device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
+          device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
+          device_secret_introspection_trust_groups:
+            deviceSecretIntrospectionTrustGroupsValidation.value,
+          token_exchange_allowed,
+          allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
+          allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
+          delegation_mode,
+          client_credentials_allowed,
+          allowed_scopes: allowedScopesValidation.value,
+          default_scope,
+          default_audience,
+          default_resource: defaultResourceValidation.value,
+        })
+      : existingClient;
+
+    let webOriginRegistry =
+      webOriginRegistryPayload !== undefined
+        ? undefined
+        : await getWebOriginRegistry(c.env, tenantId, clientId, authCtx.coreAdapter);
+    if (webOriginRegistryPayload !== undefined) {
+      try {
+        webOriginRegistry = await replaceWebOriginRegistry(
+          authCtx.coreAdapter,
+          tenantId,
+          clientId,
+          webOriginRegistryPayload
+        );
+        await invalidateWebOriginRegistryCache(c.env, tenantId, clientId);
+      } catch (error) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description:
+              error instanceof Error ? error.message : 'Invalid web_origin_registry',
+          },
+          400
+        );
+      }
+    }
 
     const log = getLogger(c).module('ADMIN-CLIENT');
     try {
@@ -1417,6 +1613,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
             updatedClient.device_secret_introspection_trust_groups
               ? parseClientStringArray(updatedClient.device_secret_introspection_trust_groups, [])
               : [],
+          web_origin_registry: webOriginRegistry,
         },
       });
     }
@@ -1459,6 +1656,7 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
     const log = getLogger(c).module('ADMIN-CLIENT');
     try {
       await invalidateClientCacheOnDelete(c.env, clientId, tenantId);
+      await invalidateWebOriginRegistryCache(c.env, tenantId, clientId);
     } catch {
       log.warn('Failed to invalidate client cache on delete', {
         action: 'cache_invalidate',
@@ -1532,6 +1730,7 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     for (const clientId of successfullyDeletedIds) {
       try {
         await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId));
+        await invalidateWebOriginRegistryCache(c.env, tenantId, clientId);
       } catch {
         log.warn('Failed to invalidate client cache', { action: 'cache_invalidate', clientId });
       }

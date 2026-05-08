@@ -354,6 +354,7 @@ export class AuthorizationCodeStore extends DurableObject {
             claims: request.claims,
             authTime: request.authTime,
             acr: request.acr,
+            amr: request.amr,
             cHash: request.cHash,
             dpopJkt: request.dpopJkt,
             sid: request.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -436,6 +437,7 @@ export class AuthorizationCodeStore extends DurableObject {
                 claims: stored.claims,
                 authTime: stored.authTime,
                 acr: stored.acr,
+                amr: stored.amr,
                 cHash: stored.cHash,
                 dpopJkt: stored.dpopJkt,
                 sid: stored.sid,
@@ -484,6 +486,7 @@ export class AuthorizationCodeStore extends DurableObject {
             claims: stored.claims,
             authTime: stored.authTime,
             acr: stored.acr,
+            amr: stored.amr,
             cHash: stored.cHash,
             dpopJkt: stored.dpopJkt,
             sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout

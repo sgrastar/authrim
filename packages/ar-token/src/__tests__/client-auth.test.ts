@@ -45,111 +45,113 @@ const mocks = vi.hoisted(() => {
   };
 
   return {
-  // Logging
-  mockLoggerMethods,
-  mockLogger,
-  mockGetLogger: vi.fn().mockReturnValue(mockLogger),
-  mockCreateLogger: vi.fn().mockReturnValue(mockLogger),
+    // Logging
+    mockLoggerMethods,
+    mockLogger,
+    mockGetLogger: vi.fn().mockReturnValue(mockLogger),
+    mockCreateLogger: vi.fn().mockReturnValue(mockLogger),
 
-  // Validation
-  mockValidateGrantType: vi.fn().mockReturnValue({ valid: true }),
-  mockValidateAuthCode: vi.fn().mockReturnValue({ valid: true }),
-  mockValidateClientId: vi.fn().mockReturnValue({ valid: true }),
-  mockValidateRedirectUri: vi.fn().mockReturnValue({ valid: true }),
+    // Validation
+    mockValidateGrantType: vi.fn().mockReturnValue({ valid: true }),
+    mockValidateAuthCode: vi.fn().mockReturnValue({ valid: true }),
+    mockValidateClientId: vi.fn().mockReturnValue({ valid: true }),
+    mockValidateRedirectUri: vi.fn().mockReturnValue({ valid: true }),
 
-  // Caching
-  mockGetClientCached: vi.fn().mockResolvedValue(null),
-  mockLoadTenantProfileCached: vi.fn().mockResolvedValue(null),
-  mockGetSystemSettingsCached: vi.fn().mockResolvedValue(null),
-  mockGetChallengeStoreByChallengeId: vi.fn().mockResolvedValue({
-    consumeChallengeRpc: vi.fn().mockRejectedValue(new Error('Artifact not found')),
-  }),
+    // Caching
+    mockGetClientCached: vi.fn().mockResolvedValue(null),
+    mockLoadTenantProfileCached: vi.fn().mockResolvedValue(null),
+    mockGetSystemSettingsCached: vi.fn().mockResolvedValue(null),
+    mockGetChallengeStoreByChallengeId: vi.fn().mockResolvedValue({
+      consumeChallengeRpc: vi.fn().mockRejectedValue(new Error('Artifact not found')),
+    }),
 
-  // Token operations
-  mockCreateAccessToken: vi
-    .fn()
-    .mockResolvedValue({ token: 'mock-access-token', jti: 'at-jti-001' }),
-  mockCreateIDToken: vi.fn().mockResolvedValue('mock-id-token'),
-  mockCreateRefreshToken: vi
-    .fn()
-    .mockResolvedValue({ token: 'mock-refresh-token', jti: 'rt-jti-001' }),
-  mockVerifyToken: vi.fn().mockResolvedValue({ valid: true, payload: {} }),
-  mockParseToken: vi.fn().mockReturnValue({}),
-  mockParseTokenHeader: vi.fn().mockReturnValue({ alg: 'RS256', kid: 'test-kid' }),
-  mockCalculateAtHash: vi.fn().mockResolvedValue('at-hash-value'),
-  mockCalculateDsHash: vi.fn().mockResolvedValue('presented-ds-hash'),
+    // Token operations
+    mockCreateAccessToken: vi
+      .fn()
+      .mockResolvedValue({ token: 'mock-access-token', jti: 'at-jti-001' }),
+    mockCreateIDToken: vi.fn().mockResolvedValue('mock-id-token'),
+    mockCreateRefreshToken: vi
+      .fn()
+      .mockResolvedValue({ token: 'mock-refresh-token', jti: 'rt-jti-001' }),
+    mockVerifyToken: vi.fn().mockResolvedValue({ valid: true, payload: {} }),
+    mockParseToken: vi.fn().mockReturnValue({}),
+    mockParseTokenHeader: vi.fn().mockReturnValue({ alg: 'RS256', kid: 'test-kid' }),
+    mockCalculateAtHash: vi.fn().mockResolvedValue('at-hash-value'),
+    mockCalculateDsHash: vi.fn().mockResolvedValue('presented-ds-hash'),
 
-  // Client authentication
-  mockValidateClientAssertion: vi.fn().mockResolvedValue({ valid: true, client_id: 'test-client' }),
-  mockValidateJWTBearerAssertion: vi.fn(),
-  mockParseTrustedIssuers: vi.fn(),
-  mockVerifyClientSecretHash: vi.fn().mockReturnValue(true),
-  mockParseBasicAuth: vi.fn().mockReturnValue({ success: false }),
+    // Client authentication
+    mockValidateClientAssertion: vi
+      .fn()
+      .mockResolvedValue({ valid: true, client_id: 'test-client' }),
+    mockValidateJWTBearerAssertion: vi.fn(),
+    mockParseTrustedIssuers: vi.fn(),
+    mockVerifyClientSecretHash: vi.fn().mockReturnValue(true),
+    mockParseBasicAuth: vi.fn().mockReturnValue({ success: false }),
 
-  // DPoP
-  mockExtractDPoPProof: vi.fn().mockReturnValue(null),
-  mockValidateDPoPProof: vi.fn().mockResolvedValue({ valid: true, jkt: 'test-jkt' }),
+    // DPoP
+    mockExtractDPoPProof: vi.fn().mockReturnValue(null),
+    mockValidateDPoPProof: vi.fn().mockResolvedValue({ valid: true, jkt: 'test-jkt' }),
 
-  // Sharding
-  mockParseShardedAuthCode: vi.fn().mockReturnValue(null),
-  mockGetShardCount: vi.fn().mockResolvedValue(1),
-  mockRemapShardIndex: vi.fn().mockImplementation((idx: number) => idx),
-  mockBuildAuthCodeShardInstanceName: vi.fn().mockReturnValue('auth-code-0'),
-  mockGenerateRegionAwareJti: vi.fn().mockResolvedValue({ jti: 'jti-region-001' }),
+    // Sharding
+    mockParseShardedAuthCode: vi.fn().mockReturnValue(null),
+    mockGetShardCount: vi.fn().mockResolvedValue(1),
+    mockRemapShardIndex: vi.fn().mockImplementation((idx: number) => idx),
+    mockBuildAuthCodeShardInstanceName: vi.fn().mockReturnValue('auth-code-0'),
+    mockGenerateRegionAwareJti: vi.fn().mockResolvedValue({ jti: 'jti-region-001' }),
 
-  // Database
-  mockD1Adapter: vi.fn().mockReturnValue({
-    query: vi.fn().mockResolvedValue([]),
-    queryOne: vi.fn().mockResolvedValue(null),
-    execute: vi.fn().mockResolvedValue({ success: true }),
-  }),
+    // Database
+    mockD1Adapter: vi.fn().mockReturnValue({
+      query: vi.fn().mockResolvedValue([]),
+      queryOne: vi.fn().mockResolvedValue(null),
+      execute: vi.fn().mockResolvedValue({ success: true }),
+    }),
 
-  // User
-  mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
+    // User
+    mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
 
-  // Native SSO
-  mockDeviceSecretRepository: {
-    validateAndUse: vi.fn().mockResolvedValue({ ok: false, reason: 'not_found' }),
-    createSecret: vi.fn().mockResolvedValue({ ok: false, reason: 'limit_exceeded' }),
-    findByUserId: vi.fn().mockResolvedValue([]),
-    revoke: vi.fn().mockResolvedValue(false),
-  },
-  mockDeviceInstallationRepository: {
-    ensureForDeviceSecret: vi.fn().mockResolvedValue(null),
-    ensureForNativeSSOTokenExchange: vi.fn().mockResolvedValue(null),
-  },
-  mockIsNativeSSOEnabled: vi.fn().mockResolvedValue(false),
-  mockGetNativeSSOConfig: vi.fn().mockResolvedValue({
-    enabled: true,
-    deviceSecretTTLDays: 30,
-    maxDeviceSecretsPerUser: 10,
-    maxUseCountPerSecret: 10,
-    maxSecretsBehavior: 'revoke_oldest',
-    deviceSecretRotationPolicy: 'disabled',
-    deviceSecretRotationOverlapSeconds: 0,
-    rateLimit: {
-      maxAttemptsPerMinute: 10,
-      blockDurationMinutes: 1,
+    // Native SSO
+    mockDeviceSecretRepository: {
+      validateAndUse: vi.fn().mockResolvedValue({ ok: false, reason: 'not_found' }),
+      createSecret: vi.fn().mockResolvedValue({ ok: false, reason: 'limit_exceeded' }),
+      findByUserId: vi.fn().mockResolvedValue([]),
+      revoke: vi.fn().mockResolvedValue(false),
     },
-    allowCrossClientNativeSSO: false,
-  }),
+    mockDeviceInstallationRepository: {
+      ensureForDeviceSecret: vi.fn().mockResolvedValue(null),
+      ensureForNativeSSOTokenExchange: vi.fn().mockResolvedValue(null),
+    },
+    mockIsNativeSSOEnabled: vi.fn().mockResolvedValue(false),
+    mockGetNativeSSOConfig: vi.fn().mockResolvedValue({
+      enabled: true,
+      deviceSecretTTLDays: 30,
+      maxDeviceSecretsPerUser: 10,
+      maxUseCountPerSecret: 10,
+      maxSecretsBehavior: 'revoke_oldest',
+      deviceSecretRotationPolicy: 'disabled',
+      deviceSecretRotationOverlapSeconds: 0,
+      rateLimit: {
+        maxAttemptsPerMinute: 10,
+        blockDurationMinutes: 1,
+      },
+      allowCrossClientNativeSSO: false,
+    }),
 
-  // RBAC / Policy
-  mockGetIDTokenRBACClaims: vi.fn().mockResolvedValue({}),
-  mockGetAccessTokenRBACClaims: vi.fn().mockResolvedValue({}),
-  mockIsPolicyEmbeddingEnabled: vi.fn().mockResolvedValue(false),
-  mockIsCustomClaimsEnabled: vi.fn().mockResolvedValue(false),
-  mockIsIdLevelPermissionsEnabled: vi.fn().mockResolvedValue(false),
-  mockGetEmbeddingLimits: vi.fn().mockReturnValue({ maxClaims: 50, maxSize: 4096 }),
+    // RBAC / Policy
+    mockGetIDTokenRBACClaims: vi.fn().mockResolvedValue({}),
+    mockGetAccessTokenRBACClaims: vi.fn().mockResolvedValue({}),
+    mockIsPolicyEmbeddingEnabled: vi.fn().mockResolvedValue(false),
+    mockIsCustomClaimsEnabled: vi.fn().mockResolvedValue(false),
+    mockIsIdLevelPermissionsEnabled: vi.fn().mockResolvedValue(false),
+    mockGetEmbeddingLimits: vi.fn().mockReturnValue({ maxClaims: 50, maxSize: 4096 }),
 
-  // Configuration
-  mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
-    getTokenExpiry: vi.fn().mockResolvedValue(3600),
-    getRefreshTokenExpiry: vi.fn().mockResolvedValue(86400 * 30),
-  }),
+    // Configuration
+    mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
+      getTokenExpiry: vi.fn().mockResolvedValue(3600),
+      getRefreshTokenExpiry: vi.fn().mockResolvedValue(86400 * 30),
+    }),
 
-  // Events
-  mockPublishEvent: vi.fn().mockResolvedValue(undefined),
+    // Events
+    mockPublishEvent: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -242,10 +244,7 @@ async function createPkceChallenge(verifier: string): Promise<string> {
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function expectRefreshTokenExpiryMetadata(
-  body: Record<string, unknown>,
-  expiresIn = 86400 * 30
-) {
+function expectRefreshTokenExpiryMetadata(body: Record<string, unknown>, expiresIn = 86400 * 30) {
   expect(body.refresh_token_expires_in).toBe(expiresIn);
   expect(typeof body.refresh_token_expires_at).toBe('string');
   expect(typeof body.refresh_token_expires_at_unix).toBe('number');
@@ -713,6 +712,51 @@ describe('Client Authentication Tests', () => {
     });
   });
 
+  describe('Authorization code ID token claims', () => {
+    it('should preserve OIDC auth_time, acr, and amr from the authorization code', async () => {
+      const client = createConfidentialClient({
+        token_endpoint_auth_method: 'client_secret_post',
+      });
+      const authCodeData = createAuthCodeData({
+        authTime: 1700000123,
+        acr: 'urn:mace:incommon:iap:silver',
+        amr: ['passkey', 'webauthn'],
+      });
+      const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateIDToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          auth_time: 1700000123,
+          acr: 'urn:mace:incommon:iap:silver',
+          amr: ['passkey', 'webauthn'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number)
+      );
+    });
+  });
+
   // ==========================================================================
   // Native SSO token exchange
   // ==========================================================================
@@ -1039,9 +1083,7 @@ describe('Client Authentication Tests', () => {
       const response = await tokenHandler(
         createNativeSSOPublicClientContext(client.client_id, { channel: undefined })
       );
-      const body = await parseJsonResponse<{ error: string; error_description: string }>(
-        response
-      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
 
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_request');
@@ -1057,9 +1099,7 @@ describe('Client Authentication Tests', () => {
       const response = await tokenHandler(
         createNativeSSOPublicClientContext(client.client_id, { channel: 'browser' })
       );
-      const body = await parseJsonResponse<{ error: string; error_description: string }>(
-        response
-      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
 
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_request');
@@ -1730,7 +1770,9 @@ describe('Client Authentication Tests', () => {
       expect(body.trust_group).toBeUndefined();
       expect(body.trust_group_id).toBeUndefined();
       expect(body.effective_native_sso_scope).toBeUndefined();
-      expect(mocks.mockDeviceInstallationRepository.ensureForNativeSSOTokenExchange).toHaveBeenCalledWith(
+      expect(
+        mocks.mockDeviceInstallationRepository.ensureForNativeSSOTokenExchange
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           targetClientId: client.client_id,
           targetTrustGroupId: 'tg-wallet',

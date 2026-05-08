@@ -29,7 +29,7 @@ import {
   deployAll,
   deployWorker,
   uploadSecrets,
-  deployAllPages,
+  deployAllUiWorkers,
   updateLockWithDeployments,
   buildApiPackages,
   DEFAULT_INTER_DEPLOY_DELAY_MS,
@@ -780,13 +780,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
   }
 
-  // Deploy Pages UI (if enabled and not skipped)
+  // Deploy UI Workers (if enabled and not skipped)
   if (
     !options.skipUi &&
     !options.component &&
     (config.components.loginUi || config.components.adminUi)
   ) {
-    console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Pages...\n'));
+    console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Workers...\n'));
 
     // Determine the API base URL for the UI to connect to
     let apiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
@@ -811,7 +811,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const loginUiUrl =
         config.urls?.loginUi?.custom ||
         config.urls?.loginUi?.auto ||
-        `https://${env}-ar-login-ui.pages.dev`;
+        `https://${env}-ar-login-ui.workers.dev`;
       const foundKeys = findKeysDirectory({
         env,
         sourceDir: rootDir,
@@ -853,7 +853,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       apiBaseUrl,
     });
 
-    const pagesResult = await deployAllPages(
+    const uiWorkersResult = await deployAllUiWorkers(
       {
         ...deployOptions,
         apiBaseUrl,
@@ -878,18 +878,18 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
     );
 
-    if (pagesResult.failedCount === 0) {
+    if (uiWorkersResult.failedCount === 0) {
       console.log(chalk.green('\n✓ All UI packages deployed successfully'));
-      for (const result of pagesResult.results) {
+      for (const result of uiWorkersResult.results) {
         console.log(chalk.cyan(`  • ${result.component}: ${result.projectName}`));
       }
     } else {
       console.log(
         chalk.yellow(
-          `\n⚠️  ${pagesResult.successCount}/${pagesResult.results.length} UI packages deployed`
+          `\n⚠️  ${uiWorkersResult.successCount}/${uiWorkersResult.results.length} UI packages deployed`
         )
       );
-      for (const result of pagesResult.results) {
+      for (const result of uiWorkersResult.results) {
         if (result.success) {
           console.log(chalk.green(`  ✓ ${result.component}: ${result.projectName}`));
         } else {

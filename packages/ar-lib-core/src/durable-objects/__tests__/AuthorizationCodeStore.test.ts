@@ -105,6 +105,9 @@ describe('AuthorizationCodeStore', () => {
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid profile',
+          authTime: 1700000000,
+          acr: 'urn:mace:incommon:iap:silver',
+          amr: ['passkey', 'webauthn'],
         }),
       });
 
@@ -165,6 +168,9 @@ describe('AuthorizationCodeStore', () => {
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid profile',
+          authTime: 1700000000,
+          acr: 'urn:mace:incommon:iap:silver',
+          amr: ['passkey', 'webauthn'],
         }),
       });
       await codeStore.fetch(storeRequest);
@@ -185,6 +191,9 @@ describe('AuthorizationCodeStore', () => {
       expect(body.userId).toBe('user_123');
       expect(body.scope).toBe('openid profile');
       expect(body.redirectUri).toBe('https://app.example.com/callback');
+      expect(body.authTime).toBe(1700000000);
+      expect(body.acr).toBe('urn:mace:incommon:iap:silver');
+      expect(body.amr).toEqual(['passkey', 'webauthn']);
     });
 
     it('should prevent replay attack (code already used)', async () => {

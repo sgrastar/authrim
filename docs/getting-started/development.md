@@ -199,7 +199,7 @@ pnpm run format:check     # Check code formatting
 
 ```bash
 pnpm run deploy           # Deploy workers with retry logic
-pnpm run deploy:ui        # Deploy UI to Cloudflare Pages
+pnpm run deploy:ui        # Deploy UI Workers with static assets
 pnpm run deploy:all       # Deploy everything
 ```
 
