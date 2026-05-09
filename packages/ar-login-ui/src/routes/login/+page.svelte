@@ -16,6 +16,7 @@
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { page } from '$app/stores';
 
 	// ---------------------------------------------------------------------------
@@ -285,7 +286,7 @@
 			if (apiError) {
 				throw new Error(getApiErrorMessage(apiError));
 			}
-			const params = new URLSearchParams({ email });
+			const params = new SvelteURLSearchParams({ email });
 			if (authorizationChallengeId) {
 				params.set('challenge_id', authorizationChallengeId);
 			}

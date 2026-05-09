@@ -391,56 +391,52 @@ async function sendEmail(
   request: ResendEmailRequest,
   config: ResendNotifierConfig
 ): Promise<SendResult> {
-  try {
-    const response = await safeFetch(`${config.apiEndpoint}/emails`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-      requireHttps: true,
-      timeoutMs: config.timeoutMs,
-      maxResponseSize: MAX_RESEND_SEND_RESPONSE_BYTES,
-    });
+  const response = await safeFetch(`${config.apiEndpoint}/emails`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+    requireHttps: true,
+    timeoutMs: config.timeoutMs,
+    maxResponseSize: MAX_RESEND_SEND_RESPONSE_BYTES,
+  });
 
-    if (response.ok) {
-      const result = JSON.parse(
-        await readResponseTextWithLimit(response, MAX_RESEND_SEND_RESPONSE_BYTES)
-      ) as ResendEmailResponse;
-      return {
-        success: true,
-        messageId: result.id,
-        providerResponse: { id: result.id },
-      };
-    }
-
-    // Handle error response
-    const errorBody = await readResponseTextWithLimit(response, MAX_RESEND_ERROR_RESPONSE_BYTES);
-    let errorMessage = `Resend API error: ${response.status}`;
-    let errorCode: string | undefined;
-    let retryable = false;
-
-    try {
-      const errorData = JSON.parse(errorBody) as ResendErrorResponse;
-      errorMessage = errorData.message || errorMessage;
-      errorCode = errorData.name;
-
-      // Determine if error is retryable
-      retryable = response.status >= 500 || response.status === 429;
-    } catch {
-      // Failed to parse error body, use status code message
-    }
-
+  if (response.ok) {
+    const result = JSON.parse(
+      await readResponseTextWithLimit(response, MAX_RESEND_SEND_RESPONSE_BYTES)
+    ) as ResendEmailResponse;
     return {
-      success: false,
-      error: sanitizeApiError(errorMessage),
-      errorCode,
-      retryable,
+      success: true,
+      messageId: result.id,
+      providerResponse: { id: result.id },
     };
-  } catch (error) {
-    throw error;
   }
+
+  // Handle error response
+  const errorBody = await readResponseTextWithLimit(response, MAX_RESEND_ERROR_RESPONSE_BYTES);
+  let errorMessage = `Resend API error: ${response.status}`;
+  let errorCode: string | undefined;
+  let retryable = false;
+
+  try {
+    const errorData = JSON.parse(errorBody) as ResendErrorResponse;
+    errorMessage = errorData.message || errorMessage;
+    errorCode = errorData.name;
+
+    // Determine if error is retryable
+    retryable = response.status >= 500 || response.status === 429;
+  } catch {
+    // Failed to parse error body, use status code message
+  }
+
+  return {
+    success: false,
+    error: sanitizeApiError(errorMessage),
+    errorCode,
+    retryable,
+  };
 }
 
 /**

@@ -46,7 +46,6 @@
 	let storagePolicy = $state<StorageProfileListPolicy | null>(null);
 	let referenceCatalog = $state<RuntimeProfileReferenceCatalog | null>(null);
 	let auditReferenceStatus = $state<Record<string, RuntimeProfileReferenceStatusEntry[]>>({});
-	let storageReferenceStatus = $state<Record<string, RuntimeProfileReferenceStatusEntry[]>>({});
 	let auditActivationStatus = $state<Record<string, RuntimeProfileActivationStatus>>({});
 	let storageActivationStatus = $state<Record<string, RuntimeProfileActivationStatus>>({});
 	let residencyActivationStatus = $state<Record<string, RuntimeProfileActivationStatus>>({});
@@ -258,7 +257,6 @@
 			storageProfiles = storageProfilesResult.profiles.storage ?? [];
 			residencyProfiles = residencyProfilesResult.profiles.residency ?? [];
 			auditReferenceStatus = auditProfilesResult.reference_status?.audit ?? {};
-			storageReferenceStatus = storageProfilesResult.reference_status?.storage ?? {};
 			auditActivationStatus = auditProfilesResult.activation_status?.audit ?? {};
 			storageActivationStatus = storageProfilesResult.activation_status?.storage ?? {};
 			residencyActivationStatus = residencyProfilesResult.activation_status?.residency ?? {};
@@ -453,7 +451,7 @@
 						<div class="summary-label">Auth core slices</div>
 						<div class="chip-row">
 							{#if storagePolicy?.authCoreSlices?.length}
-								{#each storagePolicy.authCoreSlices as slice}
+									{#each storagePolicy.authCoreSlices as slice (slice)}
 									<span class="badge">{slice}</span>
 								{/each}
 							{:else}
@@ -465,7 +463,7 @@
 
 				<div class="policy-grid">
 					{#if storagePolicy}
-						{#each Object.values(storagePolicy.slicePolicies) as policy}
+							{#each Object.values(storagePolicy.slicePolicies) as policy (policy.slice)}
 							<article class="policy-card">
 								<div class="policy-card-header">
 									<strong>{policy.slice}</strong>
@@ -499,7 +497,7 @@
 				</p>
 
 				<div class="profile-list">
-					{#each storageProfiles as profile}
+					{#each storageProfiles as profile (profile.id)}
 						{@const tenantPolicy = getStorageTenantPolicy(profile.id)}
 						{@const activation = getActivationStatus(storageActivationStatus, profile.id)}
 						<button class="profile-item profile-item-static" disabled>
@@ -554,7 +552,7 @@
 							</div>
 							<div class="chip-row">
 								{#if referenceCatalog.bindingRefs.d1.length}
-									{#each referenceCatalog.bindingRefs.d1 as ref}
+									{#each referenceCatalog.bindingRefs.d1 as ref (ref)}
 										<span class="badge">{ref}</span>
 									{/each}
 								{:else}
@@ -570,7 +568,7 @@
 							</div>
 							<div class="chip-row">
 								{#if referenceCatalog.bindingRefs.r2.length}
-									{#each referenceCatalog.bindingRefs.r2 as ref}
+									{#each referenceCatalog.bindingRefs.r2 as ref (ref)}
 										<span class="badge">{ref}</span>
 									{/each}
 								{:else}
@@ -586,7 +584,7 @@
 							</div>
 							<div class="chip-row">
 								{#if referenceCatalog.bindingRefs.hyperdrive.length}
-									{#each referenceCatalog.bindingRefs.hyperdrive as ref}
+									{#each referenceCatalog.bindingRefs.hyperdrive as ref (ref)}
 										<span class="badge">{ref}</span>
 									{/each}
 								{:else}
@@ -602,7 +600,7 @@
 							</div>
 							<div class="chip-row">
 								{#if referenceCatalog.connectionRefs.all.length}
-									{#each referenceCatalog.connectionRefs.all as ref}
+									{#each referenceCatalog.connectionRefs.all as ref (ref)}
 										<span class="badge">{ref}</span>
 									{/each}
 								{:else}
@@ -623,7 +621,7 @@
 				<div class="field">
 					<label for="defaultStorageProfile">Default storage profile</label>
 					<select id="defaultStorageProfile" bind:value={defaultStorageProfileId}>
-						{#each storageProfiles as profile}
+						{#each storageProfiles as profile (profile.id)}
 							<option
 								value={profile.id}
 								disabled={isActivationBlocked(getActivationStatus(storageActivationStatus, profile.id))}
@@ -648,7 +646,7 @@
 				<div class="field">
 					<label for="defaultAuditProfile">Default profile</label>
 					<select id="defaultAuditProfile" bind:value={defaultAuditProfileId}>
-						{#each auditProfiles as profile}
+						{#each auditProfiles as profile (profile.id)}
 							<option
 								value={profile.id}
 								disabled={isActivationBlocked(getActivationStatus(auditActivationStatus, profile.id))}
@@ -673,7 +671,7 @@
 				<div class="field">
 					<label for="defaultResidencyProfile">Default residency profile</label>
 					<select id="defaultResidencyProfile" bind:value={defaultResidencyProfileId}>
-						{#each residencyProfiles as profile}
+						{#each residencyProfiles as profile (profile.id)}
 							<option
 								value={profile.id}
 								disabled={isActivationBlocked(getActivationStatus(residencyActivationStatus, profile.id))}
@@ -702,7 +700,7 @@
 
 				<h2>Profiles</h2>
 				<div class="profile-list">
-					{#each auditProfiles as profile}
+					{#each auditProfiles as profile (profile.id)}
 						{@const activation = getActivationStatus(auditActivationStatus, profile.id)}
 						<button class="profile-item" onclick={() => selectProfileById(profile.id)}>
 							<div class="profile-title-row">
@@ -862,7 +860,7 @@
 										/>
 									</div>
 								</div>
-								{#each getAuditTargetDetails(parsedProfileDraft.primary) as detail}
+								{#each getAuditTargetDetails(parsedProfileDraft.primary) as detail (detail)}
 									<div class="helper-text">{detail}</div>
 								{/each}
 							{:else}
@@ -918,7 +916,7 @@
 								<p class="helper-text">No forwarding sinks configured.</p>
 							{:else}
 								<div class="reference-status-list">
-									{#each parsedProfileDraft.sinks as sink, index}
+									{#each parsedProfileDraft.sinks as sink, index (index)}
 										<div class="reference-status-card">
 											<div class="status-header">
 												<strong>{formatSinkLabel(sink, index)}</strong>
@@ -990,7 +988,7 @@
 													</div>
 												</div>
 											{/if}
-											{#each getAuditTargetDetails(sink) as detail}
+											{#each getAuditTargetDetails(sink) as detail (detail)}
 												<div class="helper-text">{detail}</div>
 											{/each}
 										</div>
@@ -1129,25 +1127,25 @@
 				</div>
 
 				<datalist id="runtime-d1-binding-refs">
-					{#each getReferenceCatalogValues(referenceCatalog?.bindingRefs.d1) as ref}
+					{#each getReferenceCatalogValues(referenceCatalog?.bindingRefs.d1) as ref (ref)}
 						<option value={ref}></option>
 					{/each}
 				</datalist>
 
 				<datalist id="runtime-r2-binding-refs">
-					{#each getArchiveBucketOptions() as ref}
+					{#each getArchiveBucketOptions() as ref (ref)}
 						<option value={ref}></option>
 					{/each}
 				</datalist>
 
 				<datalist id="runtime-hyperdrive-binding-refs">
-					{#each getReferenceCatalogValues(referenceCatalog?.bindingRefs.hyperdrive) as ref}
+					{#each getReferenceCatalogValues(referenceCatalog?.bindingRefs.hyperdrive) as ref (ref)}
 						<option value={ref}></option>
 					{/each}
 				</datalist>
 
 				<datalist id="runtime-connection-refs">
-					{#each getConnectionRefOptions() as ref}
+					{#each getConnectionRefOptions() as ref (ref)}
 						<option value={ref}></option>
 					{/each}
 				</datalist>
@@ -1173,13 +1171,13 @@
 						</div>
 						{#if getSelectedAuditActivationStatus()?.blockingReasons?.length}
 							<ul class="status-list">
-								{#each getSelectedAuditActivationStatus()?.blockingReasons ?? [] as reason}
+								{#each getSelectedAuditActivationStatus()?.blockingReasons ?? [] as reason (reason)}
 									<li>{reason}</li>
 								{/each}
 							</ul>
 						{:else if getSelectedAuditActivationStatus()?.warnings?.length}
 							<ul class="status-list">
-								{#each getSelectedAuditActivationStatus()?.warnings ?? [] as reason}
+								{#each getSelectedAuditActivationStatus()?.warnings ?? [] as reason (reason)}
 									<li>{reason}</li>
 								{/each}
 							</ul>
@@ -1191,7 +1189,7 @@
 					<div class="status-panel">
 						<h3>Reference Status</h3>
 						<div class="reference-status-list">
-							{#each getSelectedAuditReferenceStatus() as entry}
+							{#each getSelectedAuditReferenceStatus() as entry (entry.path)}
 								<div class="reference-status-card">
 									<div class="profile-title-row">
 										<strong>{entry.path}</strong>

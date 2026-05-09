@@ -2024,6 +2024,76 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should create OIDC claims and ASC client settings', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Claims Client',
+          redirect_uris: ['https://example.com/callback'],
+          allow_claims_without_scope: false,
+          claims_parameter_policy: {
+            email: 'claims_allowed',
+            birthdate: 'claims_allowed',
+          },
+          asc_enabled: true,
+          asc_protected_request_required: true,
+          asc_sao_enabled: true,
+          asc_transformed_claims_enabled: true,
+          asc_allowed_transformed_claims: ['age_over_18', 'email_domain'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.objectContaining({
+            client_name: 'Claims Client',
+            allow_claims_without_scope: false,
+            claims_parameter_policy: {
+              email: 'claims_allowed',
+              birthdate: 'claims_allowed',
+            },
+            asc_enabled: true,
+            asc_protected_request_required: true,
+            asc_sao_enabled: true,
+            asc_transformed_claims_enabled: true,
+            asc_allowed_transformed_claims: ['age_over_18', 'email_domain'],
+          }),
+        }),
+        201
+      );
+    });
+
+    it('should reject invalid OIDC claims and ASC client settings', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Invalid Claims Client',
+          redirect_uris: ['https://example.com/callback'],
+          claims_parameter_policy: {
+            email: 'allow',
+          },
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('claims_parameter_policy.email'),
+        }),
+        400
+      );
+    });
+
     it('should create client policy metadata for Phase 1 flows', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -2463,6 +2533,80 @@ describe('Admin API Handlers', () => {
             device_secret_introspection_enabled: false,
             device_secret_introspection_trust_groups: ['wallet-suite'],
             default_resource: 'svc://wallet-api',
+          }),
+        })
+      );
+    });
+
+    it('should update OIDC claims and ASC client settings', async () => {
+      const clientId = 'client-claims-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      let queryCount = 0;
+      (mockDB as any)._mockStatement.first.mockImplementation(() => {
+        queryCount++;
+        if (queryCount === 1) {
+          return Promise.resolve({
+            client_id: clientId,
+            client_name: 'Existing Client',
+            redirect_uris: '["https://example.com/callback"]',
+            grant_types: '["authorization_code"]',
+            response_types: '["code"]',
+          });
+        }
+        return Promise.resolve({
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+          allow_claims_without_scope: 0,
+          claims_parameter_policy: '{"email":"claims_allowed","birthdate":"claims_allowed"}',
+          asc_enabled: 1,
+          asc_protected_request_required: 1,
+          asc_sao_enabled: 1,
+          asc_transformed_claims_enabled: 1,
+          asc_allowed_transformed_claims: '["age_over_18","email_domain"]',
+        });
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          allow_claims_without_scope: false,
+          claims_parameter_policy: {
+            email: 'claims_allowed',
+            birthdate: 'claims_allowed',
+          },
+          asc_enabled: true,
+          asc_protected_request_required: true,
+          asc_sao_enabled: true,
+          asc_transformed_claims_enabled: true,
+          asc_allowed_transformed_claims: ['age_over_18', 'email_domain'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          client: expect.objectContaining({
+            client_id: clientId,
+            allow_claims_without_scope: false,
+            claims_parameter_policy: {
+              email: 'claims_allowed',
+              birthdate: 'claims_allowed',
+            },
+            asc_enabled: true,
+            asc_protected_request_required: true,
+            asc_sao_enabled: true,
+            asc_transformed_claims_enabled: true,
+            asc_allowed_transformed_claims: ['age_over_18', 'email_domain'],
           }),
         })
       );

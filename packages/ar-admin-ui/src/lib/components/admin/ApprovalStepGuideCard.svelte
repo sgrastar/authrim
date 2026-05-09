@@ -50,7 +50,7 @@
 		{/if}
 		{#if onIssueFallback && getFallbackMethods().length > 0}
 			<div class="fallback-actions">
-				{#each getFallbackMethods() as method}
+					{#each getFallbackMethods() as method (method)}
 					<button class="fallback-button" type="button" onclick={() => onIssueFallback?.(method)}>
 						Issue {method}
 					</button>

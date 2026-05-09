@@ -41,6 +41,7 @@ export interface AuthorizationCode {
   nonce?: string;
   state?: string;
   claims?: string; // OIDC claims parameter (JSON string)
+  claimsRequestProtected?: boolean; // Whether the claims parameter came from PAR/signed JAR
   authTime?: number; // OIDC auth_time (authentication timestamp)
   acr?: string; // OIDC acr (Authentication Context Class Reference)
   amr?: string[]; // OIDC amr (Authentication Methods References)
@@ -70,6 +71,7 @@ export interface StoreCodeRequest {
   nonce?: string;
   state?: string;
   claims?: string;
+  claimsRequestProtected?: boolean;
   authTime?: number;
   acr?: string;
   amr?: string[];
@@ -101,6 +103,7 @@ export interface ConsumeCodeResponse {
   nonce?: string;
   state?: string;
   claims?: string;
+  claimsRequestProtected?: boolean;
   authTime?: number;
   acr?: string;
   amr?: string[];
@@ -509,6 +512,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       nonce: request.nonce,
       state: request.state,
       claims: request.claims,
+      claimsRequestProtected: request.claimsRequestProtected,
       authTime: request.authTime,
       acr: request.acr,
       amr: request.amr,
@@ -606,6 +610,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         nonce: stored.nonce,
         state: stored.state,
         claims: stored.claims,
+        claimsRequestProtected: stored.claimsRequestProtected,
         authTime: stored.authTime,
         acr: stored.acr,
         amr: stored.amr,
@@ -667,6 +672,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       nonce: stored.nonce,
       state: stored.state,
       claims: stored.claims,
+      claimsRequestProtected: stored.claimsRequestProtected,
       authTime: stored.authTime,
       acr: stored.acr,
       amr: stored.amr,

@@ -4,6 +4,8 @@
 	import { goto } from '$app/navigation';
 	import {
 		adminClientsAPI,
+		type ClaimReleasePolicy,
+		type ClaimsParameterPolicy,
 		type Client,
 		type ClientUsage,
 		type UpdateClientInput
@@ -123,7 +125,15 @@
 	let copiedField = $state<string | null>(null);
 
 	// Tabs
-	type TabId = 'general' | 'tokens' | 'security' | 'scopes' | 'session' | 'metadata' | 'advanced';
+	type TabId =
+		| 'general'
+		| 'tokens'
+		| 'security'
+		| 'scopes'
+		| 'claims'
+		| 'session'
+		| 'metadata'
+		| 'advanced';
 	let activeTab = $state<TabId>('general');
 
 	const TAB_DEFINITIONS: ReadonlyArray<{ id: TabId; label: string }> = [
@@ -131,16 +141,33 @@
 		{ id: 'tokens', label: 'Tokens' },
 		{ id: 'security', label: 'Security' },
 		{ id: 'scopes', label: 'Scopes & Permissions' },
+		{ id: 'claims', label: 'Claims & ASC' },
 		{ id: 'session', label: 'Session & Logout' },
 		{ id: 'metadata', label: 'Client Metadata' },
 		{ id: 'advanced', label: 'Advanced' }
 	];
+
+	const CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
+		'scope_required',
+		'claims_allowed',
+		'forbidden'
+	]);
+	const ASC_TRANSFORMED_CLAIMS = [
+		{ id: 'age_over_13', label: 'Age over 13' },
+		{ id: 'age_over_18', label: 'Age over 18' },
+		{ id: 'age_over_20', label: 'Age over 20' },
+		{ id: 'email_domain', label: 'Email domain' },
+		{ id: 'phone_country_code', label: 'Phone country code' },
+		{ id: 'address_country', label: 'Address country' }
+	] as const;
 
 	// Admin visibility toggle
 	let showAdminSettings = $state(false);
 
 	// Track unsaved changes
 	let initialEditForm = $state<UpdateClientInput | null>(null);
+	let claimsParameterPolicyText = $state('');
+	let initialClaimsParameterPolicyText = $state<string | null>(null);
 	let initialDownstreamGrantEditForm = $state<ClientDownstreamGrantForm | null>(null);
 	let initialSettingsEditForm = $state<{
 		// General tab
@@ -264,8 +291,53 @@
 			...input,
 			redirect_uris: toStringArray(input.redirect_uris),
 			grant_types: toStringArray(input.grant_types),
-			response_types: toStringArray(input.response_types)
+			response_types: toStringArray(input.response_types),
+			asc_allowed_transformed_claims: input.asc_allowed_transformed_claims
+				? toStringArray(input.asc_allowed_transformed_claims)
+				: input.asc_allowed_transformed_claims
 		};
+	}
+
+	function parseClaimsParameterPolicy(text: string): ClaimsParameterPolicy | null {
+		const policy: ClaimsParameterPolicy = {};
+		for (const [index, rawLine] of text.split('\n').entries()) {
+			const line = rawLine.trim();
+			if (!line) continue;
+			const separatorIndex = line.indexOf(':');
+			if (separatorIndex <= 0) {
+				throw new Error(`Claims policy line ${index + 1} must use "claim: policy"`);
+			}
+			const claim = line.slice(0, separatorIndex).trim();
+			const policyValue = line.slice(separatorIndex + 1).trim() as ClaimReleasePolicy;
+			if (!claim) {
+				throw new Error(`Claims policy line ${index + 1} has an empty claim name`);
+			}
+			if (!CLAIM_RELEASE_POLICIES.has(policyValue)) {
+				throw new Error(
+					`Claims policy line ${index + 1} must use scope_required, claims_allowed, or forbidden`
+				);
+			}
+			policy[claim] = policyValue;
+		}
+		return Object.keys(policy).length > 0 ? policy : null;
+	}
+
+	function formatClaimsParameterPolicy(policy?: ClaimsParameterPolicy | null): string {
+		if (!policy) return '';
+		return Object.entries(policy)
+			.map(([claim, policyValue]) => `${claim}: ${policyValue}`)
+			.join('\n');
+	}
+
+	function formatEnabled(value?: boolean): string {
+		return value === false ? 'Disabled' : 'Enabled';
+	}
+
+	function getEffectiveAscAllowedTransformedClaims(currentClient: Client | null): string[] {
+		return (
+			currentClient?.asc_allowed_transformed_claims ??
+			ASC_TRANSFORMED_CLAIMS.map((claim) => claim.id)
+		);
 	}
 
 	function syncClientSettingsWithClient(
@@ -298,7 +370,16 @@
 			arraysEqual(a.response_types, b.response_types) &&
 			(a.token_endpoint_auth_method ?? '') === (b.token_endpoint_auth_method ?? '') &&
 			(a.scope ?? '') === (b.scope ?? '') &&
-			Boolean(a.require_pkce) === Boolean(b.require_pkce)
+			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
+			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
+			(a.asc_enabled ?? true) === (b.asc_enabled ?? true) &&
+			(a.asc_protected_request_required ?? true) === (b.asc_protected_request_required ?? true) &&
+			(a.asc_sao_enabled ?? true) === (b.asc_sao_enabled ?? true) &&
+			(a.asc_transformed_claims_enabled ?? true) === (b.asc_transformed_claims_enabled ?? true) &&
+			arraysEqual(
+				a.asc_allowed_transformed_claims ?? undefined,
+				b.asc_allowed_transformed_claims ?? undefined
+			)
 		);
 	}
 
@@ -508,12 +589,14 @@
 		if (
 			!isEditing ||
 			!initialEditForm ||
+			initialClaimsParameterPolicyText === null ||
 			!initialSettingsEditForm ||
 			!initialDownstreamGrantEditForm
 		)
 			return false;
 		return (
 			!clientFormEquals(editForm, initialEditForm) ||
+			claimsParameterPolicyText !== initialClaimsParameterPolicyText ||
 			!downstreamGrantFormEquals(downstreamGrantEditForm, initialDownstreamGrantEditForm) ||
 			!settingsFormEquals(settingsEditForm, initialSettingsEditForm)
 		);
@@ -565,24 +648,24 @@
 	}
 
 	function buildWebOriginRegistry(uris: string[], existing = client?.web_origin_registry) {
-		const byOrigin = new Map<
+		const byOrigin: Record<
 			string,
 			NonNullable<Client['web_origin_registry']>['origins'][number]
-		>();
+		> = {};
 		for (const entry of existing?.origins ?? []) {
-			byOrigin.set(entry.origin, entry);
+			byOrigin[entry.origin] = entry;
 		}
 		for (const uri of uris) {
 			const origin = extractOrigin(uri);
-			if (!origin || byOrigin.has(origin)) continue;
-			byOrigin.set(origin, {
+			if (!origin || byOrigin[origin]) continue;
+			byOrigin[origin] = {
 				origin,
 				cors: { allowed: true },
 				handoff_allowed: true,
 				iframe_allowed: false
-			});
+			};
 		}
-		return { origins: [...byOrigin.values()] };
+		return { origins: Object.values(byOrigin) };
 	}
 
 	/**
@@ -726,8 +809,15 @@
 			response_types: toStringArray(client.response_types),
 			token_endpoint_auth_method: client.token_endpoint_auth_method,
 			scope: client.scope,
-			require_pkce: client.require_pkce ?? false
+			require_pkce: client.require_pkce ?? false,
+			allow_claims_without_scope: client.allow_claims_without_scope ?? false,
+			asc_enabled: client.asc_enabled ?? true,
+			asc_protected_request_required: client.asc_protected_request_required ?? true,
+			asc_sao_enabled: client.asc_sao_enabled ?? true,
+			asc_transformed_claims_enabled: client.asc_transformed_claims_enabled ?? true,
+			asc_allowed_transformed_claims: getEffectiveAscAllowedTransformedClaims(client)
 		};
+		claimsParameterPolicyText = formatClaimsParameterPolicy(client.claims_parameter_policy);
 		downstreamGrantEditForm = buildClientDownstreamGrantFormFromClient(client);
 		// Initialize all Settings API fields
 		settingsEditForm = {
@@ -832,6 +922,7 @@
 				(clientSettings.values['client.token_endpoint_auth_signing_alg'] as string) ?? 'RS256'
 		};
 		initialEditForm = { ...editForm };
+		initialClaimsParameterPolicyText = claimsParameterPolicyText;
 		initialDownstreamGrantEditForm = { ...downstreamGrantEditForm };
 		initialSettingsEditForm = { ...settingsEditForm };
 		isEditing = true;
@@ -843,9 +934,11 @@
 	function cancelEditing() {
 		isEditing = false;
 		editForm = {};
+		claimsParameterPolicyText = '';
 		downstreamGrantEditForm = createDefaultClientDownstreamGrantForm();
 		settingsEditForm = {};
 		initialEditForm = null;
+		initialClaimsParameterPolicyText = null;
 		initialDownstreamGrantEditForm = null;
 		initialSettingsEditForm = null;
 		saveError = '';
@@ -856,10 +949,12 @@
 		saveError = '';
 
 		try {
+			const claimsParameterPolicy = parseClaimsParameterPolicy(claimsParameterPolicyText);
 			// Save to Client API
 			client = normalizeClientArrays(
 				await adminClientsAPI.update(clientId, {
 					...editForm,
+					claims_parameter_policy: claimsParameterPolicy,
 					web_origin_registry: buildWebOriginRegistry(editForm.redirect_uris ?? []),
 					...toClientDownstreamGrantUpdateInput(downstreamGrantEditForm),
 					login_ui_url: settingsEditForm.login_ui_url?.trim()
@@ -979,6 +1074,7 @@
 
 			isEditing = false;
 			initialEditForm = null;
+			initialClaimsParameterPolicyText = null;
 			initialDownstreamGrantEditForm = null;
 			initialSettingsEditForm = null;
 		} catch (err) {
@@ -1037,6 +1133,15 @@
 	function formatNumber(num: number | null | undefined): string {
 		if (num == null) return '0';
 		return num.toLocaleString();
+	}
+
+	function toggleEditAscAllowedTransformedClaim(claimId: string) {
+		const current = editForm.asc_allowed_transformed_claims ?? [];
+		if (current.includes(claimId)) {
+			editForm.asc_allowed_transformed_claims = current.filter((claim) => claim !== claimId);
+		} else {
+			editForm.asc_allowed_transformed_claims = [...current, claimId];
+		}
 	}
 </script>
 
@@ -2166,6 +2271,148 @@
 				</section>
 
 				<!-- Edit Actions for Scopes Tab -->
+				{#if isEditing}
+					<div class="edit-actions">
+						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button
+							class="btn btn-primary"
+							onclick={saveChanges}
+							disabled={saving || !hasUnsavedChanges}
+						>
+							{saving ? 'Saving...' : 'Save Changes'}
+						</button>
+					</div>
+				{/if}
+			{:else if activeTab === 'claims'}
+				<section class="section-spacing">
+					<h2 class="section-title-border">Claims Parameter</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.allow_claims_without_scope}
+									label="Allow Claims Without Scope"
+									description="Allow approved claims requests even when the matching scope is absent"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Allow Claims Without Scope</label>
+								<p class="display-text">
+									{client.allow_claims_without_scope ? 'Yes' : 'No'}
+								</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Claims Parameter Policy</label>
+							{#if isEditing}
+								<textarea
+									class="form-input textarea-input"
+									rows="6"
+									bind:value={claimsParameterPolicyText}
+									placeholder="email: claims_allowed&#10;birthdate: claims_allowed"
+								></textarea>
+								<p class="form-hint">
+									One claim per line. Policies: scope_required, claims_allowed, forbidden.
+								</p>
+							{:else}
+								<p class="display-text preformatted-text">
+									{formatClaimsParameterPolicy(client.claims_parameter_policy) || 'Scope required'}
+								</p>
+							{/if}
+						</div>
+					</div>
+				</section>
+
+				<section class="section-spacing">
+					<h2 class="section-title-border">Advanced Syntax for Claims</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_enabled}
+									label="Enable Advanced Syntax for Claims"
+									description="Accept _asc in the claims parameter"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">ASC</label>
+								<p class="display-text">{formatEnabled(client.asc_enabled)}</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_protected_request_required}
+									label="Require Protected ASC Requests"
+									description="Require PAR or JAR for ASC request processing"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Protected Request Required</label>
+								<p class="display-text">{formatEnabled(client.asc_protected_request_required)}</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_sao_enabled}
+									label="Enable Selective Abort/Omit"
+									description="Allow SAO rules under _asc"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Selective Abort/Omit</label>
+								<p class="display-text">{formatEnabled(client.asc_sao_enabled)}</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_transformed_claims_enabled}
+									label="Enable Transformed Claims"
+									description="Allow predefined transformed claims"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Transformed Claims</label>
+								<p class="display-text">{formatEnabled(client.asc_transformed_claims_enabled)}</p>
+							{/if}
+						</div>
+					</div>
+
+					<div class="form-group">
+						<!-- svelte-ignore a11y_label_has_associated_control -->
+						<label class="form-label">Allowed Transformed Claims</label>
+						{#if isEditing}
+							<div class="checkbox-list">
+								{#each ASC_TRANSFORMED_CLAIMS as transformedClaim (transformedClaim.id)}
+									<label class="checkbox-list-item">
+										<input
+											type="checkbox"
+											checked={editForm.asc_allowed_transformed_claims?.includes(
+												transformedClaim.id
+											)}
+											onchange={() => toggleEditAscAllowedTransformedClaim(transformedClaim.id)}
+										/>
+										{transformedClaim.label}
+									</label>
+								{/each}
+							</div>
+						{:else}
+							<p class="display-text">
+								{getEffectiveAscAllowedTransformedClaims(client).join(', ')}
+							</p>
+						{/if}
+					</div>
+				</section>
+
 				{#if isEditing}
 					<div class="edit-actions">
 						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>

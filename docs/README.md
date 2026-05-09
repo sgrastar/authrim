@@ -19,6 +19,7 @@ Documentation for the Authrim OpenID Connect Provider project.
 
 | Document | Description |
 | :------- | :---------- |
+| [Public Specification](./specification/authrim-specification.md) | Public runtime contract covering API endpoints, defaults, session profiles, storage portability, audit, security behavior, and Workers-native UI deployment |
 | [Vision](./VISION.md) | Long-term vision and strategic goals |
 | [Roadmap](./ROADMAP.md) | Product roadmap and feature status |
 | [Access Control](./access-control.md) | RBAC, ABAC, and ReBAC architecture and usage |

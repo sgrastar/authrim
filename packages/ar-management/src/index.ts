@@ -498,6 +498,7 @@ import {
   testRoleAssignmentRule,
   evaluateRoleAssignmentRules,
 } from './routes/settings/role-assignment-rules';
+import { processPendingSupportOpsSnapshotJobs, supportOpsRouter } from './support-ops';
 import {
   createOrgDomainMapping,
   listOrgDomainMappings,
@@ -2216,6 +2217,11 @@ app.get('/api/admin/jobs/:id/result/download', adminJobResultDownloadHandler);
 app.get('/api/admin/jobs/:id', adminJobGetHandler);
 
 // =============================================================================
+// Privacy-Preserving Support Operations
+// =============================================================================
+app.route('/api/admin/support-ops', supportOpsRouter);
+
+// =============================================================================
 // Admin Statistics API (Dashboard Analytics)
 // =============================================================================
 // Time-series and aggregate statistics for administrative dashboards.
@@ -2855,6 +2861,12 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     await processPendingDataExportRequests(env, log);
   } catch (jobsError) {
     log.error('Data export job processing failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processPendingSupportOpsSnapshotJobs(env, log);
+  } catch (jobsError) {
+    log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
   }
 
   try {

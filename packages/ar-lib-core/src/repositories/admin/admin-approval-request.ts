@@ -480,6 +480,10 @@ export class ApprovalRequestApprovalRepository extends BaseRepository<ApprovalRe
       updates.push('status = ?');
       values.push(input.status);
     }
+    if (input.subject_id !== undefined) {
+      updates.push('subject_id = ?');
+      values.push(input.subject_id);
+    }
     if (input.method !== undefined) {
       updates.push('method = ?');
       values.push(input.method);

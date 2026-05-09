@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { adminClientsAPI, type Client, type CreateClientInput } from '$lib/api/admin-clients';
+	import {
+		adminClientsAPI,
+		type ClaimReleasePolicy,
+		type ClaimsParameterPolicy,
+		type Client,
+		type CreateClientInput
+	} from '$lib/api/admin-clients';
 	import {
 		createPresetClientDownstreamGrantForm,
 		toClientDownstreamGrantCreateInput
@@ -104,6 +110,26 @@
 		}
 	];
 
+	const CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
+		'scope_required',
+		'claims_allowed',
+		'forbidden'
+	]);
+	const ASC_TRANSFORMED_CLAIMS = [
+		{ id: 'age_over_13', label: 'Age over 13' },
+		{ id: 'age_over_18', label: 'Age over 18' },
+		{ id: 'age_over_20', label: 'Age over 20' },
+		{ id: 'email_domain', label: 'Email domain' },
+		{ id: 'phone_country_code', label: 'Phone country code' },
+		{ id: 'address_country', label: 'Address country' }
+	] as const;
+	const DEFAULT_CLAIMS_PARAMETER_POLICY_TEXT = [
+		'email: claims_allowed',
+		'email_verified: claims_allowed',
+		'birthdate: claims_allowed',
+		'address: claims_allowed'
+	].join('\n');
+
 	// State
 	let step = $state(1);
 	let selectedPreset = $state<PresetConfig | null>(null);
@@ -120,6 +146,15 @@
 	let tokenEndpointAuthMethod = $state('client_secret_basic');
 	let scope = $state('openid profile email');
 	let requirePkce = $state(false);
+	let allowClaimsWithoutScope = $state(false);
+	let claimsParameterPolicyText = $state(DEFAULT_CLAIMS_PARAMETER_POLICY_TEXT);
+	let ascEnabled = $state(true);
+	let ascProtectedRequestRequired = $state(true);
+	let ascSaoEnabled = $state(true);
+	let ascTransformedClaimsEnabled = $state(true);
+	let ascAllowedTransformedClaims = $state<string[]>(
+		ASC_TRANSFORMED_CLAIMS.map((claim) => claim.id)
+	);
 	let downstreamGrantForm = $state(createPresetClientDownstreamGrantForm('custom'));
 
 	// CORS settings
@@ -315,6 +350,41 @@
 		}
 	}
 
+	function parseClaimsParameterPolicy(text: string): ClaimsParameterPolicy | null {
+		const policy: ClaimsParameterPolicy = {};
+		const lines = text.split('\n');
+		for (const [index, rawLine] of lines.entries()) {
+			const line = rawLine.trim();
+			if (!line) continue;
+			const separatorIndex = line.indexOf(':');
+			if (separatorIndex <= 0) {
+				throw new Error(`Claims policy line ${index + 1} must use "claim: policy"`);
+			}
+			const claim = line.slice(0, separatorIndex).trim();
+			const policyValue = line.slice(separatorIndex + 1).trim() as ClaimReleasePolicy;
+			if (!claim) {
+				throw new Error(`Claims policy line ${index + 1} has an empty claim name`);
+			}
+			if (!CLAIM_RELEASE_POLICIES.has(policyValue)) {
+				throw new Error(
+					`Claims policy line ${index + 1} must use scope_required, claims_allowed, or forbidden`
+				);
+			}
+			policy[claim] = policyValue;
+		}
+		return Object.keys(policy).length > 0 ? policy : null;
+	}
+
+	function toggleAscAllowedTransformedClaim(claimId: string) {
+		if (ascAllowedTransformedClaims.includes(claimId)) {
+			ascAllowedTransformedClaims = ascAllowedTransformedClaims.filter(
+				(claim) => claim !== claimId
+			);
+		} else {
+			ascAllowedTransformedClaims = [...ascAllowedTransformedClaims, claimId];
+		}
+	}
+
 	async function handleSubmit() {
 		if (!clientName.trim()) {
 			error = 'Client name is required';
@@ -327,10 +397,12 @@
 			return;
 		}
 
-		loading = true;
 		error = '';
 
 		try {
+			const claimsParameterPolicy = parseClaimsParameterPolicy(claimsParameterPolicyText);
+			loading = true;
+
 			const input: CreateClientInput = {
 				client_name: clientName.trim(),
 				redirect_uris: validRedirectUris,
@@ -339,6 +411,13 @@
 				token_endpoint_auth_method: tokenEndpointAuthMethod,
 				scope: scope,
 				require_pkce: requirePkce,
+				allow_claims_without_scope: allowClaimsWithoutScope,
+				claims_parameter_policy: claimsParameterPolicy,
+				asc_enabled: ascEnabled,
+				asc_protected_request_required: ascProtectedRequestRequired,
+				asc_sao_enabled: ascSaoEnabled,
+				asc_transformed_claims_enabled: ascTransformedClaimsEnabled,
+				asc_allowed_transformed_claims: ascAllowedTransformedClaims,
 				web_origin_registry: buildWebOriginRegistry(validRedirectUris),
 				...toClientDownstreamGrantCreateInput(downstreamGrantForm)
 			};
@@ -595,6 +674,86 @@
 									bind:value={scope}
 									placeholder="openid profile email"
 								/>
+							</div>
+
+							<div class="settings-summary settings-summary-subsection">
+								<h3 class="settings-summary-title">OIDC Claims & ASC</h3>
+								<div class="advanced-panel" style="padding: 0; border: none;">
+									<div class="form-group">
+										<ToggleSwitch
+											bind:checked={allowClaimsWithoutScope}
+											label="Allow Claims Without Scope"
+											description="Allow approved claims requests even when the matching scope is absent"
+										/>
+									</div>
+
+									<div class="form-group">
+										<label class="form-label" for="claimsParameterPolicy">
+											Claims Parameter Policy
+										</label>
+										<textarea
+											id="claimsParameterPolicy"
+											class="form-input textarea-input"
+											rows="5"
+											bind:value={claimsParameterPolicyText}
+											placeholder="email: claims_allowed&#10;birthdate: claims_allowed"
+										></textarea>
+										<p class="form-hint">
+											One claim per line. Policies: scope_required, claims_allowed, forbidden.
+										</p>
+									</div>
+
+									<div class="form-grid">
+										<div class="form-group">
+											<ToggleSwitch
+												bind:checked={ascEnabled}
+												label="Enable Advanced Syntax for Claims"
+												description="Accept _asc in the claims parameter"
+											/>
+										</div>
+
+										<div class="form-group">
+											<ToggleSwitch
+												bind:checked={ascProtectedRequestRequired}
+												label="Require Protected ASC Requests"
+												description="Require PAR or JAR for ASC request processing"
+											/>
+										</div>
+
+										<div class="form-group">
+											<ToggleSwitch
+												bind:checked={ascSaoEnabled}
+												label="Enable Selective Abort/Omit"
+												description="Allow SAO rules under _asc"
+											/>
+										</div>
+
+										<div class="form-group">
+											<ToggleSwitch
+												bind:checked={ascTransformedClaimsEnabled}
+												label="Enable Transformed Claims"
+												description="Allow predefined transformed claims"
+											/>
+										</div>
+									</div>
+
+									<div class="form-group">
+										<!-- svelte-ignore a11y_label_has_associated_control -->
+										<label class="form-label">Allowed Transformed Claims</label>
+										<div class="checkbox-list">
+											{#each ASC_TRANSFORMED_CLAIMS as transformedClaim (transformedClaim.id)}
+												<label class="checkbox-list-item">
+													<input
+														type="checkbox"
+														checked={ascAllowedTransformedClaims.includes(transformedClaim.id)}
+														onchange={() => toggleAscAllowedTransformedClaim(transformedClaim.id)}
+													/>
+													{transformedClaim.label}
+												</label>
+											{/each}
+										</div>
+									</div>
+								</div>
 							</div>
 
 							<div class="settings-summary settings-summary-subsection">

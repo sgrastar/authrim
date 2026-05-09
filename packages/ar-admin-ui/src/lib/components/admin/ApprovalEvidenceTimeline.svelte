@@ -50,7 +50,7 @@
 				{#if event.actor_subject_type}
 					<span>{event.actor_subject_type}{event.actor_subject_id ? ` · ${event.actor_subject_id}` : ''}</span>
 				{/if}
-				{#each meta as item}
+					{#each meta as item (item)}
 					<span>{item}</span>
 				{/each}
 			</div>

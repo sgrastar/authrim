@@ -64,6 +64,7 @@ import {
 } from '../../approval-request-preview';
 import { resolveApprovalStepGuide } from '../../approval-step-guide';
 import {
+  ApprovalWorkflowPolicyError,
   applyApprovalDecisionForRequest,
   syncElevationGrantsForRequest,
 } from '../../approval-workflow';
@@ -1301,6 +1302,7 @@ async function updateApprovalDecision(
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const actorSubjectId = c.get('adminAuth')?.userId ?? null;
     const result = await applyApprovalDecisionForRequest(c, {
       adapter,
       requestRepo,
@@ -1311,7 +1313,7 @@ async function updateApprovalDecision(
       approval,
       nextStatus,
       actorSubjectType: 'admin_user',
-      actorSubjectId: c.get('adminAuth')?.userId ?? null,
+      actorSubjectId,
       method: (body.method ?? null) as ApprovalTransportMethod | null,
       transportChannel: body.transport_channel ?? null,
       reasonCode: body.reason_code ?? null,
@@ -1326,6 +1328,15 @@ async function updateApprovalDecision(
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: error.issues[0]?.path.join('.') || 'body', reason: error.issues[0]?.message || 'Invalid approval decision payload' },
       });
+    }
+    if (error instanceof ApprovalWorkflowPolicyError) {
+      return c.json(
+        {
+          error: error.code,
+          error_description: error.message,
+        },
+        error.status as 409
+      );
     }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }

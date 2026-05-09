@@ -11,6 +11,9 @@ import { adminFetch } from '$lib/api/admin-request';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
+export type ClaimReleasePolicy = 'scope_required' | 'claims_allowed' | 'forbidden';
+export type ClaimsParameterPolicy = Record<string, ClaimReleasePolicy>;
+
 export interface Client {
 	client_id: string;
 	client_name: string;
@@ -28,6 +31,12 @@ export interface Client {
 	is_trusted?: boolean;
 	skip_consent?: boolean;
 	allow_claims_without_scope?: boolean;
+	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	asc_enabled?: boolean;
+	asc_protected_request_required?: boolean;
+	asc_sao_enabled?: boolean;
+	asc_transformed_claims_enabled?: boolean;
+	asc_allowed_transformed_claims?: string[] | null;
 	login_ui_url?: string | null;
 	id_token_signed_response_alg?: string;
 	require_pkce?: boolean;
@@ -90,6 +99,13 @@ export interface CreateClientInput {
 	token_endpoint_auth_method?: string;
 	scope?: string;
 	require_pkce?: boolean;
+	allow_claims_without_scope?: boolean;
+	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	asc_enabled?: boolean;
+	asc_protected_request_required?: boolean;
+	asc_sao_enabled?: boolean;
+	asc_transformed_claims_enabled?: boolean;
+	asc_allowed_transformed_claims?: string[] | null;
 	token_exchange_allowed?: boolean;
 	allowed_subject_token_clients?: string[];
 	allowed_token_exchange_resources?: string[];
@@ -112,6 +128,13 @@ export interface UpdateClientInput {
 	scope?: string;
 	login_ui_url?: string | null;
 	require_pkce?: boolean;
+	allow_claims_without_scope?: boolean;
+	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	asc_enabled?: boolean;
+	asc_protected_request_required?: boolean;
+	asc_sao_enabled?: boolean;
+	asc_transformed_claims_enabled?: boolean;
+	asc_allowed_transformed_claims?: string[] | null;
 	token_exchange_allowed?: boolean;
 	allowed_subject_token_clients?: string[];
 	allowed_token_exchange_resources?: string[];

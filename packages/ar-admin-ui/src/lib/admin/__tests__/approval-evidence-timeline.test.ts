@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { ApprovalTransportEvidenceEvent } from '$lib/api/admin-approvals'
 import {
 	getApprovalEvidenceArtifactSwitch,
 	getApprovalEvidenceCompletionArtifact,
@@ -16,7 +17,7 @@ describe('approval evidence timeline helpers', () => {
 			at: Date.now(),
 			request_status: 'pending',
 			transport_detail: null
-		} as any)
+		} satisfies ApprovalTransportEvidenceEvent)
 
 		expect(descriptor).toEqual({
 			title: 'Notification Reissued',
@@ -32,7 +33,7 @@ describe('approval evidence timeline helpers', () => {
 			at: Date.now(),
 			request_status: 'approved',
 			transport_detail: null
-		} as any)
+		} satisfies ApprovalTransportEvidenceEvent)
 
 		expect(descriptor).toEqual({
 			title: 'Grant Revoked',
@@ -64,7 +65,7 @@ describe('approval evidence timeline helpers', () => {
 					}
 				}
 			}
-		} as any
+		} satisfies ApprovalTransportEvidenceEvent
 
 		expect(getApprovalEvidenceArtifactSwitch(event)).toEqual({
 			previousArtifactId: 'apc_1',
@@ -100,7 +101,7 @@ describe('approval evidence timeline helpers', () => {
 					}
 				}
 			}
-		} as any)
+		} satisfies ApprovalTransportEvidenceEvent)
 
 		expect(descriptor).toEqual({
 			title: 'Decision Receipt Issued',
@@ -128,7 +129,7 @@ describe('approval evidence timeline helpers', () => {
 						}
 					}
 				}
-			} as any)
+				} satisfies ApprovalTransportEvidenceEvent)
 		).toEqual({
 			receiptId: 'adr_1',
 			path: '/api/approval-receipts/adr_1',
@@ -167,7 +168,7 @@ describe('approval evidence timeline helpers', () => {
 					}
 				}
 			}
-		} as any)
+		} satisfies ApprovalTransportEvidenceEvent)
 
 		expect(descriptor).toEqual({
 			title: 'Subject Token Issued',
@@ -202,7 +203,7 @@ describe('approval evidence timeline helpers', () => {
 						}
 					}
 				}
-			} as any)
+				} satisfies ApprovalTransportEvidenceEvent)
 		).toEqual({
 			grantId: 'egr_1',
 			clientId: 'svc-client-1',
@@ -231,7 +232,7 @@ describe('approval evidence timeline helpers', () => {
 			notification_action: 'resend',
 			notification_count: 2,
 			reason_code: 'support_case'
-		} as any)
+		} satisfies ApprovalTransportEvidenceEvent)
 
 		expect(meta).toEqual([
 			'Method: passkey',

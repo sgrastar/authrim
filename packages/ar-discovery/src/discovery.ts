@@ -18,6 +18,7 @@ import {
   // KV caching utilities (Phase 2)
   buildVersionedKey,
   getCacheTTL,
+  PREDEFINED_TRANSFORMED_CLAIMS,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -377,6 +378,20 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // OIDC Core: Additional metadata
     claim_types_supported: ['normal'],
     claims_parameter_supported: true,
+    // OpenID Connect Advanced Syntax for Claims (ASC) 1.0 draft 01.
+    // Authrim supports SAO without JSON Schema and OP-predefined transformed claims only.
+    selective_abort_omit_supported: true,
+    selective_abort_omit_schema_supported: false,
+    transformed_claims_functions_supported: [
+      'years_ago',
+      'gte',
+      'domain',
+      'phone_country_code',
+      'country',
+    ],
+    transformed_claims_predefined: PREDEFINED_TRANSFORMED_CLAIMS,
+    transformed_claims_max_depth: 2,
+    transformed_claims_max_count: 0,
     // ACR (Authentication Context Class Reference) support
     acr_values_supported: ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
     // OIDC Discovery: Recommended metadata fields

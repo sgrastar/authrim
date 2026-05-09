@@ -71,7 +71,7 @@
 		<details class="guide-details">
 			<summary>Assertion Endpoints</summary>
 			<ul>
-				{#each formatAssertionEndpoints(requirements.assertion_endpoints) as endpoint}
+					{#each formatAssertionEndpoints(requirements.assertion_endpoints) as endpoint (endpoint)}
 					<li class="monospace">{endpoint}</li>
 				{/each}
 			</ul>

@@ -56,6 +56,10 @@ const { mockGetRequestAwareIssuerUrl } = vi.hoisted(() => ({
   mockGetRequestAwareIssuerUrl: vi.fn(),
 }));
 
+const { mockGetTenantSettings } = vi.hoisted(() => ({
+  mockGetTenantSettings: vi.fn(),
+}));
+
 const { mockResolveApprovalStepGuide } = vi.hoisted(() => ({
   mockResolveApprovalStepGuide: vi.fn(),
 }));
@@ -111,6 +115,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     ensureDatabaseAdapter: vi.fn(() => mockAdapter),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
+    getTenantSettings: mockGetTenantSettings,
     ApprovalRequestRepository: vi.fn(function MockApprovalRequestRepository() {
       return mockRequestRepo;
     }),
@@ -183,6 +188,7 @@ describe('admin approvals router', () => {
     mockRequestRepo.updateApprovalRequestStatus.mockResolvedValue(null);
     mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([]);
     mockGrantRepo.listElevationGrantsForRequest.mockResolvedValue([]);
+    mockGetTenantSettings.mockResolvedValue(null);
     mockAppendApprovalTransportEvent.mockImplementation(async (_c, _adapter, _repo, request) => request);
     mockLoadApprovalTransportDetail.mockResolvedValue(null);
     mockListApprovalDecisionReceiptsForEvidence.mockResolvedValue([]);
@@ -1795,6 +1801,198 @@ describe('admin approvals router', () => {
           public_grant_id: 'egr_public_1',
         }),
       ])
+    );
+  });
+
+  it('rejects support operation self-approval unless tenant policy allows it', async () => {
+    const app = createApp();
+    const request = {
+      id: 'req-1',
+      public_request_id: 'apr_public_1',
+      tenant_id: 'tenant-a',
+      investigation_id: 'inv_test_1',
+      requester_subject_type: 'admin_user',
+      requester_subject_id: 'admin-1',
+      target_subject_type: 'tenant_resource',
+      target_subject_id: 'cohort-1',
+      request_surface: 'support_ops',
+      requested_action: 'support_action.suspend',
+      redaction_level: 'summary_only',
+      scope_json: {
+        version: 1,
+        surface: 'support_ops',
+        action: 'support_action.suspend',
+        tenant_id: 'tenant-a',
+        resource_class: 'support_operation_cohort',
+        resource_ids: ['cohort-1'],
+      },
+      scope_canonical: '{"version":1}',
+      reason_code: 'support_ops_action_request',
+      reason_note: null,
+      reference: null,
+      ticket_reference: null,
+      policy_preset: 'support_case_default',
+      reuse_scope: 'request',
+      partial_access_allowed: false,
+      status: 'pending',
+      expires_at: Date.now() + 60_000,
+      decided_at: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    const approval = {
+      id: 'step-1',
+      approval_request_id: 'req-1',
+      step_key: 'support-ops-approval',
+      side: 'admin_operator',
+      subject_type: 'admin_user',
+      subject_id: null,
+      relation_type: null,
+      relation_source: 'support_ops_policy',
+      status: 'pending',
+      method: null,
+      transport_channel: null,
+      reason_code: null,
+      reason_note: null,
+      last_notification_action: 'initial',
+      last_notified_at: Date.now() - 60_000,
+      notification_count: 1,
+      decided_at: null,
+      expires_at: Date.now() + 60_000,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue(request);
+    mockApprovalRepo.getApprovalById.mockResolvedValue(approval);
+
+    const res = await app.request(
+      '/api/admin/approvals/apr_public_1/steps/step-1/approve',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Permissions': 'admin:approvals:approve',
+        },
+        body: JSON.stringify({
+          method: 'portal_confirm',
+        }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: 'self_approval_not_allowed',
+    });
+    expect(mockGetTenantSettings).toHaveBeenCalledWith(
+      mockEnv.SETTINGS,
+      'tenant-a',
+      'support-ops'
+    );
+    expect(mockApprovalRepo.updateApproval).not.toHaveBeenCalled();
+    expect(mockRequestRepo.updateApprovalRequestStatus).not.toHaveBeenCalled();
+  });
+
+  it('captures the approving admin on unassigned support operation approval steps', async () => {
+    const app = createApp();
+    const request = {
+      id: 'req-1',
+      public_request_id: 'apr_public_1',
+      tenant_id: 'tenant-a',
+      investigation_id: 'inv_test_1',
+      requester_subject_type: 'admin_user',
+      requester_subject_id: 'admin-2',
+      target_subject_type: 'tenant_resource',
+      target_subject_id: 'cohort-1',
+      request_surface: 'support_ops',
+      requested_action: 'support_action.suspend',
+      redaction_level: 'summary_only',
+      scope_json: {
+        version: 1,
+        surface: 'support_ops',
+        action: 'support_action.suspend',
+        tenant_id: 'tenant-a',
+        resource_class: 'support_operation_cohort',
+        resource_ids: ['cohort-1'],
+      },
+      scope_canonical: '{"version":1}',
+      reason_code: 'support_ops_action_request',
+      reason_note: null,
+      reference: null,
+      ticket_reference: null,
+      policy_preset: 'support_case_default',
+      reuse_scope: 'request',
+      partial_access_allowed: false,
+      status: 'pending',
+      expires_at: Date.now() + 60_000,
+      decided_at: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    const approval = {
+      id: 'step-1',
+      approval_request_id: 'req-1',
+      step_key: 'support-ops-approval',
+      side: 'admin_operator',
+      subject_type: 'admin_user',
+      subject_id: null,
+      relation_type: null,
+      relation_source: 'support_ops_policy',
+      status: 'pending',
+      method: null,
+      transport_channel: null,
+      reason_code: null,
+      reason_note: null,
+      last_notification_action: 'initial',
+      last_notified_at: Date.now() - 60_000,
+      notification_count: 1,
+      decided_at: null,
+      expires_at: Date.now() + 60_000,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue(request);
+    mockApprovalRepo.getApprovalById.mockResolvedValue(approval);
+    mockApprovalRepo.updateApproval.mockResolvedValue({
+      ...approval,
+      status: 'approved',
+      subject_id: 'admin-1',
+    });
+    mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([
+      {
+        ...approval,
+        status: 'approved',
+        subject_id: 'admin-1',
+      },
+    ]);
+    mockRequestRepo.updateApprovalRequestStatus.mockResolvedValue({
+      ...request,
+      status: 'approved',
+    });
+    mockGrantRepo.listElevationGrantsForRequest.mockResolvedValue([]);
+
+    const res = await app.request(
+      '/api/admin/approvals/apr_public_1/steps/step-1/approve',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Permissions': 'admin:approvals:approve',
+        },
+        body: JSON.stringify({
+          method: 'portal_confirm',
+        }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockApprovalRepo.updateApproval).toHaveBeenCalledWith(
+      'step-1',
+      expect.objectContaining({
+        status: 'approved',
+        subject_id: 'admin-1',
+      })
     );
   });
 

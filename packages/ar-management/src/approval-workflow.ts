@@ -12,10 +12,57 @@ import type {
   ElevationGrantRepository,
   Env,
 } from '@authrim/ar-lib-core';
-import { ApprovalRequestApprovalRepository } from '@authrim/ar-lib-core';
+import { ApprovalRequestApprovalRepository, getTenantSettings } from '@authrim/ar-lib-core';
 import { appendApprovalTransportEvent } from './approval-transport-detail';
 
 type AppContext = Context<any, any, any>;
+
+export class ApprovalWorkflowPolicyError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status = 409
+  ) {
+    super(message);
+    this.name = 'ApprovalWorkflowPolicyError';
+  }
+}
+
+function isBooleanTrue(value: unknown): boolean {
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+async function isSupportOpsSelfApprovalAllowed(c: AppContext, tenantId: string): Promise<boolean> {
+  const env = c.env as Env | undefined;
+  const settings =
+    (await getTenantSettings(env?.SETTINGS, tenantId, 'support-ops')) ??
+    (await getTenantSettings(env?.AUTHRIM_CONFIG, tenantId, 'support-ops'));
+
+  return isBooleanTrue(settings?.['support_ops.allow_self_approval']);
+}
+
+async function assertApprovalDecisionPolicy(
+  c: AppContext,
+  input: {
+    request: ApprovalRequest;
+    nextStatus: ApprovalDecisionStatus;
+    actorSubjectType: ApprovalApproverSubjectType | null;
+    actorSubjectId: string | null;
+  }
+): Promise<void> {
+  if (
+    input.nextStatus === 'approved' &&
+    input.request.request_surface === 'support_ops' &&
+    input.request.requester_subject_type === input.actorSubjectType &&
+    input.request.requester_subject_id === input.actorSubjectId &&
+    !(await isSupportOpsSelfApprovalAllowed(c, input.request.tenant_id))
+  ) {
+    throw new ApprovalWorkflowPolicyError(
+      'self_approval_not_allowed',
+      'Support operation requests must be approved by a different admin operator.'
+    );
+  }
+}
 
 function buildGrantAuthorizationDetails(request: ApprovalRequest): Record<string, unknown> {
   return {
@@ -137,8 +184,23 @@ export async function applyApprovalDecisionForRequest(
   approvals: ApprovalRequestApproval[];
   grants: ElevationGrant[];
 }> {
+  await assertApprovalDecisionPolicy(c, {
+    request: input.request,
+    nextStatus: input.nextStatus,
+    actorSubjectType: input.actorSubjectType,
+    actorSubjectId: input.actorSubjectId,
+  });
+
   const updatedApproval = await deps.approvalRepo.updateApproval(input.approval.id, {
     status: input.nextStatus,
+    subject_id:
+      input.nextStatus === 'approved' &&
+      input.approval.subject_type === 'admin_user' &&
+      !input.approval.subject_id &&
+      input.actorSubjectType === 'admin_user' &&
+      input.actorSubjectId
+        ? input.actorSubjectId
+        : undefined,
     method: input.method ?? null,
     transport_channel: input.transportChannel ?? null,
     reason_code: input.reasonCode ?? null,

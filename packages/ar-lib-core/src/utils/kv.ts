@@ -131,7 +131,10 @@ export async function getCachedUser(
  * Fetch user directly from D1 database
  * PII/Non-PII DB separation: fetches from Core DB and PII DB in parallel and merges
  */
-async function getUserFromD1(userId: string, sources: UserCacheSources): Promise<CachedUser | null> {
+async function getUserFromD1(
+  userId: string,
+  sources: UserCacheSources
+): Promise<CachedUser | null> {
   // Query Core DB for existence and non-PII fields
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.coreDb, 'user-cache-core');
   const coreResult = await coreAdapter.queryOne<{
@@ -707,10 +710,7 @@ export async function getClient(
     try {
       return normalizeClientMetadata(JSON.parse(cached) as ClientMetadata);
     } catch (error) {
-      if (
-        error instanceof OIDCError &&
-        error.error === 'legacy_app_suite_not_supported'
-      ) {
+      if (error instanceof OIDCError && error.error === 'legacy_app_suite_not_supported') {
         throw error;
       }
 
@@ -749,6 +749,12 @@ export async function getClient(
     is_trusted: number | null;
     skip_consent: number | null;
     allow_claims_without_scope: number | null;
+    claims_parameter_policy: string | null;
+    asc_enabled: number | null;
+    asc_protected_request_required: number | null;
+    asc_sao_enabled: number | null;
+    asc_transformed_claims_enabled: number | null;
+    asc_allowed_transformed_claims: string | null;
     // RFC 8693: Token Exchange settings
     token_exchange_allowed: number | null;
     allowed_subject_token_clients: string | null;
@@ -866,6 +872,30 @@ export async function getClient(
     is_trusted: result.is_trusted === 1,
     skip_consent: result.skip_consent === 1,
     allow_claims_without_scope: result.allow_claims_without_scope === 1,
+    claims_parameter_policy: result.claims_parameter_policy
+      ? JSON.parse(result.claims_parameter_policy)
+      : undefined,
+    asc_enabled:
+      result.asc_enabled === null || result.asc_enabled === undefined
+        ? true
+        : result.asc_enabled === 1,
+    asc_protected_request_required:
+      result.asc_protected_request_required === null ||
+      result.asc_protected_request_required === undefined
+        ? true
+        : result.asc_protected_request_required === 1,
+    asc_sao_enabled:
+      result.asc_sao_enabled === null || result.asc_sao_enabled === undefined
+        ? true
+        : result.asc_sao_enabled === 1,
+    asc_transformed_claims_enabled:
+      result.asc_transformed_claims_enabled === null ||
+      result.asc_transformed_claims_enabled === undefined
+        ? true
+        : result.asc_transformed_claims_enabled === 1,
+    asc_allowed_transformed_claims: normalizeOptionalStringArray(
+      result.asc_allowed_transformed_claims
+    ),
     // RFC 8693: Token Exchange settings
     token_exchange_allowed: result.token_exchange_allowed === 1,
     allowed_subject_token_clients: normalizeOptionalStringArray(
@@ -1061,11 +1091,7 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
  * Canonical public exports live in `utils/refresh-token-store.ts`.
  * Keep this wrapper only to avoid rewriting every internal reference in one step.
  */
-async function storeRefreshToken(
-  env: Env,
-  jti: string,
-  data: RefreshTokenData
-): Promise<void> {
+async function storeRefreshToken(env: Env, jti: string, data: RefreshTokenData): Promise<void> {
   return storeRefreshTokenCanonical(env, jti, data);
 }
 

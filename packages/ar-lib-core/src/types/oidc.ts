@@ -61,6 +61,13 @@ export interface OIDCProviderMetadata {
   // OIDC Core: Additional metadata
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
+  // OpenID Connect Advanced Syntax for Claims (ASC) 1.0 draft 01
+  selective_abort_omit_supported?: boolean;
+  selective_abort_omit_schema_supported?: boolean;
+  transformed_claims_functions_supported?: string[];
+  transformed_claims_predefined?: Record<string, unknown>;
+  transformed_claims_max_depth?: number;
+  transformed_claims_max_count?: number;
   acr_values_supported?: string[];
   // OIDC Session Management 1.0
   check_session_iframe?: string;
@@ -281,6 +288,13 @@ export interface ClientRegistrationRequest {
   id_token_signed_response_alg?: string;
   // JAR (JWT-Secured Authorization Request) - RFC 9101
   request_object_signing_alg?: string;
+  // Claims parameter and ASC client settings (Authrim extension)
+  claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[];
   // SD-JWT (Selective Disclosure JWT) - RFC 9901
   // When set to 'sd-jwt', ID tokens will be issued as SD-JWT format
   id_token_signed_response_type?: 'jwt' | 'sd-jwt';
@@ -356,6 +370,13 @@ export interface ClientRegistrationResponse {
   authorization_signed_response_alg?: string;
   authorization_encrypted_response_alg?: string;
   authorization_encrypted_response_enc?: string;
+  // Claims parameter and ASC client settings (Authrim extension)
+  claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[];
   // SD-JWT (Selective Disclosure JWT) - RFC 9901
   id_token_signed_response_type?: 'jwt' | 'sd-jwt';
   sd_jwt_selective_claims?: string[];
@@ -405,6 +426,12 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   skip_consent?: boolean; // Skip consent screen for trusted clients
   // Claims Parameter Settings
   allow_claims_without_scope?: boolean; // Allow claims parameter to request claims without corresponding scope (default: false)
+  claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[];
   // JWE fields inherited from ClientRegistrationResponse
   id_token_encrypted_response_alg?: string;
   id_token_encrypted_response_enc?: string;

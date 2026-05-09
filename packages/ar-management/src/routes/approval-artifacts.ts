@@ -54,7 +54,10 @@ import {
 } from '../approval-ciba-notification';
 import { resolveApprovalNotificationPolicy } from '../approval-notification-policy';
 import { verifyApprovalOtpChallenge } from '../approval-otp';
-import { applyApprovalDecisionForRequest } from '../approval-workflow';
+import {
+  ApprovalWorkflowPolicyError,
+  applyApprovalDecisionForRequest,
+} from '../approval-workflow';
 
 const ApprovalArtifactDecisionSchema = z.object({
   decision: z.enum(['approved', 'denied']),
@@ -1250,6 +1253,15 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
           error_description: 'The approval completion artifact is invalid, expired, or consumed.',
         },
         410
+      );
+    }
+    if (error instanceof ApprovalWorkflowPolicyError) {
+      return c.json(
+        {
+          error: error.code,
+          error_description: error.message,
+        },
+        error.status as 409
       );
     }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

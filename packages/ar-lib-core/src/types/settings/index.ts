@@ -36,6 +36,7 @@ export * from './login-ui';
 export * from './diagnostic-logging';
 export * from './login-entry';
 export * from './tenant-discovery-ui';
+export * from './support-ops';
 
 // Re-export SettingsManager types
 export type {
@@ -93,6 +94,7 @@ import { LOGIN_UI_CATEGORY_META } from './login-ui';
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from './diagnostic-logging';
 import { LOGIN_ENTRY_CATEGORY_META } from './login-entry';
 import { TENANT_DISCOVERY_UI_CATEGORY_META } from './tenant-discovery-ui';
+import { SUPPORT_OPS_CATEGORY_META } from './support-ops';
 
 // Export commonly used category metadata
 export { CLIENT_CATEGORY_META, OAUTH_CATEGORY_META };
@@ -145,6 +147,7 @@ export const ALL_CATEGORY_META = {
   // Login Entry / Discovery
   'login-entry': LOGIN_ENTRY_CATEGORY_META,
   'tenant-discovery-ui': TENANT_DISCOVERY_UI_CATEGORY_META,
+  'support-ops': SUPPORT_OPS_CATEGORY_META,
 } as const;
 
 /**
@@ -271,6 +274,9 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   },
   'tenant-discovery-ui': {
     allowedScopes: ['platform', 'tenant'],
+  },
+  'support-ops': {
+    allowedScopes: ['tenant'],
   },
 
   // Diagnostic Logging (tenant + client in future)

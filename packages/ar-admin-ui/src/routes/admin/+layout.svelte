@@ -55,6 +55,7 @@
 		monitoring: [
 			{ path: '/admin/audit-logs', label: 'User Audit Logs', icon: 'i-ph-file-text' },
 			{ path: '/admin/access-trace', label: 'Access Trace', icon: 'i-ph-path' },
+			{ path: '/admin/support-ops', label: 'Support Ops', icon: 'i-ph-lifebuoy' },
 			{ path: '/admin/diagnostic-logging', label: 'Diagnostic Logging', icon: 'i-ph-bug' }
 		]
 	};

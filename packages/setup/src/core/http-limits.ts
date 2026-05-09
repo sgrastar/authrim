@@ -4,7 +4,7 @@ const DEFAULT_SETUP_ERROR_LIMIT_BYTES = 16 * 1024;
 
 export async function fetchWithTimeout(
   input: string | URL | Request,
-  init: RequestInit = {},
+  init: globalThis.RequestInit = {},
   timeoutMs = DEFAULT_SETUP_FETCH_TIMEOUT_MS
 ): Promise<Response> {
   const controller = new AbortController();

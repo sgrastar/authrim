@@ -26,6 +26,8 @@ import {
   invalidateWebOriginRegistryCache,
   type WebOriginRegistryDocument,
   type WebOriginRegistryWritePayload,
+  DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS,
+  type ClaimReleasePolicy,
 } from '@authrim/ar-lib-core';
 import {
   parseClientStringArray,
@@ -58,6 +60,12 @@ const VALID_BROWSER_REFRESH_TOKEN_POLICIES = new Set<AdminBrowserRefreshTokenPol
   'dpop_bound',
 ]);
 const VALID_CLIENT_CHANNELS = new Set<AdminClientChannel>(['browser', 'native', 'server']);
+const VALID_CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
+  'scope_required',
+  'claims_allowed',
+  'forbidden',
+]);
+const VALID_ASC_TRANSFORMED_CLAIMS = new Set(DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS);
 const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
   'app_suite',
   'trust_group_id',
@@ -148,6 +156,19 @@ function validateOptionalBooleanField(
   return { ok: true, value };
 }
 
+function validateOptionalStrictBooleanField(
+  value: unknown,
+  field: string
+): { ok: true; value: boolean | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (typeof value !== 'boolean') {
+    return { ok: false, error: `${field} must be a boolean` };
+  }
+  return { ok: true, value };
+}
+
 function validateOptionalChannelArrayField(
   value: unknown,
   field: string
@@ -172,6 +193,97 @@ function validateOptionalChannelArrayField(
     ok: true,
     value: validation.value as AdminClientChannel[],
   };
+}
+
+function validateOptionalClaimsParameterPolicyField(
+  value: unknown,
+  field: string
+):
+  | { ok: true; value: Record<string, ClaimReleasePolicy> | null | undefined }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: `${field} must be an object or null` };
+  }
+
+  const policy: Record<string, ClaimReleasePolicy> = {};
+  for (const [claim, policyValue] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedClaim = claim.trim();
+    if (!normalizedClaim) {
+      return { ok: false, error: `${field} claim names must be non-empty strings` };
+    }
+    if (
+      typeof policyValue !== 'string' ||
+      !VALID_CLAIM_RELEASE_POLICIES.has(policyValue as ClaimReleasePolicy)
+    ) {
+      return {
+        ok: false,
+        error: `${field}.${claim} must be one of scope_required, claims_allowed, forbidden`,
+      };
+    }
+    policy[normalizedClaim] = policyValue as ClaimReleasePolicy;
+  }
+
+  return { ok: true, value: policy };
+}
+
+function validateOptionalAscAllowedTransformedClaimsField(
+  value: unknown,
+  field: string
+): { ok: true; value: string[] | null | undefined } | { ok: false; error: string } {
+  const validation = validateOptionalStringArrayField(value, field);
+  if (!validation.ok) {
+    return validation;
+  }
+  if (validation.value === undefined || validation.value === null) {
+    return { ok: true, value: validation.value };
+  }
+
+  const invalid = validation.value.find((claim) => !VALID_ASC_TRANSFORMED_CLAIMS.has(claim));
+  if (invalid) {
+    return {
+      ok: false,
+      error: `${field} contains unsupported transformed claim: ${invalid}`,
+    };
+  }
+
+  return { ok: true, value: validation.value };
+}
+
+function parseClaimsParameterPolicyField(
+  value: unknown
+): Record<string, ClaimReleasePolicy> | null {
+  let current = value;
+  if (typeof current === 'string') {
+    const trimmed = current.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      current = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof current !== 'object' || current === null || Array.isArray(current)) {
+    return null;
+  }
+
+  const policy: Record<string, ClaimReleasePolicy> = {};
+  for (const [claim, policyValue] of Object.entries(current as Record<string, unknown>)) {
+    if (
+      typeof policyValue === 'string' &&
+      VALID_CLAIM_RELEASE_POLICIES.has(policyValue as ClaimReleasePolicy)
+    ) {
+      policy[claim] = policyValue as ClaimReleasePolicy;
+    }
+  }
+  return Object.keys(policy).length > 0 ? policy : null;
 }
 
 function validateWebOriginRegistryField(
@@ -271,6 +383,12 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       is_trusted?: boolean;
       skip_consent?: boolean;
       allow_claims_without_scope?: boolean;
+      claims_parameter_policy?: Record<string, ClaimReleasePolicy> | null;
+      asc_enabled?: boolean;
+      asc_protected_request_required?: boolean;
+      asc_sao_enabled?: boolean;
+      asc_transformed_claims_enabled?: boolean;
+      asc_allowed_transformed_claims?: string[] | null;
       // allowed_redirect_origins is retained for custom redirect URI compatibility.
       // web_origin_registry is the source of truth for browser handoff/CORS/iframe metadata.
       allowed_redirect_origins?: string[];
@@ -441,6 +559,90 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: allowedScopesValidation.error,
+        },
+        400
+      );
+    }
+
+    const claimsParameterPolicyValidation = validateOptionalClaimsParameterPolicyField(
+      body.claims_parameter_policy,
+      'claims_parameter_policy'
+    );
+    if (!claimsParameterPolicyValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: claimsParameterPolicyValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascEnabledValidation = validateOptionalStrictBooleanField(
+      body.asc_enabled,
+      'asc_enabled'
+    );
+    if (!ascEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascProtectedRequestRequiredValidation = validateOptionalStrictBooleanField(
+      body.asc_protected_request_required,
+      'asc_protected_request_required'
+    );
+    if (!ascProtectedRequestRequiredValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascProtectedRequestRequiredValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascSaoEnabledValidation = validateOptionalStrictBooleanField(
+      body.asc_sao_enabled,
+      'asc_sao_enabled'
+    );
+    if (!ascSaoEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascSaoEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascTransformedClaimsEnabledValidation = validateOptionalStrictBooleanField(
+      body.asc_transformed_claims_enabled,
+      'asc_transformed_claims_enabled'
+    );
+    if (!ascTransformedClaimsEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascTransformedClaimsEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascAllowedTransformedClaimsValidation = validateOptionalAscAllowedTransformedClaimsField(
+      body.asc_allowed_transformed_claims,
+      'asc_allowed_transformed_claims'
+    );
+    if (!ascAllowedTransformedClaimsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascAllowedTransformedClaimsValidation.error,
         },
         400
       );
@@ -669,6 +871,12 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       is_trusted: body.is_trusted || false,
       skip_consent: body.skip_consent || false,
       allow_claims_without_scope: body.allow_claims_without_scope || false,
+      claims_parameter_policy: claimsParameterPolicyValidation.value,
+      asc_enabled: ascEnabledValidation.value ?? true,
+      asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? true,
+      asc_sao_enabled: ascSaoEnabledValidation.value ?? true,
+      asc_transformed_claims_enabled: ascTransformedClaimsEnabledValidation.value ?? true,
+      asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
       token_exchange_allowed: body.token_exchange_allowed ?? false,
       allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
       allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
@@ -748,6 +956,15 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       is_trusted: client.is_trusted,
       skip_consent: client.skip_consent,
       allow_claims_without_scope: client.allow_claims_without_scope,
+      claims_parameter_policy:
+        parseClaimsParameterPolicyField(client.claims_parameter_policy) ?? undefined,
+      asc_enabled: client.asc_enabled,
+      asc_protected_request_required: client.asc_protected_request_required,
+      asc_sao_enabled: client.asc_sao_enabled,
+      asc_transformed_claims_enabled: client.asc_transformed_claims_enabled,
+      asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
+        ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
+        : undefined,
       token_exchange_allowed: client.token_exchange_allowed,
       allowed_subject_token_clients: client.allowed_subject_token_clients
         ? parseClientStringArray(client.allowed_subject_token_clients, [])
@@ -849,6 +1066,14 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           is_trusted: client.is_trusted,
           skip_consent: client.skip_consent,
           allow_claims_without_scope: client.allow_claims_without_scope,
+          claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+          asc_enabled: client.asc_enabled,
+          asc_protected_request_required: client.asc_protected_request_required,
+          asc_sao_enabled: client.asc_sao_enabled,
+          asc_transformed_claims_enabled: client.asc_transformed_claims_enabled,
+          asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
+            ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
+            : null,
           token_exchange_allowed: client.token_exchange_allowed,
           allowed_subject_token_clients: client.allowed_subject_token_clients
             ? parseClientStringArray(client.allowed_subject_token_clients, [])
@@ -918,6 +1143,10 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
         allowed_channels: client.allowed_channels
           ? parseClientStringArray(client.allowed_channels, [])
           : [],
+        claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+        asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
+          ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
+          : null,
         created_at: toMilliseconds(client.created_at),
         updated_at: toMilliseconds(client.updated_at),
       };
@@ -990,6 +1219,10 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
       allowed_channels: client.allowed_channels
         ? parseClientStringArray(client.allowed_channels, [])
         : [],
+      claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+      asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
+        ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
+        : null,
       web_origin_registry: webOriginRegistry,
       created_at: toMilliseconds(client.created_at as number),
       updated_at: toMilliseconds(client.updated_at as number),
@@ -1059,6 +1292,12 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       is_trusted,
       skip_consent,
       allow_claims_without_scope,
+      claims_parameter_policy,
+      asc_enabled,
+      asc_protected_request_required,
+      asc_sao_enabled,
+      asc_transformed_claims_enabled,
+      asc_allowed_transformed_claims,
       allowed_redirect_origins,
       web_origin_registry,
       require_pkce,
@@ -1259,6 +1498,87 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const claimsParameterPolicyValidation = validateOptionalClaimsParameterPolicyField(
+      claims_parameter_policy,
+      'claims_parameter_policy'
+    );
+    if (!claimsParameterPolicyValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: claimsParameterPolicyValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascEnabledValidation = validateOptionalStrictBooleanField(asc_enabled, 'asc_enabled');
+    if (!ascEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascProtectedRequestRequiredValidation = validateOptionalStrictBooleanField(
+      asc_protected_request_required,
+      'asc_protected_request_required'
+    );
+    if (!ascProtectedRequestRequiredValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascProtectedRequestRequiredValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascSaoEnabledValidation = validateOptionalStrictBooleanField(
+      asc_sao_enabled,
+      'asc_sao_enabled'
+    );
+    if (!ascSaoEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascSaoEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascTransformedClaimsEnabledValidation = validateOptionalStrictBooleanField(
+      asc_transformed_claims_enabled,
+      'asc_transformed_claims_enabled'
+    );
+    if (!ascTransformedClaimsEnabledValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascTransformedClaimsEnabledValidation.error,
+        },
+        400
+      );
+    }
+
+    const ascAllowedTransformedClaimsValidation = validateOptionalAscAllowedTransformedClaimsField(
+      asc_allowed_transformed_claims,
+      'asc_allowed_transformed_claims'
+    );
+    if (!ascAllowedTransformedClaimsValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: ascAllowedTransformedClaimsValidation.error,
+        },
+        400
+      );
+    }
+
     const applicationTypeValidation = validateOptionalEnumField(
       application_type,
       'application_type',
@@ -1451,6 +1771,12 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       is_trusted,
       skip_consent,
       allow_claims_without_scope,
+      claims_parameter_policy,
+      asc_enabled,
+      asc_protected_request_required,
+      asc_sao_enabled,
+      asc_transformed_claims_enabled,
+      asc_allowed_transformed_claims,
       allowed_redirect_origins,
       require_pkce,
       initiate_login_uri,
@@ -1501,6 +1827,12 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           is_trusted,
           skip_consent,
           allow_claims_without_scope,
+          claims_parameter_policy: claimsParameterPolicyValidation.value,
+          asc_enabled: ascEnabledValidation.value ?? undefined,
+          asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? undefined,
+          asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
+          asc_transformed_claims_enabled: ascTransformedClaimsEnabledValidation.value ?? undefined,
+          asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
           allowed_redirect_origins: validatedAllowedOrigins,
           require_pkce,
           initiate_login_uri,
@@ -1606,6 +1938,12 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           allowed_channels: updatedClient.allowed_channels
             ? parseClientStringArray(updatedClient.allowed_channels, [])
             : [],
+          claims_parameter_policy: parseClaimsParameterPolicyField(
+            updatedClient.claims_parameter_policy
+          ),
+          asc_allowed_transformed_claims: updatedClient.asc_allowed_transformed_claims
+            ? parseClientStringArray(updatedClient.asc_allowed_transformed_claims, [])
+            : null,
           device_secret_revoke_trust_groups: updatedClient.device_secret_revoke_trust_groups
             ? parseClientStringArray(updatedClient.device_secret_revoke_trust_groups, [])
             : [],

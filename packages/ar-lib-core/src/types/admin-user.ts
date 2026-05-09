@@ -573,6 +573,19 @@ export const ADMIN_PERMISSIONS = {
   OPERATIONAL_LOGS_DETAIL_READ: 'admin:operational_logs:detail:read',
   OPERATIONAL_LOGS_ALL: 'admin:operational_logs:*',
 
+  // Privacy-preserving support operations
+  SUPPORT_OPS_REGISTRY_READ: 'admin:support_ops:registry:read',
+  SUPPORT_OPS_AGGREGATE_READ: 'admin:support_ops:aggregate:read',
+  SUPPORT_OPS_COHORTS_PREVIEW: 'admin:support_ops:cohorts:preview',
+  SUPPORT_OPS_COHORTS_CREATE: 'admin:support_ops:cohorts:create',
+  SUPPORT_OPS_ACTIONS_REQUEST: 'admin:support_ops:actions:request',
+  SUPPORT_OPS_ACTIONS_APPROVE: 'admin:support_ops:actions:approve',
+  SUPPORT_OPS_ACTIONS_EXECUTE: 'admin:support_ops:actions:execute',
+  SUPPORT_OPS_ACTIONS_READ: 'admin:support_ops:actions:read',
+  SUPPORT_OPS_BREAK_GLASS_REQUEST: 'admin:support_ops:break_glass:request',
+  SUPPORT_OPS_BREAK_GLASS_REVEAL: 'admin:support_ops:break_glass:reveal',
+  SUPPORT_OPS_ALL: 'admin:support_ops:*',
+
   // Security settings
   SECURITY_READ: 'admin:security:read',
   SECURITY_WRITE: 'admin:security:write',

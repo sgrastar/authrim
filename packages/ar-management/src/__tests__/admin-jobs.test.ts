@@ -63,6 +63,8 @@ import {
 	adminJobResultArtifactChunkHandler,
 	adminJobResultArtifactDownloadHandler,
 	adminJobResultArtifactManifestHandler,
+	adminJobGetHandler,
+	adminJobsListHandler,
 	adminJobsImportUploadHandler,
 	adminJobsImportUploadUrlHandler,
 	adminJobsUsersImportHandler,
@@ -163,11 +165,13 @@ function createTestApp(envOverrides: Partial<Env> = {}) {
 	app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHandler);
 	app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadHandler);
 	app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
+	app.get('/api/admin/jobs', adminJobsListHandler);
 	app.get('/api/admin/jobs/artifacts/:artifactId', adminJobResultArtifactManifestHandler);
 	app.get('/api/admin/jobs/artifacts/:artifactId/download', adminJobResultArtifactDownloadHandler);
 	app.get('/api/admin/jobs/artifacts/:artifactId/chunks/:index', adminJobResultArtifactChunkHandler);
 	app.get('/api/admin/jobs/:id/result', adminJobResultHandler);
 	app.get('/api/admin/jobs/:id/result/download', adminJobResultDownloadHandler);
+	app.get('/api/admin/jobs/:id', adminJobGetHandler);
 
 	const env = {
 		...envOverrides,
@@ -204,6 +208,71 @@ describe('admin-jobs handlers', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+	});
+
+	it('redacts support operation snapshot job progress and config', async () => {
+		mockAdapter.queryOne.mockResolvedValue({
+			id: 'job-123',
+			tenant_id: 'tenant-a',
+			job_type: 'support-ops/cohort-snapshot',
+			status: 'processing',
+			progress: JSON.stringify({
+				total: 13,
+				processed: 4,
+				succeeded: 4,
+				failed: 0,
+				stage: 'processing',
+			}),
+			config: JSON.stringify({
+				cohort_id: 'cohort-1',
+				resource: 'User',
+				intended_action: 'suspend',
+				selector_json: JSON.stringify({ field: 'status', op: 'eq', value: 'active' }),
+				selector_hash: 'sha256:test',
+				matched_count: 13,
+				snapshot_cutoff: Date.now(),
+				support_case_id: 'CASE-1',
+			}),
+			error_code: null,
+			error_message: null,
+			created_by: 'admin-1',
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			started_at: Date.now(),
+			completed_at: null,
+			estimated_completion: Date.now() + 60_000,
+		});
+
+		const { app, env } = createTestApp();
+		const res = await app.request(
+			'/api/admin/jobs/job-123',
+			{
+				method: 'GET',
+				headers: buildHeaders(),
+			},
+			env
+		);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			progress: Record<string, unknown>;
+			parameters: Record<string, unknown>;
+		};
+		expect(body.progress).toMatchObject({
+			total: 10,
+			processed: null,
+			succeeded: null,
+			privacy: { count_exact: false, count_precision: 10 },
+		});
+		expect(body.parameters).toMatchObject({
+			cohort_id: 'cohort-1',
+			resource: 'User',
+			intended_action: 'suspend',
+			selector_hash: 'sha256:test',
+			support_case_id: 'CASE-1',
+		});
+		expect(body.parameters).not.toHaveProperty('selector_json');
+		expect(body.parameters).not.toHaveProperty('matched_count');
 	});
 
 	it('returns a tenant-scoped upload URL for CSV imports', async () => {

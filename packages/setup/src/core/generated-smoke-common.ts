@@ -150,8 +150,9 @@ export function resolveSmokeClientRegistrationDefaults(
   config: AuthrimConfig
 ): SmokeClientRegistrationDefaults {
   const grantTypes =
-    config.oidc.grantTypes.filter((value): value is string => typeof value === 'string' && value.length > 0) ||
-    [];
+    config.oidc.grantTypes.filter(
+      (value): value is string => typeof value === 'string' && value.length > 0
+    ) || [];
   const responseTypes =
     config.oidc.responseTypes.filter(
       (value): value is string => typeof value === 'string' && value.length > 0
@@ -174,7 +175,7 @@ export function withTenantHeader(
 export async function fetchJsonWithTimeout(
   url: string,
   timeoutMs: number,
-  init?: RequestInit
+  init?: globalThis.RequestInit
 ): Promise<HttpResponseSnapshot> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -230,7 +231,8 @@ export async function readGeneratedAdminApiSecret(options: {
   }
 
   const explicitPath =
-    options.adminSecretPath || findKeysDirectory({
+    options.adminSecretPath ||
+    findKeysDirectory({
       env: options.env,
       sourceDir: options.baseDir,
       keysBaseDir: options.baseDir,
@@ -293,7 +295,10 @@ export async function getTenantDcrSettings(options: {
     version,
     values,
     sources: Object.fromEntries(
-      Object.entries(sources).map(([key, value]) => [key, typeof value === 'string' ? value : 'unknown'])
+      Object.entries(sources).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? value : 'unknown',
+      ])
     ),
   };
 }

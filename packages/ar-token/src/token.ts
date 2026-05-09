@@ -38,6 +38,10 @@ import {
   getTenantSettings,
   TENANT_DEFAULTS,
   getDeviceSecretInstallationId,
+  parseClaimsRequest,
+  evaluateClaimsForTarget,
+  buildStandardUserClaims,
+  hasSAORulesForTarget,
 } from '@authrim/ar-lib-core';
 import {
   revokeToken,
@@ -745,6 +749,7 @@ interface AuthCodeStoreResponse {
   state?: string;
   createdAt?: number;
   claims?: string; // JSON string of claims parameter
+  claimsRequestProtected?: boolean;
   authTime?: number;
   acr?: string;
   amr?: string[];
@@ -1305,6 +1310,7 @@ async function handleAuthorizationCodeGrant(
         ? consumedData.amr.filter((method): method is string => typeof method === 'string')
         : undefined, // OIDC Core: Authentication Methods References
       claims: consumedData.claims,
+      claimsRequestProtected: consumedData.claimsRequestProtected === true,
       dpopJkt: consumedData.dpopJkt, // DPoP JWK thumbprint for binding verification
       sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
       authorizationDetails: consumedData.authorizationDetails, // RFC 9396: Rich Authorization Requests
@@ -1576,6 +1582,7 @@ async function handleAuthorizationCodeGrant(
     scope: string;
     client_id: string;
     claims?: string;
+    claims_request_protected?: boolean;
     cnf?: { jkt: string };
     // Phase 1 RBAC claims
     authrim_roles?: string[];
@@ -1614,6 +1621,7 @@ async function handleAuthorizationCodeGrant(
   // Add claims parameter if it was requested during authorization
   if (authCodeData.claims) {
     accessTokenClaims.claims = authCodeData.claims;
+    accessTokenClaims.claims_request_protected = authCodeData.claimsRequestProtected === true;
   }
 
   // Add DPoP confirmation (cnf) claim if DPoP is used
@@ -1825,7 +1833,7 @@ async function handleAuthorizationCodeGrant(
   // Phase 1 RBAC: Include RBAC claims in ID Token
   // Note: sid is required for RP-Initiated Logout per OIDC Session Management 1.0
   // Note: ds_hash is included when Native SSO is enabled (OIDC Native SSO 1.0)
-  const idTokenClaims = {
+  let idTokenClaims: Record<string, unknown> = {
     ...idTokenCustomClaims, // Custom claims (first, so standard claims override on collision)
     iss: getRequestIssuer(c),
     sub: authCodeData.sub,
@@ -1842,6 +1850,55 @@ async function handleAuthorizationCodeGrant(
     // Anonymous user claims (architecture-decisions.md §17)
     ...anonymousClaims,
   };
+
+  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
+  if (!parsedClaimsRequest.ok) {
+    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
+  }
+
+  const shouldEvaluateIdTokenClaims =
+    parsedClaimsRequest.request &&
+    (Object.keys(parsedClaimsRequest.request.id_token).length > 0 ||
+      hasSAORulesForTarget(parsedClaimsRequest.request, 'id_token'));
+
+  if (shouldEvaluateIdTokenClaims && parsedClaimsRequest.request) {
+    try {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const user = await getCachedUser(c.env, authCodeData.sub, {
+        coreDb: authCtx.coreAdapter,
+        piiDb: piiCtx.defaultPiiAdapter,
+      });
+      const availableClaims: Record<string, unknown> = {
+        ...(user ? buildStandardUserClaims(user) : {}),
+        sub: authCodeData.sub,
+        auth_time: authCodeData.auth_time,
+        ...(authCodeData.acr ? { acr: authCodeData.acr } : {}),
+        ...(authCodeData.amr?.length ? { amr: authCodeData.amr } : {}),
+      };
+      const requestedIdTokenClaims = evaluateClaimsForTarget({
+        target: 'id_token',
+        claimsRequest: parsedClaimsRequest.request,
+        initialClaims: idTokenClaims,
+        availableClaims,
+        grantedScopes: (authCodeData.scope || '').split(' ').filter(Boolean),
+        clientPolicy: clientMetadata,
+        includeScopeClaims: false,
+        requestIntegrityProtected: authCodeData.claimsRequestProtected === true,
+      });
+      if (!requestedIdTokenClaims.ok) {
+        return oauthError(
+          c,
+          requestedIdTokenClaims.error,
+          requestedIdTokenClaims.error_description,
+          400
+        );
+      }
+      idTokenClaims = requestedIdTokenClaims.claims;
+    } catch (claimsError) {
+      log.error('Failed to evaluate requested ID token claims', {}, claimsError as Error);
+      return oauthError(c, 'server_error', 'Failed to evaluate requested ID token claims', 500);
+    }
+  }
 
   let idToken: string;
   try {

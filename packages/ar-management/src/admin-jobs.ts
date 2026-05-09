@@ -579,6 +579,35 @@ interface JobProgress {
   processed?: number;
   succeeded?: number;
   failed?: number;
+  stage?: string;
+}
+
+const SUPPORT_OPS_SNAPSHOT_JOB_TYPE = 'support-ops/cohort-snapshot';
+const SUPPORT_OPS_JOB_COUNT_PRECISION = 10;
+
+function bucketSupportOpsJobCount(value: unknown): number | null {
+  const count = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  if (count > 0 && count < SUPPORT_OPS_JOB_COUNT_PRECISION) {
+    return null;
+  }
+  return Math.floor(count / SUPPORT_OPS_JOB_COUNT_PRECISION) * SUPPORT_OPS_JOB_COUNT_PRECISION;
+}
+
+function sanitizeSupportOpsJobProgress(progress: JobProgress | null): Record<string, unknown> | null {
+  if (!progress) {
+    return null;
+  }
+  return {
+    stage: typeof progress.stage === 'string' ? progress.stage : undefined,
+    total: bucketSupportOpsJobCount(progress.total),
+    processed: bucketSupportOpsJobCount(progress.processed),
+    succeeded: bucketSupportOpsJobCount(progress.succeeded),
+    failed: bucketSupportOpsJobCount(progress.failed),
+    privacy: {
+      count_exact: false,
+      count_precision: SUPPORT_OPS_JOB_COUNT_PRECISION,
+    },
+  };
 }
 
 /**
@@ -598,7 +627,10 @@ function formatJob(row: JobRow) {
     job_id: row.id,
     type: row.job_type,
     status: row.status,
-    progress,
+    progress:
+      row.job_type === SUPPORT_OPS_SNAPSHOT_JOB_TYPE
+        ? sanitizeSupportOpsJobProgress(progress)
+        : progress,
     created_by: row.created_by,
     created_at: toISOString(row.created_at),
     updated_at: toISOString(row.updated_at),
@@ -661,13 +693,23 @@ function formatJobResult(row: JobRow) {
   };
 }
 
-function parseJobConfig(config: string | null): Record<string, unknown> | undefined {
+function parseJobConfig(config: string | null, jobType?: string): Record<string, unknown> | undefined {
   if (!config) {
     return undefined;
   }
 
   try {
-    return JSON.parse(config) as Record<string, unknown>;
+    const parsed = JSON.parse(config) as Record<string, unknown>;
+    if (jobType !== SUPPORT_OPS_SNAPSHOT_JOB_TYPE) {
+      return parsed;
+    }
+    return {
+      cohort_id: parsed.cohort_id,
+      resource: parsed.resource,
+      intended_action: parsed.intended_action,
+      selector_hash: parsed.selector_hash,
+      support_case_id: parsed.support_case_id ?? null,
+    };
   } catch {
     return undefined;
   }
@@ -849,7 +891,9 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json({
       ...formatJob(row),
-      ...(parseJobConfig(row.config) ? { parameters: parseJobConfig(row.config) } : {}),
+      ...(parseJobConfig(row.config, row.job_type)
+        ? { parameters: parseJobConfig(row.config, row.job_type) }
+        : {}),
     });
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');

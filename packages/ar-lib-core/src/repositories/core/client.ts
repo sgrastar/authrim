@@ -105,6 +105,12 @@ export interface OAuthClient {
   is_trusted: boolean;
   skip_consent: boolean;
   allow_claims_without_scope: boolean;
+  claims_parameter_policy: string | null; // JSON object
+  asc_enabled: boolean;
+  asc_protected_request_required: boolean;
+  asc_sao_enabled: boolean;
+  asc_transformed_claims_enabled: boolean;
+  asc_allowed_transformed_claims: string | null; // JSON array
 
   // Token Exchange (RFC 8693)
   token_exchange_allowed: boolean;
@@ -210,6 +216,15 @@ export interface CreateClientInput {
   is_trusted?: boolean;
   skip_consent?: boolean;
   allow_claims_without_scope?: boolean;
+  claims_parameter_policy?: Record<
+    string,
+    'scope_required' | 'claims_allowed' | 'forbidden'
+  > | null;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[] | null;
   token_exchange_allowed?: boolean;
   allowed_subject_token_clients?: string[] | null;
   allowed_token_exchange_resources?: string[] | null;
@@ -268,6 +283,15 @@ export interface UpdateClientInput {
   is_trusted?: boolean;
   skip_consent?: boolean;
   allow_claims_without_scope?: boolean;
+  claims_parameter_policy?: Record<
+    string,
+    'scope_required' | 'claims_allowed' | 'forbidden'
+  > | null;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[] | null;
   application_type?: ClientApplicationType | null;
   // Public/Admin APIs should translate application_group to these internal trust_group fields.
   trust_group?: string | null;
@@ -390,6 +414,16 @@ export class ClientRepository {
       is_trusted: input.is_trusted ?? false,
       skip_consent: input.skip_consent ?? false,
       allow_claims_without_scope: input.allow_claims_without_scope ?? false,
+      claims_parameter_policy: input.claims_parameter_policy
+        ? JSON.stringify(input.claims_parameter_policy)
+        : null,
+      asc_enabled: input.asc_enabled ?? true,
+      asc_protected_request_required: input.asc_protected_request_required ?? true,
+      asc_sao_enabled: input.asc_sao_enabled ?? true,
+      asc_transformed_claims_enabled: input.asc_transformed_claims_enabled ?? true,
+      asc_allowed_transformed_claims: input.asc_allowed_transformed_claims
+        ? JSON.stringify(input.asc_allowed_transformed_claims)
+        : null,
       token_exchange_allowed: input.token_exchange_allowed ?? false,
       allowed_subject_token_clients: input.allowed_subject_token_clients
         ? JSON.stringify(input.allowed_subject_token_clients)
@@ -447,6 +481,8 @@ export class ClientRepository {
         post_logout_redirect_uris, subject_type, sector_identifier_uri,
         token_endpoint_auth_method, jwks, jwks_uri,
         is_trusted, skip_consent, allow_claims_without_scope,
+        claims_parameter_policy, asc_enabled, asc_protected_request_required,
+        asc_sao_enabled, asc_transformed_claims_enabled, asc_allowed_transformed_claims,
         token_exchange_allowed, allowed_subject_token_clients,
         allowed_token_exchange_resources, delegation_mode,
         client_credentials_allowed, allowed_scopes, default_scope, default_audience,
@@ -461,7 +497,7 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -505,6 +541,12 @@ export class ClientRepository {
         client.is_trusted ? 1 : 0,
         client.skip_consent ? 1 : 0,
         client.allow_claims_without_scope ? 1 : 0,
+        client.claims_parameter_policy,
+        client.asc_enabled ? 1 : 0,
+        client.asc_protected_request_required ? 1 : 0,
+        client.asc_sao_enabled ? 1 : 0,
+        client.asc_transformed_claims_enabled ? 1 : 0,
+        client.asc_allowed_transformed_claims,
         client.token_exchange_allowed ? 1 : 0,
         client.allowed_subject_token_clients,
         client.allowed_token_exchange_resources,
@@ -644,6 +686,36 @@ export class ClientRepository {
     if (input.allow_claims_without_scope !== undefined) {
       updates.push('allow_claims_without_scope = ?');
       params.push(input.allow_claims_without_scope ? 1 : 0);
+    }
+    if (input.claims_parameter_policy !== undefined) {
+      updates.push('claims_parameter_policy = ?');
+      params.push(
+        input.claims_parameter_policy ? JSON.stringify(input.claims_parameter_policy) : null
+      );
+    }
+    if (input.asc_enabled !== undefined) {
+      updates.push('asc_enabled = ?');
+      params.push(input.asc_enabled ? 1 : 0);
+    }
+    if (input.asc_protected_request_required !== undefined) {
+      updates.push('asc_protected_request_required = ?');
+      params.push(input.asc_protected_request_required ? 1 : 0);
+    }
+    if (input.asc_sao_enabled !== undefined) {
+      updates.push('asc_sao_enabled = ?');
+      params.push(input.asc_sao_enabled ? 1 : 0);
+    }
+    if (input.asc_transformed_claims_enabled !== undefined) {
+      updates.push('asc_transformed_claims_enabled = ?');
+      params.push(input.asc_transformed_claims_enabled ? 1 : 0);
+    }
+    if (input.asc_allowed_transformed_claims !== undefined) {
+      updates.push('asc_allowed_transformed_claims = ?');
+      params.push(
+        input.asc_allowed_transformed_claims
+          ? JSON.stringify(input.asc_allowed_transformed_claims)
+          : null
+      );
     }
     if (input.application_type !== undefined) {
       updates.push('application_type = ?');
@@ -1028,6 +1100,22 @@ export class ClientRepository {
       is_trusted: Boolean(row.is_trusted),
       skip_consent: Boolean(row.skip_consent),
       allow_claims_without_scope: Boolean(row.allow_claims_without_scope),
+      asc_enabled:
+        row.asc_enabled === null || row.asc_enabled === undefined ? true : Boolean(row.asc_enabled),
+      asc_protected_request_required:
+        row.asc_protected_request_required === null ||
+        row.asc_protected_request_required === undefined
+          ? true
+          : Boolean(row.asc_protected_request_required),
+      asc_sao_enabled:
+        row.asc_sao_enabled === null || row.asc_sao_enabled === undefined
+          ? true
+          : Boolean(row.asc_sao_enabled),
+      asc_transformed_claims_enabled:
+        row.asc_transformed_claims_enabled === null ||
+        row.asc_transformed_claims_enabled === undefined
+          ? true
+          : Boolean(row.asc_transformed_claims_enabled),
       native_sso_enabled:
         row.native_sso_enabled === null || row.native_sso_enabled === undefined
           ? null
@@ -1037,8 +1125,7 @@ export class ClientRepository {
           ? null
           : Boolean(row.native_channel_allowed),
       device_secret_revoke_enabled:
-        row.device_secret_revoke_enabled === null ||
-        row.device_secret_revoke_enabled === undefined
+        row.device_secret_revoke_enabled === null || row.device_secret_revoke_enabled === undefined
           ? null
           : Boolean(row.device_secret_revoke_enabled),
       device_secret_introspection_enabled:

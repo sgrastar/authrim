@@ -215,6 +215,24 @@ describe('Discovery Handler', () => {
       expect(metadata.claims_supported).toContain('email');
     });
 
+    it('should advertise implemented ASC capabilities', async () => {
+      const env = createMockEnv();
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.selective_abort_omit_supported).toBe(true);
+      expect(metadata.selective_abort_omit_schema_supported).toBe(false);
+      expect(metadata.transformed_claims_functions_supported).toContain('years_ago');
+      expect(metadata.transformed_claims_max_count).toBe(0);
+      expect(metadata.transformed_claims_predefined).toHaveProperty('age_over_18');
+    });
+
     it('should expose only the canonical Native SSO discovery field when enabled', async () => {
       const env = {
         ...createMockEnv(),

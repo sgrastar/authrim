@@ -18,6 +18,9 @@ import {
   type JWEEncryption,
   loadFeatureConfig,
   createCustomClaimSchemaResolver,
+  parseClaimsRequest,
+  evaluateClaimsForTarget,
+  buildStandardUserClaims,
 } from '@authrim/ar-lib-core';
 import { SignJWT } from 'jose';
 
@@ -148,33 +151,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // Parse claims parameter if present
-  let requestedUserinfoClaims: Record<
-    string,
-    { essential?: boolean; value?: unknown; values?: unknown[] } | null
-  > = {};
-  if (claimsParam) {
-    try {
-      const parsedClaims: unknown = JSON.parse(claimsParam);
-      if (typeof parsedClaims === 'object' && parsedClaims !== null && 'userinfo' in parsedClaims) {
-        const claimsObj = parsedClaims as { userinfo?: unknown };
-        if (claimsObj.userinfo && typeof claimsObj.userinfo === 'object') {
-          requestedUserinfoClaims = claimsObj.userinfo as Record<
-            string,
-            { essential?: boolean; value?: unknown; values?: unknown[] } | null
-          >;
-        }
-      }
-    } catch (error) {
-      log.warn('Failed to parse claims parameter', { error: String(error) });
-      // Continue without claims parameter if parsing fails
-    }
-  }
-
-  // Build user claims based on scope
-  const userClaims: Record<string, unknown> = {
-    sub,
-  };
+  const parsedClaims = parseClaimsRequest(claimsParam);
+  const claimsRequest = parsedClaims.ok ? parsedClaims.request : undefined;
 
   // Fetch user data from KV cache (falls back to D1 on cache miss)
   // This dramatically reduces D1 calls under high load
@@ -196,42 +174,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // Parse address JSON if present (CachedUser stores address as JSON string)
-  let address = null;
-  if (user.address) {
-    try {
-      address = JSON.parse(user.address);
-    } catch (error) {
-      log.warn('Failed to parse address JSON', { error: String(error), sub });
-    }
-  }
-
-  // Map cached user record to OIDC userinfo claims
   const userData = {
-    name: user.name || undefined,
-    family_name: user.family_name || undefined,
-    given_name: user.given_name || undefined,
-    middle_name: user.middle_name || undefined,
-    nickname: user.nickname || undefined,
-    preferred_username: user.preferred_username || undefined,
-    profile: user.profile || undefined,
-    picture: user.picture || undefined,
-    website: user.website || undefined,
-    gender: user.gender || undefined,
-    birthdate: user.birthdate || undefined,
-    zoneinfo: user.zoneinfo || undefined,
-    locale: user.locale || undefined,
-    // OIDC spec requires updated_at in seconds; convert from milliseconds if needed
-    updated_at: user.updated_at
-      ? user.updated_at >= 1e12
-        ? Math.floor(user.updated_at / 1000)
-        : user.updated_at
-      : Math.floor(Date.now() / 1000),
-    email: user.email || undefined,
-    email_verified: user.email_verified,
-    phone_number: user.phone_number || undefined,
-    phone_number_verified: user.phone_number_verified,
-    address: address || undefined,
+    ...buildStandardUserClaims(user),
+    sub,
   };
 
   // Get client metadata to check claims parameter settings (request-level cached)
@@ -239,100 +184,27 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const client_id = tokenClaims.client_id as string;
   const clientMetadata = client_id ? await getClientCached(c, c.env, client_id) : null;
 
-  // Check if client allows claims parameter to request claims without corresponding scope
-  // Default: false (strict scope-based access control)
-  // OIDC conformance tests: true (flexible claims parameter handling)
-  const allowClaimsWithoutScope = clientMetadata?.allow_claims_without_scope === true;
-
-  // Profile scope claims (OIDC Core 5.4)
-  const profileClaims = [
-    'name',
-    'family_name',
-    'given_name',
-    'middle_name',
-    'nickname',
-    'preferred_username',
-    'profile',
-    'picture',
-    'website',
-    'gender',
-    'birthdate',
-    'zoneinfo',
-    'locale',
-    'updated_at',
-  ];
-
-  // Add profile claims if profile scope is granted OR if explicitly requested (when allowed)
-  if (scopes.includes('profile')) {
-    // Include all profile claims when profile scope is granted
-    for (const claim of profileClaims) {
-      if (claim in userData) {
-        userClaims[claim] = userData[claim as keyof typeof userData];
-      }
-    }
-  } else if (allowClaimsWithoutScope) {
-    // Include individual profile claims if explicitly requested via claims parameter
-    // (only when client allows claims without scope)
-    for (const claim of profileClaims) {
-      if (claim in requestedUserinfoClaims && claim in userData) {
-        userClaims[claim] = userData[claim as keyof typeof userData];
-      }
-    }
+  const claimEvaluation = evaluateClaimsForTarget({
+    target: 'userinfo',
+    claimsRequest,
+    initialClaims: { sub },
+    availableClaims: userData,
+    grantedScopes: scopes,
+    clientPolicy: clientMetadata,
+    includeScopeClaims: true,
+    requestIntegrityProtected: tokenClaims.claims_request_protected === true,
+  });
+  if (!claimEvaluation.ok) {
+    return c.json(
+      {
+        error: claimEvaluation.error,
+        error_description: claimEvaluation.error_description,
+      },
+      400
+    );
   }
-  // else: Strict mode - do not return profile claims without profile scope
 
-  // Email scope claims
-  const emailClaims = ['email', 'email_verified'];
-
-  // Add email claims if email scope is granted OR if explicitly requested (when allowed)
-  if (scopes.includes('email')) {
-    // Include all email claims when email scope is granted
-    for (const claim of emailClaims) {
-      if (claim in userData) {
-        userClaims[claim] = userData[claim as keyof typeof userData];
-      }
-    }
-  } else if (allowClaimsWithoutScope) {
-    // Include individual email claims if explicitly requested via claims parameter
-    // (only when client allows claims without scope)
-    for (const claim of emailClaims) {
-      if (claim in requestedUserinfoClaims && claim in userData) {
-        userClaims[claim] = userData[claim as keyof typeof userData];
-      }
-    }
-  }
-  // else: Strict mode - do not return email claims without email scope
-
-  // Address scope claims (OIDC Core 5.4)
-  if (scopes.includes('address')) {
-    userClaims.address = userData.address;
-  } else if (allowClaimsWithoutScope && 'address' in requestedUserinfoClaims) {
-    // Include address if explicitly requested via claims parameter (only when allowed)
-    userClaims.address = userData.address;
-  }
-  // else: Strict mode - do not return address without address scope
-
-  // Phone scope claims (OIDC Core 5.4)
-  const phoneClaims = ['phone_number', 'phone_number_verified'];
-
-  // Add phone claims if phone scope is granted OR if explicitly requested (when allowed)
-  if (scopes.includes('phone')) {
-    // Include all phone claims when phone scope is granted
-    for (const claim of phoneClaims) {
-      if (claim in userData) {
-        userClaims[claim] = userData[claim as keyof typeof userData];
-      }
-    }
-  } else if (allowClaimsWithoutScope) {
-    // Include individual phone claims if explicitly requested via claims parameter
-    // (only when client allows claims without scope)
-    for (const claim of phoneClaims) {
-      if (claim in requestedUserinfoClaims && claim in userData) {
-        userClaims[claim] = userData[claim as keyof typeof userData];
-      }
-    }
-  }
-  // else: Strict mode - do not return phone claims without phone scope
+  const userClaims: Record<string, unknown> = claimEvaluation.claims;
 
   // Custom Claim Schema: add custom claims from schema resolver
   try {

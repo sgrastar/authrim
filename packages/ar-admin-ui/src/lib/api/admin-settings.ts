@@ -517,6 +517,7 @@ export const CATEGORY_NAMES = [
 	// Login Entry / Discovery
 	'login-entry',
 	'tenant-discovery-ui',
+	'support-ops',
 	// Platform settings (read-only)
 	'infrastructure',
 	'encryption'

@@ -260,6 +260,7 @@ export interface ApprovalRequestApprovalCreateInput {
 
 export interface ApprovalRequestApprovalUpdateInput {
   status?: ApprovalDecisionStatus;
+  subject_id?: string | null;
   method?: ApprovalTransportMethod | null;
   transport_channel?: string | null;
   reason_code?: string | null;

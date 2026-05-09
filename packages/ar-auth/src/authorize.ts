@@ -55,6 +55,10 @@ import {
   createSettingsManager,
   CLIENT_CATEGORY_META,
   OAUTH_CATEGORY_META,
+  parseClaimsRequest,
+  evaluateClaimsForTarget,
+  buildStandardUserClaims,
+  hasSAORulesForTarget,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
@@ -468,6 +472,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let ui_locales: string | undefined;
   let login_hint: string | undefined;
   let handoff: string | undefined; // Authrim Extension: Session Token Handoff SSO
+  let claimsRequestIntegrityProtected = false;
   let _confirmed: string | undefined;
   let _auth_time: string | undefined;
   let _session_user_id: string | undefined;
@@ -983,6 +988,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge = parData.code_challenge;
         code_challenge_method = parData.code_challenge_method;
         claims = parData.claims;
+        claimsRequestIntegrityProtected = true;
         authorization_details = parData.authorization_details; // RFC 9396 RAR
         response_mode = parData.response_mode;
       } catch {
@@ -1122,6 +1128,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             algorithm: 'none',
           });
           requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
+          claimsRequestIntegrityProtected = false;
         } else {
           // Signed request object - verify using client's public key
           // Get client metadata to retrieve jwks or jwks_uri
@@ -1251,6 +1258,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             audience: getRequestIssuer(c),
           });
           requestObjectClaims = verified as Record<string, unknown>;
+          claimsRequestIntegrityProtected = true;
         }
       }
 
@@ -1293,7 +1301,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           code_challenge = requestObjectClaims.code_challenge as string;
         if (requestObjectClaims.code_challenge_method)
           code_challenge_method = requestObjectClaims.code_challenge_method as string;
-        if (requestObjectClaims.claims) claims = requestObjectClaims.claims as string;
+        if (requestObjectClaims.claims)
+          claims =
+            typeof requestObjectClaims.claims === 'string'
+              ? requestObjectClaims.claims
+              : JSON.stringify(requestObjectClaims.claims);
         if (requestObjectClaims.response_mode)
           response_mode = requestObjectClaims.response_mode as string;
         if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
@@ -2018,47 +2030,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Validate claims parameter (optional, per OIDC Core 5.5)
-  if (claims) {
-    try {
-      const parsedClaims: unknown = JSON.parse(claims);
-
-      // Validate claims structure
-      if (
-        typeof parsedClaims !== 'object' ||
-        parsedClaims === null ||
-        Array.isArray(parsedClaims)
-      ) {
-        return sendError('invalid_request', 'claims parameter must be a JSON object');
-      }
-
-      // Validate that claims object contains valid sections (userinfo and/or id_token)
-      const validSections = ['userinfo', 'id_token'];
-      const claimsSections = Object.keys(parsedClaims as Record<string, unknown>);
-
-      if (claimsSections.length === 0) {
-        return sendError(
-          'invalid_request',
-          'claims parameter must contain at least one of: userinfo, id_token'
-        );
-      }
-
-      for (const section of claimsSections) {
-        if (!validSections.includes(section)) {
-          return sendError(
-            'invalid_request',
-            `Invalid claims section: ${section}. Must be one of: ${validSections.join(', ')}`
-          );
-        }
-
-        // Validate section contains an object
-        const claimsObj = parsedClaims as Record<string, unknown>;
-        if (typeof claimsObj[section] !== 'object' || claimsObj[section] === null) {
-          return sendError('invalid_request', `claims.${section} must be an object`);
-        }
-      }
-    } catch {
-      return sendError('invalid_request', 'claims parameter must be valid JSON');
-    }
+  const parsedClaimsRequest = parseClaimsRequest(claims);
+  if (!parsedClaimsRequest.ok) {
+    return sendError(parsedClaimsRequest.error, parsedClaimsRequest.error_description);
   }
 
   // Validate PKCE parameters if provided
@@ -3301,6 +3275,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         nonce,
         state,
         claims,
+        claimsRequestProtected: claimsRequestIntegrityProtected,
         authTime: currentAuthTime,
         acr: selectedAcr,
         amr: sessionAmr,
@@ -3338,6 +3313,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           scope: validScope,
           client_id: validClientId,
           claims,
+          ...(claims ? { claims_request_protected: claimsRequestIntegrityProtected === true } : {}),
         },
         privateKey,
         signingKeyId,
@@ -3392,7 +3368,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Create ID token with appropriate claims
       // Build base claims for ID token
       // Note: sid (session ID) is required for RP-Initiated Logout per OIDC Session Management 1.0
-      const idTokenClaims: Record<string, unknown> = {
+      let idTokenClaims: Record<string, unknown> = {
         iss: issuer,
         sub,
         aud: validClientId,
@@ -3413,32 +3389,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       // OIDC Core 5.4: For response_type=id_token (no access token), scope-based claims
       // must be included in the ID token since UserInfo endpoint is not accessible
-      // Also include essential claims from claims parameter
+      // Also include individual claims from the claims parameter.
       const isIdTokenOnly = includesIdToken && !includesToken && !includesCode;
       const scopes = validScope.split(' ');
+      const hasRequestedIdTokenClaims =
+        Object.keys(parsedClaimsRequest.request?.id_token ?? {}).length > 0;
+      const hasIdTokenSAORules = hasSAORulesForTarget(parsedClaimsRequest.request, 'id_token');
 
-      // Parse claims parameter for id_token essential claims
-      let idTokenEssentialClaims: Record<string, { essential?: boolean; value?: unknown }> = {};
-      if (claims) {
-        try {
-          const parsedClaims = JSON.parse(claims) as Record<string, unknown>;
-          if (parsedClaims.id_token && typeof parsedClaims.id_token === 'object') {
-            idTokenEssentialClaims = parsedClaims.id_token as Record<
-              string,
-              { essential?: boolean; value?: unknown }
-            >;
-          }
-        } catch {
-          // Ignore parsing errors, claims was already validated earlier
-        }
-      }
-
-      // Check if we need to add scope-based or essential claims
-      const hasEssentialClaims = Object.entries(idTokenEssentialClaims).some(
-        ([, v]) => v?.essential === true
-      );
-
-      if (isIdTokenOnly || hasEssentialClaims) {
+      if (isIdTokenOnly || hasRequestedIdTokenClaims || hasIdTokenSAORules) {
         // Fetch user data from cache (Read-Through Cache) or D1
         const piiCtx = createPIIContextFromHono(c, tenantId);
         const user = await getCachedUser(c.env, sub, {
@@ -3446,94 +3404,28 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           piiDb: piiCtx.defaultPiiAdapter,
         });
 
-        if (user) {
-          // Parse address JSON if present (CachedUser.address is already JSON string)
-          let address = null;
-          if (user.address) {
-            try {
-              address = JSON.parse(user.address);
-            } catch {
-              // Ignore address parsing errors
-            }
-          }
+        const userData: Record<string, unknown> = {
+          ...(user ? buildStandardUserClaims(user) : {}),
+          sub,
+          auth_time: currentAuthTime,
+          ...(selectedAcr ? { acr: selectedAcr } : {}),
+          ...(sessionAmr?.length ? { amr: sessionAmr } : {}),
+        };
 
-          // Map user data to OIDC claims
-          const userData: Record<string, unknown> = {
-            name: user.name || undefined,
-            family_name: user.family_name || undefined,
-            given_name: user.given_name || undefined,
-            middle_name: user.middle_name || undefined,
-            nickname: user.nickname || undefined,
-            preferred_username: user.preferred_username || undefined,
-            profile: user.profile || undefined,
-            picture: user.picture || undefined,
-            website: user.website || undefined,
-            gender: user.gender || undefined,
-            birthdate: user.birthdate || undefined,
-            zoneinfo: user.zoneinfo || undefined,
-            locale: user.locale || undefined,
-            updated_at: user.updated_at
-              ? user.updated_at >= 1e12
-                ? Math.floor(user.updated_at / 1000)
-                : user.updated_at
-              : Math.floor(Date.now() / 1000),
-            email: user.email || undefined,
-            email_verified: user.email_verified,
-            phone_number: user.phone_number || undefined,
-            phone_number_verified: user.phone_number_verified,
-            address: address || undefined,
-          };
-
-          // Profile scope claims
-          const profileClaims = [
-            'name',
-            'family_name',
-            'given_name',
-            'middle_name',
-            'nickname',
-            'preferred_username',
-            'profile',
-            'picture',
-            'website',
-            'gender',
-            'birthdate',
-            'zoneinfo',
-            'locale',
-            'updated_at',
-          ];
-
-          // Add scope-based claims for response_type=id_token
-          if (isIdTokenOnly) {
-            if (scopes.includes('profile')) {
-              for (const claim of profileClaims) {
-                if (userData[claim] !== undefined) {
-                  idTokenClaims[claim] = userData[claim];
-                }
-              }
-            }
-            if (scopes.includes('email')) {
-              if (userData.email !== undefined) idTokenClaims.email = userData.email;
-              if (userData.email_verified !== undefined)
-                idTokenClaims.email_verified = userData.email_verified;
-            }
-            if (scopes.includes('phone')) {
-              if (userData.phone_number !== undefined)
-                idTokenClaims.phone_number = userData.phone_number;
-              if (userData.phone_number_verified !== undefined)
-                idTokenClaims.phone_number_verified = userData.phone_number_verified;
-            }
-            if (scopes.includes('address') && userData.address !== undefined) {
-              idTokenClaims.address = userData.address;
-            }
-          }
-
-          // Add essential claims from claims parameter
-          for (const [claimName, claimSpec] of Object.entries(idTokenEssentialClaims)) {
-            if (claimSpec?.essential === true && userData[claimName] !== undefined) {
-              idTokenClaims[claimName] = userData[claimName];
-            }
-          }
+        const requestedClaims = evaluateClaimsForTarget({
+          target: 'id_token',
+          claimsRequest: parsedClaimsRequest.request,
+          initialClaims: idTokenClaims,
+          availableClaims: userData,
+          grantedScopes: scopes,
+          clientPolicy: clientMetadata,
+          includeScopeClaims: isIdTokenOnly,
+          requestIntegrityProtected: claimsRequestIntegrityProtected,
+        });
+        if (!requestedClaims.ok) {
+          return sendError(requestedClaims.error, requestedClaims.error_description);
         }
+        idTokenClaims = requestedClaims.claims;
       }
 
       idToken = await createIDToken(

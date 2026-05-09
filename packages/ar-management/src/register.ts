@@ -838,6 +838,8 @@ async function storeClient(
       subject_type, sector_identifier_uri,
       token_endpoint_auth_method, is_trusted, skip_consent,
       allow_claims_without_scope,
+      claims_parameter_policy, asc_enabled, asc_protected_request_required,
+      asc_sao_enabled, asc_transformed_claims_enabled, asc_allowed_transformed_claims,
       jwks, jwks_uri,
       userinfo_signed_response_alg,
       id_token_signed_response_alg,
@@ -850,7 +852,7 @@ async function storeClient(
       initiate_login_uri, registration_access_token_hash,
       software_id, software_version, requestable_scopes,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -871,7 +873,11 @@ async function storeClient(
       metadata.browser_public_client_mode || null,
       metadata.browser_refresh_token_policy || 'disabled',
       metadata.native_sso_enabled === undefined ? null : metadata.native_sso_enabled ? 1 : 0,
-      metadata.native_channel_allowed === undefined ? null : metadata.native_channel_allowed ? 1 : 0,
+      metadata.native_channel_allowed === undefined
+        ? null
+        : metadata.native_channel_allowed
+          ? 1
+          : 0,
       metadata.allowed_channels ? JSON.stringify(metadata.allowed_channels) : null,
       metadata.subject_type || 'public',
       metadata.sector_identifier_uri || null,
@@ -879,6 +885,14 @@ async function storeClient(
       metadata.is_trusted ? 1 : 0,
       metadata.skip_consent ? 1 : 0,
       metadata.allow_claims_without_scope ? 1 : 0,
+      metadata.claims_parameter_policy ? JSON.stringify(metadata.claims_parameter_policy) : null,
+      metadata.asc_enabled === false ? 0 : 1,
+      metadata.asc_protected_request_required === false ? 0 : 1,
+      metadata.asc_sao_enabled === false ? 0 : 1,
+      metadata.asc_transformed_claims_enabled === false ? 0 : 1,
+      metadata.asc_allowed_transformed_claims
+        ? JSON.stringify(metadata.asc_allowed_transformed_claims)
+        : null,
       metadata.jwks ? JSON.stringify(metadata.jwks) : null,
       metadata.jwks_uri || null,
       metadata.userinfo_signed_response_alg || null,
@@ -1091,6 +1105,16 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // RFC 9101 (JAR): Request Object signing algorithm
     if (request.request_object_signing_alg)
       response.request_object_signing_alg = request.request_object_signing_alg;
+    if (request.claims_parameter_policy)
+      response.claims_parameter_policy = request.claims_parameter_policy;
+    if (request.asc_enabled !== undefined) response.asc_enabled = request.asc_enabled;
+    if (request.asc_protected_request_required !== undefined)
+      response.asc_protected_request_required = request.asc_protected_request_required;
+    if (request.asc_sao_enabled !== undefined) response.asc_sao_enabled = request.asc_sao_enabled;
+    if (request.asc_transformed_claims_enabled !== undefined)
+      response.asc_transformed_claims_enabled = request.asc_transformed_claims_enabled;
+    if (request.asc_allowed_transformed_claims)
+      response.asc_allowed_transformed_claims = request.asc_allowed_transformed_claims;
     // OIDC RP-Initiated Logout 1.0: post_logout_redirect_uris
     if (request.post_logout_redirect_uris)
       response.post_logout_redirect_uris = request.post_logout_redirect_uris;
@@ -1204,6 +1228,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       is_trusted: isTrusted,
       skip_consent: isTrusted, // Trusted clients skip consent by default
       allow_claims_without_scope: isCertificationTest, // OIDC conformance tests need flexible claims parameter handling
+      claims_parameter_policy: request.claims_parameter_policy,
+      asc_enabled: request.asc_enabled,
+      asc_protected_request_required: request.asc_protected_request_required,
+      asc_sao_enabled: request.asc_sao_enabled,
+      asc_transformed_claims_enabled: request.asc_transformed_claims_enabled,
+      asc_allowed_transformed_claims: request.asc_allowed_transformed_claims,
       // Store hashed client secret, not plaintext
       client_secret_hash: clientSecretHash,
     };
