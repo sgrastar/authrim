@@ -272,7 +272,9 @@ export function parseUserImportCsv(
     headers = rows[0].map((value, index) => normalizeHeader(value, index));
     dataRows = rows.slice(1);
   } else {
-    headers = rows[0].map((_, index) => USER_IMPORT_DEFAULT_HEADERS[index] ?? `column_${index + 1}`);
+    headers = rows[0].map(
+      (_, index) => USER_IMPORT_DEFAULT_HEADERS[index] ?? `column_${index + 1}`
+    );
     dataRows = rows;
   }
 
@@ -426,9 +428,7 @@ function parseOptionalBoolean(
   throw new Error(`Invalid boolean value for ${field}: ${value}`);
 }
 
-function normalizeImportRecord(
-  record: Record<string, string>
-): ImportedUserRowInput {
+function normalizeImportRecord(record: Record<string, string>): ImportedUserRowInput {
   const email = record.email?.trim();
   if (!email) {
     throw new Error('Email is required');
@@ -507,9 +507,9 @@ async function createUserImportRuntime(env: Env, tenantId: string): Promise<User
     tenantId,
     env,
     coreAdapter,
-    userCoreRepo: new UserCoreRepository(coreAdapter),
+    userCoreRepo: new UserCoreRepository(coreAdapter, tenantId),
     piiAdapter,
-    piiRepo: new UserPIIRepository(piiAdapter),
+    piiRepo: new UserPIIRepository(piiAdapter, tenantId),
     customClaimSources,
   };
 }
@@ -671,7 +671,8 @@ async function updateImportedUser(
     coreUpdateData.status = input.status;
   }
   if (input.lifecycle_state !== undefined) {
-    coreUpdateData.lifecycle_state = input.lifecycle_state as UpdateUserCoreInput['lifecycle_state'];
+    coreUpdateData.lifecycle_state =
+      input.lifecycle_state as UpdateUserCoreInput['lifecycle_state'];
   }
 
   const piiFields: Array<keyof UpdateUserPIIInput> = [
@@ -728,7 +729,7 @@ async function updateImportedUser(
     });
   }
 
-  await invalidateUserCache(runtime.env, userId);
+  await invalidateUserCache(runtime.env, runtime.tenantId, userId);
 
   return {
     outcome: 'updated',
@@ -831,17 +832,13 @@ async function loadImportArtifact(
   options: UserImportJobOptions
 ): Promise<ImportJobArtifact> {
   if (job.object_catalog_id && env.OBJECT_ENCRYPTION_ROOT_KEY) {
-    const loaded = await loadCatalogObjectJson<ImportJobArtifact>(
-      adapter,
-      env,
-      {
-        tenantId: job.tenant_id,
-        objectCatalogId: job.object_catalog_id,
-        expectedClass: 'user_import_result',
-        expectedBucketBinding: 'EXPORT_ARTIFACTS',
-        allowPlaintextFallback: false,
-      }
-    );
+    const loaded = await loadCatalogObjectJson<ImportJobArtifact>(adapter, env, {
+      tenantId: job.tenant_id,
+      objectCatalogId: job.object_catalog_id,
+      expectedClass: 'user_import_result',
+      expectedBucketBinding: 'EXPORT_ARTIFACTS',
+      allowPlaintextFallback: false,
+    });
     if (loaded) {
       return loaded.value;
     }
@@ -968,10 +965,7 @@ function previewResultPayload(artifact: ImportJobArtifact) {
   };
 }
 
-function pushLog(
-  artifact: ImportJobArtifact,
-  entry: Omit<ImportJobLogEntry, 'timestamp'>
-) {
+function pushLog(artifact: ImportJobArtifact, entry: Omit<ImportJobLogEntry, 'timestamp'>) {
   artifact.logs.push({
     timestamp: nowIso(),
     ...entry,
@@ -1027,7 +1021,14 @@ async function processUserImportJob(
   const parsed = parseUserImportCsv(csvText, { skip_header: options.skip_header });
   const progress = parseProgress(job.progress);
   const runtime = await createUserImportRuntime(env, job.tenant_id);
-  const artifact = await loadImportArtifact(env, coreAdapter, resultBucket, resultKey, job, options);
+  const artifact = await loadImportArtifact(
+    env,
+    coreAdapter,
+    resultBucket,
+    resultKey,
+    job,
+    options
+  );
   let currentObjectCatalogId = job.object_catalog_id;
 
   const totalRows = parsed.records.length;
@@ -1045,8 +1046,8 @@ async function processUserImportJob(
     });
 
     await coreAdapter.execute(
-      'UPDATE admin_jobs SET progress = ?, result_r2_key = ?, updated_at = ? WHERE id = ?',
-      [JSON.stringify(initialized), resultKey, Math.floor(Date.now() / 1000), job.id]
+      'UPDATE admin_jobs SET progress = ?, result_r2_key = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [JSON.stringify(initialized), resultKey, Math.floor(Date.now() / 1000), job.id, job.tenant_id]
     );
   }
 
@@ -1137,7 +1138,7 @@ async function processUserImportJob(
     });
 
     await coreAdapter.execute(
-      'UPDATE admin_jobs SET progress = ?, result = ?, result_r2_key = ?, object_catalog_id = COALESCE(?, object_catalog_id), updated_at = ? WHERE id = ?',
+      'UPDATE admin_jobs SET progress = ?, result = ?, result_r2_key = ?, object_catalog_id = COALESCE(?, object_catalog_id), updated_at = ? WHERE id = ? AND tenant_id = ?',
       [
         JSON.stringify(nextProgress),
         JSON.stringify(previewResultPayload(artifact)),
@@ -1145,6 +1146,7 @@ async function processUserImportJob(
         currentObjectCatalogId,
         Math.floor(Date.now() / 1000),
         job.id,
+        job.tenant_id,
       ]
     );
 
@@ -1183,7 +1185,7 @@ async function processUserImportJob(
   await coreAdapter.execute(
     `UPDATE admin_jobs
      SET status = ?, progress = ?, result = ?, result_r2_key = ?, object_catalog_id = COALESCE(?, object_catalog_id), completed_at = ?, updated_at = ?
-     WHERE id = ?`,
+     WHERE id = ? AND tenant_id = ?`,
     [
       finalStatus,
       JSON.stringify(finalProgress),
@@ -1193,6 +1195,7 @@ async function processUserImportJob(
       completedTs,
       completedTs,
       job.id,
+      job.tenant_id,
     ]
   );
 
@@ -1239,8 +1242,8 @@ export async function processPendingUserImportJobs(
 
     if (job.status === 'pending') {
       const claimed = await coreAdapter.execute(
-        "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
-        [startedTs, startedTs, job.id]
+        "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
+        [startedTs, startedTs, job.id, job.tenant_id]
       );
       if ((claimed.rowsAffected ?? 0) === 0) {
         continue;
@@ -1252,10 +1255,14 @@ export async function processPendingUserImportJobs(
     } catch (error) {
       const failedTs = Math.floor(Date.now() / 1000);
       await coreAdapter.execute(
-        "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ?",
-        [String(error), failedTs, failedTs, job.id]
+        "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        [String(error), failedTs, failedTs, job.id, job.tenant_id]
       );
-      logger.error('User import job failed', { job_id: job.id, tenant_id: job.tenant_id }, error as Error);
+      logger.error(
+        'User import job failed',
+        { job_id: job.id, tenant_id: job.tenant_id },
+        error as Error
+      );
     }
   }
 }

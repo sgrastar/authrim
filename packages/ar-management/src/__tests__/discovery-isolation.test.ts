@@ -105,6 +105,9 @@ const mocked = vi.hoisted(() => {
       if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
         return state.tenants.filter((tenant) => tenant.is_active === 1) as T[];
       }
+      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
+        return state.clients.filter((client) => client.client_id === params[0]) as T[];
+      }
 
       return [];
     }
@@ -125,11 +128,6 @@ const mocked = vi.hoisted(() => {
       if (query.includes('FROM tenants WHERE id = ? AND is_active = 1')) {
         return (state.tenants.find((t) => t.id === params[0] && t.is_active === 1) ??
           null) as T | null;
-      }
-
-      // OAuth client lookup for app_hint — no active constraint (client status managed separately)
-      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
-        return (state.clients.find((c) => c.client_id === params[0]) ?? null) as T | null;
       }
 
       // Invitation lookup — expires_at > now filter applied
@@ -200,12 +198,16 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
-function createMockAdapter(options: {
-  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-} = {}) {
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+) {
   return {
     query: vi.fn().mockResolvedValue([]),
-    queryOne: vi.fn(async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null),
+    queryOne: vi.fn(
+      async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
+    ),
     execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
     transaction: vi.fn(async (fn: any) => fn()),
     batch: vi.fn().mockResolvedValue([]),

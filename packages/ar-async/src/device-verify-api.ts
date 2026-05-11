@@ -55,6 +55,10 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
 export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
   const tenantId = resolveTenantId(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     // Get client IP for rate limiting
     const clientIp =
@@ -130,7 +134,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     const getResponse = await deviceCodeStore.fetch(
       new Request('https://internal/get-by-user-code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ user_code: userCode }),
       })
     );
@@ -237,7 +241,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       const approveResponse = await deviceCodeStore.fetch(
         new Request('https://internal/approve', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalHeaders,
           body: JSON.stringify({
             user_code: userCode,
             user_id: finalUserId,
@@ -287,7 +291,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       const denyResponse = await deviceCodeStore.fetch(
         new Request('https://internal/deny', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalHeaders,
           body: JSON.stringify({ user_code: userCode }),
         })
       );

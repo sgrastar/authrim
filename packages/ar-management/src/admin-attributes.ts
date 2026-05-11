@@ -273,8 +273,8 @@ export async function adminAttributeCreateHandler(c: AdminContext) {
              verified_at = ?,
              expires_at = ?,
              updated_at = ?
-         WHERE id = ?`,
-        [body.attribute_value, now, body.expires_at || null, now, existing.id]
+         WHERE id = ? AND tenant_id = ?`,
+        [body.attribute_value, now, body.expires_at || null, now, existing.id, tenantId]
       );
     } else {
       try {
@@ -321,8 +321,8 @@ export async function adminAttributeCreateHandler(c: AdminContext) {
                verified_at = ?,
                expires_at = ?,
                updated_at = ?
-           WHERE id = ?`,
-          [body.attribute_value, now, body.expires_at || null, now, raced.id]
+           WHERE id = ? AND tenant_id = ?`,
+          [body.attribute_value, now, body.expires_at || null, now, raced.id, tenantId]
         );
       }
     }
@@ -372,16 +372,12 @@ export async function adminAttributeUpdateHandler(c: AdminContext) {
 
     // Check if attribute exists
     const existing = await adapter.query<{ tenant_id: string; source_type: string }>(
-      'SELECT tenant_id, source_type FROM user_verified_attributes WHERE id = ?',
-      [id]
+      'SELECT tenant_id, source_type FROM user_verified_attributes WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
     );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     // Build update
@@ -409,8 +405,9 @@ export async function adminAttributeUpdateHandler(c: AdminContext) {
     params.push(now);
 
     params.push(id);
+    params.push(tenantId);
     await adapter.execute(
-      `UPDATE user_verified_attributes SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE user_verified_attributes SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`,
       params
     );
 
@@ -441,19 +438,19 @@ export async function adminAttributeDeleteHandler(c: AdminContext) {
       tenant_id: string;
       user_id: string;
       attribute_name: string;
-    }>('SELECT tenant_id, user_id, attribute_name FROM user_verified_attributes WHERE id = ?', [
-      id,
-    ]);
+    }>(
+      'SELECT tenant_id, user_id, attribute_name FROM user_verified_attributes WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-    }
-
-    await adapter.execute('DELETE FROM user_verified_attributes WHERE id = ?', [id]);
+    await adapter.execute('DELETE FROM user_verified_attributes WHERE id = ? AND tenant_id = ?', [
+      id,
+      tenantId,
+    ]);
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'delete', 'user_attribute', id, {

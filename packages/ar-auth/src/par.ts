@@ -681,6 +681,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
     // Build request data with optional dpop_jkt and authorization_details
     const requestData = {
+      tenant_id: getTenantIdFromContext(c),
       client_id: params.client_id,
       response_type: params.response_type,
       redirect_uri: params.redirect_uri,

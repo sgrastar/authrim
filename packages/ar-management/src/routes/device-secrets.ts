@@ -18,6 +18,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   createAuthContextFromHono,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 // Input validation constants
@@ -74,8 +75,9 @@ interface DeviceSecretAdminResponse {
 }
 
 function getDeviceSecretRepository(c: Context<{ Bindings: Env }>): DeviceSecretRepository {
-  const authCtx = createAuthContextFromHono(c);
-  return new DeviceSecretRepository(authCtx.coreAdapter);
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  return new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
 }
 
 /**
@@ -311,7 +313,7 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
 
     const repo = getDeviceSecretRepository(c);
 
-    const revokedCount = await repo.revokeByUserId(userId, reason);
+    const revokedCount = await repo.revokeByUserId(userId, getTenantIdFromContext(c), reason);
 
     log.info('Revoked user device secrets', { userId, revokedCount, reason });
 

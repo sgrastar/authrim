@@ -1,252 +1,199 @@
 /**
  * Subject Identifier Repository
  *
- * Repository for OIDC Pairwise Subject Identifiers stored in D1_PII.
- *
- * Purpose:
- * - Privacy protection: Generates different `sub` claim per client/sector
- * - OIDC compliance: RFC 8693 pairwise identifier support
- * - Prevents client-side user correlation
- *
- * Fields:
- * - id: Record ID (UUID)
- * - user_id: Reference to users_core.id (logical FK)
- * - client_id: Client that requested this subject
- * - sector_identifier: Domain for pairwise calculation
- * - subject: The pairwise subject value
- * - created_at: Creation timestamp
+ * Repository for tenant-scoped subject identifiers stored in the PII plane.
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 
-/**
- * Subject Identifier entity
- */
 export interface SubjectIdentifier extends BaseEntity {
-  user_id: string;
-  client_id: string;
-  sector_identifier: string;
-  subject: string;
+  tenant_id: string;
+  subject_id: string;
+  identifier_type: string;
+  identifier_value: string;
+  is_primary: boolean | number;
+  verified_at?: number | null;
+  verification_method?: string | null;
 }
 
-/**
- * Subject Identifier create input
- */
 export interface CreateSubjectIdentifierInput {
   id?: string;
-  user_id: string;
-  client_id: string;
-  sector_identifier: string;
-  subject: string;
+  tenant_id: string;
+  subject_id: string;
+  identifier_type: string;
+  identifier_value: string;
+  is_primary?: boolean;
+  verified_at?: number | null;
+  verification_method?: string | null;
 }
 
-/**
- * Subject Identifier Repository
- */
 export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifier> {
   constructor(adapter: DatabaseAdapter) {
     super(adapter, {
       tableName: 'subject_identifiers',
       primaryKey: 'id',
       softDelete: false,
-      allowedFields: ['user_id', 'client_id', 'sector_identifier', 'subject'],
+      allowedFields: [
+        'tenant_id',
+        'subject_id',
+        'identifier_type',
+        'identifier_value',
+        'is_primary',
+        'verified_at',
+        'verification_method',
+      ],
     });
   }
 
-  /**
-   * Create a new subject identifier
-   *
-   * @param input - Subject identifier data
-   * @param adapter - Optional partition-specific adapter
-   * @returns Created subject identifier
-   */
   async createSubjectIdentifier(
     input: CreateSubjectIdentifierInput,
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier> {
     const db = adapter ?? this.adapter;
-    const id = input.id ?? generateId();
     const now = getCurrentTimestamp();
-
-    const subjectId: SubjectIdentifier = {
-      id,
-      user_id: input.user_id,
-      client_id: input.client_id,
-      sector_identifier: input.sector_identifier,
-      subject: input.subject,
+    const identifier: SubjectIdentifier = {
+      id: input.id ?? generateId(),
+      tenant_id: input.tenant_id,
+      subject_id: input.subject_id,
+      identifier_type: input.identifier_type,
+      identifier_value: input.identifier_value,
+      is_primary: input.is_primary === true,
+      verified_at: input.verified_at ?? null,
+      verification_method: input.verification_method ?? null,
       created_at: now,
       updated_at: now,
     };
 
-    const sql = `
-      INSERT INTO subject_identifiers (id, user_id, client_id, sector_identifier, subject, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `;
+    await db.execute(
+      `INSERT INTO subject_identifiers (
+        id, tenant_id, subject_id, identifier_type, identifier_value,
+        is_primary, verified_at, verification_method, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        identifier.id,
+        identifier.tenant_id,
+        identifier.subject_id,
+        identifier.identifier_type,
+        identifier.identifier_value,
+        identifier.is_primary ? 1 : 0,
+        identifier.verified_at,
+        identifier.verification_method,
+        identifier.created_at,
+        identifier.updated_at,
+      ]
+    );
 
-    await db.execute(sql, [
-      subjectId.id,
-      subjectId.user_id,
-      subjectId.client_id,
-      subjectId.sector_identifier,
-      subjectId.subject,
-      subjectId.created_at,
-    ]);
-
-    return subjectId;
+    return identifier;
   }
 
-  /**
-   * Find subject identifier by user and sector
-   *
-   * Returns the pairwise subject for a user in a specific sector.
-   *
-   * @param userId - User ID
-   * @param sectorIdentifier - Sector identifier (domain)
-   * @param adapter - Optional partition-specific adapter
-   * @returns Subject identifier or null
-   */
-  async findByUserAndSector(
-    userId: string,
-    sectorIdentifier: string,
+  async findByIdentifier(
+    tenantId: string,
+    identifierType: string,
+    identifierValue: string,
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier | null> {
     const db = adapter ?? this.adapter;
     return db.queryOne<SubjectIdentifier>(
-      'SELECT * FROM subject_identifiers WHERE user_id = ? AND sector_identifier = ?',
-      [userId, sectorIdentifier]
+      `SELECT * FROM subject_identifiers
+       WHERE tenant_id = ? AND identifier_type = ? AND identifier_value = ?`,
+      [tenantId, identifierType, identifierValue]
     );
   }
 
-  /**
-   * Find subject identifier by subject value
-   *
-   * Reverse lookup: find user by their pairwise subject.
-   *
-   * @param subject - Pairwise subject value
-   * @param adapter - Optional partition-specific adapter
-   * @returns Subject identifier or null
-   */
-  async findBySubject(
-    subject: string,
+  async findBySubjectId(
+    tenantId: string,
+    subjectId: string,
+    adapter?: DatabaseAdapter
+  ): Promise<SubjectIdentifier[]> {
+    const db = adapter ?? this.adapter;
+    return db.query<SubjectIdentifier>(
+      `SELECT * FROM subject_identifiers
+       WHERE tenant_id = ? AND subject_id = ?
+       ORDER BY is_primary DESC, created_at ASC`,
+      [tenantId, subjectId]
+    );
+  }
+
+  async findPrimaryBySubjectId(
+    tenantId: string,
+    subjectId: string,
+    identifierType?: string,
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier | null> {
     const db = adapter ?? this.adapter;
-    return db.queryOne<SubjectIdentifier>('SELECT * FROM subject_identifiers WHERE subject = ?', [
-      subject,
-    ]);
+    const typeClause = identifierType ? ' AND identifier_type = ?' : '';
+    const params: unknown[] = [tenantId, subjectId];
+    if (identifierType) {
+      params.push(identifierType);
+    }
+
+    return db.queryOne<SubjectIdentifier>(
+      `SELECT * FROM subject_identifiers
+       WHERE tenant_id = ? AND subject_id = ? AND is_primary = 1${typeClause}
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      params
+    );
   }
 
-  /**
-   * Find all subject identifiers for a user
-   *
-   * @param userId - User ID
-   * @param adapter - Optional partition-specific adapter
-   * @returns All subject identifiers for the user
-   */
-  async findByUserId(userId: string, adapter?: DatabaseAdapter): Promise<SubjectIdentifier[]> {
-    const db = adapter ?? this.adapter;
-    return db.query<SubjectIdentifier>('SELECT * FROM subject_identifiers WHERE user_id = ?', [
-      userId,
-    ]);
-  }
-
-  /**
-   * Find all subject identifiers for a client
-   *
-   * @param clientId - Client ID
-   * @param adapter - Optional partition-specific adapter
-   * @returns All subject identifiers for the client
-   */
-  async findByClientId(clientId: string, adapter?: DatabaseAdapter): Promise<SubjectIdentifier[]> {
-    const db = adapter ?? this.adapter;
-    return db.query<SubjectIdentifier>('SELECT * FROM subject_identifiers WHERE client_id = ?', [
-      clientId,
-    ]);
-  }
-
-  /**
-   * Get or create subject identifier
-   *
-   * Returns existing identifier if found, creates new one if not.
-   * Handles race conditions where concurrent requests may try to create
-   * the same identifier simultaneously.
-   *
-   * @param userId - User ID
-   * @param clientId - Client ID
-   * @param sectorIdentifier - Sector identifier
-   * @param generateSubject - Function to generate pairwise subject
-   * @param adapter - Optional partition-specific adapter
-   * @returns Existing or newly created subject identifier
-   */
   async getOrCreate(
-    userId: string,
-    clientId: string,
-    sectorIdentifier: string,
-    generateSubject: () => string,
+    input: CreateSubjectIdentifierInput,
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier> {
-    // First, try to find existing identifier
-    const existing = await this.findByUserAndSector(userId, sectorIdentifier, adapter);
+    const existing = await this.findByIdentifier(
+      input.tenant_id,
+      input.identifier_type,
+      input.identifier_value,
+      adapter
+    );
     if (existing) {
       return existing;
     }
 
-    // Try to create new identifier
-    // Handle race condition: if another request created it first, we'll get UNIQUE constraint error
     try {
-      return await this.createSubjectIdentifier(
-        {
-          user_id: userId,
-          client_id: clientId,
-          sector_identifier: sectorIdentifier,
-          subject: generateSubject(),
-        },
-        adapter
-      );
+      return await this.createSubjectIdentifier(input, adapter);
     } catch (error) {
-      // Check if this is a UNIQUE constraint violation (race condition)
       if (error instanceof Error && error.message.includes('UNIQUE constraint')) {
-        // Another request created the identifier, fetch and return it
-        const retried = await this.findByUserAndSector(userId, sectorIdentifier, adapter);
+        const retried = await this.findByIdentifier(
+          input.tenant_id,
+          input.identifier_type,
+          input.identifier_value,
+          adapter
+        );
         if (retried) {
           return retried;
         }
       }
-      // Re-throw if it's a different error or retry failed
       throw error;
     }
   }
 
-  /**
-   * Delete all subject identifiers for a user
-   *
-   * Used during GDPR user deletion.
-   *
-   * @param userId - User ID
-   * @param adapter - Optional partition-specific adapter
-   * @returns Number of deleted records
-   */
-  async deleteByUserId(userId: string, adapter?: DatabaseAdapter): Promise<number> {
+  async deleteByUserId(
+    tenantId: string,
+    userId: string,
+    adapter?: DatabaseAdapter
+  ): Promise<number> {
     const db = adapter ?? this.adapter;
-    const result = await db.execute('DELETE FROM subject_identifiers WHERE user_id = ?', [userId]);
+    const result = await db.execute(
+      'DELETE FROM subject_identifiers WHERE tenant_id = ? AND subject_id = ?',
+      [tenantId, userId]
+    );
     return result.rowsAffected;
   }
 
-  /**
-   * Delete all subject identifiers for a client
-   *
-   * Used during client deletion.
-   *
-   * @param clientId - Client ID
-   * @param adapter - Optional partition-specific adapter
-   * @returns Number of deleted records
-   */
-  async deleteByClientId(clientId: string, adapter?: DatabaseAdapter): Promise<number> {
+  async deleteByIdentifier(
+    tenantId: string,
+    identifierType: string,
+    identifierValue: string,
+    adapter?: DatabaseAdapter
+  ): Promise<number> {
     const db = adapter ?? this.adapter;
-    const result = await db.execute('DELETE FROM subject_identifiers WHERE client_id = ?', [
-      clientId,
-    ]);
+    const result = await db.execute(
+      `DELETE FROM subject_identifiers
+       WHERE tenant_id = ? AND identifier_type = ? AND identifier_value = ?`,
+      [tenantId, identifierType, identifierValue]
+    );
     return result.rowsAffected;
   }
 }

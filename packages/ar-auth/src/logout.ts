@@ -359,7 +359,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         // Collect session info before deletion (pass userId from id_token_hint as fallback)
         await collectSessionData(sessionId, userId);
 
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -393,7 +393,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           await collectSessionData(sid, userId);
         }
 
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid, tenantId);
         const deleted = await sessionStore.invalidateSessionRpc(sid);
 
         if (deleted) {
@@ -1204,7 +1204,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (sessionId && isShardedSessionId(sessionId)) {
       // Invalidate specific session using sharded routing via RPC
       try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {

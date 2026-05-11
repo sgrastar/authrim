@@ -49,7 +49,11 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
   const sid = getCookie(c, 'sid');
   if (sid) {
     try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid);
+      const { stub: sessionStore } = getSessionStoreBySessionId(
+        c.env,
+        sid,
+        getTenantIdFromContext(c)
+      );
       const response = await sessionStore.fetch(
         new Request(`https://do/session/${sid}`, { method: 'GET' })
       );
@@ -108,7 +112,7 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
               c.privacy_policy_version, c.tos_version, c.consent_version,
               oc.client_name, oc.logo_uri
        FROM oauth_client_consents c
-       LEFT JOIN oauth_clients oc ON c.client_id = oc.client_id
+       LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
        WHERE c.user_id = ? AND c.tenant_id = ?
        ORDER BY c.granted_at DESC`,
       [userId, tenantId]

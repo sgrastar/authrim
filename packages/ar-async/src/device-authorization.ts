@@ -75,6 +75,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     const expiresIn = DEVICE_FLOW_CONSTANTS.DEFAULT_EXPIRES_IN;
 
     const metadata: DeviceCodeMetadata = {
+      tenant_id: tenantId,
       device_code: deviceCode,
       user_code: userCode,
       client_id,
@@ -96,7 +97,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     const storeResponse = await deviceCodeStore.fetch(
       new Request('https://internal/store', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
         body: JSON.stringify(metadata),
       })
     );

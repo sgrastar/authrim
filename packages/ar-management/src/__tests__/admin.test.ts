@@ -1652,7 +1652,7 @@ describe('Admin API Handlers', () => {
       const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
         if (
           op === 'first' &&
-          sql.includes('SELECT * FROM users_core WHERE id = ? AND is_active = 1')
+          sql.includes('SELECT * FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1')
         ) {
           return {
             id: userId,

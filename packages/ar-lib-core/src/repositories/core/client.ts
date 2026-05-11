@@ -5,7 +5,7 @@
  * Contains all client configuration and metadata.
  *
  * Note: Does not extend BaseRepository because oauth_clients table
- * uses client_id as primary key instead of id.
+ * uses (tenant_id, client_id) as the primary key instead of id.
  *
  * OAuth 2.0 / OIDC client fields:
  * - client_id, client_secret_hash: Client credentials (secret stored as SHA-256 hash)
@@ -59,7 +59,7 @@ export type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
  * OAuth Client entity
  */
 export interface OAuthClient {
-  /** Client ID (primary key) */
+  /** Public OAuth client ID, unique within a tenant */
   client_id: string;
   /** SHA-256 hash of the client secret (null for public clients) */
   client_secret_hash: string | null;
@@ -361,9 +361,11 @@ export interface ClientSearchOptions extends PaginationOptions {
  */
 export class ClientRepository {
   protected readonly adapter: DatabaseAdapter;
+  private readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter) {
+  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
     this.adapter = adapter;
+    this.tenantId = tenantId;
   }
 
   /**
@@ -585,8 +587,8 @@ export class ClientRepository {
    */
   async findByClientId(clientId: string): Promise<OAuthClient | null> {
     const result = await this.adapter.queryOne<OAuthClient>(
-      'SELECT * FROM oauth_clients WHERE client_id = ?',
-      [clientId]
+      'SELECT * FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
+      [clientId, this.tenantId]
     );
     return result ? this.mapFromDb(result) : null;
   }
@@ -905,10 +907,10 @@ export class ClientRepository {
       params.push(input.login_ui_url);
     }
 
-    params.push(clientId);
+    params.push(clientId, this.tenantId);
 
     await this.adapter.execute(
-      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE client_id = ?`,
+      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE client_id = ? AND tenant_id = ?`,
       params
     );
 
@@ -919,9 +921,10 @@ export class ClientRepository {
    * Delete a client
    */
   async delete(clientId: string): Promise<boolean> {
-    const result = await this.adapter.execute('DELETE FROM oauth_clients WHERE client_id = ?', [
-      clientId,
-    ]);
+    const result = await this.adapter.execute(
+      'DELETE FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
+      [clientId, this.tenantId]
+    );
     return result.rowsAffected > 0;
   }
 
@@ -1060,8 +1063,8 @@ export class ClientRepository {
    */
   async exists(clientId: string): Promise<boolean> {
     const result = await this.adapter.queryOne<{ client_id: string }>(
-      'SELECT client_id FROM oauth_clients WHERE client_id = ?',
-      [clientId]
+      'SELECT client_id FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
+      [clientId, this.tenantId]
     );
     return result !== null;
   }

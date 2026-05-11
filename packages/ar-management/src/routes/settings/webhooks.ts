@@ -240,7 +240,10 @@ function buildWebhookDeliveryObjectKey(
   return `webhook-deliveries/${tenantId}/${webhookId}/${year}/${month}/${day}/${deliveryId}.json`;
 }
 
-function buildBodyPreview(body: string | null | undefined, maxLength = DELIVERY_BODY_PREVIEW_LIMIT) {
+function buildBodyPreview(
+  body: string | null | undefined,
+  maxLength = DELIVERY_BODY_PREVIEW_LIMIT
+) {
   if (!body) {
     return null;
   }
@@ -346,14 +349,18 @@ async function loadWebhookDeliveryPayload(
 
   const adapter = getCoreAdapter(c);
   const fallbackCatalogId =
-    objectCatalogId ?? (detailArtifactId && !detailArtifactId.startsWith('oa_') ? detailArtifactId : null);
+    objectCatalogId ??
+    (detailArtifactId && !detailArtifactId.startsWith('oa_') ? detailArtifactId : null);
   const resolvedCatalogId = detailArtifactId
-    ? (await getObjectCatalogObjectRecordByPublicArtifactId(
-        adapter,
-        detailArtifactId,
-        'canonical_json',
-        0
-      ))?.logical.id ?? null
+    ? ((
+        await getObjectCatalogObjectRecordByPublicArtifactId(
+          adapter,
+          detailArtifactId,
+          'canonical_json',
+          0,
+          tenantId
+        )
+      )?.logical.id ?? null)
     : null;
   const effectiveCatalogId = resolvedCatalogId ?? fallbackCatalogId;
   const loaded = effectiveCatalogId
@@ -903,9 +910,7 @@ interface WebhookDeliveryRow {
   detail_artifact_id?: string | null;
 }
 
-function parseRequestHeaders(
-  requestHeaders: string | null
-): Record<string, string> | null {
+function parseRequestHeaders(requestHeaders: string | null): Record<string, string> | null {
   if (!requestHeaders) {
     return null;
   }
@@ -1081,6 +1086,7 @@ export async function listWebhookDeliveries(c: Context<{ Bindings: Env }>) {
       FROM webhook_deliveries wd
       LEFT JOIN object_catalog oc
         ON oc.id = wd.detail_object_catalog_id
+       AND oc.tenant_id = wd.tenant_id
        AND oc.deleted_at IS NULL
       WHERE ${whereClauses.join(' AND ')}
       ORDER BY wd.created_at DESC, wd.id ASC
@@ -1159,6 +1165,7 @@ export async function getWebhookDelivery(c: Context<{ Bindings: Env }>) {
          FROM webhook_deliveries wd
          LEFT JOIN object_catalog oc
            ON oc.id = wd.detail_object_catalog_id
+          AND oc.tenant_id = wd.tenant_id
           AND oc.deleted_at IS NULL
         WHERE wd.id = ? AND wd.webhook_id = ? AND wd.tenant_id = ?`,
       [deliveryId, webhookId, tenantId]
@@ -1279,6 +1286,7 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
        FROM webhook_deliveries wd
        LEFT JOIN object_catalog oc
          ON oc.id = wd.detail_object_catalog_id
+        AND oc.tenant_id = wd.tenant_id
         AND oc.deleted_at IS NULL
        WHERE wd.id = ? AND wd.webhook_id = ? AND wd.tenant_id = ?`,
       [deliveryId, webhookId, tenantId]

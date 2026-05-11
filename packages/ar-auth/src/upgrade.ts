@@ -72,7 +72,11 @@ async function getAnonymousSession(
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session || !session.userId) {
@@ -251,7 +255,11 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
       // Immediately clear the nonce to prevent concurrent requests
       // This MUST happen before any other processing
-      const { stub: earlySessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+      const { stub: earlySessionStore } = getSessionStoreBySessionId(
+        c.env,
+        sessionId,
+        getTenantIdFromContext(c)
+      );
       await earlySessionStore.updateSessionDataRpc(sessionId, {
         upgrade_nonce: undefined, // Consume nonce atomically
       });
@@ -370,8 +378,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
       // Deactivate old anonymous user
       await authCtx.coreAdapter.execute(
-        'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ?',
-        [now, anonymousUserId]
+        'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
+        [now, anonymousUserId, tenantId]
       );
     }
 
@@ -397,8 +405,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     // Deactivate anonymous device (no longer needed)
     await authCtx.coreAdapter.execute(
-      'UPDATE anonymous_devices SET is_active = 0 WHERE user_id = ?',
-      [anonymousUserId]
+      'UPDATE anonymous_devices SET is_active = 0 WHERE user_id = ? AND tenant_id = ?',
+      [anonymousUserId, tenantId]
     );
 
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
@@ -420,7 +428,11 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     // Update session to reflect upgraded state
     // Security: Clear verified_email to prevent replay attacks
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     await sessionStore.updateSessionDataRpc(sessionId, {
       is_anonymous: false,
       upgrade_eligible: false,
@@ -511,7 +523,11 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session || !session.userId) {

@@ -98,6 +98,10 @@ async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
 async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
   const tenantId = resolveTenantId(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     const body = await c.req.parseBody();
     let userCode = body.user_code as string;
@@ -122,7 +126,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     const getResponse = await deviceCodeStore.fetch(
       new Request('https://internal/get-by-user-code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ user_code: userCode }),
       })
     );
@@ -175,7 +179,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     const approveResponse = await deviceCodeStore.fetch(
       new Request('https://internal/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({
           user_code: userCode,
           user_id: mockUserId,

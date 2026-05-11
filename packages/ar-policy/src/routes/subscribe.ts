@@ -28,6 +28,7 @@ import {
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
+  resolveAuthorizedCheckTenantId,
   type CheckAuthContext,
 } from '../middleware/check-auth';
 import { getPolicyCoreAdapter } from '../rebac-storage-adapter';
@@ -134,8 +135,14 @@ subscribeRoutes.get('/subscribe', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
   }
 
-  // Get tenant ID from auth context or query param
-  const tenantId = c.req.query('tenant_id') || auth.tenantId || getDefaultTenantId(c.env);
+  const tenantId = resolveAuthorizedCheckTenantId(
+    auth,
+    c.req.query('tenant_id'),
+    getDefaultTenantId(c.env)
+  );
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+  }
 
   try {
     // Get the PermissionChangeHub DO for this tenant
@@ -195,7 +202,14 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  const tenantId = c.req.query('tenant_id') || auth.tenantId || getDefaultTenantId(c.env);
+  const tenantId = resolveAuthorizedCheckTenantId(
+    auth,
+    c.req.query('tenant_id'),
+    getDefaultTenantId(c.env)
+  );
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+  }
 
   try {
     const hubId = c.env.PERMISSION_CHANGE_HUB.idFromName(tenantId);

@@ -18,11 +18,15 @@ async function getCoreAdapter(env: Env, partition: string): Promise<DatabaseAdap
 /**
  * Get provider by ID
  */
-export async function getProvider(env: Env, id: string): Promise<UpstreamProvider | null> {
+export async function getProvider(
+  env: Env,
+  tenantId: string,
+  id: string
+): Promise<UpstreamProvider | null> {
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get');
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
-    'SELECT * FROM upstream_providers WHERE id = ?',
-    [id]
+    'SELECT * FROM upstream_providers WHERE id = ? AND tenant_id = ?',
+    [id, tenantId]
   );
 
   if (!result) return null;
@@ -49,8 +53,8 @@ export async function getProviderByIdOrSlug(
   // If not found by slug, try by ID
   if (!result) {
     result = await coreAdapter.queryOne<DbUpstreamProvider>(
-      'SELECT * FROM upstream_providers WHERE id = ?',
-      [idOrSlug]
+      'SELECT * FROM upstream_providers WHERE id = ? AND tenant_id = ?',
+      [idOrSlug, tenantId]
     );
   }
 
@@ -180,10 +184,11 @@ export async function createProvider(
  */
 export async function updateProvider(
   env: Env,
+  tenantId: string,
   id: string,
   updates: Partial<Omit<UpstreamProvider, 'id' | 'createdAt' | 'updatedAt'>>
 ): Promise<UpstreamProvider | null> {
-  const existing = await getProvider(env, id);
+  const existing = await getProvider(env, tenantId, id);
   if (!existing) return null;
 
   const now = Date.now();
@@ -199,7 +204,7 @@ export async function updateProvider(
       provider_quirks = ?, icon_url = ?, button_color = ?, button_color_dark = ?, button_text = ?,
       use_request_object = ?, request_object_signing_alg = ?, private_key_jwk_encrypted = ?, public_key_jwk = ?,
       updated_at = ?
-    WHERE id = ?`,
+    WHERE id = ? AND tenant_id = ?`,
     [
       updated.slug || null,
       updated.name,
@@ -232,6 +237,7 @@ export async function updateProvider(
       updated.publicKeyJwk ? JSON.stringify(updated.publicKeyJwk) : null,
       now,
       id,
+      tenantId,
     ]
   );
 
@@ -241,9 +247,12 @@ export async function updateProvider(
 /**
  * Delete provider
  */
-export async function deleteProvider(env: Env, id: string): Promise<boolean> {
+export async function deleteProvider(env: Env, tenantId: string, id: string): Promise<boolean> {
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:delete');
-  const result = await coreAdapter.execute('DELETE FROM upstream_providers WHERE id = ?', [id]);
+  const result = await coreAdapter.execute(
+    'DELETE FROM upstream_providers WHERE id = ? AND tenant_id = ?',
+    [id, tenantId]
+  );
   return result.rowsAffected > 0;
 }
 

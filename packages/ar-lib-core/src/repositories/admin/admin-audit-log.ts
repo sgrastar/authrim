@@ -192,6 +192,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
        FROM admin_audit_log aal
        LEFT JOIN object_catalog oc
          ON oc.id = aal.detail_object_catalog_id
+        AND oc.tenant_id = aal.tenant_id
         AND oc.deleted_at IS NULL
        WHERE aal.id = ?`,
       [id]
@@ -203,8 +204,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       entry: this.rowToAuditLog(row),
       detailObjectCatalogId:
         typeof row.detail_object_catalog_id === 'string' ? row.detail_object_catalog_id : null,
-      detailArtifactId:
-        typeof row.detail_artifact_id === 'string' ? row.detail_artifact_id : null,
+      detailArtifactId: typeof row.detail_artifact_id === 'string' ? row.detail_artifact_id : null,
     };
   }
 
@@ -289,6 +289,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       FROM admin_audit_log aal
       LEFT JOIN object_catalog oc
         ON oc.id = aal.detail_object_catalog_id
+       AND oc.tenant_id = aal.tenant_id
        AND oc.deleted_at IS NULL
       ${qualifiedWhereClause}
       ORDER BY aal.created_at DESC

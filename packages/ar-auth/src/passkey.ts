@@ -523,7 +523,8 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
-        }
+        },
+        getTenantIdFromContext(c)
       )) as Session;
       sessionData = { id: createdSession.id };
     } catch (error) {
@@ -551,8 +552,8 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Step 3: Update user's email_verified status via Adapter (direct SQL)
     await authCtx.coreAdapter.execute(
-      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ?',
-      [now, userId]
+      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [now, userId, tenantId]
     );
 
     // Get updated user details via Repository
@@ -780,10 +781,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (passkey) {
         // Update legacy credential ID to base64url format via Adapter
-        await authCtx.coreAdapter.execute('UPDATE passkeys SET credential_id = ? WHERE id = ?', [
-          credentialIDBase64URL,
-          passkey.id,
-        ]);
+        await authCtx.coreAdapter.execute(
+          'UPDATE passkeys SET credential_id = ? WHERE id = ? AND tenant_id = ?',
+          [credentialIDBase64URL, passkey.id, tenantId]
+        );
         passkey.credential_id = credentialIDBase64URL;
       }
     }
@@ -912,7 +913,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
-        }
+        },
+        getTenantIdFromContext(c)
       )) as Session;
       sessionData = { id: createdSession.id };
     } catch (error) {

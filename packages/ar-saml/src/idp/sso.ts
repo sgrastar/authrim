@@ -19,6 +19,7 @@ import {
   isShardedSessionId,
   getUIConfig,
   buildIssuerUrl,
+  buildSAMLRequestStoreInstanceName,
   shouldUseBuiltinForms,
   createConfigurationError,
   getTenantIdFromContext,
@@ -82,7 +83,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     await validateAuthnRequest(authnRequest, issuerUrl);
 
     // Get SP configuration
-    const spConfig = await getSPConfig(env, authnRequest.issuer);
+    const spConfig = await getSPConfig(env, tenantId, authnRequest.issuer);
     if (!spConfig) {
       return createErrorResponse(c, 'Unknown Service Provider', STATUS_CODES.REQUEST_DENIED);
     }
@@ -93,7 +94,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     if (!userId) {
       // User not authenticated - redirect to login
       // Store AuthnRequest in SAMLRequestStore for later retrieval
-      await storeAuthnRequest(env, authnRequest, relayState);
+      await storeAuthnRequest(env, tenantId, authnRequest, relayState);
 
       // Redirect to login page with return URL
       // Conformance mode: use builtin forms
@@ -311,7 +312,11 @@ async function checkUserAuthentication(
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
       method: 'GET',
     });
@@ -332,10 +337,13 @@ async function checkUserAuthentication(
  */
 async function storeAuthnRequest(
   env: Env,
+  tenantId: string,
   authnRequest: SAMLAuthnRequest,
   relayState?: string
 ): Promise<void> {
-  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(`issuer:${authnRequest.issuer}`);
+  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
+    buildSAMLRequestStoreInstanceName(tenantId, 'idp', authnRequest.issuer)
+  );
   const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
   await samlRequestStore.fetch('https://saml-request-store/store', {

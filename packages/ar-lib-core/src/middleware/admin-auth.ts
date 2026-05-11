@@ -26,6 +26,7 @@ import { requireAdminDatabaseAdapter } from '../services/admin-database-adapter'
 import { createLogger } from '../utils/logger';
 import { hasAdminPermission } from '../types/admin-user';
 import { getDefaultTenantId } from '../utils/issuer';
+import { resolveTenantFromRequest } from '../utils/tenant-context';
 
 const log = createLogger().module('ADMIN-AUTH');
 
@@ -33,6 +34,16 @@ const log = createLogger().module('ADMIN-AUTH');
  * Options for admin authentication middleware
  */
 export interface AdminAuthOptions {
+  /**
+   * Admin authentication plane.
+   *
+   * tenant: session tenant must match the request tenant resolved from host/context.
+   * platform: system/internal endpoints are not tied to a tenant host.
+   *
+   * Default: tenant
+   */
+  plane?: 'tenant' | 'platform';
+
   /**
    * Required roles for access. User must have at least one of these roles.
    * Default: ['super_admin', 'security_admin', 'admin', 'support', 'viewer']
@@ -170,7 +181,10 @@ async function authenticateSession(
       email: string;
       is_active: number;
       status: string;
-    }>('SELECT * FROM admin_users WHERE id = ? AND is_active = 1', [session.admin_user_id]);
+    }>('SELECT * FROM admin_users WHERE id = ? AND tenant_id = ? AND is_active = 1', [
+      session.admin_user_id,
+      session.tenant_id,
+    ]);
 
     if (!adminUser) {
       log.debug('Admin user not found or inactive', { userId: session.admin_user_id });
@@ -193,9 +207,11 @@ async function authenticateSession(
        FROM admin_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.admin_user_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY r.hierarchy_level DESC`,
-      [session.admin_user_id, Math.floor(now / 1000)]
+      [session.admin_user_id, session.tenant_id, session.tenant_id, Math.floor(now / 1000)]
     );
 
     const roles: string[] = [];
@@ -233,7 +249,11 @@ async function authenticateSession(
 
     // Update session activity (fire and forget)
     adminAdapter
-      .execute('UPDATE admin_sessions SET last_activity_at = ? WHERE id = ?', [now, sessionId])
+      .execute('UPDATE admin_sessions SET last_activity_at = ? WHERE id = ? AND tenant_id = ?', [
+        now,
+        sessionId,
+        session.tenant_id,
+      ])
       .catch(() => {
         // Ignore errors
       });
@@ -383,6 +403,17 @@ function ipv4ToNumber(ip: string): number | null {
   return result >>> 0;
 }
 
+function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contextTenantId = (c as any).get('tenantId') as string | undefined;
+  if (contextTenantId) {
+    return contextTenantId;
+  }
+
+  const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
+  return tenantResult.success ? tenantResult.tenantId : getDefaultTenantId(c.env);
+}
+
 /**
  * Admin authentication middleware
  *
@@ -399,6 +430,7 @@ function ipv4ToNumber(ip: string): number | null {
  * @param options - Optional configuration for role/permission requirements
  */
 export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
+  const plane = options.plane || 'tenant';
   const requiredRoles = options.requireRoles || [
     'super_admin',
     'security_admin',
@@ -464,6 +496,32 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
         },
         401
       );
+    }
+
+    if (plane === 'tenant') {
+      const requestTenantId = resolveAdminRequestTenantId(c);
+
+      if (authContext.authMethod === 'session' && authContext.tenantId !== requestTenantId) {
+        log.warn('Admin session tenant does not match request tenant', {
+          userId: authContext.userId,
+          sessionTenantId: authContext.tenantId,
+          requestTenantId,
+        });
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Admin session is not valid for this tenant.',
+          },
+          403
+        );
+      }
+
+      if (authContext.authMethod === 'bearer') {
+        authContext = {
+          ...authContext,
+          tenantId: requestTenantId,
+        };
+      }
     }
 
     // Check IP allowlist (unless skipped)

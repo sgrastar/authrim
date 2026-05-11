@@ -17,6 +17,7 @@ import {
   getUIConfig,
   getTenantIdFromContext,
   buildIssuerUrl,
+  buildSAMLRequestStoreInstanceName,
   getLogger,
   createLogger,
   validateCustomClaimWrite,
@@ -40,7 +41,10 @@ import {
   getAttribute,
   getTextContent,
 } from '../common/xml-utils';
-import { decodePostBindingMessage, parsePostBindingFormDataWithLimit } from '../common/message-limits';
+import {
+  decodePostBindingMessage,
+  parsePostBindingFormDataWithLimit,
+} from '../common/message-limits';
 import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { verifyXmlSignature, hasSignature } from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
@@ -51,7 +55,8 @@ import { getIdPConfigByEntityId } from '../admin/providers';
 export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
-  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
+  const tenantId = getTenantIdFromContext(c);
+  const issuerUrl = buildIssuerUrl(env, tenantId);
 
   try {
     // Parse POST data
@@ -72,7 +77,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const { issuer, assertion, inResponseTo } = parseAndValidateResponse(responseXml, issuerUrl);
 
     // Get IdP configuration
-    const idpConfig = await getIdPConfigByEntityId(env, issuer);
+    const idpConfig = await getIdPConfigByEntityId(env, tenantId, issuer);
     if (!idpConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
     }
@@ -118,7 +123,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
 
     // Validate InResponseTo (if we sent an AuthnRequest)
     if (inResponseTo) {
-      const isValidRequest = await validateInResponseTo(env, inResponseTo, issuer);
+      const isValidRequest = await validateInResponseTo(env, tenantId, inResponseTo, issuer);
       if (!isValidRequest) {
         const strictMode = await getStrictInResponseToSetting(env);
         if (strictMode) {
@@ -146,13 +151,12 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const userInfo = extractUserInfo(assertion, idpConfig);
 
     // Find or create user
-    const userId = await findOrCreateUser(env, userInfo, issuer, getTenantIdFromContext(c));
+    const userId = await findOrCreateUser(env, userInfo, issuer, tenantId);
 
     // Create session
-    const sessionId = await createSession(env, userId, getTenantIdFromContext(c));
+    const sessionId = await createSession(env, userId, tenantId);
 
     // Publish SAML authentication success event (non-blocking)
-    const tenantId = getTenantIdFromContext(c);
     publishEvent(c, {
       type: AUTH_EVENTS.SAML_SUCCEEDED,
       tenantId,
@@ -210,7 +214,6 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     let returnUrl = relayState;
     if (!returnUrl) {
       const uiConfig = await getUIConfig(env);
-      const tenantId = getTenantIdFromContext(c);
       returnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${buildIssuerUrl(env, tenantId)}/`;
     }
 
@@ -698,11 +701,14 @@ async function getStrictInResponseToSetting(env: Env): Promise<boolean> {
  */
 async function validateInResponseTo(
   env: Env,
+  tenantId: string,
   inResponseTo: string,
   issuer: string
 ): Promise<boolean> {
   try {
-    const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(`issuer:${issuer}`);
+    const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
+      buildSAMLRequestStoreInstanceName(tenantId, 'sp', issuer)
+    );
     const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
     const response = await samlRequestStore.fetch(
@@ -769,9 +775,7 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
       } else if (oidcClaim === 'name') {
         userInfo.name = values[0];
       } else if (oidcClaim.startsWith('custom_claims.') || oidcClaim.startsWith('custom_fields.')) {
-        const fieldKey = oidcClaim.includes('.')
-          ? oidcClaim.slice(oidcClaim.indexOf('.') + 1)
-          : '';
+        const fieldKey = oidcClaim.includes('.') ? oidcClaim.slice(oidcClaim.indexOf('.') + 1) : '';
         if (fieldKey) {
           userInfo.customClaims[fieldKey] = values[0];
         }
@@ -797,7 +801,10 @@ async function findOrCreateUser(
   tenantId: string
 ): Promise<string> {
   const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
-  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(userStoreSources.coreDb, 'saml-acs-core');
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(
+    userStoreSources.coreDb,
+    'saml-acs-core'
+  );
   const piiAdapter: DatabaseAdapter | null = userStoreSources.piiDb
     ? ensureDatabaseAdapter(userStoreSources.piiDb, 'saml-acs-pii')
     : null;
@@ -813,8 +820,8 @@ async function findOrCreateUser(
     if (existingUserPII) {
       // Verify user is active in Core DB
       const userCore = await coreAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-        [existingUserPII.id]
+        'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+        [existingUserPII.id, tenantId]
       );
       if (userCore) {
         return userCore.id;
@@ -860,10 +867,10 @@ async function findOrCreateUser(
     );
 
     // Step 3: Update pii_status to 'active'
-    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', [
-      'active',
-      userId,
-    ]);
+    await coreAdapter.execute(
+      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
+      ['active', userId, tenantId]
+    );
   }
 
   try {
@@ -876,7 +883,10 @@ async function findOrCreateUser(
     });
   } catch (persistError) {
     if (piiAdapter) {
-      await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [userId]);
+      await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+        userId,
+        tenantId,
+      ]);
     }
     await ensureDatabaseAdapter(
       customClaimSources.nonPiiDb,
@@ -885,7 +895,10 @@ async function findOrCreateUser(
       userId,
       tenantId,
     ]);
-    await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [userId]);
+    await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+      userId,
+      tenantId,
+    ]);
     throw persistError;
   }
 

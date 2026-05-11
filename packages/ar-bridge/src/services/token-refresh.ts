@@ -122,7 +122,7 @@ async function refreshIdentityToken(
   encryptionKey: string
 ): Promise<boolean> {
   // Get provider configuration
-  const provider = await getProvider(env, identity.providerId);
+  const provider = await getProvider(env, identity.tenantId, identity.providerId);
   if (!provider) {
     // PII Protection: Don't log identity.id (technical identifier)
     log.warn('Provider not found for token refresh');

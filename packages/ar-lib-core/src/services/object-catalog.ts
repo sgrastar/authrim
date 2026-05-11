@@ -269,7 +269,12 @@ export async function getObjectCatalogObjectRecord(
     [catalogId, representation, objectIndex]
   );
 
-  if (!row || !isObjectClass(row.object_class) || !isObjectRepresentation(row.representation) || !isObjectKind(row.object_kind)) {
+  if (
+    !row ||
+    !isObjectClass(row.object_class) ||
+    !isObjectRepresentation(row.representation) ||
+    !isObjectKind(row.object_kind)
+  ) {
     return null;
   }
 
@@ -402,8 +407,14 @@ export async function getObjectCatalogObjectRecordByPublicArtifactId(
   adapter: DatabaseAdapter,
   publicArtifactId: string,
   representation: ObjectRepresentation = 'canonical_json',
-  objectIndex: number = 0
+  objectIndex: number = 0,
+  tenantId?: string
 ): Promise<ObjectCatalogLookupResult | null> {
+  const params: unknown[] = [publicArtifactId, representation, objectIndex];
+  if (tenantId !== undefined) {
+    params.push(tenantId);
+  }
+
   const row = await adapter.queryOne<{
     catalog_id: string;
     public_artifact_id: string;
@@ -450,11 +461,17 @@ export async function getObjectCatalogObjectRecordByPublicArtifactId(
       AND oco.deleted_at IS NULL
       AND oco.representation = ?
       AND oco.object_index = ?
+      ${tenantId !== undefined ? 'AND oc.tenant_id = ?' : ''}
     LIMIT 1`,
-    [publicArtifactId, representation, objectIndex]
+    params
   );
 
-  if (!row || !isObjectClass(row.object_class) || !isObjectRepresentation(row.representation) || !isObjectKind(row.object_kind)) {
+  if (
+    !row ||
+    !isObjectClass(row.object_class) ||
+    !isObjectRepresentation(row.representation) ||
+    !isObjectKind(row.object_kind)
+  ) {
     return null;
   }
 
@@ -490,6 +507,7 @@ export async function tombstoneObjectCatalogEntry(
   catalogId: string,
   deletedAt: number = Date.now()
 ): Promise<void> {
+  // System cleanup path. Tenant-facing callers must use tombstoneObjectCatalogEntryForTenant().
   await adapter.execute(
     `UPDATE object_catalog
      SET deleted_at = COALESCE(deleted_at, ?),
@@ -503,6 +521,35 @@ export async function tombstoneObjectCatalogEntry(
      SET deleted_at = COALESCE(deleted_at, ?)
      WHERE catalog_id = ?`,
     [deletedAt, catalogId]
+  );
+}
+
+export async function tombstoneObjectCatalogEntryForTenant(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  catalogId: string,
+  deletedAt: number = Date.now()
+): Promise<void> {
+  await adapter.execute(
+    `UPDATE object_catalog
+     SET deleted_at = COALESCE(deleted_at, ?),
+         updated_at = ?
+     WHERE id = ?
+       AND tenant_id = ?`,
+    [deletedAt, deletedAt, catalogId, tenantId]
+  );
+
+  await adapter.execute(
+    `UPDATE object_catalog_objects
+     SET deleted_at = COALESCE(deleted_at, ?)
+     WHERE catalog_id = ?
+       AND EXISTS (
+         SELECT 1
+         FROM object_catalog oc
+         WHERE oc.id = ?
+           AND oc.tenant_id = ?
+       )`,
+    [deletedAt, catalogId, catalogId, tenantId]
   );
 }
 
@@ -599,7 +646,9 @@ export async function purgeDeletedObjectCatalogObjects(
 
   let purged = 0;
   for (const physicalId of physicalIds) {
-    const result = await adapter.execute('DELETE FROM object_catalog_objects WHERE id = ?', [physicalId]);
+    const result = await adapter.execute('DELETE FROM object_catalog_objects WHERE id = ?', [
+      physicalId,
+    ]);
     purged += result.rowsAffected ?? 0;
   }
 

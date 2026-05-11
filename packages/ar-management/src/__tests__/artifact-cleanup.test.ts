@@ -58,6 +58,7 @@ describe('artifact cleanup', () => {
     mockAdapter.query.mockResolvedValue([
       {
         id: 'export-1',
+        tenant_id: 'default',
         object_catalog_id: 'catalog-1',
         file_path: 'exports/default/data-export/export-1/artifact.json',
       },
@@ -80,7 +81,7 @@ describe('artifact cleanup', () => {
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE data_export_requests'),
-      ['export-1']
+      ['export-1', 'default']
     );
   });
 
@@ -89,6 +90,7 @@ describe('artifact cleanup', () => {
     mockAdapter.query.mockResolvedValue([
       {
         id: 'export-legacy',
+        tenant_id: 'default',
         object_catalog_id: null,
         file_path: 'exports/default/data-export/export-legacy/artifact.json',
       },
@@ -113,6 +115,7 @@ describe('artifact cleanup', () => {
     mockAdapter.query.mockResolvedValue([
       {
         id: 'job-1',
+        tenant_id: 'default',
         object_catalog_id: 'catalog-job-1',
         result_r2_key: 'exports/default/users-import/job-1/result.json',
       },
@@ -133,10 +136,10 @@ describe('artifact cleanup', () => {
       'catalog-job-1',
       expect.any(Number)
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE admin_jobs'),
-      ['job-1']
-    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(expect.stringContaining('UPDATE admin_jobs'), [
+      'job-1',
+      'default',
+    ]);
   });
 
   it('purges deleted object artifacts from configured buckets', async () => {
@@ -182,9 +185,7 @@ describe('artifact cleanup', () => {
     );
 
     expect(purged).toBe(2);
-    expect(exportDelete).toHaveBeenCalledWith(
-      'exports/default/data-export/export-1/artifact.json'
-    );
+    expect(exportDelete).toHaveBeenCalledWith('exports/default/data-export/export-1/artifact.json');
     expect(sensitiveDelete).toHaveBeenCalledWith(
       'sensitive/default/approval/request-1/detail.json'
     );

@@ -352,7 +352,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  const { stub: asSessionStore } = getSessionStoreBySessionId(c.env, asSessionId);
+  const { stub: asSessionStore } = getSessionStoreBySessionId(c.env, asSessionId, tenantId);
   const asSessionResult = await asSessionStore.getSessionRpc(asSessionId);
 
   if (!asSessionResult) {
@@ -394,17 +394,23 @@ async function createHandoffSession(
   );
   const rpTokenTTL = 60 * 60; // 1時間（短命化）
 
-  await rpSessionStore.createSessionRpc(rpAccessToken, handoffData.userId, rpTokenTTL, {
-    email: userPII.email,
-    name: userPII.name,
-    amr: asSession.data?.amr || ['external_idp'],
-    acr: asSession.data?.acr || 'urn:mace:incommon:iap:bronze',
-    client_id,
-    audience: 'rp', // RP用トークンであることを明示
-    source_session_id: asSessionId, // AS SessionIDを記録（監査用）
-    token_type: options.dpopJkt ? 'DPoP' : 'Cookie',
-    ...(options.dpopJkt ? { cnf: { jkt: options.dpopJkt } } : {}),
-  });
+  await rpSessionStore.createSessionRpc(
+    rpAccessToken,
+    handoffData.userId,
+    rpTokenTTL,
+    {
+      email: userPII.email,
+      name: userPII.name,
+      amr: asSession.data?.amr || ['external_idp'],
+      acr: asSession.data?.acr || 'urn:mace:incommon:iap:bronze',
+      client_id,
+      audience: 'rp', // RP用トークンであることを明示
+      source_session_id: asSessionId, // AS SessionIDを記録（監査用）
+      token_type: options.dpopJkt ? 'DPoP' : 'Cookie',
+      ...(options.dpopJkt ? { cnf: { jkt: options.dpopJkt } } : {}),
+    },
+    tenantId
+  );
 
   log.info('Handoff successful', {
     userId: handoffData.userId,

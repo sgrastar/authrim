@@ -56,8 +56,10 @@ function getRuntimeUserStoreSourcesFromHonoContext(
   c: HonoContext<{ Bindings: Env }>
 ): ResolvedUserStoreRuntimeSources | undefined {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((c as any).get?.('runtimeUserStoreSources') as ResolvedUserStoreRuntimeSources | undefined)
-    || undefined;
+  return (
+    ((c as any).get?.('runtimeUserStoreSources') as ResolvedUserStoreRuntimeSources | undefined) ||
+    undefined
+  );
 }
 
 /**
@@ -98,12 +100,12 @@ export function createAuthContextFromHono(
   return {
     tenantId: resolvedTenantId,
     repositories: {
-      userCore: new UserCoreRepository(coreAdapter),
-      client: new ClientRepository(coreAdapter),
-      session: new SessionRepository(coreAdapter),
-      passkey: new PasskeyRepository(coreAdapter),
-      role: new RoleRepository(coreAdapter),
-      sessionClient: new SessionClientRepository(coreAdapter),
+      userCore: new UserCoreRepository(coreAdapter, resolvedTenantId),
+      client: new ClientRepository(coreAdapter, resolvedTenantId),
+      session: new SessionRepository(coreAdapter, resolvedTenantId),
+      passkey: new PasskeyRepository(coreAdapter, resolvedTenantId),
+      role: new RoleRepository(coreAdapter, resolvedTenantId),
+      sessionClient: new SessionClientRepository(coreAdapter, resolvedTenantId),
     },
     coreAdapter,
     cache: new MapRequestScopedCache(),
@@ -146,18 +148,18 @@ export function createPIIContextFromHono(
   return {
     tenantId: resolvedTenantId,
     repositories: {
-      userCore: new UserCoreRepository(coreAdapter),
-      client: new ClientRepository(coreAdapter),
-      session: new SessionRepository(coreAdapter),
-      passkey: new PasskeyRepository(coreAdapter),
-      role: new RoleRepository(coreAdapter),
-      sessionClient: new SessionClientRepository(coreAdapter),
+      userCore: new UserCoreRepository(coreAdapter, resolvedTenantId),
+      client: new ClientRepository(coreAdapter, resolvedTenantId),
+      session: new SessionRepository(coreAdapter, resolvedTenantId),
+      passkey: new PasskeyRepository(coreAdapter, resolvedTenantId),
+      role: new RoleRepository(coreAdapter, resolvedTenantId),
+      sessionClient: new SessionClientRepository(coreAdapter, resolvedTenantId),
     },
     coreAdapter,
     cache: new MapRequestScopedCache(),
     honoContext: c,
     piiRepositories: {
-      userPII: new UserPIIRepository(piiAdapter),
+      userPII: new UserPIIRepository(piiAdapter, resolvedTenantId),
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),
@@ -197,7 +199,7 @@ export function elevateToPIIContext(authCtx: AuthContext): PIIContext {
   return {
     ...authCtx,
     piiRepositories: {
-      userPII: new UserPIIRepository(piiAdapter),
+      userPII: new UserPIIRepository(piiAdapter, authCtx.tenantId),
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),

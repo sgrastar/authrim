@@ -51,6 +51,10 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
 export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
   const tenantId = resolveTenantId(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     // Get client IP for rate limiting using cloud provider configuration
     const cloudProvider = await getCloudProvider(c.env);
@@ -109,7 +113,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     const getResponse = await cibaRequestStore.fetch(
       new Request('https://internal/get-by-auth-req-id', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -152,7 +156,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     const approveResponse = await cibaRequestStore.fetch(
       new Request('https://internal/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({
           auth_req_id: authReqId,
           user_id: finalUserId,

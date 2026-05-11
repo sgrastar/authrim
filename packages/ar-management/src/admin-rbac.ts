@@ -246,6 +246,7 @@ export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>)
 export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const body = await c.req.json<{
       name: string;
       display_name?: string;
@@ -268,8 +269,8 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
 
     // Check if organization with same name already exists
     const existing = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE name = ?',
-      [name]
+      'SELECT id FROM organizations WHERE tenant_id = ? AND name = ?',
+      [tenantId, name]
     );
 
     if (existing) {
@@ -295,14 +296,24 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
 
     await coreAdapter.execute(
       `INSERT INTO organizations (id, tenant_id, name, display_name, plan, org_type, is_active, metadata_json, created_at, updated_at)
-       VALUES (?, '', ?, ?, ?, ?, 1, ?, ?, ?)`,
-      [orgId, name, display_name || name, orgPlan, orgTypeValue, metadata_json || null, now, now]
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      [
+        orgId,
+        tenantId,
+        name,
+        display_name || name,
+        orgPlan,
+        orgTypeValue,
+        metadata_json || null,
+        now,
+        now,
+      ]
     );
 
     // Get created organization
     const org = await coreAdapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM organizations WHERE id = ?',
-      [orgId]
+      'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
+      [tenantId, orgId]
     );
 
     return c.json(
@@ -336,6 +347,7 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
 export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const body = await c.req.json<{
       name?: string;
@@ -348,8 +360,8 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
 
     // Check if organization exists
     const org = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE id = ?',
-      [orgId]
+      'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
+      [tenantId, orgId]
     );
 
     if (!org) {
@@ -427,16 +439,16 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
     }
 
     // Execute update
-    bindings.push(orgId);
+    bindings.push(tenantId, orgId);
     await coreAdapter.execute(
-      `UPDATE organizations SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE organizations SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?`,
       bindings
     );
 
     // Get updated organization
     const updatedOrg = await coreAdapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM organizations WHERE id = ?',
-      [orgId]
+      'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
+      [tenantId, orgId]
     );
 
     return c.json({
@@ -467,12 +479,13 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
 export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
 
     // Check if organization exists
     const org = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE id = ?',
-      [orgId]
+      'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
+      [tenantId, orgId]
     );
 
     if (!org) {
@@ -488,8 +501,8 @@ export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env 
     // Soft delete by deactivating
     const now = Math.floor(Date.now() / 1000);
     await coreAdapter.execute(
-      'UPDATE organizations SET is_active = 0, updated_at = ? WHERE id = ?',
-      [now, orgId]
+      'UPDATE organizations SET is_active = 0, updated_at = ? WHERE tenant_id = ? AND id = ?',
+      [now, tenantId, orgId]
     );
 
     return c.json({
@@ -568,10 +581,10 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
         id: string;
         email: string | null;
         name: string | null;
-      }>(
-        `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-        [tenantId, ...memberUserIds]
-      );
+      }>(`SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`, [
+        tenantId,
+        ...memberUserIds,
+      ]);
 
       for (const pii of piiResult) {
         memberPIIMap.set(pii.id, {
@@ -843,20 +856,23 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
 export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const roles = await coreAdapter.query<Record<string, unknown>>(
       `SELECT id, tenant_id, name, display_name, description, permissions_json,
               is_system, role_type, parent_role_id, created_at, updated_at
        FROM roles
+       WHERE tenant_id = ?
        ORDER BY is_system DESC, role_type ASC, name ASC`,
-      []
+      [tenantId]
     );
 
     // Get assignment counts for all roles
     const assignmentCounts = await coreAdapter.query<{ role_id: string; count: number }>(
       `SELECT role_id, COUNT(DISTINCT subject_id) as count
        FROM role_assignments
+       WHERE tenant_id = ?
        GROUP BY role_id`,
-      []
+      [tenantId]
     );
     const countMap = new Map(assignmentCounts.map((r) => [r.role_id, r.count]));
 
@@ -891,11 +907,12 @@ export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const roleId = c.req.param('id')!;
 
     const role = await coreAdapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM roles WHERE id = ?',
-      [roleId]
+      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
+      [roleId, tenantId]
     );
 
     if (!role) {
@@ -917,8 +934,8 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
 
     if (role.parent_role_id) {
       parentRole = await coreAdapter.queryOne<Record<string, unknown>>(
-        'SELECT id, name, display_name, permissions_json FROM roles WHERE id = ?',
-        [role.parent_role_id as string]
+        'SELECT id, name, display_name, permissions_json FROM roles WHERE id = ? AND tenant_id = ?',
+        [role.parent_role_id as string, tenantId]
       );
       if (parentRole) {
         const parentPermissions: string[] = JSON.parse(
@@ -931,8 +948,8 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
 
     // Get count of users with this role
     const assignmentCount = await coreAdapter.queryOne<{ count: number }>(
-      'SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments WHERE role_id = ?',
-      [roleId]
+      'SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments WHERE role_id = ? AND tenant_id = ?',
+      [roleId, tenantId]
     );
 
     return c.json({
@@ -978,12 +995,13 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
 
     // Check if user exists
     const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ?',
-      [userId]
+      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
 
     if (!user) {
@@ -1005,9 +1023,11 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY r.name ASC`,
-      [userId, now]
+      [userId, tenantId, tenantId, now]
     );
 
     const formattedAssignments = assignments.map((a: Record<string, unknown>) => ({
@@ -1048,6 +1068,7 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserRoleAssignHandler(c: AdminContext) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const tenantId = getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
     const userId = c.req.param('id')!;
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<{
@@ -1072,8 +1093,8 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
 
     // Check if user exists
     const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ?',
-      [userId]
+      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
 
     if (!user) {
@@ -1090,13 +1111,13 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     let role;
     if (role_id) {
       role = await coreAdapter.queryOne<Record<string, unknown>>(
-        'SELECT * FROM roles WHERE id = ?',
-        [role_id]
+        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
+        [role_id, tenantId]
       );
     } else {
       role = await coreAdapter.queryOne<Record<string, unknown>>(
-        'SELECT * FROM roles WHERE name = ?',
-        [role_name]
+        'SELECT * FROM roles WHERE name = ? AND tenant_id = ?',
+        [role_name, tenantId]
       );
     }
 
@@ -1141,8 +1162,8 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     // Check for duplicate assignment
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE subject_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
-      [userId, role.id, assignmentScope, assignmentScopeTarget]
+       WHERE subject_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ? AND tenant_id = ?`,
+      [userId, role.id, assignmentScope, assignmentScopeTarget, tenantId]
     );
 
     if (existing) {
@@ -1160,9 +1181,10 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
 
     await coreAdapter.execute(
       `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, assigned_by, expires_at, created_at, updated_at)
-       VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         assignmentId,
+        tenantId,
         userId,
         role.id,
         assignmentScope,
@@ -1212,13 +1234,14 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
 export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const assignmentId = c.req.param('assignmentId')!;
 
     // Check if assignment exists and belongs to this user
     const assignment = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM role_assignments WHERE id = ? AND subject_id = ?',
-      [assignmentId, userId]
+      'SELECT id FROM role_assignments WHERE id = ? AND subject_id = ? AND tenant_id = ?',
+      [assignmentId, userId, tenantId]
     );
 
     if (!assignment) {
@@ -1231,7 +1254,10 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    await coreAdapter.execute('DELETE FROM role_assignments WHERE id = ?', [assignmentId]);
+    await coreAdapter.execute('DELETE FROM role_assignments WHERE id = ? AND tenant_id = ?', [
+      assignmentId,
+      tenantId,
+    ]);
 
     return c.json({
       success: true,
@@ -1261,13 +1287,14 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
 export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const direction = c.req.query('direction'); // 'outgoing', 'incoming', or undefined for both
 
     // Check if user exists in Core DB
     const userCore = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-      [userId]
+      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+      [userId, tenantId]
     );
 
     if (!userCore) {
@@ -1291,9 +1318,10 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
         `SELECT r.*
          FROM relationships r
          WHERE r.subject_id = ?
+           AND r.tenant_id = ?
            AND (r.expires_at IS NULL OR r.expires_at > ?)
          ORDER BY r.created_at DESC`,
-        [userId, now]
+        [userId, tenantId, now]
       );
 
       // Fetch PII for related users from PII DB
@@ -1308,7 +1336,10 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
           id: string;
           email: string | null;
           name: string | null;
-        }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, relatedUserIds);
+        }>(
+          `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
+          [tenantId, ...relatedUserIds]
+        );
 
         for (const pii of piiResult) {
           relatedUserPIIMap.set(pii.id, {
@@ -1339,9 +1370,10 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
         `SELECT r.*
          FROM relationships r
          WHERE r.related_subject_id = ?
+           AND r.tenant_id = ?
            AND (r.expires_at IS NULL OR r.expires_at > ?)
          ORDER BY r.created_at DESC`,
-        [userId, now]
+        [userId, tenantId, now]
       );
 
       // Fetch PII for subject users from PII DB
@@ -1354,7 +1386,10 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
           id: string;
           email: string | null;
           name: string | null;
-        }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, subjectUserIds);
+        }>(
+          `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
+          [tenantId, ...subjectUserIds]
+        );
 
         for (const pii of piiResult) {
           subjectUserPIIMap.set(pii.id, {
@@ -1407,6 +1442,7 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
 export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const body = await c.req.json<{
       related_subject_id: string;
@@ -1450,8 +1486,8 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
 
     // Check if both users exist
     const subject = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ?',
-      [userId]
+      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
 
     if (!subject) {
@@ -1465,8 +1501,8 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
     }
 
     const relatedSubject = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ?',
-      [related_subject_id]
+      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
+      [related_subject_id, tenantId]
     );
 
     if (!relatedSubject) {
@@ -1493,8 +1529,8 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
     // Check for existing relationship
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM relationships
-       WHERE subject_id = ? AND related_subject_id = ? AND relationship_type = ?`,
-      [userId, related_subject_id, relationship_type]
+       WHERE subject_id = ? AND related_subject_id = ? AND relationship_type = ? AND tenant_id = ?`,
+      [userId, related_subject_id, relationship_type, tenantId]
     );
 
     if (existing) {
@@ -1513,8 +1549,16 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
 
     await coreAdapter.execute(
       `INSERT INTO relationships (id, tenant_id, subject_id, related_subject_id, relationship_type, expires_at, created_at)
-       VALUES (?, '', ?, ?, ?, ?, ?)`,
-      [relationshipId, userId, related_subject_id, relationship_type, expiresAtSeconds, now]
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        relationshipId,
+        tenantId,
+        userId,
+        related_subject_id,
+        relationship_type,
+        expiresAtSeconds,
+        now,
+      ]
     );
 
     return c.json(
@@ -1556,13 +1600,14 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
 export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const relationshipId = c.req.param('relationshipId')!;
 
     // Check if relationship exists and involves this user
     const relationship = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM relationships WHERE id = ? AND (subject_id = ? OR related_subject_id = ?)',
-      [relationshipId, userId, userId]
+      'SELECT id FROM relationships WHERE id = ? AND tenant_id = ? AND (subject_id = ? OR related_subject_id = ?)',
+      [relationshipId, tenantId, userId, userId]
     );
 
     if (!relationship) {
@@ -1575,7 +1620,10 @@ export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: 
       );
     }
 
-    await coreAdapter.execute('DELETE FROM relationships WHERE id = ?', [relationshipId]);
+    await coreAdapter.execute('DELETE FROM relationships WHERE id = ? AND tenant_id = ?', [
+      relationshipId,
+      tenantId,
+    ]);
 
     return c.json({
       success: true,
@@ -1821,8 +1869,11 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
       `SELECT ur.role_id, r.name as role_name, ur.created_at as granted_at, ur.expires_at
        FROM user_roles ur
        INNER JOIN roles r ON ur.role_id = r.id
-       WHERE ur.user_id = ? AND (ur.expires_at IS NULL OR ur.expires_at > ?)`,
-      [userId, Math.floor(Date.now() / 1000)]
+       WHERE ur.user_id = ?
+         AND ur.tenant_id = ?
+         AND r.tenant_id = ?
+         AND (ur.expires_at IS NULL OR ur.expires_at > ?)`,
+      [userId, tenantId, tenantId, Math.floor(Date.now() / 1000)]
     );
 
     // Get permissions for each role
@@ -1951,6 +2002,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
 export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const roleId = c.req.param('id')!;
     const page = parseInt(c.req.query('page') || '1');
     const limit = parseInt(c.req.query('limit') || '20');
@@ -1958,8 +2010,8 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
 
     // Check if role exists
     const role = await coreAdapter.queryOne<{ id: string; name: string }>(
-      'SELECT id, name FROM roles WHERE id = ?',
-      [roleId]
+      'SELECT id, name FROM roles WHERE id = ? AND tenant_id = ?',
+      [roleId, tenantId]
     );
 
     if (!role) {
@@ -1977,8 +2029,8 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
     // Get total count
     const totalResult = await coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments
-       WHERE role_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
-      [roleId, now]
+       WHERE role_id = ? AND tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
+      [roleId, tenantId, now]
     );
 
     const total = totalResult?.count || 0;
@@ -1988,10 +2040,10 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
     const assignments = await coreAdapter.query<Record<string, unknown>>(
       `SELECT DISTINCT ra.id, ra.subject_id, ra.scope_type, ra.scope_target, ra.assigned_by, ra.expires_at, ra.created_at
        FROM role_assignments ra
-       WHERE ra.role_id = ? AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+       WHERE ra.role_id = ? AND ra.tenant_id = ? AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY ra.created_at DESC
        LIMIT ? OFFSET ?`,
-      [roleId, now, limit, offset]
+      [roleId, tenantId, now, limit, offset]
     );
 
     // Fetch PII for users from PII DB
@@ -2004,7 +2056,10 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
         id: string;
         email: string | null;
         name: string | null;
-      }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, userIds);
+      }>(`SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`, [
+        tenantId,
+        ...userIds,
+      ]);
 
       for (const pii of piiResult) {
         userPIIMap.set(pii.id, {

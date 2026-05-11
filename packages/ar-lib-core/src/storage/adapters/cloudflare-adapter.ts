@@ -58,7 +58,8 @@ type SessionStoreRpcStub = {
     sessionId: string,
     userId: string,
     ttl: number,
-    data?: Record<string, unknown>
+    data?: Record<string, unknown>,
+    tenantId?: string
   ): Promise<Session>;
   invalidateSessionRpc(sessionId: string): Promise<boolean>;
   extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null>;
@@ -71,10 +72,17 @@ type SessionStoreRpcStub = {
  * to the appropriate backend (D1, KV, or Durable Objects).
  */
 export class CloudflareStorageAdapter implements IStorageAdapter {
-  constructor(private env: Env) {}
+  private readonly configuredTenantId: string;
+
+  constructor(
+    private env: Env,
+    tenantId?: string
+  ) {
+    this.configuredTenantId = tenantId ?? getDefaultTenantId(this.env);
+  }
 
   getConfiguredTenantId(): string {
-    return getDefaultTenantId(this.env);
+    return this.configuredTenantId;
   }
 
   private getLegacySessionStoreStub(): SessionStoreRpcStub {
@@ -205,7 +213,8 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       sessionId,
       sessionData.user_id,
       ttl || 86400, // Default: 24 hours
-      sessionData.data
+      sessionData.data,
+      this.getConfiguredTenantId()
     );
   }
 
@@ -355,7 +364,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async getFromAuthCodeStore(key: string): Promise<string | null> {
     const code = key.substring(9); // Remove 'authcode:' prefix
-    const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
+    const doId = this.env.AUTH_CODE_STORE.idFromName(
+      buildDOInstanceName('auth-code', this.getConfiguredTenantId())
+    );
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
     const exists = await doStub.hasCodeRpc(code);
@@ -367,7 +378,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async setToAuthCodeStore(key: string, value: string, _ttl?: number): Promise<void> {
     const codeData = JSON.parse(value);
-    const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
+    const doId = this.env.AUTH_CODE_STORE.idFromName(
+      buildDOInstanceName('auth-code', this.getConfiguredTenantId())
+    );
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
     await doStub.storeCodeRpc(codeData);
@@ -378,7 +391,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async deleteFromAuthCodeStore(key: string): Promise<void> {
     const code = key.substring(9); // Remove 'authcode:' prefix
-    const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
+    const doId = this.env.AUTH_CODE_STORE.idFromName(
+      buildDOInstanceName('auth-code', this.getConfiguredTenantId())
+    );
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
     await doStub.deleteCodeRpc(code);
@@ -548,19 +563,21 @@ export class UserStore implements IUserStore {
    * Queries both users_core (DB) and users_pii (DB_PII) and merges the results.
    */
   async get(userId: string): Promise<User | null> {
+    const tenantId = this.adapter.getConfiguredTenantId();
+
     // Query both databases in parallel
     const [coreResults, piiResults] = await Promise.all([
       this.adapter.query<UserCoreRow>(
-        'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE id = ?',
-        [userId]
+        'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE tenant_id = ? AND id = ?',
+        [tenantId, userId]
       ),
       this.adapter.queryPII<UserPIIRow>(
         `SELECT id, email, name, given_name, family_name, middle_name, nickname, preferred_username,
                 profile, picture, website, gender, birthdate, zoneinfo, locale, phone_number,
                 address_formatted, address_street_address, address_locality, address_region,
                 address_postal_code, address_country
-         FROM users_pii WHERE id = ?`,
-        [userId]
+         FROM users_pii WHERE tenant_id = ? AND id = ?`,
+        [tenantId, userId]
       ),
     ]);
 
@@ -598,8 +615,8 @@ export class UserStore implements IUserStore {
 
     // Then fetch core data by ID
     const coreResults = await this.adapter.query<UserCoreRow>(
-      'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE id = ?',
-      [pii.id]
+      'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE tenant_id = ? AND id = ?',
+      [tenantId, pii.id]
     );
 
     const core = coreResults[0];
@@ -718,6 +735,7 @@ export class UserStore implements IUserStore {
    * Updates both users_core (DB) and users_pii (DB_PII).
    */
   async update(userId: string, updates: Partial<User>): Promise<User> {
+    const tenantId = this.adapter.getConfiguredTenantId();
     const existing = await this.get(userId);
     if (!existing) {
       throw new Error(`User not found: ${userId}`);
@@ -735,7 +753,7 @@ export class UserStore implements IUserStore {
       `UPDATE users_core SET
         email_verified = ?, phone_number_verified = ?, password_hash = ?,
         is_active = ?, updated_at = ?, last_login_at = ?
-      WHERE id = ?`,
+      WHERE tenant_id = ? AND id = ?`,
       [
         updated.email_verified ? 1 : 0,
         updated.phone_number_verified ? 1 : 0,
@@ -743,6 +761,7 @@ export class UserStore implements IUserStore {
         updated.is_active ? 1 : 0,
         updated.updated_at,
         updated.last_login_at || null,
+        tenantId,
         userId,
       ]
     );
@@ -755,7 +774,7 @@ export class UserStore implements IUserStore {
         gender = ?, birthdate = ?, zoneinfo = ?, locale = ?, phone_number = ?,
         address_formatted = ?, address_street_address = ?, address_locality = ?,
         address_region = ?, address_postal_code = ?, address_country = ?, updated_at = ?
-      WHERE id = ?`,
+      WHERE tenant_id = ? AND id = ?`,
       [
         updated.email,
         updated.name || null,
@@ -779,6 +798,7 @@ export class UserStore implements IUserStore {
         updated.address?.postal_code || null,
         updated.address?.country || null,
         updated.updated_at,
+        tenantId,
         userId,
       ]
     );
@@ -793,11 +813,13 @@ export class UserStore implements IUserStore {
    * For GDPR Art.17 compliance, use the Admin API's PII deletion endpoint.
    */
   async delete(userId: string): Promise<void> {
+    const tenantId = this.adapter.getConfiguredTenantId();
+
     // Soft delete: set is_active = 0
-    await this.adapter.execute('UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ?', [
-      Date.now(),
-      userId,
-    ]);
+    await this.adapter.execute(
+      'UPDATE users_core SET is_active = 0, updated_at = ? WHERE tenant_id = ? AND id = ?',
+      [Date.now(), tenantId, userId]
+    );
   }
 
   // =============================================================================
@@ -904,17 +926,21 @@ export class ClientStore implements IClientStore {
   constructor(private adapter: CloudflareStorageAdapter) {}
 
   async get(clientId: string): Promise<ClientData | null> {
+    const tenantId = this.adapter.getConfiguredTenantId();
     const results = await this.adapter.query<ClientData>(
-      'SELECT * FROM oauth_clients WHERE client_id = ?',
-      [clientId]
+      'SELECT * FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      [tenantId, clientId]
     );
     return results[0] || null;
   }
 
   async create(client: Partial<ClientData>): Promise<ClientData> {
     const now = Date.now(); // Store in milliseconds
+    const tenantId =
+      typeof client.tenant_id === 'string' ? client.tenant_id : this.adapter.getConfiguredTenantId();
 
     const newClient: ClientData = {
+      tenant_id: tenantId,
       client_id: client.client_id!,
       client_secret_hash: client.client_secret_hash,
       client_name: client.client_name,
@@ -930,11 +956,12 @@ export class ClientStore implements IClientStore {
 
     await this.adapter.execute(
       `INSERT INTO oauth_clients (
-        client_id, client_secret_hash, client_name, redirect_uris, grant_types,
+        tenant_id, client_id, client_secret_hash, client_name, redirect_uris, grant_types,
         response_types, scope, subject_type, sector_identifier_uri,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        tenantId,
         newClient.client_id,
         newClient.client_secret_hash,
         newClient.client_name,
@@ -953,6 +980,7 @@ export class ClientStore implements IClientStore {
   }
 
   async update(clientId: string, updates: Partial<ClientData>): Promise<ClientData> {
+    const tenantId = this.adapter.getConfiguredTenantId();
     const existing = await this.get(clientId);
     if (!existing) {
       throw new Error(`Client not found: ${clientId}`);
@@ -970,7 +998,7 @@ export class ClientStore implements IClientStore {
         client_secret_hash = ?, client_name = ?, redirect_uris = ?, grant_types = ?,
         response_types = ?, scope = ?, subject_type = ?, sector_identifier_uri = ?,
         updated_at = ?
-      WHERE client_id = ?`,
+      WHERE tenant_id = ? AND client_id = ?`,
       [
         updated.client_secret_hash,
         updated.client_name,
@@ -981,6 +1009,7 @@ export class ClientStore implements IClientStore {
         updated.subject_type,
         updated.sector_identifier_uri,
         updated.updated_at,
+        tenantId,
         clientId,
       ]
     );
@@ -989,7 +1018,11 @@ export class ClientStore implements IClientStore {
   }
 
   async delete(clientId: string): Promise<void> {
-    await this.adapter.execute('DELETE FROM oauth_clients WHERE client_id = ?', [clientId]);
+    const tenantId = this.adapter.getConfiguredTenantId();
+    await this.adapter.execute('DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [
+      tenantId,
+      clientId,
+    ]);
   }
 
   async list(options?: { limit?: number; offset?: number }): Promise<ClientData[]> {
@@ -997,8 +1030,8 @@ export class ClientStore implements IClientStore {
     const offset = options?.offset || 0;
 
     return await this.adapter.query<ClientData>(
-      'SELECT * FROM oauth_clients ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [limit, offset]
+      'SELECT * FROM oauth_clients WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      [this.adapter.getConfiguredTenantId(), limit, offset]
     );
   }
 }
@@ -1035,7 +1068,8 @@ export class SessionStore implements ISessionStore {
       resolved.sessionId,
       session.user_id!,
       ttl,
-      session.data
+      session.data,
+      this.adapter.getConfiguredTenantId()
     );
     return result as Session;
   }
@@ -1071,25 +1105,30 @@ export class PasskeyStore implements IPasskeyStore {
 
   async getByCredentialId(credentialId: string): Promise<Passkey | null> {
     const results = await this.adapter.query<Passkey>(
-      'SELECT * FROM passkeys WHERE credential_id = ?',
-      [credentialId]
+      'SELECT * FROM passkeys WHERE tenant_id = ? AND credential_id = ?',
+      [this.adapter.getConfiguredTenantId(), credentialId]
     );
     return results[0] || null;
   }
 
   async listByUser(userId: string): Promise<Passkey[]> {
     return await this.adapter.query<Passkey>(
-      'SELECT * FROM passkeys WHERE user_id = ? ORDER BY created_at DESC',
-      [userId]
+      'SELECT * FROM passkeys WHERE tenant_id = ? AND user_id = ? ORDER BY created_at DESC',
+      [this.adapter.getConfiguredTenantId(), userId]
     );
   }
 
   async create(passkey: Partial<Passkey>): Promise<Passkey> {
     const id = crypto.randomUUID();
     const now = Date.now(); // Store in milliseconds
+    const tenantId =
+      typeof passkey.tenant_id === 'string'
+        ? passkey.tenant_id
+        : this.adapter.getConfiguredTenantId();
 
     const newPasskey: Passkey = {
       id,
+      tenant_id: tenantId,
       user_id: passkey.user_id!,
       credential_id: passkey.credential_id!,
       public_key: passkey.public_key!,
@@ -1102,11 +1141,12 @@ export class PasskeyStore implements IPasskeyStore {
 
     await this.adapter.execute(
       `INSERT INTO passkeys (
-        id, user_id, credential_id, public_key, counter, transports,
+        id, tenant_id, user_id, credential_id, public_key, counter, transports,
         device_name, created_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newPasskey.id,
+        tenantId,
         newPasskey.user_id,
         newPasskey.credential_id,
         newPasskey.public_key,
@@ -1124,13 +1164,14 @@ export class PasskeyStore implements IPasskeyStore {
   async updateCounter(passkeyId: string, counter: number): Promise<Passkey> {
     const now = Date.now(); // Store in milliseconds
     const MAX_RETRIES = 3;
+    const tenantId = this.adapter.getConfiguredTenantId();
 
     // Retry loop for Compare-and-Swap (CAS) to handle concurrent updates
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       // 1. Read current counter value
       const currentResults = await this.adapter.query<Passkey>(
-        'SELECT * FROM passkeys WHERE id = ?',
-        [passkeyId]
+        'SELECT * FROM passkeys WHERE tenant_id = ? AND id = ?',
+        [tenantId, passkeyId]
       );
 
       if (!currentResults[0]) {
@@ -1150,8 +1191,8 @@ export class PasskeyStore implements IPasskeyStore {
       // 3. Conditional UPDATE (Compare-and-Swap)
       // Only update if counter hasn't changed since we read it
       const result = await this.adapter.execute(
-        'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ? AND counter = ?',
-        [counter, now, passkeyId, currentCounter]
+        'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE tenant_id = ? AND id = ? AND counter = ?',
+        [counter, now, tenantId, passkeyId, currentCounter]
       );
 
       // 4. Check if update succeeded (affected rows > 0)
@@ -1185,14 +1226,20 @@ export class PasskeyStore implements IPasskeyStore {
   }
 
   async delete(passkeyId: string): Promise<void> {
-    await this.adapter.execute('DELETE FROM passkeys WHERE id = ?', [passkeyId]);
+    await this.adapter.execute('DELETE FROM passkeys WHERE tenant_id = ? AND id = ?', [
+      this.adapter.getConfiguredTenantId(),
+      passkeyId,
+    ]);
   }
 }
 
 /**
  * Factory function to create CloudflareStorageAdapter with stores
  */
-export function createStorageAdapter(env: Env): {
+export function createStorageAdapter(
+  env: Env,
+  tenantId?: string
+): {
   adapter: CloudflareStorageAdapter;
   userStore: IUserStore;
   clientStore: IClientStore;
@@ -1204,7 +1251,7 @@ export function createStorageAdapter(env: Env): {
   roleAssignmentStore: IRoleAssignmentStore;
   relationshipStore: IRelationshipStore;
 } {
-  const adapter = new CloudflareStorageAdapter(env);
+  const adapter = new CloudflareStorageAdapter(env, tenantId);
 
   return {
     adapter,

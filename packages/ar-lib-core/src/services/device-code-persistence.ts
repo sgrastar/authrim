@@ -32,9 +32,70 @@ function mapDeviceCodeRow(row: DeviceCodeRow | null): DeviceCodeMetadata | null 
 }
 
 class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapter {
-  constructor(private readonly db: DatabaseAdapter) {}
+  constructor(
+    private readonly db: DatabaseAdapter,
+    private readonly tenantId?: string
+  ) {}
 
   async storeDeviceCode(metadata: DeviceCodeMetadata): Promise<void> {
+    const tenantId = metadata.tenant_id ?? this.tenantId;
+
+    if (tenantId) {
+      const updated = await this.db.execute(
+        `UPDATE device_codes
+         SET user_code = ?, client_id = ?, scope = ?, status = ?, user_id = ?, sub = ?,
+             created_at = ?, expires_at = ?, last_poll_at = ?, poll_count = ?, token_issued = ?, token_issued_at = ?,
+             tenant_id = ?
+         WHERE device_code = ?
+           AND tenant_id = ?`,
+        [
+          metadata.user_code,
+          metadata.client_id,
+          metadata.scope,
+          metadata.status,
+          metadata.user_id ?? null,
+          metadata.sub ?? null,
+          metadata.created_at,
+          metadata.expires_at,
+          metadata.last_poll_at ?? null,
+          metadata.poll_count ?? 0,
+          metadata.token_issued ? 1 : 0,
+          metadata.token_issued_at ?? null,
+          tenantId,
+          metadata.device_code,
+          tenantId,
+        ]
+      );
+
+      if (updated.rowsAffected > 0) {
+        return;
+      }
+
+      await this.db.execute(
+        `INSERT INTO device_codes (
+           device_code, user_code, client_id, scope, status, user_id, sub,
+           created_at, expires_at, last_poll_at, poll_count, token_issued, token_issued_at, tenant_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          metadata.device_code,
+          metadata.user_code,
+          metadata.client_id,
+          metadata.scope,
+          metadata.status,
+          metadata.user_id ?? null,
+          metadata.sub ?? null,
+          metadata.created_at,
+          metadata.expires_at,
+          metadata.last_poll_at ?? null,
+          metadata.poll_count ?? 0,
+          metadata.token_issued ? 1 : 0,
+          metadata.token_issued_at ?? null,
+          tenantId,
+        ]
+      );
+      return;
+    }
+
     const updated = await this.db.execute(
       `UPDATE device_codes
        SET user_code = ?, client_id = ?, scope = ?, status = ?, user_id = ?, sub = ?,
@@ -85,6 +146,19 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
   }
 
   async getByDeviceCode(deviceCode: string): Promise<DeviceCodeMetadata | null> {
+    if (this.tenantId) {
+      const row = await this.db.queryOne<DeviceCodeRow>(
+        `SELECT tenant_id, device_code, user_code, client_id, scope, status, user_id, sub,
+                created_at, expires_at, last_poll_at, poll_count, token_issued, token_issued_at
+           FROM device_codes
+          WHERE device_code = ?
+            AND tenant_id = ?`,
+        [deviceCode, this.tenantId]
+      );
+
+      return mapDeviceCodeRow(row);
+    }
+
     const row = await this.db.queryOne<DeviceCodeRow>(
       `SELECT device_code, user_code, client_id, scope, status, user_id, sub,
               created_at, expires_at, last_poll_at, poll_count, token_issued, token_issued_at
@@ -97,6 +171,19 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
   }
 
   async getByUserCode(userCode: string): Promise<DeviceCodeMetadata | null> {
+    if (this.tenantId) {
+      const row = await this.db.queryOne<DeviceCodeRow>(
+        `SELECT tenant_id, device_code, user_code, client_id, scope, status, user_id, sub,
+                created_at, expires_at, last_poll_at, poll_count, token_issued, token_issued_at
+           FROM device_codes
+          WHERE user_code = ?
+            AND tenant_id = ?`,
+        [userCode, this.tenantId]
+      );
+
+      return mapDeviceCodeRow(row);
+    }
+
     const row = await this.db.queryOne<DeviceCodeRow>(
       `SELECT device_code, user_code, client_id, scope, status, user_id, sub,
               created_at, expires_at, last_poll_at, poll_count, token_issued, token_issued_at
@@ -109,6 +196,14 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
   }
 
   async approveDeviceCode(deviceCode: string, userId: string, sub: string): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        'UPDATE device_codes SET status = ?, user_id = ?, sub = ? WHERE device_code = ? AND tenant_id = ?',
+        ['approved', userId, sub, deviceCode, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute(
       'UPDATE device_codes SET status = ?, user_id = ?, sub = ? WHERE device_code = ?',
       ['approved', userId, sub, deviceCode]
@@ -116,6 +211,14 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
   }
 
   async denyDeviceCode(deviceCode: string): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        'UPDATE device_codes SET status = ? WHERE device_code = ? AND tenant_id = ?',
+        ['denied', deviceCode, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute('UPDATE device_codes SET status = ? WHERE device_code = ?', [
       'denied',
       deviceCode,
@@ -123,6 +226,14 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
   }
 
   async updatePoll(deviceCode: string, lastPollAt: number, pollCount: number): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        'UPDATE device_codes SET last_poll_at = ?, poll_count = ? WHERE device_code = ? AND tenant_id = ?',
+        [lastPollAt, pollCount, deviceCode, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute(
       'UPDATE device_codes SET last_poll_at = ?, poll_count = ? WHERE device_code = ?',
       [lastPollAt, pollCount, deviceCode]
@@ -130,6 +241,14 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
   }
 
   async markTokenIssued(deviceCode: string, tokenIssuedAt: number): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        'UPDATE device_codes SET token_issued = ?, token_issued_at = ? WHERE device_code = ? AND tenant_id = ?',
+        [1, tokenIssuedAt, deviceCode, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute(
       'UPDATE device_codes SET token_issued = ?, token_issued_at = ? WHERE device_code = ?',
       [1, tokenIssuedAt, deviceCode]
@@ -137,10 +256,26 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
   }
 
   async deleteDeviceCode(deviceCode: string): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute('DELETE FROM device_codes WHERE device_code = ? AND tenant_id = ?', [
+        deviceCode,
+        this.tenantId,
+      ]);
+      return;
+    }
+
     await this.db.execute('DELETE FROM device_codes WHERE device_code = ?', [deviceCode]);
   }
 
   async deleteExpired(nowMs: number): Promise<number> {
+    if (this.tenantId) {
+      const result = await this.db.execute(
+        'DELETE FROM device_codes WHERE expires_at < ? AND tenant_id = ?',
+        [nowMs, this.tenantId]
+      );
+      return result.rowsAffected;
+    }
+
     const result = await this.db.execute('DELETE FROM device_codes WHERE expires_at < ?', [nowMs]);
     return result.rowsAffected;
   }
@@ -152,12 +287,13 @@ class DatabaseDeviceCodePersistenceAdapter implements DeviceCodePersistenceAdapt
 
 export function createDeviceCodePersistenceAdapter(
   source: DatabaseSource | null | undefined,
-  partition: string = 'device-code-store'
+  partition: string = 'device-code-store',
+  tenantId?: string
 ): DeviceCodePersistenceAdapter | null {
   const adapter = ensureOptionalDatabaseAdapter(source, partition);
   if (!adapter) {
     return null;
   }
 
-  return new DatabaseDeviceCodePersistenceAdapter(adapter);
+  return new DatabaseDeviceCodePersistenceAdapter(adapter, tenantId);
 }

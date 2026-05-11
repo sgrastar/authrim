@@ -8,6 +8,7 @@ import {
   deleteNonce,
   getClient,
   putClient,
+  getCachedUser,
   getCachedConsent,
 } from '../kv';
 import type { Env } from '../../types/env';
@@ -183,7 +184,7 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(dbResult),
       });
 
-      const retrieved = await getClient(env, clientId, env.DB);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.client_id).toBe(clientId);
@@ -262,7 +263,7 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(dbResult),
       });
 
-      const retrieved = await getClient(env, clientId, env.DB);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       expect(retrieved).toMatchObject({
         client_id: clientId,
@@ -293,7 +294,7 @@ describe('KV Utilities', () => {
       // Pre-populate cache using tenant-prefixed key pattern
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      const retrieved = await getClient(env, clientId, env.DB);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       // normalizeClientMetadata adds default values for missing fields
       const expectedNormalized = {
@@ -315,6 +316,34 @@ describe('KV Utilities', () => {
       expect(env.DB.prepare).not.toHaveBeenCalled();
     });
 
+    it('should isolate cached client metadata by tenant', async () => {
+      const clientId = 'shared-client-id';
+
+      await clientsCacheKV.put(
+        `tenant:tenant-a:client:${clientId}`,
+        JSON.stringify({
+          client_id: clientId,
+          client_name: 'Tenant A Client',
+          redirect_uris: ['http://tenant-a.example/callback'],
+        })
+      );
+      await clientsCacheKV.put(
+        `tenant:tenant-b:client:${clientId}`,
+        JSON.stringify({
+          client_id: clientId,
+          client_name: 'Tenant B Client',
+          redirect_uris: ['http://tenant-b.example/callback'],
+        })
+      );
+
+      const tenantAClient = await getClient(env, 'tenant-a', clientId, env.DB);
+      const tenantBClient = await getClient(env, 'tenant-b', clientId, env.DB);
+
+      expect(tenantAClient?.client_name).toBe('Tenant A Client');
+      expect(tenantBClient?.client_name).toBe('Tenant B Client');
+      expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
     it('should normalize malformed response_types from cache', async () => {
       const clientId = 'malformed-cached-client';
       const cachedData = {
@@ -327,7 +356,7 @@ describe('KV Utilities', () => {
 
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      const retrieved = await getClient(env, clientId, env.DB);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.response_types).toEqual(['code']);
@@ -344,7 +373,7 @@ describe('KV Utilities', () => {
 
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      await expect(getClient(env, clientId, env.DB)).rejects.toMatchObject({
+      await expect(getClient(env, 'default', clientId, env.DB)).rejects.toMatchObject({
         error: 'legacy_app_suite_not_supported',
         error_uri:
           'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
@@ -404,7 +433,7 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(dbResult),
       });
 
-      const retrieved = await getClient(env, clientId, env.DB);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.response_types).toEqual(['code']);
@@ -417,8 +446,58 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(null),
       });
 
-      const retrieved = await getClient(env, 'non-existent-client', env.DB);
+      const retrieved = await getClient(env, 'default', 'non-existent-client', env.DB);
       expect(retrieved).toBeNull();
+    });
+  });
+
+  describe('User Cache Read-Through', () => {
+    it('should isolate cached user metadata by tenant', async () => {
+      const userCacheKV = new MockKVNamespace();
+      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      const userId = 'shared-user-id';
+
+      await userCacheKV.put(
+        `tenant:tenant-a:user:${userId}`,
+        JSON.stringify({ id: userId, email: 'a@example.test', email_verified: true })
+      );
+      await userCacheKV.put(
+        `tenant:tenant-b:user:${userId}`,
+        JSON.stringify({ id: userId, email: 'b@example.test', email_verified: true })
+      );
+
+      const tenantAUser = await getCachedUser(env, 'tenant-a', userId, {
+        coreDb: env.DB,
+      });
+      const tenantBUser = await getCachedUser(env, 'tenant-b', userId, {
+        coreDb: env.DB,
+      });
+
+      expect(tenantAUser?.email).toBe('a@example.test');
+      expect(tenantBUser?.email).toBe('b@example.test');
+      expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
+    it('should include tenant scope in user DB fallback queries', async () => {
+      const coreAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue(null),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      await getCachedUser(env, 'tenant-a', 'user-1', {
+        coreDb: coreAdapter,
+      });
+
+      expect(coreAdapter.queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('tenant_id = ?'),
+        ['user-1', 'tenant-a']
+      );
     });
   });
 
@@ -487,7 +566,7 @@ describe('KV Utilities', () => {
         granted_at: 5678,
         expires_at: 9999,
       });
-      expect(await consentCacheKV.get('tenant:default:consent:tenant-b:user-2:client-2')).toBe(
+      expect(await consentCacheKV.get('tenant:tenant-b:consent:user-2:client-2')).toBe(
         JSON.stringify(consent)
       );
     });

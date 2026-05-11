@@ -54,6 +54,7 @@ export interface LoadedCatalogObjectRepresentation {
 
 async function getCatalogObjectRecord(
   adapter: DatabaseAdapter,
+  tenantId: string,
   identifierColumn: 'oc.id' | 'oc.public_artifact_id',
   identifierValue: string,
   representation: ObjectRepresentation,
@@ -100,13 +101,14 @@ async function getCatalogObjectRecord(
       oco.deleted_at AS physical_deleted_at
     FROM object_catalog oc
     INNER JOIN object_catalog_objects oco ON oco.catalog_id = oc.id
-    WHERE ${identifierColumn} = ?
+    WHERE oc.tenant_id = ?
+      AND ${identifierColumn} = ?
       AND oc.deleted_at IS NULL
       AND oco.deleted_at IS NULL
       AND oco.representation = ?
       AND oco.object_index = ?
     LIMIT 1`,
-    [identifierValue, representation, objectIndex]
+    [tenantId, identifierValue, representation, objectIndex]
   );
 
   if (
@@ -147,6 +149,7 @@ async function getCatalogObjectRecord(
 
 async function listCatalogObjectRecords(
   adapter: DatabaseAdapter,
+  tenantId: string,
   catalogId: string,
   representation?: ObjectRepresentation
 ): Promise<ObjectCatalogListResult | null> {
@@ -191,12 +194,13 @@ async function listCatalogObjectRecords(
       oco.deleted_at AS physical_deleted_at
     FROM object_catalog oc
     INNER JOIN object_catalog_objects oco ON oco.catalog_id = oc.id
-    WHERE oc.id = ?
+    WHERE oc.tenant_id = ?
+      AND oc.id = ?
       AND oc.deleted_at IS NULL
       AND oco.deleted_at IS NULL
       ${representation ? 'AND oco.representation = ?' : ''}
     ORDER BY oco.representation ASC, oco.object_index ASC`,
-    representation ? [catalogId, representation] : [catalogId]
+    representation ? [tenantId, catalogId, representation] : [tenantId, catalogId]
   );
 
   if (rows.length === 0) {
@@ -276,6 +280,7 @@ export async function loadCatalogObjectArtifact(
 ): Promise<LoadedCatalogObjectArtifact | null> {
   const record = await getCatalogObjectRecord(
     adapter,
+    options.tenantId,
     'oc.id',
     options.objectCatalogId,
     options.representation ?? 'canonical_json',
@@ -356,6 +361,7 @@ export async function loadPublicCatalogObjectArtifact(
 ): Promise<LoadedCatalogObjectArtifact | null> {
   const record = await getCatalogObjectRecord(
     adapter,
+    options.tenantId,
     'oc.public_artifact_id',
     options.publicArtifactId,
     options.representation ?? 'canonical_json',
@@ -456,6 +462,7 @@ export async function loadCatalogObjectRepresentation(
 ): Promise<LoadedCatalogObjectRepresentation | null> {
   const catalog = await listCatalogObjectRecords(
     adapter,
+    options.tenantId,
     options.objectCatalogId,
     options.representation ?? 'canonical_json'
   );

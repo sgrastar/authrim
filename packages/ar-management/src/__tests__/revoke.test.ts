@@ -438,6 +438,43 @@ describe('Token Revocation Endpoint', () => {
       expect(verifyClientSecretHash).toHaveBeenCalledWith('client-secret', 'hash_client-secret');
     });
 
+    it('resolves duplicated client_id through the request tenant context', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('tenant-b');
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          token_type_hint: 'access_token',
+          client_id: 'shared-mobile',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        jti: 'token-jti-123',
+        client_id: 'shared-mobile',
+        aud: 'https://op.example.com',
+        sub: 'user-123',
+        rtv: 1,
+      });
+
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'shared-mobile',
+        tenant_id: 'tenant-b',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await revokeHandler(c);
+
+      expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(c, 'tenant-b');
+      expect(mockClientRepository.findByClientId).toHaveBeenCalledWith('shared-mobile');
+      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600);
+    });
+
     it('should use tenant subdomain issuer for non-primary private_key_jwt validation', async () => {
       mockGetTenantIdFromContext.mockReturnValue('acme');
 
@@ -927,8 +964,11 @@ describe('Token Revocation Endpoint', () => {
 
       await revokeHandler(c);
 
-      expect(mockDeviceSecretRepository.findByRawSecret).toHaveBeenCalledWith('raw-device-secret');
-      expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith('ds-001', 'logout');
+      expect(mockDeviceSecretRepository.findByRawSecret).toHaveBeenCalledWith(
+        'raw-device-secret',
+        'tenant1'
+      );
+      expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith('ds-001', 'logout', 'tenant1');
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 
@@ -1060,7 +1100,8 @@ describe('Token Revocation Endpoint', () => {
 
       expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
         'ds-001',
-        'token_revocation'
+        'token_revocation',
+        'tenant1'
       );
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
@@ -1152,7 +1193,8 @@ describe('Token Revocation Endpoint', () => {
 
       expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
         'ds-001',
-        'token_revocation'
+        'token_revocation',
+        'tenant1'
       );
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });

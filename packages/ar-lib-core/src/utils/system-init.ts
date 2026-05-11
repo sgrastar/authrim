@@ -88,6 +88,7 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
   // Fallback to legacy DB (for backward compatibility)
   try {
     const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'system-init');
+    const tenantId = 'default';
     const now = Math.floor(Date.now() / 1000); // UNIX seconds for legacy role_assignments
 
     // Count users with active, non-expired system_admin role (legacy)
@@ -97,9 +98,11 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
        JOIN roles r ON ra.role_id = r.id
        JOIN users_core u ON ra.subject_id = u.id
        WHERE r.name = 'system_admin'
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND u.is_active = 1
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-      [now]
+      [tenantId, tenantId, now]
     );
 
     const adminCount = result?.count ?? 0;
@@ -189,8 +192,8 @@ export async function assignSystemAdminRole(
 
   // Get the system_admin role ID (legacy)
   const role = await coreAdapter.queryOne<{ id: string }>(
-    "SELECT id FROM roles WHERE name = 'system_admin' LIMIT 1",
-    []
+    "SELECT id FROM roles WHERE name = 'system_admin' AND tenant_id = ? LIMIT 1",
+    [tenantId]
   );
 
   if (!role) {
@@ -199,8 +202,8 @@ export async function assignSystemAdminRole(
 
   // Check if assignment already exists
   const existing = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM role_assignments WHERE subject_id = ? AND role_id = ? LIMIT 1',
-    [adminUserId, role.id]
+    'SELECT id FROM role_assignments WHERE subject_id = ? AND role_id = ? AND tenant_id = ? LIMIT 1',
+    [adminUserId, role.id, tenantId]
   );
 
   if (existing) {
@@ -216,7 +219,7 @@ export async function assignSystemAdminRole(
   // scope_type='global' means system-wide access
   await coreAdapter.execute(
     `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, created_at, updated_at)
-     VALUES (?, 'default', ?, ?, 'global', '', ?, ?)`,
-    [assignmentId, adminUserId, role.id, now, now]
+     VALUES (?, ?, ?, ?, 'global', '', ?, ?)`,
+    [assignmentId, tenantId, adminUserId, role.id, now, now]
   );
 }

@@ -748,6 +748,7 @@ export interface DeviceAuthorizationResponse {
  * Internal storage for device authorization flow
  */
 export interface DeviceCodeMetadata {
+  tenant_id?: string;
   device_code: string;
   user_code: string;
   client_id: string;
@@ -796,6 +797,7 @@ export interface CIBAAuthenticationResponse {
  * Internal storage for CIBA authentication flow
  */
 export interface CIBARequestMetadata {
+  tenant_id?: string;
   auth_req_id: string; // Unique authentication request identifier
   client_id: string;
   scope: string;

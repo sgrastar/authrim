@@ -29,9 +29,97 @@ export interface CIBARequestPersistenceAdapter {
 }
 
 class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAdapter {
-  constructor(private readonly db: DatabaseAdapter) {}
+  constructor(
+    private readonly db: DatabaseAdapter,
+    private readonly tenantId?: string
+  ) {}
 
   async storeRequest(metadata: CIBARequestMetadata): Promise<void> {
+    const tenantId = metadata.tenant_id ?? this.tenantId;
+
+    if (tenantId) {
+      const updated = await this.db.execute(
+        `UPDATE ciba_requests
+            SET client_id = ?, scope = ?, login_hint = ?, login_hint_token = ?, id_token_hint = ?,
+                binding_message = ?, user_code = ?, acr_values = ?, requested_expiry = ?, status = ?,
+                delivery_mode = ?, client_notification_token = ?, client_notification_endpoint = ?,
+                created_at = ?, expires_at = ?, last_poll_at = ?, poll_count = ?, interval = ?,
+                user_id = ?, sub = ?, nonce = ?, token_issued = ?, token_issued_at = ?, tenant_id = ?
+          WHERE auth_req_id = ?
+            AND tenant_id = ?`,
+        [
+          metadata.client_id,
+          metadata.scope,
+          metadata.login_hint ?? null,
+          metadata.login_hint_token ?? null,
+          metadata.id_token_hint ?? null,
+          metadata.binding_message ?? null,
+          metadata.user_code ?? null,
+          metadata.acr_values ?? null,
+          metadata.requested_expiry ?? null,
+          metadata.status,
+          metadata.delivery_mode,
+          metadata.client_notification_token ?? null,
+          metadata.client_notification_endpoint ?? null,
+          metadata.created_at,
+          metadata.expires_at,
+          metadata.last_poll_at ?? null,
+          metadata.poll_count ?? 0,
+          metadata.interval,
+          metadata.user_id ?? null,
+          metadata.sub ?? null,
+          metadata.nonce ?? null,
+          metadata.token_issued ? 1 : 0,
+          metadata.token_issued_at ?? null,
+          tenantId,
+          metadata.auth_req_id,
+          tenantId,
+        ]
+      );
+
+      if (updated.rowsAffected > 0) {
+        return;
+      }
+
+      await this.db.execute(
+        `INSERT INTO ciba_requests (
+           auth_req_id, client_id, scope, login_hint, login_hint_token, id_token_hint,
+           binding_message, user_code, acr_values, requested_expiry, status, delivery_mode,
+           client_notification_token, client_notification_endpoint, created_at, expires_at,
+           last_poll_at, poll_count, interval, user_id, sub, nonce, token_issued, token_issued_at,
+           tenant_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          metadata.auth_req_id,
+          metadata.client_id,
+          metadata.scope,
+          metadata.login_hint ?? null,
+          metadata.login_hint_token ?? null,
+          metadata.id_token_hint ?? null,
+          metadata.binding_message ?? null,
+          metadata.user_code ?? null,
+          metadata.acr_values ?? null,
+          metadata.requested_expiry ?? null,
+          metadata.status,
+          metadata.delivery_mode,
+          metadata.client_notification_token ?? null,
+          metadata.client_notification_endpoint ?? null,
+          metadata.created_at,
+          metadata.expires_at,
+          metadata.last_poll_at ?? null,
+          metadata.poll_count ?? 0,
+          metadata.interval,
+          metadata.user_id ?? null,
+          metadata.sub ?? null,
+          metadata.nonce ?? null,
+          metadata.token_issued ? 1 : 0,
+          metadata.token_issued_at ?? null,
+          tenantId,
+        ]
+      );
+      return;
+    }
+
     const updated = await this.db.execute(
       `UPDATE ciba_requests
           SET client_id = ?, scope = ?, login_hint = ?, login_hint_token = ?, id_token_hint = ?,
@@ -109,6 +197,21 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   }
 
   async getByAuthReqId(authReqId: string): Promise<CIBARequestMetadata | null> {
+    if (this.tenantId) {
+      const row = await this.db.queryOne<CIBARequestRow>(
+        `SELECT tenant_id, auth_req_id, client_id, scope, login_hint, login_hint_token, id_token_hint,
+                binding_message, user_code, acr_values, requested_expiry, status, delivery_mode,
+                client_notification_token, client_notification_endpoint, created_at, expires_at,
+                last_poll_at, poll_count, interval, user_id, sub, nonce, token_issued, token_issued_at
+           FROM ciba_requests
+          WHERE auth_req_id = ?
+            AND tenant_id = ?`,
+        [authReqId, this.tenantId]
+      );
+
+      return mapCIBARequestRow(row);
+    }
+
     const row = await this.db.queryOne<CIBARequestRow>(
       `SELECT auth_req_id, client_id, scope, login_hint, login_hint_token, id_token_hint,
               binding_message, user_code, acr_values, requested_expiry, status, delivery_mode,
@@ -123,6 +226,21 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   }
 
   async getByUserCode(userCode: string): Promise<CIBARequestMetadata | null> {
+    if (this.tenantId) {
+      const row = await this.db.queryOne<CIBARequestRow>(
+        `SELECT tenant_id, auth_req_id, client_id, scope, login_hint, login_hint_token, id_token_hint,
+                binding_message, user_code, acr_values, requested_expiry, status, delivery_mode,
+                client_notification_token, client_notification_endpoint, created_at, expires_at,
+                last_poll_at, poll_count, interval, user_id, sub, nonce, token_issued, token_issued_at
+           FROM ciba_requests
+          WHERE user_code = ?
+            AND tenant_id = ?`,
+        [userCode, this.tenantId]
+      );
+
+      return mapCIBARequestRow(row);
+    }
+
     const row = await this.db.queryOne<CIBARequestRow>(
       `SELECT auth_req_id, client_id, scope, login_hint, login_hint_token, id_token_hint,
               binding_message, user_code, acr_values, requested_expiry, status, delivery_mode,
@@ -137,6 +255,22 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   }
 
   async getByLoginHint(loginHint: string, clientId: string): Promise<CIBARequestMetadata | null> {
+    if (this.tenantId) {
+      const row = await this.db.queryOne<CIBARequestRow>(
+        `SELECT tenant_id, auth_req_id, client_id, scope, login_hint, login_hint_token, id_token_hint,
+                binding_message, user_code, acr_values, requested_expiry, status, delivery_mode,
+                client_notification_token, client_notification_endpoint, created_at, expires_at,
+                last_poll_at, poll_count, interval, user_id, sub, nonce, token_issued, token_issued_at
+           FROM ciba_requests
+          WHERE login_hint = ? AND client_id = ? AND status = 'pending' AND tenant_id = ?
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [loginHint, clientId, this.tenantId]
+      );
+
+      return mapCIBARequestRow(row);
+    }
+
     const row = await this.db.queryOne<CIBARequestRow>(
       `SELECT auth_req_id, client_id, scope, login_hint, login_hint_token, id_token_hint,
               binding_message, user_code, acr_values, requested_expiry, status, delivery_mode,
@@ -158,6 +292,17 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
     sub: string,
     nonce?: string
   ): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        `UPDATE ciba_requests
+            SET status = ?, user_id = ?, sub = ?, nonce = ?
+          WHERE auth_req_id = ?
+            AND tenant_id = ?`,
+        ['approved', userId, sub, nonce ?? null, authReqId, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute(
       `UPDATE ciba_requests
           SET status = ?, user_id = ?, sub = ?, nonce = ?
@@ -167,6 +312,14 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   }
 
   async denyRequest(authReqId: string): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        'UPDATE ciba_requests SET status = ? WHERE auth_req_id = ? AND tenant_id = ?',
+        ['denied', authReqId, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute('UPDATE ciba_requests SET status = ? WHERE auth_req_id = ?', [
       'denied',
       authReqId,
@@ -174,6 +327,14 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   }
 
   async updatePoll(authReqId: string, lastPollAt: number, pollCount: number): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        'UPDATE ciba_requests SET last_poll_at = ?, poll_count = ? WHERE auth_req_id = ? AND tenant_id = ?',
+        [lastPollAt, pollCount, authReqId, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute(
       'UPDATE ciba_requests SET last_poll_at = ?, poll_count = ? WHERE auth_req_id = ?',
       [lastPollAt, pollCount, authReqId]
@@ -181,6 +342,14 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   }
 
   async markTokenIssued(authReqId: string, tokenIssuedAt: number): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute(
+        'UPDATE ciba_requests SET token_issued = ?, token_issued_at = ? WHERE auth_req_id = ? AND tenant_id = ?',
+        [1, tokenIssuedAt, authReqId, this.tenantId]
+      );
+      return;
+    }
+
     await this.db.execute(
       'UPDATE ciba_requests SET token_issued = ?, token_issued_at = ? WHERE auth_req_id = ?',
       [1, tokenIssuedAt, authReqId]
@@ -188,10 +357,26 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   }
 
   async deleteRequest(authReqId: string): Promise<void> {
+    if (this.tenantId) {
+      await this.db.execute('DELETE FROM ciba_requests WHERE auth_req_id = ? AND tenant_id = ?', [
+        authReqId,
+        this.tenantId,
+      ]);
+      return;
+    }
+
     await this.db.execute('DELETE FROM ciba_requests WHERE auth_req_id = ?', [authReqId]);
   }
 
   async deleteExpired(nowMs: number): Promise<number> {
+    if (this.tenantId) {
+      const result = await this.db.execute(
+        'DELETE FROM ciba_requests WHERE expires_at < ? AND tenant_id = ?',
+        [nowMs, this.tenantId]
+      );
+      return result.rowsAffected;
+    }
+
     const result = await this.db.execute('DELETE FROM ciba_requests WHERE expires_at < ?', [nowMs]);
     return result.rowsAffected;
   }
@@ -203,12 +388,13 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
 
 export function createCIBARequestPersistenceAdapter(
   source: DatabaseSource | null | undefined,
-  partition: string = 'ciba-request-store'
+  partition: string = 'ciba-request-store',
+  tenantId?: string
 ): CIBARequestPersistenceAdapter | null {
   const adapter = ensureOptionalDatabaseAdapter(source, partition);
   if (!adapter) {
     return null;
   }
 
-  return new DatabaseCIBARequestPersistenceAdapter(adapter);
+  return new DatabaseCIBARequestPersistenceAdapter(adapter, tenantId);
 }

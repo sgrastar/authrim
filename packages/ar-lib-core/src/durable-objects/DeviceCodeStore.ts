@@ -96,6 +96,7 @@ export class DeviceCodeStore {
   private deviceCodePersistence: DeviceCodePersistenceAdapter | null = null;
   private deviceCodePersistenceInit: Promise<DeviceCodePersistenceAdapter | null> | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
+  private tenantId: string | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -123,6 +124,9 @@ export class DeviceCodeStore {
       for (const [key, metadata] of deviceEntries) {
         const deviceCode = key.substring(STORAGE_PREFIX.DEVICE.length);
         this.deviceCodes.set(deviceCode, metadata);
+        if (!this.tenantId && metadata.tenant_id) {
+          this.tenantId = metadata.tenant_id;
+        }
       }
 
       // Load user code mappings
@@ -208,6 +212,7 @@ export class DeviceCodeStore {
    */
   async fetch(request: Request): Promise<Response> {
     await this.initializeState();
+    this.configureTenantFromRequest(request);
 
     const url = new URL(request.url);
     const path = url.pathname;
@@ -337,8 +342,13 @@ export class DeviceCodeStore {
    * Store a new device code
    */
   private async storeDeviceCode(metadata: DeviceCodeMetadata): Promise<void> {
+    if (metadata.tenant_id) {
+      this.setTenantId(metadata.tenant_id);
+    }
+
     const v2Metadata: DeviceCodeV2 = {
       ...metadata,
+      ...(this.tenantId ? { tenant_id: this.tenantId } : {}),
       token_issued: false,
     };
 
@@ -855,7 +865,11 @@ export class DeviceCodeStore {
   private async initializeDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    return createDeviceCodePersistenceAdapter(source);
+    return createDeviceCodePersistenceAdapter(
+      source,
+      'device-code-store',
+      this.tenantId ?? undefined
+    );
   }
 
   private async ensureDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
@@ -870,5 +884,22 @@ export class DeviceCodeStore {
 
     this.deviceCodePersistence = await this.deviceCodePersistenceInit;
     return this.deviceCodePersistence;
+  }
+
+  private configureTenantFromRequest(request: Request): void {
+    const tenantId = request.headers.get('X-Authrim-Tenant-Id')?.trim();
+    if (tenantId) {
+      this.setTenantId(tenantId);
+    }
+  }
+
+  private setTenantId(tenantId: string): void {
+    if (this.tenantId === tenantId) {
+      return;
+    }
+
+    this.tenantId = tenantId;
+    this.deviceCodePersistence = null;
+    this.deviceCodePersistenceInit = null;
   }
 }

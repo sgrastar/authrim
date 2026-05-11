@@ -54,7 +54,7 @@ export async function revokeLinkedIdentityTokens(
 
   try {
     // Get provider configuration
-    const provider = await getProvider(env, identity.providerId);
+    const provider = await getProvider(env, identity.tenantId, identity.providerId);
     if (!provider) {
       // SECURITY: Do not expose provider ID in error to prevent enumeration
       result.errors.push('Provider not found');

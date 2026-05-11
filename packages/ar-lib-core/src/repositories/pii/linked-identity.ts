@@ -251,6 +251,7 @@ export class LinkedIdentityRepository extends BaseRepository<LinkedIdentity> {
    * @returns Updated linked identity or null
    */
   async updateLinkedIdentity(
+    tenantId: string,
     id: string,
     data: UpdateLinkedIdentityInput,
     adapter?: DatabaseAdapter
@@ -278,17 +279,26 @@ export class LinkedIdentityRepository extends BaseRepository<LinkedIdentity> {
     }
 
     if (updates.length === 0) {
-      return this.findById(id);
+      return db.queryOne<LinkedIdentity>(
+        'SELECT * FROM linked_identities WHERE id = ? AND tenant_id = ?',
+        [id, tenantId]
+      );
     }
 
     // Always update updated_at timestamp
     updates.push('updated_at = ?');
     values.push(getCurrentTimestamp());
 
-    values.push(id);
-    await db.execute(`UPDATE linked_identities SET ${updates.join(', ')} WHERE id = ?`, values);
+    values.push(id, tenantId);
+    await db.execute(
+      `UPDATE linked_identities SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`,
+      values
+    );
 
-    return db.queryOne<LinkedIdentity>('SELECT * FROM linked_identities WHERE id = ?', [id]);
+    return db.queryOne<LinkedIdentity>(
+      'SELECT * FROM linked_identities WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
   }
 
   /**
@@ -300,13 +310,17 @@ export class LinkedIdentityRepository extends BaseRepository<LinkedIdentity> {
    * @param adapter - Optional partition-specific adapter
    * @returns True if updated
    */
-  async updateLastUsed(id: string, adapter?: DatabaseAdapter): Promise<boolean> {
+  async updateLastUsed(
+    tenantId: string,
+    id: string,
+    adapter?: DatabaseAdapter
+  ): Promise<boolean> {
     const db = adapter ?? this.adapter;
     const now = getCurrentTimestamp();
-    const result = await db.execute('UPDATE linked_identities SET last_used_at = ? WHERE id = ?', [
-      now,
-      id,
-    ]);
+    const result = await db.execute(
+      'UPDATE linked_identities SET last_used_at = ? WHERE id = ? AND tenant_id = ?',
+      [now, id, tenantId]
+    );
     return result.rowsAffected > 0;
   }
 
@@ -317,9 +331,16 @@ export class LinkedIdentityRepository extends BaseRepository<LinkedIdentity> {
    * @param adapter - Optional partition-specific adapter
    * @returns True if deleted
    */
-  async deleteLinkedIdentity(id: string, adapter?: DatabaseAdapter): Promise<boolean> {
+  async deleteLinkedIdentity(
+    tenantId: string,
+    id: string,
+    adapter?: DatabaseAdapter
+  ): Promise<boolean> {
     const db = adapter ?? this.adapter;
-    const result = await db.execute('DELETE FROM linked_identities WHERE id = ?', [id]);
+    const result = await db.execute('DELETE FROM linked_identities WHERE id = ? AND tenant_id = ?', [
+      id,
+      tenantId,
+    ]);
     return result.rowsAffected > 0;
   }
 

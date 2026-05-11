@@ -263,10 +263,7 @@ export async function adminAIGrantGetHandler(c: Context<{ Bindings: Env }>) {
 export async function adminAIGrantCreateHandler(c: AdminContext) {
   try {
     const tenantId = getAdminTenantId(c);
-    const adapter = createAdapterFromContext(
-      c as unknown as Context<{ Bindings: Env }>,
-      tenantId
-    );
+    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>, tenantId);
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<AIGrantCreateRequest>();
 
@@ -367,9 +364,10 @@ export async function adminAIGrantCreateHandler(c: AdminContext) {
     });
 
     // Fetch the created grant
-    const grant = await adapter.queryOne<AIGrant>('SELECT * FROM ai_grants WHERE id = ?', [
-      grantId,
-    ]);
+    const grant = await adapter.queryOne<AIGrant>(
+      'SELECT * FROM ai_grants WHERE id = ? AND tenant_id = ?',
+      [grantId, tenantId]
+    );
 
     return c.json({ grant: formatGrant(grant!) }, 201);
   } catch (error) {
@@ -389,10 +387,7 @@ export async function adminAIGrantCreateHandler(c: AdminContext) {
 export async function adminAIGrantUpdateHandler(c: AdminContext) {
   try {
     const tenantId = getAdminTenantId(c);
-    const adapter = createAdapterFromContext(
-      c as unknown as Context<{ Bindings: Env }>,
-      tenantId
-    );
+    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>, tenantId);
     const adminAuth = getAdminAuth(c);
     const grantId = c.req.param('id')!;
     const body = await c.req.json<AIGrantUpdateRequest>();
@@ -468,9 +463,10 @@ export async function adminAIGrantUpdateHandler(c: AdminContext) {
     });
 
     // Fetch updated grant
-    const grant = await adapter.queryOne<AIGrant>('SELECT * FROM ai_grants WHERE id = ?', [
-      grantId,
-    ]);
+    const grant = await adapter.queryOne<AIGrant>(
+      'SELECT * FROM ai_grants WHERE id = ? AND tenant_id = ?',
+      [grantId, tenantId]
+    );
 
     return c.json({ grant: formatGrant(grant!) });
   } catch (error) {
@@ -487,10 +483,7 @@ export async function adminAIGrantUpdateHandler(c: AdminContext) {
 export async function adminAIGrantRevokeHandler(c: AdminContext) {
   try {
     const tenantId = getAdminTenantId(c);
-    const adapter = createAdapterFromContext(
-      c as unknown as Context<{ Bindings: Env }>,
-      tenantId
-    );
+    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>, tenantId);
     const adminAuth = getAdminAuth(c);
     const grantId = c.req.param('id')!;
 

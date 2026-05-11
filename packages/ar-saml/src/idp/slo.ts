@@ -137,7 +137,7 @@ async function processLogoutRequest(
   validateLogoutRequest(logoutRequest, issuerUrl);
 
   // Get SP configuration
-  const spConfig = await getSPConfig(env, logoutRequest.issuer);
+  const spConfig = await getSPConfig(env, getTenantIdFromContext(c), logoutRequest.issuer);
   if (!spConfig) {
     return sendLogoutResponse(c, env, issuerUrl, {
       inResponseTo: logoutRequest.id,
@@ -273,7 +273,11 @@ async function terminateSessionByNameId(
     // If sessionIndex is provided and is a valid sharded session ID, delete that specific session
     if (sessionIndex && isShardedSessionId(sessionIndex)) {
       try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionIndex);
+        const { stub: sessionStore } = getSessionStoreBySessionId(
+          env,
+          sessionIndex,
+          getTenantIdFromContext(c)
+        );
         const response = await sessionStore.fetch(`https://session-store/session/${sessionIndex}`, {
           method: 'DELETE',
         });

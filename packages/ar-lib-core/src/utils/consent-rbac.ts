@@ -47,21 +47,24 @@ export interface ConsentRBACData {
  */
 export async function getConsentRBACData(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string
 ): Promise<ConsentRBACData> {
   const adapter = ensureDatabaseAdapter(db, 'consent-rbac');
   const now = Math.floor(Date.now() / 1000);
   // Fetch organizations and roles in parallel
   const [orgs, roles] = await Promise.all([
-    resolveAllOrganizationsWithPlan(db, subjectId),
+    resolveAllOrganizationsWithPlan(db, subjectId, tenantId),
     adapter.query<{ name: string }>(
       `SELECT DISTINCT r.name
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY r.name ASC`,
-      [subjectId, now]
+      [subjectId, tenantId, tenantId, now]
     ),
   ]);
 
@@ -87,7 +90,8 @@ export async function getConsentRBACData(
  */
 async function resolveAllOrganizationsWithPlan(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string
 ): Promise<ConsentOrgInfo[]> {
   const adapter = ensureDatabaseAdapter(db, 'consent-rbac-orgs');
   const rows = await adapter.query<{
@@ -100,9 +104,12 @@ async function resolveAllOrganizationsWithPlan(
     `SELECT o.id, o.name, o.org_type, o.plan, m.is_primary
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ? AND o.is_active = 1
+       WHERE m.subject_id = ?
+         AND m.tenant_id = ?
+         AND o.tenant_id = ?
+         AND o.is_active = 1
        ORDER BY m.is_primary DESC, o.name ASC`,
-    [subjectId]
+    [subjectId, tenantId, tenantId]
   );
 
   return rows.map((r) => ({
@@ -145,7 +152,8 @@ export interface OrgAccessValidationResult {
 export async function validateConsentOrgAccess(
   db: DatabaseSource,
   subjectId: string,
-  orgId: string
+  orgId: string,
+  tenantId: string
 ): Promise<OrgAccessValidationResult> {
   const adapter = ensureDatabaseAdapter(db, 'consent-rbac-org-access');
   const result = await adapter.queryOne<{
@@ -158,8 +166,12 @@ export async function validateConsentOrgAccess(
     `SELECT o.id, o.name, o.org_type, o.plan, m.is_primary
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE o.id = ? AND m.subject_id = ? AND o.is_active = 1`,
-    [orgId, subjectId]
+       WHERE o.id = ?
+         AND o.tenant_id = ?
+         AND m.tenant_id = ?
+         AND m.subject_id = ?
+         AND o.is_active = 1`,
+    [orgId, tenantId, tenantId, subjectId]
   );
 
   if (!result) {
@@ -225,7 +237,8 @@ const ACTING_AS_ALLOWED_RELATIONSHIPS: RelationshipType[] = [
 export async function validateActingAsRelationship(
   db: DatabaseSource,
   actorId: string,
-  targetId: string
+  targetId: string,
+  tenantId: string
 ): Promise<ActingAsValidationResult> {
   const now = Math.floor(Date.now() / 1000);
   const adapter = ensureDatabaseAdapter(db, 'consent-rbac-acting-as');
@@ -236,11 +249,12 @@ export async function validateActingAsRelationship(
     `SELECT relationship_type, permission_level
        FROM relationships
        WHERE from_id = ? AND to_id = ?
+         AND tenant_id = ?
          AND from_type = 'subject' AND to_type = 'subject'
          AND relationship_type IN ('parent_child', 'guardian', 'delegate')
          AND (expires_at IS NULL OR expires_at > ?)
        LIMIT 1`,
-    [actorId, targetId, now]
+    [actorId, targetId, tenantId, now]
   );
 
   if (!result) {
@@ -282,10 +296,11 @@ export async function getActingAsUserInfo(
   db: DatabaseSource,
   actorId: string,
   targetId: string,
+  tenantId: string,
   dbPII?: DatabaseSource
 ): Promise<ConsentActingAsInfo | null> {
   // First validate the relationship
-  const validation = await validateActingAsRelationship(db, actorId, targetId);
+  const validation = await validateActingAsRelationship(db, actorId, targetId, tenantId);
 
   if (!validation.valid || !validation.relationship_type || !validation.permission_level) {
     return null;
@@ -295,8 +310,8 @@ export async function getActingAsUserInfo(
   // Check Core DB for user existence
   const coreAdapter = ensureDatabaseAdapter(db, 'consent-rbac-acting-as-core');
   const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-    [targetId]
+    'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+    [targetId, tenantId]
   );
 
   if (!userCore) {
@@ -310,8 +325,8 @@ export async function getActingAsUserInfo(
   if (dbPII) {
     const piiAdapter = ensureDatabaseAdapter(dbPII, 'consent-rbac-acting-as-pii');
     const userPII = await piiAdapter.queryOne<{ email: string; name: string | null }>(
-      'SELECT email, name FROM users_pii WHERE id = ?',
-      [targetId]
+      'SELECT email, name FROM users_pii WHERE id = ? AND tenant_id = ?',
+      [targetId, tenantId]
     );
 
     if (userPII) {
@@ -345,13 +360,14 @@ export async function getActingAsUserInfo(
 export async function getConsentUserInfo(
   db: DatabaseSource,
   subjectId: string,
+  tenantId: string,
   dbPII?: DatabaseSource
 ): Promise<ConsentUserInfo | null> {
   const coreAdapter = ensureDatabaseAdapter(db, 'consent-user-core');
   // Check Core DB for user existence
   const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-    [subjectId]
+    'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+    [subjectId, tenantId]
   );
 
   if (!userCore) {
@@ -366,8 +382,8 @@ export async function getConsentUserInfo(
   if (dbPII) {
     const piiAdapter = ensureDatabaseAdapter(dbPII, 'consent-user-pii');
     const userPII = await piiAdapter.queryOne<{ email: string; name: string | null; picture: string | null }>(
-      'SELECT email, name, picture FROM users_pii WHERE id = ?',
-      [subjectId]
+      'SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?',
+      [subjectId, tenantId]
     );
 
     if (userPII) {
@@ -428,7 +444,8 @@ export function parseConsentFeatureFlags(
 export async function getRolesInOrganization(
   db: DatabaseSource,
   subjectId: string,
-  orgId: string
+  orgId: string,
+  tenantId: string
 ): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000);
   const adapter = ensureDatabaseAdapter(db, 'consent-rbac-org-roles');
@@ -438,13 +455,15 @@ export async function getRolesInOrganization(
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
          AND (
            ra.scope_type = 'global'
            OR (ra.scope_type = 'org' AND ra.scope_target = ?)
          )
        ORDER BY r.name ASC`,
-    [subjectId, now, `org:${orgId}`]
+    [subjectId, tenantId, tenantId, now, `org:${orgId}`]
   );
 
   return rows.map((r) => r.name);

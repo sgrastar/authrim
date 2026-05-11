@@ -289,9 +289,9 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
       users_with_roles: number;
     }>(
       `SELECT
-        (SELECT COUNT(DISTINCT id) FROM roles WHERE tenant_id = ? OR tenant_id IS NULL) as active_roles,
-        (SELECT COUNT(DISTINCT user_id) FROM user_roles) as users_with_roles`,
-      [tenantId]
+        (SELECT COUNT(DISTINCT id) FROM roles WHERE tenant_id = ?) as active_roles,
+        (SELECT COUNT(DISTINCT user_id) FROM user_roles WHERE tenant_id = ?) as users_with_roles`,
+      [tenantId, tenantId]
     );
 
     // 5. Get data retention status
@@ -706,8 +706,8 @@ export async function adminComplianceAccessReviewsCreateHandler(c: Context<{ Bin
           const result = await adapter.queryOne<{ count: number }>(
             `SELECT COUNT(*) as count FROM user_roles ur
              JOIN users_core u ON ur.user_id = u.id
-             WHERE u.tenant_id = ? AND ur.role_id = ?`,
-            [tenantId, scope_value]
+             WHERE u.tenant_id = ? AND ur.tenant_id = ? AND ur.role_id = ?`,
+            [tenantId, tenantId, scope_value]
           );
           totalItems = result?.count ?? 0;
         }

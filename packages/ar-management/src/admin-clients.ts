@@ -1888,7 +1888,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     const log = getLogger(c).module('ADMIN-CLIENT');
     try {
-      await invalidateClientCache(c.env, clientId);
+      await invalidateClientCache(c.env, clientId, tenantId);
     } catch {
       log.warn('Failed to invalidate client cache', { action: 'cache_invalidate', clientId });
     }
@@ -2067,7 +2067,7 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     const successfullyDeletedIds = client_ids.filter((id) => !result.failed.includes(id));
     for (const clientId of successfullyDeletedIds) {
       try {
-        await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId));
+        await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId, tenantId));
         await invalidateWebOriginRegistryCache(c.env, tenantId, clientId);
       } catch {
         log.warn('Failed to invalidate client cache', { action: 'cache_invalidate', clientId });
@@ -2132,7 +2132,7 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
     }
 
     const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const client = await getClient(c.env, clientId, adapter);
+    const client = await getClient(c.env, tenantId, clientId, adapter);
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -2172,7 +2172,7 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
     }
 
     try {
-      await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId));
+      await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId, tenantId));
     } catch {
       log.warn('Failed to invalidate client cache after secret regeneration', {
         action: 'cache_invalidate',

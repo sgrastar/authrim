@@ -196,18 +196,14 @@ async function loadEncryptedExportArtifactRepresentation(
     return null;
   }
 
-  const artifact = await loadCatalogObjectRepresentation(
-    adapter,
-    env,
-    {
-      tenantId,
-      objectCatalogId,
-      representation,
-      expectedClass: 'user_export',
-      expectedBucketBinding: 'EXPORT_ARTIFACTS',
-      allowPlaintextFallback: false,
-    }
-  );
+  const artifact = await loadCatalogObjectRepresentation(adapter, env, {
+    tenantId,
+    objectCatalogId,
+    representation,
+    expectedClass: 'user_export',
+    expectedBucketBinding: 'EXPORT_ARTIFACTS',
+    allowPlaintextFallback: false,
+  });
   if (!artifact) {
     return null;
   }
@@ -275,8 +271,7 @@ function buildExportArtifactManifestResponse(
           `/api/user/data-export/artifacts/${catalog.logical.publicArtifactId}` +
           `/chunks/${physical.chunkIndex ?? 0}${format ? `?format=${format}` : ''}`;
       } else if (format) {
-        manifestObject.downloadUrl =
-          `/api/user/data-export/artifacts/${catalog.logical.publicArtifactId}/download?format=${format}`;
+        manifestObject.downloadUrl = `/api/user/data-export/artifacts/${catalog.logical.publicArtifactId}/download?format=${format}`;
       }
 
       return manifestObject;
@@ -326,7 +321,11 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
   const sid = getCookie(c, 'sid');
   if (sid) {
     try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid);
+      const { stub: sessionStore } = getSessionStoreBySessionId(
+        c.env,
+        sid,
+        getTenantIdFromContext(c)
+      );
       const response = await sessionStore.fetch(
         new Request(`https://do/session/${sid}`, { method: 'GET' })
       );
@@ -415,7 +414,7 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
     const syncThresholdKB = await configManager.getConsentDataExportSyncThresholdKB();
 
     // Estimate data size (simplified - just count records)
-    const estimatedSize = await estimateExportSize(authCtx.coreAdapter, userId, sections);
+    const estimatedSize = await estimateExportSize(authCtx.coreAdapter, tenantId, userId, sections);
 
     const now = Date.now();
     const requestId = crypto.randomUUID();
@@ -522,7 +521,10 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
               der.started_at, der.completed_at, der.expires_at, der.file_size, der.error_message,
               der.object_catalog_id, oc.public_artifact_id
        FROM data_export_requests der
-       LEFT JOIN object_catalog oc ON oc.id = der.object_catalog_id AND oc.deleted_at IS NULL
+       LEFT JOIN object_catalog oc
+         ON oc.id = der.object_catalog_id
+        AND oc.tenant_id = der.tenant_id
+        AND oc.deleted_at IS NULL
        WHERE der.id = ? AND der.user_id = ? AND der.tenant_id = ?`,
       [requestId, userId, tenantId]
     );
@@ -589,14 +591,19 @@ async function getDataExportRequestById(
   tenantId: string
 ): Promise<DataExportDownloadRow | null> {
   return (
-    (await adapter.query<DataExportDownloadRow>(
-      `SELECT der.id, der.status, der.format, der.include_sections, der.expires_at, der.file_path,
+    (
+      await adapter.query<DataExportDownloadRow>(
+        `SELECT der.id, der.status, der.format, der.include_sections, der.expires_at, der.file_path,
               der.object_catalog_id, oc.public_artifact_id
          FROM data_export_requests der
-         LEFT JOIN object_catalog oc ON oc.id = der.object_catalog_id AND oc.deleted_at IS NULL
+         LEFT JOIN object_catalog oc
+           ON oc.id = der.object_catalog_id
+          AND oc.tenant_id = der.tenant_id
+          AND oc.deleted_at IS NULL
         WHERE der.id = ? AND der.user_id = ? AND der.tenant_id = ?`,
-      [requestId, userId, tenantId]
-    ))[0] ?? null
+        [requestId, userId, tenantId]
+      )
+    )[0] ?? null
   );
 }
 
@@ -607,17 +614,21 @@ async function getDataExportRequestByArtifactId(
   tenantId: string
 ): Promise<DataExportDownloadRow | null> {
   return (
-    (await adapter.query<DataExportDownloadRow>(
-      `SELECT der.id, der.status, der.format, der.include_sections, der.expires_at, der.file_path,
+    (
+      await adapter.query<DataExportDownloadRow>(
+        `SELECT der.id, der.status, der.format, der.include_sections, der.expires_at, der.file_path,
               der.object_catalog_id, oc.public_artifact_id
          FROM data_export_requests der
-         INNER JOIN object_catalog oc ON oc.id = der.object_catalog_id
+         INNER JOIN object_catalog oc
+           ON oc.id = der.object_catalog_id
+          AND oc.tenant_id = der.tenant_id
         WHERE oc.public_artifact_id = ?
           AND oc.deleted_at IS NULL
           AND der.user_id = ?
           AND der.tenant_id = ?`,
-      [artifactId, userId, tenantId]
-    ))[0] ?? null
+        [artifactId, userId, tenantId]
+      )
+    )[0] ?? null
   );
 }
 
@@ -687,7 +698,12 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
 
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const request = await getDataExportRequestById(authCtx.coreAdapter, requestId, userId, tenantId);
+    const request = await getDataExportRequestById(
+      authCtx.coreAdapter,
+      requestId,
+      userId,
+      tenantId
+    );
     if (!request) {
       return c.json(
         {
@@ -738,7 +754,10 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      const catalog = await listObjectCatalogObjects(authCtx.coreAdapter, request.object_catalog_id);
+      const catalog = await listObjectCatalogObjects(
+        authCtx.coreAdapter,
+        request.object_catalog_id
+      );
       if (!catalog) {
         return c.json(
           {
@@ -1043,18 +1062,14 @@ export async function dataExportArtifactChunkHandler(c: Context<{ Bindings: Env 
       );
     }
 
-    const chunkMetadata = await loadCatalogObjectRepresentation(
-      authCtx.coreAdapter,
-      c.env,
-      {
-        tenantId,
-        objectCatalogId: request.object_catalog_id,
-        representation: representationForExportFormat(requestedFormat),
-        expectedClass: 'user_export',
-        expectedBucketBinding: 'EXPORT_ARTIFACTS',
-        allowPlaintextFallback: false,
-      }
-    );
+    const chunkMetadata = await loadCatalogObjectRepresentation(authCtx.coreAdapter, c.env, {
+      tenantId,
+      objectCatalogId: request.object_catalog_id,
+      representation: representationForExportFormat(requestedFormat),
+      expectedClass: 'user_export',
+      expectedBucketBinding: 'EXPORT_ARTIFACTS',
+      allowPlaintextFallback: false,
+    });
     if (!chunkMetadata) {
       return c.json(
         {
@@ -1112,7 +1127,8 @@ export async function dataExportArtifactChunkHandler(c: Context<{ Bindings: Env 
       status: 200,
       headers: {
         'Content-Type':
-          chunkArtifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
+          chunkArtifact.contentType ||
+          (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
       },
     });
   } catch (error) {
@@ -1146,7 +1162,10 @@ export async function processPendingDataExportRequests(
 
   const keyVersion = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
   const rootKeyHex = env.OBJECT_ENCRYPTION_ROOT_KEY;
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'management-data-export-jobs');
+  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'management-data-export-jobs'
+  );
   const piiAdapter = ensureDatabaseAdapter(env.DB_PII, 'management-data-export-pii');
   const pendingRequests = await coreAdapter.query<PendingDataExportRow>(
     `SELECT id, tenant_id, user_id, status, format, include_sections, requested_at
@@ -1159,8 +1178,8 @@ export async function processPendingDataExportRequests(
   for (const request of pendingRequests) {
     if (request.status === 'pending') {
       const claimed = await coreAdapter.execute(
-        "UPDATE data_export_requests SET status = 'processing', started_at = ? WHERE id = ? AND status = 'pending'",
-        [Date.now(), request.id]
+        "UPDATE data_export_requests SET status = 'processing', started_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
+        [Date.now(), request.id, request.tenant_id]
       );
       if ((claimed.rowsAffected ?? 0) === 0) {
         continue;
@@ -1210,7 +1229,7 @@ export async function processPendingDataExportRequests(
                   object_catalog_id = ?,
                   file_size = ?,
                   error_message = NULL
-            WHERE id = ?`,
+            WHERE id = ? AND tenant_id = ?`,
           [
             now,
             expiresAt,
@@ -1218,6 +1237,7 @@ export async function processPendingDataExportRequests(
             catalogId,
             new TextEncoder().encode(content).byteLength,
             request.id,
+            request.tenant_id,
           ]
         );
       });
@@ -1234,10 +1254,19 @@ export async function processPendingDataExportRequests(
             SET status = 'failed',
                 completed_at = ?,
                 error_message = ?
-          WHERE id = ?`,
-        [Date.now(), error instanceof Error ? error.message : String(error), request.id]
+          WHERE id = ? AND tenant_id = ?`,
+        [
+          Date.now(),
+          error instanceof Error ? error.message : String(error),
+          request.id,
+          request.tenant_id,
+        ]
       );
-      logger.error('Data export request processing failed', { request_id: request.id }, error as Error);
+      logger.error(
+        'Data export request processing failed',
+        { request_id: request.id },
+        error as Error
+      );
     }
   }
 }
@@ -1247,6 +1276,7 @@ export async function processPendingDataExportRequests(
  */
 async function estimateExportSize(
   adapter: { query: <T>(sql: string, params?: unknown[]) => Promise<T[]> },
+  tenantId: string,
   userId: string,
   sections: DataExportSection[]
 ): Promise<number> {
@@ -1255,8 +1285,8 @@ async function estimateExportSize(
   // Estimate ~500 bytes per consent record
   if (sections.includes('consents')) {
     const consents = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM oauth_client_consents WHERE user_id = ?',
-      [userId]
+      'SELECT COUNT(*) as count FROM oauth_client_consents WHERE user_id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
     totalSize += (consents[0]?.count || 0) * 500;
   }
@@ -1264,8 +1294,8 @@ async function estimateExportSize(
   // Estimate ~200 bytes per session
   if (sections.includes('sessions')) {
     const sessions = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM sessions WHERE user_id = ?',
-      [userId]
+      'SELECT COUNT(*) as count FROM sessions WHERE user_id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
     totalSize += (sessions[0]?.count || 0) * 200;
   }
@@ -1273,8 +1303,8 @@ async function estimateExportSize(
   // Estimate ~300 bytes per audit log entry
   if (sections.includes('audit_log')) {
     const logs = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM consent_history WHERE user_id = ?',
-      [userId]
+      'SELECT COUNT(*) as count FROM consent_history WHERE user_id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
     totalSize += (logs[0]?.count || 0) * 300;
   }
@@ -1282,8 +1312,8 @@ async function estimateExportSize(
   // Estimate ~400 bytes per passkey
   if (sections.includes('passkeys')) {
     const passkeys = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM user_passkeys WHERE user_id = ?',
-      [userId]
+      'SELECT COUNT(*) as count FROM user_passkeys WHERE user_id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
     totalSize += (passkeys[0]?.count || 0) * 400;
   }
@@ -1496,8 +1526,8 @@ async function collectExportData(
     }>(
       `SELECT id, created_at, last_used_at, name
        FROM user_passkeys
-       WHERE user_id = ?`,
-      [userId]
+       WHERE user_id = ? AND tenant_id = ?`,
+      [userId, tenantId]
     );
 
     exportedData.passkeys = passkeys.map((p) => ({

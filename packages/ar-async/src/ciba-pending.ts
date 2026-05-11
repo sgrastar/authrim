@@ -54,6 +54,10 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
 export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
   const tenantId = resolveTenantId(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     // User identification for CIBA pending requests
     //
@@ -97,7 +101,7 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
       getResponse = await cibaRequestStore.fetch(
         new Request('https://internal/get-by-login-hint', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalHeaders,
           body: JSON.stringify({ login_hint: loginHint }),
         })
       );
@@ -107,7 +111,7 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
       getResponse = await cibaRequestStore.fetch(
         new Request('https://internal/get-by-login-hint', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalHeaders,
           body: JSON.stringify({ login_hint: `sub:${userId}` }),
         })
       );
@@ -136,6 +140,7 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     // Enrich with client metadata from KV cache (with D1 fallback)
     const client = await getClient(
       c.env,
+      tenantId,
       metadata.client_id,
       createAuthContextFromHono(c, tenantId).coreAdapter
     );

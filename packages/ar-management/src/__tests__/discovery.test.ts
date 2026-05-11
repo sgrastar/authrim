@@ -45,6 +45,9 @@ const mocked = vi.hoisted(() => {
       if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
         return state.tenants.filter((tenant) => tenant.is_active === 1).slice(0, 2) as T[];
       }
+      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
+        return state.clients.filter((client) => client.client_id === params[0]) as T[];
+      }
 
       return [];
     }
@@ -62,9 +65,6 @@ const mocked = vi.hoisted(() => {
       if (query.includes('FROM tenants WHERE id = ? AND is_active = 1')) {
         return (state.tenants.find((tenant) => tenant.id === params[0] && tenant.is_active === 1) ??
           null) as T | null;
-      }
-      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
-        return (state.clients.find((client) => client.client_id === params[0]) ?? null) as T | null;
       }
       if (query.includes('FROM tenant_invitations')) {
         const token = params[0];
@@ -134,12 +134,16 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
-function createMockAdapter(options: {
-  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-} = {}) {
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+) {
   return {
     query: vi.fn().mockResolvedValue([]),
-    queryOne: vi.fn(async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null),
+    queryOne: vi.fn(
+      async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
+    ),
     execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
     transaction: vi.fn(async (fn: any) => fn()),
     batch: vi.fn().mockResolvedValue([]),
@@ -574,6 +578,40 @@ describe('discovery API', () => {
     expect(body.candidate.source).toBe('app_hint');
   });
 
+  it('returns multiple app_hint candidates when client_id exists in multiple tenants', async () => {
+    mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'acme' });
+    mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'beta' });
+    try {
+      const { app, env } = createDiscoveryApp();
+
+      const response = await app.request(
+        'https://default.auth.example.com/api/auth/discovery',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Forwarded-Host': 'default.auth.example.com',
+          },
+          body: JSON.stringify({ mode: 'app_hint', value: 'shared-native' }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        result: 'multiple';
+        candidates: Array<{ tenant_id: string; source: string }>;
+      };
+      expect(body.result).toBe('multiple');
+      expect(body.candidates.map((candidate) => candidate.tenant_id).sort()).toEqual([
+        'acme',
+        'beta',
+      ]);
+    } finally {
+      mocked.state.clients.splice(-2, 2);
+    }
+  });
+
   it('returns not_found when app_hint resolves to an inactive tenant', async () => {
     const { app, env } = createDiscoveryApp();
 
@@ -679,9 +717,7 @@ describe('discovery API', () => {
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { login_url: string };
-    expect(body.login_url).toMatch(
-      /^https:\/\/login\.acme\.example\.com\/login\?discovery_grant=/
-    );
+    expect(body.login_url).toMatch(/^https:\/\/login\.acme\.example\.com\/login\?discovery_grant=/);
   });
 
   it('verifies a discovery grant only for the bound tenant login URL', async () => {

@@ -14,11 +14,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
-import {
-  detectImageType,
-  logSanitizedError,
-  scheduleAdminAuditLog,
-} from './admin-shared';
+import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
 
 /**
  * Serve avatar image from R2
@@ -153,7 +149,7 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
       await piiCtx.piiRepositories.userPII.updatePII(userId, { picture: avatarUrl }, piiAdapter);
     }
 
-    await invalidateUserCache(c.env, userId);
+    await invalidateUserCache(c.env, tenantId, userId);
 
     return c.json({
       success: true,
@@ -229,7 +225,7 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
       await piiCtx.piiRepositories.userPII.updatePII(userId, { picture: null }, piiAdapter);
     }
 
-    await invalidateUserCache(c.env, userId);
+    await invalidateUserCache(c.env, tenantId, userId);
 
     return c.json({
       success: true,
@@ -322,7 +318,10 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
           id: string;
           email: string | null;
           name: string | null;
-        }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, userIds);
+        }>(
+          `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
+          [tenantId, ...userIds]
+        );
 
         for (const pii of piiResults) {
           userPIIMap.set(pii.id, { email: pii.email, name: pii.name });
@@ -387,7 +386,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
 
     if (isShardedSessionId(sessionId)) {
       try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
         sessionData = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
         if (sessionData) {
@@ -407,8 +406,8 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       expires_at: number;
     }
     const session = await authCtx.coreAdapter.queryOne<SessionRow>(
-      'SELECT * FROM sessions WHERE id = ?',
-      [sessionId]
+      'SELECT * FROM sessions WHERE id = ? AND tenant_id = ?',
+      [sessionId, tenantId]
     );
 
     if (!session && !sessionData) {
@@ -429,7 +428,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       const userPII = await piiCtx.defaultPiiAdapter.queryOne<{
         email: string | null;
         name: string | null;
-      }>('SELECT email, name FROM users_pii WHERE id = ?', [userId]);
+      }>('SELECT email, name FROM users_pii WHERE id = ? AND tenant_id = ?', [userId, tenantId]);
       userEmail = userPII?.email || null;
       userName = userPII?.name || null;
     }
@@ -471,8 +470,8 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = createAuthContextFromHono(c, tenantId);
 
     const session = await authCtx.coreAdapter.queryOne<{ id: string; user_id: string }>(
-      'SELECT id, user_id FROM sessions WHERE id = ?',
-      [sessionId]
+      'SELECT id, user_id FROM sessions WHERE id = ? AND tenant_id = ?',
+      [sessionId, tenantId]
     );
 
     if (!session) {
@@ -488,7 +487,7 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
     const log = getLogger(c).module('ADMIN');
     if (isShardedSessionId(sessionId)) {
       try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (!deleted) {
@@ -507,7 +506,10 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    await authCtx.coreAdapter.execute('DELETE FROM sessions WHERE id = ?', [sessionId]);
+    await authCtx.coreAdapter.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
+      sessionId,
+      tenantId,
+    ]);
 
     log.info('Admin revoked session', {
       action: 'session_revoke',
@@ -546,7 +548,10 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const userCore = await authCtx.coreAdapter.queryOne<{ id: string; is_active: number }>(
+      'SELECT id, is_active FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
 
     if (!userCore || !userCore.is_active) {
       return c.json(
@@ -568,8 +573,8 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     );
 
     const deleteResult = await authCtx.coreAdapter.execute(
-      'DELETE FROM sessions WHERE user_id = ?',
-      [userId]
+      'DELETE FROM sessions WHERE user_id = ? AND tenant_id = ?',
+      [userId, tenantId]
     );
 
     const dbRevokedCount = deleteResult.rowsAffected || 0;

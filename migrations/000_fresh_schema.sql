@@ -290,7 +290,7 @@ CREATE TABLE "ciba_requests" (
   token_issued INTEGER DEFAULT 0,
   token_issued_at INTEGER,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
 );
 
@@ -306,7 +306,7 @@ CREATE TABLE client_consent_overrides (
   display_order INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
   FOREIGN KEY (statement_id) REFERENCES consent_statements(id) ON DELETE CASCADE,
   UNIQUE (tenant_id, client_id, statement_id)
 );
@@ -705,12 +705,12 @@ CREATE TABLE "oauth_client_consents" (
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   tenant_id TEXT NOT NULL DEFAULT 'default', selected_scopes TEXT, privacy_policy_version TEXT, tos_version TEXT, consent_version INTEGER DEFAULT 1,
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
-  UNIQUE (user_id, client_id)
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, user_id, client_id)
 );
 
 CREATE TABLE oauth_clients (
-  client_id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
   client_name TEXT NOT NULL,
   redirect_uris TEXT NOT NULL,
   grant_types TEXT NOT NULL,
@@ -737,7 +737,7 @@ CREATE TABLE oauth_clients (
   default_resource TEXT,  -- Default resource target for access tokens
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, claims_parameter_policy TEXT, asc_enabled INTEGER DEFAULT 1, asc_protected_request_required INTEGER DEFAULT 1, asc_sao_enabled INTEGER DEFAULT 1, asc_transformed_claims_enabled INTEGER DEFAULT 1, asc_allowed_transformed_claims TEXT, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, login_ui_url TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0, application_type TEXT DEFAULT 'web', trust_group TEXT, trust_group_id TEXT, browser_public_client_mode TEXT, browser_refresh_token_policy TEXT NOT NULL DEFAULT 'disabled', native_sso_enabled INTEGER, native_channel_allowed INTEGER, allowed_channels TEXT);
+, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, claims_parameter_policy TEXT, asc_enabled INTEGER DEFAULT 1, asc_protected_request_required INTEGER DEFAULT 1, asc_sao_enabled INTEGER DEFAULT 1, asc_transformed_claims_enabled INTEGER DEFAULT 1, asc_allowed_transformed_claims TEXT, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, login_ui_url TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0, application_type TEXT DEFAULT 'web', trust_group TEXT, trust_group_id TEXT, browser_public_client_mode TEXT, browser_refresh_token_policy TEXT NOT NULL DEFAULT 'disabled', native_sso_enabled INTEGER, native_channel_allowed INTEGER, allowed_channels TEXT, PRIMARY KEY (tenant_id, client_id));
 
 CREATE INDEX idx_oauth_clients_trust_group ON oauth_clients(tenant_id, trust_group);
 CREATE INDEX idx_oauth_clients_application_type ON oauth_clients(tenant_id, application_type);
@@ -755,7 +755,7 @@ CREATE TABLE web_origin_registry (
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
   UNIQUE (tenant_id, client_id, origin)
 );
 
@@ -1141,11 +1141,20 @@ CREATE TABLE "role_assignments" (
 
 CREATE TABLE roles (
   id TEXT PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  name TEXT NOT NULL,
   description TEXT,
   permissions_json TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-, tenant_id TEXT NOT NULL DEFAULT 'default', role_type TEXT NOT NULL DEFAULT 'custom', hierarchy_level INTEGER DEFAULT 0, is_assignable INTEGER DEFAULT 1, parent_role_id TEXT REFERENCES roles(id), display_name TEXT, is_system INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
+  created_at INTEGER NOT NULL,
+  role_type TEXT NOT NULL DEFAULT 'custom',
+  hierarchy_level INTEGER DEFAULT 0,
+  is_assignable INTEGER DEFAULT 1,
+  parent_role_id TEXT REFERENCES roles(id),
+  display_name TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER,
+  UNIQUE(tenant_id, name)
+);
 
 CREATE TABLE schema_migrations (
   -- Migration version (from filename: 001_initial_schema.sql -> version = 1)
@@ -1233,16 +1242,16 @@ CREATE TABLE security_threats (
 
 CREATE TABLE "session_clients" (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
   session_id TEXT NOT NULL,
   client_id TEXT NOT NULL,
   first_token_at INTEGER NOT NULL,
   last_token_at INTEGER NOT NULL,
   last_seen_at INTEGER,
 
-  -- Only keep the client_id foreign key
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
 
-  UNIQUE (session_id, client_id)
+  UNIQUE (tenant_id, session_id, client_id)
 );
 
 CREATE TABLE "sessions" (
@@ -1848,7 +1857,7 @@ CREATE INDEX idx_check_api_keys_prefix
 CREATE INDEX idx_check_api_keys_tenant_active
     ON check_api_keys(tenant_id, is_active);
 
-CREATE INDEX idx_ciba_client ON ciba_requests(client_id);
+CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id);
 
 CREATE INDEX idx_ciba_status ON ciba_requests(status);
 
@@ -1921,7 +1930,7 @@ CREATE INDEX idx_csv_statement ON consent_statement_versions(statement_id, is_cu
 CREATE UNIQUE INDEX idx_csv_unique_current
   ON consent_statement_versions(tenant_id, current_statement_guard);
 
-CREATE INDEX idx_consents_client ON oauth_client_consents(client_id);
+CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id);
 
 CREATE INDEX idx_consents_expires_at_active
   ON oauth_client_consents(expires_at);
@@ -2205,7 +2214,7 @@ CREATE INDEX idx_security_threats_tenant ON security_threats(tenant_id);
 
 CREATE INDEX idx_security_threats_type ON security_threats(tenant_id, type);
 
-CREATE INDEX idx_session_clients_client_id ON session_clients(client_id);
+CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id);
 
 CREATE INDEX idx_session_clients_last_seen_at ON session_clients(last_seen_at);
 

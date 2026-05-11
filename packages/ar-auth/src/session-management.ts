@@ -61,7 +61,11 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session) {
@@ -179,7 +183,11 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session) {
@@ -206,7 +214,8 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
           {
             rpOrigin: rp_origin,
             parentSessionId: session.id,
-          }
+          },
+          getTenantIdFromContext(c)
         )) as Session;
         rpSessionId = newSession.id;
       } catch (error) {
@@ -268,7 +277,11 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session) {
@@ -402,7 +415,11 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.extendSessionRpc(
       sessionId,
       extendSeconds

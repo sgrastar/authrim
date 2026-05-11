@@ -42,8 +42,6 @@ import {
   getClientCached,
   loadTenantProfileCached,
   loadClientContractCached,
-  // Session-Client Repository (for implicit/hybrid logout support)
-  SessionClientRepository,
   // Logging
   getLogger,
   createLogger,
@@ -899,9 +897,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         if (parsedPar) {
           // New region-sharded format: route via embedded shard info
-          const { stub } = getPARRequestStoreByUri(c.env, request_uri!, getTenantIdFromContext(c));
+          const tenantId = getTenantIdFromContext(c);
+          const { stub } = getPARRequestStoreByUri(c.env, request_uri!, tenantId);
           consumed = (await stub.consumeRequestRpc({
             requestUri: request_uri!,
+            tenant_id: tenantId,
             client_id: client_id || '', // May be empty for new format
           })) as PARRequestData;
         } else {
@@ -919,6 +919,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           const stub = c.env.PAR_REQUEST_STORE.get(id);
           consumed = (await stub.consumeRequestRpc({
             requestUri: request_uri!,
+            tenant_id: getTenantIdFromContext(c),
             client_id: client_id,
           })) as PARRequestData;
         }
@@ -2087,7 +2088,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Legacy sessions without shard prefix are treated as invalid (user must re-login)
   if (sessionId && c.env.SESSION_STORE && isShardedSessionId(sessionId)) {
     try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
 
       const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
@@ -2774,9 +2775,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Use DatabaseAdapter for consent insert (portable across D1/PostgreSQL/MySQL)
         await authCtx.coreAdapter.execute(
           `INSERT INTO oauth_client_consents
-           (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [consentId, sub, validClientId, scope, now, null, now, now]
+           (id, tenant_id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [consentId, tenantId, sub, validClientId, scope, now, null, now, now]
         );
 
         // Invalidate consent cache after insert so next read picks up new consent
@@ -3399,7 +3400,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       if (isIdTokenOnly || hasRequestedIdTokenClaims || hasIdTokenSAORules) {
         // Fetch user data from cache (Read-Through Cache) or D1
         const piiCtx = createPIIContextFromHono(c, tenantId);
-        const user = await getCachedUser(c.env, sub, {
+        const user = await getCachedUser(c.env, tenantId, sub, {
           coreDb: piiCtx.coreAdapter,
           piiDb: piiCtx.defaultPiiAdapter,
         });
@@ -3460,8 +3461,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sidPrefix: sessionId.substring(0, 25),
         clientIdPrefix: validClientId.substring(0, 25),
       });
-      const sessionClientRepo = new SessionClientRepository(authCtx.coreAdapter);
-      const result = await sessionClientRepo.createOrUpdate({
+      const result = await authCtx.repositories.sessionClient.createOrUpdate({
         session_id: sessionId,
         client_id: validClientId,
       });
@@ -4492,7 +4492,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   if (sessionTenantProfile.uses_do_for_state) {
     // Human profile: Create session using sharded SessionStore
     const { stub: sessionStore, sessionId: newSessionId } = await getSessionStoreForNewSession(
-      c.env
+      c.env,
+      tenantId
     );
 
     try {
@@ -4503,7 +4504,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         {
           clientId: metadata.client_id as string,
           authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
-        }
+        },
+        tenantId
       );
 
       // Set session cookie with the pre-generated sharded session ID (HttpOnly for security)

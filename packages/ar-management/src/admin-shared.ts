@@ -221,15 +221,19 @@ export async function loadAdminAuditDetail(
   }
 
   const fallbackCatalogId =
-    objectCatalogId ?? (detailArtifactId && !detailArtifactId.startsWith('oa_') ? detailArtifactId : null);
+    objectCatalogId ??
+    (detailArtifactId && !detailArtifactId.startsWith('oa_') ? detailArtifactId : null);
 
   const resolvedCatalogId = detailArtifactId
-    ? (await getObjectCatalogObjectRecordByPublicArtifactId(
-        adminAdapter,
-        detailArtifactId,
-        'canonical_json',
-        0
-      ))?.logical.id ?? null
+    ? ((
+        await getObjectCatalogObjectRecordByPublicArtifactId(
+          adminAdapter,
+          detailArtifactId,
+          'canonical_json',
+          0,
+          tenantId
+        )
+      )?.logical.id ?? null)
     : null;
 
   const effectiveCatalogId = resolvedCatalogId ?? fallbackCatalogId;
@@ -318,9 +322,9 @@ export async function writeAdminAuditLog(
       ip_address: ipAddress,
       user_agent: userAgent,
       session_id: adminAuth?.sessionId ?? undefined,
-      before: detailObjectCatalogId ? undefined : detailPayload.before ?? undefined,
-      after: detailObjectCatalogId ? undefined : detailPayload.after ?? undefined,
-      metadata: detailObjectCatalogId ? undefined : detailPayload.metadata ?? undefined,
+      before: detailObjectCatalogId ? undefined : (detailPayload.before ?? undefined),
+      after: detailObjectCatalogId ? undefined : (detailPayload.after ?? undefined),
+      metadata: detailObjectCatalogId ? undefined : (detailPayload.metadata ?? undefined),
       detail_object_catalog_id: detailObjectCatalogId ?? undefined,
     });
   } catch (error) {

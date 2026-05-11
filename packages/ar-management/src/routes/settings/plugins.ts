@@ -30,6 +30,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   createLogger,
+  getTenantIdFromContext,
   invalidatePluginRuntimeCaches,
 } from '@authrim/ar-lib-core';
 import {
@@ -198,10 +199,30 @@ function getPluginKV(env: Env): KVNamespace | undefined {
   return env.SETTINGS;
 }
 
+type PluginTenantScope = 'tenant' | 'platform';
+
+const PLUGIN_TENANT_SCOPE_KEY = 'pluginTenantScope';
+
+export async function platformPluginScopeMiddleware(
+  c: Context<{ Bindings: Env }>,
+  next: () => Promise<void>
+): Promise<void> {
+  (c as any).set(PLUGIN_TENANT_SCOPE_KEY, 'platform');
+  await next();
+}
+
+function getPluginTenantScope(c: Context<{ Bindings: Env }>): PluginTenantScope {
+  return ((c as any).get(PLUGIN_TENANT_SCOPE_KEY) as PluginTenantScope | undefined) ?? 'tenant';
+}
+
 function getRequestTenantId(
   c: Context<{ Bindings: Env }>,
   explicitTenantId?: string
 ): string | undefined {
+  if (getPluginTenantScope(c) === 'tenant') {
+    return getTenantIdFromContext(c);
+  }
+
   const candidates = [explicitTenantId, c.req.query('tenant_id'), c.req.header('X-Tenant-Id')];
 
   for (const candidate of candidates) {
@@ -499,7 +520,9 @@ export async function getPluginConfig(
 
   // Check tenant-specific first
   if (tenantId) {
-    const resolvedTenantConfig = await readKvConfig(`plugins:config:${pluginId}:tenant:${tenantId}`);
+    const resolvedTenantConfig = await readKvConfig(
+      `plugins:config:${pluginId}:tenant:${tenantId}`
+    );
     if (resolvedTenantConfig) {
       tenantConfig = resolvedTenantConfig;
       hasKvConfig = true;
@@ -585,7 +608,9 @@ function createEmailNotifierCaptureRegistry(env: Env): {
   registerNotifier(channel: string, handler: unknown): void;
   registerIdP(): void;
   registerAuthenticator(): void;
-  getEmailNotifier(): { send: (notification: Record<string, unknown>) => Promise<unknown> } | undefined;
+  getEmailNotifier():
+    | { send: (notification: Record<string, unknown>) => Promise<unknown> }
+    | undefined;
 } {
   let emailNotifier:
     | { send: (notification: Record<string, unknown>) => Promise<unknown> }
@@ -602,7 +627,9 @@ function createEmailNotifierCaptureRegistry(env: Env): {
         configurable: true,
         enumerable: false,
       });
-      emailNotifier = handler as { send: (notification: Record<string, unknown>) => Promise<unknown> };
+      emailNotifier = handler as {
+        send: (notification: Record<string, unknown>) => Promise<unknown>;
+      };
     },
     registerIdP() {
       // No-op: plugin email test only needs notifier registration.
@@ -840,10 +867,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
 
   // Save to KV
   await kv.put(configKey, JSON.stringify(configToStore));
-  invalidatePluginRuntimeCaches(
-    c.env,
-    tenantId ? { tenantId, pluginId } : { pluginId }
-  );
+  invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
 
   // Log the change (with masked values for audit)
   log.info(

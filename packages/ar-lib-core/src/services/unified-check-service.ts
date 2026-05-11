@@ -622,9 +622,10 @@ export class UnifiedCheckService {
            INNER JOIN role_assignments ra ON r.id = ra.role_id
            WHERE ra.subject_id = ?
              AND ra.tenant_id = ?
+             AND r.tenant_id = ?
              AND r.is_active = 1
              AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-          [context.subjectId, context.tenantId, Math.floor(Date.now() / 1000)]
+          [context.subjectId, context.tenantId, context.tenantId, Math.floor(Date.now() / 1000)]
         );
 
       const permissionToCheck =
@@ -719,8 +720,8 @@ export class UnifiedCheckService {
         const orgMemberResult = await this.db
           .queryOne(
             `SELECT 1 FROM organization_memberships
-             WHERE user_id = ? AND org_id = ? AND is_active = 1`,
-            [context.subjectId, context.resourceContext.org_id]
+             WHERE tenant_id = ? AND user_id = ? AND org_id = ? AND is_active = 1`,
+            [context.tenantId, context.subjectId, context.resourceContext.org_id]
           );
 
         if (orgMemberResult) {

@@ -29,16 +29,15 @@ const {
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
   mockResolveUserStoreRuntimeSourcesFromEnv,
-} =
-  vi.hoisted(() => ({
-    mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
-    mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
-    mockSyncUserLifecycleState: vi.fn().mockResolvedValue({
-      lifecycleState: 'active',
-      missingRequiredFields: [],
-    }),
-    mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
-  }));
+} = vi.hoisted(() => ({
+  mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
+  mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
+  mockSyncUserLifecycleState: vi.fn().mockResolvedValue({
+    lifecycleState: 'active',
+    missingRequiredFields: [],
+  }),
+  mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+}));
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
@@ -99,12 +98,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-function createMockAdapter(options: {
-  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-} = {}) {
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+) {
   return {
     query: vi.fn().mockResolvedValue([]),
-    queryOne: vi.fn(async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null),
+    queryOne: vi.fn(
+      async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
+    ),
     execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
     transaction: vi.fn(async (fn: any) => fn()),
     batch: vi.fn().mockResolvedValue([]),
@@ -280,21 +283,23 @@ describe('SAML Integration', () => {
     });
 
     // Mock IdP config
-    mockGetIdPConfigByEntityId.mockImplementation(async (_env: any, entityId: string) => {
-      if (entityId === 'https://idp.example.com') {
-        return {
-          entityId: 'https://idp.example.com',
-          ssoUrl: 'https://idp.example.com/sso',
-          sloUrl: 'https://idp.example.com/slo',
-          certificate: 'mock-certificate',
-          attributeMapping: {
-            email: 'email',
-            name: 'displayName',
-          },
-        };
+    mockGetIdPConfigByEntityId.mockImplementation(
+      async (_env: any, _tenantId: string, entityId: string) => {
+        if (entityId === 'https://idp.example.com') {
+          return {
+            entityId: 'https://idp.example.com',
+            ssoUrl: 'https://idp.example.com/sso',
+            sloUrl: 'https://idp.example.com/slo',
+            certificate: 'mock-certificate',
+            attributeMapping: {
+              email: 'email',
+              name: 'displayName',
+            },
+          };
+        }
+        return null;
       }
-      return null;
-    });
+    );
     mockResolveUserStoreRuntimeSourcesFromEnv.mockImplementation(async (env: Partial<Env>) => ({
       storageProfile: {
         id: 'builtin:storage:standard',

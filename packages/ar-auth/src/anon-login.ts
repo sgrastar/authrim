@@ -415,8 +415,8 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         if (existingDevice.expires_at && existingDevice.expires_at < now) {
           // Device expired - deactivate and create new
           await authCtx.coreAdapter.execute(
-            'UPDATE anonymous_devices SET is_active = 0 WHERE id = ?',
-            [existingDevice.id]
+            'UPDATE anonymous_devices SET is_active = 0 WHERE id = ? AND tenant_id = ?',
+            [existingDevice.id, tenantId]
           );
         } else {
           // Resume existing user
@@ -424,8 +424,8 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
           // Update last_used_at
           await authCtx.coreAdapter.execute(
-            'UPDATE anonymous_devices SET last_used_at = ? WHERE id = ?',
-            [now, existingDevice.id]
+            'UPDATE anonymous_devices SET last_used_at = ? WHERE id = ? AND tenant_id = ?',
+            [now, existingDevice.id, tenantId]
           );
         }
       }
@@ -543,18 +543,25 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       let sessionId: string;
       try {
         const { stub: sessionStore, sessionId: newSessionId } = await getSessionStoreForNewSession(
-          c.env
+          c.env,
+          tenantId
         );
         sessionId = newSessionId;
 
-        await sessionStore.createSessionRpc(newSessionId, userId, SESSION_TTL, {
-          amr: ['anon'],
-          acr: 'urn:mace:incommon:iap:anonymous',
-          is_anonymous: true,
-          upgrade_eligible: true,
-          device_id_hash: currentSignature.device_id_hash,
-          client_id: clientId,
-        });
+        await sessionStore.createSessionRpc(
+          newSessionId,
+          userId,
+          SESSION_TTL,
+          {
+            amr: ['anon'],
+            acr: 'urn:mace:incommon:iap:anonymous',
+            is_anonymous: true,
+            upgrade_eligible: true,
+            device_id_hash: currentSignature.device_id_hash,
+            client_id: clientId,
+          },
+          tenantId
+        );
       } catch (error) {
         log.error('Failed to create session', { action: 'session_create' }, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
@@ -562,10 +569,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Update last_login_at (fire-and-forget)
       authCtx.coreAdapter
-        .execute('UPDATE users_core SET last_login_at = ?, updated_at = ? WHERE id = ?', [
+        .execute('UPDATE users_core SET last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?', [
           now,
           now,
           userId,
+          tenantId,
         ])
         .catch((error) => {
           log.error(

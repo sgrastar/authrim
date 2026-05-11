@@ -61,7 +61,11 @@ async function getAuthenticatedUserId(c: Context<{ Bindings: Env }>): Promise<st
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
     if (!session || !session.userId) {
       return null;

@@ -140,7 +140,7 @@ describe('Consent RBAC Utilities', () => {
         roles: { results: [{ name: 'admin' }, { name: 'user' }] },
       });
 
-      const result = await getConsentRBACData(db, 'user-123');
+      const result = await getConsentRBACData(db, 'user-123', 'default');
 
       expect(result.organizations).toHaveLength(2);
       expect(result.organizations[0]).toEqual({
@@ -171,7 +171,7 @@ describe('Consent RBAC Utilities', () => {
         roles: { results: [] },
       });
 
-      const result = await getConsentRBACData(db, 'user-123');
+      const result = await getConsentRBACData(db, 'user-123', 'default');
 
       expect(result.primary_org).toBeNull();
       expect(result.organizations).toHaveLength(1);
@@ -183,7 +183,7 @@ describe('Consent RBAC Utilities', () => {
         roles: { results: [] },
       });
 
-      const result = await getConsentRBACData(db, 'user-123');
+      const result = await getConsentRBACData(db, 'user-123', 'default');
 
       expect(result.organizations).toEqual([]);
       expect(result.primary_org).toBeNull();
@@ -207,7 +207,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await validateConsentOrgAccess(db, 'user-123', 'org-1');
+      const result = await validateConsentOrgAccess(db, 'user-123', 'org-1', 'default');
 
       expect(result.valid).toBe(true);
       expect(result.organization).toEqual({
@@ -225,7 +225,7 @@ describe('Consent RBAC Utilities', () => {
         validateOrgAccess: null,
       });
 
-      const result = await validateConsentOrgAccess(db, 'user-123', 'org-not-member');
+      const result = await validateConsentOrgAccess(db, 'user-123', 'org-not-member', 'default');
 
       expect(result.valid).toBe(false);
       expect(result.error).toBe('User is not a member of the specified organization');
@@ -243,7 +243,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await validateConsentOrgAccess(db, 'user-123', 'org-2');
+      const result = await validateConsentOrgAccess(db, 'user-123', 'org-2', 'default');
 
       expect(result.valid).toBe(true);
       expect(result.organization?.is_primary).toBe(false);
@@ -263,7 +263,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await validateActingAsRelationship(db, 'parent-123', 'child-456');
+      const result = await validateActingAsRelationship(db, 'parent-123', 'child-456', 'default');
 
       expect(result.valid).toBe(true);
       expect(result.relationship_type).toBe('parent_child');
@@ -279,7 +279,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await validateActingAsRelationship(db, 'guardian-123', 'ward-456');
+      const result = await validateActingAsRelationship(db, 'guardian-123', 'ward-456', 'default');
 
       expect(result.valid).toBe(true);
       expect(result.relationship_type).toBe('guardian');
@@ -294,7 +294,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await validateActingAsRelationship(db, 'delegate-123', 'principal-456');
+      const result = await validateActingAsRelationship(db, 'delegate-123', 'principal-456', 'default');
 
       expect(result.valid).toBe(true);
       expect(result.relationship_type).toBe('delegate');
@@ -306,7 +306,7 @@ describe('Consent RBAC Utilities', () => {
         relationship: null,
       });
 
-      const result = await validateActingAsRelationship(db, 'user-123', 'user-456');
+      const result = await validateActingAsRelationship(db, 'user-123', 'user-456', 'default');
 
       expect(result.valid).toBe(false);
       expect(result.error).toBe('No valid acting-as relationship exists');
@@ -338,7 +338,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await getActingAsUserInfo(db, 'parent-123', 'child-456', dbPII);
+      const result = await getActingAsUserInfo(db, 'parent-123', 'child-456', 'default', dbPII);
 
       expect(result).toEqual({
         id: 'child-456',
@@ -354,7 +354,7 @@ describe('Consent RBAC Utilities', () => {
         relationship: null,
       });
 
-      const result = await getActingAsUserInfo(db, 'user-123', 'user-456');
+      const result = await getActingAsUserInfo(db, 'user-123', 'user-456', 'default');
 
       expect(result).toBeNull();
     });
@@ -368,7 +368,7 @@ describe('Consent RBAC Utilities', () => {
         user: null,
       });
 
-      const result = await getActingAsUserInfo(db, 'delegate-123', 'deleted-user');
+      const result = await getActingAsUserInfo(db, 'delegate-123', 'deleted-user', 'default');
 
       expect(result).toBeNull();
     });
@@ -388,7 +388,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await getActingAsUserInfo(db, 'guardian-123', 'ward-456', dbPII);
+      const result = await getActingAsUserInfo(db, 'guardian-123', 'ward-456', 'default', dbPII);
 
       expect(result?.name).toBeUndefined();
       expect(result?.email).toBe('ward@example.com');
@@ -403,7 +403,7 @@ describe('Consent RBAC Utilities', () => {
         user: { id: 'target-456' },
       });
 
-      const result = await getActingAsUserInfo(db, 'actor-123', 'target-456');
+      const result = await getActingAsUserInfo(db, 'actor-123', 'target-456', 'default');
 
       expect(result?.email).toBe('target-456'); // Fallback to target ID
       expect(result?.name).toBeUndefined();
@@ -430,7 +430,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await getConsentUserInfo(db, 'user-123', dbPII);
+      const result = await getConsentUserInfo(db, 'user-123', 'default', dbPII);
 
       expect(result).toEqual({
         id: 'user-123',
@@ -452,7 +452,7 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await getConsentUserInfo(db, 'user-123', dbPII);
+      const result = await getConsentUserInfo(db, 'user-123', 'default', dbPII);
 
       expect(result?.name).toBeUndefined();
       expect(result?.picture).toBeUndefined();
@@ -464,7 +464,7 @@ describe('Consent RBAC Utilities', () => {
         user: null,
       });
 
-      const result = await getConsentUserInfo(db, 'nonexistent-user');
+      const result = await getConsentUserInfo(db, 'nonexistent-user', 'default');
 
       expect(result).toBeNull();
     });
@@ -475,7 +475,7 @@ describe('Consent RBAC Utilities', () => {
       });
 
       // Without dbPII, email falls back to subjectId
-      const result = await getConsentUserInfo(db, 'user-123');
+      const result = await getConsentUserInfo(db, 'user-123', 'default');
 
       expect(result).toEqual({
         id: 'user-123',

@@ -296,16 +296,12 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
 
     // Check if exists and belongs to the current tenant
     const existing = await adapter.query<{ tenant_id: string }>(
-      'SELECT tenant_id FROM relation_definitions WHERE id = ?',
-      [id]
+      'SELECT tenant_id FROM relation_definitions WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
     );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -329,9 +325,9 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
       params.push(body.is_active ? 1 : 0);
     }
 
-    params.push(id);
+    params.push(id, tenantId);
     await adapter.execute(
-      `UPDATE relation_definitions SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE relation_definitions SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`,
       params
     );
 
@@ -359,19 +355,18 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
 
     // Check if exists and belongs to the current tenant
     const existing = await adapter.query<{ tenant_id: string }>(
-      'SELECT tenant_id FROM relation_definitions WHERE id = ?',
-      [id]
+      'SELECT tenant_id FROM relation_definitions WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
     );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-    }
-
-    await adapter.execute('DELETE FROM relation_definitions WHERE id = ?', [id]);
+    await adapter.execute('DELETE FROM relation_definitions WHERE id = ? AND tenant_id = ?', [
+      id,
+      tenantId,
+    ]);
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'delete', 'relation_definition', id, {});
@@ -586,19 +581,18 @@ export async function adminRelationshipTupleDeleteHandler(c: AdminContext) {
 
     // Check if exists
     const existing = await adapter.query<{ tenant_id: string }>(
-      'SELECT tenant_id FROM relationships WHERE id = ?',
-      [id]
+      'SELECT tenant_id FROM relationships WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
     );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-    }
-
-    await adapter.execute('DELETE FROM relationships WHERE id = ?', [id]);
+    await adapter.execute('DELETE FROM relationships WHERE id = ? AND tenant_id = ?', [
+      id,
+      tenantId,
+    ]);
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'delete', 'relationship_tuple', id, {});

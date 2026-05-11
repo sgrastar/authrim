@@ -97,6 +97,7 @@ export class CIBARequestStore {
   private requestPersistence: CIBARequestPersistenceAdapter | null = null;
   private requestPersistenceInit: Promise<CIBARequestPersistenceAdapter | null> | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
+  private tenantId: string | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -124,6 +125,9 @@ export class CIBARequestStore {
       for (const [key, metadata] of requestEntries) {
         const authReqId = key.substring(STORAGE_PREFIX.REQUEST.length);
         this.cibaRequests.set(authReqId, metadata);
+        if (!this.tenantId && metadata.tenant_id) {
+          this.tenantId = metadata.tenant_id;
+        }
       }
 
       // Load user code mappings
@@ -209,6 +213,7 @@ export class CIBARequestStore {
    */
   async fetch(request: Request): Promise<Response> {
     await this.initializeState();
+    this.configureTenantFromRequest(request);
 
     const url = new URL(request.url);
     const path = url.pathname;
@@ -357,8 +362,13 @@ export class CIBARequestStore {
    * Store a new CIBA request
    */
   private async storeCIBARequest(metadata: CIBARequestMetadata): Promise<void> {
+    if (metadata.tenant_id) {
+      this.setTenantId(metadata.tenant_id);
+    }
+
     const v2Metadata: CIBARequestV2 = {
       ...metadata,
+      ...(this.tenantId ? { tenant_id: this.tenantId } : {}),
       token_issued: metadata.token_issued ?? false,
     };
 
@@ -946,7 +956,11 @@ export class CIBARequestStore {
   private async initializeRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    return createCIBARequestPersistenceAdapter(source);
+    return createCIBARequestPersistenceAdapter(
+      source,
+      'ciba-request-store',
+      this.tenantId ?? undefined
+    );
   }
 
   private async ensureRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
@@ -961,5 +975,22 @@ export class CIBARequestStore {
 
     this.requestPersistence = await this.requestPersistenceInit;
     return this.requestPersistence;
+  }
+
+  private configureTenantFromRequest(request: Request): void {
+    const tenantId = request.headers.get('X-Authrim-Tenant-Id')?.trim();
+    if (tenantId) {
+      this.setTenantId(tenantId);
+    }
+  }
+
+  private setTenantId(tenantId: string): void {
+    if (this.tenantId === tenantId) {
+      return;
+    }
+
+    this.tenantId = tenantId;
+    this.requestPersistence = null;
+    this.requestPersistenceInit = null;
   }
 }

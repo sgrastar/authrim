@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   buildRecordMigrationSql,
   buildRuntimeProfileSeedSql,
@@ -7,6 +10,51 @@ import {
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
+
+function findSqlite3(): string | null {
+  try {
+    const path = execFileSync('which', ['sqlite3'], { encoding: 'utf-8' }).trim();
+    return path || null;
+  } catch {
+    return null;
+  }
+}
+
+function runSqlite(sqlite3Path: string, dbPath: string, sql: string): void {
+  execFileSync(sqlite3Path, [dbPath], {
+    input: sql,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+}
+
+function readSqlite(sqlite3Path: string, dbPath: string, sql: string): string {
+  return execFileSync(sqlite3Path, [dbPath, sql], { encoding: 'utf-8' }).trim();
+}
+
+function insertOAuthClientSql(tenantId: string, clientId: string, clientName: string): string {
+  return `
+INSERT INTO oauth_clients (
+  tenant_id,
+  client_id,
+  client_name,
+  redirect_uris,
+  grant_types,
+  response_types,
+  created_at,
+  updated_at
+) VALUES (
+  '${tenantId}',
+  '${clientId}',
+  '${clientName}',
+  '[]',
+  '[]',
+  '[]',
+  1,
+  1
+);
+`;
+}
 
 describe('shouldMirrorPiiMigrationsToCore', () => {
   it('returns false for the standard storage profile', () => {
@@ -135,6 +183,139 @@ describe('migration seed SQL portability', () => {
     for (const fileUrl of migrationFiles) {
       const sql = readFileSync(fileUrl, 'utf-8');
       expect(sql).not.toMatch(partialIndexPattern);
+    }
+  });
+
+  it('scopes OAuth client identifiers by tenant in fresh schema assets', () => {
+    const migrationFiles = [
+      new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
+      new URL('../../migrations/000_fresh_schema.sql', import.meta.url),
+    ];
+
+    for (const fileUrl of migrationFiles) {
+      const sql = readFileSync(fileUrl, 'utf-8');
+      expect(sql).not.toContain('client_id TEXT PRIMARY KEY');
+      expect(sql).toContain('PRIMARY KEY (tenant_id, client_id)');
+      expect(sql).toContain(
+        'FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id)'
+      );
+      expect(sql).toContain('UNIQUE (tenant_id, user_id, client_id)');
+      expect(sql).toContain('UNIQUE (tenant_id, session_id, client_id)');
+      expect(sql).toContain('CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id)');
+      expect(sql).toContain(
+        'CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id)'
+      );
+      expect(sql).toContain(
+        'CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id)'
+      );
+    }
+  });
+
+  it('applies the tenant-scoped OAuth client migration in SQLite', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) {
+      return;
+    }
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-oauth-client-migration-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `
+PRAGMA foreign_keys = ON;
+CREATE TABLE users_core (id TEXT PRIMARY KEY);
+CREATE TABLE consent_statements (id TEXT PRIMARY KEY);
+CREATE TABLE sessions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default');
+`
+      );
+
+      const migrationSql = readFileSync(
+        new URL('../../../../migrations/077_oauth_client_tenant_scoped_identity.sql', import.meta.url),
+        'utf-8'
+      );
+      runSqlite(sqlite3Path, dbPath, migrationSql);
+
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `
+PRAGMA foreign_keys = ON;
+${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Tenant A Mobile')}
+${insertOAuthClientSql('tenant-b', 'shared-mobile', 'Tenant B Mobile')}
+`
+      );
+
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT COUNT(*) FROM oauth_clients WHERE client_id = 'shared-mobile';"
+        )
+      ).toBe('2');
+
+      expect(() =>
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `
+PRAGMA foreign_keys = ON;
+${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Duplicate Tenant A Mobile')}
+`
+        )
+      ).toThrow();
+
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `
+PRAGMA foreign_keys = ON;
+INSERT INTO session_clients (
+  id,
+  tenant_id,
+  session_id,
+  client_id,
+  first_token_at,
+  last_token_at
+) VALUES (
+  'sc-tenant-a',
+  'tenant-a',
+  'session-a',
+  'shared-mobile',
+  1,
+  1
+);
+`
+      );
+
+      expect(() =>
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `
+PRAGMA foreign_keys = ON;
+INSERT INTO session_clients (
+  id,
+  tenant_id,
+  session_id,
+  client_id,
+  first_token_at,
+  last_token_at
+) VALUES (
+  'sc-tenant-c',
+  'tenant-c',
+  'session-c',
+  'shared-mobile',
+  1,
+  1
+);
+`
+        )
+      ).toThrow();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });

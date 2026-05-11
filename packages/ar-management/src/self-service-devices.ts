@@ -171,7 +171,10 @@ async function requireSelfServiceAccess(
 
   const sub = introspection.claims.sub;
   if (typeof sub !== 'string' || sub.length === 0) {
-    return c.json({ error: 'invalid_token', error_description: 'Access token subject is missing' }, 401);
+    return c.json(
+      { error: 'invalid_token', error_description: 'Access token subject is missing' },
+      401
+    );
   }
 
   return {
@@ -295,7 +298,9 @@ async function buildAppDisplayNameMap(
   repo: ClientDisplayNameRepository,
   clientIds: Iterable<string | undefined>
 ): Promise<Map<string, string>> {
-  const uniqueClientIds = [...new Set([...clientIds].filter((value): value is string => Boolean(value)))];
+  const uniqueClientIds = [
+    ...new Set([...clientIds].filter((value): value is string => Boolean(value))),
+  ];
   const entries = await Promise.all(
     uniqueClientIds.map(async (clientId) => {
       const client = await repo.findByClientId(clientId);
@@ -419,7 +424,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
 
   const limit = normalizeLimit(c.req.query('limit'));
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const repo = new DeviceSecretRepository(authCtx.coreAdapter);
+  const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
   const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
   const legacySecrets = await repo.findByUserId(access.sub, tenantId, true);
   const migratedInstallations = await Promise.all(
@@ -430,9 +435,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
     : undefined;
   const visibility = {
     trustGroupId: currentInstallation?.trust_group_id,
-    clientId: currentInstallation?.trust_group_id
-      ? undefined
-      : currentInstallation?.client_id,
+    clientId: currentInstallation?.trust_group_id ? undefined : currentInstallation?.client_id,
   };
   const canonicalInstallations = await installationRepo.findByUserId(access.sub, tenantId, {
     validOnly: true,
@@ -517,7 +520,7 @@ export async function updateMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
     return c.json({ error: 'not_found', error_description: 'Device was not found' }, 404);
   }
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const repo = new DeviceSecretRepository(authCtx.coreAdapter);
+  const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
   const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
   const existingInstallation = await findOwnedInstallation(
     installationRepo,
@@ -530,7 +533,7 @@ export async function updateMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
       (await installationRepo.updateDisplayName(existingInstallation.id, tenantId, displayName)) ??
       existingInstallation;
     if (updated.linked_device_secret_id) {
-      await repo.update(updated.linked_device_secret_id, { device_name: displayName });
+      await repo.update(updated.linked_device_secret_id, { device_name: displayName }, tenantId);
     }
     const clientId = getInstallationInventoryClientId(updated, access);
     const appDisplayNames = await buildAppDisplayNameMap(authCtx.repositories.client, [clientId]);
@@ -548,7 +551,8 @@ export async function updateMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
     return c.json({ error: 'not_found', error_description: 'Device was not found' }, 404);
   }
 
-  const updated = (await repo.update(existing.id, { device_name: displayName })) ?? existing;
+  const updated =
+    (await repo.update(existing.id, { device_name: displayName }, tenantId)) ?? existing;
   await installationRepo.ensureForDeviceSecret(updated);
   const clientId = getDeviceSecretInventoryClientId(updated, access);
   const appDisplayNames = await buildAppDisplayNameMap(authCtx.repositories.client, [clientId]);
@@ -574,7 +578,7 @@ export async function deleteMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
     return c.json({ error: 'not_found', error_description: 'Device was not found' }, 404);
   }
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const repo = new DeviceSecretRepository(authCtx.coreAdapter);
+  const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
   const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
   const existingInstallation = await findOwnedInstallation(
     installationRepo,
@@ -594,7 +598,7 @@ export async function deleteMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
       'device_unlink'
     );
     if (existingInstallation.linked_device_secret_id) {
-      await repo.revoke(existingInstallation.linked_device_secret_id, 'device_unlink');
+      await repo.revoke(existingInstallation.linked_device_secret_id, 'device_unlink', tenantId);
     }
 
     return c.json({
@@ -619,7 +623,7 @@ export async function deleteMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
       access.sessionId !== undefined &&
       existing.session_id === access.sessionId);
 
-  const revoked = await repo.revoke(existing.id, 'device_unlink');
+  const revoked = await repo.revoke(existing.id, 'device_unlink', tenantId);
   const legacyInstallation = await installationRepo.ensureForDeviceSecret(existing);
   if (legacyInstallation) {
     await installationRepo.revoke(legacyInstallation.id, tenantId, 'device_unlink');

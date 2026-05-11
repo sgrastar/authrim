@@ -214,7 +214,8 @@ describe('handleHandoffVerify', () => {
       expect.objectContaining({
         token_type: 'DPoP',
         cnf: { jkt: 'jkt-123' },
-      })
+      }),
+      'tenant-123'
     );
   });
 
@@ -316,7 +317,8 @@ describe('handleHandoffVerify', () => {
       3600,
       expect.objectContaining({
         token_type: 'Cookie',
-      })
+      }),
+      'tenant-123'
     );
     expect(mocks.createSessionRpc.mock.calls.at(-1)?.[3]).not.toHaveProperty('cnf');
   });

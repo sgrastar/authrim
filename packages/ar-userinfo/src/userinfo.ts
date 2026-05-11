@@ -157,7 +157,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   // Fetch user data from KV cache (falls back to D1 on cache miss)
   // This dramatically reduces D1 calls under high load
   const piiCtx = createPIIContextFromHono(c, tenantId);
-  const user = await getCachedUser(c.env, sub, {
+  const user = await getCachedUser(c.env, tenantId, sub, {
     coreDb: piiCtx.coreAdapter,
     piiDb: piiCtx.defaultPiiAdapter,
   });

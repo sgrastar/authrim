@@ -549,7 +549,10 @@ async function getTenantRowsByExactEmail(env: Env, email: string): Promise<Tenan
           return null;
         }
 
-        const piiAdapter = ensureDatabaseAdapter(userStoreSources.piiDb, `discovery-pii-${tenant.id}`);
+        const piiAdapter = ensureDatabaseAdapter(
+          userStoreSources.piiDb,
+          `discovery-pii-${tenant.id}`
+        );
         const piiUser = await piiAdapter.queryOne<ExactEmailUserRow>(
           'SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?',
           [email, tenant.id]
@@ -587,10 +590,10 @@ async function getTenantRowsByExactEmail(env: Env, email: string): Promise<Tenan
   }
 }
 
-async function getClientRowByClientId(env: Env, clientId: string): Promise<ClientLookupRow | null> {
+async function getClientRowsByClientId(env: Env, clientId: string): Promise<ClientLookupRow[]> {
   const adapter = await getDiscoveryCoreAdapter(env);
-  return adapter.queryOne<ClientLookupRow>(
-    'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ?',
+  return adapter.query<ClientLookupRow>(
+    'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ? ORDER BY tenant_id ASC',
     [clientId]
   );
 }
@@ -828,17 +831,29 @@ async function resolveDiscoveryRequest(
         return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const client = await getClientRowByClientId(env, value);
-      if (!client) {
+      const clients = await getClientRowsByClientId(env, value);
+      if (clients.length === 0) {
         return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const tenant = await getTenantRowById(env, client.tenant_id);
-      if (tenant) {
+      const candidates = await Promise.all(
+        clients.map(async (client) => {
+          const tenant = await getTenantRowById(env, client.tenant_id);
+          return tenant ? buildCandidate(env, tenant, 'app_hint') : null;
+        })
+      );
+      const resolvedCandidates = candidates.filter(
+        (candidate): candidate is DiscoveryCandidate => candidate !== null
+      );
+
+      if (resolvedCandidates.length === 1) {
         return {
           result: 'resolved',
-          candidate: await buildCandidate(env, tenant, 'app_hint'),
+          candidate: resolvedCandidates[0],
         };
+      }
+      if (resolvedCandidates.length > 1) {
+        return { result: 'multiple', candidates: resolvedCandidates };
       }
 
       return buildNotFoundResponse('app_hint_not_found');
@@ -899,8 +914,7 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
         ? await getSingleActiveTenantCandidate(c.env)
         : undefined;
     const commonDiscoverUrl = await getCommonDiscoverUrl(c.env);
-    const tenantId =
-      settingsScope.type === 'tenant' ? settingsScope.id : getDefaultTenantId(c.env);
+    const tenantId = settingsScope.type === 'tenant' ? settingsScope.id : getDefaultTenantId(c.env);
     const ui = await getDiscoveryUiConfig(
       c.env,
       commonEntryHost ? null : tenantId,

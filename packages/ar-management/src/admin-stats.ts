@@ -479,9 +479,11 @@ export async function adminStatsTimelineHandler(c: Context<{ Bindings: Env }>) {
 
     const adapter = hotQuery.context.adapter;
     const [auditFromTs, auditToTs] = getAuditTimeRange(fromTs, toTs, hotQuery.context);
-    const { tableName: auditTable, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(
-      hotQuery.context
-    );
+    const {
+      tableName: auditTable,
+      actionColumn,
+      detailsColumn,
+    } = getAuditHotQuerySqlSpec(hotQuery.context);
 
     // Build client filter
     const authWhere =
@@ -634,9 +636,11 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
 
-    const { tableName: auditTable, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(
-      hotQuery.context
-    );
+    const {
+      tableName: auditTable,
+      actionColumn,
+      detailsColumn,
+    } = getAuditHotQuerySqlSpec(hotQuery.context);
     const auditAdapter = hotQuery.context.adapter;
     const coreAdapter = createCoreAdapter(c, tenantId);
     const [auditFromTs, auditToTs] = getAuditTimeRange(fromTs, toTs, hotQuery.context);
@@ -650,7 +654,7 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
         : [clientId, clientId, clientId, clientId];
 
     // Verify client exists and belongs to tenant using KV cache (with D1 fallback)
-    const client = await getClient(c.env, clientId, coreAdapter);
+    const client = await getClient(c.env, tenantId, clientId, coreAdapter);
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -692,8 +696,8 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
           COUNT(DISTINCT sc.session_id) as active_refresh
          FROM session_clients sc
          JOIN sessions s ON s.id = sc.session_id
-         WHERE sc.client_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
-        [clientId, tenantId, Math.floor(Date.now() / 1000)]
+         WHERE sc.client_id = ? AND sc.tenant_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
+        [clientId, tenantId, tenantId, Math.floor(Date.now() / 1000)]
       ),
 
       // Auth statistics within period
@@ -711,11 +715,7 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
           AND ${clientClause}
           AND ${hotQuery.context.mode === 'legacy' ? `(${actionColumn} LIKE 'auth.%' OR ${actionColumn} LIKE 'token.%')` : `event_category IN ('auth', 'token')`}
           AND created_at >= ? AND created_at <= ?`,
-        [
-          tenantId,
-          ...clientBindings,
-          ...getAuditTimeRange(fromTs, toTs, hotQuery.context),
-        ]
+        [tenantId, ...clientBindings, ...getAuditTimeRange(fromTs, toTs, hotQuery.context)]
       ),
 
       // Usage statistics
@@ -740,7 +740,9 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
           ...getAuditTimeRange(todayStart, todayEnd, hotQuery.context),
           tenantId,
           ...clientBindings,
-          ...(hotQuery.context.createdAtUnit === 'milliseconds' ? [monthStart * 1000] : [monthStart]),
+          ...(hotQuery.context.createdAtUnit === 'milliseconds'
+            ? [monthStart * 1000]
+            : [monthStart]),
           tenantId,
           ...clientBindings,
           ...getAuditTimeRange(fromTs, toTs, hotQuery.context),
@@ -926,11 +928,8 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
 
     const adapter = context.adapter;
     const [auditFromTs, auditToTs] = getAuditTimeRange(fromTs, toTs, context);
-    const { tableName: auditTable, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(
-      context
-    );
-    const countryExpr =
-      `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'country_code', context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'countryCode', context.dialect)}, 'XX')`;
+    const { tableName: auditTable, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
+    const countryExpr = `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'country_code', context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'countryCode', context.dialect)}, 'XX')`;
     const uniqueUserExpr =
       context.mode === 'legacy'
         ? `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'user_id', context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'ip', context.dialect)})`
@@ -984,9 +983,7 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
       unique_users: row.unique_users,
       last_activity: row.last_activity
         ? new Date(
-            context.createdAtUnit === 'milliseconds'
-              ? row.last_activity
-              : row.last_activity * 1000
+            context.createdAtUnit === 'milliseconds' ? row.last_activity : row.last_activity * 1000
           ).toISOString()
         : null,
     }));

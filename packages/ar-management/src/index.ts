@@ -40,14 +40,13 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   createCompatibilityErrorResponse,
   ADMIN_PERMISSIONS,
+  getDefaultTenantId,
 } from '@authrim/ar-lib-core';
-import {
-  cloudflareEmailPlugin,
-  resendEmailPlugin,
-} from '@authrim/ar-lib-plugin';
+import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
+import { processPendingTenantDeletionJobs } from './tenant-deletion-jobs';
 
 // Import handlers
 import { registerHandler } from './register';
@@ -305,7 +304,6 @@ import {
   adminTenantUpdateHandler,
   adminTenantDeleteHandler,
   adminTenantSetDefaultHandler,
-  TENANT_TABLES_TO_DELETE,
 } from './admin-tenants';
 import {
   listTenantDomainMappingsHandler,
@@ -381,6 +379,7 @@ import {
   updatePartitionSettings,
   testPartitionRouting,
   getPartitionStats,
+  getPlatformPartitionStats,
   deletePartitionSettings,
 } from './routes/settings/pii-partitions';
 import {
@@ -456,10 +455,15 @@ import {
 } from './routes/settings/introspection-cache';
 import {
   listTombstones,
+  listPlatformTombstones,
   getTombstone,
+  getPlatformTombstone,
   getTombstoneStats,
+  getPlatformTombstoneStats,
   cleanupTombstones,
+  cleanupPlatformTombstones,
   deleteTombstone,
+  deletePlatformTombstone,
 } from './routes/settings/tombstones';
 import {
   getFapiSecurityConfig,
@@ -589,6 +593,7 @@ import {
   getPluginHealthHandler,
   getPluginSchemaHandler,
   ensureBuiltinPluginsRegistered,
+  platformPluginScopeMiddleware,
 } from './routes/settings/plugins';
 import {
   getNativeSSOSettingsConfig,
@@ -974,31 +979,28 @@ app.use('/api/admin/*', csrfProtectionMiddleware());
 // Admin authentication middleware - applies to ALL /api/admin/* routes
 // Supports both Bearer token (for headless/API usage) and session-based auth (for UI)
 // Note: /api/admin/auth/* routes are handled by ar-auth via ar-router
-app.use('/api/admin/*', adminAuthMiddleware());
+app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
 
 // Body size limit for Admin API - prevents DoS attacks via large payloads
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
-app.use(
-  '/api/admin/*',
-  async (c, next) => {
-    const isImportUpload = c.req.path.startsWith('/api/admin/jobs/users/import/upload/');
-    const maxSize = isImportUpload ? USER_IMPORT_MAX_UPLOAD_BYTES : 100 * 1024;
-    const maxSizeLabel = isImportUpload ? '50MB' : '100KB';
+app.use('/api/admin/*', async (c, next) => {
+  const isImportUpload = c.req.path.startsWith('/api/admin/jobs/users/import/upload/');
+  const maxSize = isImportUpload ? USER_IMPORT_MAX_UPLOAD_BYTES : 100 * 1024;
+  const maxSizeLabel = isImportUpload ? '50MB' : '100KB';
 
-    return bodyLimit({
-      maxSize,
-      onError: (ctx) => {
-        return ctx.json(
-          {
-            error: 'payload_too_large',
-            message: `Request body exceeds maximum allowed size (${maxSizeLabel})`,
-          },
-          413
-        );
-      },
-    })(c, next);
-  }
-);
+  return bodyLimit({
+    maxSize,
+    onError: (ctx) => {
+      return ctx.json(
+        {
+          error: 'payload_too_large',
+          message: `Request body exceeds maximum allowed size (${maxSizeLabel})`,
+        },
+        413
+      );
+    },
+  })(c, next);
+});
 
 // Admin API endpoints
 app.get('/api/admin/stats', adminStatsHandler);
@@ -1382,6 +1384,11 @@ app.get('/api/admin/settings/pii-partitions', getPartitionSettings);
 app.put('/api/admin/settings/pii-partitions', updatePartitionSettings);
 app.post('/api/admin/settings/pii-partitions/test', testPartitionRouting);
 app.get('/api/admin/settings/pii-partitions/stats', getPartitionStats);
+app.get(
+  '/api/admin/platform/settings/pii-partitions/stats',
+  requireSystemAdmin(),
+  getPlatformPartitionStats
+);
 app.delete('/api/admin/settings/pii-partitions', deletePartitionSettings);
 
 // Admin Tombstone Management endpoints (GDPR Art.17 deletion tracking)
@@ -1390,6 +1397,11 @@ app.get('/api/admin/tombstones/stats', getTombstoneStats); // Must be before :id
 app.post('/api/admin/tombstones/cleanup', cleanupTombstones);
 app.get('/api/admin/tombstones/:id', getTombstone);
 app.delete('/api/admin/tombstones/:id', deleteTombstone);
+app.get('/api/admin/platform/tombstones', requireSystemAdmin(), listPlatformTombstones);
+app.get('/api/admin/platform/tombstones/stats', requireSystemAdmin(), getPlatformTombstoneStats);
+app.post('/api/admin/platform/tombstones/cleanup', requireSystemAdmin(), cleanupPlatformTombstones);
+app.get('/api/admin/platform/tombstones/:id', requireSystemAdmin(), getPlatformTombstone);
+app.delete('/api/admin/platform/tombstones/:id', requireSystemAdmin(), deletePlatformTombstone);
 
 // [DEPRECATED] Admin OAuth/OIDC Configuration
 // → Migrate to: /api/admin/tenants/:tenantId/settings/oauth
@@ -1938,6 +1950,20 @@ app.get('/api/admin/vc/status-lists/:id', getStatusListHandler);
 // =============================================================================
 // Plugin Management (Phase 9 - Plugin Architecture)
 // =============================================================================
+
+// Platform/global plugin management. System admins may manage global defaults or
+// target a tenant explicitly with tenant_id/X-Tenant-Id.
+app.use('/api/admin/platform/plugins/*', requireSystemAdmin(), platformPluginScopeMiddleware);
+app.use('/api/admin/platform/plugins', requireSystemAdmin(), platformPluginScopeMiddleware);
+app.get('/api/admin/platform/plugins', listPluginsHandler);
+app.get('/api/admin/platform/plugins/:id', getPluginHandler);
+app.get('/api/admin/platform/plugins/:id/config', getPluginConfigHandler);
+app.put('/api/admin/platform/plugins/:id/config', updatePluginConfigHandler);
+app.post('/api/admin/platform/plugins/:id/test-email', sendPluginTestEmailHandler);
+app.put('/api/admin/platform/plugins/:id/enable', enablePluginHandler);
+app.put('/api/admin/platform/plugins/:id/disable', disablePluginHandler);
+app.get('/api/admin/platform/plugins/:id/health', getPluginHealthHandler);
+app.get('/api/admin/platform/plugins/:id/schema', getPluginSchemaHandler);
 
 // Plugin listing and details
 app.get('/api/admin/plugins', listPluginsHandler);
@@ -2537,79 +2563,83 @@ app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-g
  *
  * Requires: Bearer token (ADMIN_API_SECRET)
  */
-app.post('/api/internal/versions/:workerName', adminAuthMiddleware(), async (c) => {
-  const workerName = c.req.param('workerName')!;
+app.post(
+  '/api/internal/versions/:workerName',
+  adminAuthMiddleware({ plane: 'platform' }),
+  async (c) => {
+    const workerName = c.req.param('workerName')!;
 
-  // Validate worker name (only allow known workers)
-  const validWorkers = [
-    'ar-auth',
-    'ar-token',
-    'ar-management',
-    'ar-userinfo',
-    'ar-async',
-    'ar-discovery',
-    'ar-policy',
-    'ar-saml',
-    'ar-bridge',
-    'ar-vc',
-  ];
-  if (!validWorkers.includes(workerName)) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-  }
-
-  const body = (await c.req.json()) as { uuid: string; deployTime: string };
-
-  if (!body.uuid || !body.deployTime) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-      variables: { field: 'uuid, deployTime' },
-    });
-  }
-
-  // Validate UUID format
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(body.uuid)) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-  }
-
-  try {
-    const vmId = c.env.VERSION_MANAGER.idFromName('global');
-    const vm = c.env.VERSION_MANAGER.get(vmId);
-
-    const response = await vm.fetch(
-      new Request(`https://do/version/${workerName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
-        },
-        body: JSON.stringify({
-          uuid: body.uuid,
-          deployTime: body.deployTime,
-        }),
-      })
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      const log = getLogger(c).module('VERSION-API');
-      log.error('Failed to register version', { workerName, error });
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    // Validate worker name (only allow known workers)
+    const validWorkers = [
+      'ar-auth',
+      'ar-token',
+      'ar-management',
+      'ar-userinfo',
+      'ar-async',
+      'ar-discovery',
+      'ar-policy',
+      'ar-saml',
+      'ar-bridge',
+      'ar-vc',
+    ];
+    if (!validWorkers.includes(workerName)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const log = getLogger(c).module('VERSION-API');
-    log.info('Registered version', {
-      workerName,
-      uuid: body.uuid.substring(0, 8) + '...',
-      deployTime: body.deployTime,
-    });
+    const body = (await c.req.json()) as { uuid: string; deployTime: string };
 
-    return c.json({ success: true, workerName, uuid: body.uuid });
-  } catch (error) {
-    const log = getLogger(c).module('VERSION-API');
-    log.error('Version registration error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    if (!body.uuid || !body.deployTime) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'uuid, deployTime' },
+      });
+    }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(body.uuid)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    try {
+      const vmId = c.env.VERSION_MANAGER.idFromName('global');
+      const vm = c.env.VERSION_MANAGER.get(vmId);
+
+      const response = await vm.fetch(
+        new Request(`https://do/version/${workerName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
+          },
+          body: JSON.stringify({
+            uuid: body.uuid,
+            deployTime: body.deployTime,
+          }),
+        })
+      );
+
+      if (!response.ok) {
+        const error = await response.text();
+        const log = getLogger(c).module('VERSION-API');
+        log.error('Failed to register version', { workerName, error });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
+
+      const log = getLogger(c).module('VERSION-API');
+      log.info('Registered version', {
+        workerName,
+        uuid: body.uuid.substring(0, 8) + '...',
+        deployTime: body.deployTime,
+      });
+
+      return c.json({ success: true, workerName, uuid: body.uuid });
+    } catch (error) {
+      const log = getLogger(c).module('VERSION-API');
+      log.error('Version registration error', {}, error as Error);
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
   }
-});
+);
 
 /**
  * GET /api/internal/version-manager/status
@@ -2617,35 +2647,39 @@ app.post('/api/internal/versions/:workerName', adminAuthMiddleware(), async (c) 
  *
  * Requires: Bearer token (ADMIN_API_SECRET)
  */
-app.get('/api/internal/version-manager/status', adminAuthMiddleware(), async (c) => {
-  try {
-    const vmId = c.env.VERSION_MANAGER.idFromName('global');
-    const vm = c.env.VERSION_MANAGER.get(vmId);
+app.get(
+  '/api/internal/version-manager/status',
+  adminAuthMiddleware({ plane: 'platform' }),
+  async (c) => {
+    try {
+      const vmId = c.env.VERSION_MANAGER.idFromName('global');
+      const vm = c.env.VERSION_MANAGER.get(vmId);
 
-    const response = await vm.fetch(
-      new Request('https://do/version-manager/status', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
-        },
-      })
-    );
+      const response = await vm.fetch(
+        new Request('https://do/version-manager/status', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
+          },
+        })
+      );
 
-    if (!response.ok) {
-      const error = await response.text();
+      if (!response.ok) {
+        const error = await response.text();
+        const log = getLogger(c).module('VERSION-API');
+        log.error('Failed to get version status', { error });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
+
+      const data = await response.json();
+      return c.json(data);
+    } catch (error) {
       const log = getLogger(c).module('VERSION-API');
-      log.error('Failed to get version status', { error });
+      log.error('Version status error', {}, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
-
-    const data = await response.json();
-    return c.json(data);
-  } catch (error) {
-    const log = getLogger(c).module('VERSION-API');
-    log.error('Version status error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
-});
+);
 
 // 404 handler
 app.notFound((c) => {
@@ -2658,6 +2692,42 @@ app.onError((err, c) => {
   log.error('Unhandled error', {}, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
+
+async function listMaintenanceTenantIds(
+  adapter: DatabaseAdapter,
+  env: Env,
+  log: ReturnType<typeof createLogger>
+): Promise<string[]> {
+  try {
+    const rows = await adapter.query<{ id: string }>(
+      'SELECT id FROM tenants WHERE is_active = 1 ORDER BY id'
+    );
+    const tenantIds = rows.map((row) => row.id).filter((id) => id.length > 0);
+    if (tenantIds.length > 0) {
+      return tenantIds;
+    }
+  } catch (error) {
+    log.warn('Failed to list active tenants for scheduled cleanup', {
+      error: (error as Error).message,
+    });
+  }
+
+  return [getDefaultTenantId(env)];
+}
+
+async function deleteExpiredTenantRows(
+  adapter: DatabaseAdapter,
+  tenantIds: string[],
+  sql: string,
+  getParams: (tenantId: string) => unknown[]
+): Promise<number> {
+  let deleted = 0;
+  for (const tenantId of tenantIds) {
+    const result = await adapter.execute(sql, getParams(tenantId));
+    deleted += result.rowsAffected || 0;
+  }
+  return deleted;
+}
 
 /**
  * Scheduled handler for D1 database cleanup and async job processing.
@@ -2691,22 +2761,31 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       env,
       'management-scheduled'
     );
+    const maintenanceTenantIds = await listMaintenanceTenantIds(coreAdapter, env, log);
 
     // 1. Cleanup expired sessions (with 1-day grace period)
-    const sessionsResult = await coreAdapter.execute(
-      'DELETE FROM sessions WHERE expires_at < ?',
-      [now - 86400] // 1 day grace period
+    const sessionsDeleted = await deleteExpiredTenantRows(
+      coreAdapter,
+      maintenanceTenantIds,
+      'DELETE FROM sessions WHERE tenant_id = ? AND expires_at < ?',
+      (tenantId) => [tenantId, now - 86400] // 1 day grace period
     );
-    const sessionsDeleted = sessionsResult.rowsAffected || 0;
-    log.debug('Deleted expired sessions', { count: sessionsDeleted });
+    log.debug('Deleted expired sessions', {
+      count: sessionsDeleted,
+      tenantCount: maintenanceTenantIds.length,
+    });
 
     // 2. Cleanup expired/used password reset tokens
-    const passwordTokensResult = await coreAdapter.execute(
-      'DELETE FROM password_reset_tokens WHERE expires_at < ? OR used = 1',
-      [now]
+    const passwordTokensDeleted = await deleteExpiredTenantRows(
+      coreAdapter,
+      maintenanceTenantIds,
+      'DELETE FROM password_reset_tokens WHERE tenant_id = ? AND (expires_at < ? OR used = 1)',
+      (tenantId) => [tenantId, now]
     );
-    const passwordTokensDeleted = passwordTokensResult.rowsAffected || 0;
-    log.debug('Deleted expired/used password reset tokens', { count: passwordTokensDeleted });
+    log.debug('Deleted expired/used password reset tokens', {
+      count: passwordTokensDeleted,
+      tenantCount: maintenanceTenantIds.length,
+    });
 
     // 3. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
     // by cleanupResolvedAuditPrimaries(), which resolves the effective audit profile per tenant
@@ -2719,9 +2798,14 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     try {
       const nativeSSOEnabled = await isNativeSSOEnabled(env);
       if (nativeSSOEnabled) {
-        const deviceSecretRepo = new DeviceSecretRepository(coreAdapter);
-        deviceSecretsDeleted = await deviceSecretRepo.cleanupExpired();
-        log.debug('Cleaned up expired device secrets', { count: deviceSecretsDeleted });
+        for (const tenantId of maintenanceTenantIds) {
+          const deviceSecretRepo = new DeviceSecretRepository(coreAdapter, tenantId);
+          deviceSecretsDeleted += await deviceSecretRepo.cleanupExpired();
+        }
+        log.debug('Cleaned up expired device secrets', {
+          count: deviceSecretsDeleted,
+          tenantCount: maintenanceTenantIds.length,
+        });
       }
     } catch (deviceSecretError) {
       // Log but don't fail the entire cleanup job
@@ -2732,12 +2816,16 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     // Retention period is tenant-configurable, defaults to 90 days
     let operationalLogsDeleted = 0;
     try {
-      const operationalLogsResult = await coreAdapter.execute(
-        'DELETE FROM operational_logs WHERE expires_at < ?',
-        [now]
+      operationalLogsDeleted = await deleteExpiredTenantRows(
+        coreAdapter,
+        maintenanceTenantIds,
+        'DELETE FROM operational_logs WHERE tenant_id = ? AND expires_at < ?',
+        (tenantId) => [tenantId, now]
       );
-      operationalLogsDeleted = operationalLogsResult.rowsAffected || 0;
-      log.debug('Deleted expired operational logs', { count: operationalLogsDeleted });
+      log.debug('Deleted expired operational logs', {
+        count: operationalLogsDeleted,
+        tenantCount: maintenanceTenantIds.length,
+      });
     } catch (operationalLogError) {
       // Log but don't fail - table might not exist yet
       log.warn('Operational logs cleanup failed (table may not exist)', {
@@ -2748,12 +2836,16 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     // 6. Cleanup expired idempotency keys (24 hour TTL)
     let idempotencyKeysDeleted = 0;
     try {
-      const idempotencyResult = await coreAdapter.execute(
-        'DELETE FROM idempotency_keys WHERE expires_at < ?',
-        [now]
+      idempotencyKeysDeleted = await deleteExpiredTenantRows(
+        coreAdapter,
+        maintenanceTenantIds,
+        'DELETE FROM idempotency_keys WHERE tenant_id = ? AND expires_at < ?',
+        (tenantId) => [tenantId, now]
       );
-      idempotencyKeysDeleted = idempotencyResult.rowsAffected || 0;
-      log.debug('Deleted expired idempotency keys', { count: idempotencyKeysDeleted });
+      log.debug('Deleted expired idempotency keys', {
+        count: idempotencyKeysDeleted,
+        tenantCount: maintenanceTenantIds.length,
+      });
     } catch (idempotencyError) {
       // Log but don't fail - table might not exist yet
       log.warn('Idempotency keys cleanup failed (table may not exist)', {
@@ -2799,53 +2891,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
   // Process pending tenant deletion jobs (up to 5 per Cron run to stay within CPU limits)
   try {
-    const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      'management-scheduled-jobs'
-    );
-    const pendingJobs = await coreAdapter.query<{ id: string; config: string }>(
-      "SELECT id, config FROM admin_jobs WHERE job_type = 'tenants/delete' AND status = 'pending' LIMIT 5"
-    );
-
-    for (const job of pendingJobs) {
-      const nowTs = Math.floor(Date.now() / 1000);
-      await coreAdapter.execute(
-        "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ?",
-        [nowTs, nowTs, job.id]
-      );
-
-      try {
-        const config = JSON.parse(job.config) as { tenant_id: string };
-        const tenantId = config.tenant_id;
-
-        await coreAdapter.transaction(async (tx) => {
-          for (const table of TENANT_TABLES_TO_DELETE) {
-            await tx.execute(`DELETE FROM ${table} WHERE tenant_id = ?`, [tenantId]);
-          }
-          await tx.execute('DELETE FROM tenants WHERE id = ?', [tenantId]);
-        });
-
-        const completedTs = Math.floor(Date.now() / 1000);
-        await coreAdapter.execute(
-          "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ?",
-          [completedTs, completedTs, JSON.stringify({ stage: 'completed' }), job.id]
-        );
-
-        log.info('Tenant deletion job completed', { job_id: job.id, tenant_id: tenantId });
-      } catch (jobError) {
-        const failedTs = Math.floor(Date.now() / 1000);
-        await coreAdapter.execute(
-          "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ?",
-          [String(jobError), failedTs, failedTs, job.id]
-        );
-
-        log.error('Tenant deletion job failed', { job_id: job.id }, jobError as Error);
-      }
-    }
-
-    if (pendingJobs.length > 0) {
-      log.info('Tenant deletion jobs processed', { count: pendingJobs.length });
-    }
+    await processPendingTenantDeletionJobs(env, log);
   } catch (jobsError) {
     log.error('Tenant deletion job processing failed', {}, jobsError as Error);
     // Don't throw - other cleanup tasks already completed

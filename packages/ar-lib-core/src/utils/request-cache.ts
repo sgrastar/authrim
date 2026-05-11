@@ -99,7 +99,7 @@ export interface TenantFeatureFlags {
  * Request-scoped cache structure
  */
 interface RequestCache {
-  /** Cached client metadata (clientId → metadata or null) */
+  /** Cached client metadata (tenantId:clientId → metadata or null) */
   clients: Map<string, ClientMetadata | null>;
   /** Cached tenant profiles (tenantId → profile) */
   tenantProfiles: Map<string, TenantProfile>;
@@ -205,19 +205,21 @@ export async function getClientCached(
   clientId: string
 ): Promise<ClientMetadata | null> {
   const cache = getRequestCache(c);
+  const authCtx = createAuthContextFromHono(c);
+  const cacheKey = `${authCtx.tenantId}:${clientId}`;
 
   // Check request-level cache
-  if (cache.clients.has(clientId)) {
+  if (cache.clients.has(cacheKey)) {
     cache.stats.clientHit++;
-    return cache.clients.get(clientId) ?? null;
+    return cache.clients.get(cacheKey) ?? null;
   }
 
   // Cache miss - fetch from KV/D1
   cache.stats.clientMiss++;
-  const clientMetadata = await getClient(env, clientId, createAuthContextFromHono(c).coreAdapter);
+  const clientMetadata = await getClient(env, authCtx.tenantId, clientId, authCtx.coreAdapter);
 
   // Store in request cache (including null for not-found)
-  cache.clients.set(clientId, clientMetadata);
+  cache.clients.set(cacheKey, clientMetadata);
 
   return clientMetadata;
 }

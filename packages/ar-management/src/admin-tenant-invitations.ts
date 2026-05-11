@@ -303,7 +303,10 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await adapter.execute('DELETE FROM tenant_invitations WHERE id = ?', [invId]);
+    await adapter.execute('DELETE FROM tenant_invitations WHERE id = ? AND tenant_id = ?', [
+      invId,
+      tenantId,
+    ]);
 
     await createAuditLogFromContext(c, 'tenant_invitation.cancel', 'tenant_invitation', invId, {
       tenant_id: tenantId,

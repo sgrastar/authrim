@@ -87,11 +87,11 @@ function createMockEnv(overrides: Partial<Env> = {}): Env {
 /**
  * Create a test Hono app with admin auth middleware
  */
-function createTestApp(env: Env) {
+function createTestApp(env: Env, options: Parameters<typeof adminAuthMiddleware>[0] = {}) {
   const app = new Hono<{ Bindings: Env }>();
 
   // Apply admin auth middleware
-  app.use('/api/admin/*', adminAuthMiddleware());
+  app.use('/api/admin/*', adminAuthMiddleware(options));
 
   // Protected test endpoint
   app.get('/api/admin/test', (c) => {
@@ -286,6 +286,34 @@ describe('adminAuthMiddleware', () => {
       expect(data.adminAuth.roles).toContain('admin');
     });
 
+    it('should constrain admin user, role, and session update by session tenant', async () => {
+      const userId = 'admin-user-tenant-scoped';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+
+      const env = createMockEnv({ DB: db });
+      const app = createTestApp(env);
+
+      const request = new Request('http://localhost/api/admin/test', {
+        headers: {
+          Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+        },
+      });
+
+      const response = await app.fetch(request);
+      expect(response.status).toBe(200);
+      expect(db.prepare).toHaveBeenCalledWith(
+        'SELECT * FROM admin_users WHERE id = ? AND tenant_id = ? AND is_active = 1'
+      );
+      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('AND ra.tenant_id = ?'));
+      expect(db.prepare).toHaveBeenCalledWith(
+        'UPDATE admin_sessions SET last_activity_at = ? WHERE id = ? AND tenant_id = ?'
+      );
+    });
+
     it('should reject expired session', async () => {
       const db = createMockDB({
         // admin_sessions query returns null (WHERE expires_at > ? filters it out)
@@ -462,6 +490,61 @@ describe('adminAuthMiddleware', () => {
 
       const response = await app.fetch(request);
       expect(response.status).toBe(401);
+    });
+
+    it('should reject a session from a different request tenant on tenant admin routes', async () => {
+      const userId = 'admin-user-cross-tenant';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+
+      const env = createMockEnv({
+        DB: db,
+        BASE_DOMAIN: 'authrim.test',
+        DEFAULT_TENANT_ID: 'default',
+      });
+      const app = createTestApp(env);
+
+      const request = new Request('https://acme.authrim.test/api/admin/test', {
+        headers: {
+          Host: 'acme.authrim.test',
+          Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+        },
+      });
+
+      const response = await app.fetch(request);
+      expect(response.status).toBe(403);
+
+      const data = (await response.json()) as Record<string, unknown>;
+      expect(data.error).toBe('access_denied');
+    });
+
+    it('should allow session tenant mismatch on platform admin routes', async () => {
+      const userId = 'admin-user-platform';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+
+      const env = createMockEnv({
+        DB: db,
+        BASE_DOMAIN: 'authrim.test',
+        DEFAULT_TENANT_ID: 'default',
+      });
+      const app = createTestApp(env, { plane: 'platform' });
+
+      const request = new Request('https://acme.authrim.test/api/admin/test', {
+        headers: {
+          Host: 'acme.authrim.test',
+          Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+        },
+      });
+
+      const response = await app.fetch(request);
+      expect(response.status).toBe(200);
     });
   });
 

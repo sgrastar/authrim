@@ -197,12 +197,12 @@ export class ContextFactory implements IContextFactory {
    */
   private createCoreRepositories(): CoreRepositories {
     return {
-      userCore: new UserCoreRepository(this.coreAdapter),
-      client: new ClientRepository(this.coreAdapter),
-      session: new SessionRepository(this.coreAdapter),
-      passkey: new PasskeyRepository(this.coreAdapter),
-      role: new RoleRepository(this.coreAdapter),
-      sessionClient: new SessionClientRepository(this.coreAdapter),
+      userCore: new UserCoreRepository(this.coreAdapter, this.tenantId),
+      client: new ClientRepository(this.coreAdapter, this.tenantId),
+      session: new SessionRepository(this.coreAdapter, this.tenantId),
+      passkey: new PasskeyRepository(this.coreAdapter, this.tenantId),
+      role: new RoleRepository(this.coreAdapter, this.tenantId),
+      sessionClient: new SessionClientRepository(this.coreAdapter, this.tenantId),
       // Future: organization: new OrganizationRepository(this.coreAdapter),
     };
   }
@@ -214,7 +214,7 @@ export class ContextFactory implements IContextFactory {
    */
   private createPIIRepositories(piiAdapter: DatabaseAdapter): PIIRepositories {
     return {
-      userPII: new UserPIIRepository(piiAdapter),
+      userPII: new UserPIIRepository(piiAdapter, this.tenantId),
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),

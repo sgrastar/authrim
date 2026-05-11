@@ -14,6 +14,7 @@ import {
   isObjectKind,
   isObjectRepresentation,
   tombstoneObjectCatalogEntry,
+  tombstoneObjectCatalogEntryForTenant,
 } from '../object-catalog.ts';
 
 describe('object-catalog helpers', () => {
@@ -98,9 +99,16 @@ describe('object-catalog helpers', () => {
         return { rowsAffected: 1 };
       },
       queryOne: async (_sql: string, params: unknown[]) => {
+        const tenantId = params[3];
         const logical =
-          state.logical.find((row) => row.id === params[0]) ??
-          state.logical.find((row) => row.public_artifact_id === params[0]);
+          state.logical.find(
+            (row) => row.id === params[0] && (tenantId === undefined || row.tenant_id === tenantId)
+          ) ??
+          state.logical.find(
+            (row) =>
+              row.public_artifact_id === params[0] &&
+              (tenantId === undefined || row.tenant_id === tenantId)
+          );
         const physical = logical
           ? state.physical.find(
               (row) =>
@@ -134,7 +142,10 @@ describe('object-catalog helpers', () => {
         };
       },
       query: async (_sql: string, params?: unknown[]) => {
-        if (_sql.includes('FROM object_catalog_objects oco') && _sql.includes('oco.deleted_at IS NOT NULL')) {
+        if (
+          _sql.includes('FROM object_catalog_objects oco') &&
+          _sql.includes('oco.deleted_at IS NOT NULL')
+        ) {
           const hasBucketBindingFilter = _sql.includes('AND oco.bucket_binding = ?');
           const bucketBinding = hasBucketBindingFilter ? params?.[0] : undefined;
           return state.physical
@@ -226,11 +237,29 @@ describe('object-catalog helpers', () => {
     );
     expect(byPublicId?.logical.id).toBe(catalogId);
 
+    const byTenantPublicId = await getObjectCatalogObjectRecordByPublicArtifactId(
+      adapter,
+      publicArtifactId,
+      'canonical_json',
+      0,
+      'tenant-1'
+    );
+    expect(byTenantPublicId?.logical.id).toBe(catalogId);
+
+    const wrongTenantPublicId = await getObjectCatalogObjectRecordByPublicArtifactId(
+      adapter,
+      publicArtifactId,
+      'canonical_json',
+      0,
+      'tenant-2'
+    );
+    expect(wrongTenantPublicId).toBeNull();
+
     const listed = await listObjectCatalogObjects(adapter, catalogId);
     expect(listed?.logical.publicArtifactId).toBe(publicArtifactId);
     expect(listed?.physical).toHaveLength(1);
 
-    await tombstoneObjectCatalogEntry(adapter, catalogId, 1_700_000_123_000);
+    await tombstoneObjectCatalogEntryForTenant(adapter, 'tenant-1', catalogId, 1_700_000_123_000);
     const deleted = await listDeletedObjectCatalogObjects(adapter);
     expect(deleted).toHaveLength(1);
     expect(deleted[0]?.catalogId).toBe(catalogId);
@@ -240,5 +269,20 @@ describe('object-catalog helpers', () => {
     expect(purged).toBe(1);
     expect(await listDeletedObjectCatalogObjects(adapter)).toHaveLength(0);
     expect(state.logical).toHaveLength(0);
+  });
+
+  it('keeps a platform cleanup tombstone helper for already selected catalog rows', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const adapter = {
+      execute: async (sql: string, params: unknown[]) => {
+        calls.push({ sql, params });
+        return { rowsAffected: 1 };
+      },
+    } as Parameters<typeof tombstoneObjectCatalogEntry>[0];
+
+    await tombstoneObjectCatalogEntry(adapter, 'catalog-cleanup', 1_700_000_123_000);
+
+    expect(calls[0]?.sql).toContain('WHERE id = ?');
+    expect(calls[0]?.params).toEqual([1_700_000_123_000, 1_700_000_123_000, 'catalog-cleanup']);
   });
 });

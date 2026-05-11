@@ -395,7 +395,11 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       }
 
       // セッション有効性チェック
-      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+      const { stub: sessionStore } = getSessionStoreBySessionId(
+        c.env,
+        sessionId,
+        tenantIdResolved
+      );
       const session: Session | null = await sessionStore.getSessionRpc(sessionId);
 
       if (!session) {
@@ -724,7 +728,11 @@ async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionToken);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionToken,
+      getTenantIdFromContext(c)
+    );
     const response = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionToken}`, {
         method: 'GET',

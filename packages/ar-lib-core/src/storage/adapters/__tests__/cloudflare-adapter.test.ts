@@ -206,6 +206,14 @@ describe('CloudflareStorageAdapter', () => {
       expect(env.AUTH_CODE_STORE.get).toHaveBeenCalled();
     });
 
+    it('should route authcode DO by configured tenant', async () => {
+      adapter = new CloudflareStorageAdapter(env, 'acme');
+
+      await adapter.get('authcode:abc123');
+
+      expect(env.AUTH_CODE_STORE.idFromName).toHaveBeenCalledWith('tenant:acme:auth-code');
+    });
+
     it('should reject low-level refreshtoken reads without routing metadata', async () => {
       await expect(adapter.get('refreshtoken:family_123')).rejects.toThrow(
         'Use getRefreshToken() from @authrim/ar-lib-core/utils/refresh-token-store instead.'
@@ -602,7 +610,9 @@ describe('ClientStore', () => {
 
   it('should delete client', async () => {
     await clientStore.delete('client_123');
-    expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM oauth_clients WHERE client_id = ?');
+    expect(env.DB.prepare).toHaveBeenCalledWith(
+      'DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?'
+    );
   });
 
   it('should list clients with pagination', async () => {
@@ -829,7 +839,9 @@ describe('PasskeyStore', () => {
 
   it('should delete passkey', async () => {
     await passkeyStore.delete('passkey_123');
-    expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM passkeys WHERE id = ?');
+    expect(env.DB.prepare).toHaveBeenCalledWith(
+      'DELETE FROM passkeys WHERE tenant_id = ? AND id = ?'
+    );
   });
 });
 
@@ -844,5 +856,12 @@ describe('createStorageAdapter', () => {
     expect(clientStore).toBeInstanceOf(ClientStore);
     expect(sessionStore).toBeInstanceOf(SessionStore);
     expect(passkeyStore).toBeInstanceOf(PasskeyStore);
+  });
+
+  it('should pass explicit tenant ID to the adapter', () => {
+    const env = createMockEnv();
+    const { adapter } = createStorageAdapter(env, 'acme');
+
+    expect(adapter.getConfiguredTenantId()).toBe('acme');
   });
 });

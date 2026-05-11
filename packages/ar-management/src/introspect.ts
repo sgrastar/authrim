@@ -206,8 +206,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
-    const deviceSecret = await deviceSecretRepo.findByRawSecret(token);
+    const tenantId = getTenantIdFromContext(c);
+    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+    const deviceSecret = await deviceSecretRepo.findByRawSecret(token, tenantId);
     const nowMs = Date.now();
 
     if (

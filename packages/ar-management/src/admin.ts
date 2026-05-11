@@ -156,7 +156,7 @@ function formatArchiveAuditEntry(
         ? metadataObject.resourceId
         : typeof metadataObject?.resource_id === 'string'
           ? metadataObject.resource_id
-          : entry.clientId ?? null,
+          : (entry.clientId ?? null),
     ipAddress:
       typeof metadataObject?.ipAddress === 'string'
         ? metadataObject.ipAddress
@@ -186,7 +186,9 @@ async function buildArchiveAuditUserIdMap(
   tenantId: string,
   entries: Array<{ anonymizedUserId?: string }>
 ) {
-  const anonymizedIds = [...new Set(entries.map((entry) => entry.anonymizedUserId).filter(Boolean))] as string[];
+  const anonymizedIds = [
+    ...new Set(entries.map((entry) => entry.anonymizedUserId).filter(Boolean)),
+  ] as string[];
   return resolveAuditUserIdMap(c, tenantId, anonymizedIds);
 }
 
@@ -565,14 +567,14 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
                 : undefined,
           },
           {
-          tenantId,
-          subjectType: 'user',
-          subjectId: userId,
-          actorId,
-          action: 'user.suspend',
-          reasonDetail: body.reason_detail,
-          requestId,
-          retentionDays,
+            tenantId,
+            subjectType: 'user',
+            subjectId: userId,
+            actorId,
+            action: 'user.suspend',
+            reasonDetail: body.reason_detail,
+            requestId,
+            retentionDays,
           }
         );
       } catch (opLogError) {
@@ -735,14 +737,14 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
                 : undefined,
           },
           {
-          tenantId,
-          subjectType: 'user',
-          subjectId: userId,
-          actorId,
-          action: 'user.lock',
-          reasonDetail: body.reason_detail,
-          requestId,
-          retentionDays,
+            tenantId,
+            subjectType: 'user',
+            subjectId: userId,
+            actorId,
+            action: 'user.lock',
+            reasonDetail: body.reason_detail,
+            requestId,
+            retentionDays,
           }
         );
       } catch (opLogError) {
@@ -931,14 +933,14 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
                 : undefined,
           },
           {
-          tenantId,
-          subjectType: 'user',
-          subjectId: userId,
-          actorId,
-          action: 'user.activate',
-          reasonDetail: body.reason_detail,
-          requestId,
-          retentionDays,
+            tenantId,
+            subjectType: 'user',
+            subjectId: userId,
+            actorId,
+            action: 'user.activate',
+            reasonDetail: body.reason_detail,
+            requestId,
+            retentionDays,
           }
         );
       } catch (opLogError) {
@@ -1101,7 +1103,11 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     if (hasPIIDatabase(c) && user.pii_status !== 'none') {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiAdapter = piiCtx.getPiiAdapter(user.pii_partition);
-      const existingTombstone = await piiCtx.piiRepositories.tombstone.findByUserId(userId, piiAdapter);
+      const existingTombstone = await piiCtx.piiRepositories.tombstone.findByUserId(
+        tenantId,
+        userId,
+        piiAdapter
+      );
       const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
 
       if (!existingTombstone) {
@@ -1130,7 +1136,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
 
       await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
       await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(tenantId, userId, piiAdapter);
-      await piiCtx.piiRepositories.identifier.deleteByUserId(userId, piiAdapter);
+      await piiCtx.piiRepositories.identifier.deleteByUserId(tenantId, userId, piiAdapter);
     }
 
     const sessions = await authCtx.repositories.session.findByUserId(userId);
@@ -1422,7 +1428,9 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
         created_at: number;
       }>(query, [...params, limit, offset]);
 
-      const anonymizedIds = [...new Set(result.map((row) => row.anonymized_user_id).filter(Boolean))] as string[];
+      const anonymizedIds = [
+        ...new Set(result.map((row) => row.anonymized_user_id).filter(Boolean)),
+      ] as string[];
       const userIdMap = await resolveAuditUserIdMap(c, tenantId, anonymizedIds);
 
       entries = result.map((row) => {
@@ -2377,8 +2385,15 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Verify user exists in Core DB via Repository
-    const userCore = await authCtx.repositories.userCore.findById(user_id);
+    // Verify user exists in Core DB
+    const userCore = await authCtx.coreAdapter.queryOne<{
+      id: string;
+      pii_partition: string | null;
+      is_active: number;
+    }>('SELECT id, pii_partition, is_active FROM users_core WHERE id = ? AND tenant_id = ?', [
+      user_id,
+      tenantId,
+    ]);
 
     if (!userCore || !userCore.is_active) {
       return c.json(
@@ -2395,10 +2410,10 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
     let userName: string | null = null;
     if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition ?? 'default');
       const userPII = await piiAdapter.queryOne<{ email: string | null; name: string | null }>(
-        'SELECT email, name FROM users_pii WHERE id = ?',
-        [user_id]
+        'SELECT email, name FROM users_pii WHERE id = ? AND tenant_id = ?',
+        [user_id, tenantId]
       );
       userEmail = userPII?.email ?? null;
       userName = userPII?.name ?? null;
@@ -2414,11 +2429,17 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
     );
 
     try {
-      await sessionStore.createSessionRpc(sessionId, user_id, ttl_seconds, {
-        amr: ['admin_api'],
-        email: userEmail,
-        name: userName,
-      });
+      await sessionStore.createSessionRpc(
+        sessionId,
+        user_id,
+        ttl_seconds,
+        {
+          amr: ['admin_api'],
+          email: userEmail,
+          name: userName,
+        },
+        getTenantIdFromContext(c)
+      );
     } catch (error) {
       logSanitizedError('Failed to create session', error);
       return c.json(
@@ -2754,7 +2775,7 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
               c.privacy_policy_version, c.tos_version, c.consent_version,
               oc.client_name, oc.logo_uri
        FROM oauth_client_consents c
-       LEFT JOIN oauth_clients oc ON c.client_id = oc.client_id
+       LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
        WHERE c.user_id = ? AND c.tenant_id = ?
        ORDER BY c.granted_at DESC`,
       [userId, tenantId]
@@ -2974,7 +2995,7 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
         : [clientId, clientId, clientId, clientId];
 
     // Verify client exists and belongs to tenant using KV cache (with D1 fallback)
-    const client = await getClient(c.env, clientId, coreAdapter);
+    const client = await getClient(c.env, tenantId, clientId, coreAdapter);
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
@@ -3018,10 +3039,10 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
       // Active sessions count (sessions that haven't expired)
       coreAdapter.queryOne<{ active_sessions: number }>(
         `SELECT COUNT(DISTINCT sc.session_id) as active_sessions
-           FROM session_clients sc
+          FROM session_clients sc
            JOIN sessions s ON s.id = sc.session_id
-          WHERE sc.client_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
-        [clientId, tenantId, nowTs]
+          WHERE sc.client_id = ? AND sc.tenant_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
+        [clientId, tenantId, tenantId, nowTs]
       ),
 
       // Last token issued timestamp
@@ -3149,18 +3170,14 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
       const fromTs = buildAuditTimestamp(fromParam);
       if (fromTs != null) {
         query += ' AND created_at >= ?';
-        bindings.push(
-          context.createdAtUnit === 'milliseconds' ? fromTs * 1000 : fromTs
-        );
+        bindings.push(context.createdAtUnit === 'milliseconds' ? fromTs * 1000 : fromTs);
       }
     }
     if (toParam) {
       const toTs = buildAuditTimestamp(toParam);
       if (toTs != null) {
         query += ' AND created_at <= ?';
-        bindings.push(
-          context.createdAtUnit === 'milliseconds' ? toTs * 1000 : toTs
-        );
+        bindings.push(context.createdAtUnit === 'milliseconds' ? toTs * 1000 : toTs);
       }
     }
 

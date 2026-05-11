@@ -78,15 +78,16 @@ export interface CachedUser {
  */
 export async function getCachedUser(
   env: Env,
+  tenantId: string,
   userId: string,
   sources: UserCacheSources
 ): Promise<CachedUser | null> {
   // If USER_CACHE is not configured, fall back to D1 directly
   if (!env.USER_CACHE) {
-    return await getUserFromD1(userId, sources);
+    return await getUserFromD1(tenantId, userId, sources);
   }
 
-  const cacheKey = buildKVKey('user', userId);
+  const cacheKey = buildKVKey('user', userId, tenantId);
 
   // Step 1: Try USER_CACHE (Read-Through Cache)
   const cached = await env.USER_CACHE.get(cacheKey);
@@ -105,7 +106,7 @@ export async function getCachedUser(
   }
 
   // Step 2: Cache miss - fetch from D1
-  const user = await getUserFromD1(userId, sources);
+  const user = await getUserFromD1(tenantId, userId, sources);
 
   if (!user) {
     return null;
@@ -132,6 +133,7 @@ export async function getCachedUser(
  * PII/Non-PII DB separation: fetches from Core DB and PII DB in parallel and merges
  */
 async function getUserFromD1(
+  tenantId: string,
   userId: string,
   sources: UserCacheSources
 ): Promise<CachedUser | null> {
@@ -143,8 +145,10 @@ async function getUserFromD1(
     phone_number_verified: number;
     updated_at: number;
   }>(
-    'SELECT id, email_verified, phone_number_verified, updated_at FROM users_core WHERE id = ? AND is_active = 1',
-    [userId]
+    `SELECT id, email_verified, phone_number_verified, updated_at
+       FROM users_core
+      WHERE id = ? AND tenant_id = ? AND is_active = 1`,
+    [userId, tenantId]
   );
 
   if (!coreResult) {
@@ -206,8 +210,8 @@ async function getUserFromD1(
               address_formatted, address_street_address, address_locality,
               address_region, address_postal_code, address_country,
               birthdate, gender, profile, website, zoneinfo
-       FROM users_pii WHERE id = ?`,
-      [userId]
+       FROM users_pii WHERE id = ? AND tenant_id = ?`,
+      [userId, tenantId]
     );
   }
 
@@ -257,12 +261,16 @@ async function getUserFromD1(
  * @param env - Cloudflare environment bindings
  * @param userId - User ID to invalidate
  */
-export async function invalidateUserCache(env: Env, userId: string): Promise<void> {
+export async function invalidateUserCache(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<void> {
   if (!env.USER_CACHE) {
     return;
   }
 
-  const cacheKey = buildKVKey('user', userId);
+  const cacheKey = buildKVKey('user', userId, tenantId);
 
   try {
     await env.USER_CACHE.delete(cacheKey);
@@ -306,6 +314,7 @@ export interface UserCoreExistence {
  */
 export async function getCachedUserCore(
   env: Env,
+  tenantId: string,
   userId: string,
   coreDbSource: DatabaseSource
 ): Promise<UserCoreExistence | null> {
@@ -317,8 +326,10 @@ export async function getCachedUserCore(
     updated_at: number;
     user_type: string | null;
   }>(
-    'SELECT id, email_verified, phone_number_verified, updated_at, user_type FROM users_core WHERE id = ? AND is_active = 1',
-    [userId]
+    `SELECT id, email_verified, phone_number_verified, updated_at, user_type
+       FROM users_core
+      WHERE id = ? AND tenant_id = ? AND is_active = 1`,
+    [userId, tenantId]
   );
 
   if (!coreResult) {
@@ -372,7 +383,7 @@ export async function getCachedConsent(
     return await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
   }
 
-  const cacheKey = buildKVKey('consent', `${tenantId}:${userId}:${clientId}`);
+  const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
 
   // Step 1: Try CONSENT_CACHE (Read-Through Cache)
   const cached = await env.CONSENT_CACHE.get(cacheKey);
@@ -465,7 +476,7 @@ export async function invalidateConsentCache(
 
   if (clientId) {
     // Invalidate specific consent
-    const cacheKey = buildKVKey('consent', `${tenantId}:${userId}:${clientId}`);
+    const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
     try {
       await env.CONSENT_CACHE.delete(cacheKey);
     } catch (error) {
@@ -695,10 +706,11 @@ function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
  */
 export async function getClient(
   env: Env,
+  tenantId: string,
   clientId: string,
   coreDbSource: DatabaseSource
 ): Promise<ClientMetadata | null> {
-  const cacheKey = buildKVKey('client', clientId);
+  const cacheKey = buildKVKey('client', clientId, tenantId);
 
   // Get cache TTL based on cache mode (client-specific > platform > default)
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientId);
@@ -805,7 +817,7 @@ export async function getClient(
     device_secret_introspection_trust_groups: string | null;
     created_at: number;
     updated_at: number;
-  }>('SELECT * FROM oauth_clients WHERE client_id = ?', [clientId]);
+  }>('SELECT * FROM oauth_clients WHERE client_id = ? AND tenant_id = ?', [clientId, tenantId]);
 
   if (!result) {
     return null;
@@ -971,7 +983,8 @@ export async function getClient(
  * @returns Promise<void>
  */
 export async function putClient(env: Env, clientData: ClientMetadata): Promise<void> {
-  const cacheKey = buildKVKey('client', clientData.client_id);
+  const tenantId = clientData.tenant_id || getDefaultTenantId(env);
+  const cacheKey = buildKVKey('client', clientData.client_id, tenantId);
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientData.client_id);
   const normalizedClientData = normalizeClientMetadata(clientData);
 
@@ -996,8 +1009,12 @@ export async function putClient(env: Env, clientData: ClientMetadata): Promise<v
  * @param clientId - Client ID to delete from cache
  * @returns Promise<void>
  */
-export async function deleteClientFromKV(env: Env, clientId: string): Promise<void> {
-  const cacheKey = buildKVKey('client', clientId);
+export async function deleteClientFromKV(
+  env: Env,
+  tenantId: string,
+  clientId: string
+): Promise<void> {
+  const cacheKey = buildKVKey('client', clientId, tenantId);
 
   try {
     await env.CLIENTS_CACHE.delete(cacheKey);

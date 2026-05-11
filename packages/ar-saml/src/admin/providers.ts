@@ -30,6 +30,7 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   createErrorResponse,
   AR_ERROR_CODES,
+  getTenantIdFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
 import {
@@ -58,7 +59,8 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const tenantId = getTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const providers = await coreAdapter.query<{
       id: string;
       name: string;
@@ -70,9 +72,9 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
     }>(
       `SELECT id, name, provider_type, config_json, enabled, created_at, updated_at
        FROM identity_providers
-       WHERE provider_type IN ('saml_idp', 'saml_sp')
+       WHERE tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')
        ORDER BY created_at DESC`,
-      []
+      [tenantId]
     );
 
     const response = providers.map((row) => ({
@@ -137,12 +139,14 @@ export async function handleCreateProvider(c: Context<{ Bindings: Env }>): Promi
     const id = crypto.randomUUID();
     const now = Date.now();
 
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const tenantId = getTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     await coreAdapter.execute(
-      `INSERT INTO identity_providers (id, name, provider_type, config_json, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO identity_providers (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
+        tenantId,
         body.name,
         body.providerType,
         JSON.stringify(body.config),
@@ -183,7 +187,8 @@ export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const tenantId = getTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const provider = await coreAdapter.queryOne<{
       id: string;
       name: string;
@@ -195,8 +200,8 @@ export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<
     }>(
       `SELECT id, name, provider_type, config_json, enabled, created_at, updated_at
        FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
-      [id]
+       WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id, tenantId]
     );
 
     if (!provider) {
@@ -231,7 +236,8 @@ export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const tenantId = getTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Get existing provider
     const existing = await coreAdapter.queryOne<{
@@ -243,8 +249,8 @@ export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promi
     }>(
       `SELECT id, name, provider_type, config_json, enabled
        FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
-      [id]
+       WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id, tenantId]
     );
 
     if (!existing) {
@@ -261,13 +267,14 @@ export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promi
     await coreAdapter.execute(
       `UPDATE identity_providers
        SET name = ?, config_json = ?, enabled = ?, updated_at = ?
-       WHERE id = ?`,
+       WHERE id = ? AND tenant_id = ?`,
       [
         body.name || existing.name,
         JSON.stringify(newConfig),
         body.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled,
         now,
         id,
+        tenantId,
       ]
     );
 
@@ -298,11 +305,12 @@ export async function handleDeleteProvider(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const tenantId = getTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const result = await coreAdapter.execute(
       `DELETE FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
-      [id]
+       WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id, tenantId]
     );
 
     if (result.rowsAffected === 0) {
@@ -329,7 +337,8 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
     }
 
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const tenantId = getTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Get existing provider
     const existing = await coreAdapter.queryOne<{
@@ -339,8 +348,8 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
     }>(
       `SELECT id, provider_type, config_json
        FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
-      [id]
+       WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id, tenantId]
     );
 
     if (!existing) {
@@ -400,8 +409,8 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
     const now = Date.now();
 
     await coreAdapter.execute(
-      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ?',
-      [JSON.stringify(mergedConfig), now, id]
+      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [JSON.stringify(mergedConfig), now, id, tenantId]
     );
 
     return c.json({
@@ -639,12 +648,16 @@ async function resolveSAMLProvidersCoreAdapter(env: Env) {
 /**
  * Get SP configuration by Entity ID
  */
-export async function getSPConfig(env: Env, entityId: string): Promise<SAMLSPConfig | null> {
+export async function getSPConfig(
+  env: Env,
+  tenantId: string,
+  entityId: string
+): Promise<SAMLSPConfig | null> {
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
-     WHERE provider_type = 'saml_sp' AND enabled = 1`,
-    []
+     WHERE tenant_id = ? AND provider_type = 'saml_sp' AND enabled = 1`,
+    [tenantId]
   );
 
   for (const row of result) {
@@ -660,12 +673,16 @@ export async function getSPConfig(env: Env, entityId: string): Promise<SAMLSPCon
 /**
  * Get IdP configuration by provider ID
  */
-export async function getIdPConfig(env: Env, providerId: string): Promise<SAMLIdPConfig | null> {
+export async function getIdPConfig(
+  env: Env,
+  tenantId: string,
+  providerId: string
+): Promise<SAMLIdPConfig | null> {
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.queryOne<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
-     WHERE id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
-    [providerId]
+     WHERE id = ? AND tenant_id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
+    [providerId, tenantId]
   );
 
   if (!result) {
@@ -680,13 +697,14 @@ export async function getIdPConfig(env: Env, providerId: string): Promise<SAMLId
  */
 export async function getIdPConfigByEntityId(
   env: Env,
+  tenantId: string,
   entityId: string
 ): Promise<SAMLIdPConfig | null> {
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
-     WHERE provider_type = 'saml_idp' AND enabled = 1`,
-    []
+     WHERE tenant_id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
+    [tenantId]
   );
 
   for (const row of result) {
@@ -703,7 +721,8 @@ export async function getIdPConfigByEntityId(
  * List all SP configurations
  */
 export async function listSPConfigs(
-  env: Env
+  env: Env,
+  tenantId: string
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{
@@ -712,8 +731,8 @@ export async function listSPConfigs(
     config_json: string;
   }>(
     `SELECT id, name, config_json FROM identity_providers
-     WHERE provider_type = 'saml_sp' AND enabled = 1`,
-    []
+     WHERE tenant_id = ? AND provider_type = 'saml_sp' AND enabled = 1`,
+    [tenantId]
   );
 
   return result.map((row) => ({
@@ -727,7 +746,8 @@ export async function listSPConfigs(
  * List all IdP configurations
  */
 export async function listIdPConfigs(
-  env: Env
+  env: Env,
+  tenantId: string
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
   const result = await coreAdapter.query<{
@@ -736,8 +756,8 @@ export async function listIdPConfigs(
     config_json: string;
   }>(
     `SELECT id, name, config_json FROM identity_providers
-     WHERE provider_type = 'saml_idp' AND enabled = 1`,
-    []
+     WHERE tenant_id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
+    [tenantId]
   );
 
   return result.map((row) => ({

@@ -90,6 +90,8 @@ function createMockContext(options: {
   headers?: Record<string, string>;
   envOverrides?: Record<string, unknown>;
   adminAuth?: { userId?: string; authMethod?: string };
+  tenantId?: string;
+  pluginTenantScope?: 'tenant' | 'platform';
 }) {
   const mockKV =
     options.kv ??
@@ -100,9 +102,12 @@ function createMockContext(options: {
     });
 
   const contextStore = new Map<string, unknown>([
-    ['tenantId', 'default'],
+    ['tenantId', options.tenantId ?? 'default'],
     ['adminAuth', options.adminAuth ?? { userId: 'admin-1', authMethod: 'password' }],
   ]);
+  if (options.pluginTenantScope) {
+    contextStore.set('pluginTenantScope', options.pluginTenantScope);
+  }
 
   const c = {
     req: {
@@ -688,7 +693,7 @@ describe('Plugin Admin API - Get Plugin Config', () => {
       expect(response.config.endpoint).toBe('https://api.example.com');
     });
 
-    it('should return tenant-specific config when tenant_id is provided', async () => {
+    it('should return tenant-specific config for the context tenant', async () => {
       const globalConfig = { apiKey: 'global-key', timeout: 5000 };
       const tenantConfig = { apiKey: 'tenant-key' };
 
@@ -701,7 +706,7 @@ describe('Plugin Admin API - Get Plugin Config', () => {
 
       const c = createMockContext({
         params: { id: 'test-plugin' },
-        query: { tenant_id: 'tenant-1' },
+        tenantId: 'tenant-1',
         kv,
       });
 
@@ -807,6 +812,7 @@ describe('Plugin Admin API - Update Plugin Config', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'notifier-resend' },
+        pluginTenantScope: 'platform',
         body: {
           config: {
             apiKey: 're_l****5678',
@@ -894,9 +900,9 @@ describe('Plugin Admin API - Update Plugin Config', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
+        tenantId: 'tenant-1',
         body: {
           config: { apiKey: 'tenant-specific-key' },
-          tenant_id: 'tenant-1',
         },
         kv,
       });
@@ -1041,6 +1047,7 @@ describe('Plugin Admin API - Enable/Disable', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
         body: {},
         kv,
       });
@@ -1092,7 +1099,8 @@ describe('Plugin Admin API - Enable/Disable', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
-        body: { tenant_id: 'tenant-1' },
+        body: {},
+        tenantId: 'tenant-1',
         kv,
       });
 
@@ -1126,6 +1134,7 @@ describe('Plugin Admin API - Enable/Disable', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
         body: {},
         kv,
       });
@@ -1177,7 +1186,8 @@ describe('Plugin Admin API - Enable/Disable', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
-        body: { tenant_id: 'tenant-1' },
+        body: {},
+        tenantId: 'tenant-1',
         kv,
       });
 
@@ -1212,7 +1222,8 @@ describe('Plugin Admin API - Enable/Disable', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
-        body: { tenant_id: 'special-tenant' },
+        body: {},
+        tenantId: 'special-tenant',
         kv,
       });
 
@@ -1771,6 +1782,7 @@ describe('Plugin Admin API - Concurrency', () => {
       const c1 = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
         body: { config: { version: 1, updatedBy: 'user-1' } },
         kv,
       });
@@ -1778,6 +1790,7 @@ describe('Plugin Admin API - Concurrency', () => {
       const c2 = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
         body: { config: { version: 2, updatedBy: 'user-2' } },
         kv,
       });
@@ -1813,6 +1826,7 @@ describe('Plugin Admin API - Concurrency', () => {
       const enableContext = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
         body: {},
         kv,
       });
@@ -1820,6 +1834,7 @@ describe('Plugin Admin API - Concurrency', () => {
       const disableContext = createMockContext({
         method: 'PUT',
         params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
         body: {},
         kv,
       });
@@ -1934,7 +1949,8 @@ describe('Plugin Admin API - Traceability', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'audited-plugin' },
-        body: { config: { key: 'value' }, tenant_id: 'tenant-123' },
+        body: { config: { key: 'value' } },
+        tenantId: 'tenant-123',
         kv,
       });
 
@@ -2141,6 +2157,7 @@ describe('Plugin Admin API - Security', () => {
       const c = createMockContext({
         params: { id: 'test-plugin' },
         query: { tenant_id: "'; DROP TABLE plugins; --" },
+        pluginTenantScope: 'platform',
         kv,
       });
 
@@ -2545,6 +2562,7 @@ describe('Plugin Admin API - Data Integrity', () => {
       const c = createMockContext({
         method: 'PUT',
         params: { id: 'nested-plugin' },
+        pluginTenantScope: 'platform',
         body: {
           config: {
             server: {
@@ -2627,7 +2645,7 @@ describe('Plugin Admin API - Tenant Isolation', () => {
       // Request from tenant-A
       const cA = createMockContext({
         params: { id: 'test-plugin' },
-        query: { tenant_id: 'tenant-A' },
+        tenantId: 'tenant-A',
         kv,
       });
 
@@ -2650,6 +2668,7 @@ describe('Plugin Admin API - Tenant Isolation', () => {
       // Request global config (no tenant_id)
       const cGlobal = createMockContext({
         params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
         kv,
       });
 
@@ -2681,7 +2700,8 @@ describe('Plugin Admin API - Tenant Isolation', () => {
       const c1 = createMockContext({
         method: 'PUT',
         params: { id: 'multi-tenant-plugin' },
-        body: { tenant_id: 'tenant-1' },
+        body: {},
+        tenantId: 'tenant-1',
         kv,
       });
       await enablePluginHandler(c1);
@@ -2690,7 +2710,8 @@ describe('Plugin Admin API - Tenant Isolation', () => {
       const c2 = createMockContext({
         method: 'PUT',
         params: { id: 'multi-tenant-plugin' },
-        body: { tenant_id: 'tenant-2' },
+        body: {},
+        tenantId: 'tenant-2',
         kv,
       });
       await disablePluginHandler(c2);

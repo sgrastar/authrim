@@ -41,12 +41,33 @@ interface TombstoneRecord {
   deletion_metadata: string | null;
 }
 
+type TombstoneTenantScope = 'tenant' | 'platform';
+
 async function resolveTombstoneDatabase(
   c: Context<{ Bindings: Env }>,
   tenantId: string
 ): Promise<DatabaseSource | null> {
   const sources = await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId);
   return sources.piiDb;
+}
+
+function resolveTombstoneTenantId(
+  c: Context<{ Bindings: Env }>,
+  scope: TombstoneTenantScope,
+  explicitTenantId?: string
+): string | undefined {
+  if (scope === 'tenant') {
+    return getTenantIdFromContext(c);
+  }
+
+  const candidates = [explicitTenantId, c.req.query('tenant_id'), c.req.header('X-Tenant-Id')];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -61,8 +82,11 @@ async function resolveTombstoneDatabase(
  * - page: Page number (default: 1)
  * - limit: Items per page (default: 20, max: 100)
  */
-export async function listTombstones(c: Context<{ Bindings: Env }>) {
-  const tenantId = c.req.query('tenant_id') ?? getTenantIdFromContext(c);
+async function listTombstonesForScope(
+  c: Context<{ Bindings: Env }>,
+  scope: TombstoneTenantScope = 'tenant'
+) {
+  const tenantId = resolveTombstoneTenantId(c, scope);
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -113,9 +137,7 @@ export async function listTombstones(c: Context<{ Bindings: Env }>) {
 
     // Get items
     const dataSql = `SELECT * FROM users_pii_tombstone ${whereClause} ORDER BY deleted_at DESC LIMIT ? OFFSET ?`;
-    const items = (
-      await adapter.query<TombstoneRecord>(dataSql, [...params, limit, offset])
-    ).map(
+    const items = (await adapter.query<TombstoneRecord>(dataSql, [...params, limit, offset])).map(
       (row: TombstoneRecord) => ({
         id: row.id,
         tenant_id: row.tenant_id,
@@ -166,14 +188,25 @@ export async function listTombstones(c: Context<{ Bindings: Env }>) {
   }
 }
 
+export async function listTombstones(c: Context<{ Bindings: Env }>) {
+  return listTombstonesForScope(c, 'tenant');
+}
+
+export async function listPlatformTombstones(c: Context<{ Bindings: Env }>) {
+  return listTombstonesForScope(c, 'platform');
+}
+
 /**
  * GET /api/admin/tombstones/:id
  *
  * Get a specific tombstone by ID.
  */
-export async function getTombstone(c: Context<{ Bindings: Env }>) {
+async function getTombstoneForScope(
+  c: Context<{ Bindings: Env }>,
+  scope: TombstoneTenantScope = 'tenant'
+) {
   const log = getLogger(c).module('TombstonesAPI');
-  const tenantId = c.req.query('tenant_id') ?? getTenantIdFromContext(c);
+  const tenantId = resolveTombstoneTenantId(c, scope);
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -227,6 +260,14 @@ export async function getTombstone(c: Context<{ Bindings: Env }>) {
   }
 }
 
+export async function getTombstone(c: Context<{ Bindings: Env }>) {
+  return getTombstoneForScope(c, 'tenant');
+}
+
+export async function getPlatformTombstone(c: Context<{ Bindings: Env }>) {
+  return getTombstoneForScope(c, 'platform');
+}
+
 /**
  * GET /api/admin/tombstones/stats
  *
@@ -235,8 +276,11 @@ export async function getTombstone(c: Context<{ Bindings: Env }>) {
  * Query Parameters:
  * - tenant_id: Filter by tenant (optional)
  */
-export async function getTombstoneStats(c: Context<{ Bindings: Env }>) {
-  const tenantId = c.req.query('tenant_id') ?? getTenantIdFromContext(c);
+async function getTombstoneStatsForScope(
+  c: Context<{ Bindings: Env }>,
+  scope: TombstoneTenantScope = 'tenant'
+) {
+  const tenantId = resolveTombstoneTenantId(c, scope);
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -309,6 +353,14 @@ export async function getTombstoneStats(c: Context<{ Bindings: Env }>) {
   }
 }
 
+export async function getTombstoneStats(c: Context<{ Bindings: Env }>) {
+  return getTombstoneStatsForScope(c, 'tenant');
+}
+
+export async function getPlatformTombstoneStats(c: Context<{ Bindings: Env }>) {
+  return getTombstoneStatsForScope(c, 'platform');
+}
+
 /**
  * POST /api/admin/tombstones/cleanup
  *
@@ -318,7 +370,10 @@ export async function getTombstoneStats(c: Context<{ Bindings: Env }>) {
  * - tenant_id: Only cleanup for specific tenant
  * - dry_run: If true, only return count without deleting (default: false)
  */
-export async function cleanupTombstones(c: Context<{ Bindings: Env }>) {
+async function cleanupTombstonesForScope(
+  c: Context<{ Bindings: Env }>,
+  scope: TombstoneTenantScope = 'tenant'
+) {
   const log = getLogger(c).module('TombstonesAPI');
 
   let body: { tenant_id?: string; dry_run?: boolean } = {};
@@ -328,7 +383,7 @@ export async function cleanupTombstones(c: Context<{ Bindings: Env }>) {
     // No body is fine
   }
 
-  const tenantId = body.tenant_id ?? getTenantIdFromContext(c);
+  const tenantId = resolveTombstoneTenantId(c, scope, body.tenant_id);
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -387,15 +442,26 @@ export async function cleanupTombstones(c: Context<{ Bindings: Env }>) {
   }
 }
 
+export async function cleanupTombstones(c: Context<{ Bindings: Env }>) {
+  return cleanupTombstonesForScope(c, 'tenant');
+}
+
+export async function cleanupPlatformTombstones(c: Context<{ Bindings: Env }>) {
+  return cleanupTombstonesForScope(c, 'platform');
+}
+
 /**
  * DELETE /api/admin/tombstones/:id
  *
  * Force delete a specific tombstone.
  * Use with caution - this removes the deletion record.
  */
-export async function deleteTombstone(c: Context<{ Bindings: Env }>) {
+async function deleteTombstoneForScope(
+  c: Context<{ Bindings: Env }>,
+  scope: TombstoneTenantScope = 'tenant'
+) {
   const log = getLogger(c).module('TombstonesAPI');
-  const tenantId = c.req.query('tenant_id') ?? getTenantIdFromContext(c);
+  const tenantId = resolveTombstoneTenantId(c, scope);
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -440,6 +506,14 @@ export async function deleteTombstone(c: Context<{ Bindings: Env }>) {
     log.error('deleteTombstone error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+export async function deleteTombstone(c: Context<{ Bindings: Env }>) {
+  return deleteTombstoneForScope(c, 'tenant');
+}
+
+export async function deletePlatformTombstone(c: Context<{ Bindings: Env }>) {
+  return deleteTombstoneForScope(c, 'platform');
 }
 
 /**

@@ -16,14 +16,17 @@
  * Tables: roles, user_roles
  * Schema (roles):
  *   - id: TEXT PRIMARY KEY (UUID)
- *   - name: TEXT UNIQUE NOT NULL
+ *   - tenant_id: TEXT NOT NULL
+ *   - name: TEXT NOT NULL
  *   - description: TEXT
  *   - permissions_json: TEXT NOT NULL (JSON array of permissions)
  *   - created_at: INTEGER NOT NULL (timestamp)
+ *   - UNIQUE(tenant_id, name)
  *
  * Schema (user_roles):
  *   - user_id: TEXT NOT NULL (FK to users)
  *   - role_id: TEXT NOT NULL (FK to roles)
+ *   - tenant_id: TEXT NOT NULL
  *   - created_at: INTEGER NOT NULL (timestamp)
  *   - PRIMARY KEY (user_id, role_id)
  */
@@ -37,7 +40,9 @@ import type { DatabaseAdapter } from '../../db/adapter';
 export interface Role {
   /** Unique role ID (UUID) */
   id: string;
-  /** Role name (unique) */
+  /** Tenant ID */
+  tenant_id: string;
+  /** Role name (unique within tenant) */
   name: string;
   /** Role description */
   description: string | null;
@@ -55,6 +60,8 @@ export interface UserRole {
   user_id: string;
   /** Role ID */
   role_id: string;
+  /** Tenant ID */
+  tenant_id: string;
   /** Assignment timestamp (Unix ms) */
   created_at: number;
 }
@@ -90,6 +97,7 @@ export interface UpdateRoleInput {
  */
 interface RoleRow {
   id: string;
+  tenant_id: string;
   name: string;
   description: string | null;
   permissions_json: string;
@@ -102,6 +110,7 @@ interface RoleRow {
 interface UserRoleRow {
   user_id: string;
   role_id: string;
+  tenant_id: string;
   created_at: number;
 }
 
@@ -115,9 +124,11 @@ interface UserRoleRow {
  */
 export class RoleRepository {
   protected readonly adapter: DatabaseAdapter;
+  protected readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter) {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
+    this.tenantId = tenantId;
   }
 
   // =========================================================================
@@ -137,12 +148,13 @@ export class RoleRepository {
     const permissionsJson = JSON.stringify(input.permissions);
 
     const sql = `
-      INSERT INTO roles (id, name, description, permissions_json, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO roles (id, tenant_id, name, description, permissions_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
       id,
+      this.tenantId,
       input.name,
       input.description ?? null,
       permissionsJson,
@@ -151,6 +163,7 @@ export class RoleRepository {
 
     return {
       id,
+      tenant_id: this.tenantId,
       name: input.name,
       description: input.description ?? null,
       permissions: input.permissions,
@@ -165,8 +178,8 @@ export class RoleRepository {
    * @returns Role or null if not found
    */
   async findById(id: string): Promise<Role | null> {
-    const sql = 'SELECT * FROM roles WHERE id = ?';
-    const row = await this.adapter.queryOne<RoleRow>(sql, [id]);
+    const sql = 'SELECT * FROM roles WHERE id = ? AND tenant_id = ?';
+    const row = await this.adapter.queryOne<RoleRow>(sql, [id, this.tenantId]);
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -177,8 +190,8 @@ export class RoleRepository {
    * @returns Role or null if not found
    */
   async findByName(name: string): Promise<Role | null> {
-    const sql = 'SELECT * FROM roles WHERE name = ?';
-    const row = await this.adapter.queryOne<RoleRow>(sql, [name]);
+    const sql = 'SELECT * FROM roles WHERE tenant_id = ? AND name = ?';
+    const row = await this.adapter.queryOne<RoleRow>(sql, [this.tenantId, name]);
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -188,8 +201,8 @@ export class RoleRepository {
    * @returns Array of all roles
    */
   async findAll(): Promise<Role[]> {
-    const sql = 'SELECT * FROM roles ORDER BY name ASC';
-    const rows = await this.adapter.query<RoleRow>(sql);
+    const sql = 'SELECT * FROM roles WHERE tenant_id = ? ORDER BY name ASC';
+    const rows = await this.adapter.query<RoleRow>(sql, [this.tenantId]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -228,8 +241,8 @@ export class RoleRepository {
       return existing;
     }
 
-    const sql = `UPDATE roles SET ${updates.join(', ')} WHERE id = ?`;
-    params.push(id);
+    const sql = `UPDATE roles SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`;
+    params.push(id, this.tenantId);
 
     await this.adapter.execute(sql, params);
     return this.findById(id);
@@ -243,8 +256,8 @@ export class RoleRepository {
    * @returns True if deleted, false if not found
    */
   async delete(id: string): Promise<boolean> {
-    const sql = 'DELETE FROM roles WHERE id = ?';
-    const result = await this.adapter.execute(sql, [id]);
+    const sql = 'DELETE FROM roles WHERE id = ? AND tenant_id = ?';
+    const result = await this.adapter.execute(sql, [id, this.tenantId]);
     return result.rowsAffected > 0;
   }
 
@@ -255,8 +268,8 @@ export class RoleRepository {
    * @returns True if exists
    */
   async nameExists(name: string): Promise<boolean> {
-    const sql = 'SELECT 1 FROM roles WHERE name = ?';
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [name]);
+    const sql = 'SELECT 1 FROM roles WHERE tenant_id = ? AND name = ?';
+    const result = await this.adapter.queryOne<{ 1: number }>(sql, [this.tenantId, name]);
     return result !== null;
   }
 
@@ -284,12 +297,14 @@ export class RoleRepository {
     }
 
     const now = getCurrentTimestamp();
-    const sql = 'INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)';
-    await this.adapter.execute(sql, [userId, roleId, now]);
+    const sql =
+      'INSERT INTO user_roles (user_id, role_id, tenant_id, created_at) VALUES (?, ?, ?, ?)';
+    await this.adapter.execute(sql, [userId, roleId, this.tenantId, now]);
 
     return {
       user_id: userId,
       role_id: roleId,
+      tenant_id: this.tenantId,
       created_at: now,
     };
   }
@@ -302,8 +317,8 @@ export class RoleRepository {
    * @returns True if revoked, false if assignment didn't exist
    */
   async revokeRoleFromUser(userId: string, roleId: string): Promise<boolean> {
-    const sql = 'DELETE FROM user_roles WHERE user_id = ? AND role_id = ?';
-    const result = await this.adapter.execute(sql, [userId, roleId]);
+    const sql = 'DELETE FROM user_roles WHERE user_id = ? AND role_id = ? AND tenant_id = ?';
+    const result = await this.adapter.execute(sql, [userId, roleId, this.tenantId]);
     return result.rowsAffected > 0;
   }
 
@@ -317,11 +332,11 @@ export class RoleRepository {
     const sql = `
       SELECT r.* FROM roles r
       INNER JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.user_id = ?
+      WHERE ur.user_id = ? AND ur.tenant_id = ? AND r.tenant_id = ?
       ORDER BY r.name ASC
     `;
 
-    const rows = await this.adapter.query<RoleRow>(sql, [userId]);
+    const rows = await this.adapter.query<RoleRow>(sql, [userId, this.tenantId, this.tenantId]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -332,8 +347,9 @@ export class RoleRepository {
    * @returns Array of user IDs with this role
    */
   async findUsersWithRole(roleId: string): Promise<string[]> {
-    const sql = 'SELECT user_id FROM user_roles WHERE role_id = ? ORDER BY created_at ASC';
-    const rows = await this.adapter.query<{ user_id: string }>(sql, [roleId]);
+    const sql =
+      'SELECT user_id FROM user_roles WHERE role_id = ? AND tenant_id = ? ORDER BY created_at ASC';
+    const rows = await this.adapter.query<{ user_id: string }>(sql, [roleId, this.tenantId]);
     return rows.map((row) => row.user_id);
   }
 
@@ -345,8 +361,12 @@ export class RoleRepository {
    * @returns True if user has the role
    */
   async userHasRole(userId: string, roleId: string): Promise<boolean> {
-    const sql = 'SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ?';
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [userId, roleId]);
+    const sql = 'SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND tenant_id = ?';
+    const result = await this.adapter.queryOne<{ 1: number }>(sql, [
+      userId,
+      roleId,
+      this.tenantId,
+    ]);
     return result !== null;
   }
 
@@ -361,9 +381,14 @@ export class RoleRepository {
     const sql = `
       SELECT 1 FROM user_roles ur
       INNER JOIN roles r ON ur.role_id = r.id
-      WHERE ur.user_id = ? AND r.name = ?
+      WHERE ur.user_id = ? AND ur.tenant_id = ? AND r.tenant_id = ? AND r.name = ?
     `;
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [userId, roleName]);
+    const result = await this.adapter.queryOne<{ 1: number }>(sql, [
+      userId,
+      this.tenantId,
+      this.tenantId,
+      roleName,
+    ]);
     return result !== null;
   }
 
@@ -429,8 +454,8 @@ export class RoleRepository {
    * @returns Number of role assignments removed
    */
   async removeAllRolesFromUser(userId: string): Promise<number> {
-    const sql = 'DELETE FROM user_roles WHERE user_id = ?';
-    const result = await this.adapter.execute(sql, [userId]);
+    const sql = 'DELETE FROM user_roles WHERE user_id = ? AND tenant_id = ?';
+    const result = await this.adapter.execute(sql, [userId, this.tenantId]);
     return result.rowsAffected;
   }
 
@@ -469,8 +494,8 @@ export class RoleRepository {
    * @returns Number of users with this role
    */
   async countUsersWithRole(roleId: string): Promise<number> {
-    const sql = 'SELECT COUNT(*) as count FROM user_roles WHERE role_id = ?';
-    const result = await this.adapter.queryOne<{ count: number }>(sql, [roleId]);
+    const sql = 'SELECT COUNT(*) as count FROM user_roles WHERE role_id = ? AND tenant_id = ?';
+    const result = await this.adapter.queryOne<{ count: number }>(sql, [roleId, this.tenantId]);
     return result?.count ?? 0;
   }
 
@@ -482,8 +507,8 @@ export class RoleRepository {
    * @returns User-role assignment or null if not found
    */
   async getUserRoleAssignment(userId: string, roleId: string): Promise<UserRole | null> {
-    const sql = 'SELECT * FROM user_roles WHERE user_id = ? AND role_id = ?';
-    const row = await this.adapter.queryOne<UserRoleRow>(sql, [userId, roleId]);
+    const sql = 'SELECT * FROM user_roles WHERE user_id = ? AND role_id = ? AND tenant_id = ?';
+    const row = await this.adapter.queryOne<UserRoleRow>(sql, [userId, roleId, this.tenantId]);
     return row ?? null;
   }
 
@@ -501,6 +526,7 @@ export class RoleRepository {
 
     return {
       id: row.id,
+      tenant_id: row.tenant_id,
       name: row.name,
       description: row.description,
       permissions,

@@ -48,7 +48,11 @@ interface PARRequestStoreStub extends DurableObjectStub {
     data: Record<string, unknown>;
     ttl: number;
   }): Promise<void>;
-  consumeRequestRpc(request: { requestUri: string; client_id: string }): Promise<PARRequestData>;
+  consumeRequestRpc(request: {
+    requestUri: string;
+    tenant_id: string;
+    client_id: string;
+  }): Promise<PARRequestData>;
 }
 
 /**

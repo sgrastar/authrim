@@ -277,7 +277,9 @@ describe('SCIM 2.0 Endpoints', () => {
                   const user = mockUsers.get(userId);
                   const customFields = user?.custom_fields || {};
                   const results = Object.entries(customFields)
-                    .filter(([fieldName]) => fieldNames.length === 0 || fieldNames.includes(fieldName))
+                    .filter(
+                      ([fieldName]) => fieldNames.length === 0 || fieldNames.includes(fieldName)
+                    )
                     .map(([field_name, field_value]) => ({
                       field_name,
                       field_value,
@@ -317,7 +319,9 @@ describe('SCIM 2.0 Endpoints', () => {
                 }
                 // Handle UPDATE users_core SET (PII/Non-PII separation)
                 if (sql.includes('UPDATE users_core SET')) {
-                  const userId = args[args.length - 1];
+                  const userId = sql.includes('tenant_id = ?')
+                    ? args[args.length - 2]
+                    : args[args.length - 1];
                   const user = mockUsers.get(userId);
                   if (user) {
                     user.updated_at = Math.floor(Date.now() / 1000);
@@ -349,15 +353,18 @@ describe('SCIM 2.0 Endpoints', () => {
                   const groupId = args[0];
                   mockGroups.set(groupId, {
                     id: groupId,
-                    name: args[1],
-                    description: args[2],
-                    external_id: args[4],
-                    created_at: args[5],
+                    tenant_id: args[1],
+                    name: args[2],
+                    description: args[3],
+                    external_id: args[5],
+                    created_at: args[6],
                   });
                   return { success: true };
                 }
                 if (sql.includes('UPDATE roles SET')) {
-                  const groupId = args[args.length - 1];
+                  const groupId = sql.includes('tenant_id = ?')
+                    ? args[args.length - 2]
+                    : args[args.length - 1];
                   const group = mockGroups.get(groupId);
                   if (group) {
                     group.name = args[0];
@@ -395,7 +402,9 @@ describe('SCIM 2.0 Endpoints', () => {
               first: vi.fn().mockImplementation(async () => {
                 // Handle SELECT queries for PII data
                 if (
-                  sql.includes('SELECT custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?')
+                  sql.includes(
+                    'SELECT custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?'
+                  )
                 ) {
                   const user = mockUsers.get(args[0]);
                   if (!user) return null;
@@ -694,9 +703,9 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.schemas).toContain('urn:ietf:params:scim:schemas:extension:enterprise:2.0:User');
-      expect(
-        body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department
-      ).toBe('Engineering');
+      expect(body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department).toBe(
+        'Engineering'
+      );
     });
 
     it('should return 404 for non-existent user', async () => {
@@ -845,9 +854,9 @@ describe('SCIM 2.0 Endpoints', () => {
 
       expect(res.status).toBe(201);
       const body = (await res.json()) as any;
-      expect(
-        body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department
-      ).toBe('Support');
+      expect(body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department).toBe(
+        'Support'
+      );
     });
 
     it('should create a user when a required non-PII enterprise field is satisfied', async () => {
@@ -1016,9 +1025,9 @@ describe('SCIM 2.0 Endpoints', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
-      expect(
-        body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department
-      ).toBe('Engineering');
+      expect(body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department).toBe(
+        'Engineering'
+      );
     });
 
     it('should return 404 for non-existent user', async () => {
@@ -1249,9 +1258,8 @@ describe('SCIM 2.0 Endpoints', () => {
         'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'
       );
       expect(
-        body.Operations[0].response[
-          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'
-        ]?.department
+        body.Operations[0].response['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']
+          ?.department
       ).toBe('Support');
     });
 
@@ -1327,9 +1335,8 @@ describe('SCIM 2.0 Endpoints', () => {
       const body = (await res.json()) as any;
       expect(body.Operations[0].status).toBe('200');
       expect(
-        body.Operations[0].response[
-          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'
-        ]?.department
+        body.Operations[0].response['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']
+          ?.department
       ).toBe('Engineering');
     });
 

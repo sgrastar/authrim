@@ -154,7 +154,9 @@ export interface UserCoreFilterOptions {
  * User Core Repository
  */
 export class UserCoreRepository extends BaseRepository<UserCore> {
-  constructor(adapter: DatabaseAdapter) {
+  private readonly tenantId: string;
+
+  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
     super(adapter, {
       tableName: 'users_core',
       primaryKey: 'id',
@@ -179,6 +181,7 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
         'locked_until',
       ],
     });
+    this.tenantId = tenantId;
   }
 
   /**
@@ -256,8 +259,8 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
    */
   async updatePIIStatus(userId: string, status: PIIStatus): Promise<boolean> {
     const result = await this.adapter.execute(
-      'UPDATE users_core SET pii_status = ?, updated_at = ? WHERE id = ?',
-      [status, getCurrentTimestamp(), userId]
+      'UPDATE users_core SET pii_status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [status, getCurrentTimestamp(), userId, this.tenantId]
     );
     return result.rowsAffected > 0;
   }
@@ -271,8 +274,8 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
   async updateLastLogin(userId: string): Promise<boolean> {
     const now = getCurrentTimestamp();
     const result = await this.adapter.execute(
-      'UPDATE users_core SET last_login_at = ?, updated_at = ? WHERE id = ?',
-      [now, now, userId]
+      'UPDATE users_core SET last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [now, now, userId, this.tenantId]
     );
     return result.rowsAffected > 0;
   }
@@ -467,8 +470,8 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
    */
   override async findById(id: string): Promise<UserCore | null> {
     const row = await this.adapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM users_core WHERE id = ? AND is_active = 1',
-      [id]
+      'SELECT * FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+      [id, this.tenantId]
     );
     return row ? this.mapRowToEntity(row) : null;
   }

@@ -192,12 +192,13 @@ export async function getUserIdLevelPermissions(
            (subject_type = 'user' AND subject_id = ?)
            OR subject_type = 'role' AND subject_id IN (
              SELECT role_id FROM role_assignments
-             WHERE subject_id = ?
+             WHERE tenant_id = ?
+               AND subject_id = ?
                AND (expires_at IS NULL OR expires_at > ?)
            )
          )
        ORDER BY resource_type, resource_id`,
-    [tenantId, now, subjectId, subjectId, now]
+    [tenantId, now, subjectId, tenantId, subjectId, now]
   );
 
   return rows.map(rowToResourcePermission);
@@ -293,12 +294,13 @@ export async function hasIdLevelPermission(
            (subject_type = 'user' AND subject_id = ?)
            OR subject_type = 'role' AND subject_id IN (
              SELECT role_id FROM role_assignments
-             WHERE subject_id = ?
+             WHERE tenant_id = ?
+               AND subject_id = ?
                AND (expires_at IS NULL OR expires_at > ?)
            )
          )
        LIMIT 1`,
-    [tenantId, resource, resourceId, now, subjectId, subjectId, now]
+    [tenantId, resource, resourceId, now, subjectId, tenantId, subjectId, now]
   );
 
   if (!result) {
@@ -318,11 +320,12 @@ export async function hasIdLevelPermission(
            (subject_type = 'user' AND subject_id = ?)
            OR subject_type = 'role' AND subject_id IN (
              SELECT role_id FROM role_assignments
-             WHERE subject_id = ?
+             WHERE tenant_id = ?
+               AND subject_id = ?
                AND (expires_at IS NULL OR expires_at > ?)
            )
          )`,
-    [tenantId, resource, resourceId, now, subjectId, subjectId, now]
+    [tenantId, resource, resourceId, now, subjectId, tenantId, subjectId, now]
   );
 
   for (const row of fullResult) {

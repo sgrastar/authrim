@@ -39,6 +39,7 @@ const log = createLogger().module('CHECK-API');
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
+  resolveAuthorizedCheckTenantId,
   type CheckAuthResult,
 } from '../middleware/check-auth';
 import {
@@ -582,13 +583,22 @@ checkRoutes.post('/', async (c) => {
       }
     }
 
-    // Build full request
-    // Use tenant from auth context if not specified in request
+    const tenantId = resolveAuthorizedCheckTenantId(
+      auth,
+      body.tenant_id,
+      getDefaultTenantId(c.env)
+    );
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // Build full request using the authenticated tenant unless a system secret
+    // explicitly targets another tenant.
     const request: CheckApiRequest = {
       subject_id: body.subject_id,
       subject_type: body.subject_type ?? 'user',
       permission: body.permission,
-      tenant_id: body.tenant_id ?? auth.tenantId ?? getDefaultTenantId(c.env),
+      tenant_id: tenantId,
       resource_context: body.resource_context,
       rebac: body.rebac,
     };
@@ -748,13 +758,20 @@ checkRoutes.post('/batch', async (c) => {
       }
     }
 
-    // Apply default tenant_id (use auth context tenant if available)
+    // Apply default tenant_id and reject cross-tenant overrides for tenant-bound auth.
     const defaultTenantId = auth.tenantId ?? getDefaultTenantId(c.env);
-    const normalizedChecks = body.checks.map((check) => ({
-      ...check,
-      subject_type: check.subject_type ?? 'user',
-      tenant_id: check.tenant_id ?? defaultTenantId,
-    }));
+    const normalizedChecks: CheckApiRequest[] = [];
+    for (const check of body.checks) {
+      const tenantId = resolveAuthorizedCheckTenantId(auth, check.tenant_id, defaultTenantId);
+      if (!tenantId) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
+      normalizedChecks.push({
+        ...check,
+        subject_type: check.subject_type ?? 'user',
+        tenant_id: tenantId,
+      });
+    }
 
     // Execute batch check with audit options
     const result = await services.checkService.batchCheck(

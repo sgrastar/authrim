@@ -582,6 +582,28 @@ export function isOperationAllowed(auth: CheckAuthResult, operation: CheckApiOpe
   return auth.allowedOperations.includes(operation);
 }
 
+/**
+ * Resolve the tenant for a Check API request.
+ *
+ * API keys and access tokens are tenant-bound, so request-level tenant overrides
+ * must not cross the authenticated tenant. The shared policy secret is an
+ * internal system credential and may target any explicit tenant.
+ */
+export function resolveAuthorizedCheckTenantId(
+  auth: CheckAuthResult,
+  requestedTenantId: string | undefined,
+  fallbackTenantId: string
+): string | null {
+  const authTenantId = auth.tenantId ?? fallbackTenantId;
+  const tenantId = requestedTenantId ?? authTenantId;
+
+  if (auth.method !== 'policy_secret' && tenantId !== authTenantId) {
+    return null;
+  }
+
+  return tenantId;
+}
+
 // =============================================================================
 // Rate Limit Configuration
 // =============================================================================

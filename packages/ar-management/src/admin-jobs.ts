@@ -56,7 +56,10 @@ export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
   app.use('/api/admin/jobs/*', requireAnyRole(ADMIN_JOB_MANAGER_ROLES));
 
   app.use('/api/admin/jobs', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
-  app.use('/api/admin/jobs/users/import/upload-url', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE]));
+  app.use(
+    '/api/admin/jobs/users/import/upload-url',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
   app.use(
     '/api/admin/jobs/users/import/upload/:upload_id',
     requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
@@ -395,8 +398,7 @@ function buildJobResultManifestResponse(
           `/api/admin/jobs/artifacts/${catalog.logical.publicArtifactId}` +
           `/chunks/${physical.chunkIndex ?? 0}${format ? `?format=${format}` : ''}`;
       } else if (format) {
-        manifestObject.downloadUrl =
-          `/api/admin/jobs/artifacts/${catalog.logical.publicArtifactId}/download?format=${format}`;
+        manifestObject.downloadUrl = `/api/admin/jobs/artifacts/${catalog.logical.publicArtifactId}/download?format=${format}`;
       }
 
       return manifestObject;
@@ -446,7 +448,10 @@ async function getJobResultArtifactRowById(
     `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result_r2_key,
             aj.object_catalog_id, oc.public_artifact_id
        FROM admin_jobs aj
-       LEFT JOIN object_catalog oc ON oc.id = aj.object_catalog_id AND oc.deleted_at IS NULL
+       LEFT JOIN object_catalog oc
+         ON oc.id = aj.object_catalog_id
+        AND oc.tenant_id = aj.tenant_id
+        AND oc.deleted_at IS NULL
       WHERE aj.id = ? AND aj.tenant_id = ?`,
     [jobId, tenantId]
   );
@@ -461,7 +466,9 @@ async function getJobResultArtifactRowByArtifactId(
     `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result_r2_key,
             aj.object_catalog_id, oc.public_artifact_id
        FROM admin_jobs aj
-       INNER JOIN object_catalog oc ON oc.id = aj.object_catalog_id
+       INNER JOIN object_catalog oc
+         ON oc.id = aj.object_catalog_id
+        AND oc.tenant_id = aj.tenant_id
       WHERE oc.public_artifact_id = ?
         AND oc.deleted_at IS NULL
         AND aj.tenant_id = ?`,
@@ -593,7 +600,9 @@ function bucketSupportOpsJobCount(value: unknown): number | null {
   return Math.floor(count / SUPPORT_OPS_JOB_COUNT_PRECISION) * SUPPORT_OPS_JOB_COUNT_PRECISION;
 }
 
-function sanitizeSupportOpsJobProgress(progress: JobProgress | null): Record<string, unknown> | null {
+function sanitizeSupportOpsJobProgress(
+  progress: JobProgress | null
+): Record<string, unknown> | null {
   if (!progress) {
     return null;
   }
@@ -693,7 +702,10 @@ function formatJobResult(row: JobRow) {
   };
 }
 
-function parseJobConfig(config: string | null, jobType?: string): Record<string, unknown> | undefined {
+function parseJobConfig(
+  config: string | null,
+  jobType?: string
+): Record<string, unknown> | undefined {
   if (!config) {
     return undefined;
   }
@@ -1026,7 +1038,10 @@ export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
       `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result, aj.result_r2_key,
               aj.object_catalog_id, oc.public_artifact_id
        FROM admin_jobs aj
-       LEFT JOIN object_catalog oc ON oc.id = aj.object_catalog_id AND oc.deleted_at IS NULL
+       LEFT JOIN object_catalog oc
+         ON oc.id = aj.object_catalog_id
+        AND oc.tenant_id = aj.tenant_id
+        AND oc.deleted_at IS NULL
        WHERE aj.id = ? AND aj.tenant_id = ?`,
       [jobId, tenantId]
     );
@@ -1511,7 +1526,10 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     }
     if (body.size_bytes !== undefined && body.size_bytes !== inputBytes.byteLength) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'size_bytes', reason: 'Import artifact size does not match upload receipt' },
+        variables: {
+          field: 'size_bytes',
+          reason: 'Import artifact size does not match upload receipt',
+        },
       });
     }
     if (body.content_type && body.content_type !== storedContentType) {

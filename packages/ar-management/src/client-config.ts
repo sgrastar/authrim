@@ -218,7 +218,10 @@ function validateUpdateRequest(
         error_description: 'backchannel_logout_uri must be a string',
       };
     }
-    const error = validateOutboundCallbackUri(body.backchannel_logout_uri, 'backchannel_logout_uri');
+    const error = validateOutboundCallbackUri(
+      body.backchannel_logout_uri,
+      'backchannel_logout_uri'
+    );
     if (error) {
       return { error: 'invalid_client_metadata', error_description: error };
     }
@@ -422,7 +425,10 @@ function buildClientResponse(
   return response;
 }
 
-function coalesceNullable<T>(newValue: T | undefined, existingValue: T | null | undefined): T | null {
+function coalesceNullable<T>(
+  newValue: T | undefined,
+  existingValue: T | null | undefined
+): T | null {
   return newValue ?? existingValue ?? null;
 }
 
@@ -608,7 +614,10 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
         `,
         [
           // Basic client info
-          coalesceNullable(body.client_name, existingClient.client_name as string | null | undefined),
+          coalesceNullable(
+            body.client_name,
+            existingClient.client_name as string | null | undefined
+          ),
           serializeField(body.redirect_uris, existingClient.redirect_uris),
           serializeField(body.grant_types, existingClient.grant_types),
           serializeField(body.response_types, existingClient.response_types),
@@ -691,7 +700,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
 
     const log = getLogger(c).module('RFC7592');
     // Invalidate cache (use same key format as kv.ts getClient)
-    const cacheKey = buildKVKey('client', clientId);
+    const cacheKey = buildKVKey('client', clientId, tenantId);
     await c.env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
       log.warn('Failed to invalidate client cache', { action: 'config_update', clientId });
     });
@@ -768,11 +777,14 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
 
     // Delete client from D1
     const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    await coreAdapter.execute('DELETE FROM oauth_clients WHERE client_id = ?', [clientId]);
+    await coreAdapter.execute('DELETE FROM oauth_clients WHERE client_id = ? AND tenant_id = ?', [
+      clientId,
+      tenantId,
+    ]);
 
     const log = getLogger(c).module('RFC7592');
     // Invalidate cache (use same key format as kv.ts getClient)
-    const cacheKey = buildKVKey('client', clientId);
+    const cacheKey = buildKVKey('client', clientId, tenantId);
     await c.env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
       log.warn('Failed to invalidate client cache', { action: 'config_delete', clientId });
     });

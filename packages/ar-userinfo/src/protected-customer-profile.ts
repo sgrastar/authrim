@@ -251,7 +251,7 @@ async function loadProtectedCustomerProfileFromEnv(input: {
   userId: string;
 }): Promise<ProtectedCustomerProfileResource | null> {
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
-  const cachedUser = await getCachedUser(input.c.env, input.userId, {
+  const cachedUser = await getCachedUser(input.c.env, input.tenantId, input.userId, {
     coreDb: piiCtx.coreAdapter,
     piiDb: piiCtx.defaultPiiAdapter,
   });
@@ -514,7 +514,7 @@ async function updateProtectedCustomerProfileFromEnv(input: {
   update: UpdateUserPIIInput;
 }): Promise<ProtectedCustomerProfileResource | null> {
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
-  const repository = new UserPIIRepository(piiCtx.defaultPiiAdapter);
+  const repository = new UserPIIRepository(piiCtx.defaultPiiAdapter, input.tenantId);
   const updated = await repository.updatePII(
     input.subjectUserId,
     input.update,
@@ -523,7 +523,7 @@ async function updateProtectedCustomerProfileFromEnv(input: {
   if (!updated) {
     return null;
   }
-  await invalidateUserCache(input.c.env, input.subjectUserId);
+  await invalidateUserCache(input.c.env, input.tenantId, input.subjectUserId);
   return loadProtectedCustomerProfileFromEnv({
     c: input.c,
     tenantId: input.tenantId,

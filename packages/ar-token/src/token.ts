@@ -47,7 +47,6 @@ import {
   revokeToken,
   getCachedUser,
   getCachedUserCore,
-  SessionClientRepository,
   // Native SSO (OIDC Native SSO 1.0)
   DeviceInstallationRepository,
   DeviceSecretRepository,
@@ -1473,7 +1472,7 @@ async function handleAuthorizationCodeGrant(
         authCtx.coreAdapter,
         authCodeData.sub,
         authCodeData.scope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId }
       );
     }
   } catch (policyError) {
@@ -1513,7 +1512,12 @@ async function handleAuthorizationCodeGrant(
   // Anonymous user claims (architecture-decisions.md §17)
   let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(c.env, authCodeData.sub, authCtx.coreAdapter);
+    const userCore = await getCachedUserCore(
+      c.env,
+      tenantId,
+      authCodeData.sub,
+      authCtx.coreAdapter
+    );
     if (userCore?.user_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
@@ -1697,11 +1701,11 @@ async function handleAuthorizationCodeGrant(
   if (nativeSSOGloballyEnabled && clientNativeSSOIssuanceEligible && authCodeData.sid) {
     try {
       const nativeSSOConfig = await getNativeSSOConfig(c.env);
-      const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
+      const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
       const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
 
       // Check max device secrets per user (revoke oldest if exceeded)
-      const userSecrets = await deviceSecretRepo.findByUserId(authCodeData.sub);
+      const userSecrets = await deviceSecretRepo.findByUserId(authCodeData.sub, tenantId);
       let activeSecrets = userSecrets.filter((s) => s.is_active === 1);
 
       if (
@@ -1713,7 +1717,7 @@ async function handleAuthorizationCodeGrant(
         );
 
         for (const secret of rotationCandidates) {
-          await deviceSecretRepo.revoke(secret.id, 'rotation');
+          await deviceSecretRepo.revoke(secret.id, 'rotation', tenantId);
         }
 
         if (rotationCandidates.length > 0) {
@@ -1737,7 +1741,7 @@ async function handleAuthorizationCodeGrant(
             activeSecrets.length - nativeSSOConfig.maxDeviceSecretsPerUser + 1
           );
           for (const secret of toRevoke) {
-            await deviceSecretRepo.revoke(secret.id, 'max_secrets_exceeded');
+            await deviceSecretRepo.revoke(secret.id, 'max_secrets_exceeded', tenantId);
           }
           log.info('Revoked oldest device secrets', {
             count: toRevoke.length,
@@ -1864,7 +1868,7 @@ async function handleAuthorizationCodeGrant(
   if (shouldEvaluateIdTokenClaims && parsedClaimsRequest.request) {
     try {
       const piiCtx = createPIIContextFromHono(c, tenantId);
-      const user = await getCachedUser(c.env, authCodeData.sub, {
+      const user = await getCachedUser(c.env, tenantId, authCodeData.sub, {
         coreDb: authCtx.coreAdapter,
         piiDb: piiCtx.defaultPiiAdapter,
       });
@@ -2131,8 +2135,7 @@ async function handleAuthorizationCodeGrant(
         clientId: client_id,
         action: 'Logout',
       });
-      const sessionClientRepo = new SessionClientRepository(authCtx.coreAdapter);
-      const result = await sessionClientRepo.createOrUpdate({
+      const result = await authCtx.repositories.sessionClient.createOrUpdate({
         session_id: authCodeData.sid,
         client_id: client_id,
       });
@@ -2510,7 +2513,7 @@ async function handleRefreshTokenGrant(
         authCtx.coreAdapter,
         refreshTokenData.sub,
         grantedScope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
     }
   } catch (policyError) {
@@ -2521,7 +2524,12 @@ async function handleRefreshTokenGrant(
   // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
   let anonymousClaimsRefresh: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(c.env, refreshTokenData.sub, authCtx.coreAdapter);
+    const userCore = await getCachedUserCore(
+      c.env,
+      tenantId,
+      refreshTokenData.sub,
+      authCtx.coreAdapter
+    );
     if (userCore?.user_type === 'anonymous') {
       anonymousClaimsRefresh = {
         user_type: 'anonymous',
@@ -3084,6 +3092,11 @@ async function handleDeviceCodeGrant(
   const log = getLogger(c).module('TOKEN');
   const deviceCode = formData.device_code;
   const client_id = formData.client_id;
+  const tenantId = getTenantIdFromContext(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
 
   // Validate required parameters
   if (!deviceCode) {
@@ -3115,12 +3128,12 @@ async function handleDeviceCodeGrant(
 
   if (parsedDeviceCode) {
     // New region-sharded format: route via embedded shard info
-    const { stub } = getDeviceCodeStoreById(c.env, deviceCode, getTenantIdFromContext(c));
+    const { stub } = getDeviceCodeStoreById(c.env, deviceCode, tenantId);
     deviceCodeStore = stub;
   } else {
     // Legacy format: use tenant-scoped global DO
     const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
-      buildDOInstanceName('device', getTenantIdFromContext(c))
+      buildDOInstanceName('device', tenantId)
     );
     deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
   }
@@ -3130,7 +3143,7 @@ async function handleDeviceCodeGrant(
     await deviceCodeStore.fetch(
       new Request('https://internal/update-poll', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ device_code: deviceCode }),
       })
     );
@@ -3142,7 +3155,7 @@ async function handleDeviceCodeGrant(
   const getResponse = await deviceCodeStore.fetch(
     new Request('https://internal/get-by-device-code', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ device_code: deviceCode }),
     })
   );
@@ -3212,7 +3225,7 @@ async function handleDeviceCodeGrant(
     await deviceCodeStore.fetch(
       new Request('https://internal/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ device_code: deviceCode }),
       })
     );
@@ -3251,7 +3264,7 @@ async function handleDeviceCodeGrant(
   await deviceCodeStore.fetch(
     new Request('https://internal/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ device_code: deviceCode }),
     })
   );
@@ -3260,7 +3273,7 @@ async function handleDeviceCodeGrant(
   let privateKey: CryptoKey;
   let keyId: string;
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+    const signingKey = await getSigningKeyFromKeyManager(c.env, tenantId);
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -3315,7 +3328,7 @@ async function handleDeviceCodeGrant(
         authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
     }
   } catch (policyError) {
@@ -3540,6 +3553,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const log = getLogger(c).module('TOKEN');
   const authReqId = formData.auth_req_id;
   const client_id = formData.client_id;
+  const tenantId = getTenantIdFromContext(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
 
   // Validate required parameters
   if (!authReqId) {
@@ -3571,12 +3589,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   if (parsedCIBAId) {
     // New region-sharded format: route via embedded shard info
-    const { stub } = getCIBARequestStoreById(c.env, authReqId, getTenantIdFromContext(c));
+    const { stub } = getCIBARequestStoreById(c.env, authReqId, tenantId);
     cibaRequestStore = stub;
   } else {
     // Legacy format: use tenant-scoped global DO
     const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
-      buildDOInstanceName('ciba', getTenantIdFromContext(c))
+      buildDOInstanceName('ciba', tenantId)
     );
     cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
   }
@@ -3586,7 +3604,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     await cibaRequestStore.fetch(
       new Request('https://internal/update-poll', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -3598,7 +3616,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const getResponse = await cibaRequestStore.fetch(
     new Request('https://internal/get-by-auth-req-id', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ auth_req_id: authReqId }),
     })
   );
@@ -3683,7 +3701,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     await cibaRequestStore.fetch(
       new Request('https://internal/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -3722,7 +3740,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const markIssuedResponse = await cibaRequestStore.fetch(
     new Request('https://internal/mark-token-issued', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ auth_req_id: authReqId }),
     })
   );
@@ -3750,7 +3768,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   // Verify user exists in Core DB (PII/Non-PII separation: NO PII DB access in token endpoint)
   // Note: metadata.sub is guaranteed to exist due to the check at line 2340
   // Use getCachedUserCore() instead of getCachedUser() to avoid unnecessary PII DB access
-  const userCore = await getCachedUserCore(c.env, metadata.sub, authCtx.coreAdapter);
+  const userCore = await getCachedUserCore(
+    c.env,
+    getTenantIdFromContext(c),
+    metadata.sub,
+    authCtx.coreAdapter
+  );
 
   if (!userCore) {
     // Security: Internal error - don't leak user existence
@@ -3837,7 +3860,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
     }
   } catch (policyError) {
@@ -3985,7 +4008,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   await cibaRequestStore.fetch(
     new Request('https://internal/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ auth_req_id: authReqId }),
     })
   );
@@ -5315,7 +5338,7 @@ async function handleNativeSSOTokenExchange(
   }
 
   const authCtx = createAuthContextFromHono(c, tenantId);
-  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
+  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
   const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
   const nativeSSOConfig = await getNativeSSOConfig(c.env);
 
@@ -5449,6 +5472,7 @@ async function handleNativeSSOTokenExchange(
   // Pass maxUseCountPerSecret from config for replay attack prevention
   const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
     maxUseCount: nativeSSOConfig.maxUseCountPerSecret,
+    tenantId,
   });
   if (!deviceSecretValidation.ok) {
     const errorMessages: Record<string, string> = {

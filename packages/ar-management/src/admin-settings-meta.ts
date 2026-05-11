@@ -55,6 +55,74 @@ const SETTINGS_CATEGORIES = [
 ] as const;
 type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number];
 
+const OAUTH_CLIENT_CLONE_COLUMNS = [
+  'client_id',
+  'client_name',
+  'redirect_uris',
+  'grant_types',
+  'response_types',
+  'scope',
+  'logo_uri',
+  'client_uri',
+  'policy_uri',
+  'tos_uri',
+  'contacts',
+  'subject_type',
+  'sector_identifier_uri',
+  'token_endpoint_auth_method',
+  'token_exchange_allowed',
+  'allowed_subject_token_clients',
+  'allowed_token_exchange_resources',
+  'delegation_mode',
+  'client_credentials_allowed',
+  'allowed_scopes',
+  'default_scope',
+  'default_audience',
+  'default_resource',
+  'is_trusted',
+  'skip_consent',
+  'allow_claims_without_scope',
+  'claims_parameter_policy',
+  'asc_enabled',
+  'asc_protected_request_required',
+  'asc_sao_enabled',
+  'asc_transformed_claims_enabled',
+  'asc_allowed_transformed_claims',
+  'backchannel_token_delivery_mode',
+  'backchannel_client_notification_endpoint',
+  'backchannel_authentication_request_signing_alg',
+  'backchannel_user_code_parameter',
+  'jwks',
+  'jwks_uri',
+  'userinfo_signed_response_alg',
+  'post_logout_redirect_uris',
+  'allowed_redirect_origins',
+  'backchannel_logout_uri',
+  'backchannel_logout_session_required',
+  'frontchannel_logout_uri',
+  'frontchannel_logout_session_required',
+  'logout_webhook_uri',
+  'logout_webhook_secret_encrypted',
+  'registration_access_token_hash',
+  'initiate_login_uri',
+  'login_ui_url',
+  'id_token_signed_response_alg',
+  'request_object_signing_alg',
+  'client_secret_hash',
+  'software_id',
+  'software_version',
+  'requestable_scopes',
+  'require_pkce',
+  'application_type',
+  'trust_group',
+  'trust_group_id',
+  'browser_public_client_mode',
+  'browser_refresh_token_policy',
+  'native_sso_enabled',
+  'native_channel_allowed',
+  'allowed_channels',
+] as const;
+
 /**
  * Settings schema definition types
  */
@@ -1215,7 +1283,9 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const nowTs = Math.floor(Date.now() / 1000);
+    const now = new Date();
+    const nowTs = Math.floor(now.getTime() / 1000);
+    const nowIso = now.toISOString();
 
     // Clone tenant with new id, name, and description
     await adapter.execute(
@@ -1236,34 +1306,27 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
 
     // Clone clients if requested
     if (include_clients) {
-      const clients = await adapter.query<{
-        id: string;
-        name: string;
-        client_type: string;
-        redirect_uris: string;
-        grant_types: string;
-        scopes: string;
-        settings: string;
-      }>(
-        `SELECT id, name, client_type, redirect_uris, grant_types, scopes, settings
+      const clients = await adapter.query<Record<string, unknown>>(
+        `SELECT ${OAUTH_CLIENT_CLONE_COLUMNS.join(', ')}
          FROM oauth_clients WHERE tenant_id = ?`,
         [sourceTenantId]
       );
 
+      const clientInsertColumns = [
+        'tenant_id',
+        ...OAUTH_CLIENT_CLONE_COLUMNS,
+        'created_at',
+        'updated_at',
+      ];
+      const clientPlaceholders = clientInsertColumns.map(() => '?').join(', ');
+
       for (const client of clients) {
-        const newClientId = crypto.randomUUID();
         await adapter.execute(
-          `INSERT INTO oauth_clients (id, tenant_id, name, client_type, redirect_uris, grant_types, scopes, settings, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO oauth_clients (${clientInsertColumns.join(', ')})
+           VALUES (${clientPlaceholders})`,
           [
-            newClientId,
             newTenantId,
-            client.name,
-            client.client_type,
-            client.redirect_uris,
-            client.grant_types,
-            client.scopes,
-            client.settings,
+            ...OAUTH_CLIENT_CLONE_COLUMNS.map((column) => client[column]),
             nowTs,
             nowTs,
           ]
@@ -1277,21 +1340,46 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       const roles = await adapter.query<{
         id: string;
         name: string;
-        description: string;
-        permissions: string;
+        description: string | null;
+        permissions_json: string;
+        role_type: string;
+        hierarchy_level: number | null;
+        is_assignable: number | null;
+        parent_role_id: string | null;
+        display_name: string | null;
         is_system: number;
       }>(
-        `SELECT id, name, description, permissions, is_system
+        `SELECT id, name, description, permissions_json, role_type, hierarchy_level,
+                is_assignable, parent_role_id, display_name, is_system
          FROM roles WHERE tenant_id = ? AND is_system = 0`,
         [sourceTenantId]
       );
 
+      const roleIdMap = new Map(roles.map((role) => [role.id, crypto.randomUUID()]));
+
       for (const role of roles) {
-        const newRoleId = crypto.randomUUID();
+        const newRoleId = roleIdMap.get(role.id)!;
         await adapter.execute(
-          `INSERT INTO roles (id, tenant_id, name, description, permissions, is_system, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-          [newRoleId, newTenantId, role.name, role.description, role.permissions, nowTs, nowTs]
+          `INSERT INTO roles (
+             id, tenant_id, name, description, permissions_json, role_type,
+             hierarchy_level, is_assignable, parent_role_id, display_name,
+             is_system, created_at, updated_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          [
+            newRoleId,
+            newTenantId,
+            role.name,
+            role.description,
+            role.permissions_json,
+            role.role_type,
+            role.hierarchy_level ?? 0,
+            role.is_assignable ?? 1,
+            role.parent_role_id ? (roleIdMap.get(role.parent_role_id) ?? null) : null,
+            role.display_name,
+            nowTs,
+            nowTs,
+          ]
         );
         clonedItems.roles++;
       }
@@ -1303,31 +1391,36 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         name: string;
         url: string;
         events: string;
+        secret_encrypted: string | null;
         headers: string;
         retry_policy: string;
         timeout_ms: number;
       }>(
-        `SELECT name, url, events, headers, retry_policy, timeout_ms
-         FROM webhooks WHERE tenant_id = ? AND scope = 'tenant'`,
+        `SELECT name, url, events, secret_encrypted, headers, retry_policy, timeout_ms
+         FROM webhook_configs WHERE tenant_id = ? AND scope = 'tenant'`,
         [sourceTenantId]
       );
 
       for (const webhook of webhooks) {
         const newWebhookId = crypto.randomUUID();
         await adapter.execute(
-          `INSERT INTO webhooks (id, tenant_id, scope, name, url, events, headers, retry_policy, timeout_ms, active, created_at, updated_at)
-           VALUES (?, ?, 'tenant', ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+          `INSERT INTO webhook_configs (
+             id, tenant_id, scope, name, url, events, secret_encrypted,
+             headers, retry_policy, timeout_ms, active, created_at, updated_at
+           )
+           VALUES (?, ?, 'tenant', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
           [
             newWebhookId,
             newTenantId,
             webhook.name,
             webhook.url,
             webhook.events,
+            webhook.secret_encrypted,
             webhook.headers,
             webhook.retry_policy,
             webhook.timeout_ms,
-            nowTs,
-            nowTs,
+            nowIso,
+            nowIso,
           ]
         );
         clonedItems.webhooks++;
@@ -1351,7 +1444,7 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         source_tenant_id: sourceTenantId,
         source_tenant_name: sourceTenant.name,
         cloned_items: clonedItems,
-        created_at: new Date(nowTs * 1000).toISOString(),
+        created_at: nowIso,
       },
       201
     );

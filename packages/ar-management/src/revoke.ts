@@ -176,8 +176,9 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('REVOKE');
 
   if (token_type_hint === 'device_secret') {
-    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
-    const deviceSecret = await deviceSecretRepo.findByRawSecret(token);
+    const tenantId = getTenantIdFromContext(c);
+    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+    const deviceSecret = await deviceSecretRepo.findByRawSecret(token, tenantId);
     const nowMs = Date.now();
 
     if (
@@ -216,7 +217,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
     const revokeReason =
       deviceSecretPolicy.callerClass === 'native_public_client' ? 'logout' : 'token_revocation';
-    await deviceSecretRepo.revoke(deviceSecret.id, revokeReason);
+    await deviceSecretRepo.revoke(deviceSecret.id, revokeReason, tenantId);
 
     log.info('Device secret revoke requested', {
       action: 'revoke',
@@ -588,8 +589,9 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
 
       try {
         if (item.token_type_hint === 'device_secret') {
-          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter);
-          await deviceSecretRepo.revokeByRawSecret(item.token, 'batch_token_revocation');
+          const tenantId = getTenantIdFromContext(c);
+          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+          await deviceSecretRepo.revokeByRawSecret(item.token, 'batch_token_revocation', tenantId);
           return { token_hint: tokenHint, status: 'revoked' };
         }
 

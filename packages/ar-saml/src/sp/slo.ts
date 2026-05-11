@@ -136,7 +136,11 @@ async function processLogoutRequest(
   const log = getLogger(c).module('SAML-SP');
 
   // Get IdP configuration
-  const idpConfig = await getIdPConfigByEntityId(env, logoutRequest.issuer);
+  const idpConfig = await getIdPConfigByEntityId(
+    env,
+    getTenantIdFromContext(c),
+    logoutRequest.issuer
+  );
 
   if (!idpConfig) {
     log.error('Unknown IdP', { issuer: logoutRequest.issuer });
@@ -199,7 +203,11 @@ async function processLogoutResponse(
   const log = getLogger(c).module('SAML-SP');
 
   // Get IdP configuration
-  const idpConfig = await getIdPConfigByEntityId(env, logoutResponse.issuer);
+  const idpConfig = await getIdPConfigByEntityId(
+    env,
+    getTenantIdFromContext(c),
+    logoutResponse.issuer
+  );
 
   // Verify signature if present
   if (idpConfig && samlBase64) {
@@ -293,7 +301,11 @@ async function terminateSessionByNameId(
     // If sessionIndex is provided and is a valid sharded session ID, delete that specific session
     if (sessionIndex && isShardedSessionId(sessionIndex)) {
       try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionIndex);
+        const { stub: sessionStore } = getSessionStoreBySessionId(
+          env,
+          sessionIndex,
+          getTenantIdFromContext(c)
+        );
         const response = await sessionStore.fetch(`https://session-store/session/${sessionIndex}`, {
           method: 'DELETE',
         });

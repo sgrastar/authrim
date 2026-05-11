@@ -94,7 +94,10 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
         id: string;
         email: string | null;
         name: string | null;
-      }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, userIds);
+      }>(
+        `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
+        [tenantId, ...userIds]
+      );
 
       const piiMap = new Map<string, { email: string | null; name: string | null }>();
       for (const pii of piiResults) {
@@ -235,8 +238,8 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
       const userIds = coreUsers.map((u) => u.id);
       const placeholders = userIds.map(() => '?').join(',');
       const piiResults = await piiCtx.defaultPiiAdapter.query<UserPII>(
-        `SELECT * FROM users_pii WHERE id IN (${placeholders})`,
-        userIds
+        `SELECT * FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
+        [tenantId, ...userIds]
       );
 
       const piiMap = new Map<string, UserPII>();
@@ -828,7 +831,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    await invalidateUserCache(c.env, userId);
+    await invalidateUserCache(c.env, tenantId, userId);
     const updatedCore = await authCtx.repositories.userCore.findById(userId);
 
     let updatedPII: UserPII | null = null;
@@ -944,7 +947,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       pii_status: 'deleted',
     });
 
-    await invalidateUserCache(c.env, userId);
+    await invalidateUserCache(c.env, tenantId, userId);
 
     const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {
@@ -1098,7 +1101,7 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
       pii_status: 'active',
     });
 
-    await invalidateUserCache(c.env, userId);
+    await invalidateUserCache(c.env, tenantId, userId);
 
     return c.json({
       success: true,
@@ -1203,13 +1206,13 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
 
     await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
     await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(piiCtx.tenantId, userId, piiAdapter);
-    await piiCtx.piiRepositories.identifier.deleteByUserId(userId, piiAdapter);
+    await piiCtx.piiRepositories.identifier.deleteByUserId(piiCtx.tenantId, userId, piiAdapter);
 
     await authCtx.repositories.userCore.update(userId, {
       pii_status: 'deleted',
     });
 
-    await invalidateUserCache(c.env, userId);
+    await invalidateUserCache(c.env, tenantId, userId);
     scheduleAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, {
       reason: deletionReason,
       retention_days: retentionDays,

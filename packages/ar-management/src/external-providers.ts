@@ -13,6 +13,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
   readResponseTextWithLimit,
 } from '@authrim/ar-lib-core';
 
@@ -58,14 +59,10 @@ async function proxyToExternalIdp(
     const headers: HeadersInit = {
       Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
       'Content-Type': 'application/json',
+      'X-Tenant-Id': getTenantIdFromContext(c),
     };
 
-    // Forward tenant_id query parameter if present
-    const url = new URL(c.req.url);
-    const tenantId = url.searchParams.get('tenant_id');
-    const targetUrl = tenantId
-      ? `https://external-idp${path}?tenant_id=${encodeURIComponent(tenantId)}`
-      : `https://external-idp${path}`;
+    const targetUrl = `https://external-idp${path}`;
 
     const requestInit: RequestInit = {
       method,

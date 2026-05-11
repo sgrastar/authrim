@@ -14,6 +14,7 @@ import {
   getUIConfig,
   getTenantIdFromContext,
   buildIssuerUrl,
+  buildSAMLRequestStoreInstanceName,
   getLogger,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
@@ -56,12 +57,12 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     if (!idpId) {
       // Return list of available IdPs if no IdP specified
-      const idps = await listIdPConfigs(env);
+      const idps = await listIdPConfigs(env, tenantId);
       return c.html(buildIdPSelectionPage(issuerUrl, idps, returnUrl));
     }
 
     // Get IdP configuration
-    const idpConfig = await getIdPConfig(env, idpId);
+    const idpConfig = await getIdPConfig(env, tenantId, idpId);
     if (!idpConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -71,7 +72,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     // Store request in SAMLRequestStore for later validation
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
-    await storeAuthnRequest(env, requestId, issuerUrl, idpConfig.entityId, returnUrl);
+    await storeAuthnRequest(env, tenantId, requestId, issuerUrl, idpConfig.entityId, returnUrl);
 
     // Redirect to IdP based on preferred binding
     if (idpConfig.allowedBindings.includes('redirect')) {
@@ -132,12 +133,15 @@ function buildAuthnRequest(issuerUrl: string, idpConfig: SAMLIdPConfig): string 
  */
 async function storeAuthnRequest(
   env: Env,
+  tenantId: string,
   requestId: string,
   issuerUrl: string,
   idpEntityId: string,
   returnUrl: string
 ): Promise<void> {
-  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(`issuer:${idpEntityId}`);
+  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
+    buildSAMLRequestStoreInstanceName(tenantId, 'sp', idpEntityId)
+  );
   const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
   await samlRequestStore.fetch('https://saml-request-store/store', {

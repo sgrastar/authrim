@@ -152,9 +152,16 @@ export class TombstoneRepository extends BaseRepository<Tombstone> {
    * @param adapter - Optional partition-specific adapter
    * @returns Tombstone or null
    */
-  async findByUserId(userId: string, adapter?: DatabaseAdapter): Promise<Tombstone | null> {
+  async findByUserId(
+    tenantId: string,
+    userId: string,
+    adapter?: DatabaseAdapter
+  ): Promise<Tombstone | null> {
     const db = adapter ?? this.adapter;
-    return db.queryOne<Tombstone>('SELECT * FROM users_pii_tombstone WHERE id = ?', [userId]);
+    return db.queryOne<Tombstone>(
+      'SELECT * FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
   }
 
   /**

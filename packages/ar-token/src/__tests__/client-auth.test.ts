@@ -1372,7 +1372,8 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockDeviceSecretRepository.revoke).toHaveBeenCalledTimes(1);
       expect(mocks.mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
         'ds-old-same-session',
-        'rotation'
+        'rotation',
+        'default'
       );
     });
 

@@ -46,7 +46,7 @@ export async function handleListLinkedIdentities(c: Context<{ Bindings: Env }>):
     // Enrich with provider names
     const enrichedIdentities = await Promise.all(
       identities.map(async (identity) => {
-        const provider = await getProvider(c.env, identity.providerId);
+        const provider = await getProvider(c.env, tenantId, identity.providerId);
         return {
           id: identity.id,
           providerId: identity.providerId,
@@ -96,14 +96,15 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
       });
     }
 
+    const tenantId = getTenantIdFromContext(c);
+
     // Check if provider exists
-    const provider = await getProvider(c.env, body.provider_id);
+    const provider = await getProvider(c.env, tenantId, body.provider_id);
     if (!provider || !provider.enabled) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check if already linked to this provider
-    const tenantId = getTenantIdFromContext(c);
     const existing = await getLinkedIdentityForUserAndProvider(
       c.env,
       tenantId,
@@ -220,7 +221,11 @@ async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionToken);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionToken,
+      getTenantIdFromContext(c)
+    );
     const response = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionToken}`, {
         method: 'GET',

@@ -847,7 +847,14 @@ rebacRoutes.post('/write', async (c) => {
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM relationships
        WHERE tenant_id = ? AND from_type = ? AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
-      [tenantId, body.subject_type, body.subject_id, body.object_type, body.object_id, body.relation]
+      [
+        tenantId,
+        body.subject_type,
+        body.subject_id,
+        body.object_type,
+        body.object_id,
+        body.relation,
+      ]
     );
 
     let id = existing?.id ?? crypto.randomUUID();
@@ -856,8 +863,8 @@ rebacRoutes.post('/write', async (c) => {
       await coreAdapter.execute(
         `UPDATE relationships
          SET expires_at = ?, updated_at = ?
-         WHERE id = ?`,
-        [body.expires_at ?? null, now, existing.id]
+         WHERE id = ? AND tenant_id = ?`,
+        [body.expires_at ?? null, now, existing.id, tenantId]
       );
     } else {
       try {
@@ -908,8 +915,8 @@ rebacRoutes.post('/write', async (c) => {
         await coreAdapter.execute(
           `UPDATE relationships
            SET expires_at = ?, updated_at = ?
-           WHERE id = ?`,
-          [body.expires_at ?? null, now, raced.id]
+           WHERE id = ? AND tenant_id = ?`,
+          [body.expires_at ?? null, now, raced.id, tenantId]
         );
       }
     }

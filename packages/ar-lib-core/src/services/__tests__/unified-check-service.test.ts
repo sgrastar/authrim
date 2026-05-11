@@ -504,7 +504,12 @@ describe('UnifiedCheckService', () => {
       await service.check(request);
 
       // Verify tenant_id 'default' was used in the query
-      expect(mockD1.bind).toHaveBeenCalledWith('user_123', 'default', expect.any(Number));
+      expect(mockD1.bind).toHaveBeenCalledWith(
+        'user_123',
+        'default',
+        'default',
+        expect.any(Number)
+      );
     });
 
     it('should use default subject_type of user', async () => {

@@ -109,7 +109,7 @@ export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): P
   }
 
   try {
-    const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const providers = await listAllProviders(c.env, tenantId);
 
     // Remove encrypted secrets from response
@@ -163,7 +163,6 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
       token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post';
       attribute_mapping?: Record<string, string>;
       provider_quirks?: Record<string, unknown>;
-      tenant_id?: string;
       template?: 'google' | 'github' | 'microsoft' | 'linkedin' | 'facebook' | 'twitter' | 'apple';
       // Request Object (JAR - RFC 9101) settings
       use_request_object?: boolean;
@@ -349,7 +348,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
     }
 
     const provider = await createProvider(c.env, {
-      tenantId: body.tenant_id || getTenantIdFromContext(c),
+      tenantId: getTenantIdFromContext(c),
       slug: body.slug,
       name: body.name,
       providerType: body.provider_type || 'oidc',
@@ -410,7 +409,8 @@ export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Pro
   if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
-    const provider = await getProvider(c.env, id);
+    const tenantId = getTenantIdFromContext(c);
+    const provider = await getProvider(c.env, tenantId, id);
     if (!provider) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -555,7 +555,8 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
     }
     if (body.public_key_jwk !== undefined) updates.publicKeyJwk = body.public_key_jwk;
 
-    const provider = await updateProvider(c.env, id, updates);
+    const tenantId = getTenantIdFromContext(c);
+    const provider = await updateProvider(c.env, tenantId, id, updates);
     if (!provider) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -588,7 +589,8 @@ export async function handleAdminDeleteProvider(c: Context<{ Bindings: Env }>): 
   if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
-    const deleted = await deleteProvider(c.env, id);
+    const tenantId = getTenantIdFromContext(c);
+    const deleted = await deleteProvider(c.env, tenantId, id);
     if (!deleted) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }

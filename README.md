@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-02-09
+date: 2026-05-11
 description: "Open Source Identity & Access Platform for the modern web"
 type: reference
 tags:
@@ -41,6 +41,7 @@ An open-source, serverless **Identity Hub** that combines authentication, author
 
 Authrim is functional but pre-1.0. APIs may change, and no formal security audit has been completed yet.
 Evaluate thoroughly before production use.
+Production readiness is tracked against documented deployment, operations, recovery, auditability, and protocol/security validation criteria in the roadmap.
 
 ## Vision
 
@@ -50,7 +51,7 @@ Evaluate thoroughly before production use.
 - **Authorization** — RBAC, ABAC, ReBAC policy engine built-in
 - **Identity Federation** — Multiple identity sources into one unified identity
 
-Built for edge deployment with <50ms latency worldwide.
+Designed for low-latency edge deployment on Cloudflare Workers.
 
 ```bash
 npx @authrim/setup
@@ -60,15 +61,17 @@ npx @authrim/setup
 
 ## Quick Start
 
-### Option 1: Using @authrim/setup (Recommended)
+### Option 1: Using the published setup package (Recommended)
 
 ```bash
-# Interactive setup with Web UI
+# Interactive setup from npm
 npx @authrim/setup
 
 # Or CLI mode for terminal-based setup
 npx @authrim/setup --cli
 ```
+
+The setup package can download the Authrim source into a local project directory before provisioning and deployment.
 
 The setup wizard will guide you through:
 - Cloudflare authentication
@@ -77,12 +80,29 @@ The setup wizard will guide you through:
 - Worker deployment
 - Initial admin creation
 
-### Option 2: Manual Setup (Development)
+### Option 2: Clone the source and run the setup tool
+
+Use this path when you want to inspect or modify the source code while still using the setup workflow.
 
 ```bash
 # 1. Clone and install
 git clone https://github.com/sgrastar/authrim.git
-cd authrim && pnpm install
+cd authrim
+pnpm install
+
+# 2. Launch the local setup tool
+pnpm run setup
+```
+
+The local setup command runs the same setup package from the workspace source.
+
+### Option 3: Manual Setup (Development)
+
+```bash
+# 1. Clone and install
+git clone https://github.com/sgrastar/authrim.git
+cd authrim
+pnpm install
 
 # 2. Setup (generates keys, configures local environment)
 ./scripts/setup-keys.sh
@@ -99,18 +119,15 @@ pnpm run dev
 
 ## Performance
 
-K6 Cloud distributed load testing (December 2025) demonstrated **zero-error operation** across all endpoints within capacity limits.
+K6 Cloud distributed load testing in December 2025 validated Authrim's current sharded Workers architecture under representative OIDC workloads.
 
-Token operations sustain **2,500–3,500 RPS**,  
-full 5-step OAuth login flows handle **150 logins/sec** (P95 756ms),  
-and token validation maintains **100% accuracy** even under peak load.
+Observed benchmark results include:
 
-CPU time stays constant at 1–4ms —  
-**horizontal scaling via Durable Object sharding** is the proven strategy.
+- Token-oriented endpoints: **2,500-3,500 RPS** within tested capacity limits
+- Full 5-step OAuth login flow: **150 logins/sec** with P95 around 756ms
+- CPU time: typically **1-4ms** in the tested scenarios
 
-Authrim scales horizontally by design.  
-In practice, capacity can be increased by adjusting a single scaling parameter —  
-globally, without migrations or downtime.
+Capacity depends on workload shape, Cloudflare plan limits, storage usage, and sharding configuration.
 
 [View detailed reports](./load-testing/reports/Dec2025/)
 
@@ -162,16 +179,25 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 
 ## Current Status
 
-| Phase | Name                           | Timeline | Status      |
-| ----- | ------------------------------ | -------- | ----------- |
-| 1-5   | Foundation, Core API, UI/UX    | 2025-11  | ✅ Complete |
-| 6     | Enterprise Features            | 2025-12  | ✅ Complete |
-| 7     | **Identity Hub Foundation**    | 2025-12  | ✅ Complete |
-| 8     | **Unified Policy Integration** | 2025-12  | ✅ Complete |
-| 9     | **Advanced Identity (VC/DID)** | 2025-12  | ✅ Complete |
-| 10    | **SDK & API**                  | 2026-01  | ✅ Complete |
-| 11    | Security & QA                  | 2026-Q1  | ⏳ ~50%     |
-| 12    | Certification & Release        | 2026-Q1  | 🔜 Final    |
+Authrim is currently pre-1.0. Core protocol and platform capabilities are implemented, but production readiness work is still in progress.
+
+**Target release window:** Summer/Fall 2026
+
+| Area | Status |
+| ----- | ------ |
+| Core OIDC/OAuth implementation | Implemented |
+| SAML 2.0 core IdP/SP | Implemented; production readiness in progress |
+| SCIM 2.0 | Implemented |
+| RBAC / ABAC / ReBAC policy engine | Implemented |
+| Identity Hub and external IdP integration | Implemented |
+| Passkey / email auth / local auth | Implemented; production flow consolidation in progress |
+| JavaScript SDKs | Implemented |
+| Setup tooling | Implemented; production deployment docs in progress |
+| UI consolidation | Active |
+| Security, QA, and release validation | Active |
+| Storage portability | Active; focused on PII, custom/extension, and audit storage |
+| SAML Production Readiness | Planned/Active |
+| SAML DR-readiness | Planned for Summer 2026 |
 
 [View detailed roadmap](./docs/ROADMAP.md)
 
@@ -184,187 +210,48 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | Layer         | Technology                | Version  | Purpose                            |
 | ------------- | ------------------------- | -------- | ---------------------------------- |
 | **Runtime**   | Cloudflare Workers        | -        | Global edge deployment             |
-| **Framework** | Hono                      | 4.11.x   | Fast, lightweight web framework    |
+| **Framework** | Hono                      | 4.12.x   | Fast, lightweight web framework    |
 | **Language**  | TypeScript                | 5.9.x    | Type-safe development              |
-| **Build**     | Turbo + pnpm              | 2.x      | Monorepo, parallel builds, caching |
-| **Storage**   | KV / D1 / Durable Objects | -        | Flexible data persistence          |
-| **Crypto**    | JOSE                      | 6.x      | JWT/JWS/JWE/JWK (RS256, ES256)     |
-| **WebAuthn**  | SimpleWebAuthn            | 13.x     | Passkey authentication             |
-| **SAML**      | xmldom + pako             | -        | SAML 2.0 XML processing            |
-| **Email**     | Resend                    | 6.x      | Magic Link, OTP delivery           |
-| **Testing**   | Vitest                    | 4.x      | Unit & integration tests           |
+| **Build**     | Turbo + pnpm              | 2.6.x / 9.x | Monorepo, parallel builds, caching |
+| **Deployment** | Wrangler                 | 4.59.x   | Workers deployment and local runtime |
+| **Storage**   | KV / D1 / Durable Objects / Hyperdrive | - | Cloudflare-native persistence with external database paths where supported |
+| **Crypto**    | JOSE                      | 6.1.x    | JWT/JWS/JWE/JWK (RS256, ES256)     |
+| **WebAuthn**  | SimpleWebAuthn            | 13.2.x   | Passkey authentication             |
+| **SAML**      | xmldom + xml-crypto + pako | -       | SAML 2.0 XML processing, signatures, and bindings |
+| **Email**     | Resend                    | 6.5.x    | Magic Link, OTP delivery           |
+| **Testing**   | Vitest + Playwright       | 4.0.x / 1.56.x | Unit, integration, and E2E tests |
 
 ### Frontend (UI)
 
 | Layer          | Technology               | Version   | Purpose                        |
 | -------------- | ------------------------ | --------- | ------------------------------ |
-| **Framework**  | SvelteKit + Svelte       | 2.x / 5.x | Modern reactive framework      |
+| **Framework**  | SvelteKit + Svelte       | 2.53.x / 5.53.x | Modern reactive framework |
 | **Deployment** | Cloudflare Workers static assets | - | UI Workers and global edge delivery |
-| **CSS**        | UnoCSS                   | 66.x      | Utility-first CSS              |
-| **Components** | Melt UI                  | 0.86.x    | Headless, accessible           |
-| **i18n**       | typesafe-i18n            | 5.x       | Type-safe internationalization |
-| **WebAuthn**   | SimpleWebAuthn Browser   | 13.x      | Client-side passkey support    |
-| **Testing**    | Vitest + Testing Library | 4.x       | Component & E2E tests          |
+| **Build**      | Vite                     | 7.2.x     | UI build and dev server        |
+| **CSS**        | UnoCSS                   | 66.5.x    | Utility-first CSS              |
+| **Components** | Melt UI                  | 0.86.x    | Headless, accessible components |
+| **i18n**       | typesafe-i18n            | 5.26.x    | Type-safe internationalization |
+| **WebAuthn**   | SimpleWebAuthn Browser   | 13.2.x    | Client-side passkey support    |
+| **Testing**    | Vitest + Testing Library | 4.0.x     | Component tests                |
 
 ## Features
 
-| Feature | Status | Test Result / Note |
-|---------|--------|------|
-| **OpenID Provider** | | |
-| Basic OP | ✅ Done | [View Result](https://www.certification.openid.net/plan-detail.html?plan=rC9mDif1jiuFD&public=true) |
-| Implicit OP | ✅ Done | [View Result](https://www.certification.openid.net/plan-detail.html?plan=aZHmoBP9mzeH0&public=true) |
-| Hybrid OP | ✅ Done | [View Result](https://www.certification.openid.net/plan-detail.html?plan=LKV8BKyTZZbl9&public=true) |
-| Config OP (Discovery / JWKS) | ✅ Done | [View Result](https://www.certification.openid.net/plan-detail.html?plan=YVvNf5mprr0Ks&public=true) |
-| Dynamic OP | ✅ Done | [`code`](https://www.certification.openid.net/plan-detail.html?plan=dCoXptjFq1VoP&public=true), [`id_token`](https://www.certification.openid.net/plan-detail.html?plan=uogVbOOQsKOur&public=true)<br>[`id_token token`](https://www.certification.openid.net/plan-detail.html?plan=szzLvB2IsMRy7&public=true), [`code id_token`](https://www.certification.openid.net/plan-detail.html?plan=MgbxkrOkg4kVG&public=true)<br>[`code token`](https://www.certification.openid.net/plan-detail.html?plan=WOHqvMoO6XjTG&public=true), [`code id_token token`](https://www.certification.openid.net/plan-detail.html?plan=U04s3T2zYOHCu&public=true) |
-| Form Post OP | ✅ Done | [Basic](https://www.certification.openid.net/plan-detail.html?plan=bSTOLyFujxs3m&public=true), [Implicit](https://www.certification.openid.net/plan-detail.html?plan=c31kQmt39zuT0&public=true), [Hybrid](https://www.certification.openid.net/plan-detail.html?plan=cQ3itsQtPgZdP&public=true) |
-| 3rd Party-Init OP | ✅ Done | [`code`](https://www.certification.openid.net/plan-detail.html?plan=K6OtyPJ2plwuX&public=true), [`id_token`](https://www.certification.openid.net/plan-detail.html?plan=PlXsATTbxvoUu&public=true)<br>[`id_token token`](https://www.certification.openid.net/plan-detail.html?plan=F4137vXl2vQsU&public=true), [`code id_token`](https://www.certification.openid.net/plan-detail.html?plan=fW9JtNjtIf5Vh&public=true)<br>[`code token`](https://www.certification.openid.net/plan-detail.html?plan=KoOGvJwua3Mix&public=true), [`code id_token token`](https://www.certification.openid.net/plan-detail.html?plan=TXWQFGNUlQ7jD&public=true) |
-| Authorization Code Flow + PKCE | ✅ Done | |
-| **OpenID Provider Logout Profiles** | | |
-| RP-Initiated OP | ✅ Done | [`code`](https://www.certification.openid.net/plan-detail.html?plan=ms8UmTwCsVMg3&public=true), [`id_token`](https://www.certification.openid.net/plan-detail.html?plan=RETZUmMlazyYD&public=true)<br>[`id_token token`](https://www.certification.openid.net/plan-detail.html?plan=9hVLKioECp2aI&public=true), [`code id_token`](https://www.certification.openid.net/plan-detail.html?plan=gtaa7IZIhLdsR&public=true)<br>[`code token`](https://www.certification.openid.net/plan-detail.html?plan=2cDNqDsp9Dbl5&public=true), [`code id_token token`](https://www.certification.openid.net/plan-detail.html?plan=STPR0zraLS31P&public=true) |
-| Session OP | ✅ Done | [`code`](https://www.certification.openid.net/plan-detail.html?plan=ULOYyV8BOyoJm&public=true), [`id_token`](https://www.certification.openid.net/plan-detail.html?plan=tF5HaTejrTebE&public=true)<br>[`id_token token`](https://www.certification.openid.net/plan-detail.html?plan=YNhqAS1StLy9o&public=true), [`code id_token`](https://www.certification.openid.net/plan-detail.html?plan=idSiUuXR82ZoR&public=true)<br>[`code token`](https://www.certification.openid.net/plan-detail.html?plan=8n0n6NXFolp3j&public=true), [`code id_token token`](https://www.certification.openid.net/plan-detail.html?plan=JLzoFbwarUXKe&public=true) |
-| Front-Channel OP | ✅ Done | [`code`](https://www.certification.openid.net/plan-detail.html?plan=8NmrgZhWbOUAi&public=true), [`id_token`](https://www.certification.openid.net/plan-detail.html?plan=xSEsIAFEPcuUD&public=true)<br>[`id_token token`](https://www.certification.openid.net/plan-detail.html?plan=NxOP0F237Ox26&public=true), [`code id_token`](https://www.certification.openid.net/plan-detail.html?plan=KqcoCop3Dlqmm&public=true)<br>[`code token`](https://www.certification.openid.net/plan-detail.html?plan=0CBRXtKgDBEWn&public=true), [`code id_token token`](https://www.certification.openid.net/plan-detail.html?plan=zTXc1bRXG3fdd&public=true) |
-| Back-Channel OP | ✅ Done | [`code`](https://www.certification.openid.net/plan-detail.html?plan=oWIJMYozUYuF6&public=true), [`id_token`](https://www.certification.openid.net/plan-detail.html?plan=62tXUxHRhA569&public=true)<br>[`id_token token`](https://www.certification.openid.net/plan-detail.html?plan=IkAwZzpjQPmaH&public=true), [`code id_token`](https://www.certification.openid.net/plan-detail.html?plan=3cuS6wB3lu8ac&public=true)<br>[`code token`](https://www.certification.openid.net/plan-detail.html?plan=mqyJda2Vz5AeB&public=true), [`code id_token token`](https://www.certification.openid.net/plan-detail.html?plan=RysSDebbnj9UV&public=true) |
-| **OpenID Relying Parties** | | |
-| Basic RP | ✅ Done | |
-| Config RP (Discovery / JWKS) | ✅ Done | |
-| Form Post RP | ✅ Done | |
-| Front-Channel RP | Not Supported | |
-| Hybrid RP | Not Supported | |
-| Dynamic RP | Not Supported | |
-| 3rd Party-Init RP | Not Supported | |
-| **OpenID Relying Parties Logout Profiles** | | |
-| Back-Channel RP | ✅ Done | |
-| RP-Initiated RP | Not Supported | |
-| Session RP | Not Supported | |
-| Front-Channel RP | Not Supported | |
-| **Advanced Security** | | |
-| PAR (RFC 9126) | ✅ Done | |
-| DPoP (RFC 9449) | ✅ Done | |
-| JAR (RFC 9101) | ✅ Done | |
-| JARM | ✅ Done | |
-| JWE (RFC 7516) | ✅ Done | |
-| Pairwise Subject Identifiers | ✅ Done | |
-| NIST SP 800-63-4 (AAL/FAL/IAL) | ✅ Done | Assurance Levels |
-| **Token Management** | | |
-| JWT Signing (RS256) + Key Rotation | ✅ Done | |
-| Refresh Token Rotation | ✅ Done | |
-| Token Introspection (RFC 7662) | ✅ Done | |
-| Token Revocation (RFC 7009) | ✅ Done | |
-| Token Exchange (RFC 8693) | ✅ Done | |
-| ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant) | ✅ Done | AI Agent認可 |
-| Client Credentials (RFC 6749 §4.4) | ✅ Done | |
-| Dynamic Client Registration (RFC 7591) | ✅ Done | |
-| **Authentication** | | |
-| WebAuthn / Passkey | ✅ Done | |
-| Email OTP | ✅ Done | |
-| Device Flow (RFC 8628) | ✅ Done | |
-| CIBA | ✅ Done | |
-| JWT Bearer (RFC 7523) | ✅ Done | |
-| **Identity Hub** | | |
-| Social Login (7 providers) | ✅ Done | |
-| Identity Linking | ✅ Done | |
-| PII/Non-PII Separation | ✅ Done | |
-| **Authorization** | | |
-| RBAC / ABAC / ReBAC | ✅ Done | |
-| Real-time Check API | ✅ Done | |
-| WebSocket Push | ✅ Done | |
-| **Verifiable Credentials** | | |
-| OpenID4VP | ✅ Done | |
-| OpenID4VCI | ✅ Done | |
-| DID (did:web, did:key) | ✅ Done | |
-| **Enterprise** | | |
-| SCIM 2.0 (RFC 7643/7644) | ✅ Done | |
-| SAML 2.0 IdP/SP | ✅ Done | |
-| Admin Dashboard | ✅ Done | |
-| Multi-language (EN/JA) | ✅ Done | |
-| **Tooling** | | |
-| Setup CLI (`@authrim/setup`) | ✅ Done | [Documentation](./packages/setup/README.md) |
-| **SDK Packages** | | |
-| @authrim/core | ✅ Done | v0.1.11 - Platform-agnostic OIDC client |
-| @authrim/web | ✅ Done | v0.1.9 - Browser SDK |
-| @authrim/server | ✅ Done | v0.1.1 - Server SDK (Express, Hono, etc.) |
-| @authrim/sveltekit | ✅ Done | v0.1.2 - SvelteKit integration |
-| **Future SDKs** | | |
-| @authrim/react | 🔜 Post-v1.0 | React hooks/components |
-| @authrim/vue | 🔜 Post-v1.0 | Vue.js integration |
-| **Not Supported** | | |
-| MTLS (RFC 8705) | — | |
-| AD / LDAP | — | |
+| Area | Implementation | Production readiness | Notes |
+| --- | --- | --- | --- |
+| OpenID Provider | Complete | Ready | Certified OpenID Provider and Logout profiles |
+| OAuth/OIDC advanced profiles | Complete | In progress | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange |
+| SAML 2.0 IdP/SP | Basic complete | In progress | Production readiness and DR-readiness work are active |
+| SCIM 2.0 | Complete | In progress | User provisioning |
+| Authentication | Complete | In progress | Passkey, email code, social login, Direct Auth, device flow, CIBA |
+| Native SSO | Complete | In progress | `device_secret`, `ds_hash`, and DPoP-bound token exchange support |
+| Authorization | Complete | In progress | RBAC, ABAC, ReBAC, token embedding, real-time check API |
+| Identity Hub | Complete | In progress | External IdP integration, account linking, identity stitching |
+| VC/DID | Complete | Experimental | OpenID4VP, OpenID4VCI, did:web, did:key |
+| SDKs | Complete | In progress | Core, web, server, and SvelteKit packages |
+| Admin/Login UI | Basic complete | In progress | Consolidation and production flow readiness are release workstreams |
+| Runtime storage profiles | Partial | In progress | Hyperdrive-backed PII/custom/audit paths exist; auth core remains D1/KV-biased |
 
-> **Note:** All "Done" features are implemented and have unit tests. Integration testing and OpenID conformance certification are in progress.
->
-> **Not Supported:** MTLS is not available due to Cloudflare Workers TLS termination at edge. AD/LDAP requires TCP sockets not supported in Workers runtime. Use SAML/OIDC federation or SCIM provisioning as alternatives.
-
----
-
-## SDK Feature Matrix
-
-`@authrim/core` is a platform-agnostic TypeScript library. `@authrim/web` provides browser-specific implementations.
-
-| Feature | Server | Core SDK | Web SDK | Note |
-|---------|:------:|:--------:|:-------:|------|
-| **Basic OAuth/OIDC** | | | | |
-| OIDC Discovery | ✅ | ✅ | ✅ | Auto-discovery from issuer |
-| Authorization Code Flow + PKCE | ✅ | ✅ | ✅ | Standard secure flow |
-| Silent Auth (iframe) | ✅ | ✅ | ✅ | Session renewal |
-| Popup Auth | ✅ | — | ✅ | Browser popup flow |
-| Redirect Auth | ✅ | ✅ | ✅ | Standard redirect flow |
-| State/Nonce Management | ✅ | ✅ | ✅ | CSRF protection |
-| **Direct Auth (Passwordless)** | | | | |
-| Passkey (WebAuthn) | ✅ | — | ✅ | Login, SignUp, Register |
-| Passkey Conditional UI | ✅ | — | ✅ | Autofill integration |
-| Email Code (OTP) | ✅ | — | ✅ | Send, Verify |
-| Social Login | ✅ | — | ✅ | Popup + Redirect |
-| **Token Management** | | | | |
-| Token Storage | ✅ | ✅ | ✅ | Secure storage |
-| Token Refresh | ✅ | ✅ | ✅ | Auto-refresh |
-| Token Introspection (RFC 7662) | ✅ | ✅ | — | Server-side validation |
-| Token Revocation (RFC 7009) | ✅ | ✅ | — | Explicit invalidation |
-| Token Exchange (RFC 8693) | ✅ | ✅ | — | Cross-service tokens |
-| **Advanced Security** | | | | |
-| PAR (RFC 9126) | ✅ | ✅ | — | FAPI 2.0 security baseline |
-| DPoP (RFC 9449) | ✅ | ✅ | — | Token binding/proof of possession |
-| JAR (RFC 9101) | ✅ | ✅ | — | Signed authorization requests |
-| JARM | ✅ | ✅ | — | Signed authorization responses |
-| **Client Authentication** | | | | |
-| Client Credentials (RFC 6749 §4.4) | ✅ | ✅ | — | M2M auth (Node SDK only) |
-| Private Key JWT | ✅ | ✅ | — | client_assertion |
-| **Device Flow** | | | | |
-| Device Flow (RFC 8628) | ✅ | ✅ | ✅ | CLI/TV/IoT |
-| DeviceFlowUI Helper | — | — | ✅ | Events, countdown, QR |
-| **Session Management** | | | | |
-| Session State Calculator | ✅ | ✅ | — | session_state hash calculation |
-| Check Session Iframe | ✅ | — | ✅ | postMessage session check |
-| Session Monitor | ✅ | — | ✅ | Periodic session polling |
-| **Logout** | | | | |
-| RP-Initiated Logout | ✅ | ✅ | ✅ | LogoutHandler / signOut |
-| Front-Channel Logout | ✅ | ✅ | ✅ | URL builder + handler |
-| Back-Channel Logout | ✅ | ✅ | — | logout_token JWT validation |
-| **Utilities** | | | | |
-| PKCE Helper | — | ✅ | — | Code verifier/challenge |
-| JWT Decode/Validate | — | ✅ | — | Without signature verification |
-| Base64url Encode/Decode | — | ✅ | — | Standard encoding |
-| Timing-safe Comparison | — | ✅ | — | Security utility |
-| **Event System** | | | | |
-| Auth Lifecycle Events | — | ✅ | ✅ | Login, logout, token refresh |
-| Session Events | — | — | ✅ | Changed, expired |
-| **Deferred (Not Implemented)** | | | | |
-| JWE | ✅ | — | — | Signing sufficient for most cases |
-| CIBA | ✅ | — | — | Specialized use case (PSD2/banking) |
-| VC (OpenID4VP/VCI/DID) | ✅ | — | — | Specs still maturing |
-
-### Summary
-
-| SDK | Features Implemented | Primary Use Case |
-|-----|---------------------|------------------|
-| **@authrim/core** | 26 features | Platform-agnostic (Node.js, Deno, Workers, etc.) |
-| **@authrim/web** | 22 features | Browser SPA/PWA with Direct Auth focus |
-
-> **Design Principles:**
-> - Core returns "facts" only — UX events are handled by upper SDKs (web/react/svelte)
-> - Fail safe — Insecure options require explicit `dangerouslyAllowInsecure` opt-in
-> - Respect Discovery — Enforces `require_pushed_authorization_requests` and `require_signed_request_object` flags
-> - Security first — Timing-safe comparison, input length validation, JTI replay guidance
+See [Feature Matrix](./docs/FEATURES.md) for a more detailed capability and SDK overview.
 
 ---
 
@@ -400,9 +287,9 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** — _Identity & Access at the edge of everywhere_
 >
-> **Status:** Phase 1-10 ✅ Complete | Phase 11 ~50% | Phase 12 🔜 Planned
+> **Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Production readiness in progress
 >
-> _From zero to production-ready Identity & Access Platform in under 5 minutes._
+> _A self-hosted Identity & Access Platform for modern applications._
 >
 > ```bash
 > npx @authrim/setup

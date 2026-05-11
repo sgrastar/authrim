@@ -553,7 +553,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         try {
           const { stub: existingSessionStore } = getSessionStoreBySessionId(
             c.env,
-            existingSessionId
+            existingSessionId,
+            tenantId
           );
           const existingSession = (await existingSessionStore.getSessionRpc(
             existingSessionId
@@ -617,7 +618,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
               name: user.name,
               amr: ['otp'],
               acr: 'urn:mace:incommon:iap:bronze',
-            }
+            },
+            tenantId
           );
         } catch (error) {
           // PII Protection: Don't log full error
@@ -636,8 +638,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       // This is non-critical for the login flow - session is already created
       authCtx.coreAdapter
         .execute(
-          'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?',
-          [now, now, challengeData.userId]
+          'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+          [now, now, challengeData.userId, tenantId]
         )
         .catch((error) => {
           // PII Protection: Don't log full error

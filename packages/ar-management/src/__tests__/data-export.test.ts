@@ -90,9 +90,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 vi.mock('@authrim/ar-lib-core/services/object-artifact-store', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('@authrim/ar-lib-core/services/object-artifact-store')
-  >();
+  const actual =
+    await importOriginal<typeof import('@authrim/ar-lib-core/services/object-artifact-store')>();
   return {
     ...actual,
     loadCatalogObjectArtifact: actual.loadCatalogObjectArtifact,
@@ -116,8 +115,7 @@ import {
 } from '../data-export';
 import { getCookie } from 'hono/cookie';
 
-const OBJECT_ROOT_KEY =
-  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 /**
  * Helper to create mock context
@@ -162,8 +160,12 @@ function createMockContext(options: {
   return c;
 }
 
-function createMockR2ObjectStore(initial: Record<string, { body: Uint8Array; contentType?: string }> = {}) {
-  const store = new Map<string, { body: Uint8Array; contentType?: string }>(Object.entries(initial));
+function createMockR2ObjectStore(
+  initial: Record<string, { body: Uint8Array; contentType?: string }> = {}
+) {
+  const store = new Map<string, { body: Uint8Array; contentType?: string }>(
+    Object.entries(initial)
+  );
 
   return {
     store,
@@ -919,7 +921,10 @@ describe('Data Export API', () => {
     it('materializes pending export requests into encrypted EXPORT_ARTIFACTS objects', async () => {
       const { bucket, store } = createMockR2ObjectStore();
       mockCoreAdapter.query.mockImplementation(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('FROM data_export_requests') && sql.includes("status IN ('pending', 'processing')")) {
+        if (
+          sql.includes('FROM data_export_requests') &&
+          sql.includes("status IN ('pending', 'processing')")
+        ) {
           return [
             {
               id: 'export-123',
@@ -973,19 +978,19 @@ describe('Data Export API', () => {
       };
 
       await processPendingDataExportRequests(
-        ({
+        {
           DB_PII: {} as D1Database,
           EXPORT_ARTIFACTS: bucket,
           OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
           OBJECT_ENCRYPTION_KEY_VERSION: '2',
-        } as unknown as Env),
+        } as unknown as Env,
         logger
       );
 
       expect(store.has('exports/default/data-export/export-123/artifact.json')).toBe(true);
       expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-        "UPDATE data_export_requests SET status = 'processing', started_at = ? WHERE id = ? AND status = 'pending'",
-        [expect.any(Number), 'export-123']
+        "UPDATE data_export_requests SET status = 'processing', started_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
+        [expect.any(Number), 'export-123', 'default']
       );
       expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO object_catalog'),

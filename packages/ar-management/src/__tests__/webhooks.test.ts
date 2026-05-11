@@ -1367,10 +1367,8 @@ describe('Webhook Admin API - Get Delivery', () => {
     });
 
     it('loads externalized request and response payloads from SENSITIVE_DETAILS', async () => {
-      const rootKey =
-        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      const objectKey =
-        'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const objectKey = 'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
@@ -1424,10 +1422,6 @@ describe('Webhook Admin API - Get Delivery', () => {
           };
         }
         if (sql.includes('FROM object_catalog oc')) {
-          expect([
-            ['oa_test', 'canonical_json', 0],
-            ['catalog-123', 'canonical_json', 0],
-          ]).toContainEqual(params);
           return {
             catalog_id: 'catalog-123',
             public_artifact_id: 'oa_test',
@@ -1454,8 +1448,17 @@ describe('Webhook Admin API - Get Delivery', () => {
 
       const response = (await getWebhookDelivery(c)) as Response;
       const { body, status } = await getResponseData(response);
+      const objectCatalogQueryParams = mockD1AdapterQueryOne.mock.calls
+        .filter(([sql]) => String(sql).includes('FROM object_catalog oc'))
+        .map(([, params]) => params);
 
       expect(status).toBe(200);
+      expect(objectCatalogQueryParams).toContainEqual([
+        'test-tenant',
+        'catalog-123',
+        'canonical_json',
+        0,
+      ]);
       expect(body.delivery.request_headers).toEqual({
         Authorization: 'Bearer token',
         'Content-Type': 'application/json',
@@ -1467,10 +1470,8 @@ describe('Webhook Admin API - Get Delivery', () => {
     });
 
     it('allows delivery detail reads with a matching elevation grant', async () => {
-      const rootKey =
-        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      const objectKey =
-        'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const objectKey = 'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { 'Content-Type': 'application/json' },
@@ -1751,10 +1752,8 @@ describe('Webhook Admin API - Replay Delivery', () => {
     });
 
     it('replays from externalized delivery payloads and stores pointer-backed previews', async () => {
-      const rootKey =
-        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      const objectKey =
-        'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const objectKey = 'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { 'Content-Type': 'application/json' },
@@ -1851,12 +1850,10 @@ describe('Webhook Admin API - Replay Delivery', () => {
       );
       expect(mockD1AdapterExecute).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO webhook_deliveries'),
-        expect.arrayContaining([
-          expect.any(String),
-        ])
+        expect.arrayContaining([expect.any(String)])
       );
-      const deliveryInsert = mockD1AdapterExecute.mock.calls.find(([sql]) =>
-        typeof sql === 'string' && sql.includes('INSERT INTO webhook_deliveries')
+      const deliveryInsert = mockD1AdapterExecute.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO webhook_deliveries')
       );
       expect(deliveryInsert?.[1]?.[7]).toContain('"X-Webhook-Replay":"true"');
       expect(deliveryInsert?.[1]?.[8]).toContain('"event":"user.created"');

@@ -249,7 +249,7 @@ async function invalidateUserSessions(
       // Terminate session in Durable Object
       if (isShardedSessionId(session.id)) {
         try {
-          const { stub: sessionStore } = getSessionStoreBySessionId(env, session.id);
+          const { stub: sessionStore } = getSessionStoreBySessionId(env, session.id, tenantId);
           await sessionStore.fetch(
             new Request(`https://session-store/session/${session.id}`, {
               method: 'DELETE',

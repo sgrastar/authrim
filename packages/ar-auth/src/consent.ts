@@ -264,7 +264,7 @@ async function handleJsonConsentGet(
 
   // Get user info (PII/Non-PII DB separation)
   const piiCtx = createPIIContextFromHono(c, tenantId);
-  const userInfo = await getConsentUserInfo(authCtx.coreAdapter, userId, piiCtx.defaultPiiAdapter);
+  const userInfo = await getConsentUserInfo(authCtx.coreAdapter, userId, tenantId, piiCtx.defaultPiiAdapter);
   if (!userInfo) {
     return c.json(
       {
@@ -276,7 +276,7 @@ async function handleJsonConsentGet(
   }
 
   // Get RBAC data (organizations, roles)
-  const rbacData = await getConsentRBACData(authCtx.coreAdapter, userId);
+  const rbacData = await getConsentRBACData(authCtx.coreAdapter, userId, tenantId);
 
   // Parse feature flags from environment
   const features = parseConsentFeatureFlags(
@@ -288,7 +288,7 @@ async function handleJsonConsentGet(
   // Get acting-as info if present in metadata
   let actingAsInfo = null;
   if (metadata.acting_as && features.acting_as_enabled) {
-    actingAsInfo = await getActingAsUserInfo(authCtx.coreAdapter, userId, metadata.acting_as);
+    actingAsInfo = await getActingAsUserInfo(authCtx.coreAdapter, userId, metadata.acting_as, tenantId);
   }
 
   // Determine target org and get roles for that org
@@ -297,7 +297,7 @@ async function handleJsonConsentGet(
 
   // If targeting a specific org, get roles for that org
   if (targetOrgId) {
-    roles = await getRolesInOrganization(authCtx.coreAdapter, userId, targetOrgId);
+    roles = await getRolesInOrganization(authCtx.coreAdapter, userId, targetOrgId, tenantId);
   }
 
   // Get consent settings

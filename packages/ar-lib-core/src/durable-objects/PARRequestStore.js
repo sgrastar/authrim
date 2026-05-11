@@ -163,6 +163,9 @@ export class PARRequestStore extends DurableObject {
      */
     async storeRequest(request) {
         await this.initializeState();
+        if (!request.data.tenant_id) {
+            throw new Error('Invalid PAR request: tenant_id is required');
+        }
         const now = Date.now();
         const data = {
             ...request.data,
@@ -196,6 +199,10 @@ export class PARRequestStore extends DurableObject {
         // Request not found
         if (!data) {
             throw new Error('Invalid request_uri: not found or already consumed');
+        }
+        // Tenant mismatch
+        if (data.tenant_id !== request.tenant_id) {
+            throw new Error('Invalid request_uri: tenant_id mismatch');
         }
         // Client ID mismatch
         if (data.client_id !== request.client_id) {
@@ -263,7 +270,7 @@ export class PARRequestStore extends DurableObject {
             // POST /request - Store new PAR request
             if (path === '/request' && request.method === 'POST') {
                 const body = (await request.json());
-                if (!body.requestUri || !body.data || !body.ttl) {
+                if (!body.requestUri || !body.data || !body.data.tenant_id || !body.ttl) {
                     return new Response(JSON.stringify({
                         error: 'invalid_request',
                         error_description: 'Missing required fields',
@@ -281,7 +288,7 @@ export class PARRequestStore extends DurableObject {
             // POST /request/consume - Consume PAR request (atomic)
             if (path === '/request/consume' && request.method === 'POST') {
                 const body = (await request.json());
-                if (!body.requestUri || !body.client_id) {
+                if (!body.requestUri || !body.tenant_id || !body.client_id) {
                     return new Response(JSON.stringify({
                         error: 'invalid_request',
                         error_description: 'Missing required fields',

@@ -310,13 +310,19 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     const sessionTtl = DEFAULT_SESSION_TTL;
 
-    await sessionStore.createSessionRpc(sessionId, linkedIdentity.user_id, sessionTtl, {
-      amr: ['did'],
-      acr: 'urn:authrim:acr:did',
-      auth_time: Math.floor(Date.now() / 1000),
-      did,
-      verification_method: kid,
-    });
+    await sessionStore.createSessionRpc(
+      sessionId,
+      linkedIdentity.user_id,
+      sessionTtl,
+      {
+        amr: ['did'],
+        acr: 'urn:authrim:acr:did',
+        auth_time: Math.floor(Date.now() / 1000),
+        did,
+        verification_method: kid,
+      },
+      tenantId
+    );
 
     // Publish DID authentication success event (non-blocking)
     publishEvent(c, {

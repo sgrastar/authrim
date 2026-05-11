@@ -453,6 +453,43 @@ describe('Token Introspection Endpoint', () => {
       expect(verifyClientSecretHash).toHaveBeenCalledWith('client-secret', 'hash_client-secret');
     });
 
+    it('resolves duplicated client_id through the request tenant context', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('tenant-b');
+
+      const tokenPayload = {
+        ...sampleTokenPayload,
+        client_id: 'shared-mobile',
+      };
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'shared-mobile',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue(tokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(tokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'shared-mobile',
+        tenant_id: 'tenant-b',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(c, 'tenant-b');
+      expect(mockClientRepository.findByClientId).toHaveBeenCalledWith('shared-mobile');
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+    });
+
     it('should use the naked-domain issuer for primary-tenant private_key_jwt validation', async () => {
       mockGetTenantIdFromContext.mockReturnValue('default');
 

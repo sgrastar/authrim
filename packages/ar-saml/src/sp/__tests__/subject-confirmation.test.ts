@@ -138,20 +138,22 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
     vi.clearAllMocks();
 
     // Mock IdP config
-    mockGetIdPConfigByEntityId.mockImplementation(async (_env: unknown, entityId: string) => {
-      if (entityId === 'https://idp.example.com') {
-        return {
-          entityId: 'https://idp.example.com',
-          ssoUrl: 'https://idp.example.com/sso',
-          certificate: 'mock-certificate',
-          attributeMapping: {
-            email: 'email',
-            name: 'displayName',
-          },
-        };
+    mockGetIdPConfigByEntityId.mockImplementation(
+      async (_env: unknown, _tenantId: string, entityId: string) => {
+        if (entityId === 'https://idp.example.com') {
+          return {
+            entityId: 'https://idp.example.com',
+            ssoUrl: 'https://idp.example.com/sso',
+            certificate: 'mock-certificate',
+            attributeMapping: {
+              email: 'email',
+              name: 'displayName',
+            },
+          };
+        }
+        return null;
       }
-      return null;
-    });
+    );
 
     // Mock environment
     mockEnv = {

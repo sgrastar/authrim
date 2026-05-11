@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
+  resolveAuthorizedCheckTenantId,
   type CheckAuthResult,
   type CheckAuthContext,
 } from '../check-auth';
@@ -611,6 +612,32 @@ describe('Check API Authentication Middleware', () => {
       };
 
       expect(isOperationAllowed(authResult, 'check')).toBe(false);
+    });
+  });
+
+  describe('resolveAuthorizedCheckTenantId', () => {
+    it('allows tenant-bound auth to use its own tenant only', () => {
+      const authResult: CheckAuthResult = {
+        authenticated: true,
+        method: 'api_key',
+        tenantId: 'tenant-a',
+        allowedOperations: ['check'],
+      };
+
+      expect(resolveAuthorizedCheckTenantId(authResult, undefined, 'default')).toBe('tenant-a');
+      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-a', 'default')).toBe('tenant-a');
+      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-b', 'default')).toBeNull();
+    });
+
+    it('allows policy secret auth to target an explicit tenant', () => {
+      const authResult: CheckAuthResult = {
+        authenticated: true,
+        method: 'policy_secret',
+        tenantId: 'default',
+        allowedOperations: ['check', 'batch', 'subscribe'],
+      };
+
+      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-b', 'default')).toBe('tenant-b');
     });
   });
 

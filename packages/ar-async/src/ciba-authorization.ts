@@ -190,6 +190,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // Create CIBA request metadata
     const metadata: CIBARequestMetadata = {
+      tenant_id: tenantId,
       auth_req_id: authReqId,
       client_id,
       scope,
@@ -223,7 +224,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     const storeResponse = await cibaRequestStore.fetch(
       new Request('https://internal/store', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
         body: JSON.stringify(metadata),
       })
     );

@@ -434,7 +434,7 @@ async function validateDirectAuthClient(
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
 
-  const client = await getClient(c.env, clientId, authCtx.coreAdapter);
+  const client = await getClient(c.env, tenantId, clientId, authCtx.coreAdapter);
 
   if (!client) {
     return {
@@ -549,7 +549,11 @@ async function validateSession(
     return null;
   }
 
-  const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+  const { stub: sessionStore } = getSessionStoreBySessionId(
+    c.env,
+    sessionId,
+    getTenantIdFromContext(c)
+  );
   const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
   if (!session) {
@@ -824,10 +828,10 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       passkey = await authCtx.repositories.passkey.findByCredentialId(legacyId);
 
       if (passkey) {
-        await authCtx.coreAdapter.execute('UPDATE passkeys SET credential_id = ? WHERE id = ?', [
-          credentialIDBase64URL,
-          passkey.id,
-        ]);
+        await authCtx.coreAdapter.execute(
+          'UPDATE passkeys SET credential_id = ? WHERE id = ? AND tenant_id = ?',
+          [credentialIDBase64URL, passkey.id, tenantId]
+        );
         passkey.credential_id = credentialIDBase64URL;
       }
     }
@@ -1305,8 +1309,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     // Update email_verified
     const now = Date.now();
     await authCtx.coreAdapter.execute(
-      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ?',
-      [now, userId]
+      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [now, userId, tenantId]
     );
 
     // Check if this is a new user (created in this flow)
@@ -1767,8 +1771,8 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     // Update email_verified
     const now = Date.now();
     await authCtx.coreAdapter.execute(
-      'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?',
-      [now, now, challengeData.userId]
+      'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [now, now, challengeData.userId, tenantId]
     );
 
     const isNewUser = userCore ? now - (userCore.created_at || 0) < 60000 : false;
@@ -2056,15 +2060,21 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
 
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
 
-    await sessionStore.createSessionRpc(sessionId, artifactData.userId, sessionTTL, {
-      email: userPII.email || null,
-      name: userPII.name,
-      amr,
-      acr,
-      authTime,
-      client_id,
-      direct_auth_channel: channel,
-    });
+    await sessionStore.createSessionRpc(
+      sessionId,
+      artifactData.userId,
+      sessionTTL,
+      {
+        email: userPII.email || null,
+        name: userPII.name,
+        amr,
+        acr,
+        authTime,
+        client_id,
+        direct_auth_channel: channel,
+      },
+      tenantId
+    );
 
     const isSecure = new URL(c.req.url).protocol === 'https:';
     setCookie(c, 'authrim_session', sessionId, {
@@ -2567,7 +2577,11 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
 
       // Invalidate session from SessionStore
       if (isShardedSessionId(sessionId)) {
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(
+          c.env,
+          sessionId,
+          getTenantIdFromContext(c)
+        );
 
         try {
           session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;

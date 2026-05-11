@@ -46,6 +46,7 @@ const log = createLogger().module('DO-SESSION-STORE');
  */
 export interface Session {
   id: string;
+  tenantId?: string;
   userId: string;
   expiresAt: number;
   createdAt: number;
@@ -78,6 +79,7 @@ export interface SessionData {
  */
 export interface CreateSessionRequest {
   sessionId: string; // Required: Sharded session ID from session-helper
+  tenantId?: string;
   userId: string;
   ttl: number; // Time to live in seconds
   data?: SessionData;
@@ -88,6 +90,7 @@ export interface CreateSessionRequest {
  */
 export interface SessionResponse {
   id: string;
+  tenantId?: string;
   userId: string;
   expiresAt: number;
   createdAt: number;
@@ -110,6 +113,7 @@ const TOMBSTONE_KEY_PREFIX = 'tombstone:';
  * After this period, tombstones are automatically cleaned up
  */
 const TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
+const SESSION_STORE_TENANT_CONTEXT_KEY = 'session-store:tenant-context';
 
 /**
  * Tombstone data interface
@@ -137,6 +141,7 @@ export class SessionStore extends DurableObject<Env> {
   private sessionPersistence: SessionPersistenceAdapter | null = null;
   private sessionPersistenceInit: Promise<SessionPersistenceAdapter | null> | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
+  private tenantId: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -164,9 +169,10 @@ export class SessionStore extends DurableObject<Env> {
     sessionId: string,
     userId: string,
     ttl: number,
-    data?: SessionData
+    data?: SessionData,
+    tenantId?: string
   ): Promise<Session> {
-    return this.createSession(sessionId, userId, ttl, data);
+    return this.createSession(sessionId, userId, ttl, data, tenantId);
   }
 
   /**
@@ -397,6 +403,37 @@ export class SessionStore extends DurableObject<Env> {
     return session.expiresAt <= Date.now();
   }
 
+  private extractTenantId(data?: SessionData, tenantId?: string): string | undefined {
+    if (tenantId) {
+      return tenantId;
+    }
+    const metadataTenantId = data?.tenant_id ?? data?.tenantId;
+    return typeof metadataTenantId === 'string' ? metadataTenantId : undefined;
+  }
+
+  private async setTenantContext(tenantId: string): Promise<void> {
+    if (this.tenantId === tenantId) {
+      return;
+    }
+    this.tenantId = tenantId;
+    this.sessionPersistence = null;
+    await this.actorCtx.storage.put(SESSION_STORE_TENANT_CONTEXT_KEY, tenantId);
+  }
+
+  private async ensureTenantContext(): Promise<string | undefined> {
+    if (this.tenantId) {
+      return this.tenantId;
+    }
+
+    const stored = await this.actorCtx.storage.get<string>(SESSION_STORE_TENANT_CONTEXT_KEY);
+    if (stored) {
+      this.tenantId = stored;
+      return stored;
+    }
+
+    return undefined;
+  }
+
   /**
    * Load session from cold persistence
    * Checks for tombstones first to prevent returning deleted sessions
@@ -521,10 +558,17 @@ export class SessionStore extends DurableObject<Env> {
     sessionId: string,
     userId: string,
     ttl: number,
-    data?: SessionData
+    data?: SessionData,
+    tenantId?: string
   ): Promise<Session> {
+    const resolvedTenantId = this.extractTenantId(data, tenantId);
+    if (resolvedTenantId) {
+      await this.setTenantContext(resolvedTenantId);
+    }
+
     const session: Session = {
       id: sessionId,
+      tenantId: resolvedTenantId,
       userId,
       expiresAt: Date.now() + ttl * 1000,
       createdAt: Date.now(),
@@ -715,6 +759,7 @@ export class SessionStore extends DurableObject<Env> {
       if (session.userId === userId && session.expiresAt > now) {
         sessions.push({
           id: session.id,
+          tenantId: session.tenantId,
           userId: session.userId,
           expiresAt: session.expiresAt,
           createdAt: session.createdAt,
@@ -732,6 +777,7 @@ export class SessionStore extends DurableObject<Env> {
           if (!existingIds.has(row.id)) {
             sessions.push({
               id: row.id,
+              tenantId: row.tenantId,
               userId: row.userId,
               expiresAt: row.expiresAt,
               createdAt: row.createdAt,
@@ -877,7 +923,8 @@ export class SessionStore extends DurableObject<Env> {
   private async initializeSessionPersistence(): Promise<SessionPersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    return createSessionPersistenceAdapter(source);
+    const tenantId = await this.ensureTenantContext();
+    return createSessionPersistenceAdapter(source, 'session-store', tenantId);
   }
 
   private async ensureSessionPersistence(): Promise<SessionPersistenceAdapter | null> {
@@ -933,7 +980,13 @@ export class SessionStore extends DurableObject<Env> {
           );
         }
 
-        const session = await this.createSession(body.sessionId, body.userId, body.ttl, body.data);
+        const session = await this.createSession(
+          body.sessionId,
+          body.userId,
+          body.ttl,
+          body.data,
+          body.tenantId
+        );
 
         return new Response(JSON.stringify(this.sanitizeSession(session)), {
           status: 201,

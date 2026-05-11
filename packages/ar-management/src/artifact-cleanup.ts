@@ -36,10 +36,11 @@ export async function cleanupExpiredDataExportArtifacts(
   const now = Date.now();
   const expiredRows = await adapter.query<{
     id: string;
+    tenant_id: string;
     object_catalog_id: string | null;
     file_path: string | null;
   }>(
-    `SELECT id, object_catalog_id, file_path
+    `SELECT id, tenant_id, object_catalog_id, file_path
        FROM data_export_requests
       WHERE status = 'completed'
         AND expires_at IS NOT NULL
@@ -62,8 +63,8 @@ export async function cleanupExpiredDataExportArtifacts(
         `UPDATE data_export_requests
             SET object_catalog_id = NULL,
                 file_path = NULL
-          WHERE id = ?`,
-        [row.id]
+          WHERE id = ? AND tenant_id = ?`,
+        [row.id, row.tenant_id]
       );
       cleaned += 1;
     } catch (error) {
@@ -102,10 +103,11 @@ export async function cleanupExpiredAdminJobArtifacts(
     Math.floor(Date.now() / 1000) - ADMIN_JOB_ARTIFACT_RETENTION_DAYS * 24 * 60 * 60;
   const oldRows = await adapter.query<{
     id: string;
+    tenant_id: string;
     object_catalog_id: string | null;
     result_r2_key: string | null;
   }>(
-    `SELECT id, object_catalog_id, result_r2_key
+    `SELECT id, tenant_id, object_catalog_id, result_r2_key
        FROM admin_jobs
       WHERE status IN ('completed', 'failed', 'partial_failure')
         AND completed_at IS NOT NULL
@@ -129,14 +131,18 @@ export async function cleanupExpiredAdminJobArtifacts(
         `UPDATE admin_jobs
             SET object_catalog_id = NULL,
                 result_r2_key = NULL
-          WHERE id = ?`,
-        [row.id]
+          WHERE id = ? AND tenant_id = ?`,
+        [row.id, row.tenant_id]
       );
       cleaned += 1;
     } catch (error) {
       logger.error(
         'Failed to tombstone admin job artifact',
-        { job_id: row.id, object_catalog_id: row.object_catalog_id, result_r2_key: row.result_r2_key },
+        {
+          job_id: row.id,
+          object_catalog_id: row.object_catalog_id,
+          result_r2_key: row.result_r2_key,
+        },
         error as Error
       );
     }
@@ -162,8 +168,7 @@ export async function purgeDeletedObjectArtifacts(
   const sensitiveBucket = env.SENSITIVE_DETAILS;
 
   const pending = await listDeletedObjectCatalogObjects(adapter, {
-    deletedBefore:
-      Date.now() - OBJECT_CATALOG_TOMBSTONE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    deletedBefore: Date.now() - OBJECT_CATALOG_TOMBSTONE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     limit: DELETED_OBJECT_PURGE_BATCH_LIMIT,
   });
   if (pending.length === 0) {

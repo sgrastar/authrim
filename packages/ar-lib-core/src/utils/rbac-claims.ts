@@ -168,7 +168,7 @@ export interface RBACClaimsOptions {
   cache?: KVNamespace; // REBAC_CACHE KV namespace
   claimsConfig?: string; // Comma-separated list of claims to include
   env?: Env; // Environment bindings for dynamic TTL
-  tenantId?: string; // Tenant ID for multi-tenant isolation (default: '__global__')
+  tenantId?: string; // Tenant ID for multi-tenant isolation (default: 'default')
 }
 
 /**
@@ -236,7 +236,8 @@ export async function getCompositeRBACCache(
   subjectId: string,
   options: RBACClaimsOptions = {}
 ): Promise<CompositeRBACCache> {
-  const { cache, env, tenantId } = options;
+  const { cache, env } = options;
+  const tenantId = options.tenantId ?? 'default';
 
   // Try cache first
   if (cache) {
@@ -266,14 +267,14 @@ export async function getCompositeRBACCache(
   // Cache miss - fetch all RBAC data in parallel (7 queries → 1 batch)
   const [roles, scopedRoles, userType, orgInfo, orgName, orgs, relationships, permissions] =
     await Promise.all([
-      resolveEffectiveRoles(db, subjectId),
-      resolveScopedRoles(db, subjectId),
-      resolveUserType(db, subjectId),
-      resolveOrganizationInfo(db, subjectId),
-      resolveOrganizationName(db, subjectId),
-      resolveAllOrganizations(db, subjectId),
-      resolveRelationshipsSummary(db, subjectId),
-      resolvePermissions(db, subjectId),
+      resolveEffectiveRoles(db, subjectId, tenantId),
+      resolveScopedRoles(db, subjectId, tenantId),
+      resolveUserType(db, subjectId, tenantId),
+      resolveOrganizationInfo(db, subjectId, tenantId),
+      resolveOrganizationName(db, subjectId, tenantId),
+      resolveAllOrganizations(db, subjectId, tenantId),
+      resolveRelationshipsSummary(db, subjectId, tenantId),
+      resolvePermissions(db, subjectId, tenantId),
     ]);
 
   // Get current version for cache storage
@@ -443,7 +444,11 @@ interface ResolvedOrgInfo {
  * @param subjectId - User ID
  * @returns Array of role names
  */
-export async function resolveEffectiveRoles(db: DatabaseSource, subjectId: string): Promise<string[]> {
+export async function resolveEffectiveRoles(
+  db: DatabaseSource,
+  subjectId: string,
+  tenantId: string = 'default'
+): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000); // UNIX seconds
 
   const rows = await getRBACDatabaseAdapter(db).query<{ name: string }>(
@@ -451,9 +456,11 @@ export async function resolveEffectiveRoles(db: DatabaseSource, subjectId: strin
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY r.name ASC`,
-    [subjectId, now]
+    [subjectId, tenantId, tenantId, now]
   );
 
   return rows.map((r) => r.name);
@@ -471,7 +478,8 @@ export async function resolveEffectiveRoles(db: DatabaseSource, subjectId: strin
  */
 export async function resolveOrganizationInfo(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string
 ): Promise<ResolvedOrgInfo | null> {
   const result = await getRBACDatabaseAdapter(db).queryOne<{
     org_id: string;
@@ -481,8 +489,12 @@ export async function resolveOrganizationInfo(
     `SELECT o.id as org_id, o.plan, o.org_type
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ? AND m.is_primary = 1 AND o.is_active = 1`,
-    [subjectId]
+       WHERE m.subject_id = ?
+         AND m.tenant_id = ?
+         AND o.tenant_id = ?
+         AND m.is_primary = 1
+         AND o.is_active = 1`,
+    [subjectId, tenantId, tenantId]
   );
 
   if (!result) {
@@ -503,10 +515,14 @@ export async function resolveOrganizationInfo(
  * @param subjectId - User ID
  * @returns User type or 'end_user' as default
  */
-export async function resolveUserType(db: DatabaseSource, subjectId: string): Promise<UserType> {
+export async function resolveUserType(
+  db: DatabaseSource,
+  subjectId: string,
+  tenantId: string
+): Promise<UserType> {
   const result = await getRBACDatabaseAdapter(db).queryOne<{ user_type: string }>(
-    'SELECT user_type FROM users_core WHERE id = ?',
-    [subjectId]
+    'SELECT user_type FROM users_core WHERE id = ? AND tenant_id = ?',
+    [subjectId, tenantId]
   );
 
   return (result?.user_type as UserType) || 'end_user';
@@ -537,13 +553,14 @@ export async function resolveUserType(db: DatabaseSource, subjectId: string): Pr
  */
 export async function getUserRBACClaims(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string = 'default'
 ): Promise<RBACTokenClaims> {
   // Fetch all RBAC info in parallel
   const [roles, orgInfo, userType] = await Promise.all([
-    resolveEffectiveRoles(db, subjectId),
-    resolveOrganizationInfo(db, subjectId),
-    resolveUserType(db, subjectId),
+    resolveEffectiveRoles(db, subjectId, tenantId),
+    resolveOrganizationInfo(db, subjectId, tenantId),
+    resolveUserType(db, subjectId, tenantId),
   ]);
 
   const claims: RBACTokenClaims = {};
@@ -596,7 +613,8 @@ export async function getIDTokenRBACClaims(
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
-  const { cache, claimsConfig, tenantId } = options;
+  const { cache, claimsConfig } = options;
+  const tenantId = options.tenantId ?? 'default';
 
   // Try cache first
   if (cache) {
@@ -615,10 +633,9 @@ export async function getIDTokenRBACClaims(
   // Cache miss - fetch from D1
   let claims: Partial<RBACTokenClaims>;
   if (claimsConfig !== undefined) {
-    claims = await getIDTokenRBACClaimsConfigurable(db, subjectId, claimsConfig);
+    claims = await getIDTokenRBACClaimsConfigurable(db, subjectId, claimsConfig, tenantId);
   } else {
-    // Legacy behavior for backward compatibility
-    claims = await getUserRBACClaims(db, subjectId);
+    claims = await getUserRBACClaims(db, subjectId, tenantId);
   }
 
   // Store in cache (fire-and-forget with dynamic TTL)
@@ -668,7 +685,8 @@ export async function getAccessTokenRBACClaims(
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
-  const { cache, claimsConfig, tenantId } = options;
+  const { cache, claimsConfig } = options;
+  const tenantId = options.tenantId ?? 'default';
 
   // Try cache first
   if (cache) {
@@ -685,7 +703,7 @@ export async function getAccessTokenRBACClaims(
   }
 
   // Cache miss - fetch from D1
-  const claims = await getAccessTokenRBACClaimsInternal(db, subjectId, claimsConfig);
+  const claims = await getAccessTokenRBACClaimsInternal(db, subjectId, claimsConfig, tenantId);
 
   // Store in cache (fire-and-forget with dynamic TTL)
   if (cache) {
@@ -711,7 +729,8 @@ export async function getAccessTokenRBACClaims(
 async function getAccessTokenRBACClaimsInternal(
   db: DatabaseSource,
   subjectId: string,
-  claimsConfig?: string
+  claimsConfig?: string,
+  tenantId: string = 'default'
 ): Promise<Partial<RBACTokenClaims>> {
   const enabledClaims = parseClaimsConfig<AccessTokenClaimKey>(
     claimsConfig,
@@ -728,10 +747,10 @@ async function getAccessTokenRBACClaimsInternal(
 
   // Fetch required data in parallel
   const [roles, scopedRoles, orgInfo, permissions] = await Promise.all([
-    needsRoles ? resolveEffectiveRoles(db, subjectId) : Promise.resolve([]),
-    needsScopedRoles ? resolveScopedRoles(db, subjectId) : Promise.resolve([]),
-    needsOrgInfo ? resolveOrganizationInfo(db, subjectId) : Promise.resolve(null),
-    needsPermissions ? resolvePermissions(db, subjectId) : Promise.resolve([]),
+    needsRoles ? resolveEffectiveRoles(db, subjectId, tenantId) : Promise.resolve([]),
+    needsScopedRoles ? resolveScopedRoles(db, subjectId, tenantId) : Promise.resolve([]),
+    needsOrgInfo ? resolveOrganizationInfo(db, subjectId, tenantId) : Promise.resolve(null),
+    needsPermissions ? resolvePermissions(db, subjectId, tenantId) : Promise.resolve([]),
   ]);
 
   // Add claims based on configuration
@@ -775,7 +794,8 @@ async function getAccessTokenRBACClaimsInternal(
  */
 export async function resolveScopedRoles(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string = 'default'
 ): Promise<TokenScopedRole[]> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -788,9 +808,11 @@ export async function resolveScopedRoles(
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY r.name ASC`,
-    [subjectId, now]
+    [subjectId, tenantId, tenantId, now]
   );
 
   return rows.map((r) => ({
@@ -809,7 +831,8 @@ export async function resolveScopedRoles(
  */
 export async function resolveAllOrganizations(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string
 ): Promise<TokenOrgInfo[]> {
   const rows = await getRBACDatabaseAdapter(db).query<{
     id: string;
@@ -820,9 +843,12 @@ export async function resolveAllOrganizations(
     `SELECT o.id, o.name, o.org_type, m.is_primary
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ? AND o.is_active = 1
+       WHERE m.subject_id = ?
+         AND m.tenant_id = ?
+         AND o.tenant_id = ?
+         AND o.is_active = 1
        ORDER BY m.is_primary DESC, o.name ASC`,
-    [subjectId]
+    [subjectId, tenantId, tenantId]
   );
 
   return rows.map((r) => ({
@@ -842,7 +868,8 @@ export async function resolveAllOrganizations(
  */
 export async function resolveRelationshipsSummary(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string
 ): Promise<RelationshipsSummary> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -855,9 +882,10 @@ export async function resolveRelationshipsSummary(
     `SELECT relationship_type, from_id, to_id
        FROM relationships
        WHERE (from_id = ? OR to_id = ?)
+         AND tenant_id = ?
          AND relationship_type = 'parent_child'
          AND (expires_at IS NULL OR expires_at > ?)`,
-    [subjectId, subjectId, now]
+    [subjectId, subjectId, tenantId, now]
   );
 
   const childrenIds: string[] = [];
@@ -886,7 +914,11 @@ export async function resolveRelationshipsSummary(
  * @param subjectId - User ID
  * @returns Array of permission strings
  */
-export async function resolvePermissions(db: DatabaseSource, subjectId: string): Promise<string[]> {
+export async function resolvePermissions(
+  db: DatabaseSource,
+  subjectId: string,
+  tenantId: string = 'default'
+): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000);
 
   const rows = await getRBACDatabaseAdapter(db).query<{ permissions_json: string }>(
@@ -894,10 +926,12 @@ export async function resolvePermissions(db: DatabaseSource, subjectId: string):
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
          AND r.permissions_json IS NOT NULL
          AND r.permissions_json != '[]'`,
-    [subjectId, now]
+    [subjectId, tenantId, tenantId, now]
   );
 
   const permissionsSet = new Set<string>();
@@ -925,14 +959,19 @@ export async function resolvePermissions(db: DatabaseSource, subjectId: string):
  */
 export async function resolveOrganizationName(
   db: DatabaseSource,
-  subjectId: string
+  subjectId: string,
+  tenantId: string
 ): Promise<string | null> {
   const result = await getRBACDatabaseAdapter(db).queryOne<{ name: string }>(
     `SELECT o.name
        FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ? AND m.is_primary = 1 AND o.is_active = 1`,
-    [subjectId]
+       WHERE m.subject_id = ?
+         AND m.tenant_id = ?
+         AND o.tenant_id = ?
+         AND m.is_primary = 1
+         AND o.is_active = 1`,
+    [subjectId, tenantId, tenantId]
   );
 
   return result?.name ?? null;
@@ -980,7 +1019,8 @@ function parseClaimsConfig<T extends string>(config: string | undefined, default
 export async function getIDTokenRBACClaimsConfigurable(
   db: DatabaseSource,
   subjectId: string,
-  claimsConfig?: string
+  claimsConfig?: string,
+  tenantId: string = 'default'
 ): Promise<Partial<RBACTokenClaims>> {
   const enabledClaims = parseClaimsConfig<IDTokenClaimKey>(claimsConfig, DEFAULT_ID_TOKEN_CLAIMS);
 
@@ -1002,14 +1042,14 @@ export async function getIDTokenRBACClaimsConfigurable(
 
   // Fetch required data in parallel
   const [roles, scopedRoles, userType, orgInfo, orgName, orgs, relationships] = await Promise.all([
-    needsRoles ? resolveEffectiveRoles(db, subjectId) : Promise.resolve([]),
-    needsScopedRoles ? resolveScopedRoles(db, subjectId) : Promise.resolve([]),
-    needsUserType ? resolveUserType(db, subjectId) : Promise.resolve('end_user' as UserType),
-    needsBasicOrgInfo ? resolveOrganizationInfo(db, subjectId) : Promise.resolve(null),
-    needsOrgName ? resolveOrganizationName(db, subjectId) : Promise.resolve(null),
-    needsOrgs ? resolveAllOrganizations(db, subjectId) : Promise.resolve([]),
+    needsRoles ? resolveEffectiveRoles(db, subjectId, tenantId) : Promise.resolve([]),
+    needsScopedRoles ? resolveScopedRoles(db, subjectId, tenantId) : Promise.resolve([]),
+    needsUserType ? resolveUserType(db, subjectId, tenantId) : Promise.resolve('end_user' as UserType),
+    needsBasicOrgInfo ? resolveOrganizationInfo(db, subjectId, tenantId) : Promise.resolve(null),
+    needsOrgName ? resolveOrganizationName(db, subjectId, tenantId) : Promise.resolve(null),
+    needsOrgs ? resolveAllOrganizations(db, subjectId, tenantId) : Promise.resolve([]),
     needsRelationships
-      ? resolveRelationshipsSummary(db, subjectId)
+      ? resolveRelationshipsSummary(db, subjectId, tenantId)
       : Promise.resolve({ children_ids: [], parent_ids: [] }),
   ]);
 

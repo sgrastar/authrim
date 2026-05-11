@@ -69,6 +69,20 @@ describe('DeviceSecretRepository', () => {
       }
     });
 
+    it('should use the repository tenant_id when input tenant_id is omitted', async () => {
+      const tenantRepository = new DeviceSecretRepository(adapter, 'tenant-a');
+
+      const result = await tenantRepository.createSecret({
+        user_id: 'user-123',
+        session_id: 'session-456',
+      });
+
+      expect('entity' in result).toBe(true);
+      if ('entity' in result) {
+        expect(result.entity.tenant_id).toBe('tenant-a');
+      }
+    });
+
     it('should accept explicit installation metadata', async () => {
       const result = await repository.createSecret({
         user_id: 'user-123',
@@ -607,6 +621,57 @@ describe('DeviceSecretRepository', () => {
       // This verifies the method runs without error
       const count = await repository.cleanupExpired();
       expect(typeof count).toBe('number');
+    });
+
+    it('should cleanup only the repository tenant', async () => {
+      const now = Date.now();
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      const tenantRepository = new DeviceSecretRepository(adapter, 'tenant-a');
+      adapter.seed('device_secrets', [
+        {
+          id: 'expired-a',
+          tenant_id: 'tenant-a',
+          user_id: 'user-123',
+          session_id: 'session-1',
+          secret_hash: 'hash-a',
+          device_name: null,
+          device_platform: null,
+          created_at: now - 10_000,
+          updated_at: now - 10_000,
+          expires_at: now - 1,
+          last_used_at: null,
+          use_count: 0,
+          revoked_at: null,
+          revoke_reason: null,
+          is_active: 1,
+        },
+        {
+          id: 'expired-b',
+          tenant_id: 'tenant-b',
+          user_id: 'user-123',
+          session_id: 'session-1',
+          secret_hash: 'hash-b',
+          device_name: null,
+          device_platform: null,
+          created_at: now - 10_000,
+          updated_at: now - 10_000,
+          expires_at: now - 1,
+          last_used_at: null,
+          use_count: 0,
+          revoked_at: null,
+          revoke_reason: null,
+          is_active: 1,
+        },
+      ]);
+
+      const count = await tenantRepository.cleanupExpired();
+
+      const lastQuery = adapter.getQueryLog().at(-1);
+      expect(typeof count).toBe('number');
+      expect(lastQuery?.sql).toContain('tenant_id = ?');
+      expect(lastQuery?.params?.[0]).toBe('tenant-a');
+      vi.useRealTimers();
     });
   });
 

@@ -361,7 +361,10 @@ interface ExistingUser {
   email_verified: boolean;
 }
 
-async function resolveUserStoreAdapters(env: Env, tenantId: string): Promise<{
+async function resolveUserStoreAdapters(
+  env: Env,
+  tenantId: string
+): Promise<{
   coreSource: DatabaseSource;
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter | null;
@@ -397,8 +400,8 @@ async function findUserByEmail(
 
   // Verify user is active and get email_verified from Core DB
   const userCore = await coreAdapter.queryOne<{ id: string; email_verified: number }>(
-    'SELECT id, email_verified FROM users_core WHERE id = ? AND is_active = 1',
-    [userPII.id]
+    'SELECT id, email_verified FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+    [userPII.id, tenantId]
   );
 
   if (!userCore) return null;
@@ -576,7 +579,10 @@ async function createUserFromExternalIdentity(
     );
 
     // Step 3: Update pii_status to 'active'
-    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', ['active', id]);
+    await coreAdapter.execute(
+      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
+      ['active', id, params.tenantId]
+    );
   }
 
   return { id };
@@ -628,8 +634,8 @@ export async function hasPasskeyCredential(
 ): Promise<boolean> {
   const { coreAdapter } = await resolveUserStoreAdapters(env, tenantId);
   const result = await coreAdapter.queryOne<{ count: number }>(
-    'SELECT COUNT(*) as count FROM passkeys WHERE user_id = ?',
-    [userId]
+    'SELECT COUNT(*) as count FROM passkeys WHERE user_id = ? AND tenant_id = ?',
+    [userId, tenantId]
   );
 
   return (result?.count || 0) > 0;
@@ -766,7 +772,10 @@ async function createUserWithJITProvisioning(
     );
 
     // Update pii_status to 'active'
-    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', ['active', id]);
+    await coreAdapter.execute(
+      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
+      ['active', id, params.tenantId]
+    );
   }
 
   result.userId = id;
@@ -782,7 +791,10 @@ async function createUserWithJITProvisioning(
   } catch (persistError) {
     try {
       if (piiAdapter) {
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
+        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+          id,
+          params.tenantId,
+        ]);
       }
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
@@ -791,7 +803,10 @@ async function createUserWithJITProvisioning(
         id,
         params.tenantId,
       ]);
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
+      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
     } catch (cleanupError) {
       const log = createLogger().module('IDENTITY-STITCHING');
       log.error(
@@ -832,7 +847,10 @@ async function createUserWithJITProvisioning(
     // Clean up: delete the user we just created
     try {
       if (piiAdapter) {
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
+        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+          id,
+          params.tenantId,
+        ]);
       }
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
@@ -841,7 +859,10 @@ async function createUserWithJITProvisioning(
         id,
         params.tenantId,
       ]);
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
+      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
       const log = createLogger().module('IDENTITY-STITCHING');
@@ -912,7 +933,10 @@ async function createUserWithJITProvisioning(
     // Clean up
     try {
       if (piiAdapter) {
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
+        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+          id,
+          params.tenantId,
+        ]);
       }
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
@@ -921,7 +945,10 @@ async function createUserWithJITProvisioning(
         id,
         params.tenantId,
       ]);
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
+      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
       const log = createLogger().module('IDENTITY-STITCHING');

@@ -51,6 +51,10 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
 export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
   const tenantId = resolveTenantId(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     const authReqId = c.req.param('auth_req_id');
 
@@ -71,7 +75,7 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
     const getResponse = await cibaRequestStore.fetch(
       new Request('https://internal/get-by-auth-req-id', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -89,6 +93,7 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
     // Enrich with client metadata from KV cache (with D1 fallback)
     const client = await getClient(
       c.env,
+      tenantId,
       metadata.client_id,
       createAuthContextFromHono(c, tenantId).coreAdapter
     );

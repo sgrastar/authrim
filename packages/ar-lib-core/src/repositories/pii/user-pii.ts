@@ -189,7 +189,9 @@ const USER_PII_UPDATABLE_FIELDS = new Set([
  * to support partition-specific queries. If not provided, uses the default adapter.
  */
 export class UserPIIRepository extends BaseRepository<UserPII> {
-  constructor(adapter: DatabaseAdapter) {
+  private readonly tenantId: string;
+
+  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
     super(adapter, {
       tableName: 'users_pii',
       primaryKey: 'id',
@@ -220,6 +222,7 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
         'declared_residence',
       ],
     });
+    this.tenantId = tenantId;
   }
 
   /**
@@ -324,7 +327,10 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
    */
   async findByUserId(userId: string, adapter?: DatabaseAdapter): Promise<UserPII | null> {
     const db = adapter ?? this.adapter;
-    return db.queryOne<UserPII>('SELECT * FROM users_pii WHERE id = ?', [userId]);
+    return db.queryOne<UserPII>('SELECT * FROM users_pii WHERE id = ? AND tenant_id = ?', [
+      userId,
+      this.tenantId,
+    ]);
   }
 
   /**
@@ -400,7 +406,11 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
     const setClause = fields.map((f) => `${f} = ?`).join(', ');
     const values = fields.map((f) => updateData[f as keyof typeof updateData]);
 
-    await db.execute(`UPDATE users_pii SET ${setClause} WHERE id = ?`, [...values, userId]);
+    await db.execute(`UPDATE users_pii SET ${setClause} WHERE id = ? AND tenant_id = ?`, [
+      ...values,
+      userId,
+      this.tenantId,
+    ]);
 
     return this.findByUserId(userId, db);
   }
@@ -414,7 +424,10 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
    */
   async deletePII(userId: string, adapter?: DatabaseAdapter): Promise<boolean> {
     const db = adapter ?? this.adapter;
-    const result = await db.execute('DELETE FROM users_pii WHERE id = ?', [userId]);
+    const result = await db.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+      userId,
+      this.tenantId,
+    ]);
     return result.rowsAffected > 0;
   }
 

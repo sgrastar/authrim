@@ -530,7 +530,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         acr: 'urn:mace:incommon:iap:bronze',
         client_id: clientId,
         external_idp: provider.id,
-      });
+      }, tenantId);
 
       // セッションCookie設定
       const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);

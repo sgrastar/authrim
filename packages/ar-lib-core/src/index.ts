@@ -99,6 +99,7 @@ export * from './utils/token-revocation-sharding';
 export * from './utils/region-sharding';
 export * from './utils/dpop-jti-sharding';
 export * from './utils/par-sharding';
+export * from './utils/saml-request-store';
 export * from './utils/device-code-sharding';
 export * from './utils/ciba-sharding';
 export * from './utils/flow-state-sharding';

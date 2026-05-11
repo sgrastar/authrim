@@ -244,7 +244,8 @@ describe('object-artifact-store helpers', () => {
 
     const adapter = {
       queryOne: vi.fn().mockImplementation(async (_sql: string, params: unknown[]) => {
-        const index = params[2];
+        expect(params[0]).toBe('default');
+        const index = params[3];
         if (index === 0) {
           return {
             catalog_id: 'catalog-chunked',

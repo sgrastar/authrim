@@ -262,16 +262,17 @@ describe('Admin Provider API', () => {
       });
     });
 
-    it('should use tenant_id from query parameter', async () => {
+    it('should ignore tenant_id query parameter and use context tenant', async () => {
       vi.mocked(providerStore.listAllProviders).mockResolvedValueOnce([]);
 
       const ctx = createMockContext('GET', '/external-idp/admin/providers', {
         headers: { Authorization: 'Bearer test-admin-secret' },
         query: { tenant_id: 'custom-tenant' },
+        tenantId: 'context-tenant',
       });
       await handleAdminListProviders(ctx as never);
 
-      expect(providerStore.listAllProviders).toHaveBeenCalledWith(mockEnv, 'custom-tenant');
+      expect(providerStore.listAllProviders).toHaveBeenCalledWith(mockEnv, 'context-tenant');
     });
   });
 
@@ -535,9 +536,14 @@ describe('Admin Provider API', () => {
       });
       await handleAdminUpdateProvider(ctx as never);
 
-      expect(providerStore.updateProvider).toHaveBeenCalledWith(mockEnv, 'provider-123', {
-        name: 'Updated Name',
-      });
+      expect(providerStore.updateProvider).toHaveBeenCalledWith(
+        mockEnv,
+        'default',
+        'provider-123',
+        {
+          name: 'Updated Name',
+        }
+      );
     });
 
     it('should encrypt new client secret on update', async () => {
@@ -633,7 +639,7 @@ describe('Admin Provider API', () => {
       });
       await handleAdminDeleteProvider(ctx as never);
 
-      expect(providerStore.deleteProvider).toHaveBeenCalledWith(mockEnv, 'provider-123');
+      expect(providerStore.deleteProvider).toHaveBeenCalledWith(mockEnv, 'default', 'provider-123');
       expect(ctx.json).toHaveBeenCalledWith({ success: true });
     });
 

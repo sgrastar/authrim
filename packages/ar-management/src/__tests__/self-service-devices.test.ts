@@ -192,14 +192,15 @@ describe('/me/devices handlers', () => {
       device_name: 'My iPhone',
     });
     mockRepo.revoke.mockResolvedValue(true);
-    mockClientRepository.findByClientId.mockImplementation(async (clientId: string) =>
-      ({
-        'native-client-001': { client_id: 'native-client-001', client_name: 'Authrim Wallet' },
-        'other-native-client': {
-          client_id: 'other-native-client',
-          client_name: 'Companion Native',
-        },
-      })[clientId] ?? null
+    mockClientRepository.findByClientId.mockImplementation(
+      async (clientId: string) =>
+        ({
+          'native-client-001': { client_id: 'native-client-001', client_name: 'Authrim Wallet' },
+          'other-native-client': {
+            client_id: 'other-native-client',
+            client_name: 'Companion Native',
+          },
+        })[clientId] ?? null
     );
     mockInstallationRepo.ensureForDeviceSecret.mockResolvedValue(null);
     mockInstallationRepo.findById.mockResolvedValue(null);
@@ -209,9 +210,7 @@ describe('/me/devices handlers', () => {
   });
 
   it('lists devices with current-first cursor pagination and canonical shape', async () => {
-    const firstResponse = await listMyDevicesHandler(
-      createMockContext({ query: { limit: '1' } })
-    );
+    const firstResponse = await listMyDevicesHandler(createMockContext({ query: { limit: '1' } }));
     const firstBody = (await firstResponse.json()) as {
       devices: Array<Record<string, unknown>>;
       next_cursor?: string;
@@ -258,10 +257,7 @@ describe('/me/devices handlers', () => {
   it('lists canonical installations from the current trust_group', async () => {
     mockRepo.findByUserId.mockResolvedValue([]);
     mockInstallationRepo.findById.mockResolvedValue(currentInstallation);
-    mockInstallationRepo.findByUserId.mockResolvedValue([
-      targetInstallation,
-      currentInstallation,
-    ]);
+    mockInstallationRepo.findByUserId.mockResolvedValue([targetInstallation, currentInstallation]);
 
     const response = await listMyDevicesHandler(createMockContext());
     const body = (await response.json()) as {
@@ -328,9 +324,7 @@ describe('/me/devices handlers', () => {
     }));
     mockRepo.findByUserId.mockResolvedValue(manyDevices);
 
-    const response = await listMyDevicesHandler(
-      createMockContext({ query: { limit: '101' } })
-    );
+    const response = await listMyDevicesHandler(createMockContext({ query: { limit: '101' } }));
     const body = (await response.json()) as {
       devices: Array<Record<string, unknown>>;
       next_cursor?: string;
@@ -352,7 +346,11 @@ describe('/me/devices handlers', () => {
 
     expect(response.status).toBe(200);
     expect(mockRepo.findByInstallationId).toHaveBeenCalledWith('inst-current');
-    expect(mockRepo.update).toHaveBeenCalledWith('ds-current', { device_name: 'My iPhone' });
+    expect(mockRepo.update).toHaveBeenCalledWith(
+      'ds-current',
+      { device_name: 'My iPhone' },
+      'default'
+    );
     expect(body.device).toMatchObject({
       id: 'inst-current',
       display_name: 'My iPhone',
@@ -407,7 +405,7 @@ describe('/me/devices handlers', () => {
 
     expect(response.status).toBe(200);
     expect(mockRepo.findByInstallationId).toHaveBeenCalledWith('inst-current');
-    expect(mockRepo.revoke).toHaveBeenCalledWith('ds-current', 'device_unlink');
+    expect(mockRepo.revoke).toHaveBeenCalledWith('ds-current', 'device_unlink', 'default');
     expect(body).toEqual({
       ok: true,
       device_unlink_result: {
@@ -433,7 +431,7 @@ describe('/me/devices handlers', () => {
     };
 
     expect(response.status).toBe(200);
-    expect(mockRepo.revoke).toHaveBeenCalledWith('ds-other', 'device_unlink');
+    expect(mockRepo.revoke).toHaveBeenCalledWith('ds-other', 'device_unlink', 'default');
     expect(body.device_unlink_result).toEqual({
       action: 'device_unlinked',
       target_id: 'inst-other',

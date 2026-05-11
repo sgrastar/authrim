@@ -45,12 +45,12 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
 
     if (!spEntityId) {
       // Return list of available SPs if no SP specified
-      const sps = await listSPConfigs(env);
+      const sps = await listSPConfigs(env, tenantId);
       return c.html(buildSPSelectionPage(issuerUrl, sps));
     }
 
     // Get SP configuration
-    const spConfig = await getSPConfig(env, spEntityId);
+    const spConfig = await getSPConfig(env, tenantId, spEntityId);
     if (!spConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -126,7 +126,11 @@ async function checkUserAuthentication(
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
       method: 'GET',
     });
