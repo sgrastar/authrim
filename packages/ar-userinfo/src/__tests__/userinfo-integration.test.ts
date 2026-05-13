@@ -35,9 +35,10 @@ const mockGetCachedUser = vi.hoisted(() => vi.fn());
 // Mock shared module
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = (await vi.importActual('@authrim/ar-lib-core')) as Record<string, unknown>;
-  const oidcClaims = (await vi.importActual(
-    '/Users/yuta/Documents/Authrim/authrim/packages/ar-lib-core/src/utils/oidc-claims.ts'
-  )) as Record<string, unknown>;
+  const oidcClaims = (await vi.importActual('@authrim/ar-lib-core/utils/oidc-claims')) as Record<
+    string,
+    unknown
+  >;
   return {
     ...actual,
     ...oidcClaims,
