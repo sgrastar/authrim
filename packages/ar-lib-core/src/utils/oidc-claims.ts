@@ -291,6 +291,13 @@ function validateSAORule(
       error_description: `${path}.loc must be a JSON Pointer string`,
     };
   }
+  if (!isSafeJsonPointer(rule.loc)) {
+    return {
+      ok: false,
+      error: 'invalid_request',
+      error_description: `${path}.loc must not target prototype properties`,
+    };
+  }
   if (!['exists', 'simple', 'schema'].includes(method)) {
     return {
       ok: false,
@@ -350,12 +357,14 @@ function validateSAORule(
   if (rule.what !== undefined) {
     if (
       !Array.isArray(rule.what) ||
-      !rule.what.every((item) => typeof item === 'string' && item.startsWith('/'))
+      !rule.what.every(
+        (item) => typeof item === 'string' && item.startsWith('/') && isSafeJsonPointer(item)
+      )
     ) {
       return {
         ok: false,
         error: 'invalid_request',
-        error_description: `${path}.what must be an array of JSON Pointer strings`,
+        error_description: `${path}.what must be an array of safe JSON Pointer strings`,
       };
     }
   }
@@ -702,6 +711,9 @@ function deleteByJsonPointer(object: Record<string, unknown>, pointer: string): 
   if (path.length === 0) return;
   let current: unknown = object;
   for (const segment of path.slice(0, -1)) {
+    if (isPrototypePollutionKey(segment)) {
+      return;
+    }
     if (Array.isArray(current)) {
       current = current[Number(segment)];
     } else if (isPlainObject(current)) {
@@ -711,6 +723,9 @@ function deleteByJsonPointer(object: Record<string, unknown>, pointer: string): 
     }
   }
   const last = path[path.length - 1];
+  if (isPrototypePollutionKey(last)) {
+    return;
+  }
   if (Array.isArray(current)) {
     const index = Number(last);
     if (Number.isInteger(index)) current.splice(index, 1);
@@ -725,6 +740,14 @@ function parseJsonPointer(pointer: string): string[] {
     .slice(1)
     .split('/')
     .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
+}
+
+function isSafeJsonPointer(pointer: string): boolean {
+  return !parseJsonPointer(pointer).some(isPrototypePollutionKey);
+}
+
+function isPrototypePollutionKey(key: string): boolean {
+  return key === '__proto__' || key === 'prototype' || key === 'constructor';
 }
 
 function stripPredefinedPrefix(claimName: string): string {

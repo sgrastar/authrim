@@ -893,7 +893,7 @@ export async function startStepUpAction(
     const definition = methodDefinition(resolved.method) ?? METHOD_CATALOG.portal_confirm;
     const challengeValue =
       definition.nextActionType === 'otp'
-        ? String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1000000).padStart(6, '0')
+        ? generateUnbiasedNumericCode(6)
         : generateSecureRandomString(32);
     const metadata: StepUpActionMetadata = {
       version: 1,
@@ -1148,10 +1148,7 @@ export async function resendStepUpAction(
     }
   }
 
-  const challengeValue = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1000000).padStart(
-    6,
-    '0'
-  );
+  const challengeValue = generateUnbiasedNumericCode(6);
   const updated: StepUpActionMetadata = {
     ...metadata,
     resend_count: metadata.resend_count + 1,
@@ -1237,4 +1234,18 @@ export async function consumeStepUpReceipt(
   }
 
   return metadata;
+}
+
+function generateUnbiasedNumericCode(digits: number): string {
+  const max = 10 ** digits;
+  const limit = Math.floor(0x100000000 / max) * max;
+  const value = new Uint32Array(1);
+
+  while (true) {
+    crypto.getRandomValues(value);
+    const candidate = value[0]!;
+    if (candidate < limit) {
+      return String(candidate - Math.floor(candidate / max) * max).padStart(digits, '0');
+    }
+  }
 }

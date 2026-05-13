@@ -391,6 +391,17 @@ describe('generateRoutes', () => {
     });
   });
 
+  it('escapes environment names before parsing generated wrangler bindings', () => {
+    const toml = `
+[[env.portable.prod.kv_namespaces]]
+binding = "SESSION_STORE"
+id = "kv-id"
+`;
+
+    expect(parseWranglerToml(toml, 'portable.prod').kv).toEqual({ SESSION_STORE: 'kv-id' });
+    expect(parseWranglerToml(toml, 'portableXprod').kv).toEqual({});
+  });
+
   it('assigns AUDIT_QUEUE producer bindings to auth/token and a consumer to management', () => {
     const config = {
       version: '1.0.0',

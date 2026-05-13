@@ -1368,10 +1368,11 @@ export function parseWranglerToml(
     hyperdrive: {} as Record<string, string>,
     r2: {} as Record<string, string>,
   };
+  const escapedEnv = escapeRegExp(env);
 
   // Parse KV namespaces: [[env.{env}.kv_namespaces]]
   const kvRegex = new RegExp(
-    `\\[\\[env\\.${env}\\.kv_namespaces\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
+    `\\[\\[env\\.${escapedEnv}\\.kv_namespaces\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
     'g'
   );
   let kvMatch;
@@ -1381,7 +1382,7 @@ export function parseWranglerToml(
 
   // Parse D1 databases: [[env.{env}.d1_databases]]
   const d1Regex = new RegExp(
-    `\\[\\[env\\.${env}\\.d1_databases\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\ndatabase_name\\s*=\\s*"[^"]+"\\s*\\ndatabase_id\\s*=\\s*"([^"]+)"`,
+    `\\[\\[env\\.${escapedEnv}\\.d1_databases\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\ndatabase_name\\s*=\\s*"[^"]+"\\s*\\ndatabase_id\\s*=\\s*"([^"]+)"`,
     'g'
   );
   let d1Match;
@@ -1390,7 +1391,7 @@ export function parseWranglerToml(
   }
 
   const hyperdriveRegex = new RegExp(
-    `\\[\\[env\\.${env}\\.hyperdrive\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
+    `\\[\\[env\\.${escapedEnv}\\.hyperdrive\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
     'g'
   );
   let hyperdriveMatch;
@@ -1399,7 +1400,7 @@ export function parseWranglerToml(
   }
 
   const r2Regex = new RegExp(
-    `\\[\\[env\\.${env}\\.r2_buckets\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nbucket_name\\s*=\\s*"([^"]+)"`,
+    `\\[\\[env\\.${escapedEnv}\\.r2_buckets\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nbucket_name\\s*=\\s*"([^"]+)"`,
     'g'
   );
   let r2Match;
@@ -1408,6 +1409,10 @@ export function parseWranglerToml(
   }
 
   return result;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

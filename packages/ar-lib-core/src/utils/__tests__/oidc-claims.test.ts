@@ -267,6 +267,43 @@ describe('OIDC claims parameter and ASC utilities', () => {
     if (!result.ok) expect(result.error_description).toContain('what');
   });
 
+  it('rejects SAO pointers targeting prototype properties', () => {
+    const unsafeLoc = parseClaimsRequest(
+      JSON.stringify({
+        userinfo: { email: null },
+        _asc: {
+          sao: {
+            userinfo: [{ loc: '/__proto__/polluted', method: 'exists', else: 'omit' }],
+          },
+        },
+      })
+    );
+
+    expect(unsafeLoc.ok).toBe(false);
+    if (!unsafeLoc.ok) expect(unsafeLoc.error_description).toContain('prototype');
+
+    const unsafeWhat = parseClaimsRequest(
+      JSON.stringify({
+        userinfo: { email: null },
+        _asc: {
+          sao: {
+            userinfo: [
+              {
+                loc: '/email',
+                method: 'exists',
+                else: 'omit',
+                what: ['/constructor/prototype/polluted'],
+              },
+            ],
+          },
+        },
+      })
+    );
+
+    expect(unsafeWhat.ok).toBe(false);
+    if (!unsafeWhat.ok) expect(unsafeWhat.error_description).toContain('safe JSON Pointer');
+  });
+
   it('treats year zero and invalid transformed-claim dates as unavailable', () => {
     const parsed = parseClaimsRequest(
       JSON.stringify({

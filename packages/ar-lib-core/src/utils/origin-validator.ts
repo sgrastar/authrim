@@ -54,7 +54,10 @@ function patternToRegex(pattern: string): RegExp | null {
   }
 
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escaped.replace('*', '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?')}$`, 'i');
+  return new RegExp(
+    `^${escaped.replaceAll('*', '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?')}$`,
+    'i'
+  );
 }
 
 /**
