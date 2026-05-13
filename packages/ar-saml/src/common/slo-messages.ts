@@ -18,8 +18,12 @@ import {
   findElements,
   getAttribute,
   getTextContent,
-  base64Decode,
 } from './xml-utils';
+import {
+  bytesToBinaryString,
+  decodePostBindingMessage,
+  inflateRedirectBindingMessage,
+} from './message-limits';
 import type { NameIDFormat } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 
@@ -77,6 +81,8 @@ export interface ParsedLogoutRequest {
   destination?: string;
   nameId: string;
   nameIdFormat?: string;
+  nameIdNameQualifier?: string;
+  nameIdSPNameQualifier?: string;
   /** First SessionIndex (for backward compatibility) */
   sessionIndex?: string;
   /** All SessionIndex elements (SAML 2.0 allows multiple) */
@@ -231,7 +237,7 @@ export function buildLogoutResponse(options: LogoutResponseOptions): string {
  * Parse LogoutRequest from HTTP-POST binding (Base64)
  */
 export function parseLogoutRequestPost(samlRequestBase64: string): ParsedLogoutRequest {
-  const xml = base64Decode(samlRequestBase64);
+  const xml = decodePostBindingMessage(samlRequestBase64, 'SAML LogoutRequest');
   return parseLogoutRequestXml(xml);
 }
 
@@ -239,13 +245,7 @@ export function parseLogoutRequestPost(samlRequestBase64: string): ParsedLogoutR
  * Parse LogoutRequest from HTTP-Redirect binding (Deflate + Base64)
  */
 export function parseLogoutRequestRedirect(samlRequestEncoded: string): ParsedLogoutRequest {
-  const base64Decoded = base64Decode(samlRequestEncoded);
-  const inflated = pako.inflateRaw(
-    Uint8Array.from(base64Decoded, (c) => c.charCodeAt(0)),
-    {
-      to: 'string',
-    }
-  );
+  const inflated = inflateRedirectBindingMessage(samlRequestEncoded, 'SAML LogoutRequest');
   return parseLogoutRequestXml(inflated);
 }
 
@@ -285,6 +285,8 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
 
   const nameId = getTextContent(nameIdElement) || '';
   const nameIdFormat = getAttribute(nameIdElement, 'Format') || undefined;
+  const nameIdNameQualifier = getAttribute(nameIdElement, 'NameQualifier') || undefined;
+  const nameIdSPNameQualifier = getAttribute(nameIdElement, 'SPNameQualifier') || undefined;
 
   // Parse SessionIndex (optional, can have multiple per SAML 2.0 spec)
   const sessionIndexElements = findElements(
@@ -312,6 +314,8 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
     destination: destination || undefined,
     nameId,
     nameIdFormat,
+    nameIdNameQualifier,
+    nameIdSPNameQualifier,
     sessionIndex,
     sessionIndices: sessionIndices.length > 0 ? sessionIndices : undefined,
     notOnOrAfter: notOnOrAfter || undefined,
@@ -322,7 +326,7 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
  * Parse LogoutResponse from HTTP-POST binding (Base64)
  */
 export function parseLogoutResponsePost(samlResponseBase64: string): ParsedLogoutResponse {
-  const xml = base64Decode(samlResponseBase64);
+  const xml = decodePostBindingMessage(samlResponseBase64, 'SAML LogoutResponse');
   return parseLogoutResponseXml(xml);
 }
 
@@ -330,13 +334,7 @@ export function parseLogoutResponsePost(samlResponseBase64: string): ParsedLogou
  * Parse LogoutResponse from HTTP-Redirect binding (Deflate + Base64)
  */
 export function parseLogoutResponseRedirect(samlResponseEncoded: string): ParsedLogoutResponse {
-  const base64Decoded = base64Decode(samlResponseEncoded);
-  const inflated = pako.inflateRaw(
-    Uint8Array.from(base64Decoded, (c) => c.charCodeAt(0)),
-    {
-      to: 'string',
-    }
-  );
+  const inflated = inflateRedirectBindingMessage(samlResponseEncoded, 'SAML LogoutResponse');
   return parseLogoutResponseXml(inflated);
 }
 
@@ -404,9 +402,18 @@ export function encodeForPostBinding(xml: string): string {
  * Encode LogoutRequest/Response for HTTP-Redirect binding
  */
 export function encodeForRedirectBinding(xml: string): string {
-  const deflated = pako.deflateRaw(xml);
-  return btoa(String.fromCharCode(...deflated))
+  return encodeForRedirectBindingQueryValue(xml)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/[=]+$/, '');
+}
+
+/**
+ * Encode LogoutRequest/Response for HTTP-Redirect binding query values.
+ *
+ * SAML HTTP-Redirect binding signs the URL-encoded standard Base64 value.
+ */
+export function encodeForRedirectBindingQueryValue(xml: string): string {
+  const deflated = pako.deflateRaw(xml);
+  return btoa(bytesToBinaryString(deflated));
 }

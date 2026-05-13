@@ -33,6 +33,7 @@ const {
   mockRequireAnyRole,
   mockD1AdapterQueryOne,
   mockD1AdapterQuery,
+  mockCreateAuthContextFromHono,
   mockCreatePolicyResolver,
   mockCreateAuditLogEntry,
   mockCreateLogger,
@@ -48,6 +49,12 @@ const {
   }),
   mockD1AdapterQueryOne: vi.fn(),
   mockD1AdapterQuery: vi.fn(),
+  mockCreateAuthContextFromHono: vi.fn().mockImplementation(() => ({
+    coreAdapter: {
+      queryOne: mockD1AdapterQueryOne,
+      query: mockD1AdapterQuery,
+    },
+  })),
   mockCreatePolicyResolver: vi.fn(),
   mockCreateAuditLogEntry: vi.fn().mockReturnValue({
     timestamp: new Date().toISOString(),
@@ -81,6 +88,13 @@ function resetMocks() {
 
   mockD1AdapterQueryOne.mockReset();
   mockD1AdapterQuery.mockReset();
+  mockCreateAuthContextFromHono.mockReset();
+  mockCreateAuthContextFromHono.mockImplementation(() => ({
+    coreAdapter: {
+      queryOne: mockD1AdapterQueryOne,
+      query: mockD1AdapterQuery,
+    },
+  }));
   mockCreatePolicyResolver.mockReset();
 
   mockCreateAuditLogEntry.mockReset();
@@ -109,6 +123,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     requireAnyRole: mockRequireAnyRole,
+    createAuthContextFromHono: mockCreateAuthContextFromHono,
     D1Adapter: vi.fn().mockImplementation(function () {
       return {
         queryOne: mockD1AdapterQueryOne,

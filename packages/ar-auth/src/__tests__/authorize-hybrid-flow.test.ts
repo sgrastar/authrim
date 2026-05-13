@@ -38,8 +38,8 @@ import { parseToken } from '@authrim/ar-lib-core/utils/jwt';
  * - Implicit OP: https://www.certification.openid.net/plan-detail.html?plan=aZHmoBP9mzeH0&public=true
  */
 
-// Skip integration tests when running unit tests (requires running server on localhost:8787)
-describe.skip('Hybrid Flow - OIDC Core 3.3', () => {
+// Integration tests are excluded from the default vitest config and run via test:integration.
+describe('Hybrid Flow - OIDC Core 3.3', () => {
   const BASE_URL = 'http://localhost:8787';
   const TEST_CLIENT_ID = 'test-client-hybrid';
   const TEST_REDIRECT_URI = 'https://example.com/callback';
@@ -298,8 +298,8 @@ describe.skip('Hybrid Flow - OIDC Core 3.3', () => {
   });
 });
 
-// Skip integration tests (requires running server on localhost:8787)
-describe.skip('Implicit Flow - OIDC Core 3.2', () => {
+// Integration tests are excluded from the default vitest config and run via test:integration.
+describe('Implicit Flow - OIDC Core 3.2', () => {
   const BASE_URL = 'http://localhost:8787';
   const TEST_CLIENT_ID = 'test-client-implicit';
   const TEST_REDIRECT_URI = 'https://example.com/callback';

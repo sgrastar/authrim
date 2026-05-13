@@ -7,8 +7,12 @@ import {
   getNonce,
   deleteNonce,
   getClient,
+  putClient,
+  getCachedUser,
+  getCachedConsent,
 } from '../kv';
 import type { Env } from '../../types/env';
+import type { DatabaseAdapter } from '../../db';
 
 // Mock KV namespace
 class MockKVNamespace implements KVNamespace {
@@ -93,26 +97,28 @@ describe('KV Utilities', () => {
     it('should store and retrieve state parameter', async () => {
       const state = 'test-state-123';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeState(env, state, clientId);
-      const retrieved = await getState(env, state);
+      await storeState(env, state, clientId, tenantId);
+      const retrieved = await getState(env, state, tenantId);
 
       expect(retrieved).toBe(clientId);
     });
 
     it('should return null for non-existent state', async () => {
-      const retrieved = await getState(env, 'non-existent-state');
+      const retrieved = await getState(env, 'non-existent-state', 'tenant-1');
       expect(retrieved).toBeNull();
     });
 
     it('should delete state parameter', async () => {
       const state = 'test-state-delete';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeState(env, state, clientId);
-      await deleteState(env, state);
+      await storeState(env, state, clientId, tenantId);
+      await deleteState(env, state, tenantId);
 
-      const retrieved = await getState(env, state);
+      const retrieved = await getState(env, state, tenantId);
       expect(retrieved).toBeNull();
     });
   });
@@ -121,26 +127,28 @@ describe('KV Utilities', () => {
     it('should store and retrieve nonce parameter', async () => {
       const nonce = 'test-nonce-123';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeNonce(env, nonce, clientId);
-      const retrieved = await getNonce(env, nonce);
+      await storeNonce(env, nonce, clientId, tenantId);
+      const retrieved = await getNonce(env, nonce, tenantId);
 
       expect(retrieved).toBe(clientId);
     });
 
     it('should return null for non-existent nonce', async () => {
-      const retrieved = await getNonce(env, 'non-existent-nonce');
+      const retrieved = await getNonce(env, 'non-existent-nonce', 'tenant-1');
       expect(retrieved).toBeNull();
     });
 
     it('should delete nonce parameter', async () => {
       const nonce = 'test-nonce-delete';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeNonce(env, nonce, clientId);
-      await deleteNonce(env, nonce);
+      await storeNonce(env, nonce, clientId, tenantId);
+      await deleteNonce(env, nonce, tenantId);
 
-      const retrieved = await getNonce(env, nonce);
+      const retrieved = await getNonce(env, nonce, tenantId);
       expect(retrieved).toBeNull();
     });
   });
@@ -180,12 +188,103 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(dbResult),
       });
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.client_id).toBe(clientId);
       expect(retrieved?.client_name).toBe('Test Client');
       expect(retrieved?.redirect_uris).toEqual(['http://localhost:3000/callback']);
+    });
+
+    it('should preserve Phase 1 client policy metadata from D1', async () => {
+      const clientId = 'phase1-policy-client';
+      const dbResult = {
+        client_id: clientId,
+        client_secret_hash: null,
+        client_name: 'Phase 1 Policy Client',
+        application_type: 'native',
+        trust_group: 'wallet-suite',
+        trust_group_id: 'wallet-suite',
+        browser_public_client_mode: 'cookie_fallback',
+        browser_refresh_token_policy: 'dpop_bound',
+        native_sso_enabled: 1,
+        native_channel_allowed: 1,
+        allowed_channels: JSON.stringify(['native']),
+        device_secret_revoke_enabled: 1,
+        device_secret_revoke_trust_groups: JSON.stringify(['wallet-suite']),
+        device_secret_introspection_enabled: 0,
+        device_secret_introspection_trust_groups: JSON.stringify(['wallet-suite']),
+        default_resource: 'svc://wallet-api',
+        redirect_uris: JSON.stringify(['http://localhost:3000/callback']),
+        grant_types: JSON.stringify(['authorization_code']),
+        response_types: JSON.stringify(['code']),
+        scope: 'openid profile',
+        token_endpoint_auth_method: 'none',
+        contacts: null,
+        logo_uri: null,
+        client_uri: null,
+        policy_uri: null,
+        tos_uri: null,
+        jwks_uri: null,
+        jwks: null,
+        subject_type: 'public',
+        sector_identifier_uri: null,
+        id_token_signed_response_alg: null,
+        userinfo_signed_response_alg: null,
+        request_object_signing_alg: null,
+        allow_claims_without_scope: 0,
+        token_exchange_allowed: 0,
+        allowed_subject_token_clients: null,
+        allowed_token_exchange_resources: null,
+        delegation_mode: 'delegation',
+        client_credentials_allowed: 0,
+        allowed_scopes: null,
+        default_scope: null,
+        default_audience: null,
+        initiate_login_uri: null,
+        registration_access_token_hash: null,
+        post_logout_redirect_uris: null,
+        backchannel_logout_uri: null,
+        backchannel_logout_session_required: 0,
+        frontchannel_logout_uri: null,
+        frontchannel_logout_session_required: 0,
+        software_id: null,
+        software_version: null,
+        requestable_scopes: null,
+        backchannel_token_delivery_mode: null,
+        backchannel_client_notification_endpoint: null,
+        backchannel_authentication_request_signing_alg: null,
+        backchannel_user_code_parameter: 0,
+        allowed_redirect_origins: null,
+        require_pkce: 0,
+        tenant_id: 'default',
+        created_at: 1234567890,
+        updated_at: 1234567890,
+      };
+
+      (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue(dbResult),
+      });
+
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
+
+      expect(retrieved).toMatchObject({
+        client_id: clientId,
+        application_type: 'native',
+        trust_group: 'wallet-suite',
+        trust_group_id: 'wallet-suite',
+        browser_public_client_mode: 'cookie_fallback',
+        browser_refresh_token_policy: 'dpop_bound',
+        native_sso_enabled: true,
+        native_channel_allowed: true,
+        allowed_channels: ['native'],
+        device_secret_revoke_enabled: true,
+        device_secret_revoke_trust_groups: ['wallet-suite'],
+        device_secret_introspection_enabled: false,
+        device_secret_introspection_trust_groups: ['wallet-suite'],
+        default_resource: 'svc://wallet-api',
+      });
     });
 
     it('should return client from cache when available', async () => {
@@ -199,7 +298,7 @@ describe('KV Utilities', () => {
       // Pre-populate cache using tenant-prefixed key pattern
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       // normalizeClientMetadata adds default values for missing fields
       const expectedNormalized = {
@@ -213,10 +312,39 @@ describe('KV Utilities', () => {
         post_logout_redirect_uris: undefined,
         requestable_scopes: undefined,
         allowed_redirect_origins: undefined,
+        allowed_channels: undefined,
       };
 
       expect(retrieved).toEqual(expectedNormalized);
       // D1 should not be called when cache hits
+      expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
+    it('should isolate cached client metadata by tenant', async () => {
+      const clientId = 'shared-client-id';
+
+      await clientsCacheKV.put(
+        `tenant:tenant-a:client:${clientId}`,
+        JSON.stringify({
+          client_id: clientId,
+          client_name: 'Tenant A Client',
+          redirect_uris: ['http://tenant-a.example/callback'],
+        })
+      );
+      await clientsCacheKV.put(
+        `tenant:tenant-b:client:${clientId}`,
+        JSON.stringify({
+          client_id: clientId,
+          client_name: 'Tenant B Client',
+          redirect_uris: ['http://tenant-b.example/callback'],
+        })
+      );
+
+      const tenantAClient = await getClient(env, 'tenant-a', clientId, env.DB);
+      const tenantBClient = await getClient(env, 'tenant-b', clientId, env.DB);
+
+      expect(tenantAClient?.client_name).toBe('Tenant A Client');
+      expect(tenantBClient?.client_name).toBe('Tenant B Client');
       expect(env.DB.prepare).not.toHaveBeenCalled();
     });
 
@@ -232,10 +360,48 @@ describe('KV Utilities', () => {
 
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.response_types).toEqual(['code']);
+    });
+
+    it('should fail runtime client config containing legacy app_suite', async () => {
+      const clientId = 'legacy-app-suite-client';
+      const cachedData = {
+        client_id: clientId,
+        client_name: 'Legacy App Suite Client',
+        redirect_uris: ['http://example.com/callback'],
+        app_suite: 'wallet-suite',
+      };
+
+      await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
+
+      await expect(getClient(env, 'default', clientId, env.DB)).rejects.toMatchObject({
+        error: 'legacy_app_suite_not_supported',
+        error_uri: 'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        statusCode: 400,
+      });
+      expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
+    it('should normalize client metadata before write-through caching', async () => {
+      const clientId = 'write-through-normalized-client';
+
+      await putClient(env, {
+        client_id: clientId,
+        tenant_id: 'default',
+        client_name: 'Write-Through Client',
+        redirect_uris: 'http://example.com/callback' as unknown as string[],
+      });
+
+      const cached = await clientsCacheKV.get(`tenant:default:client:${clientId}`);
+      expect(JSON.parse(cached ?? '{}')).toMatchObject({
+        client_id: clientId,
+        redirect_uris: ['http://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+      });
     });
 
     it('should normalize double-encoded response_types from D1', async () => {
@@ -271,7 +437,7 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(dbResult),
       });
 
-      const retrieved = await getClient(env, clientId);
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.response_types).toEqual(['code']);
@@ -284,8 +450,117 @@ describe('KV Utilities', () => {
         first: vi.fn().mockResolvedValue(null),
       });
 
-      const retrieved = await getClient(env, 'non-existent-client');
+      const retrieved = await getClient(env, 'default', 'non-existent-client', env.DB);
       expect(retrieved).toBeNull();
+    });
+  });
+
+  describe('User Cache Read-Through', () => {
+    it('should isolate cached user metadata by tenant', async () => {
+      const userCacheKV = new MockKVNamespace();
+      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      const userId = 'shared-user-id';
+
+      await userCacheKV.put(
+        `tenant:tenant-a:user:${userId}`,
+        JSON.stringify({ id: userId, email: 'a@example.test', email_verified: true })
+      );
+      await userCacheKV.put(
+        `tenant:tenant-b:user:${userId}`,
+        JSON.stringify({ id: userId, email: 'b@example.test', email_verified: true })
+      );
+
+      const tenantAUser = await getCachedUser(env, 'tenant-a', userId, {
+        coreDb: env.DB,
+      });
+      const tenantBUser = await getCachedUser(env, 'tenant-b', userId, {
+        coreDb: env.DB,
+      });
+
+      expect(tenantAUser?.email).toBe('a@example.test');
+      expect(tenantBUser?.email).toBe('b@example.test');
+      expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
+    it('should include tenant scope in user DB fallback queries', async () => {
+      const coreAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue(null),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      await getCachedUser(env, 'tenant-a', 'user-1', {
+        coreDb: coreAdapter,
+      });
+
+      expect(coreAdapter.queryOne).toHaveBeenCalledWith(expect.stringContaining('tenant_id = ?'), [
+        'user-1',
+        'tenant-a',
+      ]);
+    });
+  });
+
+  describe('Consent Cache Read-Through', () => {
+    function createMockAdapter(result: Record<string, unknown> | null): DatabaseAdapter {
+      return {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue(result),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+    }
+
+    it('should read consent through the provided adapter when env.DB is unavailable', async () => {
+      const coreAdapter = createMockAdapter({
+        scope: 'openid profile',
+        granted_at: 1234,
+        expires_at: null,
+      });
+      (env as unknown as { DB?: D1Database }).DB = undefined;
+
+      const consent = await getCachedConsent(env, 'user-1', 'client-1', 'tenant-a', coreAdapter);
+
+      expect(consent).toEqual({
+        scope: 'openid profile',
+        granted_at: 1234,
+        expires_at: null,
+      });
+      expect(coreAdapter.queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('FROM oauth_client_consents'),
+        ['tenant-a', 'user-1', 'client-1']
+      );
+    });
+
+    it('should populate CONSENT_CACHE after a miss using the provided adapter', async () => {
+      const coreAdapter = createMockAdapter({
+        scope: 'openid email',
+        granted_at: 5678,
+        expires_at: 9999,
+      });
+      const consentCacheKV = new MockKVNamespace();
+      (env as unknown as { DB?: D1Database }).DB = undefined;
+      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+      (env as unknown as Record<string, string>).CONSENT_CACHE_TTL = '120';
+
+      const consent = await getCachedConsent(env, 'user-2', 'client-2', 'tenant-b', coreAdapter);
+
+      expect(consent).toEqual({
+        scope: 'openid email',
+        granted_at: 5678,
+        expires_at: 9999,
+      });
+      expect(await consentCacheKV.get('tenant:tenant-b:consent:user-2:client-2')).toBe(
+        JSON.stringify(consent)
+      );
     });
   });
 });

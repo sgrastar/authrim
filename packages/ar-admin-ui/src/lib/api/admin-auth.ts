@@ -7,7 +7,7 @@ import { adminFetch } from '$lib/api/admin-request';
  * - Session status check
  * - Logout
  *
- * Uses both Cookie and X-Session-Id header for Safari ITP compatibility.
+ * Uses HttpOnly cookie-backed Admin sessions.
  */
 
 import type {
@@ -18,31 +18,11 @@ import type {
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
-/**
- * Get session ID from localStorage for Safari ITP compatibility
- */
-function getSessionId(): string | null {
-	if (typeof localStorage !== 'undefined') {
-		return localStorage.getItem('sessionId');
-	}
-	return null;
-}
-
-/**
- * Build headers with optional session ID for Safari ITP compatibility
- */
 function buildHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
-	const headers: Record<string, string> = {
+	return {
 		'Content-Type': 'application/json',
 		...additionalHeaders
 	};
-
-	const sessionId = getSessionId();
-	if (sessionId && sessionId !== 'session-from-cookie') {
-		headers['X-Session-Id'] = sessionId;
-	}
-
-	return headers;
 }
 
 /**
@@ -59,15 +39,18 @@ export class AuthError extends Error {
 }
 
 /**
- * Session status response from /api/admin/sessions/me
+ * Session status response from /api/admin/me/session
  */
 export interface SessionStatus {
 	active: boolean;
 	session_id: string;
 	user_id: string;
+	tenant_id: string;
 	email?: string;
 	name?: string;
 	roles: string[];
+	admin_scope: 'platform' | 'tenant';
+	is_platform_admin: boolean;
 	expires_at: number;
 	created_at: number;
 	last_login_at?: number | null;
@@ -104,6 +87,7 @@ export const adminAuthAPI = {
 	}> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/options`, {
 			method: 'POST',
+			skipTenantHeader: true,
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
 			body: JSON.stringify({})
@@ -133,6 +117,7 @@ export const adminAuthAPI = {
 	): Promise<LoginResult> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/verify`, {
 			method: 'POST',
+			skipTenantHeader: true,
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
 			body: JSON.stringify({ challengeId, credential })
@@ -151,7 +136,7 @@ export const adminAuthAPI = {
 
 	/**
 	 * Check current session status
-	 * GET /api/admin/sessions/me
+	 * GET /api/admin/me/session
 	 *
 	 * Returns:
 	 * - SessionStatus if authenticated with admin role
@@ -159,7 +144,8 @@ export const adminAuthAPI = {
 	 * - throws AuthError with 'forbidden' code if session exists but no admin role
 	 */
 	async checkSession(): Promise<SessionStatus | null> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/sessions/me`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/session`, {
+			skipTenantHeader: true,
 			credentials: 'include',
 			headers: buildHeaders()
 		});
@@ -193,12 +179,12 @@ export const adminAuthAPI = {
 	async logout(): Promise<void> {
 		await adminFetch(`${API_BASE_URL}/api/admin/logout`, {
 			method: 'POST',
+			skipTenantHeader: true,
 			credentials: 'include',
 			headers: buildHeaders()
 		});
 		// Clear localStorage
 		if (typeof localStorage !== 'undefined') {
-			localStorage.removeItem('sessionId');
 			localStorage.removeItem('userId');
 			localStorage.removeItem('userEmail');
 			localStorage.removeItem('userName');

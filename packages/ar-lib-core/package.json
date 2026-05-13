@@ -30,6 +30,10 @@
       "import": "./dist/durable-objects/*.js",
       "default": "./src/durable-objects/*.ts"
     },
+    "./services/*": {
+      "import": "./dist/services/*.js",
+      "default": "./src/services/*.ts"
+    },
     "./notifications": {
       "import": "./dist/notifications/index.js",
       "default": "./src/notifications/index.ts"
@@ -54,11 +58,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "hono": "^4.12.7",
-    "jose": "^6.1.2"
+    "hono": "4.12.12",
+    "jose": "^6.1.2",
+    "mysql2": "^3.15.3",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
+    "@types/pg": "^8.15.6",
     "@types/node": "^20.19.25",
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3"

@@ -162,7 +162,7 @@ describe('Settings History Handlers', () => {
       expect(response.status).toBe(400);
     });
 
-    it('should reject cross-tenant access for org admins', async () => {
+    it('should ignore tenant query overrides on tenant-scoped history routes', async () => {
       const c = createMockContext({
         params: { category: 'oauth' },
         query: { tenantId: 'tenant_other' },
@@ -176,8 +176,12 @@ describe('Settings History Handlers', () => {
       const response = await listSettingsHistory(c as never);
       const body = (await response.json()) as HistoryResponseBody;
 
-      expect(response.status).toBe(403);
-      expect(body.error).toBe('forbidden');
+      expect(response.status).toBe(200);
+      expect(body.error).toBeUndefined();
+      expect(mockHistoryManager.listVersions).toHaveBeenCalledWith('oauth', {
+        limit: 50,
+        offset: 0,
+      });
     });
   });
 

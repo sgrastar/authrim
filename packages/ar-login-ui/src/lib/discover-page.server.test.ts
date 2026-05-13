@@ -32,10 +32,12 @@ describe('/discover page server', () => {
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
-					redirect_default_login_to_discovery: true
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true
 				},
 				single_tenant_mode: false,
-				is_common_entry_host: false
+				is_common_entry_host: false,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
 			})
 		);
 
@@ -68,10 +70,12 @@ describe('/discover page server', () => {
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
-						redirect_default_login_to_discovery: true
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true
 					},
 					single_tenant_mode: false,
-					is_common_entry_host: true
+					is_common_entry_host: true,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
 				})
 			)
 			.mockResolvedValueOnce(
@@ -130,10 +134,12 @@ describe('/discover page server', () => {
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
-						redirect_default_login_to_discovery: true
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true
 					},
 					single_tenant_mode: false,
-					is_common_entry_host: true
+					is_common_entry_host: true,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
 				})
 			)
 			.mockResolvedValueOnce(
@@ -146,6 +152,12 @@ describe('/discover page server', () => {
 						login_url: 'https://first.multi-tenant.authrim.com/login',
 						source: 'tenant_code'
 					}
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					grant: 'grant-token',
+					login_url: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
 				})
 			);
 
@@ -167,10 +179,127 @@ describe('/discover page server', () => {
 			} as never)
 		).rejects.toMatchObject({
 			status: 303,
-			location: 'https://first.multi-tenant.authrim.com/login'
+			location: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
 		});
 
 		expect(cookies.set).toHaveBeenCalled();
+		const grantRequest = fetch.mock.calls[2]?.[1];
+		expect(grantRequest?.method).toBe('POST');
+	});
+
+	it('auto-skips the shared discover screen when exactly one active tenant exists', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					config: {
+						tenant_id: 'default',
+						mode: 'discovery_optional',
+						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						selection_policy: 'select_if_multiple',
+						allow_manual_tenant_entry: true,
+						remember_last_tenant: true,
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true,
+						skip_discovery_if_only_one_tenant: true
+					},
+					single_tenant_mode: false,
+					is_common_entry_host: true,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover',
+					single_active_tenant_candidate: {
+						tenant_id: 'first',
+						tenant_code: 'first',
+						display_name: 'First Tenant',
+						login_url: 'https://first.multi-tenant.authrim.com/login',
+						source: 'tenant_slug'
+					}
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					grant: 'grant-token',
+					login_url: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
+				})
+			);
+
+		await expect(
+			load({
+				fetch,
+				cookies: createCookies(),
+				request: new Request(
+					'https://multi-tenant.authrim.com/discover?expected_tenant_id=first&return_to=https%3A%2F%2Ffirst.multi-tenant.authrim.com%2Flogin'
+				),
+				url: new URL(
+					'https://multi-tenant.authrim.com/discover?expected_tenant_id=first&return_to=https%3A%2F%2Ffirst.multi-tenant.authrim.com%2Flogin'
+				)
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
+		});
+	});
+
+	it('passes the discovered email as login_hint when redirecting to tenant login', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					config: {
+						tenant_id: 'default',
+						mode: 'discovery_optional',
+						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						selection_policy: 'select_if_multiple',
+						allow_manual_tenant_entry: true,
+						remember_last_tenant: true,
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true
+					},
+					single_tenant_mode: false,
+					is_common_entry_host: true,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: 'resolved',
+					candidate: {
+						tenant_id: 'first',
+						tenant_code: 'first',
+						display_name: 'First Tenant',
+						login_url: 'https://first.multi-tenant.authrim.com/login',
+						source: 'email_domain'
+					}
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					grant: 'grant-token',
+					login_url:
+						'https://first.multi-tenant.authrim.com/login?login_hint=user%40example.com&discovery_grant=grant-token'
+				})
+			);
+
+		await expect(
+			actions.resolve({
+				cookies: createCookies(),
+				fetch,
+				request: new Request('https://multi-tenant.authrim.com/discover?/resolve', {
+					method: 'POST',
+					body: new URLSearchParams({
+						mode: 'email',
+						value: 'user@example.com'
+					})
+				}),
+				url: new URL('https://multi-tenant.authrim.com/discover?/resolve')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location:
+				'https://first.multi-tenant.authrim.com/login?login_hint=user%40example.com&discovery_grant=grant-token'
+		});
+
+		const grantRequest = fetch.mock.calls[2]?.[1];
+		expect(grantRequest?.body).toContain('"login_hint":"user@example.com"');
 	});
 
 	it('redirects common-entry invitation discovery success to tenant signup url', async () => {
@@ -185,10 +314,12 @@ describe('/discover page server', () => {
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
-						redirect_default_login_to_discovery: true
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true
 					},
 					single_tenant_mode: false,
-					is_common_entry_host: true
+					is_common_entry_host: true,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
 				})
 			)
 			.mockResolvedValueOnce(

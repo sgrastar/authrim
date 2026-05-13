@@ -21,6 +21,7 @@
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
   createSettingsHistoryManager,
   type SettingsHistoryManager,
   type ListVersionsOptions,
@@ -155,15 +156,15 @@ function isValidCategory(category: string): category is SettingsCategory {
 }
 
 function resolveTenantId(c: SettingsContext): string {
-  return c.req.query('tenantId') || getTenantIdFromContext(c as unknown as BaseContext);
+  return getTenantIdFromContext(c as unknown as BaseContext);
 }
 
 function getHistoryManager(c: SettingsContext): SettingsHistoryManager {
-  if (!c.env.DB) {
-    throw new Error('Database not configured');
-  }
   const tenantId = resolveTenantId(c);
-  return createSettingsHistoryManager(c.env.DB, tenantId);
+  return createSettingsHistoryManager(
+    createAuthContextFromHono(c as unknown as BaseContext, tenantId).coreAdapter,
+    tenantId
+  );
 }
 
 /**

@@ -4,6 +4,10 @@
 	import { goto } from '$app/navigation';
 	import { adminTenantsAPI, type Tenant } from '$lib/api/admin-tenants';
 	import {
+		tenantVanityDomainsAPI,
+		type TenantVanityDomain
+	} from '$lib/api/admin-tenant-vanity-domains';
+	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
 		type CategorySettings,
@@ -44,6 +48,19 @@
 	let settings = $state<CategorySettings | null>(null);
 	let settingsLoading = $state(false);
 	let settingsError = $state('');
+
+	// Vanity domains
+	let vanityDomains = $state<TenantVanityDomain[]>([]);
+	let vanityCloudflareConfigured = $state(false);
+	let vanityLoading = $state(false);
+	let vanityError = $state('');
+	let vanitySuccess = $state('');
+	let newVanityHostname = $state('');
+	let vanityCreating = $state(false);
+	let vanitySyncingId = $state<string | null>(null);
+	let vanityVerifyingId = $state<string | null>(null);
+	let vanityDeletingId = $state<string | null>(null);
+	let vanityPrimaryId = $state<string | null>(null);
 
 	const singleTenantMode = $derived(tenantStore.singleTenantMode);
 
@@ -98,9 +115,23 @@
 		}
 	}
 
+	async function loadVanityDomains() {
+		vanityLoading = true;
+		vanityError = '';
+		try {
+			const response = await tenantVanityDomainsAPI.list(tenantId);
+			vanityDomains = response.domains;
+			vanityCloudflareConfigured = response.cloudflare_configured;
+		} catch (err) {
+			vanityError = err instanceof Error ? err.message : 'Failed to load vanity domains';
+		} finally {
+			vanityLoading = false;
+		}
+	}
+
 	onMount(async () => {
 		await loadTenant();
-		await loadSettings();
+		await Promise.all([loadSettings(), loadVanityDomains()]);
 	});
 
 	// ==========================================================================
@@ -214,6 +245,97 @@
 
 	function getSettingValue(key: string): unknown {
 		return settings?.values[key];
+	}
+
+	function formatValidationRecords(records: unknown): string {
+		if (!records) return 'No validation records returned yet.';
+		return JSON.stringify(records, null, 2);
+	}
+
+	async function handleCreateVanityDomain() {
+		const hostname = newVanityHostname.trim();
+		if (!hostname) {
+			vanityError = 'Hostname is required';
+			return;
+		}
+		vanityCreating = true;
+		vanityError = '';
+		vanitySuccess = '';
+		try {
+			const response = await tenantVanityDomainsAPI.create(tenantId, hostname);
+			newVanityHostname = '';
+			vanitySuccess = response.manual_setup_required
+				? 'Vanity domain saved. Add it manually in Cloudflare Custom Hostnames and create the DNS records shown below.'
+				: response.cloudflare_error
+					? `Vanity domain saved, but Cloudflare returned an error: ${response.cloudflare_error}`
+					: 'Vanity domain created. Refresh status after DNS validation is complete.';
+			await loadVanityDomains();
+		} catch (err) {
+			vanityError = err instanceof Error ? err.message : 'Failed to create vanity domain';
+		} finally {
+			vanityCreating = false;
+		}
+	}
+
+	async function handleSyncVanityDomain(id: string) {
+		vanitySyncingId = id;
+		vanityError = '';
+		vanitySuccess = '';
+		try {
+			await tenantVanityDomainsAPI.sync(tenantId, id);
+			vanitySuccess = 'Cloudflare status refreshed.';
+			await loadVanityDomains();
+		} catch (err) {
+			vanityError = err instanceof Error ? err.message : 'Failed to refresh vanity domain';
+		} finally {
+			vanitySyncingId = null;
+		}
+	}
+
+	async function handleVerifyVanityDomain(id: string) {
+		vanityVerifyingId = id;
+		vanityError = '';
+		vanitySuccess = '';
+		try {
+			await tenantVanityDomainsAPI.verify(tenantId, id);
+			vanitySuccess = 'Vanity domain marked as verified.';
+			await loadVanityDomains();
+		} catch (err) {
+			vanityError = err instanceof Error ? err.message : 'Failed to verify vanity domain';
+		} finally {
+			vanityVerifyingId = null;
+		}
+	}
+
+
+	async function handleSetPrimaryVanityDomain(id: string) {
+		vanityPrimaryId = id;
+		vanityError = '';
+		vanitySuccess = '';
+		try {
+			await tenantVanityDomainsAPI.setPrimary(tenantId, id);
+			vanitySuccess = 'Primary vanity domain updated.';
+			await loadVanityDomains();
+		} catch (err) {
+			vanityError = err instanceof Error ? err.message : 'Failed to set primary vanity domain';
+		} finally {
+			vanityPrimaryId = null;
+		}
+	}
+
+	async function handleDeleteVanityDomain(id: string) {
+		vanityDeletingId = id;
+		vanityError = '';
+		vanitySuccess = '';
+		try {
+			await tenantVanityDomainsAPI.delete(tenantId, id);
+			vanitySuccess = 'Vanity domain deleted.';
+			await loadVanityDomains();
+		} catch (err) {
+			vanityError = err instanceof Error ? err.message : 'Failed to delete vanity domain';
+		} finally {
+			vanityDeletingId = null;
+		}
 	}
 </script>
 
@@ -424,6 +546,145 @@
 						<dd>{new Date(tenant.updated_at * 1000).toLocaleString()}</dd>
 					</div>
 				</dl>
+			</section>
+		{/if}
+
+		{#if !singleTenantMode}
+			<!-- Vanity Domains -->
+			<section class="card">
+				<div class="card-header-row">
+					<div>
+						<h2 class="card-title">Vanity Domains</h2>
+						<p class="card-description">
+							Primary active vanity domains become the tenant canonical issuer.
+						</p>
+					</div>
+					<button class="btn btn-secondary" onclick={loadVanityDomains} disabled={vanityLoading}>
+						{#if vanityLoading}
+							<i class="i-ph-circle-notch animate-spin"></i>
+							Refreshing
+						{:else}
+							<i class="i-ph-arrows-clockwise"></i>
+							Refresh
+						{/if}
+					</button>
+				</div>
+
+				{#if vanityError}
+					<div class="alert alert-error">{vanityError}</div>
+				{/if}
+				{#if vanitySuccess}
+					<div class="alert alert-success">{vanitySuccess}</div>
+				{/if}
+				{#if !vanityCloudflareConfigured}
+					<div class="alert alert-warning">
+						<i class="i-ph-warning"></i>
+						Cloudflare automation is not configured. Create a Cloudflare Custom Hostname manually
+						and add the required CNAME and HTTP ownership validation records.
+					</div>
+				{/if}
+
+				<div class="vanity-create-row">
+					<div class="form-group vanity-host-input">
+						<label for="vanity-hostname" class="form-label">Hostname</label>
+						<input
+							id="vanity-hostname"
+							type="text"
+							class="form-input"
+							bind:value={newVanityHostname}
+							placeholder="login.example.com"
+							autocomplete="off"
+						/>
+					</div>
+					<button
+						class="btn btn-primary"
+						onclick={handleCreateVanityDomain}
+						disabled={vanityCreating}
+					>
+						{#if vanityCreating}
+							<i class="i-ph-circle-notch animate-spin"></i>
+							Adding
+						{:else}
+							Add Domain
+						{/if}
+					</button>
+				</div>
+
+				{#if vanityLoading}
+					<div class="loading-inline"><i class="i-ph-circle-notch animate-spin"></i> Loading...</div>
+				{:else if vanityDomains.length === 0}
+					<p class="empty-text">No vanity domains configured.</p>
+				{:else}
+					<div class="vanity-domain-list">
+						{#each vanityDomains as domain (domain.id)}
+							<div class="vanity-domain-row">
+								<div class="vanity-domain-main">
+									<div class="vanity-host-line">
+										<span class="mono">{domain.hostname}</span>
+										{#if domain.is_primary}
+											<span class="badge badge-default">Primary</span>
+										{/if}
+										<span class:badge-active={domain.status === 'active'} class="badge">
+											{domain.status}
+										</span>
+									</div>
+									<div class="vanity-meta">
+										<span>SSL: {domain.ssl_status ?? 'pending'}</span>
+										<span>Ownership: {domain.ownership_status ?? 'pending'}</span>
+										{#if domain.last_sync_at}
+											<span>Synced: {new Date(domain.last_sync_at * 1000).toLocaleString()}</span>
+										{/if}
+									</div>
+									<details class="validation-details">
+										<summary>Validation records</summary>
+										<pre>{formatValidationRecords(domain.validation_records)}</pre>
+									</details>
+								</div>
+								<div class="vanity-actions">
+									<button
+										class="btn btn-secondary"
+										onclick={() => handleSyncVanityDomain(domain.id)}
+										disabled={vanitySyncingId === domain.id}
+									>
+										{#if vanitySyncingId === domain.id}
+											<i class="i-ph-circle-notch animate-spin"></i>
+										{/if}
+										Sync
+									</button>
+									<button
+										class="btn btn-secondary"
+										onclick={() => handleSetPrimaryVanityDomain(domain.id)}
+										disabled={domain.is_primary || domain.status !== 'active' || vanityPrimaryId === domain.id}
+										title={domain.status !== 'active'
+											? 'Only active vanity domains can be primary'
+											: 'Set as primary canonical issuer'}
+									>
+										Primary
+									</button>
+									{#if domain.status !== 'active'}
+										<button
+											class="btn btn-secondary"
+											onclick={() => handleVerifyVanityDomain(domain.id)}
+											disabled={vanityVerifyingId === domain.id}
+										>
+											Verify
+										</button>
+									{/if}
+									<button
+										class="btn btn-danger-outline"
+										onclick={() => handleDeleteVanityDomain(domain.id)}
+										disabled={vanityDeletingId === domain.id}
+									>
+										{#if vanityDeletingId === domain.id}
+											<i class="i-ph-circle-notch animate-spin"></i>
+										{/if}
+										Delete
+									</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
 			</section>
 		{/if}
 
@@ -876,37 +1137,6 @@
 		height: 16px;
 	}
 
-	.settings-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0;
-	}
-
-	.setting-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		padding: 12px 0;
-		border-bottom: 1px solid var(--border-subtle, var(--border));
-	}
-
-	.setting-item:last-child {
-		border-bottom: none;
-	}
-
-	.setting-item.modified {
-		background: color-mix(in srgb, var(--primary) 4%, transparent);
-		margin: 0 -8px;
-		padding: 12px 8px;
-		border-radius: var(--radius-sm);
-	}
-
-	.setting-info {
-		flex: 1;
-		min-width: 0;
-	}
-
 	.setting-label {
 		font-size: 0.875rem;
 		font-weight: 500;
@@ -914,49 +1144,85 @@
 		margin-right: 8px;
 	}
 
-	.modified-badge {
-		font-size: 0.75rem;
-		color: var(--primary);
-		font-weight: 500;
-	}
-
-	.setting-desc {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-		margin: 4px 0 0;
-	}
-
-	.setting-control {
-		flex-shrink: 0;
-	}
-
-	.settings-select,
-	.settings-input {
-		padding: 6px 10px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--bg-card);
-		color: var(--text-primary);
-		font-size: 0.875rem;
-		font-family: var(--font-body);
-		outline: none;
-	}
-
-	.settings-select {
-		min-width: 160px;
-	}
-
-	.settings-input {
-		min-width: 200px;
-	}
-
-	.settings-actions {
+	/* Vanity domains */
+	.vanity-create-row {
 		display: flex;
-		justify-content: flex-end;
+		align-items: flex-end;
+		gap: 12px;
+		margin: 16px 0;
+	}
+
+	.vanity-host-input {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.vanity-domain-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.vanity-domain-row {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 14px 0;
+		border-top: 1px solid var(--border-subtle, var(--border));
+	}
+
+	.vanity-domain-main {
+		display: flex;
+		flex: 1;
+		min-width: 0;
+		flex-direction: column;
 		gap: 8px;
-		margin-top: 16px;
-		padding-top: 16px;
-		border-top: 1px solid var(--border);
+	}
+
+	.vanity-host-line {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.vanity-meta {
+		display: flex;
+		gap: 12px;
+		flex-wrap: wrap;
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+	}
+
+	.validation-details summary {
+		cursor: pointer;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+	}
+
+	.validation-details pre {
+		overflow: auto;
+		max-height: 220px;
+		margin: 8px 0 0;
+		padding: 12px;
+		border-radius: var(--radius-sm);
+		background: var(--bg-subtle);
+		color: var(--text-primary);
+		font-size: 0.75rem;
+	}
+
+	.vanity-actions {
+		display: flex;
+		gap: 8px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+
+	.empty-text {
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+		margin: 0;
 	}
 
 	/* Danger Zone */
@@ -1119,6 +1385,16 @@
 		.danger-row {
 			flex-direction: column;
 			align-items: flex-start;
+		}
+
+		.vanity-create-row,
+		.vanity-domain-row {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.vanity-actions {
+			justify-content: flex-start;
 		}
 	}
 </style>

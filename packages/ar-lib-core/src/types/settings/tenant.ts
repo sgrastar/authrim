@@ -8,6 +8,7 @@
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 import type { UserIdFormat } from '../../utils/id';
+import type { SAMLAttributeReleaseFailureUserMessageMode } from '../saml';
 
 /**
  * Tenant Settings Interface
@@ -23,6 +24,17 @@ export interface TenantSettings {
   'tenant.allowed_origins': string;
   'tenant.allowed_domains': string;
   'tenant.allowed_identifiers': string;
+
+  // Runtime Profile Overrides
+  'tenant.storage_profile_id': string;
+  'tenant.audit_profile_id': string;
+  'tenant.residency_profile_id': string;
+
+  // Browser Public Client Defaults
+  'tenant.browser_public_client_mode': 'strict' | 'cookie_fallback' | 'legacy';
+
+  // SAML Defaults
+  'tenant.saml_attribute_release_failure_message_mode': SAMLAttributeReleaseFailureUserMessageMode;
 
   // Branding
   'tenant.name': string;
@@ -109,6 +121,54 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     label: 'Allowed Identifiers',
     description:
       'Comma-separated list of exact issuer/verifier identifiers allowed for this tenant. Empty disables additional identifier restrictions.',
+    visibility: 'admin',
+  },
+  'tenant.storage_profile_id': {
+    key: 'tenant.storage_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Storage Profile Override',
+    description:
+      'Optional storage profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.audit_profile_id': {
+    key: 'tenant.audit_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Audit Profile Override',
+    description:
+      'Optional audit profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.residency_profile_id': {
+    key: 'tenant.residency_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Residency Profile Override',
+    description:
+      'Optional residency profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.browser_public_client_mode': {
+    key: 'tenant.browser_public_client_mode',
+    type: 'enum',
+    default: 'cookie_fallback',
+    envKey: 'TENANT_BROWSER_PUBLIC_CLIENT_MODE',
+    label: 'Browser Public Client Mode',
+    description:
+      'Default hosted/built-in browser behavior. Custom browser SDK clients default to strict unless configured otherwise.',
+    enum: ['strict', 'cookie_fallback', 'legacy'],
+    visibility: 'admin',
+  },
+  'tenant.saml_attribute_release_failure_message_mode': {
+    key: 'tenant.saml_attribute_release_failure_message_mode',
+    type: 'enum',
+    default: 'generic',
+    label: 'SAML Attribute Failure Message Mode',
+    description:
+      'Default user-facing StatusMessage detail for SAML required attribute release failures. SP configuration can override this.',
+    enum: ['generic', 'detailed'],
     visibility: 'admin',
   },
 
@@ -220,6 +280,11 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.allowed_origins': '',
   'tenant.allowed_domains': '',
   'tenant.allowed_identifiers': '',
+  'tenant.storage_profile_id': '',
+  'tenant.audit_profile_id': '',
+  'tenant.residency_profile_id': '',
+  'tenant.browser_public_client_mode': 'cookie_fallback',
+  'tenant.saml_attribute_release_failure_message_mode': 'generic',
   // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',

@@ -124,6 +124,17 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
     getTenantIdFromContext: () => 'default',
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
   };
 });
 
@@ -516,6 +527,46 @@ describe('Passkey Handlers', () => {
       );
     });
 
+    it('should return missing_required_fields when registration fields are required', async () => {
+      const db = createMockDB({
+        allResults: [
+          {
+            field_key: 'department',
+            display_label: 'Department',
+            field_type: 'string',
+            registration_required: 1,
+            validation_rules: null,
+          },
+        ],
+      });
+
+      const c = createMockContext({
+        body: { email: 'newuser@example.com' },
+        headers: { origin: 'https://example.com' },
+        db,
+      });
+
+      const response = await passkeyRegisterOptionsHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        missing_required_fields?: Array<{
+          field_key: string;
+          label: string;
+          field_type: string;
+        }>;
+      };
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
+
     it('should generate registration options for existing user', async () => {
       // PII/Non-PII DB Separation via Repository:
       // 1. Query PII DB for user by email
@@ -762,16 +813,26 @@ describe('Passkey Handlers', () => {
     });
 
     it('should verify registration and create session on success', async () => {
-      const challengeStore = createMockChallengeStore();
       const sessionStore = createMockSessionStore();
+      const db = createMockDB({
+        allResults: [
+          {
+            field_key: 'department',
+            display_label: 'Department',
+            field_type: 'string',
+            registration_required: 0,
+            validation_rules: null,
+          },
+        ],
+      });
 
-      // Pre-store a challenge (will be consumed via /challenge/consume)
-      challengeStore._challenges.set('passkey_reg:user-123', {
-        id: 'passkey_reg:user-123',
-        type: 'passkey_registration',
-        userId: 'user-123',
+      mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValueOnce({
         challenge: 'mock-challenge-base64',
-        email: 'test@example.com',
+        metadata: {
+          custom_fields: {
+            department: 'Platform',
+          },
+        },
       });
 
       // Setup: User found after registration via Repository
@@ -802,8 +863,8 @@ describe('Passkey Handlers', () => {
           },
         },
         headers: { origin: 'https://example.com' },
-        challengeStore,
         sessionStore,
+        db,
       });
 
       await passkeyRegisterVerifyHandler(c);
@@ -815,6 +876,9 @@ describe('Passkey Handlers', () => {
           credential_id: expect.any(String),
           public_key: expect.any(String),
         })
+      );
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO user_custom_fields')
       );
     });
   });

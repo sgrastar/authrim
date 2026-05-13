@@ -1,0 +1,15 @@
+case_id,route_family,host_topology,required_profiles,expect
+ER-001,/discover,single tenant,P00,Redirects to default tenant login; no chooser.
+ER-002,/discover,common base host,P00;P03;P06;P10;P11,"Renders discovery, redirects, chooser, or skip behavior according to profile."
+ER-003,/discover,tenant subdomain,P00;P01,Current expected behavior: redirect to /login unless invite/app_hint exception applies.
+ER-004,/discover?invite_token=...,common or tenant host,P00;P01,Valid invite resolves tenant and redirects to signup; tenant_only should not block invite.
+ER-005,/discover?app_hint=...,common or tenant host,P11,Known app hint resolves tenant; disabled/unknown app hint returns not found.
+ER-006,common /login,common base host,P00;P09,Redirects to /discover when redirect flag true; otherwise renders/follows configured fallback.
+ER-007,tenant /login direct,tenant subdomain,P00;P09,Redirects to common discovery when require flag true; renders when false.
+ER-008,tenant /login?discovery_grant=valid,tenant subdomain,P00,"Verifies grant, strips URL, renders login."
+ER-009,tenant /login?discovery_grant=invalid,tenant subdomain,P00,Redirects to common discovery with expected tenant and safe return target.
+ER-010,tenant /login?challenge_id=...,tenant subdomain,P00;P09,Bypasses common discovery requirement and renders challenge login.
+ER-011,/authorize,tenant subdomain,P00;P09,Creates challenge under tenant issuer/client constraints.
+ER-012,/authorize,wrong tenant host,P00,Rejects or fails tenant/client binding.
+ER-013,/login;/discover;/.well-known/openid-configuration,naked base host,P00;P09 on naked topology,Resolves to primary tenant only when naked issuer is enabled.
+ER-014,/login;/authorize,vanity host,P00 on vanity topology,Works only if router maps host to tenant and tenant binding allows the host.

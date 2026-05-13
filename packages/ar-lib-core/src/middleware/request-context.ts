@@ -15,7 +15,7 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID, resolveTenantFromRequest } from '../utils/tenant-context';
-import { isMultiTenantEnabled, validateTenantExistsAsync } from '../utils/issuer';
+import { getRequestHost, isMultiTenantEnabled, validateTenantExistsAsync } from '../utils/issuer';
 import { validateTenantRequestBinding } from '../utils/tenant-binding-policy';
 import {
   classifyTenantRequestPath,
@@ -24,6 +24,12 @@ import {
   isValidTenantIdentifier,
 } from '../utils/tenant-request-policy';
 import { createLogger, type Logger } from '../utils/logger';
+import {
+  getPrimaryTenantVanityDomain,
+  resolveTenantFromVanityHost,
+} from '../services/tenant-vanity-domain-resolver';
+import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
+import { resolveUserStoreRuntimeSourcesFromEnv } from '../services/user-store-runtime-sources';
 
 /**
  * Request context available to all handlers via c.get()
@@ -67,6 +73,37 @@ export interface RequestContextMiddlewareOptions {
    * If false, continues with default tenant (useful for health checks).
    */
   requireTenant?: boolean;
+}
+
+function shouldAttemptVanityHostResolution(
+  env: Partial<Env>,
+  requestHost: string | undefined,
+  requestClass:
+    | 'platform_admin'
+    | 'tenant_inventory_admin'
+    | 'tenant_scoped_admin'
+    | 'discovery_ui'
+    | 'health_or_internal'
+    | 'public_protocol_or_rest'
+): boolean {
+  if (!requestHost || !isMultiTenantEnabled(env)) {
+    return false;
+  }
+
+  if (requestClass === 'platform_admin' || requestClass === 'tenant_inventory_admin') {
+    return false;
+  }
+
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (!baseDomain) {
+    return false;
+  }
+
+  if (requestHost === baseDomain || requestHost.endsWith(`.${baseDomain}`)) {
+    return false;
+  }
+
+  return true;
 }
 
 export function requestContextMiddleware(options: RequestContextMiddlewareOptions = {}) {
@@ -117,7 +154,28 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Single-tenant mode: always returns default tenant
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
+    const authCoreSource = await resolveAuthCorePersistenceSourceFromEnv(c.env).catch(
+      () => c.env.DB
+    );
     let tenantId = tenantResult.tenantId;
+    const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
+    if (
+      !tenantResult.success &&
+      shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)
+    ) {
+      const vanityTenantId = await resolveTenantFromVanityHost(
+        authCoreSource,
+        c.env.AUTHRIM_CONFIG,
+        requestHost
+      );
+      if (vanityTenantId) {
+        tenantResult.success = true;
+        tenantResult.tenantId = vanityTenantId;
+        delete tenantResult.error;
+        delete tenantResult.statusCode;
+        tenantId = vanityTenantId;
+      }
+    }
     const allowUnknownTenant =
       requestClass === 'discovery_ui' ||
       requestClass === 'platform_admin' ||
@@ -184,7 +242,11 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       (requestClass === 'tenant_scoped_admin' || tenantResult.success);
 
     if (shouldValidateTenantExists) {
-      const exists = await validateTenantExistsAsync(c.env.DB, c.env.AUTHRIM_CONFIG, tenantId);
+      const exists = await validateTenantExistsAsync(
+        authCoreSource,
+        c.env.AUTHRIM_CONFIG,
+        tenantId
+      );
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
         errorLogger.warn('Tenant existence check failed', {
@@ -193,6 +255,35 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
           path: c.req.path,
         });
         return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+      }
+    }
+
+    if (
+      isMultiTenantEnabled(c.env) &&
+      tenantResult.success &&
+      requestHost &&
+      !!c.env.BASE_DOMAIN &&
+      requestHost === `${tenantId}.${c.env.BASE_DOMAIN}`
+    ) {
+      const primaryVanity = await getPrimaryTenantVanityDomain(
+        { ...c.env, DB: authCoreSource },
+        tenantId
+      );
+      if (primaryVanity && primaryVanity.hostname !== requestHost) {
+        const isBrowserNavigation =
+          ['GET', 'HEAD'].includes(c.req.method) &&
+          !c.req.path.startsWith('/api/') &&
+          (c.req.header('Accept') || '').includes('text/html');
+
+        if (isBrowserNavigation) {
+          const redirectUrl = new URL(c.req.url);
+          redirectUrl.hostname = primaryVanity.hostname;
+          return c.redirect(redirectUrl.toString(), 308);
+        }
+
+        if (requestClass === 'public_protocol_or_rest') {
+          return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+        }
       }
     }
 
@@ -234,6 +325,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ctx.set('tenantId', tenantId);
     ctx.set('logger', logger);
     ctx.set('startTime', startTime);
+    ctx.set(
+      'runtimeUserStoreSources',
+      await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId)
+    );
 
     // Log request start
     logger.debug('Request started', {

@@ -15,16 +15,16 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 // Define context type with adminAuth variable
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 import {
-  D1Adapter,
   AdminIpAllowlistRepository,
-  AdminAuditLogRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { writeAdminAuditLog } from '../../admin-shared';
 
 // Create router
 export const ipAllowlistRouter = new Hono<{
@@ -45,10 +45,7 @@ ipAllowlistRouter.use(
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getAdminAdapter(c: Context<any, any, any>) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
-  }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
 }
 
 /**
@@ -70,22 +67,12 @@ async function createAuditLog(
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const authContext = c.get('adminAuth') as AdminAuthContext;
-  const adapter = getAdminAdapter(c);
-  const auditRepo = new AdminAuditLogRepository(adapter);
-  const tenantId = getTenantIdFromContext(c);
-
-  await auditRepo.createAuditLog({
-    tenant_id: tenantId,
-    admin_user_id: authContext.userId,
-    admin_email: authContext.email,
+  await writeAdminAuditLog(c, {
     action,
-    resource_type: 'admin_ip_allowlist',
-    resource_id: resourceId,
+    resourceType: 'admin_ip_allowlist',
+    resourceId,
     result,
     severity: 'warn', // IP changes are security-sensitive
-    ip_address: c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
-    user_agent: c.req.header('user-agent') || undefined,
     metadata,
   });
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminCacheModeAPI,
 		type CacheMode,
@@ -21,6 +22,7 @@
 	const isMaintenanceMode = $derived(platformMode?.effective === 'maintenance');
 
 	onMount(async () => {
+		await settingsContext.initialize();
 		await loadData();
 	});
 

@@ -85,6 +85,7 @@ export class ErrorFactory {
       meta: { ...definition.meta },
       errorId,
       state: options.state,
+      extensions: options.extensions,
     };
 
     // Apply security masking (replaces detail with generic message for masked/internal levels)
@@ -139,6 +140,7 @@ export class ErrorFactory {
       },
       errorId,
       state: options.state,
+      extensions: options.extensions,
     };
 
     return descriptor;

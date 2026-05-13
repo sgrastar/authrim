@@ -17,6 +17,7 @@
  * 7. Stop immediately if deny action is encountered
  */
 
+import type { KVNamespace } from '@cloudflare/workers-types';
 import type {
   RoleAssignmentRule,
   RoleAssignmentRuleRow,
@@ -28,6 +29,8 @@ import type {
   ConditionOperator,
   DenyErrorCode,
 } from '../types/policy-rules';
+import type { DatabaseAdapter, DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import type { ScopeType } from '../types/rbac';
 import {
   normalizeClaimValue,
@@ -57,12 +60,12 @@ const RULES_CACHE_PREFIX = 'role_assignment_rules_cache:';
  * Supports caching via KV for performance.
  */
 export class RuleEvaluator {
-  private db: D1Database;
+  private db: DatabaseAdapter;
   private cache?: KVNamespace;
   private cacheTtl: number;
 
-  constructor(db: D1Database, cache?: KVNamespace, cacheTtlSeconds?: number) {
-    this.db = db;
+  constructor(db: DatabaseSource, cache?: KVNamespace, cacheTtlSeconds?: number) {
+    this.db = ensureDatabaseAdapter(db, 'rule-evaluator');
     this.cache = cache;
     this.cacheTtl = cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
   }
@@ -154,7 +157,7 @@ export class RuleEvaluator {
   }
 
   /**
-   * Load rules from D1 database
+   * Load rules from the configured database source
    */
   private async loadRulesFromDb(tenantId: string): Promise<RoleAssignmentRule[]> {
     const query = `
@@ -170,9 +173,8 @@ export class RuleEvaluator {
       ORDER BY priority DESC
     `;
 
-    const result = await this.db.prepare(query).bind(tenantId).all<RoleAssignmentRuleRow>();
-
-    return (result.results || []).map(this.rowToRule);
+    const rows = await this.db.query<RoleAssignmentRuleRow>(query, [tenantId]);
+    return rows.map(this.rowToRule);
   }
 
   /**
@@ -392,7 +394,7 @@ export class RuleEvaluator {
  * Create a RuleEvaluator instance
  */
 export function createRuleEvaluator(
-  db: D1Database,
+  db: DatabaseSource,
   cache?: KVNamespace,
   cacheTtlSeconds?: number
 ): RuleEvaluator {

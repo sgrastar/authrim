@@ -82,6 +82,34 @@ describe('admin-info tenant base URL resolution', () => {
     });
   });
 
+  it('normalizes short workers.dev UI URLs to the issuer account subdomain', async () => {
+    const env = {
+      UI_URL: 'https://single-ar-login-ui.workers.dev',
+      ADMIN_UI_URL: 'https://single-ar-admin-ui.workers.dev',
+    } as Env;
+
+    await expect(
+      getConfiguredUiUrls(env, 'https://single-ar-router.sgrastar.workers.dev')
+    ).resolves.toEqual({
+      loginUiUrl: 'https://single-ar-login-ui.sgrastar.workers.dev',
+      adminUiUrl: 'https://single-ar-admin-ui.sgrastar.workers.dev',
+    });
+  });
+
+  it('keeps custom UI domains unchanged when issuer uses workers.dev', async () => {
+    const env = {
+      UI_URL: 'https://login.example.com',
+      ADMIN_UI_URL: 'https://admin.example.com',
+    } as Env;
+
+    await expect(
+      getConfiguredUiUrls(env, 'https://single-ar-router.sgrastar.workers.dev')
+    ).resolves.toEqual({
+      loginUiUrl: 'https://login.example.com',
+      adminUiUrl: 'https://admin.example.com',
+    });
+  });
+
   it('prefers UI config from SETTINGS over env UI_URL', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
@@ -120,6 +148,10 @@ describe('admin-info tenant base URL resolution', () => {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
       BASE_DOMAIN: 'auth.example.com',
+      PROFILE_REGISTRY_BACKEND: 'database',
+      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
+      DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
+      DEFAULT_RESIDENCY_PROFILE_ID: 'builtin:residency:default',
       DB: {
         prepare: vi.fn().mockReturnValue({
           bind: vi.fn().mockReturnValue({
@@ -150,10 +182,24 @@ describe('admin-info tenant base URL resolution', () => {
       login_ui_url: string | null;
       global_login_ui_url: string | null;
       discover_url: string | null;
+      runtime_profiles: {
+        registry_backend: string;
+        effective: {
+          storage: { id: string };
+          audit: { id: string };
+          residency: { id: string };
+        };
+      } | null;
+      runtime_profiles_error: string | null;
     };
     expect(body.login_ui_url).toBe('https://default.auth.example.com/login');
     expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev/login');
     expect(body.discover_url).toBe('https://nodomain-ar-login-ui.pages.dev/discover');
+    expect(body.runtime_profiles?.registry_backend).toBe('database');
+    expect(body.runtime_profiles?.effective.storage.id).toBe('builtin:storage:standard');
+    expect(body.runtime_profiles?.effective.audit.id).toBe('builtin:audit:standard');
+    expect(body.runtime_profiles?.effective.residency.id).toBe('builtin:residency:default');
+    expect(body.runtime_profiles_error).toBeNull();
   });
 
   it('uses naked-domain issuer login URL for the primary tenant', async () => {
@@ -226,6 +272,45 @@ describe('admin-info tenant base URL resolution', () => {
       discover_url: string | null;
     };
     expect(body.login_ui_url).toBe('https://login.example.com/login');
+    expect(body.global_login_ui_url).toBeNull();
+    expect(body.discover_url).toBeNull();
+  });
+
+  it('uses the configured Login UI URL in single-tenant mode when it differs from issuer', async () => {
+    const env = {
+      UI_URL: 'https://single-ar-login-ui.pages.dev',
+      ISSUER_URL: 'https://single-ar-router.sgrastar.workers.dev',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn(),
+    } as any);
+
+    const body = (await response.json()) as {
+      login_ui_url: string | null;
+      global_login_ui_url: string | null;
+      discover_url: string | null;
+    };
+    expect(body.login_ui_url).toBe('https://single-ar-login-ui.pages.dev/login');
     expect(body.global_login_ui_url).toBeNull();
     expect(body.discover_url).toBeNull();
   });

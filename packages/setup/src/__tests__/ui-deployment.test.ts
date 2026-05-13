@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthrimConfig } from '../core/config.js';
-import { DISABLED_API_BACKEND_URL, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
+import {
+  describeAdminUiApiMode,
+  DISABLED_API_BACKEND_URL,
+  resolveUiDeploymentSettings,
+} from '../core/ui-deployment.js';
 
 function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
   return {
@@ -18,12 +22,12 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
       },
       loginUi: {
         custom: null,
-        auto: 'https://test-ar-login-ui.pages.dev',
+        auto: 'https://test-ar-login-ui.workers.dev',
         sameAsApi: false,
       },
       adminUi: {
         custom: null,
-        auto: 'https://test-ar-admin-ui.pages.dev',
+        auto: 'https://test-ar-admin-ui.workers.dev',
         sameAsApi: false,
       },
     },
@@ -60,7 +64,6 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
       refreshTokenShards: 4,
       sessionShards: 4,
       challengeShards: 4,
-      flowStateShards: 32,
       ...overrides.sharding,
     },
     features: {
@@ -93,7 +96,7 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
 }
 
 describe('resolveUiDeploymentSettings', () => {
-  it('uses same-origin proxy mode for pages.dev UIs against a custom API domain', () => {
+  it('uses same-origin proxy mode for UI Workers against a custom API domain', () => {
     const config = createConfig({
       urls: {
         api: {
@@ -102,12 +105,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -145,6 +148,7 @@ describe('resolveUiDeploymentSettings', () => {
 
     expect(admin.useRelativeApi).toBe(true);
     expect(admin.needsProxy).toBe(true);
+    expect(admin.adminUiApiMode).toBe('cross-site-proxy');
     expect(admin.serviceBindingName).toBe('AR_ROUTER');
     expect(admin.uiEnv.PUBLIC_API_BASE_URL).toBe('');
     expect(admin.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBe('https://test.authrim.com');
@@ -153,7 +157,7 @@ describe('resolveUiDeploymentSettings', () => {
     expect(admin.runtimeApiBackendUrl).toBe('https://test.authrim.com');
   });
 
-  it('uses Service Binding proxy mode for workers.dev API and pages.dev Login UI', () => {
+  it('uses Service Binding proxy mode for workers.dev API and Login UI Worker', () => {
     const config = createConfig({
       urls: {
         api: {
@@ -162,12 +166,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -187,7 +191,7 @@ describe('resolveUiDeploymentSettings', () => {
     });
 
     expect(login.apiBaseUrl).toBe('https://test-ar-router.example.workers.dev');
-    expect(login.uiUrl).toBe('https://test-ar-login-ui.pages.dev');
+    expect(login.uiUrl).toBe('https://test-ar-login-ui.workers.dev');
     expect(login.useRelativeApi).toBe(true);
     expect(login.needsProxy).toBe(true);
     expect(login.serviceBindingName).toBe('AR_ROUTER');
@@ -210,12 +214,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: 'https://login.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: 'https://admin.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -246,6 +250,7 @@ describe('resolveUiDeploymentSettings', () => {
 
     expect(admin.useRelativeApi).toBe(false);
     expect(admin.needsProxy).toBe(false);
+    expect(admin.adminUiApiMode).toBe('same-site-cross-origin');
     expect(admin.serviceBindingName).toBeUndefined();
     expect(admin.uiEnv.PUBLIC_API_BASE_URL).toBe('https://auth.example.com');
     expect(admin.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBeUndefined();
@@ -261,12 +266,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: 'https://auth.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: true,
         },
         adminUi: {
           custom: 'https://auth.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: true,
         },
       },
@@ -283,6 +288,10 @@ describe('resolveUiDeploymentSettings', () => {
       component: 'ar-login-ui',
       config,
     });
+    const admin = resolveUiDeploymentSettings({
+      component: 'ar-admin-ui',
+      config,
+    });
 
     expect(login.useRelativeApi).toBe(true);
     expect(login.needsProxy).toBe(false);
@@ -290,6 +299,12 @@ describe('resolveUiDeploymentSettings', () => {
     expect(login.uiEnv.PUBLIC_API_BASE_URL).toBe('');
     expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBeUndefined();
     expect(login.runtimeApiBackendUrl).toBe(DISABLED_API_BACKEND_URL);
+
+    expect(admin.useRelativeApi).toBe(true);
+    expect(admin.needsProxy).toBe(false);
+    expect(admin.adminUiApiMode).toBe('same-origin');
+    expect(admin.serviceBindingName).toBeUndefined();
+    expect(admin.uiEnv.PUBLIC_API_BASE_URL).toBe('');
   });
 
   it('falls back to the public API URL for proxy mode when no auto backend URL exists', () => {
@@ -300,12 +315,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -340,12 +355,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -367,6 +382,13 @@ describe('resolveUiDeploymentSettings', () => {
     // derive the correct X-Authrim-Forwarded-Host for Service Binding requests.
     expect(admin.uiEnv.PUBLIC_AUTHRIM_ISSUER).toBe('https://auth.example.com');
     expect(admin.needsProxy).toBe(true);
+    expect(admin.adminUiApiMode).toBe('cross-site-proxy');
     expect(admin.serviceBindingName).toBe('AR_ROUTER');
+  });
+
+  it('describes Admin UI API modes for operator output', () => {
+    expect(describeAdminUiApiMode('same-origin')).toContain('same origin');
+    expect(describeAdminUiApiMode('same-site-cross-origin')).toContain('credentialed CORS');
+    expect(describeAdminUiApiMode('cross-site-proxy')).toContain('Worker BFF');
   });
 });

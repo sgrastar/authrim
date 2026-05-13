@@ -36,7 +36,6 @@ import {
   type ShardResolution,
   ID_PREFIX,
 } from './region-sharding';
-import { getDefaultTenantId } from './issuer';
 
 /**
  * PARRequestStore RPC stub interface
@@ -48,7 +47,11 @@ interface PARRequestStoreStub extends DurableObjectStub {
     data: Record<string, unknown>;
     ttl: number;
   }): Promise<void>;
-  consumeRequestRpc(request: { requestUri: string; client_id: string }): Promise<PARRequestData>;
+  consumeRequestRpc(request: {
+    requestUri: string;
+    tenant_id: string;
+    client_id: string;
+  }): Promise<PARRequestData>;
 }
 
 /**
@@ -162,19 +165,24 @@ export function parsePARRequestUri(requestUri: string): (ParsedRegionId & { uuid
  * @throws Error if requestUri format is invalid
  *
  * @example
- * const { stub, resolution } = getPARRequestStoreByUri(env, "urn:...:g1:apac:3:par_abc...");
+ * const { stub, resolution } = getPARRequestStoreByUri(env, "urn:...:g1:apac:3:par_abc...", tenantId);
  * const response = await stub.fetch(new Request('https://internal/consume'));
  */
 export function getPARRequestStoreByUri(
   env: Env,
   requestUri: string,
-  tenantId: string = getDefaultTenantId(env)
+  tenantId: string
 ): {
   stub: PARRequestStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   uuid: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('getPARRequestStoreByUri requires tenantId');
+  }
+
   const parsed = parsePARRequestUri(requestUri);
   if (!parsed) {
     throw new Error(`Invalid PAR request URI format: ${requestUri}`);
@@ -187,7 +195,7 @@ export function getPARRequestStoreByUri(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'par',
     resolution.shardIndex

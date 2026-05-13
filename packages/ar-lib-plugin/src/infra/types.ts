@@ -388,6 +388,7 @@ export interface IPasskeyStore extends NonPIIStore {
 
 export interface Passkey {
   id: string;
+  tenant_id?: string;
   user_id: string;
   credential_id: string;
   public_key: string;
@@ -408,11 +409,11 @@ export interface Passkey {
  * @non-pii - Contains organizational hierarchy, no user PII
  */
 export interface IOrganizationStore extends NonPIIStore {
-  get(orgId: string): Promise<Organization | null>;
+  get(tenantId: string, orgId: string): Promise<Organization | null>;
   getByName(tenantId: string, name: string): Promise<Organization | null>;
   create(org: Partial<Organization>): Promise<Organization>;
-  update(orgId: string, updates: Partial<Organization>): Promise<Organization>;
-  delete(orgId: string): Promise<void>;
+  update(tenantId: string, orgId: string, updates: Partial<Organization>): Promise<Organization>;
+  delete(tenantId: string, orgId: string): Promise<void>;
   list(tenantId: string, options?: { limit?: number; offset?: number }): Promise<Organization[]>;
 }
 
@@ -434,11 +435,11 @@ export interface Organization {
  * @non-pii - Contains role definitions, no user PII
  */
 export interface IRoleStore extends NonPIIStore {
-  get(roleId: string): Promise<Role | null>;
+  get(tenantId: string, roleId: string): Promise<Role | null>;
   getByName(tenantId: string, name: string): Promise<Role | null>;
   create(role: Partial<Role>): Promise<Role>;
-  update(roleId: string, updates: Partial<Role>): Promise<Role>;
-  delete(roleId: string): Promise<void>;
+  update(tenantId: string, roleId: string, updates: Partial<Role>): Promise<Role>;
+  delete(tenantId: string, roleId: string): Promise<void>;
   list(tenantId: string, options?: { limit?: number; offset?: number }): Promise<Role[]>;
 }
 
@@ -460,14 +461,18 @@ export interface Role {
  * @non-pii - Contains role-subject mappings (subject_id is opaque ID, not PII)
  */
 export interface IRoleAssignmentStore extends NonPIIStore {
-  get(assignmentId: string): Promise<RoleAssignment | null>;
+  get(tenantId: string, assignmentId: string): Promise<RoleAssignment | null>;
   create(assignment: Partial<RoleAssignment>): Promise<RoleAssignment>;
-  update(assignmentId: string, updates: Partial<RoleAssignment>): Promise<RoleAssignment>;
-  delete(assignmentId: string): Promise<void>;
-  listBySubject(subjectId: string): Promise<RoleAssignment[]>;
-  listByRole(roleId: string): Promise<RoleAssignment[]>;
-  getEffectiveRoles(subjectId: string): Promise<string[]>;
-  hasRole(subjectId: string, roleName: string): Promise<boolean>;
+  update(
+    tenantId: string,
+    assignmentId: string,
+    updates: Partial<RoleAssignment>
+  ): Promise<RoleAssignment>;
+  delete(tenantId: string, assignmentId: string): Promise<void>;
+  listBySubject(tenantId: string, subjectId: string): Promise<RoleAssignment[]>;
+  listByRole(tenantId: string, roleId: string): Promise<RoleAssignment[]>;
+  getEffectiveRoles(tenantId: string, subjectId: string): Promise<string[]>;
+  hasRole(tenantId: string, subjectId: string, roleName: string): Promise<boolean>;
 }
 
 export interface RoleAssignment {
@@ -488,13 +493,18 @@ export interface RoleAssignment {
  * @non-pii - Contains entity relationships, no user PII
  */
 export interface IRelationshipStore extends NonPIIStore {
-  get(relationshipId: string): Promise<Relationship | null>;
+  get(tenantId: string, relationshipId: string): Promise<Relationship | null>;
   create(relationship: Partial<Relationship>): Promise<Relationship>;
-  update(relationshipId: string, updates: Partial<Relationship>): Promise<Relationship>;
-  delete(relationshipId: string): Promise<void>;
-  listFrom(fromType: string, fromId: string): Promise<Relationship[]>;
-  listTo(toType: string, toId: string): Promise<Relationship[]>;
+  update(
+    tenantId: string,
+    relationshipId: string,
+    updates: Partial<Relationship>
+  ): Promise<Relationship>;
+  delete(tenantId: string, relationshipId: string): Promise<void>;
+  listFrom(tenantId: string, fromType: string, fromId: string): Promise<Relationship[]>;
+  listTo(tenantId: string, toType: string, toId: string): Promise<Relationship[]>;
   find(
+    tenantId: string,
     fromType: string,
     fromId: string,
     toType: string,

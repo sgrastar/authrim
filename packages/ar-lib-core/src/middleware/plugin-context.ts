@@ -25,9 +25,7 @@
 
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
-import { getTenantIdFromContext } from './request-context';
 import { createLogger } from '../utils/logger';
-import { getDefaultTenantId } from '../utils/issuer';
 
 const log = createLogger().module('PluginContext');
 
@@ -89,6 +87,11 @@ export interface PluginCapabilityRegistry {
    * List all available capabilities
    */
   listCapabilities(): string[];
+}
+
+export interface TenantEmailSettings {
+  strategy: 'priority_failover';
+  providerOrder: string[];
 }
 
 /**
@@ -187,11 +190,166 @@ export interface PluginContextMiddlewareOptions {
 // State
 // =============================================================================
 
-/**
- * Cached plugin registry (singleton per Worker isolate)
- */
-let cachedRegistry: PluginCapabilityRegistry | null = null;
-let registryInitPromise: Promise<PluginCapabilityRegistry> | null = null;
+interface CachedValue<T> {
+  value: T;
+  expiresAt: number;
+}
+
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_TTL_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+
+let registryCacheByEnv = new WeakMap<Env, Map<string, CachedValue<PluginCapabilityRegistry>>>();
+let registryInitPromisesByEnv = new WeakMap<Env, Map<string, Promise<PluginCapabilityRegistry>>>();
+let runtimeValueCacheByEnv = new WeakMap<Env, Map<string, CachedValue<unknown>>>();
+
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getCacheTTLMs(env: Env): number {
+  const ttl = env.SETTINGS_CACHE_TTL;
+  if (!ttl) {
+    return DEFAULT_CACHE_TTL_MS;
+  }
+
+  const ttlSeconds = parseInt(ttl, 10);
+  if (Number.isNaN(ttlSeconds) || ttlSeconds <= 0) {
+    return DEFAULT_CACHE_TTL_MS;
+  }
+
+  return Math.min(ttlSeconds, MAX_CACHE_TTL_SECONDS) * 1000;
+}
+
+function getScopedMap<T>(
+  store: WeakMap<Env, Map<string, CachedValue<T>>>,
+  env: Env
+): Map<string, CachedValue<T>> {
+  let map = store.get(env);
+  if (!map) {
+    map = new Map<string, CachedValue<T>>();
+    store.set(env, map);
+  }
+  return map;
+}
+
+function getScopedPromiseMap(
+  store: WeakMap<Env, Map<string, Promise<PluginCapabilityRegistry>>>,
+  env: Env
+): Map<string, Promise<PluginCapabilityRegistry>> {
+  let map = store.get(env);
+  if (!map) {
+    map = new Map<string, Promise<PluginCapabilityRegistry>>();
+    store.set(env, map);
+  }
+  return map;
+}
+
+function getCachedValue<T>(env: Env, key: string): T | undefined {
+  const cache = getScopedMap(runtimeValueCacheByEnv, env);
+  const entry = cache.get(key);
+  if (!entry) {
+    return undefined;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return undefined;
+  }
+
+  return entry.value as T;
+}
+
+function setCachedValue<T>(env: Env, key: string, value: T): T {
+  const cache = getScopedMap(runtimeValueCacheByEnv, env);
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + getCacheTTLMs(env),
+  });
+  return value;
+}
+
+function getCachedRegistry(env: Env, tenantId: string): PluginCapabilityRegistry | undefined {
+  const cache = getScopedMap(registryCacheByEnv, env);
+  const entry = cache.get(tenantId);
+  if (!entry) {
+    return undefined;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(tenantId);
+    return undefined;
+  }
+
+  return entry.value;
+}
+
+function setCachedRegistry(
+  env: Env,
+  tenantId: string,
+  registry: PluginCapabilityRegistry
+): PluginCapabilityRegistry {
+  const cache = getScopedMap(registryCacheByEnv, env);
+  cache.set(tenantId, {
+    value: registry,
+    expiresAt: Date.now() + getCacheTTLMs(env),
+  });
+  return registry;
+}
+
+function clearRuntimeValueCache(env: Env, predicate: (key: string) => boolean): void {
+  const cache = runtimeValueCacheByEnv.get(env);
+  if (!cache) {
+    return;
+  }
+
+  for (const key of cache.keys()) {
+    if (predicate(key)) {
+      cache.delete(key);
+    }
+  }
+}
+
+function clearRegistryCache(env: Env, tenantId?: string): void {
+  const cache = registryCacheByEnv.get(env);
+  if (cache) {
+    if (tenantId) {
+      cache.delete(tenantId);
+    } else {
+      cache.clear();
+    }
+  }
+
+  const promises = registryInitPromisesByEnv.get(env);
+  if (promises) {
+    if (tenantId) {
+      promises.delete(tenantId);
+    } else {
+      promises.clear();
+    }
+  }
+}
+
+function getPluginConfigGlobalCacheKey(pluginId: string): string {
+  return `plugin-config:global:${pluginId}`;
+}
+
+function getPluginConfigTenantCacheKey(pluginId: string, tenantId: string): string {
+  return `plugin-config:tenant:${tenantId}:${pluginId}`;
+}
+
+function getPluginEnabledCacheKey(pluginId: string, tenantId: string): string {
+  return `plugin-enabled:tenant:${tenantId}:${pluginId}`;
+}
+
+function getEmailSettingsCacheKey(tenantId: string): string {
+  return `email-settings:${tenantId}`;
+}
 
 /**
  * Default empty registry (used when plugins are not loaded)
@@ -210,44 +368,58 @@ const emptyRegistry: PluginCapabilityRegistry = {
 /**
  * Plugin context middleware
  *
- * This middleware initializes the plugin system once per Worker lifecycle
- * and provides access to it via c.get('pluginContext').
+ * This middleware initializes the plugin system lazily and provides access to
+ * it via c.get('pluginContext').
  *
- * The initialization is lazy - it happens on the first request.
- * Subsequent requests reuse the cached registry.
+ * Registries are cached per tenant within the Worker isolate using the same
+ * TTL policy as other settings caches. This keeps runtime KV reads low without
+ * leaking one tenant's plugin state into another tenant.
  */
 export function pluginContextMiddleware(options: PluginContextMiddlewareOptions = {}) {
   const { required = false, loadPlugins } = options;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const tenantId = getTenantIdFromContext(c);
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Tenant context is required for plugin context',
+        },
+        400
+      );
+    }
 
     // Initialize or get cached registry
     let registry: PluginCapabilityRegistry;
     let initialized = false;
 
     try {
-      if (cachedRegistry) {
-        registry = cachedRegistry;
-        initialized = true;
-      } else if (registryInitPromise) {
-        // Wait for ongoing initialization
-        registry = await registryInitPromise;
-        initialized = true;
-      } else if (loadPlugins) {
-        // Start initialization
-        registryInitPromise = loadPlugins(c.env, tenantId);
-        registry = await registryInitPromise;
-        cachedRegistry = registry;
-        registryInitPromise = null;
-        initialized = true;
+      if (loadPlugins) {
+        registry = getCachedRegistry(c.env, tenantId) ?? emptyRegistry;
+        if (registry !== emptyRegistry) {
+          initialized = true;
+        } else {
+          const initPromises = getScopedPromiseMap(registryInitPromisesByEnv, c.env);
+          let initPromise = initPromises.get(tenantId);
+          if (!initPromise) {
+            initPromise = loadPlugins(c.env, tenantId)
+              .then((loadedRegistry) => setCachedRegistry(c.env, tenantId, loadedRegistry))
+              .finally(() => {
+                initPromises.delete(tenantId);
+              });
+            initPromises.set(tenantId, initPromise);
+          }
+          registry = await initPromise;
+          initialized = true;
+        }
       } else {
         // No custom loader, use empty registry
         registry = emptyRegistry;
       }
     } catch (error) {
       log.error('Failed to initialize plugins', {}, error as Error);
-      registryInitPromise = null;
+      clearRegistryCache(c.env, tenantId);
 
       if (required) {
         return c.json(
@@ -297,11 +469,16 @@ export function getPluginContext(c: Context<{ Bindings: Env }>): WorkerPluginCon
   const ctx = (c as any).get('pluginContext') as WorkerPluginContext | undefined;
 
   if (!ctx) {
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      throw new Error('Plugin context requires tenant context');
+    }
+
     // Return a default context if middleware wasn't applied
     return {
       registry: emptyRegistry,
       initialized: false,
-      tenantId: getDefaultTenantId(c.env),
+      tenantId,
       getPluginConfig: async <T>(_pluginId: string, defaultValue: T) => defaultValue,
       isPluginEnabled: async () => true,
     };
@@ -319,24 +496,16 @@ async function getPluginConfigFromKV<T>(
   tenantId: string,
   defaultValue: T
 ): Promise<T> {
-  const kv = env.SETTINGS;
-  if (!kv) {
-    return defaultValue;
-  }
-
   try {
-    // Try tenant-specific first
-    const tenantKey = `plugins:config:${pluginId}:tenant:${tenantId}`;
-    const tenantValue = await kv.get(tenantKey);
-    if (tenantValue) {
-      const tenantConfig = JSON.parse(tenantValue);
-      // Get global config and merge
-      const globalConfig = await getGlobalPluginConfig(kv, pluginId, defaultValue);
-      return { ...globalConfig, ...tenantConfig } as T;
-    }
-
-    // Fall back to global
-    return getGlobalPluginConfig(kv, pluginId, defaultValue);
+    const [globalConfig, tenantConfig] = await Promise.all([
+      getGlobalPluginConfigRecord(env, pluginId),
+      getTenantPluginConfigRecord(env, pluginId, tenantId),
+    ]);
+    return {
+      ...defaultValue,
+      ...globalConfig,
+      ...tenantConfig,
+    } as T;
   } catch {
     return defaultValue;
   }
@@ -345,21 +514,67 @@ async function getPluginConfigFromKV<T>(
 /**
  * Get global plugin configuration from KV
  */
-async function getGlobalPluginConfig<T>(
-  kv: KVNamespace,
-  pluginId: string,
-  defaultValue: T
-): Promise<T> {
+async function getGlobalPluginConfigRecord(
+  env: Env,
+  pluginId: string
+): Promise<Record<string, unknown>> {
+  const cacheKey = getPluginConfigGlobalCacheKey(pluginId);
+  const cached = getCachedValue<Record<string, unknown>>(env, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const kv = env.SETTINGS;
+  if (!kv) {
+    return setCachedValue(env, cacheKey, {});
+  }
+
   try {
     const key = `plugins:config:${pluginId}`;
     const value = await kv.get(key);
     if (value) {
-      return JSON.parse(value) as T;
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object') {
+        return setCachedValue(env, cacheKey, parsed as Record<string, unknown>);
+      }
     }
   } catch {
     // Ignore parse errors
   }
-  return defaultValue;
+
+  return setCachedValue(env, cacheKey, {});
+}
+
+async function getTenantPluginConfigRecord(
+  env: Env,
+  pluginId: string,
+  tenantId: string
+): Promise<Record<string, unknown>> {
+  const cacheKey = getPluginConfigTenantCacheKey(pluginId, tenantId);
+  const cached = getCachedValue<Record<string, unknown>>(env, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const kv = env.SETTINGS;
+  if (!kv) {
+    return setCachedValue(env, cacheKey, {});
+  }
+
+  try {
+    const tenantKey = `plugins:config:${pluginId}:tenant:${tenantId}`;
+    const tenantValue = await kv.get(tenantKey);
+    if (tenantValue) {
+      const parsed = JSON.parse(tenantValue);
+      if (parsed && typeof parsed === 'object') {
+        return setCachedValue(env, cacheKey, parsed as Record<string, unknown>);
+      }
+    }
+  } catch {
+    // Ignore malformed tenant config; admin API validation should prevent this.
+  }
+
+  return setCachedValue(env, cacheKey, {});
 }
 
 /**
@@ -379,6 +594,12 @@ function pluginIdToSettingsKey(pluginId: string): string {
  * 3. Default: true
  */
 async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string): Promise<boolean> {
+  const cacheKey = getPluginEnabledCacheKey(pluginId, tenantId);
+  const cached = getCachedValue<boolean>(env, cacheKey);
+  if (typeof cached === 'boolean') {
+    return cached;
+  }
+
   // 1. Check settings-v2 (AUTHRIM_CONFIG KV)
   try {
     const configKV = env.AUTHRIM_CONFIG;
@@ -388,11 +609,11 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
       if (kvJson) {
         const settings = JSON.parse(kvJson) as Record<string, unknown>;
         if (typeof settings[settingsKey] === 'boolean') {
-          return settings[settingsKey] as boolean;
+          return setCachedValue(env, cacheKey, settings[settingsKey] as boolean);
         }
         // Also check string form (KV stores may serialize as string)
         if (typeof settings[settingsKey] === 'string') {
-          return settings[settingsKey] === 'true';
+          return setCachedValue(env, cacheKey, settings[settingsKey] === 'true');
         }
       }
     }
@@ -408,14 +629,14 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
       const tenantKey = `plugins:enabled:${pluginId}:tenant:${tenantId}`;
       const tenantValue = await kv.get(tenantKey);
       if (tenantValue !== null) {
-        return tenantValue === 'true';
+        return setCachedValue(env, cacheKey, tenantValue === 'true');
       }
 
       // Fall back to global
       const globalKey = `plugins:enabled:${pluginId}`;
       const globalValue = await kv.get(globalKey);
       if (globalValue !== null) {
-        return globalValue === 'true';
+        return setCachedValue(env, cacheKey, globalValue === 'true');
       }
     } catch {
       // Ignore errors
@@ -423,15 +644,155 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
   }
 
   // 3. Default: enabled
-  return true;
+  return setCachedValue(env, cacheKey, true);
+}
+
+const EMAIL_SETTINGS_KEY = 'email-settings';
+const DEFAULT_EMAIL_SETTINGS: TenantEmailSettings = {
+  strategy: 'priority_failover',
+  providerOrder: [],
+};
+
+function getEmailSettingsKv(env: Env): KVNamespace | undefined {
+  return env.AUTHRIM_CONFIG || env.SETTINGS;
+}
+
+function normalizeTenantEmailSettings(
+  value: unknown,
+  availableProviderIds?: string[]
+): TenantEmailSettings {
+  const input =
+    value && typeof value === 'object' ? (value as Partial<TenantEmailSettings>) : undefined;
+
+  const rawOrder = Array.isArray(input?.providerOrder)
+    ? input.providerOrder.filter(
+        (providerId): providerId is string => typeof providerId === 'string'
+      )
+    : [];
+
+  const dedupedOrder = Array.from(new Set(rawOrder));
+  const available = availableProviderIds ?? [];
+  const providerOrder =
+    available.length === 0
+      ? dedupedOrder
+      : [
+          ...dedupedOrder.filter((providerId) => available.includes(providerId)),
+          ...available.filter((providerId) => !dedupedOrder.includes(providerId)),
+        ];
+
+  return {
+    strategy: input?.strategy === 'priority_failover' ? 'priority_failover' : 'priority_failover',
+    providerOrder,
+  };
+}
+
+export async function getTenantEmailSettings(
+  env: Env,
+  tenantId: string,
+  availableProviderIds?: string[]
+): Promise<TenantEmailSettings> {
+  const cacheKey = getEmailSettingsCacheKey(tenantId);
+  const cached = getCachedValue<TenantEmailSettings>(env, cacheKey);
+  if (cached) {
+    return normalizeTenantEmailSettings(cached, availableProviderIds);
+  }
+
+  const kv = getEmailSettingsKv(env);
+  if (!kv) {
+    return normalizeTenantEmailSettings(DEFAULT_EMAIL_SETTINGS, availableProviderIds);
+  }
+
+  try {
+    const raw = await kv.get(`settings:tenant:${tenantId}:${EMAIL_SETTINGS_KEY}`);
+    if (!raw) {
+      const normalized = normalizeTenantEmailSettings(DEFAULT_EMAIL_SETTINGS);
+      setCachedValue(env, cacheKey, normalized);
+      return normalizeTenantEmailSettings(normalized, availableProviderIds);
+    }
+
+    const normalized = normalizeTenantEmailSettings(JSON.parse(raw));
+    setCachedValue(env, cacheKey, normalized);
+    return normalizeTenantEmailSettings(normalized, availableProviderIds);
+  } catch {
+    const normalized = normalizeTenantEmailSettings(DEFAULT_EMAIL_SETTINGS);
+    setCachedValue(env, cacheKey, normalized);
+    return normalizeTenantEmailSettings(normalized, availableProviderIds);
+  }
+}
+
+export async function putTenantEmailSettings(
+  env: Env,
+  tenantId: string,
+  settings: TenantEmailSettings
+): Promise<void> {
+  const kv = getEmailSettingsKv(env);
+  if (!kv) {
+    throw new Error('Email settings KV is not configured');
+  }
+
+  const normalized = normalizeTenantEmailSettings(settings);
+  await kv.put(`settings:tenant:${tenantId}:${EMAIL_SETTINGS_KEY}`, JSON.stringify(normalized));
+  invalidateTenantEmailSettingsCache(env, tenantId);
+}
+
+export function invalidateTenantEmailSettingsCache(env: Env, tenantId: string): void {
+  clearRuntimeValueCache(env, (key) => key === getEmailSettingsCacheKey(tenantId));
+}
+
+export function invalidatePluginRuntimeCaches(
+  env: Env,
+  scope: {
+    tenantId?: string;
+    pluginId?: string;
+  } = {}
+): void {
+  const { tenantId, pluginId } = scope;
+
+  clearRuntimeValueCache(env, (key) => {
+    if (!pluginId && !tenantId) {
+      return true;
+    }
+
+    if (pluginId && key === getPluginConfigGlobalCacheKey(pluginId)) {
+      return true;
+    }
+
+    if (pluginId && tenantId && key === getPluginConfigTenantCacheKey(pluginId, tenantId)) {
+      return true;
+    }
+
+    if (pluginId && key.endsWith(`:${pluginId}`) && key.startsWith('plugin-config:tenant:')) {
+      return !tenantId || key.startsWith(`plugin-config:tenant:${tenantId}:`);
+    }
+
+    if (pluginId && key.endsWith(`:${pluginId}`) && key.startsWith('plugin-enabled:tenant:')) {
+      return !tenantId || key.startsWith(`plugin-enabled:tenant:${tenantId}:`);
+    }
+
+    if (!pluginId && tenantId) {
+      return (
+        key.startsWith(`plugin-config:tenant:${tenantId}:`) ||
+        key.startsWith(`plugin-enabled:tenant:${tenantId}:`)
+      );
+    }
+
+    return false;
+  });
+
+  if (tenantId) {
+    clearRegistryCache(env, tenantId);
+  } else {
+    clearRegistryCache(env);
+  }
 }
 
 /**
  * Reset the cached registry (for testing)
  */
 export function resetPluginRegistryCache(): void {
-  cachedRegistry = null;
-  registryInitPromise = null;
+  registryCacheByEnv = new WeakMap<Env, Map<string, CachedValue<PluginCapabilityRegistry>>>();
+  registryInitPromisesByEnv = new WeakMap<Env, Map<string, Promise<PluginCapabilityRegistry>>>();
+  runtimeValueCacheByEnv = new WeakMap<Env, Map<string, CachedValue<unknown>>>();
 }
 
 // =============================================================================
@@ -480,9 +841,22 @@ export interface PluginLoaderConfig {
   configOverride?: Record<string, unknown>;
 
   /**
+   * Resolve bootstrap defaults from Worker bindings/environment.
+   *
+   * These values are merged before KV config so tenant/global plugin settings
+   * can override the deployment-time bootstrap when needed.
+   */
+  envConfigResolver?: (env: Env) => Record<string, unknown>;
+
+  /**
    * Whether this plugin is required (fail if load fails)
    */
   required?: boolean;
+
+  /**
+   * Skip loading when no bootstrap/KV/override config is available.
+   */
+  skipIfConfigEmpty?: boolean;
 }
 
 /**
@@ -490,12 +864,26 @@ export interface PluginLoaderConfig {
  * This is a lightweight alternative to the full ar-lib-plugin registry
  */
 class SimpleCapabilityRegistry implements PluginCapabilityRegistry {
-  private notifiers = new Map<string, NotifierHandler>();
+  private notifiers = new Map<string, Array<{ pluginId: string; handler: NotifierHandler }>>();
   private idps = new Map<string, IdPHandler>();
   private authenticators = new Map<string, AuthenticatorHandler>();
 
-  registerNotifier(channel: string, handler: NotifierHandler): void {
-    this.notifiers.set(channel, handler);
+  constructor(
+    private readonly env: Env,
+    private readonly tenantId: string
+  ) {}
+
+  registerNotifier(channel: string, handler: NotifierHandler, pluginId?: string): void {
+    if (handler && typeof handler === 'object') {
+      Object.defineProperty(handler, '__authrimWorkerEnv', {
+        value: this.env,
+        configurable: true,
+        enumerable: false,
+      });
+    }
+    const entries = this.notifiers.get(channel) ?? [];
+    entries.push({ pluginId: pluginId ?? `unknown:${channel}:${entries.length}`, handler });
+    this.notifiers.set(channel, entries);
   }
 
   registerIdP(providerId: string, handler: IdPHandler): void {
@@ -507,7 +895,16 @@ class SimpleCapabilityRegistry implements PluginCapabilityRegistry {
   }
 
   getNotifier(channel: string): NotifierHandler | undefined {
-    return this.notifiers.get(channel);
+    const handlers = this.notifiers.get(channel);
+    if (!handlers || handlers.length === 0) {
+      return undefined;
+    }
+
+    if (handlers.length === 1 || channel !== 'email') {
+      return handlers[0]?.handler;
+    }
+
+    return createCompositeEmailNotifier(this.env, this.tenantId, handlers);
   }
 
   getIdP(providerId: string): IdPHandler | undefined {
@@ -527,6 +924,157 @@ class SimpleCapabilityRegistry implements PluginCapabilityRegistry {
   }
 }
 
+function createCompositeEmailNotifier(
+  env: Env,
+  tenantId: string,
+  handlers: Array<{ pluginId: string; handler: NotifierHandler }>
+): NotifierHandler {
+  return {
+    async send(notification) {
+      const availableProviderIds = handlers.map((entry) => entry.pluginId);
+      const emailSettings = await getTenantEmailSettings(env, tenantId, availableProviderIds);
+
+      // TODO: Extend this strategy switch when round-robin or send-count based
+      // routing is added to the Email Settings page.
+      if (emailSettings.strategy !== 'priority_failover') {
+        log.warn('Unsupported email strategy, falling back to priority_failover', {
+          tenantId,
+          strategy: emailSettings.strategy,
+        });
+      }
+
+      const priorityOrder = new Map(
+        emailSettings.providerOrder.map((providerId, index) => [providerId, index])
+      );
+
+      const orderedHandlers = [...handlers].sort((a, b) => {
+        const aIndex = priorityOrder.get(a.pluginId) ?? Number.MAX_SAFE_INTEGER;
+        const bIndex = priorityOrder.get(b.pluginId) ?? Number.MAX_SAFE_INTEGER;
+        return aIndex - bIndex;
+      });
+
+      let lastFailure:
+        | {
+            success: false;
+            error: string;
+            retryable?: boolean;
+          }
+        | undefined;
+
+      for (const provider of orderedHandlers) {
+        try {
+          const result = await provider.handler.send(notification);
+          if (result.success) {
+            return result;
+          }
+
+          lastFailure = {
+            success: false,
+            error: `[${provider.pluginId}] ${result.error ?? 'Unknown email delivery failure'}`,
+            retryable: result.retryable,
+          };
+        } catch (error) {
+          lastFailure = {
+            success: false,
+            error: `[${provider.pluginId}] ${error instanceof Error ? error.message : 'Unknown error'}`,
+            retryable: true,
+          };
+        }
+      }
+
+      return {
+        success: false,
+        error: lastFailure?.error ?? 'No email providers are available',
+        retryable: lastFailure?.retryable ?? false,
+      };
+    },
+  };
+}
+
+function getPluginEnvConfig(env: Env, pluginId: string): Record<string, unknown> {
+  const envKey = `PLUGIN_${pluginId.toUpperCase().replace(/-/g, '_')}_CONFIG`;
+  const envValue = (env as unknown as Record<string, unknown>)[envKey];
+  if (typeof envValue !== 'string' || envValue.trim() === '') {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(envValue);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function getPluginKvConfig(
+  env: Env,
+  pluginId: string,
+  tenantId: string
+): Promise<Record<string, unknown>> {
+  const [globalConfig, tenantConfig] = await Promise.all([
+    getGlobalPluginConfigRecord(env, pluginId),
+    getTenantPluginConfigRecord(env, pluginId, tenantId),
+  ]);
+
+  return {
+    ...globalConfig,
+    ...tenantConfig,
+  };
+}
+
+class WorkerPluginConfigStore {
+  constructor(private readonly env: Env) {}
+
+  async get<T>(
+    pluginId: string,
+    schema: {
+      parse: (input: unknown) => T;
+    }
+  ): Promise<T> {
+    const config = {
+      ...getPluginEnvConfig(this.env, pluginId),
+      ...(await getGlobalPluginConfigRecord(this.env, pluginId)),
+    };
+    return schema.parse(config);
+  }
+
+  async getForTenant<T>(
+    pluginId: string,
+    tenantId: string,
+    schema: {
+      parse: (input: unknown) => T;
+    }
+  ): Promise<T> {
+    const config = {
+      ...getPluginEnvConfig(this.env, pluginId),
+      ...(await getPluginKvConfig(this.env, pluginId, tenantId)),
+    };
+    return schema.parse(config);
+  }
+
+  async set<T>(_pluginId: string, _config: T): Promise<void> {
+    throw new Error(
+      'Worker plugin loader does not support writing plugin config during initialize()'
+    );
+  }
+}
+
+function createUnsupportedService<T>(serviceName: string): T {
+  return new Proxy(
+    {},
+    {
+      get(_target, property) {
+        throw new Error(
+          `Worker plugin loader does not provide ${serviceName} during initialize(); attempted to access ${String(property)}`
+        );
+      },
+      set() {
+        throw new Error(`Worker plugin loader does not provide ${serviceName} during initialize()`);
+      },
+    }
+  ) as T;
+}
+
 /**
  * Create a plugin loader function
  */
@@ -534,66 +1082,56 @@ export function createPluginLoader(
   plugins: PluginLoaderConfig[]
 ): (env: Env, tenantId: string) => Promise<PluginCapabilityRegistry> {
   return async (env: Env, tenantId: string): Promise<PluginCapabilityRegistry> => {
-    const registry = new SimpleCapabilityRegistry();
+    const registry = new SimpleCapabilityRegistry(env, tenantId);
+    const configStore = new WorkerPluginConfigStore(env);
 
-    for (const { plugin, configOverride, required } of plugins) {
+    for (const {
+      plugin,
+      configOverride,
+      envConfigResolver,
+      required,
+      skipIfConfigEmpty,
+    } of plugins) {
       try {
-        // Get config from KV/env
-        let config: Record<string, unknown> = {};
-        const kv = env.SETTINGS;
-
-        if (kv) {
-          // Try tenant-specific config
-          const tenantKey = `plugins:config:${plugin.id}:tenant:${tenantId}`;
-          const tenantValue = await kv.get(tenantKey);
-          if (tenantValue) {
-            try {
-              config = JSON.parse(tenantValue);
-            } catch {
-              // Ignore parse errors
-            }
-          }
-
-          // Try global config
-          if (Object.keys(config).length === 0) {
-            const globalKey = `plugins:config:${plugin.id}`;
-            const globalValue = await kv.get(globalKey);
-            if (globalValue) {
-              try {
-                config = JSON.parse(globalValue);
-              } catch {
-                // Ignore parse errors
-              }
-            }
-          }
-        }
-
-        // Try environment variable
-        if (Object.keys(config).length === 0) {
-          const envKey = `PLUGIN_${plugin.id.toUpperCase().replace(/-/g, '_')}_CONFIG`;
-          const envValue = (env as unknown as Record<string, unknown>)[envKey];
-          if (typeof envValue === 'string') {
-            try {
-              config = JSON.parse(envValue);
-            } catch {
-              // Ignore parse errors
-            }
-          }
-        }
-
-        // Apply config override
-        if (configOverride) {
-          config = { ...config, ...configOverride };
-        }
-
-        // Parse config through schema (applies defaults)
-        const parsedConfig = plugin.configSchema.parse(config);
-
         // Check if plugin is enabled
         const enabled = await isPluginEnabledInKV(env, plugin.id, tenantId);
         if (!enabled) {
           log.info('Plugin is disabled, skipping', { pluginId: plugin.id });
           continue;
+        }
+
+        const config = {
+          ...getPluginEnvConfig(env, plugin.id),
+          ...(envConfigResolver?.(env) ?? {}),
+          ...(await getPluginKvConfig(env, plugin.id, tenantId)),
+          ...(configOverride ?? {}),
+        };
+
+        if (skipIfConfigEmpty && Object.keys(config).length === 0) {
+          log.info('Plugin has no resolved configuration, skipping', { pluginId: plugin.id });
+          continue;
+        }
+
+        // Parse config through schema (applies defaults)
+        const parsedConfig = plugin.configSchema.parse(config);
+
+        if (plugin.initialize) {
+          await plugin.initialize(
+            {
+              storage: createUnsupportedService('storage'),
+              policy: createUnsupportedService('policy'),
+              config: configStore,
+              logger: log,
+              audit: {
+                async log() {
+                  // Worker-side loader does not emit audit events during initialize().
+                },
+              },
+              tenantId,
+              env,
+            },
+            parsedConfig
+          );
         }
 
         // Register the plugin

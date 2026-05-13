@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateEnvVars, deriveAllowedOrigins } from '../core/wrangler.js';
 import type { AuthrimConfig } from '../core/config.js';
+import { classifyUiApiSite } from '../core/site-classifier.js';
 import {
   SCENARIOS,
   buildAuthrimConfig,
@@ -27,6 +28,20 @@ function expectedPrimaryTenantId(config: AuthrimConfig): string | undefined {
 
 function isMultiTenantConfigured(config: AuthrimConfig): boolean {
   return config.tenant?.multiTenant === true && !!config.tenant.baseDomain;
+}
+
+function expectedAdminUiApiMode(config: AuthrimConfig): string {
+  const multiTenant = isMultiTenantConfigured(config);
+  const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+  const issuerUrl = multiTenant ? config.urls?.api?.auto || '' : apiUrl;
+  const adminUiUrl = config.urls?.adminUi?.sameAsApi
+    ? apiUrl
+    : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+  const classification = classifyUiApiSite(apiUrl, adminUiUrl, {
+    baseDomain: multiTenant ? config.tenant?.baseDomain : undefined,
+  });
+
+  return classification === 'cross-site' ? 'cross-site-proxy' : classification;
 }
 
 // =============================================================================
@@ -61,7 +76,8 @@ describe('generateEnvVars - ar-auth', () => {
     expect(vars['UI_URL']).toBe(expectedUiUrl);
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
     expect(vars['COOKIE_SAME_SITE']).toBe(expectedCookieSameSite);
-    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe(expected.ADMIN_COOKIE_SAME_SITE);
+    expect(vars['ADMIN_UI_API_MODE']).toBe(expectedAdminUiApiMode(config));
+    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe('Lax');
     expect(vars['DEFAULT_TENANT_ID']).toBe(expected.DEFAULT_TENANT_ID);
 
     // BASE_DOMAIN
@@ -117,7 +133,8 @@ describe('generateEnvVars - ar-management', () => {
     expect(vars['VC_ENABLED']).toBe((config.components?.vc ?? false) ? 'true' : 'false');
     expect(vars['DEFAULT_TENANT_ID']).toBe(expected.DEFAULT_TENANT_ID);
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
-    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe(expected.ADMIN_COOKIE_SAME_SITE);
+    expect(vars['ADMIN_UI_API_MODE']).toBe(expectedAdminUiApiMode(config));
+    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe('Lax');
 
     expect(vars['ALLOWED_ORIGINS']).toBeDefined();
     expect(vars['ALLOWED_ORIGINS'].split(',').sort()).toEqual(
@@ -156,6 +173,55 @@ describe('generateEnvVars - ar-saml', () => {
       expect(vars['ISSUER_URL']).toBe(scenario.expected.issuerUrl);
     }
   });
+
+  it('includes runtime profile defaults and registry backend for profile-aware workers', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
+    config.profiles = {
+      defaults: {
+        storage: 'builtin:storage:external-postgres',
+        audit: 'builtin:audit:standard',
+        residency: 'builtin:residency:eu',
+      },
+      registry: {
+        backend: 'database',
+      },
+    };
+
+    const authVars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+    const samlVars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
+
+    expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
+    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
+    expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
+    expect(authVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
+
+    expect(samlVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
+    expect(samlVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
+    expect(samlVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
+    expect(samlVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
+  });
+
+  it('passes through built-in single-db profile defaults for profile-aware workers', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
+    config.profiles = {
+      defaults: {
+        storage: 'builtin:storage:single-db',
+        audit: 'builtin:audit:minimal',
+        residency: 'builtin:residency:default',
+      },
+      registry: {
+        backend: 'kv',
+      },
+    };
+
+    const authVars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+    const managementVars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
+
+    expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('kv');
+    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
+    expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:minimal');
+    expect(managementVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
+  });
 });
 
 // =============================================================================
@@ -187,16 +253,16 @@ describe('generateEnvVars - ar-router', () => {
 
     // AR_ADMIN_UI_URL is set only when adminSameAsApi=true
     if (adminSameAsApi) {
-      const adminPagesUrl = scenario.config.adminUiAuto ?? scenario.config.adminUiCustom;
-      expect(vars['AR_ADMIN_UI_URL']).toBe(adminPagesUrl ?? undefined);
+      const adminUiWorkerUrl = scenario.config.adminUiAuto ?? scenario.config.adminUiCustom;
+      expect(vars['AR_ADMIN_UI_URL']).toBe(adminUiWorkerUrl ?? undefined);
     } else {
       expect(vars['AR_ADMIN_UI_URL']).toBeUndefined();
     }
 
     // AR_LOGIN_UI_URL is set only when loginSameAsApi=true
     if (loginProxyEnabled) {
-      const loginPagesUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
-      expect(vars['AR_LOGIN_UI_URL']).toBe(loginPagesUrl ?? undefined);
+      const loginUiWorkerUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
+      expect(vars['AR_LOGIN_UI_URL']).toBe(loginUiWorkerUrl ?? undefined);
     } else {
       expect(vars['AR_LOGIN_UI_URL']).toBeUndefined();
     }
@@ -247,12 +313,12 @@ describe('multi-tenant login UI canonical routing', () => {
         },
         loginUi: {
           custom: 'https://login.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: 'https://admin.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -301,7 +367,6 @@ describe('multi-tenant login UI canonical routing', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       security: {
         piiEncryptionEnabled: true,
@@ -316,7 +381,7 @@ describe('multi-tenant login UI canonical routing', () => {
     expect(authVars['UI_URL']).toBe('https://test.authrim.com');
     expect(authVars['COOKIE_SAME_SITE']).toBe('Lax');
     expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('true');
-    expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.pages.dev');
+    expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.my-project.workers.dev');
   });
 });
 
@@ -355,12 +420,12 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -411,7 +476,6 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       security: {
         piiEncryptionEnabled: true,
@@ -441,12 +505,12 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -496,7 +560,6 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       security: {
         piiEncryptionEnabled: true,

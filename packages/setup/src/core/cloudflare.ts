@@ -6,6 +6,7 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,13 @@ import {
   KV_NAMESPACES,
 } from './naming.js';
 import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
+import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-portability.js';
+import {
+  buildAdminUiBffMachineAccessBootstrapSql,
+  buildSetupMachineAccessBootstrapSql,
+  loadAdminUiBffPublicJwk,
+  loadSetupMachinePublicJwk,
+} from './admin-machine-access.js';
 
 // Package directory (for bundled migrations)
 const __filename = fileURLToPath(import.meta.url);
@@ -91,6 +99,20 @@ export interface ProvisionOptions {
   onProgress?: (message: string) => void;
   /** Database location configuration */
   databaseConfig?: DatabaseProvisionConfig;
+  /** Runtime profile defaults used for migration layout decisions */
+  config?: MigrationProfileConfig;
+}
+
+export interface MigrationProfileConfig {
+  profiles?: {
+    defaults?: {
+      storage?: string;
+    };
+  };
+}
+
+export function shouldMirrorPiiMigrationsToCore(config?: MigrationProfileConfig | null): boolean {
+  return config?.profiles?.defaults?.storage === 'builtin:storage:single-db';
 }
 
 // =============================================================================
@@ -308,7 +330,7 @@ export interface SetupCapabilityDiagnostics {
   zoneReadAvailable: boolean;
   accessibleZoneCount: number;
   dnsReadAvailable: boolean;
-  pagesReadAvailable: boolean;
+  uiWorkersApiAvailable: boolean;
 }
 
 export interface SetupCapabilityEstimate {
@@ -340,7 +362,7 @@ export function deriveSetupCapabilityEstimate(
     diagnostics.accessibleZoneCount > 0;
   const multiTenant = customDomain && diagnostics.dnsReadAvailable;
   const nakedDomain = multiTenant;
-  const pages = workersDeploy && diagnostics.tokenAvailable && diagnostics.pagesReadAvailable;
+  const pages = workersDeploy && diagnostics.tokenAvailable && diagnostics.uiWorkersApiAvailable;
 
   return {
     workersDeploy,
@@ -383,7 +405,7 @@ export function deriveSetupCapabilityStatuses(
   let pages: SetupCapabilityStatus;
   if (workersDeploy === 'ng') {
     pages = 'ng';
-  } else if (diagnostics.pagesReadAvailable) {
+  } else if (diagnostics.uiWorkersApiAvailable) {
     pages = 'ok';
   } else {
     pages = 'review';
@@ -411,7 +433,7 @@ export async function getSetupCapabilityDiagnostics(
     zoneReadAvailable: false,
     accessibleZoneCount: 0,
     dnsReadAvailable: false,
-    pagesReadAvailable: false,
+    uiWorkersApiAvailable: false,
   };
 
   if (!wranglerInstalled || !auth.isLoggedIn) {
@@ -461,15 +483,15 @@ export async function getSetupCapabilityDiagnostics(
 
   if (auth.accountId) {
     try {
-      const pagesResponse = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${auth.accountId}/pages/projects?per_page=1`,
+      const workersResponse = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${auth.accountId}/workers/scripts`,
         {
           headers: {
             Authorization: `Bearer ${tokenInfo.token}`,
           },
         }
       );
-      baseDiagnostics.pagesReadAvailable = pagesResponse.ok;
+      baseDiagnostics.uiWorkersApiAvailable = workersResponse.ok;
     } catch {
       // Keep default false; this is an estimate only.
     }
@@ -1344,7 +1366,8 @@ export async function ensureWildcardDnsRecord(
 
 export async function ensureWildcardDnsForMultiTenant(
   cfg: Partial<AuthrimConfig> | null | undefined,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  verifyPublicDns: (baseDomain: string) => Promise<boolean> = verifyWildcardDnsPublicResolution
 ): Promise<void> {
   const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
   if (!baseDomain) {
@@ -1359,12 +1382,39 @@ export async function ensureWildcardDnsForMultiTenant(
   } else if (result.updated) {
     onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
   } else if (result.verificationLimited) {
+    if (await verifyPublicDns(baseDomain)) {
+      onProgress?.(`✓ Wildcard DNS resolves publicly: ${result.name} -> ${result.target}`);
+      return;
+    }
     throw new Error(
       `Token lacks zone:read or dns:edit permission to verify/create wildcard DNS record for ${result.name}`
     );
   } else {
     onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
   }
+}
+
+export async function verifyWildcardDnsPublicResolution(baseDomain: string): Promise<boolean> {
+  const hostname = `authrim-wildcard-check-${Date.now()}.${baseDomain}`;
+
+  const attempts = [
+    () => resolveCname(hostname),
+    () => resolve4(hostname),
+    () => resolve6(hostname),
+  ] as const;
+
+  for (const attempt of attempts) {
+    try {
+      const records = await attempt();
+      if (records.length > 0) {
+        return true;
+      }
+    } catch {
+      // Try the next record type.
+    }
+  }
+
+  return false;
 }
 
 // =============================================================================
@@ -1538,12 +1588,27 @@ export async function executeD1Migration(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
-    await wrangler(['d1', 'execute', dbName, '--remote', '--file', sqlFilePath, '--yes']);
+    const { readFileSync } = await import('node:fs');
+    const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
+    const tempSqlPath = pathJoin(
+      tmpdir(),
+      `authrim-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`
+    );
+    await writeFile(tempSqlPath, renderedSql, 'utf-8');
+    try {
+      await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes']);
+    } finally {
+      await unlink(tempSqlPath).catch(() => {});
+    }
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Ignore "already exists" errors - migration may have been partially applied
-    if (message.includes('already exists') || message.includes('UNIQUE constraint')) {
+    if (
+      message.includes('already exists') ||
+      message.includes('duplicate column name') ||
+      message.includes('UNIQUE constraint')
+    ) {
       onProgress?.('  ⚠️ Migration already applied (skipped)');
       return { success: true };
     }
@@ -1613,8 +1678,19 @@ async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
 /**
  * Record a migration filename as applied.
  */
+export function buildRecordMigrationSql(filename: string, appliedAt = Date.now()): string {
+  const escapedFilename = filename.replace(/'/g, "''");
+  return `INSERT INTO authrim_migrations (filename, applied_at)
+SELECT '${escapedFilename}', ${appliedAt}
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM authrim_migrations
+  WHERE filename = '${escapedFilename}'
+);`;
+}
+
 async function recordMigration(dbName: string, filename: string): Promise<void> {
-  const sql = `INSERT OR IGNORE INTO authrim_migrations (filename, applied_at) VALUES ('${filename.replace(/'/g, "''")}', ${Date.now()});`;
+  const sql = buildRecordMigrationSql(filename);
   try {
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
   } catch {
@@ -1701,6 +1777,7 @@ function sqlString(value: string): string {
  * tenant must be inserted so host-based tenant resolution succeeds.
  */
 export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
+  const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantCode = tenantId;
   const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
@@ -1719,23 +1796,27 @@ SET id = ${tenantIdSql},
     tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     is_active = 1,
-    updated_at = unixepoch()
+    updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = 'default'
   AND ${tenantIdSql} <> 'default'
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
   AND (SELECT COUNT(*) FROM tenants) = 1;
 
-INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
+INSERT INTO tenants (
+  id, tenant_code, name, description, is_active, is_default,
+  default_tenant_guard, created_at, updated_at
+)
 SELECT ${tenantIdSql}, ${tenantCodeSql}, ${displayNameSql}, NULL, 1,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
-       unixepoch(), unixepoch()
+       CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
+       ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
 WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
 
 UPDATE tenants
 SET tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     is_active = 1,
-    updated_at = unixepoch()
+    updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = ${tenantIdSql};
 `.trim();
 }
@@ -1749,6 +1830,7 @@ WHERE id = ${tenantIdSql};
  * assign `super_admin` without failing.
  */
 export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
+  const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantIdSql = sqlString(tenantId);
 
@@ -1777,8 +1859,8 @@ SELECT
   hierarchy_level,
   role_type,
   is_system,
-  unixepoch() * 1000,
-  unixepoch() * 1000,
+  ${sqlExpr.nowEpochMilliseconds},
+  ${sqlExpr.nowEpochMilliseconds},
   inherits_from
 FROM admin_roles
 WHERE tenant_id = 'default'
@@ -1799,6 +1881,18 @@ export interface InitialTenantBootstrapResult {
 
 export interface InitialAdminRolesBootstrapResult {
   success: boolean;
+  error?: string;
+}
+
+export interface SetupMachineAccessBootstrapResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface RuntimeProfileSeedResult {
+  success: boolean;
+  seededCount: number;
+  backend: 'kv' | 'database';
   error?: string;
 }
 
@@ -1883,6 +1977,232 @@ export async function ensureInitialAdminRolesInD1(
 }
 
 /**
+ * Ensure the setup tool machine principal and public JWK credential exist in DB_ADMIN.
+ */
+export async function ensureSetupMachineAccessInD1(
+  env: string,
+  config: AuthrimConfig,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    const publicJwk = await loadSetupMachinePublicJwk(keysDir);
+    const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
+
+    onProgress?.(`🔧 Ensuring setup machine access exists in ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Setup machine access bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    onProgress?.('  ✅ Setup machine access ready');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Setup machine access bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Ensure the Admin UI BFF machine principal and public JWK credential exist in DB_ADMIN.
+ */
+export async function ensureAdminUiBffMachineAccessInD1(
+  env: string,
+  config: AuthrimConfig,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    const publicJwk = await loadAdminUiBffPublicJwk(keysDir);
+    const sql = buildAdminUiBffMachineAccessBootstrapSql(config, publicJwk);
+
+    onProgress?.(`🔧 Ensuring Admin UI BFF machine access exists in ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Admin UI BFF machine access bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    onProgress?.('  ✅ Admin UI BFF machine access ready');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Admin UI BFF machine access bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+type SeededRuntimeProfile = {
+  kind: 'storage' | 'audit' | 'residency';
+  id: string;
+  payload: Record<string, unknown>;
+};
+
+function collectSeededRuntimeProfiles(config: AuthrimConfig): SeededRuntimeProfile[] {
+  const seeded: SeededRuntimeProfile[] = [];
+  for (const profile of config.profiles?.seed?.storage ?? []) {
+    seeded.push({
+      kind: 'storage',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'storage',
+        builtin: false,
+      },
+    });
+  }
+  for (const profile of config.profiles?.seed?.audit ?? []) {
+    seeded.push({
+      kind: 'audit',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'audit',
+        builtin: false,
+      },
+    });
+  }
+  for (const profile of config.profiles?.seed?.residency ?? []) {
+    seeded.push({
+      kind: 'residency',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'residency',
+        builtin: false,
+      },
+    });
+  }
+  return seeded;
+}
+
+export function buildRuntimeProfileSeedSql(config: AuthrimConfig): string | null {
+  const seeded = collectSeededRuntimeProfiles(config);
+  if (seeded.length === 0) {
+    return null;
+  }
+
+  return seeded
+    .map((profile) => {
+      const payloadSql = sqlString(JSON.stringify(profile.payload));
+      const kindSql = sqlString(profile.kind);
+      const idSql = sqlString(profile.id);
+      return `
+UPDATE profile_registry
+SET payload_json = ${payloadSql},
+    updated_at = CURRENT_TIMESTAMP
+WHERE kind = ${kindSql}
+  AND id = ${idSql};
+
+INSERT INTO profile_registry (id, kind, payload_json, created_at, updated_at)
+SELECT ${idSql}, ${kindSql}, ${payloadSql}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM profile_registry
+  WHERE kind = ${kindSql}
+    AND id = ${idSql}
+);`.trim();
+    })
+    .join('\n\n');
+}
+
+export async function seedRuntimeProfiles(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<RuntimeProfileSeedResult> {
+  const seeded = collectSeededRuntimeProfiles(config);
+  if (seeded.length === 0) {
+    return {
+      success: true,
+      seededCount: 0,
+      backend: config.profiles?.registry?.backend ?? 'kv',
+    };
+  }
+
+  const backend = config.profiles?.registry?.backend ?? 'kv';
+
+  try {
+    if (backend === 'database') {
+      const dbName = getD1DatabaseName(env, 'core-db');
+      const sql = buildRuntimeProfileSeedSql(config);
+      if (!sql) {
+        return { success: true, seededCount: 0, backend };
+      }
+
+      onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
+      const { stdout, stderr } = await wrangler([
+        'd1',
+        'execute',
+        dbName,
+        '--remote',
+        '--yes',
+        '--command',
+        sql,
+      ]);
+
+      const combined = (stdout + '\n' + stderr).toLowerCase();
+      if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+        const errorDetail = stderr || stdout;
+        onProgress?.(`  ❌ Runtime profile seed failed: ${errorDetail}`);
+        return { success: false, seededCount: 0, backend, error: errorDetail };
+      }
+
+      onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
+      return { success: true, seededCount: seeded.length, backend };
+    }
+
+    onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into AUTHRIM_CONFIG KV...`);
+    for (const profile of seeded) {
+      await wrangler([
+        'kv',
+        'key',
+        'put',
+        `profile-registry:${profile.kind}:${profile.id}`,
+        JSON.stringify(profile.payload),
+        '--env',
+        env,
+        '--binding',
+        'AUTHRIM_CONFIG',
+      ]);
+    }
+
+    onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
+    return { success: true, seededCount: seeded.length, backend };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Runtime profile seed failed: ${message}`);
+    return { success: false, seededCount: 0, backend, error: message };
+  }
+}
+
+/**
  * Run migrations for an Authrim environment
  *
  * Searches for migrations directory in multiple locations:
@@ -1897,7 +2217,8 @@ export async function ensureInitialAdminRolesInD1(
 export async function runMigrationsForEnvironment(
   env: string,
   rootDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  config?: MigrationProfileConfig
 ): Promise<{
   success: boolean;
   core: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -1974,6 +2295,27 @@ export async function runMigrationsForEnvironment(
     }
   }
 
+  let coreMirrorResult: {
+    success: boolean;
+    appliedCount: number;
+    skippedCount: number;
+    error?: string;
+  } | null = null;
+
+  if (shouldMirrorPiiMigrationsToCore(config) && existsSync(piiMigrationsDir)) {
+    onProgress?.(`📜 Mirroring PII migrations into ${coreDbName} for single-db profile...`);
+    coreMirrorResult = await runD1Migrations(coreDbName, piiMigrationsDir, onProgress);
+    if (!coreMirrorResult.success) {
+      onProgress?.(`  ❌ Core mirror migration failed: ${coreMirrorResult.error}`);
+    } else {
+      coreResult.appliedCount += coreMirrorResult.appliedCount;
+      coreResult.skippedCount += coreMirrorResult.skippedCount;
+      onProgress?.(
+        `  ✅ Mirrored ${coreMirrorResult.appliedCount} PII migrations into core (${coreMirrorResult.skippedCount} skipped)`
+      );
+    }
+  }
+
   // Run Admin database migrations
   const adminMigrationsDir = join(migrationsRoot, 'admin');
   onProgress?.(`📜 Running migrations for ${adminDbName}...`);
@@ -1994,8 +2336,16 @@ export async function runMigrationsForEnvironment(
   }
 
   return {
-    success: coreResult.success && piiResult.success && adminResult.success,
-    core: coreResult,
+    success:
+      coreResult.success &&
+      (coreMirrorResult?.success ?? true) &&
+      piiResult.success &&
+      adminResult.success,
+    core: {
+      ...coreResult,
+      success: coreResult.success && (coreMirrorResult?.success ?? true),
+      error: coreMirrorResult?.error ?? coreResult.error,
+    },
     pii: piiResult,
     admin: adminResult,
   };
@@ -2381,7 +2731,12 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     if (options.runMigrations !== false && options.rootDir) {
       onProgress('📜 Running database migrations...');
 
-      const migrationsResult = await runMigrationsForEnvironment(env, options.rootDir, onProgress);
+      const migrationsResult = await runMigrationsForEnvironment(
+        env,
+        options.rootDir,
+        onProgress,
+        options.config
+      );
 
       if (!migrationsResult.success) {
         const errors = [];
@@ -2474,6 +2829,48 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     } catch (error) {
       onProgress(`  ⚠️ Skipped: ${diagnosticBucketName} - ${sanitizeError(error)}`);
     }
+
+    const importArtifactsBucketName = `${env}-import-artifacts`;
+    onProgress(`  ⏳ Creating: ${importArtifactsBucketName}...`);
+
+    try {
+      const result = await createR2Bucket(importArtifactsBucketName);
+      resources.r2.push({
+        binding: 'IMPORT_ARTIFACTS',
+        name: result.name,
+      });
+      onProgress(`  ✅ ${importArtifactsBucketName} created`);
+    } catch (error) {
+      onProgress(`  ⚠️ Skipped: ${importArtifactsBucketName} - ${sanitizeError(error)}`);
+    }
+
+    const exportArtifactsBucketName = `${env}-export-artifacts`;
+    onProgress(`  ⏳ Creating: ${exportArtifactsBucketName}...`);
+
+    try {
+      const result = await createR2Bucket(exportArtifactsBucketName);
+      resources.r2.push({
+        binding: 'EXPORT_ARTIFACTS',
+        name: result.name,
+      });
+      onProgress(`  ✅ ${exportArtifactsBucketName} created`);
+    } catch (error) {
+      onProgress(`  ⚠️ Skipped: ${exportArtifactsBucketName} - ${sanitizeError(error)}`);
+    }
+
+    const sensitiveDetailsBucketName = `${env}-sensitive-details`;
+    onProgress(`  ⏳ Creating: ${sensitiveDetailsBucketName}...`);
+
+    try {
+      const result = await createR2Bucket(sensitiveDetailsBucketName);
+      resources.r2.push({
+        binding: 'SENSITIVE_DETAILS',
+        name: result.name,
+      });
+      onProgress(`  ✅ ${sensitiveDetailsBucketName} created`);
+    } catch (error) {
+      onProgress(`  ⚠️ Skipped: ${sensitiveDetailsBucketName} - ${sanitizeError(error)}`);
+    }
     onProgress('');
   }
 
@@ -2535,13 +2932,13 @@ export function toResourceIds(resources: ProvisionedResources): {
  */
 const AUTHRIM_PATTERNS = {
   worker:
-    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy)$/,
+    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
   d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs)$/,
-  // Pages projects: {env}-ar-admin-ui, {env}-ar-login-ui
+  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts|export-artifacts|sensitive-details)$/,
+  // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
 
@@ -2630,7 +3027,7 @@ export async function listQueues(): Promise<Array<{ name: string; id?: string }>
 }
 
 /**
- * List Pages projects
+ * List legacy Pages projects
  */
 export async function listPagesProjects(): Promise<Array<{ name: string }>> {
   try {
@@ -2667,7 +3064,7 @@ export async function listPagesProjects(): Promise<Array<{ name: string }>> {
 }
 
 /**
- * Delete a Pages project
+ * Delete a legacy Pages project
  */
 export async function deletePagesProject(name: string): Promise<boolean> {
   try {
@@ -2843,21 +3240,23 @@ export async function detectEnvironments(
     progress(`  ⚠️ Could not scan R2: ${error instanceof Error ? error.message : error}`);
   }
 
-  progress('Scanning Pages projects...');
+  progress('Scanning legacy Pages projects...');
   try {
     const pagesProjects = await listPagesProjects();
     for (const project of pagesProjects) {
       const match = project.name.match(AUTHRIM_PATTERNS.pages);
       if (match) {
         const env = match[1].toLowerCase();
-        // Only attach Pages to environments that already have Workers or D1
+        // Only attach legacy Pages projects to environments that already have Workers or D1
         if (environments.has(env)) {
           environments.get(env)!.pages.push({ name: project.name });
         }
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan Pages: ${error instanceof Error ? error.message : error}`);
+    progress(
+      `  ⚠️ Could not scan legacy Pages projects: ${error instanceof Error ? error.message : error}`
+    );
   }
 
   // Filter: only keep environments that have actual Workers or D1 databases
@@ -3096,9 +3495,9 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress('');
   }
 
-  // Delete Pages projects
+  // Delete legacy Pages projects
   if (deletePages && envInfo.pages.length > 0) {
-    onProgress(`📄 Deleting Pages Projects (${envInfo.pages.length})...`);
+    onProgress(`📄 Deleting legacy Pages Projects (${envInfo.pages.length})...`);
     for (const project of envInfo.pages) {
       onProgress(`  ⏳ Deleting: ${project.name}...`);
       const success = await deletePagesProject(project.name);
@@ -3106,7 +3505,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         deleted.pages.push(project.name);
         onProgress(`  ✅ ${project.name}`);
       } else {
-        errors.push(`Failed to delete Pages: ${project.name}`);
+        errors.push(`Failed to delete legacy Pages project: ${project.name}`);
         onProgress(`  ❌ ${project.name}`);
       }
     }

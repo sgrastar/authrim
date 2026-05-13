@@ -155,8 +155,8 @@ const en: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI deployment method',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Deploy to Cloudflare Pages (recommended)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Deploy to Cloudflare Workers (recommended)',
   'ui.customOption': 'Custom domain',
   'ui.customDesc': 'Use your own hosting',
   'ui.skipOption': 'Skip',
@@ -750,7 +750,7 @@ const en: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'Login UI',
-  'web.config.loginUiDesc': 'Pre-built authentication UI deployed to Cloudflare Pages.',
+  'web.config.loginUiDesc': 'Pre-built authentication UI deployed to Cloudflare Workers.',
   'web.config.adminUi': 'Admin UI',
   'web.config.adminUiDesc': 'Management dashboard for users, clients, and settings.',
 
@@ -759,9 +759,9 @@ const en: Translations = {
   'web.url.apiDomain': 'API Domain',
   'web.url.apiDomainHint': 'Leave empty to use workers.dev subdomain',
   'web.url.loginDomain': 'Login UI Domain',
-  'web.url.loginDomainHint': 'Leave empty to use pages.dev subdomain',
+  'web.url.loginDomainHint': 'Leave empty to use workers.dev subdomain',
   'web.url.adminDomain': 'Admin UI Domain',
-  'web.url.adminDomainHint': 'Leave empty to use pages.dev subdomain',
+  'web.url.adminDomainHint': 'Leave empty to use workers.dev subdomain',
 
   // Web UI Database
   'web.db.title': 'Database Configuration',
@@ -925,7 +925,7 @@ const en: Translations = {
   'web.section.apiDomain': 'API / Issuer Domain',
   'web.section.uiDomains': 'UI Domains (Optional)',
   'web.section.uiDomainsHint':
-    'Custom domains for Login/Admin UIs. Each can be set independently. Leave empty to use Cloudflare Pages default.',
+    'Custom domains for Login/Admin UIs. Each can be set independently. Leave empty to use Cloudflare Workers default.',
   'web.section.corsHint':
     'CORS: Cross-origin requests from Login/Admin UI to API are automatically allowed.',
   'web.section.configPreview': 'Configuration Preview',
@@ -937,7 +937,7 @@ const en: Translations = {
   'web.preview.issuerUrl': 'Issuer URL:',
   'web.preview.loginUi': 'Login UI:',
   'web.preview.adminUi': 'Admin UI:',
-  'web.preview.pagesUrl': 'Login UI (Pages):',
+  'web.preview.pagesUrl': 'Login UI (Worker):',
   'web.preview.tenantDiscover': 'Tenant Selection (Common Entry):',
   'web.preview.adminAccess': 'Admin UI Access:',
   'web.preview.firstTenant': '{{name}} (Primary Tenant)',
@@ -997,8 +997,17 @@ const en: Translations = {
     'Used for sending Mail OTP and email address verification. You can configure this later if you prefer.',
   'web.email.configureLater': 'Configure later',
   'web.email.configureLaterHint': 'Skip for now and configure later.',
+  'web.email.configureCloudflare': 'Configure Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Use the native Workers Email Service binding. Requires a Workers Paid plan and Cloudflare DNS.',
   'web.email.configureResend': 'Configure Resend',
   'web.email.configureResendHint': 'Set up email sending with Resend (recommended for production).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Requirements',
+  'web.email.cloudflareRequirementPaid': 'Workers Paid Plan is required',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS/domain onboarding is required',
+  'web.email.cloudflareRequirementManual':
+    'Domain setup in the Cloudflare dashboard is still manual',
   'web.email.resendSetup': 'Resend Configuration',
   'web.email.beforeBegin': 'Before you begin:',
   'web.email.step1': 'Create a Resend account at',
@@ -1006,10 +1015,17 @@ const en: Translations = {
   'web.email.step3': 'Create an API key at',
   'web.email.resendApiKey': 'Resend API Key',
   'web.email.resendApiKeyHint': 'Your API key starts with "re_"',
+  'web.email.resendApiKeyMissing': 'Please enter your Resend API key',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API key does not start with "re_". This may not be a valid Resend API key. Continue anyway?',
   'web.email.fromEmailAddress': 'From Email Address',
+  'web.email.cloudflareFromHint': 'Must be from a domain onboarded to Cloudflare Email Service',
   'web.email.fromEmailHint': 'Must be from a verified domain in your Resend account',
+  'web.email.fromEmailMissing': 'Please enter a From email address',
+  'web.email.fromEmailInvalid': 'Please enter a valid email address',
   'web.email.fromDisplayName': 'From Display Name (optional)',
   'web.email.fromDisplayHint': 'Displayed as the sender name in email clients',
+  'web.email.saveConfigFailed': 'Failed to save email configuration',
   'web.email.domainVerificationTitle': 'Domain Verification Required',
   'web.email.domainVerificationDesc':
     'Before your domain is verified, emails can only be sent from onboarding@resend.dev (for testing).',
@@ -1051,7 +1067,35 @@ const en: Translations = {
   'web.envDetail.kvNamespaces': 'KV Namespaces',
   'web.envDetail.queues': 'Queues',
   'web.envDetail.r2Buckets': 'R2 Buckets',
-  'web.envDetail.pagesProjects': 'Pages Projects',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'Email Settings',
+  'web.envDetail.emailDesc':
+    'Enable Cloudflare Email Service later for this environment. This updates .authrim, regenerates wrangler bindings, uploads email secrets, and redeploys ar-auth and ar-management.',
+  'web.envDetail.emailCurrentProvider': 'Current Provider',
+  'web.envDetail.emailCurrentStatus': 'Status',
+  'web.envDetail.emailCurrentFrom': 'From Address',
+  'web.envDetail.emailConfigured': 'Configured',
+  'web.envDetail.emailNotConfigured': 'Not configured',
+  'web.envDetail.emailProviderNone': 'Not configured',
+  'web.envDetail.emailCloudflareRequirements': 'Requirements',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan is required',
+  'web.envDetail.emailCloudflareRequirementDns': 'Cloudflare DNS/domain onboarding is required',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Domain setup in the Cloudflare dashboard is still manual',
+  'web.envDetail.emailCloudflareFromHint':
+    'Must be from a domain onboarded to Cloudflare Email Service.',
+  'web.envDetail.emailFromAddress': 'From Email Address',
+  'web.envDetail.emailFromName': 'From Display Name (optional)',
+  'web.envDetail.emailEnableCloudflare': 'Enable Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Applying...',
+  'web.envDetail.emailProgress': 'Email Setup Progress:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email enabled.',
+  'web.envDetail.emailUpdateFailed': 'Failed to enable Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Please enter a From email address.',
+  'web.envDetail.emailFromInvalid': 'Please enter a valid email address.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'This environment already has another email provider configured. Switch it to Cloudflare Email Service?',
+  'web.envDetail.emailStarting': 'Starting Cloudflare Email setup...',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Update All Workers',
@@ -1072,9 +1116,9 @@ const en: Translations = {
   'web.envDetail.action': 'Action',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Update UI (Pages)',
+  'web.envDetail.uiUpdate': 'Update UI (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.',
+    'Update Admin UI or Login UI individually. These are deployed to Cloudflare Workers.',
   'web.envDetail.updateNow': 'Update',
 
   // Web UI Delete Section
@@ -1088,7 +1132,7 @@ const en: Translations = {
   'web.delete.kvNamespaces': 'KV Namespaces',
   'web.delete.queues': 'Queues',
   'web.delete.r2Buckets': 'R2 Buckets',
-  'web.delete.pagesProjects': 'Pages Projects',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Cancel',
   'web.delete.confirmBtn': 'Delete Selected',
 

@@ -16,6 +16,12 @@ tags:
 Load testing framework for Authrim OIDC Provider using K6.
 
 > **See also**: [Testing Guide](../docs/getting-started/testing.md) for unit tests, E2E tests, conformance tests, and other test types.
+>
+> **Scope note**:
+> - This folder is primarily for throughput / capacity benchmarking.
+> - Some benchmark or seed flows assume benchmark-only helpers or permissive preconditions that are not always available in a hardened deployed environment.
+> - For generated/deployed env validation against supported APIs only, use
+>   `test/environment-validation/load-generated-live-safe.ts`.
 
 ## Table of Contents
 
@@ -118,6 +124,23 @@ k6 run \
   --env PRESET=rps500 \
   scripts/benchmarks/test-userinfo-benchmark.js
 ```
+
+### 2b. Run the deployed-env live-safe load check
+
+If you want to exercise a real generated/deployed environment without relying on benchmark-only helpers, use:
+
+```bash
+pnpm exec tsx test/environment-validation/load-generated-live-safe.ts --env single --profile safe
+pnpm exec tsx test/environment-validation/load-generated-live-safe.ts --config /path/to/.authrim/single/config.json --profile medium --json
+```
+
+This runner:
+
+- uses supported public/admin/token/product APIs only
+- bootstraps a real approval/grant/protected-resource context
+- checks load, abuse, and concurrency behavior
+- records latency, status mix, and `retry_after`
+- is meant for resilience validation, not capacity sizing
 
 ### 3. Collect Cloudflare Analytics
 
@@ -246,6 +269,7 @@ All seed scripts are in `scripts/seeds/`. Create a test client first via Admin A
 ```bash
 curl -X POST "https://your-authrim.example.com/api/admin/clients" \
   -H "Authorization: Bearer YOUR_ADMIN_API_SECRET" \
+  -H "X-Tenant-Id: default" \
   -H "Content-Type: application/json" \
   -d '{
     "client_name": "Load Test Client",
@@ -261,13 +285,19 @@ curl -X POST "https://your-authrim.example.com/api/admin/clients" \
 
 | Script                   | Required Env Vars                                            | Optional                                       | Description                             |
 | ------------------------ | ------------------------------------------------------------ | ---------------------------------------------- | --------------------------------------- |
-| `seed-access-tokens.js`  | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TOKEN_COUNT` (1000), `CONCURRENCY` (20)       | Tokens for introspect/exchange/userinfo |
-| `seed-otp-users.js`      | `BASE_URL`, `ADMIN_API_SECRET`                               | `OTP_USER_COUNT` (500), `CONCURRENCY` (20)     | Users for OTP login / silent auth       |
-| `seed-passkey-users.js`  | `BASE_URL`, `ADMIN_API_SECRET`                               | `PASSKEY_USER_COUNT` (100), `CONCURRENCY` (10) | Users with passkey credentials          |
-| `seed-refresh-tokens.js` | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `COUNT` (120)                                  | Refresh tokens for rotation tests       |
-| `seed-authcodes.js`      | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `AUTH_CODE_COUNT` (200)                        | Authorization codes                     |
+| `seed-access-tokens.js`  | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `TOKEN_COUNT` (1000), `CONCURRENCY` (20)       | Tokens for introspect/exchange/userinfo |
+| `seed-otp-users.js`      | `BASE_URL`, `ADMIN_API_SECRET`                               | `TENANT_ID` (`default`), `OTP_USER_COUNT` (500), `CONCURRENCY` (20)     | Users for OTP login / silent auth       |
+| `seed-passkey-users.js`  | `BASE_URL`, `ADMIN_API_SECRET`                               | `TENANT_ID` (`default`), `PASSKEY_USER_COUNT` (100), `CONCURRENCY` (10) | Users with passkey credentials          |
+| `seed-refresh-tokens.js` | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `COUNT` (120)                                  | Refresh tokens for rotation tests       |
+| `seed-authcodes.js`      | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `AUTH_CODE_COUNT` (200)                        | Authorization codes                     |
 
 **Token Mix** (`seed-access-tokens.js`): Valid 60%, Token Exchange 5%, Expired 12%, Revoked 12%, Wrong Audience 6%, Wrong Client 5%
+
+Notes:
+
+- Even in a single-tenant generated environment such as `single`, admin seed APIs still require
+  `X-Tenant-Id: default`.
+- The seed scripts above now accept `TENANT_ID` and attach that header automatically.
 
 ---
 

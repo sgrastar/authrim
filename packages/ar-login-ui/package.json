@@ -21,8 +21,8 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"typecheck": "svelte-check --tsconfig ./tsconfig.json",
-		"deploy:preview": "pnpm build && wrangler pages deploy .svelte-kit/cloudflare",
-		"deploy:production": "pnpm build && wrangler pages deploy .svelte-kit/cloudflare --branch=main",
+		"deploy:preview": "pnpm build && wrangler deploy",
+		"deploy:production": "pnpm build && wrangler deploy",
 		"typesafe-i18n": "typesafe-i18n"
 	},
 	"devDependencies": {
@@ -57,6 +57,7 @@
 		"vitest": "^4.0.13"
 	},
 	"dependencies": {
+		"@authrim/core": "^0.1.17",
 		"@simplewebauthn/browser": "^13.2.2",
 		"qrcode": "^1.5.4"
 	}

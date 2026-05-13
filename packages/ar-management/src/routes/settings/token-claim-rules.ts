@@ -14,10 +14,7 @@
 
 import type { Context } from 'hono';
 import {
-  D1Adapter,
   getLogger,
-  getTenantIdFromContext,
-  type DatabaseAdapter,
   type TokenClaimRule,
   type TokenClaimRuleRow,
   type TokenClaimRuleInput,
@@ -30,6 +27,7 @@ import {
   createTokenClaimEvaluator,
   testTokenClaimRule,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
@@ -114,7 +112,7 @@ function validateRuleInput(input: TokenClaimRuleInput): {
 }
 
 function resolveTenantId(c: Context): string {
-  return c.req.query('tenantId') || getTenantIdFromContext(c as never);
+  return resolveSettingsTenantId(c);
 }
 
 // =============================================================================
@@ -150,7 +148,7 @@ export async function createTokenClaimRule(c: Context) {
   const id = `tcr_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if name already exists
@@ -248,7 +246,7 @@ export async function listTokenClaimRules(c: Context) {
   const isActive = c.req.query('is_active');
   const tokenType = c.req.query('token_type') as TokenType | undefined;
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     let whereClause = 'WHERE tenant_id = ?';
@@ -272,18 +270,15 @@ export async function listTokenClaimRules(c: Context) {
     const total = countResult?.count ?? 0;
 
     // Get rules
-    const result = await c.env.DB.prepare(
+    const rows = await coreAdapter.query<TokenClaimRuleRow>(
       `SELECT * FROM token_claim_rules ${whereClause}
        ORDER BY priority DESC, created_at ASC
-       LIMIT ? OFFSET ?`
-    )
-      .bind(...[...values, limit, offset])
-      .all();
-
-    const rules = ((result.results || []) as TokenClaimRuleRow[]).map(rowToRule);
+       LIMIT ? OFFSET ?`,
+      [...values, limit, offset]
+    );
 
     return c.json({
-      rules,
+      rules: rows.map(rowToRule),
       total,
       limit,
       offset,
@@ -309,7 +304,7 @@ export async function getTokenClaimRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveTenantId(c);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const row = await coreAdapter.queryOne<TokenClaimRuleRow>(
@@ -350,7 +345,7 @@ export async function updateTokenClaimRule(c: Context) {
   const tenantId = resolveTenantId(c);
   const body = await c.req.json<Partial<TokenClaimRuleInput>>();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if rule exists
@@ -483,7 +478,7 @@ export async function deleteTokenClaimRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveTenantId(c);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const result = await coreAdapter.execute(
@@ -546,7 +541,7 @@ export async function testTokenClaimRuleHandler(c: Context) {
     };
   }>();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get rule
@@ -635,7 +630,7 @@ export async function evaluateTokenClaimRules(c: Context) {
     };
 
     // Create evaluator and run
-    const evaluator = createTokenClaimEvaluator(c.env.DB, c.env.SETTINGS);
+    const evaluator = createTokenClaimEvaluator(resolveSettingsCoreAdapter(c), c.env.SETTINGS);
     const result = await evaluator.evaluate(evalContext, body.token_type);
 
     return c.json({

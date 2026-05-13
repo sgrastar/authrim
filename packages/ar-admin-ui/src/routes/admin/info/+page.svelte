@@ -15,7 +15,13 @@
 
 	// React to tenant switching
 	$effect(() => {
-		const tenantId = settingsContext.tenantId;
+		const tenantId =
+			settingsContext.current.tenantId?.trim() || settingsContext.availableTenants[0]?.id?.trim();
+		if (!tenantId) {
+			loading = false;
+			info = null;
+			return;
+		}
 		loadInfo(tenantId);
 	});
 

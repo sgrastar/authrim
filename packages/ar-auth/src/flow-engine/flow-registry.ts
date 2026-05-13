@@ -2,19 +2,20 @@
  * FlowRegistry - Flow定義の取得・管理
  *
  * 責務:
- * - D1からのカスタムFlow取得（Admin UI経由）
+ * - relational store からのカスタムFlow取得（Admin UI経由）
  * - ビルトインFlowの取得
  * - KVからのカスタムFlow取得（レガシー）
  *
  * 優先順位:
- * 1. D1: client-specific flow (tenant_id + client_id + profile_id)
- * 2. D1: tenant default flow (tenant_id + profile_id, client_id = NULL)
+ * 1. relational store: client-specific flow (tenant_id + client_id + profile_id)
+ * 2. relational store: tenant default flow (tenant_id + profile_id, client_id = NULL)
  * 3. ビルトインFlow
  * 4. KV: カスタムFlow（レガシー）
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
 
+import { ensureDatabaseAdapter, type DatabaseSource } from '@authrim/ar-lib-core';
 import type { GraphDefinition } from './types';
 import { BUILTIN_FLOWS, getBuiltinFlow } from './flows/login-flow';
 
@@ -33,8 +34,8 @@ export type FlowType = 'login' | 'authorization' | 'consent' | 'logout';
 export interface FlowRegistryOptions {
   /** KVNamespace（カスタムFlow用、レガシー） */
   kv?: KVNamespace;
-  /** D1Database（推奨: Admin UIからのカスタムFlow） */
-  db?: D1Database;
+  /** DatabaseSource（推奨: Admin UIからのカスタムFlow） */
+  db?: DatabaseSource;
 }
 
 // =============================================================================
@@ -46,12 +47,12 @@ export interface FlowRegistryOptions {
  *
  * ヘッドレス運用対応:
  * - ビルトインFlowのみでも動作
- * - D1が設定されていればAdmin UIからのカスタムFlowを取得
+ * - relational store が設定されていればAdmin UIからのカスタムFlowを取得
  * - KVが設定されていればレガシーカスタムFlowも取得可能
  */
 export class FlowRegistry {
   private kv?: KVNamespace;
-  private db?: D1Database;
+  private db?: DatabaseSource;
 
   constructor(options: FlowRegistryOptions = {}) {
     this.kv = options.kv;
@@ -62,8 +63,8 @@ export class FlowRegistry {
    * FlowTypeからGraphDefinitionを取得
    *
    * 優先順位:
-   * 1. D1: client-specific flow (tenant_id + client_id + profile_id)
-   * 2. D1: tenant default flow (tenant_id + profile_id, client_id = NULL)
+   * 1. Database: client-specific flow (tenant_id + client_id + profile_id)
+   * 2. Database: tenant default flow (tenant_id + profile_id, client_id = NULL)
    * 3. ビルトインFlow
    * 4. KV: カスタムFlow（レガシー）
    *
@@ -80,17 +81,17 @@ export class FlowRegistry {
     // profileIdを解決（flowType → profileId）
     const profileId = this.flowTypeToProfileId(flowType);
 
-    // 1. D1: client-specific flow
+    // 1. Database: client-specific flow
     if (this.db && tenantId && clientId) {
-      const clientFlow = await this.getFlowFromD1(tenantId, profileId, clientId);
+      const clientFlow = await this.getFlowFromDatabase(tenantId, profileId, clientId);
       if (clientFlow) {
         return clientFlow;
       }
     }
 
-    // 2. D1: tenant default flow
+    // 2. Database: tenant default flow
     if (this.db && tenantId) {
-      const tenantFlow = await this.getFlowFromD1(tenantId, profileId, null);
+      const tenantFlow = await this.getFlowFromDatabase(tenantId, profileId, null);
       if (tenantFlow) {
         return tenantFlow;
       }
@@ -155,13 +156,13 @@ export class FlowRegistry {
   }
 
   /**
-   * D1からFlow定義を取得
+   * Database から Flow 定義を取得
    *
    * @param tenantId - テナントID
    * @param profileId - プロファイルID
    * @param clientId - クライアントID（NULLの場合はテナントデフォルト）
    */
-  private async getFlowFromD1(
+  private async getFlowFromDatabase(
     tenantId: string,
     profileId: string,
     clientId: string | null
@@ -171,32 +172,27 @@ export class FlowRegistry {
     }
 
     try {
-      let result: D1Result<{ graph_definition: string }>;
+      const adapter = ensureDatabaseAdapter(this.db, 'flow-registry');
+      let rows: Array<{ graph_definition: string }>;
 
       if (clientId) {
-        // client-specific flow
-        result = await this.db
-          .prepare(
-            `SELECT graph_definition FROM flows
+        rows = await adapter.query<{ graph_definition: string }>(
+          `SELECT graph_definition FROM flows
              WHERE tenant_id = ? AND profile_id = ? AND client_id = ?
-             AND is_active = 1`
-          )
-          .bind(tenantId, profileId, clientId)
-          .all();
+             AND is_active = 1`,
+          [tenantId, profileId, clientId]
+        );
       } else {
-        // tenant default flow (client_id IS NULL)
-        result = await this.db
-          .prepare(
-            `SELECT graph_definition FROM flows
+        rows = await adapter.query<{ graph_definition: string }>(
+          `SELECT graph_definition FROM flows
              WHERE tenant_id = ? AND profile_id = ? AND client_id IS NULL
-             AND is_active = 1`
-          )
-          .bind(tenantId, profileId)
-          .all();
+             AND is_active = 1`,
+          [tenantId, profileId]
+        );
       }
 
-      if (result.results.length > 0) {
-        const row = result.results[0];
+      if (rows.length > 0) {
+        const row = rows[0];
         const graphDef = JSON.parse(row.graph_definition);
 
         if (this.isValidGraphDefinition(graphDef)) {
@@ -208,7 +204,7 @@ export class FlowRegistry {
     } catch (error) {
       // セキュリティ対策（High 9）: error オブジェクトをそのまま出力せず、メッセージのみ
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`Failed to get flow from D1: ${errorMsg}`);
+      console.error(`Failed to get flow from database: ${errorMsg}`);
       return null;
     }
   }
@@ -270,10 +266,10 @@ export class FlowRegistry {
  * // ビルトインFlowのみ
  * const registry = createFlowRegistry();
  *
- * // D1対応（推奨: Admin UIからのカスタムFlow）
+ * // DatabaseSource 対応（推奨: Admin UIからのカスタムFlow）
  * const registry = createFlowRegistry({ db: env.DB });
  *
- * // D1 + KV対応（フルオプション）
+ * // DatabaseSource + KV対応（フルオプション）
  * const registry = createFlowRegistry({ db: env.DB, kv: env.AUTHRIM_CONFIG });
  */
 export function createFlowRegistry(options: FlowRegistryOptions = {}): FlowRegistry {

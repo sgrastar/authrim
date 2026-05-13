@@ -19,17 +19,14 @@
 import { Hono } from 'hono';
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  AR_ERROR_CODES,
-  getLogger,
-  getDefaultTenantId,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
+  resolveAuthorizedCheckTenantId,
   type CheckAuthContext,
 } from '../middleware/check-auth';
+import { getPolicyCoreAdapter } from '../rebac-storage-adapter';
 
 // =============================================================================
 // Types
@@ -114,11 +111,11 @@ subscribeRoutes.get('/subscribe', async (c) => {
   }
 
   // Authenticate using the token
+  const coreAdapter = getPolicyCoreAdapter(c);
   const authContext: CheckAuthContext = {
-    db: c.env.DB,
+    db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   };
 
   const auth = await authenticateCheckApiRequest(`Bearer ${token}`, authContext);
@@ -132,8 +129,10 @@ subscribeRoutes.get('/subscribe', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
   }
 
-  // Get tenant ID from auth context or query param
-  const tenantId = c.req.query('tenant_id') || auth.tenantId || getDefaultTenantId(c.env);
+  const tenantId = resolveAuthorizedCheckTenantId(auth, c.req.query('tenant_id'));
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+  }
 
   try {
     // Get the PermissionChangeHub DO for this tenant
@@ -176,11 +175,11 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
   }
 
   // Authentication
+  const coreAdapter = getPolicyCoreAdapter(c);
   const auth = await authenticateCheckApiRequest(c.req.header('Authorization'), {
-    db: c.env.DB,
+    db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -192,7 +191,10 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  const tenantId = c.req.query('tenant_id') || auth.tenantId || getDefaultTenantId(c.env);
+  const tenantId = resolveAuthorizedCheckTenantId(auth, c.req.query('tenant_id'));
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+  }
 
   try {
     const hubId = c.env.PERMISSION_CHANGE_HUB.idFromName(tenantId);

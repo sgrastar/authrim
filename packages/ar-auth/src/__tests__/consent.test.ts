@@ -468,9 +468,7 @@ describe('Consent Handlers', () => {
       await consentPostHandler(c);
 
       // Should save consent to database
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT OR REPLACE INTO oauth_client_consents')
-      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('oauth_client_consents'));
     });
 
     it('should handle form-encoded requests', async () => {

@@ -35,42 +35,52 @@ function makeSchema(overrides: Partial<CustomClaimSchema> = {}): CustomClaimSche
 }
 
 const mockDb = {
-  prepare: vi.fn().mockReturnThis(),
-  bind: vi.fn().mockReturnThis(),
-  all: vi.fn(),
-  first: vi.fn(),
+  query: vi.fn(),
+  queryOne: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn().mockReturnValue('mock'),
+  close: vi.fn(),
 };
 
 const mockPiiDb = {
-  prepare: vi.fn().mockReturnThis(),
-  bind: vi.fn().mockReturnThis(),
-  all: vi.fn(),
-  first: vi.fn(),
+  query: vi.fn(),
+  queryOne: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn().mockReturnValue('mock'),
+  close: vi.fn(),
 };
 
 describe('UserCustomDataFetcher', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.all.mockResolvedValue({ results: [] });
-    mockPiiDb.first.mockResolvedValue(null);
+    mockDb.query.mockResolvedValue([]);
+    mockPiiDb.queryOne.mockResolvedValue(null);
   });
 
   it('fetches non-PII data from user_custom_fields', async () => {
     const schemas = [makeSchema({ field_key: 'department', is_pii: 0 })];
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'department', field_value: 'engineering' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'department', field_value: 'engineering' }]);
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, null);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.get('department')).toBe('engineering');
-    expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('user_custom_fields'));
+    expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining('user_custom_fields'), [
+      'default',
+      'user-1',
+      'department',
+    ]);
   });
 
   it('fetches PII data from users_pii', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
-    mockPiiDb.first.mockResolvedValue({
+    mockPiiDb.queryOne.mockResolvedValue({
       custom_attributes_json: JSON.stringify({ ssn: '123-45-6789' }),
     });
 
@@ -85,10 +95,8 @@ describe('UserCustomDataFetcher', () => {
       makeSchema({ field_key: 'department', is_pii: 0 }),
       makeSchema({ field_key: 'ssn', is_pii: 1 }),
     ];
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'department', field_value: 'eng' }],
-    });
-    mockPiiDb.first.mockResolvedValue({
+    mockDb.query.mockResolvedValue([{ field_name: 'department', field_value: 'eng' }]);
+    mockPiiDb.queryOne.mockResolvedValue({
       custom_attributes_json: JSON.stringify({ ssn: '999' }),
     });
 
@@ -110,7 +118,7 @@ describe('UserCustomDataFetcher', () => {
 
   it('handles PII JSON parse error gracefully', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
-    mockPiiDb.first.mockResolvedValue({
+    mockPiiDb.queryOne.mockResolvedValue({
       custom_attributes_json: 'not-json',
     });
 
@@ -122,9 +130,7 @@ describe('UserCustomDataFetcher', () => {
 
   it('skips null field_value entries', async () => {
     const schemas = [makeSchema({ field_key: 'department', is_pii: 0 })];
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'department', field_value: null }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'department', field_value: null }]);
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, null);
     const result = await fetcher.fetch('default', 'user-1', schemas);
@@ -138,12 +144,12 @@ describe('UserCustomDataFetcher', () => {
     const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
     await fetcher.fetch('default', 'user-1', schemas);
 
-    expect(mockDb.prepare).not.toHaveBeenCalled();
+    expect(mockDb.query).not.toHaveBeenCalled();
   });
 
   it('handles DB error gracefully for non-PII', async () => {
     const schemas = [makeSchema({ field_key: 'department', is_pii: 0 })];
-    mockDb.all.mockRejectedValue(new Error('DB error'));
+    mockDb.query.mockRejectedValue(new Error('DB error'));
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, null);
     const result = await fetcher.fetch('default', 'user-1', schemas);

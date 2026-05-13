@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
-    "hono": "^4.12.7",
+    "hono": "4.12.12",
     "jose": "^6.1.2"
   },
   "devDependencies": {

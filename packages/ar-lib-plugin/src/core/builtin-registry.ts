@@ -80,6 +80,36 @@ export function getBuiltinPlugins(): AuthrimPlugin<unknown>[] {
   return [...builtinNotifierPlugins] as AuthrimPlugin<unknown>[];
 }
 
+/**
+ * Resolve deployment-time bootstrap configuration for builtin plugins.
+ *
+ * These values come from setup/deploy-generated Worker environment variables
+ * and should be merged before tenant/global KV overrides.
+ */
+export function resolveBuiltinPluginBootstrapConfig(
+  env: {
+    EMAIL_FROM?: string;
+    EMAIL_FROM_NAME?: string;
+    RESEND_API_KEY?: string;
+  },
+  pluginId: string
+): Record<string, unknown> {
+  switch (pluginId) {
+    case 'notifier-cloudflare':
+      return {
+        ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
+        ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
+      };
+    case 'notifier-resend':
+      return {
+        ...(env.RESEND_API_KEY ? { apiKey: env.RESEND_API_KEY } : {}),
+        ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
+      };
+    default:
+      return {};
+  }
+}
+
 // =============================================================================
 // Registration
 // =============================================================================

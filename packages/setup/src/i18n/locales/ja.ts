@@ -154,8 +154,8 @@ const ja: Translations = {
 
   // UI deployment
   'ui.prompt': 'UIのデプロイ方法',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Cloudflare Pagesにデプロイ（推奨）',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Cloudflare Workersにデプロイ（推奨）',
   'ui.customOption': 'カスタムドメイン',
   'ui.customDesc': '独自のホスティングを使用',
   'ui.skipOption': 'スキップ',
@@ -746,7 +746,7 @@ const ja: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'ログインUI',
-  'web.config.loginUiDesc': 'Cloudflare Pagesにデプロイされる認証UI',
+  'web.config.loginUiDesc': 'Cloudflare Workersにデプロイされる認証UI',
   'web.config.adminUi': '管理UI',
   'web.config.adminUiDesc': 'ユーザー、クライアント、設定を管理するダッシュボード',
 
@@ -755,9 +755,9 @@ const ja: Translations = {
   'web.url.apiDomain': 'APIドメイン',
   'web.url.apiDomainHint': '空欄の場合 workers.dev サブドメインを使用',
   'web.url.loginDomain': 'ログインUIドメイン',
-  'web.url.loginDomainHint': '空欄の場合 pages.dev サブドメインを使用',
+  'web.url.loginDomainHint': '空欄の場合 workers.dev サブドメインを使用',
   'web.url.adminDomain': '管理UIドメイン',
-  'web.url.adminDomainHint': '空欄の場合 pages.dev サブドメインを使用',
+  'web.url.adminDomainHint': '空欄の場合 workers.dev サブドメインを使用',
 
   // Web UI Database
   'web.db.title': 'データベース設定',
@@ -917,7 +917,7 @@ const ja: Translations = {
   'web.section.apiDomain': 'API / Issuer ドメイン',
   'web.section.uiDomains': 'UIドメイン（オプション）',
   'web.section.uiDomainsHint':
-    'ログイン/管理UIのカスタムドメイン。個別に設定可能です。空欄でCloudflare Pagesデフォルトを使用。',
+    'ログイン/管理UIのカスタムドメイン。個別に設定可能です。空欄でCloudflare Workersデフォルトを使用。',
   'web.section.corsHint':
     'CORS: ログイン/管理UIからAPIへのクロスオリジンリクエストは自動的に許可されます。',
   'web.section.configPreview': '設定プレビュー',
@@ -929,7 +929,7 @@ const ja: Translations = {
   'web.preview.issuerUrl': 'Issuer URL:',
   'web.preview.loginUi': 'ログインUI:',
   'web.preview.adminUi': '管理UI:',
-  'web.preview.pagesUrl': 'ログインUI (Pages):',
+  'web.preview.pagesUrl': 'ログインUI (Worker):',
   'web.preview.tenantDiscover': 'テナント選択 (共通入り口):',
   'web.preview.adminAccess': '管理UIアクセス先:',
   'web.preview.firstTenant': '{{name}} (初期テナント)',
@@ -988,8 +988,17 @@ const ja: Translations = {
     'メールOTPとメールアドレス確認の送信に使用します。後で設定することも可能です。',
   'web.email.configureLater': '後で設定',
   'web.email.configureLaterHint': '今はスキップして後で設定。',
+  'web.email.configureCloudflare': 'Cloudflare Email Serviceを設定',
+  'web.email.configureCloudflareHint':
+    'Workers ネイティブの Email Service binding を使います。Workers Paid Plan と Cloudflare DNS が必要です。',
   'web.email.configureResend': 'Resendを設定',
   'web.email.configureResendHint': 'Resendでメール送信を設定（本番環境推奨）。',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': '要件',
+  'web.email.cloudflareRequirementPaid': 'Workers Paid Plan が必要です',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / ドメインのオンボーディングが必要です',
+  'web.email.cloudflareRequirementManual':
+    'Cloudflare ダッシュボードでのドメイン設定は引き続き手動です',
   'web.email.resendSetup': 'Resend設定',
   'web.email.beforeBegin': '開始前に:',
   'web.email.step1': 'Resendアカウントを作成:',
@@ -997,10 +1006,18 @@ const ja: Translations = {
   'web.email.step3': 'APIキーを作成:',
   'web.email.resendApiKey': 'Resend APIキー',
   'web.email.resendApiKeyHint': 'APIキーは "re_" で始まります',
+  'web.email.resendApiKeyMissing': 'Resend APIキーを入力してください',
+  'web.email.resendApiKeyConfirmInvalid':
+    'APIキーが "re_" で始まっていません。有効な Resend APIキーではない可能性があります。このまま続行しますか？',
   'web.email.fromEmailAddress': '送信元メールアドレス',
+  'web.email.cloudflareFromHint':
+    'Cloudflare Email Service にオンボード済みのドメインのアドレスである必要があります',
   'web.email.fromEmailHint': 'Resendアカウントで認証されたドメインのアドレスを使用',
+  'web.email.fromEmailMissing': '送信元メールアドレスを入力してください',
+  'web.email.fromEmailInvalid': '有効なメールアドレスを入力してください',
   'web.email.fromDisplayName': '送信者表示名（オプション）',
   'web.email.fromDisplayHint': 'メールクライアントに表示される送信者名',
+  'web.email.saveConfigFailed': 'メール設定の保存に失敗しました',
   'web.email.domainVerificationTitle': 'ドメイン認証が必要',
   'web.email.domainVerificationDesc':
     'ドメインが認証されるまで、メールは onboarding@resend.dev からのみ送信可能（テスト用）。',
@@ -1041,7 +1058,36 @@ const ja: Translations = {
   'web.envDetail.kvNamespaces': 'KV名前空間',
   'web.envDetail.queues': 'Queues',
   'web.envDetail.r2Buckets': 'R2バケット',
-  'web.envDetail.pagesProjects': 'Pagesプロジェクト',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'メール設定',
+  'web.envDetail.emailDesc':
+    '.authrim を更新し、wrangler binding を再生成し、メール用 secret をアップロードして、ar-auth と ar-management を再デプロイします。',
+  'web.envDetail.emailCurrentProvider': '現在のプロバイダー',
+  'web.envDetail.emailCurrentStatus': '状態',
+  'web.envDetail.emailCurrentFrom': '送信元アドレス',
+  'web.envDetail.emailConfigured': '設定済み',
+  'web.envDetail.emailNotConfigured': '未設定',
+  'web.envDetail.emailProviderNone': '未設定',
+  'web.envDetail.emailCloudflareRequirements': '要件',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan が必要です',
+  'web.envDetail.emailCloudflareRequirementDns':
+    'Cloudflare DNS / ドメインのオンボーディングが必要です',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Cloudflare ダッシュボードでのドメイン設定は引き続き手動です',
+  'web.envDetail.emailCloudflareFromHint':
+    'Cloudflare Email Service にオンボード済みのドメインのアドレスである必要があります。',
+  'web.envDetail.emailFromAddress': '送信元メールアドレス',
+  'web.envDetail.emailFromName': '送信者表示名（オプション）',
+  'web.envDetail.emailEnableCloudflare': 'Cloudflare Email Service を有効化',
+  'web.envDetail.emailDeploying': '反映中...',
+  'web.envDetail.emailProgress': 'メール設定の進行状況:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email を有効化しました。',
+  'web.envDetail.emailUpdateFailed': 'Cloudflare Email の有効化に失敗しました。',
+  'web.envDetail.emailFromMissing': '送信元メールアドレスを入力してください。',
+  'web.envDetail.emailFromInvalid': '有効なメールアドレスを入力してください。',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'この環境には別のメールプロバイダー設定があります。Cloudflare Email Service に切り替えますか？',
+  'web.envDetail.emailStarting': 'Cloudflare Email 設定を開始しています...',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '全てのWorkerを更新',
@@ -1062,9 +1108,9 @@ const ja: Translations = {
   'web.envDetail.action': '操作',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'UI を更新（Pages）',
+  'web.envDetail.uiUpdate': 'UI を更新（Workers）',
   'web.envDetail.uiUpdateDesc':
-    'Admin UI または Login UI を個別に更新します。これらは Cloudflare Pages にデプロイされます。',
+    'Admin UI または Login UI を個別に更新します。これらは Cloudflare Workers にデプロイされます。',
   'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
@@ -1077,7 +1123,7 @@ const ja: Translations = {
   'web.delete.kvNamespaces': 'KV名前空間',
   'web.delete.queues': 'Queues',
   'web.delete.r2Buckets': 'R2バケット',
-  'web.delete.pagesProjects': 'Pagesプロジェクト',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'キャンセル',
   'web.delete.confirmBtn': '選択項目を削除',
 

@@ -20,6 +20,23 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+function jwksResponse(keys: unknown[], status = 200): Response {
+  return new Response(JSON.stringify({ keys }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function expectJwksFetch(url: string): void {
+  expect(mockFetch).toHaveBeenCalledWith(
+    url,
+    expect.objectContaining({
+      headers: { Accept: 'application/json' },
+      signal: expect.any(AbortSignal),
+    })
+  );
+}
+
 describe('Client Authentication', () => {
   let rsaKeyPair: Awaited<ReturnType<typeof generateKeyPair>>;
   let publicJwk: Awaited<ReturnType<typeof exportJWK>>;
@@ -145,6 +162,20 @@ describe('Client Authentication', () => {
 
       expect(result.valid).toBe(false);
       expect(result.error).toBe('invalid_client');
+    });
+
+    it('should reject oversized assertions before decoding', async () => {
+      const client = createClientWithJWKS(clientId);
+
+      const result = await validateClientAssertion(
+        ['e30', 'x'.repeat(17 * 1024), 'sig'].join('.'),
+        tokenEndpoint,
+        client
+      );
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('invalid_client');
+      expect(result.error_description).toContain('too large');
     });
 
     it('should reject assertion with empty header', async () => {
@@ -528,18 +559,13 @@ describe('Client Authentication', () => {
         jwks_uri: 'https://client.example.com/.well-known/jwks.json',
       } as ClientMetadata;
 
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ keys: [publicJwk] }),
-      });
+      mockFetch.mockResolvedValueOnce(jwksResponse([publicJwk]));
 
       const assertion = await createClientAssertion(clientId, tokenEndpoint);
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
       expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
-        headers: { Accept: 'application/json' },
-      });
+      expectJwksFetch(client.jwks_uri);
     });
 
     it('should fail when jwks_uri fetch fails', async () => {
@@ -550,10 +576,7 @@ describe('Client Authentication', () => {
         jwks_uri: 'https://client.example.com/.well-known/jwks.json',
       } as ClientMetadata;
 
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      });
+      mockFetch.mockResolvedValueOnce(jwksResponse([], 500));
 
       const assertion = await createClientAssertion(clientId, tokenEndpoint);
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
@@ -570,10 +593,7 @@ describe('Client Authentication', () => {
         jwks_uri: 'https://client.example.com/.well-known/jwks.json',
       } as ClientMetadata;
 
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ keys: [] }),
-      });
+      mockFetch.mockResolvedValueOnce(jwksResponse([]));
 
       const assertion = await createClientAssertion(clientId, tokenEndpoint);
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
@@ -626,10 +646,7 @@ describe('Client Authentication', () => {
       } as ClientMetadata;
 
       // Mock jwks_uri to return the NEW key
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ keys: [newPublicJwk] }),
-      });
+      mockFetch.mockResolvedValueOnce(jwksResponse([newPublicJwk]));
 
       // Create assertion signed with NEW key (simulating RP key rotation)
       const now = Math.floor(Date.now() / 1000);
@@ -648,9 +665,7 @@ describe('Client Authentication', () => {
 
       // Should succeed because jwks_uri is prioritized and has the new key
       expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
-        headers: { Accept: 'application/json' },
-      });
+      expectJwksFetch(client.jwks_uri);
     });
 
     it('should fall back to embedded jwks when jwks_uri fetch fails', async () => {
@@ -666,9 +681,7 @@ describe('Client Authentication', () => {
 
       // Should succeed because it falls back to embedded jwks
       expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
-        headers: { Accept: 'application/json' },
-      });
+      expectJwksFetch(client.jwks_uri);
     });
   });
 
@@ -782,7 +795,7 @@ describe('Client Authentication', () => {
       expect(result.error_description).toContain('Failed to fetch client JWKS');
     });
 
-    it('should handle assertion with very long claims', async () => {
+    it('should reject assertions with very long claims', async () => {
       const client = createClientWithJWKS(clientId);
       const assertion = await createClientAssertion(clientId, tokenEndpoint, {
         jti: 'a'.repeat(10000),
@@ -790,8 +803,8 @@ describe('Client Authentication', () => {
 
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
-      // Should still validate (long JTI is allowed)
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.error_description).toContain('too large');
     });
   });
 
@@ -917,10 +930,7 @@ describe('Client Authentication', () => {
 
       const jwkWithKid = { ...publicJwk, kid: 'remote-key-1' };
 
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ keys: [jwkWithKid] }),
-      });
+      mockFetch.mockResolvedValueOnce(jwksResponse([jwkWithKid]));
 
       const assertion = await createClientAssertionWithKid(
         clientId,
@@ -932,9 +942,7 @@ describe('Client Authentication', () => {
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
       expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
-        headers: { Accept: 'application/json' },
-      });
+      expectJwksFetch(client.jwks_uri);
     });
 
     it('should use first key when no kid is specified in assertion', async () => {

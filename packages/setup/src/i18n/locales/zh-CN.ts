@@ -153,8 +153,8 @@ const zhCN: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI 部署方式',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': '部署到 Cloudflare Pages（推荐）',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': '部署到 Cloudflare Workers（推荐）',
   'ui.customOption': '自定义域名',
   'ui.customDesc': '使用您自己的托管',
   'ui.skipOption': '跳过',
@@ -738,7 +738,7 @@ const zhCN: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': '登录 UI',
-  'web.config.loginUiDesc': '部署到 Cloudflare Pages 的预构建认证 UI。',
+  'web.config.loginUiDesc': '部署到 Cloudflare Workers 的预构建认证 UI。',
   'web.config.adminUi': '管理 UI',
   'web.config.adminUiDesc': '用于管理用户、客户端和设置的管理仪表板。',
 
@@ -747,9 +747,9 @@ const zhCN: Translations = {
   'web.url.apiDomain': 'API 域名',
   'web.url.apiDomainHint': '留空使用 workers.dev 子域',
   'web.url.loginDomain': '登录 UI 域名',
-  'web.url.loginDomainHint': '留空使用 pages.dev 子域',
+  'web.url.loginDomainHint': '留空使用 workers.dev 子域',
   'web.url.adminDomain': '管理 UI 域名',
-  'web.url.adminDomainHint': '留空使用 pages.dev 子域',
+  'web.url.adminDomainHint': '留空使用 workers.dev 子域',
 
   // Web UI Database
   'web.db.title': '数据库配置',
@@ -904,7 +904,7 @@ const zhCN: Translations = {
   'web.section.apiDomain': 'API / 发行者域名',
   'web.section.uiDomains': 'UI 域名（可选）',
   'web.section.uiDomainsHint':
-    '登录/管理 UI 的自定义域名。每个可以独立设置。留空使用 Cloudflare Pages 默认值。',
+    '登录/管理 UI 的自定义域名。每个可以独立设置。留空使用 Cloudflare Workers 默认值。',
   'web.section.corsHint': 'CORS：从登录/管理 UI 到 API 的跨域请求自动允许。',
   'web.section.configPreview': '配置预览',
   'web.section.resourceNames': '资源名称',
@@ -915,7 +915,7 @@ const zhCN: Translations = {
   'web.preview.issuerUrl': '发行者 URL：',
   'web.preview.loginUi': '登录 UI：',
   'web.preview.adminUi': '管理 UI：',
-  'web.preview.pagesUrl': '登录 UI (Pages)：',
+  'web.preview.pagesUrl': '登录 UI (Worker)：',
   'web.preview.tenantDiscover': '租户选择（公共入口）：',
   'web.preview.adminAccess': '管理 UI 访问地址：',
   'web.preview.firstTenant': '{{name}}（主租户）',
@@ -970,8 +970,16 @@ const zhCN: Translations = {
   'web.email.introDesc': '用于发送邮件 OTP 和邮箱地址验证。如果您愿意，可以稍后配置。',
   'web.email.configureLater': '稍后配置',
   'web.email.configureLaterHint': '暂时跳过，稍后配置。',
+  'web.email.configureCloudflare': '配置 Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    '使用 Workers 原生 Email Service 绑定。需要 Workers Paid 套餐和 Cloudflare DNS。',
   'web.email.configureResend': '配置 Resend',
   'web.email.configureResendHint': '使用 Resend 设置邮件发送（生产环境推荐）。',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': '要求',
+  'web.email.cloudflareRequirementPaid': '需要 Workers Paid 套餐',
+  'web.email.cloudflareRequirementDns': '需要 Cloudflare DNS / 域名接入',
+  'web.email.cloudflareRequirementManual': 'Cloudflare 控制台中的域名设置仍需手动完成',
   'web.email.resendSetup': 'Resend 配置',
   'web.email.beforeBegin': '开始之前：',
   'web.email.step1': '在此创建 Resend 账户',
@@ -979,10 +987,17 @@ const zhCN: Translations = {
   'web.email.step3': '在此创建 API 密钥',
   'web.email.resendApiKey': 'Resend API 密钥',
   'web.email.resendApiKeyHint': '您的 API 密钥以 "re_" 开头',
+  'web.email.resendApiKeyMissing': '请输入您的 Resend API 密钥',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API 密钥不是以 "re_" 开头。这可能不是有效的 Resend API 密钥。仍要继续吗？',
   'web.email.fromEmailAddress': '发件人邮箱地址',
+  'web.email.cloudflareFromHint': '必须来自已接入 Cloudflare Email Service 的域名',
   'web.email.fromEmailHint': '必须来自您 Resend 账户中的已验证域名',
+  'web.email.fromEmailMissing': '请输入发件人邮箱地址',
+  'web.email.fromEmailInvalid': '请输入有效的邮箱地址',
   'web.email.fromDisplayName': '发件人显示名称（可选）',
   'web.email.fromDisplayHint': '在邮件客户端中显示的发件人名称',
+  'web.email.saveConfigFailed': '保存邮件配置失败',
   'web.email.domainVerificationTitle': '需要域名验证',
   'web.email.domainVerificationDesc':
     '在您的域名验证之前，邮件只能从 onboarding@resend.dev 发送（用于测试）。',
@@ -1022,7 +1037,7 @@ const zhCN: Translations = {
   'web.envDetail.kvNamespaces': 'KV 命名空间',
   'web.envDetail.queues': '队列',
   'web.envDetail.r2Buckets': 'R2 存储桶',
-  'web.envDetail.pagesProjects': 'Pages 项目',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '更新所有 Workers',
@@ -1043,8 +1058,8 @@ const zhCN: Translations = {
   'web.envDetail.action': '操作',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': '更新 UI（Pages）',
-  'web.envDetail.uiUpdateDesc': '单独更新 Admin UI 或 Login UI。这些部署在 Cloudflare Pages 上。',
+  'web.envDetail.uiUpdate': '更新 UI（Workers）',
+  'web.envDetail.uiUpdateDesc': '单独更新 Admin UI 或 Login UI。这些部署在 Cloudflare Workers 上。',
   'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
@@ -1057,7 +1072,7 @@ const zhCN: Translations = {
   'web.delete.kvNamespaces': 'KV 命名空间',
   'web.delete.queues': '队列',
   'web.delete.r2Buckets': 'R2 存储桶',
-  'web.delete.pagesProjects': 'Pages 项目',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': '取消',
   'web.delete.confirmBtn': '删除所选',
 

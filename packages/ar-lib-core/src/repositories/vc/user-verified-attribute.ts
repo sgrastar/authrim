@@ -62,6 +62,15 @@ export interface UserVerifiedAttributeFilterOptions {
   source_type?: AttributeSourceType;
 }
 
+interface ExistingUserVerifiedAttribute {
+  id: string;
+  created_at: number;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
+}
+
 /**
  * User Verified Attribute Repository
  */
@@ -92,11 +101,56 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
    * Otherwise, insert a new record.
    */
   async upsertAttribute(input: CreateUserVerifiedAttributeInput): Promise<UserVerifiedAttribute> {
-    const id = input.id ?? generateId();
     const now = getCurrentTimestamp();
+    const existing = await this.adapter.queryOne<ExistingUserVerifiedAttribute>(
+      `SELECT id, created_at
+       FROM user_verified_attributes
+       WHERE tenant_id = ? AND user_id = ? AND attribute_name = ?`,
+      [input.tenant_id, input.user_id, input.attribute_name]
+    );
 
-    const attribute: UserVerifiedAttribute = {
-      id,
+    if (existing) {
+      await this.adapter.execute(
+        `UPDATE user_verified_attributes
+         SET attribute_value = ?,
+             source_type = ?,
+             issuer_did = ?,
+             verification_id = ?,
+             verified_at = ?,
+             expires_at = ?,
+             updated_at = ?
+         WHERE tenant_id = ? AND id = ?`,
+        [
+          input.attribute_value,
+          input.source_type,
+          input.issuer_did ?? null,
+          input.verification_id ?? null,
+          now,
+          input.expires_at ?? null,
+          now,
+          input.tenant_id,
+          existing.id,
+        ]
+      );
+
+      return {
+        id: existing.id,
+        tenant_id: input.tenant_id,
+        user_id: input.user_id,
+        attribute_name: input.attribute_name,
+        attribute_value: input.attribute_value,
+        source_type: input.source_type,
+        issuer_did: input.issuer_did ?? null,
+        verification_id: input.verification_id ?? null,
+        verified_at: now,
+        expires_at: input.expires_at ?? null,
+        created_at: existing.created_at,
+        updated_at: now,
+      };
+    }
+
+    const createdAttribute: UserVerifiedAttribute = {
+      id: input.id ?? generateId(),
       tenant_id: input.tenant_id,
       user_id: input.user_id,
       attribute_name: input.attribute_name,
@@ -110,37 +164,75 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
       updated_at: now,
     };
 
-    const sql = `
-      INSERT INTO user_verified_attributes (
-        id, tenant_id, user_id, attribute_name, attribute_value,
-        source_type, issuer_did, verification_id, verified_at, expires_at,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(tenant_id, user_id, attribute_name) DO UPDATE SET
-        attribute_value = excluded.attribute_value,
-        issuer_did = excluded.issuer_did,
-        verification_id = excluded.verification_id,
-        verified_at = excluded.verified_at,
-        expires_at = excluded.expires_at,
-        updated_at = excluded.updated_at
-    `;
+    try {
+      await this.adapter.execute(
+        `INSERT INTO user_verified_attributes (
+          id, tenant_id, user_id, attribute_name, attribute_value,
+          source_type, issuer_did, verification_id, verified_at, expires_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createdAttribute.id,
+          createdAttribute.tenant_id,
+          createdAttribute.user_id,
+          createdAttribute.attribute_name,
+          createdAttribute.attribute_value,
+          createdAttribute.source_type,
+          createdAttribute.issuer_did,
+          createdAttribute.verification_id,
+          createdAttribute.verified_at,
+          createdAttribute.expires_at,
+          createdAttribute.created_at,
+          createdAttribute.updated_at,
+        ]
+      );
 
-    await this.adapter.execute(sql, [
-      attribute.id,
-      attribute.tenant_id,
-      attribute.user_id,
-      attribute.attribute_name,
-      attribute.attribute_value,
-      attribute.source_type,
-      attribute.issuer_did,
-      attribute.verification_id,
-      attribute.verified_at,
-      attribute.expires_at,
-      attribute.created_at,
-      attribute.updated_at,
-    ]);
+      return createdAttribute;
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+    }
 
-    return attribute;
+    const raced = await this.adapter.queryOne<ExistingUserVerifiedAttribute>(
+      `SELECT id, created_at
+       FROM user_verified_attributes
+       WHERE tenant_id = ? AND user_id = ? AND attribute_name = ?`,
+      [input.tenant_id, input.user_id, input.attribute_name]
+    );
+
+    if (!raced) {
+      throw new Error('Failed to resolve raced user verified attribute');
+    }
+
+    await this.adapter.execute(
+      `UPDATE user_verified_attributes
+       SET attribute_value = ?,
+           source_type = ?,
+           issuer_did = ?,
+           verification_id = ?,
+           verified_at = ?,
+           expires_at = ?,
+           updated_at = ?
+       WHERE tenant_id = ? AND id = ?`,
+      [
+        input.attribute_value,
+        input.source_type,
+        input.issuer_did ?? null,
+        input.verification_id ?? null,
+        now,
+        input.expires_at ?? null,
+        now,
+        input.tenant_id,
+        raced.id,
+      ]
+    );
+
+    return {
+      ...createdAttribute,
+      id: raced.id,
+      created_at: raced.created_at,
+    };
   }
 
   /**

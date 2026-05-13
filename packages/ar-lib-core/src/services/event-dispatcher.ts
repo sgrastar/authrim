@@ -36,6 +36,7 @@ import type { WebhookRegistryImpl, WebhookConfigWithScope } from './webhook-regi
 import { executeBeforeHooks } from './event-hook-registry';
 import { generateWebhookSignature, sendWebhook } from './webhook-sender';
 import { createLogger } from '../utils/logger';
+import { writeLegacyAuditLog } from '../utils/audit-log';
 
 const log = createLogger().module('EVENT-DISPATCHER');
 
@@ -59,6 +60,8 @@ export interface EventDispatcherConfig {
   hookRegistry: EventHookRegistryImpl;
   /** Function to decrypt webhook secrets */
   decryptSecret: SecretDecryptor;
+  /** Optional runtime-aware audit log writer */
+  auditLogWriter?: (event: UnifiedEvent, context: EventHandlerContext) => Promise<void>;
   /** Options */
   options?: EventDispatcherOptions;
 }
@@ -152,6 +155,10 @@ export class EventDispatcherImpl implements IEventDispatcher {
   private readonly handlerRegistry: EventHandlerRegistryImpl;
   private readonly hookRegistry: EventHookRegistryImpl;
   private readonly decryptSecret: SecretDecryptor;
+  private readonly auditLogWriter?: (
+    event: UnifiedEvent,
+    context: EventHandlerContext
+  ) => Promise<void>;
   private readonly options: Required<EventDispatcherOptions>;
 
   constructor(config: EventDispatcherConfig) {
@@ -161,6 +168,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     this.handlerRegistry = config.handlerRegistry;
     this.hookRegistry = config.hookRegistry;
     this.decryptSecret = config.decryptSecret;
+    this.auditLogWriter = config.auditLogWriter;
 
     // Apply defaults
     this.options = {
@@ -608,6 +616,11 @@ export class EventDispatcherImpl implements IEventDispatcher {
    * Maps to the audit_log table schema used by admin APIs.
    */
   private async recordAuditLog(event: UnifiedEvent, _context: ExecutionContext): Promise<void> {
+    if (this.auditLogWriter) {
+      await this.auditLogWriter(event, _context);
+      return;
+    }
+
     // Extract resource info from event data if available
     const eventData = event.data as Record<string, unknown> | undefined;
     const resourceType = this.extractResourceType(event.type);
@@ -615,22 +628,17 @@ export class EventDispatcherImpl implements IEventDispatcher {
     const auditId = `audit_${crypto.randomUUID().replace(/-/g, '')}`;
     const createdAt = Math.floor(new Date(event.timestamp).getTime() / 1000);
 
-    // Map event to audit_log table schema
-    await this.adapter.execute(
-      `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, metadata_json, created_at, severity)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        auditId,
-        event.tenantId,
-        event.metadata?.actor?.id ?? null,
-        event.type, // action = event type (e.g., 'token.refresh.issued')
-        resourceType,
-        resourceId,
-        JSON.stringify(event.data),
-        createdAt,
-        'info',
-      ]
-    );
+    await writeLegacyAuditLog(this.adapter, {
+      id: auditId,
+      tenantId: event.tenantId,
+      userId: event.metadata?.actor?.id ?? null,
+      action: event.type,
+      resource: resourceType,
+      resourceId,
+      metadata: JSON.stringify(event.data),
+      severity: 'info',
+      createdAt,
+    });
   }
 
   /**

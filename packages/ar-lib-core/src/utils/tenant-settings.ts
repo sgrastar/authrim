@@ -12,8 +12,10 @@ export type TenantSettingsCategory =
   | 'login-ui'
   | 'login-methods'
   | 'feature-flags'
+  | 'step-up'
   | 'login-entry'
-  | 'tenant-discovery-ui';
+  | 'tenant-discovery-ui'
+  | 'support-ops';
 
 /**
  * Read a tenant settings object from KV.

@@ -20,15 +20,15 @@ import {
   resolvePaths,
   listEnvironments,
   findAuthrimBaseDir,
-  findKeysDirectory,
   AUTHRIM_DIR,
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../../core/paths.js';
 import {
   deployAll,
+  deployWorker,
   uploadSecrets,
-  deployAllPages,
+  deployAllUiWorkers,
   updateLockWithDeployments,
   buildApiPackages,
   DEFAULT_INTER_DEPLOY_DELAY_MS,
@@ -39,20 +39,32 @@ import {
   checkAuth,
   runMigrationsForEnvironment,
   ensureInitialAdminRolesInD1,
+  ensureAdminUiBffMachineAccessInD1,
+  ensureSetupMachineAccessInD1,
   ensureInitialTenantInD1,
+  seedRuntimeProfiles,
   getWorkersSubdomain,
   ensureWildcardDnsForMultiTenant,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
-import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
-import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
 import {
-  ensureLoginUiClient,
-  shouldReportLoginUiClientWarning,
-} from '../../core/login-ui-client.js';
-import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
+  generateWranglerConfig,
+  toToml,
+  buildResourceIdsFromLock,
+  type ResourceIds,
+} from '../../core/wrangler.js';
+import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
+import { ensureLoginUiClient } from '../../core/login-ui-client.js';
+import { loadAdminUiBffWorkerSecrets } from '../../core/admin-machine-access.js';
+import {
+  configureDownstreamIntrospectionDeployment,
+  resolveDownstreamIntrospectionKeysDir,
+} from '../../core/downstream-introspection-deploy.js';
+import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { resolveIssuerUrl } from '../../core/url-config.js';
+import { ensureSupplementalKeyFiles } from '../../core/keys.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
+import { saveMasterWranglerConfigs } from '../../core/wrangler-sync.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 import {
   formatWildcardDnsManualAction,
@@ -106,8 +118,14 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
     { file: 'private.pem', name: 'PRIVATE_KEY_PEM' },
     { file: 'public.jwk.json', name: 'PUBLIC_JWK_JSON' },
     { file: 'rp_token_encryption_key.txt', name: 'RP_TOKEN_ENCRYPTION_KEY' },
+    { file: 'object_encryption_root_key.txt', name: 'OBJECT_ENCRYPTION_ROOT_KEY' },
+    { file: 'version_manager_secret.txt', name: 'VERSION_MANAGER_SECRET' },
     { file: 'admin_api_secret.txt', name: 'ADMIN_API_SECRET' },
     { file: 'key_manager_secret.txt', name: 'KEY_MANAGER_SECRET' },
+    { file: 'cloudflare_api_token.txt', name: 'CLOUDFLARE_API_TOKEN' },
+    { file: 'resend_api_key.txt', name: 'RESEND_API_KEY' },
+    { file: 'email_from.txt', name: 'EMAIL_FROM' },
+    { file: 'email_from_name.txt', name: 'EMAIL_FROM_NAME' },
   ];
 
   for (const { file, name } of secretFiles) {
@@ -118,6 +136,25 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
   }
 
   return secrets;
+}
+
+async function ensureSupplementalKeysForDeploy(
+  keysDir: string,
+  onProgress: (message: string) => void
+): Promise<void> {
+  if (!existsSync(keysDir)) {
+    return;
+  }
+
+  const result = await ensureSupplementalKeyFiles(keysDir);
+  if (result.createdFiles.length === 0) {
+    return;
+  }
+
+  onProgress(`Created ${result.createdFiles.length} supplemental key file(s) in ${keysDir}`);
+  for (const filePath of result.createdFiles) {
+    onProgress(`  - ${filePath.replace(`${keysDir}/`, '')}`);
+  }
 }
 
 // =============================================================================
@@ -366,9 +403,25 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     process.exit(1);
   }
   console.log(chalk.cyan(`Lock: ${lockPath}`));
+  let currentLock = lock;
 
   // Determine what to deploy
   let componentsToDeply: WorkerComponent[] | undefined;
+  let resolvedKeysDir: string | null = null;
+
+  const getResolvedKeysDir = (): string => {
+    if (resolvedKeysDir) {
+      return resolvedKeysDir;
+    }
+
+    resolvedKeysDir = resolveDownstreamIntrospectionKeysDir({
+      env,
+      rootDir: baseDir,
+      keysDir: options.keysDir || config.keys.secretsPath,
+      keysBaseDir: process.cwd(),
+    });
+    return resolvedKeysDir;
+  };
 
   if (options.component) {
     // Deploy single component
@@ -414,8 +467,39 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   console.log('');
 
+  if (!options.dryRun) {
+    await ensureSupplementalKeysForDeploy(getResolvedKeysDir(), (message) => {
+      console.log(chalk.gray(message));
+    });
+  }
+
+  // Refresh generated wrangler configs from the current config/lock before deployment.
+  // This prevents stale bindings such as send_email from surviving across setup upgrades.
+  if (structureType === 'new' && lock) {
+    const resourceIds = buildResourceIdsFromLock(lock);
+    const masterSpinner = ora('Refreshing generated wrangler configs...').start();
+    const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+      baseDir,
+      env,
+      dryRun: options.dryRun,
+      onProgress: (msg) => {
+        masterSpinner.text = msg;
+      },
+    });
+
+    if (!masterResult.success) {
+      masterSpinner.fail('Failed to refresh generated wrangler configs');
+      for (const error of masterResult.errors) {
+        console.log(chalk.red(`  • ${error}`));
+      }
+      process.exit(1);
+    }
+
+    masterSpinner.succeed(`Refreshed ${masterResult.files.length} generated wrangler config(s)`);
+  }
+
   // Check wrangler.toml sync status (only for new structure)
-  if (structureType === 'new' && !options.component) {
+  if (structureType === 'new') {
     const packagesDir = join(rootDir, 'packages');
 
     if (existsSync(packagesDir)) {
@@ -581,18 +665,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Upload secrets first (if not skipped)
   if (!options.skipSecrets && !options.component) {
-    // Determine keys directory using 3-tier fallback search
-    let keysDir: string;
-    const foundKeys = findKeysDirectory({ env, sourceDir: baseDir, keysBaseDir: process.cwd() });
-    if (foundKeys) {
-      keysDir = foundKeys.path;
-    } else if (structureType === 'new') {
-      const envPaths = getEnvironmentPaths({ baseDir, env });
-      keysDir = envPaths.keys;
-    } else {
-      // Legacy: use secretsPath from config or default
-      keysDir = config.keys.secretsPath || getLegacyPaths(baseDir, env).keys;
-    }
+    const keysDir = getResolvedKeysDir();
 
     if (existsSync(keysDir)) {
       console.log(chalk.bold('📦 Uploading secrets...\n'));
@@ -692,133 +765,19 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Update lock file with deployment results
   if (!options.dryRun && summary.successCount > 0) {
-    const updatedLock = updateLockWithDeployments(lock, summary.results);
-    await saveLockFile(updatedLock, lockPath);
+    currentLock = updateLockWithDeployments(currentLock, summary.results);
+    await saveLockFile(currentLock, lockPath);
     console.log(chalk.gray(`\nLock file updated: ${lockPath}`));
-  }
-
-  // Deploy Pages UI (if enabled and not skipped)
-  if (
-    !options.skipUi &&
-    !options.component &&
-    (config.components.loginUi || config.components.adminUi)
-  ) {
-    console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Pages...\n'));
-
-    // Determine the API base URL for the UI to connect to
-    let apiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
-
-    // If no URL in config, construct it with correct workers.dev subdomain
-    if (!apiBaseUrl) {
-      const subdomain = await getWorkersSubdomain();
-      if (subdomain) {
-        apiBaseUrl = `https://${env}-ar-router.${subdomain}.workers.dev`;
-      } else {
-        // Fallback without subdomain (may not work correctly)
-        apiBaseUrl = `https://${env}-ar-router.workers.dev`;
-        console.log(
-          chalk.yellow(`  ⚠️  Could not determine workers.dev subdomain, using fallback URL`)
-        );
-        console.log(chalk.gray(`     If API calls fail, set the correct URL in config or ui.env`));
-      }
-    }
-
-    let loginUiClientId: string | undefined;
-    if (config.components.loginUi && !options.dryRun) {
-      const loginUiUrl =
-        config.urls?.loginUi?.custom ||
-        config.urls?.loginUi?.auto ||
-        `https://${env}-ar-login-ui.pages.dev`;
-      const foundKeys = findKeysDirectory({
-        env,
-        sourceDir: rootDir,
-        keysBaseDir: process.cwd(),
-      });
-      const adminApiSecretPath = foundKeys
-        ? join(foundKeys.path, 'admin_api_secret.txt')
-        : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keyFiles.adminApiSecret;
-
-      const clientResult = await ensureLoginUiClient({
-        apiBaseUrl,
-        loginUiUrl,
-        adminApiSecretPath,
-        onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
-      });
-
-      if (clientResult.success && clientResult.clientId) {
-        loginUiClientId = clientResult.clientId;
-        if (clientResult.alreadyExists) {
-          console.log(chalk.gray(`  ✓ Login UI client exists: ${loginUiClientId}`));
-        } else {
-          console.log(chalk.green(`  ✓ Login UI client created: ${loginUiClientId}`));
-        }
-      } else if (shouldReportLoginUiClientWarning(clientResult.error)) {
-        console.log(chalk.yellow(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`));
-      }
-    }
-
-    const loginUiSettings = resolveUiDeploymentSettings({
-      component: 'ar-login-ui',
-      config,
-      apiBaseUrl,
-      loginUiClientId,
-    });
-    const adminUiSettings = resolveUiDeploymentSettings({
-      component: 'ar-admin-ui',
-      config,
-      apiBaseUrl,
-    });
-
-    const pagesResult = await deployAllPages(
-      {
-        ...deployOptions,
-        apiBaseUrl,
-        perComponent: {
-          'ar-login-ui': {
-            apiBaseUrl: loginUiSettings.apiBaseUrl,
-            runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
-            uiEnvConfig: loginUiSettings.uiEnv,
-            serviceBindingName: loginUiSettings.serviceBindingName,
-          },
-          'ar-admin-ui': {
-            apiBaseUrl: adminUiSettings.apiBaseUrl,
-            runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
-            uiEnvConfig: adminUiSettings.uiEnv,
-            serviceBindingName: adminUiSettings.serviceBindingName,
-          },
-        },
-      },
-      {
-        loginUi: config.components.loginUi ?? true,
-        adminUi: config.components.adminUi ?? true,
-      }
-    );
-
-    if (pagesResult.failedCount === 0) {
-      console.log(chalk.green('\n✓ All UI packages deployed successfully'));
-      for (const result of pagesResult.results) {
-        console.log(chalk.cyan(`  • ${result.component}: ${result.projectName}`));
-      }
-    } else {
-      console.log(
-        chalk.yellow(
-          `\n⚠️  ${pagesResult.successCount}/${pagesResult.results.length} UI packages deployed`
-        )
-      );
-      for (const result of pagesResult.results) {
-        if (result.success) {
-          console.log(chalk.green(`  ✓ ${result.component}: ${result.projectName}`));
-        } else {
-          console.log(chalk.red(`  ✗ ${result.component}: ${result.error}`));
-        }
-      }
-    }
   }
 
   // Run D1 database migrations (unless skipped or dry-run)
   let migrationsSuccess = true;
   let initialTenantSuccess = true;
   let initialAdminRolesSuccess = true;
+  let setupMachineAccessSuccess = true;
+  let adminUiBffMachineAccessSuccess = true;
+  let runtimeProfileSeedSuccess = true;
+  let uiWorkersSuccess = true;
   if (
     !options.skipMigrations &&
     !options.dryRun &&
@@ -830,9 +789,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     const migrationsSpinner = ora('Running migrations...').start();
 
     try {
-      const migrationsResult = await runMigrationsForEnvironment(env, rootDir, (msg) => {
-        migrationsSpinner.text = msg;
-      });
+      const migrationsResult = await runMigrationsForEnvironment(
+        env,
+        rootDir,
+        (msg) => {
+          migrationsSpinner.text = msg;
+        },
+        config
+      );
 
       if (migrationsResult.success) {
         migrationsSpinner.succeed(
@@ -868,6 +832,65 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
           initialAdminRolesSuccess = false;
         }
+
+        const setupMachineSpinner = ora('Ensuring setup machine access exists...').start();
+        const setupMachineResult = await ensureSetupMachineAccessInD1(
+          env,
+          config,
+          getResolvedKeysDir(),
+          (msg) => {
+            setupMachineSpinner.text = msg;
+          }
+        );
+
+        if (setupMachineResult.success) {
+          setupMachineSpinner.succeed('Setup machine access ready');
+        } else {
+          setupMachineSpinner.fail('Setup machine access bootstrap failed');
+          if (setupMachineResult.error) {
+            console.log(chalk.red(`  ${setupMachineResult.error}`));
+          }
+          setupMachineAccessSuccess = false;
+        }
+
+        if (config.components.adminUi ?? true) {
+          const adminUiBffSpinner = ora('Ensuring Admin UI BFF machine access exists...').start();
+          const adminUiBffResult = await ensureAdminUiBffMachineAccessInD1(
+            env,
+            config,
+            getResolvedKeysDir(),
+            (msg) => {
+              adminUiBffSpinner.text = msg;
+            }
+          );
+
+          if (adminUiBffResult.success) {
+            adminUiBffSpinner.succeed('Admin UI BFF machine access ready');
+          } else {
+            adminUiBffSpinner.fail('Admin UI BFF machine access bootstrap failed');
+            if (adminUiBffResult.error) {
+              console.log(chalk.red(`  ${adminUiBffResult.error}`));
+            }
+            adminUiBffMachineAccessSuccess = false;
+          }
+        }
+
+        const profileSeedSpinner = ora('Seeding runtime profiles...').start();
+        const profileSeedResult = await seedRuntimeProfiles(env, config, (msg) => {
+          profileSeedSpinner.text = msg;
+        });
+
+        if (profileSeedResult.success) {
+          profileSeedSpinner.succeed(
+            `Runtime profiles ready (${profileSeedResult.seededCount} seeded to ${profileSeedResult.backend})`
+          );
+        } else {
+          profileSeedSpinner.fail('Runtime profile seed failed');
+          if (profileSeedResult.error) {
+            console.log(chalk.red(`  ${profileSeedResult.error}`));
+          }
+          runtimeProfileSeedSuccess = false;
+        }
       } else {
         migrationsSpinner.warn('Some migrations failed');
         if (migrationsResult.core.error) {
@@ -888,6 +911,183 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
   }
 
+  const bootstrapSuccess =
+    migrationsSuccess &&
+    initialTenantSuccess &&
+    initialAdminRolesSuccess &&
+    setupMachineAccessSuccess &&
+    adminUiBffMachineAccessSuccess &&
+    runtimeProfileSeedSuccess;
+
+  const shouldConfigureDownstreamIntrospectionClient =
+    !options.dryRun &&
+    !options.skipSecrets &&
+    summary.failedCount === 0 &&
+    bootstrapSuccess &&
+    (!options.component || options.component === 'ar-userinfo');
+
+  if (shouldConfigureDownstreamIntrospectionClient) {
+    const keysDir = getResolvedKeysDir();
+    const downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+      env,
+      rootDir,
+      keysDir,
+      apiBaseUrl: config.urls?.api?.custom || config.urls?.api?.auto,
+      tenantId: config.tenant?.name,
+      dryRun: options.dryRun,
+      onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+    });
+
+    if (downstreamSetupResult.success && downstreamSetupResult.redeployResult?.deployedAt) {
+      currentLock = updateLockWithDeployments(currentLock, [downstreamSetupResult.redeployResult]);
+      await saveLockFile(currentLock, lockPath);
+      console.log(
+        chalk.green(
+          `  ✓ ${downstreamSetupResult.redeployResult.workerName} redeployed successfully`
+        )
+      );
+    } else if (!downstreamSetupResult.success) {
+      console.log(
+        chalk.yellow(
+          `\n⚠️  Downstream introspection client setup skipped: ${downstreamSetupResult.error}`
+        )
+      );
+      for (const error of downstreamSetupResult.secretUploadErrors ?? []) {
+        console.log(chalk.red(`  • ${error}`));
+      }
+    }
+  }
+
+  // Deploy UI Workers only after database and tenant bootstrap work has completed.
+  if (
+    !options.skipUi &&
+    !options.component &&
+    summary.failedCount === 0 &&
+    bootstrapSuccess &&
+    (config.components.loginUi || config.components.adminUi)
+  ) {
+    console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Workers...\n'));
+
+    let apiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+    if (!apiBaseUrl) {
+      const subdomain = await getWorkersSubdomain();
+      if (subdomain) {
+        apiBaseUrl = `https://${env}-ar-router.${subdomain}.workers.dev`;
+      } else {
+        apiBaseUrl = `https://${env}-ar-router.workers.dev`;
+        console.log(
+          chalk.yellow(`  ⚠️  Could not determine workers.dev subdomain, using fallback URL`)
+        );
+        console.log(chalk.gray(`     If API calls fail, set the correct URL in config or ui.env`));
+      }
+    }
+
+    let loginUiClientId: string | undefined;
+    if (config.components.loginUi && !options.dryRun) {
+      const loginUiUrl =
+        config.urls?.loginUi?.custom ||
+        config.urls?.loginUi?.auto ||
+        `https://${env}-ar-login-ui.workers.dev`;
+      const keysDir = getResolvedKeysDir();
+      const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+
+      const clientResult = await ensureLoginUiClient({
+        apiBaseUrl,
+        loginUiUrl,
+        adminApiSecretPath,
+        keysDir,
+        tenantId: config.tenant?.name,
+        onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+      });
+
+      if (clientResult.success && clientResult.clientId) {
+        loginUiClientId = clientResult.clientId;
+        if (clientResult.alreadyExists) {
+          console.log(chalk.gray(`  ✓ Login UI client exists: ${loginUiClientId}`));
+        } else {
+          console.log(chalk.green(`  ✓ Login UI client created: ${loginUiClientId}`));
+        }
+      } else {
+        console.error(
+          chalk.red(`  ✗ Login UI client creation failed: ${clientResult.error || 'unknown error'}`)
+        );
+        process.exit(1);
+      }
+    }
+
+    const loginUiSettings = resolveUiDeploymentSettings({
+      component: 'ar-login-ui',
+      config,
+      apiBaseUrl,
+      loginUiClientId,
+    });
+    const adminUiSettings = resolveUiDeploymentSettings({
+      component: 'ar-admin-ui',
+      config,
+      apiBaseUrl,
+    });
+    const adminUiBffSecrets =
+      (config.components.adminUi ?? true) && !options.dryRun
+        ? await loadAdminUiBffWorkerSecrets(getResolvedKeysDir())
+        : undefined;
+    if ((config.components.adminUi ?? true) && adminUiSettings.adminUiApiMode) {
+      console.log(
+        chalk.gray(
+          `  Admin UI API mode: ${adminUiSettings.adminUiApiMode} - ${describeAdminUiApiMode(
+            adminUiSettings.adminUiApiMode
+          )}`
+        )
+      );
+    }
+
+    const uiWorkersResult = await deployAllUiWorkers(
+      {
+        ...deployOptions,
+        apiBaseUrl,
+        perComponent: {
+          'ar-login-ui': {
+            apiBaseUrl: loginUiSettings.apiBaseUrl,
+            runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
+            uiEnvConfig: loginUiSettings.uiEnv,
+            serviceBindingName: loginUiSettings.serviceBindingName,
+          },
+          'ar-admin-ui': {
+            apiBaseUrl: adminUiSettings.apiBaseUrl,
+            runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
+            uiEnvConfig: adminUiSettings.uiEnv,
+            serviceBindingName: adminUiSettings.serviceBindingName,
+            adminUiBffSecrets,
+          },
+        },
+      },
+      {
+        loginUi: config.components.loginUi ?? true,
+        adminUi: config.components.adminUi ?? true,
+      }
+    );
+
+    uiWorkersSuccess = uiWorkersResult.failedCount === 0;
+    if (uiWorkersSuccess) {
+      console.log(chalk.green('\n✓ All UI packages deployed successfully'));
+      for (const result of uiWorkersResult.results) {
+        console.log(chalk.cyan(`  • ${result.component}: ${result.projectName}`));
+      }
+    } else {
+      console.log(
+        chalk.yellow(
+          `\n⚠️  ${uiWorkersResult.successCount}/${uiWorkersResult.results.length} UI packages deployed`
+        )
+      );
+      for (const result of uiWorkersResult.results) {
+        if (result.success) {
+          console.log(chalk.green(`  ✓ ${result.component}: ${result.projectName}`));
+        } else {
+          console.log(chalk.red(`  ✗ ${result.component}: ${result.error}`));
+        }
+      }
+    }
+  }
+
   // Final summary
   console.log(chalk.bold('\n━━━ Deployment Complete ━━━\n'));
 
@@ -895,7 +1095,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     summary.failedCount === 0 &&
     migrationsSuccess &&
     initialTenantSuccess &&
-    initialAdminRolesSuccess
+    initialAdminRolesSuccess &&
+    runtimeProfileSeedSuccess &&
+    uiWorkersSuccess
   ) {
     console.log(chalk.green('✅ All components deployed and migrations applied!\n'));
   } else if (summary.failedCount === 0 && !migrationsSuccess) {
@@ -907,6 +1109,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   } else if (summary.failedCount === 0 && !initialAdminRolesSuccess) {
     console.log(
       chalk.yellow('⚠️  All components deployed, but initial admin role bootstrap failed.\n')
+    );
+  } else if (summary.failedCount === 0 && !runtimeProfileSeedSuccess) {
+    console.log(chalk.yellow('⚠️  All components deployed, but runtime profile seed failed.\n'));
+  } else if (summary.failedCount === 0 && !uiWorkersSuccess) {
+    console.log(
+      chalk.yellow('⚠️  All API components deployed, but UI Worker deployment failed.\n')
     );
   } else {
     console.log(
@@ -925,6 +1133,22 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     if (apiUrl) console.log(chalk.cyan(`  API:       ${apiUrl}`));
     if (loginUrl) console.log(chalk.cyan(`  Login UI:  ${loginUrl}`));
     if (adminUrl) console.log(chalk.cyan(`  Admin UI:  ${adminUrl}`));
+    if (config.components.adminUi ?? true) {
+      const adminUiSettings = resolveUiDeploymentSettings({
+        component: 'ar-admin-ui',
+        config,
+        apiBaseUrl: apiUrl,
+      });
+      if (adminUiSettings.adminUiApiMode) {
+        console.log(
+          chalk.gray(
+            `  Admin UI API mode: ${adminUiSettings.adminUiApiMode} - ${describeAdminUiApiMode(
+              adminUiSettings.adminUiApiMode
+            )}`
+          )
+        );
+      }
+    }
 
     console.log('');
   }

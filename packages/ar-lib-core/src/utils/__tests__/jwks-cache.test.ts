@@ -3,6 +3,7 @@ import {
   getJwksWithCache,
   getKeyByKid,
   getVerificationKey,
+  invalidateAllJwksCaches,
   invalidateJwksCache,
   getJwksCacheStatus,
 } from '../jwks-cache';
@@ -82,7 +83,7 @@ function createMockEnv(
 describe('JWKS Cache', () => {
   beforeEach(() => {
     // Clear in-memory cache for all tenants before each test
-    invalidateJwksCache();
+    invalidateAllJwksCaches();
     vi.clearAllMocks();
   });
 
@@ -282,13 +283,17 @@ describe('JWKS Cache', () => {
       expect(getJwksCacheStatus(OTHER_TENANT)).not.toBeNull();
     });
 
-    it('should clear all caches when called without tenantId', async () => {
+    it('should reject a missing tenant ID', () => {
+      expect(() => invalidateJwksCache('')).toThrow('invalidateJwksCache requires tenantId');
+    });
+
+    it('should clear all caches through the explicit platform helper', async () => {
       const env = createMockEnv({ doKeys: [mockJwk1] });
 
       await getJwksWithCache(env, TEST_TENANT);
       await getJwksWithCache(env, OTHER_TENANT);
 
-      invalidateJwksCache();
+      invalidateAllJwksCaches();
 
       expect(getJwksCacheStatus(TEST_TENANT)).toBeNull();
       expect(getJwksCacheStatus(OTHER_TENANT)).toBeNull();

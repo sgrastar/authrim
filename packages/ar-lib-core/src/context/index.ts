@@ -8,11 +8,13 @@
  * import { createAuthContextFromHono, createPIIContextFromHono } from '@authrim/ar-lib-core';
  *
  * app.get('/authorize', async (c) => {
+ *   // Requires requestContextMiddleware, or pass an explicit tenant ID.
  *   const ctx = createAuthContextFromHono(c);
  *   const session = await ctx.repositories.session.findById(sessionId);
  * });
  *
  * app.get('/userinfo', async (c) => {
+ *   // Requires requestContextMiddleware, or pass an explicit tenant ID.
  *   const ctx = createPIIContextFromHono(c);
  *   const userPII = await ctx.piiRepositories.userPII.findByUserId(userId);
  * });
@@ -20,7 +22,7 @@
  *
  * Usage with factory (advanced):
  * ```typescript
- * const factory = createContextFactory(coreAdapter, piiAdapter, partitionRouter);
+ * const factory = createContextFactory(coreAdapter, tenantId, piiAdapter, partitionRouter);
  * const ctx = factory.createAuthContext(c);
  * ```
  */
@@ -50,4 +52,5 @@ export {
   createPIIContextFromHono,
   elevateToPIIContext,
   hasPIIDatabase,
+  resolveOptionalCoreAdapterFromHono,
 } from './hono-context';

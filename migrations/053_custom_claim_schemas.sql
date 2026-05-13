@@ -19,6 +19,7 @@ CREATE TABLE custom_claim_schemas (
 
   -- Field definition
   field_key TEXT NOT NULL,                    -- snake_case (e.g. 'employee_id')
+  active_field_key TEXT,                      -- field_key when is_active=1, NULL otherwise
   display_label TEXT NOT NULL,
   field_type TEXT NOT NULL DEFAULT 'string',  -- 'string'|'number'|'boolean'|'date'|'enum'
   is_pii INTEGER NOT NULL DEFAULT 0,          -- 0=non-PII(D1_CORE), 1=PII(D1_PII); immutable after creation
@@ -68,10 +69,10 @@ CREATE TABLE custom_claim_schemas (
   updated_at INTEGER NOT NULL
 );
 
--- Partial unique: only enforce uniqueness on active keys
--- Allows soft-deprecate -> new creation coexistence
-CREATE UNIQUE INDEX uniq_ccs_active_key ON custom_claim_schemas(tenant_id, field_key) WHERE is_active = 1;
+-- Portable uniqueness: only active rows materialize field_key into a guard column
+CREATE UNIQUE INDEX uniq_ccs_active_key
+  ON custom_claim_schemas(tenant_id, active_field_key);
 
 CREATE INDEX idx_ccs_tenant_active ON custom_claim_schemas(tenant_id, is_active, display_order);
 CREATE INDEX idx_ccs_tenant_key ON custom_claim_schemas(tenant_id, field_key);
-CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status) WHERE operation_status != 'active';
+CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status);

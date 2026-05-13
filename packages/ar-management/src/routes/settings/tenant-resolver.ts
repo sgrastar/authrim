@@ -1,16 +1,21 @@
 import type { Context } from 'hono';
-import { getDefaultTenantId, getTenantIdFromContext, type Env } from '@authrim/ar-lib-core';
+import {
+  createAuthContextFromHono,
+  getTenantIdFromContext,
+  type DatabaseAdapter,
+  type Env,
+} from '@authrim/ar-lib-core';
 
-export function resolveSettingsTenantId(c: Context, explicitTenantId?: string | null): string {
-  const trimmedExplicit = explicitTenantId?.trim();
-  if (trimmedExplicit) {
-    return trimmedExplicit;
-  }
-
+export function resolveSettingsTenantId(c: Context): string {
   const contextTenantId = getTenantIdFromContext(c as Context<{ Bindings: Env }>);
   if (contextTenantId) {
     return contextTenantId;
   }
 
-  return getDefaultTenantId((c as Context<{ Bindings: Env }>).env);
+  throw new Error('Settings routes require tenant context');
+}
+
+export function resolveSettingsCoreAdapter(c: Context): DatabaseAdapter {
+  const tenantId = resolveSettingsTenantId(c);
+  return createAuthContextFromHono(c as Context<{ Bindings: Env }>, tenantId).coreAdapter;
 }

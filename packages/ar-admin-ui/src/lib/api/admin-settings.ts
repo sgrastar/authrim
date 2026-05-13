@@ -181,6 +181,38 @@ export function convertPatchesToAPIRequest(
 	};
 }
 
+export interface TokenExchangeBooleanSetting {
+	value: boolean;
+	source: SettingSource;
+	default: boolean;
+}
+
+export interface TokenExchangeConfigResponse {
+	settings: {
+		enabled: TokenExchangeBooleanSetting;
+		allowedSubjectTokenTypes: {
+			value: string[];
+			source: SettingSource;
+			default: string[];
+			validOptions: string[];
+		};
+		maxResourceParams: {
+			value: number;
+			source: SettingSource;
+			default: number;
+			min: number;
+			max: number;
+		};
+		maxAudienceParams: {
+			value: number;
+			source: SettingSource;
+			default: number;
+			min: number;
+			max: number;
+		};
+	};
+}
+
 /**
  * Settings conflict error
  */
@@ -371,6 +403,46 @@ export const adminSettingsAPI = {
 	}
 };
 
+export const adminTokenExchangeSettingsAPI = {
+	async getConfig(): Promise<TokenExchangeConfigResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/token-exchange`, {
+			skipTenantHeader: true
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(
+				error.error_description || error.message || 'Failed to fetch token exchange settings'
+			);
+		}
+
+		return response.json();
+	},
+
+	async updateConfig(request: {
+		enabled: boolean;
+		allowedSubjectTokenTypes?: string[];
+		maxResourceParams?: number;
+		maxAudienceParams?: number;
+	}): Promise<TokenExchangeConfigResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/token-exchange`, {
+			method: 'PUT',
+			includeJsonContentType: true,
+			skipTenantHeader: true,
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(
+				error.error_description || error.message || 'Failed to update token exchange settings'
+			);
+		}
+
+		return response.json();
+	}
+};
+
 export const adminUiConfigAPI = {
 	async get(): Promise<UIConfigResponse> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
@@ -392,6 +464,7 @@ export const adminUiConfigAPI = {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
 			method: 'PUT',
 			includeJsonContentType: true,
+			skipTenantHeader: true,
 			body: JSON.stringify(request)
 		});
 
@@ -445,9 +518,11 @@ export const CATEGORY_NAMES = [
 	'check-api-audit',
 	// Login UI Customization
 	'login-ui',
+	'login-methods',
 	// Login Entry / Discovery
 	'login-entry',
 	'tenant-discovery-ui',
+	'support-ops',
 	// Platform settings (read-only)
 	'infrastructure',
 	'encryption'

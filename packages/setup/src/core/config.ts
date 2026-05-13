@@ -28,7 +28,7 @@ const urlOrHostname = z
 export const UrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
   custom: urlOrHostname.nullable().optional(),
-  /** Auto-generated URL (workers.dev or pages.dev) */
+  /** Auto-generated Workers URL */
   auto: urlOrHostname.optional(),
   /** Cloudflare zone ID for custom domain (populated during setup) */
   zoneId: z.string().nullable().optional(),
@@ -39,12 +39,12 @@ export const UrlConfigSchema = z.object({
 export const UiUrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
   custom: urlOrHostname.nullable().optional(),
-  /** Auto-generated URL (workers.dev or pages.dev) */
+  /** Auto-generated Workers URL */
   auto: urlOrHostname.optional(),
   /**
    * Whether to serve this UI from the same domain as the API via proxy
    * - true: UI is proxied through ar-router (e.g., https://api.example.com/admin)
-   * - false: UI is served from its own Pages URL (e.g., https://admin.pages.dev)
+   * - false: UI is served from its own UI Worker URL (e.g., https://admin.example.workers.dev)
    */
   sameAsApi: z.boolean().default(false),
 });
@@ -193,8 +193,6 @@ export const ShardingConfigSchema = z.object({
   sessionShards: z.number().int().positive().default(4),
   /** Number of challenge store shards */
   challengeShards: z.number().int().positive().default(4),
-  /** Number of flow state store shards (Flow Engine) */
-  flowStateShards: z.number().int().positive().default(32),
 });
 
 // =============================================================================
@@ -210,8 +208,8 @@ export const R2FeatureSchema = z.object({
 });
 
 export const EmailFeatureSchema = z.object({
-  /** Email provider (resend, sendgrid, ses, or none) */
-  provider: z.enum(['none', 'resend', 'sendgrid', 'ses']).default('none'),
+  /** Email provider (cloudflare, resend, sendgrid, ses, or none) */
+  provider: z.enum(['none', 'cloudflare', 'resend', 'sendgrid', 'ses']).default('none'),
   /** Sender email address (e.g., "noreply@yourdomain.com") */
   fromAddress: z.string().email().optional(),
   /** Sender display name (e.g., "Authrim") */
@@ -300,6 +298,219 @@ export const DatabaseConfigSchema = z.object({
 });
 
 // =============================================================================
+// Runtime Profile Configuration
+// =============================================================================
+
+export const ProfileIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9:_-]+$/, { message: 'Profile ID may only contain letters, numbers, :, _, -' });
+
+export const ProfileRegistryBackendSchema = z.enum(['kv', 'database']);
+
+export const ProfileDefaultsConfigSchema = z.object({
+  /**
+   * Environment default storage profile ID.
+   *
+   * Common built-ins:
+   * - builtin:storage:standard
+   * - builtin:storage:single-db
+   * - builtin:storage:eu-pii-split
+   * - builtin:storage:external-postgres
+   */
+  storage: ProfileIdSchema.default('builtin:storage:standard'),
+  /** Environment default audit profile ID */
+  audit: ProfileIdSchema.default('builtin:audit:standard'),
+  /** Environment default residency profile ID */
+  residency: ProfileIdSchema.default('builtin:residency:default'),
+});
+
+export const ProfileRegistryConfigSchema = z.object({
+  /**
+   * Registry storage backend for runtime profiles.
+   * - kv: lightweight install, no dedicated DB required for profile definitions
+   * - database: profile definitions stored in the configured database backend
+   */
+  backend: ProfileRegistryBackendSchema.default('kv'),
+});
+
+const HyperdriveReferenceSchema = z.object({
+  binding: z.string().min(1),
+  id: z.string().min(1),
+  driver: z.enum(['postgres', 'mysql']),
+});
+
+export const ProfileReferencesConfigSchema = z.object({
+  hyperdrive: z.record(z.string(), HyperdriveReferenceSchema).default({}),
+});
+
+const RuntimeProfileMetadataSchema = z.record(z.string(), z.unknown()).optional();
+const RuntimeProfileVersionSchema = z.number().int().positive().optional();
+
+const StorageTargetSeedSchema = z
+  .object({
+    driver: z.enum(['d1', 'postgres', 'mysql']),
+    bindingRef: z.string().min(1).optional(),
+    connectionRef: z.string().min(1).optional(),
+    role: z.enum(['core', 'pii', 'admin', 'custom']).optional(),
+  })
+  .refine((value) => Boolean(value.bindingRef || value.connectionRef), {
+    message: 'Storage targets require bindingRef or connectionRef',
+  });
+
+const StorageProfileSeedSchema = z.object({
+  id: ProfileIdSchema,
+  label: z.string().min(1),
+  description: z.string().min(1).optional(),
+  version: RuntimeProfileVersionSchema,
+  metadata: RuntimeProfileMetadataSchema,
+  residencyProfileId: ProfileIdSchema.optional(),
+  slices: z
+    .object({
+      users_core: StorageTargetSeedSchema.optional(),
+      users_pii: StorageTargetSeedSchema.optional(),
+      custom_claims: StorageTargetSeedSchema.optional(),
+      registration_fields: StorageTargetSeedSchema.optional(),
+      custom_pii: StorageTargetSeedSchema.optional(),
+    })
+    .superRefine((value, ctx) => {
+      if (
+        !value.users_core &&
+        !value.users_pii &&
+        !value.custom_claims &&
+        !value.registration_fields &&
+        !value.custom_pii
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'At least one storage slice must be configured',
+        });
+      }
+    }),
+});
+
+const DatabaseAuditTargetSeedSchema = z
+  .object({
+    type: z.enum(['d1', 'postgres', 'mysql']),
+    bindingRef: z.string().min(1).optional(),
+    connectionRef: z.string().min(1).optional(),
+    dataset: z.string().min(1).optional(),
+  })
+  .refine((value) => Boolean(value.bindingRef || value.connectionRef), {
+    message: 'Database audit targets require bindingRef or connectionRef',
+  });
+
+const HttpAuditTargetSeedSchema = z
+  .object({
+    type: z.literal('http'),
+    url: z
+      .string()
+      .url()
+      .refine((value) => value.startsWith('https://'), {
+        message: 'HTTP audit targets must use https URLs',
+      })
+      .optional(),
+    urlRef: z.string().min(1).optional(),
+    authTokenRef: z.string().min(1).optional(),
+    method: z.literal('POST').optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    format: z.literal('json').optional(),
+  })
+  .refine((value) => Boolean(value.url || value.urlRef), {
+    message: 'HTTP audit targets require url or urlRef',
+  });
+
+const AuditTargetSeedSchema = z.union([
+  DatabaseAuditTargetSeedSchema,
+  z.object({
+    type: z.literal('r2'),
+    bucketRef: z.string().min(1),
+    prefix: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal('logpush'),
+    destinationRef: z.string().min(1),
+    dataset: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal('firehose'),
+    streamRef: z.string().min(1),
+  }),
+  HttpAuditTargetSeedSchema,
+]);
+
+const AuditRetentionSeedSchema = z.object({
+  eventLogRetentionDays: z.number().int().positive().nullable().optional(),
+  piiLogRetentionDays: z.number().int().positive().nullable().optional(),
+  archiveBeforeDelete: z.boolean().optional(),
+  minimumRetentionDays: z.number().int().positive().nullable().optional(),
+  primaryDays: z.number().int().positive().nullable().optional(),
+  archiveDays: z.number().int().positive().nullable().optional(),
+});
+
+const AuditProfileSeedSchema = z.object({
+  id: ProfileIdSchema,
+  label: z.string().min(1),
+  description: z.string().min(1).optional(),
+  version: RuntimeProfileVersionSchema,
+  metadata: RuntimeProfileMetadataSchema,
+  primary: DatabaseAuditTargetSeedSchema.nullable(),
+  archive: z
+    .union([
+      DatabaseAuditTargetSeedSchema,
+      z.object({
+        type: z.literal('r2'),
+        bucketRef: z.string().min(1),
+        prefix: z.string().min(1).optional(),
+      }),
+    ])
+    .nullable()
+    .optional(),
+  sinks: z
+    .array(
+      z.union([
+        z.object({
+          type: z.literal('logpush'),
+          destinationRef: z.string().min(1),
+          dataset: z.string().min(1).optional(),
+        }),
+        z.object({
+          type: z.literal('firehose'),
+          streamRef: z.string().min(1),
+        }),
+        HttpAuditTargetSeedSchema,
+      ])
+    )
+    .default([]),
+  retention: AuditRetentionSeedSchema.optional(),
+  archiveFailureMode: z.enum(['best_effort', 'gate_cleanup']).optional(),
+  sinkFailureMode: z.enum(['best_effort', 'retry_until_ttl']).optional(),
+});
+
+const ResidencyProfileSeedSchema = z.object({
+  id: ProfileIdSchema,
+  label: z.string().min(1),
+  description: z.string().min(1).optional(),
+  version: RuntimeProfileVersionSchema,
+  metadata: RuntimeProfileMetadataSchema,
+  locationHint: z.enum(['auto', 'wnam', 'enam', 'weur', 'eeur', 'apac', 'oc']),
+  jurisdiction: z.enum(['none', 'eu', 'jp', 'us']),
+  allowedRegions: z.array(z.string().min(1)).optional(),
+});
+
+export const ProfileSeedConfigSchema = z.object({
+  storage: z.array(StorageProfileSeedSchema).default([]),
+  audit: z.array(AuditProfileSeedSchema).default([]),
+  residency: z.array(ResidencyProfileSeedSchema).default([]),
+});
+
+export const ProfilesConfigSchema = z.object({
+  defaults: ProfileDefaultsConfigSchema.default({}),
+  registry: ProfileRegistryConfigSchema.default({}),
+  references: ProfileReferencesConfigSchema.default({}),
+  seed: ProfileSeedConfigSchema.default({}),
+});
+
+// =============================================================================
 // Security Configuration
 // =============================================================================
 
@@ -380,6 +591,9 @@ export const AuthrimConfigSchema = z.object({
   /** Database configuration (D1 location/jurisdiction) */
   database: DatabaseConfigSchema.default({}),
 
+  /** Runtime profile defaults and registry backend selection */
+  profiles: ProfilesConfigSchema.default({}),
+
   /** Security configuration (PII encryption, domain hashing) */
   security: SecurityConfigSchema.default({}),
 });
@@ -402,6 +616,13 @@ export type D1Location = z.infer<typeof D1LocationSchema>;
 export type D1Jurisdiction = z.infer<typeof D1JurisdictionSchema>;
 export type DatabaseLocation = z.infer<typeof DatabaseLocationSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
+export type ProfileId = z.infer<typeof ProfileIdSchema>;
+export type ProfileRegistryBackend = z.infer<typeof ProfileRegistryBackendSchema>;
+export type ProfileDefaultsConfig = z.infer<typeof ProfileDefaultsConfigSchema>;
+export type ProfileRegistryConfig = z.infer<typeof ProfileRegistryConfigSchema>;
+export type ProfileReferencesConfig = z.infer<typeof ProfileReferencesConfigSchema>;
+export type ProfileSeedConfig = z.infer<typeof ProfileSeedConfigSchema>;
+export type ProfilesConfig = z.infer<typeof ProfilesConfigSchema>;
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
 // =============================================================================

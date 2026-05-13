@@ -65,14 +65,32 @@ export interface KeyMetadata {
     privateKey: string;
     publicKey: string;
     rpTokenEncryptionKey?: string;
+    objectEncryptionRootKey?: string;
+    versionManagerSecret?: string;
+    setupMachinePrivateKey?: string;
+    setupMachinePublicKey?: string;
+    adminUiBffPrivateKey?: string;
+    adminUiBffPublicKey?: string;
   };
+}
+
+export interface SupplementalKeyFilesResult {
+  createdFiles: string[];
 }
 
 export interface GeneratedSecrets {
   /** RSA key pair for JWT signing */
   keyPair: KeyPair;
+  /** ES256 key pair for setup tool Admin Machine Access */
+  setupMachineKeyPair: KeyPair;
+  /** ES256 key pair for Admin UI BFF Admin Machine Access transport auth */
+  adminUiBffMachineKeyPair: KeyPair;
   /** RP Token encryption key (hex encoded) */
   rpTokenEncryptionKey: string;
+  /** Root key for object plane encryption (hex encoded) */
+  objectEncryptionRootKey: string;
+  /** Scoped VersionManager Durable Object secret */
+  versionManagerSecret: string;
   /** Admin API secret */
   adminApiSecret: string;
   /** Key Manager secret */
@@ -146,6 +164,48 @@ export function generateRsaKeyPair(keyId?: string, keySize: number = 2048): KeyP
   };
 }
 
+/**
+ * Generate an ES256 key pair for Admin Machine Access client assertions.
+ *
+ * The private key is held by the setup tool. Only the public JWK is registered in
+ * DB_ADMIN as a machine credential.
+ */
+export function generateEs256KeyPair(keyId?: string): KeyPair {
+  const kid = keyId || generateKeyId('setup');
+
+  const { privateKey, publicKey } = generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+    publicKeyEncoding: {
+      type: 'spki',
+      format: 'pem',
+    },
+    privateKeyEncoding: {
+      type: 'pkcs8',
+      format: 'pem',
+    },
+  });
+
+  const publicKeyObject = createPublicKey({
+    key: publicKey,
+    format: 'pem',
+  });
+
+  const publicJwk = publicKeyObject.export({ format: 'jwk' }) as JWK;
+  const jwkWithMetadata: JWK = {
+    ...publicJwk,
+    kid,
+    use: 'sig',
+    alg: 'ES256',
+  };
+
+  return {
+    privateKeyPem: privateKey,
+    publicKeyJwk: jwkWithMetadata,
+    keyId: kid,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 // =============================================================================
 // Secret Generation
 // =============================================================================
@@ -173,10 +233,16 @@ export function generateBase64Secret(bytes: number = 32): string {
  */
 export function generateAllSecrets(keyId?: string): GeneratedSecrets {
   const keyPair = generateRsaKeyPair(keyId);
+  const setupMachineKeyPair = generateEs256KeyPair(`${keyPair.keyId}-setup`);
+  const adminUiBffMachineKeyPair = generateEs256KeyPair(`${keyPair.keyId}-admin-ui-bff`);
 
   return {
     keyPair,
+    setupMachineKeyPair,
+    adminUiBffMachineKeyPair,
     rpTokenEncryptionKey: generateHexSecret(32), // 256-bit key
+    objectEncryptionRootKey: generateHexSecret(32), // 256-bit key
+    versionManagerSecret: generateBase64Secret(32), // 256-bit secret
     adminApiSecret: generateBase64Secret(32), // 256-bit secret
     keyManagerSecret: generateBase64Secret(32), // 256-bit secret
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
@@ -393,9 +459,15 @@ export async function saveKeysToDirectory(
     privateKey: join(targetDir, 'private.pem'),
     publicKey: join(targetDir, 'public.jwk.json'),
     rpTokenEncryptionKey: join(targetDir, 'rp_token_encryption_key.txt'),
+    objectEncryptionRootKey: join(targetDir, 'object_encryption_root_key.txt'),
+    versionManagerSecret: join(targetDir, 'version_manager_secret.txt'),
     adminApiSecret: join(targetDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(targetDir, 'key_manager_secret.txt'),
     setupToken: join(targetDir, 'setup_token.txt'),
+    setupMachinePrivateKey: join(targetDir, 'setup_machine_private.pem'),
+    setupMachinePublicKey: join(targetDir, 'setup_machine_public.jwk.json'),
+    adminUiBffPrivateKey: join(targetDir, 'admin_ui_bff_private.pem'),
+    adminUiBffPublicKey: join(targetDir, 'admin_ui_bff_public.jwk.json'),
     metadata: join(targetDir, 'metadata.json'),
   };
 
@@ -413,6 +485,10 @@ export async function saveKeysToDirectory(
   // Write other secrets
   await writeFile(paths.rpTokenEncryptionKey, secrets.rpTokenEncryptionKey, 'utf-8');
   await chmod(paths.rpTokenEncryptionKey, SENSITIVE_FILE_MODE);
+  await writeFile(paths.objectEncryptionRootKey, secrets.objectEncryptionRootKey, 'utf-8');
+  await chmod(paths.objectEncryptionRootKey, SENSITIVE_FILE_MODE);
+  await writeFile(paths.versionManagerSecret, secrets.versionManagerSecret, 'utf-8');
+  await chmod(paths.versionManagerSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.adminApiSecret, secrets.adminApiSecret, 'utf-8');
   await chmod(paths.adminApiSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.keyManagerSecret, secrets.keyManagerSecret, 'utf-8');
@@ -422,6 +498,28 @@ export async function saveKeysToDirectory(
     await writeFile(paths.setupToken, secrets.setupToken, 'utf-8');
     await chmod(paths.setupToken, SENSITIVE_FILE_MODE);
   }
+
+  await writeFile(paths.setupMachinePrivateKey, secrets.setupMachineKeyPair.privateKeyPem, 'utf-8');
+  await chmod(paths.setupMachinePrivateKey, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.setupMachinePublicKey,
+    JSON.stringify(secrets.setupMachineKeyPair.publicKeyJwk, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.setupMachinePublicKey, SENSITIVE_FILE_MODE);
+
+  await writeFile(
+    paths.adminUiBffPrivateKey,
+    secrets.adminUiBffMachineKeyPair.privateKeyPem,
+    'utf-8'
+  );
+  await chmod(paths.adminUiBffPrivateKey, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.adminUiBffPublicKey,
+    JSON.stringify(secrets.adminUiBffMachineKeyPair.publicKeyJwk, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.adminUiBffPublicKey, SENSITIVE_FILE_MODE);
 
   // Write metadata
   const metadata: KeyMetadata = {
@@ -433,11 +531,163 @@ export async function saveKeysToDirectory(
       privateKey: paths.privateKey,
       publicKey: paths.publicKey,
       rpTokenEncryptionKey: paths.rpTokenEncryptionKey,
+      objectEncryptionRootKey: paths.objectEncryptionRootKey,
+      versionManagerSecret: paths.versionManagerSecret,
+      setupMachinePrivateKey: paths.setupMachinePrivateKey,
+      setupMachinePublicKey: paths.setupMachinePublicKey,
+      adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
+      adminUiBffPublicKey: paths.adminUiBffPublicKey,
     },
   };
 
   await writeFile(paths.metadata, JSON.stringify(metadata, null, 2), 'utf-8');
   await chmod(paths.metadata, SENSITIVE_FILE_MODE);
+}
+
+async function readBaseKeyId(targetDir: string): Promise<string> {
+  const metadataPath = join(targetDir, 'metadata.json');
+  if (existsSync(metadataPath)) {
+    try {
+      const metadata = JSON.parse(await readFile(metadataPath, 'utf-8')) as Partial<KeyMetadata>;
+      if (typeof metadata.kid === 'string' && metadata.kid.length > 0) {
+        return metadata.kid;
+      }
+    } catch {
+      // Fall through to public JWK below.
+    }
+  }
+
+  const publicJwkPath = join(targetDir, 'public.jwk.json');
+  if (existsSync(publicJwkPath)) {
+    try {
+      const publicJwk = JSON.parse(await readFile(publicJwkPath, 'utf-8')) as Partial<JWK>;
+      if (typeof publicJwk.kid === 'string' && publicJwk.kid.length > 0) {
+        return publicJwk.kid;
+      }
+    } catch {
+      // Fall through to generated key ID below.
+    }
+  }
+
+  return generateKeyId('supplemental');
+}
+
+async function writeSensitiveFile(path: string, content: string): Promise<void> {
+  await writeFile(path, content, 'utf-8');
+  await chmod(path, 0o600);
+}
+
+async function writeMissingMachineKeyPair(
+  paths: { privateKey: string; publicKey: string },
+  keyId: string,
+  createdFiles: string[]
+): Promise<void> {
+  const hasPrivateKey = existsSync(paths.privateKey);
+  const hasPublicKey = existsSync(paths.publicKey);
+
+  if (hasPrivateKey && hasPublicKey) {
+    return;
+  }
+
+  if (hasPrivateKey !== hasPublicKey) {
+    throw new Error(
+      `Incomplete machine key pair: both ${paths.privateKey} and ${paths.publicKey} are required`
+    );
+  }
+
+  const keyPair = generateEs256KeyPair(keyId);
+  await writeSensitiveFile(paths.privateKey, keyPair.privateKeyPem);
+  await writeSensitiveFile(paths.publicKey, JSON.stringify(keyPair.publicKeyJwk, null, 2));
+  createdFiles.push(paths.privateKey, paths.publicKey);
+}
+
+async function updateMetadataWithSupplementalFiles(
+  targetDir: string,
+  files: Partial<KeyMetadata['files']>
+): Promise<void> {
+  const metadataPath = join(targetDir, 'metadata.json');
+  if (!existsSync(metadataPath)) {
+    return;
+  }
+
+  try {
+    const metadata = JSON.parse(await readFile(metadataPath, 'utf-8')) as KeyMetadata;
+    metadata.files = {
+      ...metadata.files,
+      ...files,
+    };
+    await writeSensitiveFile(metadataPath, JSON.stringify(metadata, null, 2));
+  } catch {
+    // Metadata is advisory; do not block deploy-time compatibility repair.
+  }
+}
+
+/**
+ * Backfill keys/secrets introduced after the original setup flow.
+ *
+ * Existing self-hosted installs may have a valid key directory without
+ * VersionManager or Admin Machine Access key material. Deploy paths call this
+ * before uploading secrets and before bootstrapping DB_ADMIN machine principals.
+ */
+export async function ensureSupplementalKeyFiles(
+  keysDir: string
+): Promise<SupplementalKeyFilesResult> {
+  validateKeysDirectory(keysDir);
+
+  if (!existsSync(keysDir)) {
+    throw new Error(`Keys directory not found: ${keysDir}`);
+  }
+
+  const createdFiles: string[] = [];
+  const baseKeyId = await readBaseKeyId(keysDir);
+  const paths = {
+    objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
+    versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
+    setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
+    setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
+    adminUiBffPrivateKey: join(keysDir, 'admin_ui_bff_private.pem'),
+    adminUiBffPublicKey: join(keysDir, 'admin_ui_bff_public.jwk.json'),
+  };
+
+  if (!existsSync(paths.objectEncryptionRootKey)) {
+    await writeSensitiveFile(paths.objectEncryptionRootKey, generateHexSecret(32));
+    createdFiles.push(paths.objectEncryptionRootKey);
+  }
+
+  if (!existsSync(paths.versionManagerSecret)) {
+    await writeSensitiveFile(paths.versionManagerSecret, generateBase64Secret(32));
+    createdFiles.push(paths.versionManagerSecret);
+  }
+
+  await writeMissingMachineKeyPair(
+    {
+      privateKey: paths.setupMachinePrivateKey,
+      publicKey: paths.setupMachinePublicKey,
+    },
+    `${baseKeyId}-setup`,
+    createdFiles
+  );
+  await writeMissingMachineKeyPair(
+    {
+      privateKey: paths.adminUiBffPrivateKey,
+      publicKey: paths.adminUiBffPublicKey,
+    },
+    `${baseKeyId}-admin-ui-bff`,
+    createdFiles
+  );
+
+  if (createdFiles.length > 0) {
+    await updateMetadataWithSupplementalFiles(keysDir, {
+      objectEncryptionRootKey: paths.objectEncryptionRootKey,
+      versionManagerSecret: paths.versionManagerSecret,
+      setupMachinePrivateKey: paths.setupMachinePrivateKey,
+      setupMachinePublicKey: paths.setupMachinePublicKey,
+      adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
+      adminUiBffPublicKey: paths.adminUiBffPublicKey,
+    });
+  }
+
+  return { createdFiles };
 }
 
 export interface LoadKeysOptions {
@@ -592,6 +842,14 @@ export function generateWranglerSecretCommands(
     `echo -n "$(cat ${join(keysDir, 'rp_token_encryption_key.txt')})" | wrangler secret put RP_TOKEN_ENCRYPTION_KEY${envFlag}`
   );
 
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'object_encryption_root_key.txt')})" | wrangler secret put OBJECT_ENCRYPTION_ROOT_KEY${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'version_manager_secret.txt')})" | wrangler secret put VERSION_MANAGER_SECRET${envFlag}`
+  );
+
   // Admin API secret
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'admin_api_secret.txt')})" | wrangler secret put ADMIN_API_SECRET${envFlag}`
@@ -632,4 +890,15 @@ export function validatePublicKeyJwk(jwk: JWK): boolean {
   if (!jwk.n || !jwk.e) return false;
   if (!jwk.kid) return false;
   return true;
+}
+
+export function validateSetupMachinePublicKeyJwk(jwk: JWK): boolean {
+  return (
+    jwk.kty === 'EC' &&
+    jwk.crv === 'P-256' &&
+    typeof jwk.x === 'string' &&
+    typeof jwk.y === 'string' &&
+    typeof jwk.kid === 'string' &&
+    jwk.alg === 'ES256'
+  );
 }

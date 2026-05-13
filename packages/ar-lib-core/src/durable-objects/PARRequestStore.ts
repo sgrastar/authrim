@@ -29,6 +29,7 @@ import { createLogger, type Logger } from '../utils/logger';
  * PAR request data
  */
 export interface PARRequestData {
+  tenant_id: string;
   client_id: string;
   redirect_uri: string;
   scope: string;
@@ -69,6 +70,7 @@ export interface StorePARRequest {
  */
 export interface ConsumePARRequest {
   requestUri: string;
+  tenant_id: string;
   client_id: string; // Must match the client_id in stored data
 }
 
@@ -246,6 +248,10 @@ export class PARRequestStore extends DurableObject<Env> {
   async storeRequest(request: StorePARRequest): Promise<void> {
     await this.initializeState();
 
+    if (!request.data.tenant_id) {
+      throw new Error('Invalid PAR request: tenant_id is required');
+    }
+
     const now = Date.now();
     const data: PARRequestData = {
       ...request.data,
@@ -284,6 +290,11 @@ export class PARRequestStore extends DurableObject<Env> {
     // Request not found
     if (!data) {
       throw new Error('Invalid request_uri: not found or already consumed');
+    }
+
+    // Tenant mismatch
+    if (data.tenant_id !== request.tenant_id) {
+      throw new Error('Invalid request_uri: tenant_id mismatch');
     }
 
     // Client ID mismatch
@@ -368,7 +379,7 @@ export class PARRequestStore extends DurableObject<Env> {
       if (path === '/request' && request.method === 'POST') {
         const body = (await request.json()) as Partial<StorePARRequest>;
 
-        if (!body.requestUri || !body.data || !body.ttl) {
+        if (!body.requestUri || !body.data || !body.data.tenant_id || !body.ttl) {
           return new Response(
             JSON.stringify({
               error: 'invalid_request',
@@ -393,7 +404,7 @@ export class PARRequestStore extends DurableObject<Env> {
       if (path === '/request/consume' && request.method === 'POST') {
         const body = (await request.json()) as Partial<ConsumePARRequest>;
 
-        if (!body.requestUri || !body.client_id) {
+        if (!body.requestUri || !body.tenant_id || !body.client_id) {
           return new Response(
             JSON.stringify({
               error: 'invalid_request',

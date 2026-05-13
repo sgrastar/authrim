@@ -556,6 +556,22 @@ export function getHtmlTemplate(
       margin-bottom: 1.25rem;
     }
 
+    .inline-field {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .inline-field input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .inline-field button {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
     label {
       display: block;
       font-family: var(--font-sans);
@@ -2159,8 +2175,12 @@ export function getHtmlTemplate(
       const copyByLocale = {
         ja: {
           initialTenantLabel: '最初のテナントID',
+          singleTenantLabel: 'テナントID',
+          randomTenantButtonLabel: 'ランダムで決める',
           initialTenantHintGeneric:
-            '最初に作成するテナント識別子です。URLに使わない場合でも内部設定に使います。',
+            '最初に作成するテナント識別子です。1〜63文字で、先頭は小文字の英字、使用できるのは小文字英字・数字・ハイフンです。URLに使わない場合でも内部設定に使います。',
+          singleTenantHintGeneric:
+            'テナント識別子です。1〜63文字で、先頭は小文字の英字、使用できるのは小文字英字・数字・ハイフンです。URLに使わない場合でも内部設定に使います。',
           initialTenantHintSubdomain: (_tenantName, baseDomain, url) =>
             '最初のテナントは ' + url + ' を使います。',
           primaryTenantLabel: 'URLにテナント名を含めないテナント',
@@ -2427,8 +2447,12 @@ export function getHtmlTemplate(
         },
         en: {
           initialTenantLabel: 'Initial Tenant ID',
+          singleTenantLabel: 'Tenant ID',
+          randomTenantButtonLabel: 'Generate Random',
           initialTenantHintGeneric:
-            'Identifier for the first tenant you create. It is kept even when the URL does not expose a tenant segment.',
+            'Identifier for the first tenant you create. Use 1-63 characters, start with a lowercase letter, and use only lowercase letters, digits, and hyphens. It is kept even when the URL does not expose a tenant segment.',
+          singleTenantHintGeneric:
+            'Tenant identifier. Use 1-63 characters, start with a lowercase letter, and use only lowercase letters, digits, and hyphens. It is kept even when the URL does not expose a tenant segment.',
           initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
             'The first tenant will use ' + url + '.',
           primaryTenantLabel: 'Tenant that uses the naked URL',
@@ -2899,7 +2923,7 @@ export function getHtmlTemplate(
             <li data-i18n="web.mode.quickDomain">Optional custom domain</li>
             <li data-i18n="web.mode.quickDefault">Default components</li>
           </ul>
-          <span class="mode-badge" data-i18n="web.mode.recommended">Recommended</span>
+          <!--<span class="mode-badge" data-i18n="web.mode.recommended">Recommended</span>-->
         </div>
 
         <div class="mode-card" id="mode-custom">
@@ -3071,11 +3095,14 @@ export function getHtmlTemplate(
           </div>
         </div>
 
-        <!-- Initial Tenant (hidden when naked domain is checked or using workers.dev) -->
+        <!-- Tenant (hidden when naked domain is checked) -->
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
             <label for="tenant-name" id="tenant-id-label">Initial Tenant ID</label>
-            <input type="text" id="tenant-name" placeholder="default" value="default" disabled readonly data-i18n-placeholder="web.form.tenantIdPlaceholder">
+            <div class="inline-field">
+              <input type="text" id="tenant-name" placeholder="default" value="default" data-i18n-placeholder="web.form.tenantIdPlaceholder">
+              <button type="button" id="tenant-name-random" class="btn-secondary">Generate Random</button>
+            </div>
             <small id="tenant-id-hint" style="color: var(--text-muted)">Identifier for the first tenant you create.</small>
             <small id="tenant-workers-note" style="color: #6b7280; display: none;" data-i18n="web.form.tenantIdWorkerNote">
               (Tenant ID is used internally. URL subdomain requires custom domain.)
@@ -3111,14 +3138,14 @@ export function getHtmlTemplate(
         <h4>🖥️ <span data-i18n="web.section.uiDomains">UI Domains (Optional)</span></h4>
         <div class="section-hint" data-i18n="web.section.uiDomainsHint">
           Custom domains for Login/Admin UIs. Each can be set independently.
-          Leave empty to use Cloudflare Pages default.
+          Leave empty to use the UI Worker default.
         </div>
 
         <div class="domain-row" id="login-domain-row">
           <span class="domain-label" data-i18n="web.domain.loginUi">Login UI</span>
           <div class="domain-input-wrapper">
             <input type="text" id="login-domain" placeholder="login.example.com" data-i18n-placeholder="web.form.loginDomainPlaceholder">
-            <span class="domain-default" id="login-default">{env}-ar-login-ui.pages.dev</span>
+            <span class="domain-default" id="login-default">{env}-ar-login-ui.workers.dev</span>
           </div>
         </div>
 
@@ -3126,7 +3153,7 @@ export function getHtmlTemplate(
           <span class="domain-label" data-i18n="web.domain.adminUi">Admin UI</span>
           <div class="domain-input-wrapper">
             <input type="text" id="admin-domain" placeholder="admin.example.com" data-i18n-placeholder="web.form.adminDomainPlaceholder">
-            <span class="domain-default" id="admin-default">{env}-ar-admin-ui.pages.dev</span>
+            <span class="domain-default" id="admin-default">{env}-ar-admin-ui.workers.dev</span>
           </div>
         </div>
 
@@ -3160,22 +3187,22 @@ export function getHtmlTemplate(
           <!-- テナント別カード (JS で描画) -->
           <div id="preview-mt-rows" aria-live="polite"></div>
 
-          <!-- Login UI Pages URL (実際の Pages deployment 先) -->
+          <!-- Login UI Worker URL -->
           <div class="infra-item" id="preview-login-pages-row" style="margin-top: 0.25rem;">
-            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI (Pages):</span>
-            <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.pages.dev</span>
+            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI (Worker):</span>
+            <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.workers.dev</span>
           </div>
 
           <!-- テナント選択 共通入り口 -->
           <div class="infra-item" id="preview-tenant-discover-row" style="margin-top: 0.25rem;">
             <span class="infra-label" data-i18n="web.preview.tenantDiscover">テナント選択 (共通入り口):</span>
-            <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.pages.dev/discover</span>
+            <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.workers.dev/discover</span>
           </div>
 
           <!-- Admin UI アクセス先 -->
           <div class="infra-item" id="preview-admin-access-row">
             <span class="infra-label" data-i18n="web.preview.adminAccess">Admin UI Access:</span>
-            <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.pages.dev/admin</span>
+            <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.workers.dev/admin</span>
           </div>
 
           <!-- 無効設定の警告 (条件に合致した時のみ表示) -->
@@ -3189,11 +3216,15 @@ export function getHtmlTemplate(
         <!-- シングルテナント用 Login UI / Admin UI 行 (multi-tenant=off 時のみ表示) -->
         <div class="infra-item" id="preview-login-row">
           <span class="infra-label" data-i18n="web.preview.loginUi">Login UI:</span>
-          <span class="infra-value" id="preview-login">{env}-ar-login-ui.pages.dev</span>
+          <span class="infra-value" id="preview-login">{env}-ar-login-ui.workers.dev</span>
         </div>
         <div class="infra-item" id="preview-admin-row">
           <span class="infra-label" data-i18n="web.preview.adminUi">Admin UI:</span>
-          <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.pages.dev</span>
+          <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.workers.dev</span>
+        </div>
+        <div class="infra-item" id="preview-admin-api-mode-row">
+          <span class="infra-label">Admin UI API mode:</span>
+          <span class="infra-value" id="preview-admin-api-mode">cross-site-proxy</span>
         </div>
       </div>
 
@@ -3351,14 +3382,47 @@ export function getHtmlTemplate(
             <small style="color: var(--text-muted);" data-i18n="web.email.configureLaterHint">Skip for now and configure later.</small>
           </span>
         </label>
+	        <label class="radio-item" style="padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.5rem;">
+	          <input type="radio" name="email-setup-choice" value="cloudflare">
+	          <span style="display: flex; flex-direction: column; gap: 0.25rem;">
+	            <strong data-i18n="web.email.configureCloudflare">Configure Cloudflare Email Service</strong>
+	            <small style="color: var(--text-muted);" data-i18n="web.email.configureCloudflareHint">Use the native Workers Email Service binding. Requires a Workers Paid plan and Cloudflare DNS.</small>
+	          </span>
+	        </label>
         <label class="radio-item" style="padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.5rem;">
-          <input type="radio" name="email-setup-choice" value="configure">
+          <input type="radio" name="email-setup-choice" value="resend">
           <span style="display: flex; flex-direction: column; gap: 0.25rem;">
             <strong data-i18n="web.email.configureResend">Configure Resend</strong>
             <small style="color: var(--text-muted);" data-i18n="web.email.configureResendHint">Set up email sending with Resend (recommended for production).</small>
           </span>
         </label>
       </div>
+
+	      <!-- Cloudflare Configuration Form (hidden by default) -->
+	      <div id="cloudflare-config-form" class="hidden" style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem;">
+	        <h3 style="margin: 0 0 1rem 0; font-size: 1rem;">☁️ <span data-i18n="web.email.cloudflareSetup">Cloudflare Email Service</span></h3>
+
+	        <div class="alert alert-warning" style="margin-bottom: 1rem;">
+	          <strong data-i18n="web.email.cloudflareRequirements">Requirements</strong>
+	          <ul style="margin: 0.5rem 0 0 1rem; padding: 0;">
+	            <li data-i18n="web.email.cloudflareRequirementPaid">Workers Paid Plan is required</li>
+	            <li data-i18n="web.email.cloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li>
+	            <li data-i18n="web.email.cloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li>
+	          </ul>
+	        </div>
+
+	        <div class="form-group">
+	          <label for="cloudflare-from-address" data-i18n="web.email.fromEmailAddress">From Email Address</label>
+	          <input type="email" id="cloudflare-from-address" placeholder="noreply@yourdomain.com" autocomplete="off">
+	          <small style="color: var(--text-muted);" data-i18n="web.email.cloudflareFromHint">Must be from a domain onboarded to Cloudflare Email Service</small>
+	        </div>
+
+	        <div class="form-group">
+	          <label for="cloudflare-from-name" data-i18n="web.email.fromDisplayName">From Display Name (optional)</label>
+	          <input type="text" id="cloudflare-from-name" placeholder="Authrim" autocomplete="off">
+	          <small style="color: var(--text-muted);" data-i18n="web.email.fromDisplayHint">Displayed as the sender name in email clients</small>
+	        </div>
+	      </div>
 
       <!-- Resend Configuration Form (hidden by default) -->
       <div id="resend-config-form" class="hidden" style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem;">
@@ -3640,6 +3704,64 @@ export function getHtmlTemplate(
         </div>
       </div>
 
+      <div class="resource-section" id="env-email-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          📧 <span data-i18n="web.envDetail.emailSettings">Email Settings</span>
+        </div>
+        <p style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;" data-i18n="web.envDetail.emailDesc">
+          Enable Cloudflare Email Service later for this environment. This updates .authrim, regenerates wrangler bindings, uploads email secrets, and redeploys ar-auth and ar-management.
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-top: 1rem;">
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentProvider">Current Provider</div>
+            <div id="env-email-provider" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentStatus">Status</div>
+            <div id="env-email-status" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentFrom">From Address</div>
+            <div id="env-email-from" style="margin-top: 0.35rem; font-weight: 600; word-break: break-word;">-</div>
+          </div>
+        </div>
+
+        <div class="alert alert-warning" style="margin-top: 1rem;">
+          <strong data-i18n="web.envDetail.emailCloudflareRequirements">Requirements</strong>
+          <ul style="margin: 0.5rem 0 0 1.25rem;">
+            <li data-i18n="web.envDetail.emailCloudflareRequirementPaid">Workers Paid Plan is required</li>
+            <li data-i18n="web.envDetail.emailCloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li>
+            <li data-i18n="web.envDetail.emailCloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li>
+          </ul>
+        </div>
+
+        <div style="margin-top: 1rem; display: grid; gap: 1rem;">
+          <div>
+            <label for="env-email-from-address" style="display: block; margin-bottom: 0.5rem; font-weight: 600;" data-i18n="web.envDetail.emailFromAddress">From Email Address</label>
+            <input type="email" id="env-email-from-address" placeholder="noreply@yourdomain.com" autocomplete="off">
+            <div style="margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCloudflareFromHint">
+              Must be from a domain onboarded to Cloudflare Email Service.
+            </div>
+          </div>
+          <div>
+            <label for="env-email-from-name" style="display: block; margin-bottom: 0.5rem; font-weight: 600;" data-i18n="web.envDetail.emailFromName">From Display Name (optional)</label>
+            <input type="text" id="env-email-from-name" placeholder="Authrim" autocomplete="off">
+          </div>
+        </div>
+
+        <div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
+          <button class="btn-primary" id="btn-enable-cloudflare-email">
+            ☁️ <span data-i18n="web.envDetail.emailEnableCloudflare">Enable Cloudflare Email Service</span>
+          </button>
+        </div>
+
+        <div id="env-email-progress" class="hidden" style="margin-top: 1rem;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;" data-i18n="web.envDetail.emailProgress">Email Setup Progress:</div>
+          <div id="env-email-log" class="progress-log" style="max-height: 240px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+        </div>
+      </div>
+
       <div id="detail-resources">
         <!-- Workers -->
         <div class="resource-section">
@@ -3702,10 +3824,10 @@ export function getHtmlTemplate(
         <!-- UI Update Section (Admin UI, Login UI) -->
         <div class="resource-section" id="ui-update-section" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
           <div class="resource-section-title">
-            📱 <span data-i18n="web.envDetail.uiUpdate">Update UI (Pages)</span>
+            📱 <span data-i18n="web.envDetail.uiUpdate">Update UI (Workers)</span>
           </div>
           <p style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;" data-i18n="web.envDetail.uiUpdateDesc">
-            Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.
+            Update Admin UI or Login UI individually. These are deployed to Cloudflare Workers.
           </p>
 
           <!-- UI Components -->
@@ -3714,7 +3836,7 @@ export function getHtmlTemplate(
             <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
               <div>
                 <div style="font-weight: 600;">🖥️ Admin UI</div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-admin-ui • Cloudflare Pages</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-admin-ui • Cloudflare Worker</div>
               </div>
               <button class="btn-primary btn-sm" id="btn-update-admin-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
                 🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
@@ -3725,7 +3847,7 @@ export function getHtmlTemplate(
             <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
               <div>
                 <div style="font-weight: 600;">🔐 Login UI</div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-login-ui • Cloudflare Pages</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-login-ui • Cloudflare Worker</div>
               </div>
               <button class="btn-primary btn-sm" id="btn-update-login-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
                 🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
@@ -3772,10 +3894,10 @@ export function getHtmlTemplate(
           <div class="resource-list" id="detail-r2-list"></div>
         </div>
 
-        <!-- Pages Projects -->
+        <!-- Legacy Pages Projects -->
         <div class="resource-section" id="detail-pages-section">
           <div class="resource-section-title">
-            📄 <span data-i18n="web.envDetail.pagesProjects">Pages Projects</span> <span class="count" id="detail-pages-count">(0)</span>
+            📄 <span data-i18n="web.envDetail.pagesProjects">Legacy Pages Projects</span> <span class="count" id="detail-pages-count">(0)</span>
           </div>
           <div class="resource-list" id="detail-pages-list"></div>
         </div>
@@ -3849,7 +3971,7 @@ export function getHtmlTemplate(
           <label class="checkbox-item delete-option">
             <input type="checkbox" id="delete-pages" checked>
             <span>
-              <strong data-i18n="web.delete.pagesProjects">Pages Projects</strong>
+              <strong data-i18n="web.delete.pagesProjects">Legacy Pages Projects</strong>
               <small id="delete-pages-count">(0 projects)</small>
             </span>
           </label>
@@ -4011,6 +4133,7 @@ export function getHtmlTemplate(
     // Environment management state
     let detectedEnvironments = [];
     let selectedEnvForDetail = null;
+    let selectedEnvDetailConfig = null;
     let selectedEnvForDelete = null;
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
@@ -4529,7 +4652,10 @@ export function getHtmlTemplate(
       document.querySelectorAll('input[name="email-setup-choice"]').forEach((input) => {
         input.checked = input.value === 'later';
       });
+      document.getElementById('cloudflare-config-form').classList.add('hidden');
       document.getElementById('resend-config-form').classList.add('hidden');
+      document.getElementById('cloudflare-from-address').value = '';
+      document.getElementById('cloudflare-from-name').value = '';
       document.getElementById('resend-api-key').value = '';
       document.getElementById('email-from-address').value = '';
       document.getElementById('email-from-name').value = '';
@@ -4981,14 +5107,31 @@ export function getHtmlTemplate(
       });
     }
 
+    function generateRandomTenantIdInBrowser() {
+      const alphabet = 'abcdefghjkmnpqrstuvwxyz';
+      const bytes = new Uint8Array(12);
+      globalThis.crypto.getRandomValues(bytes);
+      let body = '';
+      for (let i = 0; i < bytes.length; i += 1) {
+        body += alphabet[bytes[i] % alphabet.length];
+      }
+      return body;
+    }
+
     function refreshApiDomainUi() {
       const state = getCurrentApiDomainUiState();
       const copy = getApiDomainUiCopy();
       const baseDomain = document.getElementById('base-domain').value.trim();
       const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
       const primaryTenant = document.getElementById('primary-tenant').value.trim() || tenantName;
+      const singleTenantMode = !state.multiTenantEnabled;
 
-      document.getElementById('tenant-id-label').textContent = copy.initialTenantLabel;
+      document.getElementById('tenant-id-label').textContent =
+        singleTenantMode
+          ? copy.singleTenantLabel || copy.initialTenantLabel
+          : copy.initialTenantLabel;
+      document.getElementById('tenant-name-random').textContent =
+        copy.randomTenantButtonLabel || 'Generate Random';
       document.getElementById('primary-tenant-label').textContent = copy.primaryTenantLabel;
       document.getElementById('tenant-url-examples-title').textContent = copy.examplesTitle;
       document.getElementById('tenant-url-examples-header-label').textContent =
@@ -5011,7 +5154,10 @@ export function getHtmlTemplate(
           'https://' + tenantName + '.' + baseDomain
         );
       } else {
-        document.getElementById('tenant-id-hint').textContent = copy.initialTenantHintGeneric;
+        document.getElementById('tenant-id-hint').textContent =
+          singleTenantMode
+            ? copy.singleTenantHintGeneric || copy.initialTenantHintGeneric
+            : copy.initialTenantHintGeneric;
       }
 
       document.getElementById('primary-tenant-hint').textContent = copy.primaryTenantHint(
@@ -5041,6 +5187,54 @@ export function getHtmlTemplate(
 
     window.refreshApiDomainUi = refreshApiDomainUi;
     window.renderDeployManualWildcardWarning = renderDeployManualWildcardWarning;
+
+    function getOriginFromPreviewUrl(value) {
+      try {
+        return new URL(value).origin;
+      } catch {
+        return '';
+      }
+    }
+
+    function hostWithinBaseDomain(host, baseDomain) {
+      if (!host || !baseDomain) return false;
+      const normalizedHost = host.toLowerCase();
+      const normalizedBase = baseDomain.toLowerCase();
+      return normalizedHost === normalizedBase || normalizedHost.endsWith('.' + normalizedBase);
+    }
+
+    function describeAdminPreviewMode(mode) {
+      if (mode === 'same-origin') {
+        return 'same-origin - relative Admin API calls on the same origin';
+      }
+      if (mode === 'same-site-cross-origin') {
+        return 'same-site-cross-origin - direct Admin API calls with credentialed CORS';
+      }
+      return 'cross-site-proxy - Admin UI Worker BFF via Service Binding';
+    }
+
+    function resolveAdminPreviewMode(apiUrl, adminUrl, baseDomain) {
+      const apiOrigin = getOriginFromPreviewUrl(apiUrl);
+      const adminOrigin = getOriginFromPreviewUrl(adminUrl);
+      if (apiOrigin && adminOrigin && apiOrigin === adminOrigin) {
+        return 'same-origin';
+      }
+
+      try {
+        const apiHost = new URL(apiUrl).hostname;
+        const adminHost = new URL(adminUrl).hostname;
+        if (
+          hostWithinBaseDomain(apiHost, baseDomain) &&
+          hostWithinBaseDomain(adminHost, baseDomain)
+        ) {
+          return 'same-site-cross-origin';
+        }
+      } catch {
+        // Fall through to proxy mode for incomplete preview input.
+      }
+
+      return 'cross-site-proxy';
+    }
 
     function updatePreview() {
       const env = document.getElementById('env').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '{env}';
@@ -5072,9 +5266,12 @@ export function getHtmlTemplate(
       const workersDomain = workersSubdomain
         ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
         : env + '-ar-router.workers.dev';
-      // Note: Pages uses {project}.pages.dev format (no account subdomain, unlike Workers)
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
+      const loginUiWorkerDomain = workersSubdomain
+        ? env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-login-ui.workers.dev';
+      const adminUiWorkerDomain = workersSubdomain
+        ? env + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-admin-ui.workers.dev';
 
       // Issuer URL
       // Note: Tenant subdomain is only supported with custom domains, NOT workers.dev
@@ -5108,10 +5305,10 @@ export function getHtmlTemplate(
         previewLogin.textContent = 'https://' + loginDomain;
         previewLogin.style.color = '';
       } else {
-        previewLogin.textContent = 'https://' + loginPagesDomain;
+        previewLogin.textContent = 'https://' + loginUiWorkerDomain;
         previewLogin.style.color = '';
       }
-      document.getElementById('login-default').textContent = loginPagesDomain;
+      document.getElementById('login-default').textContent = loginUiWorkerDomain;
 
       // Admin UI - check if component is enabled (in custom mode)
       const adminUiEnabled = document.getElementById('comp-admin-ui').checked;
@@ -5123,10 +5320,23 @@ export function getHtmlTemplate(
         previewAdmin.textContent = 'https://' + adminDomain;
         previewAdmin.style.color = '';
       } else {
-        previewAdmin.textContent = 'https://' + adminPagesDomain;
+        previewAdmin.textContent = 'https://' + adminUiWorkerDomain;
         previewAdmin.style.color = '';
       }
-      document.getElementById('admin-default').textContent = adminPagesDomain;
+      document.getElementById('admin-default').textContent = adminUiWorkerDomain;
+
+      const apiPreviewUrl = document.getElementById('preview-issuer').textContent.trim();
+      const adminPreviewUrl = previewAdmin.textContent.trim();
+      const adminApiModeRow = document.getElementById('preview-admin-api-mode-row');
+      const adminApiModeEl = document.getElementById('preview-admin-api-mode');
+      if (adminUiEnabled && adminPreviewUrl.startsWith('https://')) {
+        adminApiModeRow.style.display = '';
+        adminApiModeEl.textContent = describeAdminPreviewMode(
+          resolveAdminPreviewMode(apiPreviewUrl, adminPreviewUrl, baseDomain)
+        );
+      } else {
+        adminApiModeRow.style.display = 'none';
+      }
 
       // === マルチテナント拡張プレビュー ===
       const previewMtSection = document.getElementById('preview-multi-tenant-section');
@@ -5183,15 +5393,15 @@ export function getHtmlTemplate(
         mtRowsContainer.appendChild(makeBlock(t('web.preview.firstTenant', { name: tenantName }), firstBase));
         mtRowsContainer.appendChild(makeBlock(t('web.preview.otherTenants'), otherBase));
 
-        // Login UI Pages URL (全テナント共通の Pages デプロイ先)
+        // Login UI Worker URL (shared by all tenants)
         const loginPagesRow = document.getElementById('preview-login-pages-row');
         const tenantDiscoverRow = document.getElementById('preview-tenant-discover-row');
         if (loginUiEnabled) {
           loginPagesRow.style.display = '';
           document.getElementById('preview-login-pages').textContent =
-            'https://' + loginPagesDomain + '  ' + t('web.preview.allTenantsShared');
+            'https://' + loginUiWorkerDomain + '  ' + t('web.preview.allTenantsShared');
           // テナント選択画面: カスタムドメインが設定されていればそちらを優先
-          const loginUiBase = loginDomain ? loginDomain : loginPagesDomain;
+          const loginUiBase = loginDomain ? loginDomain : loginUiWorkerDomain;
           tenantDiscoverRow.style.display = '';
           document.getElementById('preview-tenant-discover').textContent =
             'https://' + loginUiBase + '/discover';
@@ -5211,7 +5421,7 @@ export function getHtmlTemplate(
           } else if (adminDomain) {
             adminAccessEl.textContent = 'https://' + adminDomain + '/admin';
           } else {
-            adminAccessEl.textContent = 'https://' + adminPagesDomain + '/admin';
+            adminAccessEl.textContent = 'https://' + adminUiWorkerDomain + '/admin';
           }
         } else {
           adminAccessRow.style.display = 'none';
@@ -5253,6 +5463,16 @@ export function getHtmlTemplate(
       }
     });
 
+    document.getElementById('tenant-name-random').addEventListener('click', () => {
+      const tenantNameInput = document.getElementById('tenant-name');
+      if (tenantNameInput.disabled) {
+        return;
+      }
+
+      tenantNameInput.value = generateRandomTenantIdInBrowser();
+      updatePreview();
+    });
+
     // Validate environment name on blur
     const envInput = document.getElementById('env');
     const envError = document.getElementById('env-error');
@@ -5292,6 +5512,7 @@ export function getHtmlTemplate(
       const tenantWorkersNote = document.getElementById('tenant-workers-note');
       const tenantFields = document.getElementById('tenant-fields');
       const tenantNameInput = document.getElementById('tenant-name');
+      const tenantNameRandomButton = document.getElementById('tenant-name-random');
       const primaryTenantRow = document.getElementById('primary-tenant-row');
       const primaryTenantInput = document.getElementById('primary-tenant');
 
@@ -5307,9 +5528,6 @@ export function getHtmlTemplate(
         nakedDomainCheckbox.disabled = true;
         nakedDomainCheckbox.checked = false;
         nakedDomainLabel.style.opacity = '0.5';
-        tenantNameInput.value = 'default';
-        tenantNameInput.disabled = true;
-        tenantNameInput.readOnly = true;
         primaryTenantInput.value = '';
       }
 
@@ -5330,15 +5548,14 @@ export function getHtmlTemplate(
       tenantFields.style.display = domainUiState.showTenantFields ? 'block' : 'none';
       primaryTenantRow.style.display = domainUiState.showPrimaryTenantRow ? 'block' : 'none';
 
-      if (domainUiState.showTenantFields && domainUiState.multiTenantEnabled) {
+      if (domainUiState.showTenantFields) {
         tenantNameInput.disabled = false;
         tenantNameInput.readOnly = false;
-      } else if (domainUiState.showWorkersDevNote) {
-        tenantNameInput.disabled = true;
-        tenantNameInput.readOnly = true;
+        tenantNameRandomButton.disabled = false;
       } else {
         tenantNameInput.disabled = true;
         tenantNameInput.readOnly = true;
+        tenantNameRandomButton.disabled = true;
       }
 
       document.getElementById('base-domain').placeholder = domainUiState.baseDomainPlaceholder;
@@ -5625,11 +5842,17 @@ export function getHtmlTemplate(
     // Toggle resend config form visibility
     document.querySelectorAll('input[name="email-setup-choice"]').forEach(radio => {
       radio.addEventListener('change', () => {
+        const cloudflareForm = document.getElementById('cloudflare-config-form');
         const resendForm = document.getElementById('resend-config-form');
         const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
-        if (choice === 'configure') {
+        if (choice === 'cloudflare') {
+          cloudflareForm.classList.remove('hidden');
+          resendForm.classList.add('hidden');
+        } else if (choice === 'resend') {
+          cloudflareForm.classList.add('hidden');
           resendForm.classList.remove('hidden');
         } else {
+          cloudflareForm.classList.add('hidden');
           resendForm.classList.add('hidden');
         }
       });
@@ -5644,32 +5867,37 @@ export function getHtmlTemplate(
       const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
       const btn = document.getElementById('btn-continue-email');
 
-      if (choice === 'configure') {
+      if (choice === 'cloudflare' || choice === 'resend') {
         // Validate and store email configuration
+        const isCloudflare = choice === 'cloudflare';
         const apiKey = document.getElementById('resend-api-key').value.trim();
-        const fromAddress = document.getElementById('email-from-address').value.trim();
-        const fromName = document.getElementById('email-from-name').value.trim();
+        const fromAddress = isCloudflare
+          ? document.getElementById('cloudflare-from-address').value.trim()
+          : document.getElementById('email-from-address').value.trim();
+        const fromName = isCloudflare
+          ? document.getElementById('cloudflare-from-name').value.trim()
+          : document.getElementById('email-from-name').value.trim();
 
-        // Validate API key format
-        if (!apiKey) {
-          alert('Please enter your Resend API key');
-          return;
-        }
-        if (!apiKey.startsWith('re_')) {
-          if (!confirm('API key does not start with "re_". This may not be a valid Resend API key. Continue anyway?')) {
-            return;
-          }
-        }
+	        // Validate API key format
+	        if (!isCloudflare && !apiKey) {
+	          alert(t('web.email.resendApiKeyMissing'));
+	          return;
+	        }
+	        if (!isCloudflare && !apiKey.startsWith('re_')) {
+	          if (!confirm(t('web.email.resendApiKeyConfirmInvalid'))) {
+	            return;
+	          }
+	        }
 
-        // Validate email address
-        if (!fromAddress) {
-          alert('Please enter a From email address');
-          return;
-        }
-        if (!fromAddress.includes('@')) {
-          alert('Please enter a valid email address');
-          return;
-        }
+	        // Validate email address
+	        if (!fromAddress) {
+	          alert(t('web.email.fromEmailMissing'));
+	          return;
+	        }
+	        if (!fromAddress.includes('@')) {
+	          alert(t('web.email.fromEmailInvalid'));
+	          return;
+	        }
 
         // Save email configuration to server
         btn.disabled = true;
@@ -5680,29 +5908,29 @@ export function getHtmlTemplate(
             method: 'POST',
             body: {
               env: config.env,
-              provider: 'resend',
-              apiKey: apiKey,
+              provider: isCloudflare ? 'cloudflare' : 'resend',
+              apiKey: isCloudflare ? undefined : apiKey,
               fromAddress: fromAddress,
               fromName: fromName || undefined,
             },
-          });
+	          });
 
-          if (!result.success) {
-            throw new Error(result.error || 'Failed to save email configuration');
-          }
+	          if (!result.success) {
+	            throw new Error(result.error || t('web.email.saveConfigFailed'));
+	          }
 
           // Store email configuration (without apiKey for config file)
           config.email = {
-            provider: 'resend',
+            provider: isCloudflare ? 'cloudflare' : 'resend',
             fromAddress: fromAddress,
             fromName: fromName || undefined,
             configured: true,
           };
-        } catch (error) {
-          alert('Failed to save email configuration: ' + error.message);
-          btn.disabled = false;
-          btn.textContent = t('web.btn.continue');
-          return;
+	        } catch (error) {
+	          alert(t('web.email.saveConfigFailed') + ': ' + error.message);
+	          btn.disabled = false;
+	          btn.textContent = t('web.btn.continue');
+	          return;
         }
 
         btn.disabled = false;
@@ -6051,9 +6279,11 @@ export function getHtmlTemplate(
           }
           // Login UI URL for setup page (setup page is in Login UI, not API)
           const loginUiEnabled = config.components?.loginUi !== false;
-          const loginPagesDomain = config.env + '-ar-login-ui.pages.dev';
+          const loginUiWorkerDomain = workersSubdomain
+            ? config.env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+            : config.env + '-ar-login-ui.workers.dev';
           const loginUiUrl = loginUiEnabled
-            ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain)
+            ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginUiWorkerDomain)
             : null;
 
           output.textContent += '  API URL: ' + apiUrl + '\\n';
@@ -6134,7 +6364,7 @@ export function getHtmlTemplate(
       const env = config.env;
       const completeEnv = {
         env,
-        pages: [
+        workers: [
           ...(config.components?.loginUi === false ? [] : [{ name: env + '-ar-login-ui' }]),
           ...(config.components?.adminUi === false ? [] : [{ name: env + '-ar-admin-ui' }]),
         ],
@@ -6331,8 +6561,14 @@ export function getHtmlTemplate(
           keysDir + '/private.pem (RSA Private Key)',
           keysDir + '/public.jwk.json (JWK Public Key)',
           keysDir + '/rp_token_encryption_key.txt',
+          keysDir + '/object_encryption_root_key.txt',
+          keysDir + '/version_manager_secret.txt',
           keysDir + '/admin_api_secret.txt',
           keysDir + '/key_manager_secret.txt',
+          keysDir + '/setup_machine_private.pem',
+          keysDir + '/setup_machine_public.jwk.json',
+          keysDir + '/admin_ui_bff_private.pem',
+          keysDir + '/admin_ui_bff_public.jwk.json',
           keysDir + '/setup_token.txt'
         ]
       };
@@ -6377,17 +6613,9 @@ export function getHtmlTemplate(
       // admin-db uses the same region as pii-db (both contain sensitive data)
       const adminRegion = piiRegion;
 
-      const coreLi = document.createElement('li');
-      coreLi.innerHTML = coreDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(coreRegion.location, coreRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(coreLi);
-
-      const piiLi = document.createElement('li');
-      piiLi.innerHTML = piiDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(piiRegion.location, piiRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(piiLi);
-
-      const adminLi = document.createElement('li');
-      adminLi.innerHTML = adminDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(adminRegion.location, adminRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(adminLi);
+      appendDatabasePreviewItem(d1List, coreDbName, getRegionLabel(coreRegion.location, coreRegion.jurisdiction));
+      appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
+      appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
 
       resources.kv.forEach(name => {
         const li = document.createElement('li');
@@ -6400,6 +6628,16 @@ export function getHtmlTemplate(
         li.textContent = name;
         keysList.appendChild(li);
       });
+    }
+
+    function appendDatabasePreviewItem(list, dbName, regionLabel) {
+      const li = document.createElement('li');
+      li.appendChild(document.createTextNode(dbName + ' '));
+      const regionSpan = document.createElement('span');
+      regionSpan.style.cssText = 'color: var(--text-muted); font-size: 0.85em;';
+      regionSpan.textContent = '(' + regionLabel + ')';
+      li.appendChild(regionSpan);
+      list.appendChild(li);
     }
 
     // Update provision button state based on completion status
@@ -6439,8 +6677,12 @@ export function getHtmlTemplate(
       const workersDomain = workersSubdomain
         ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
         : env + '-ar-router.workers.dev';
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
+      const loginUiWorkerDomain = workersSubdomain
+        ? env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-login-ui.workers.dev';
+      const adminUiWorkerDomain = workersSubdomain
+        ? env + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-admin-ui.workers.dev';
 
       // Build config in AuthrimConfigSchema format
       const configToSave = {
@@ -6459,11 +6701,11 @@ export function getHtmlTemplate(
           },
           loginUi: {
             custom: config.loginUiDomain || null,
-            auto: 'https://' + loginPagesDomain,
+            auto: 'https://' + loginUiWorkerDomain,
           },
           adminUi: {
             custom: config.adminUiDomain || null,
-            auto: 'https://' + adminPagesDomain,
+            auto: 'https://' + adminUiWorkerDomain,
           },
         },
         tenant: {
@@ -6498,7 +6740,7 @@ export function getHtmlTemplate(
             provider: config.email?.provider || 'none',
             fromAddress: config.email?.fromAddress || undefined,
             fromName: config.email?.fromName || undefined,
-            configured: config.email?.provider === 'resend' && config.email?.apiKey ? true : false,
+            configured: config.email?.provider && config.email?.provider !== 'none' ? true : false,
           },
         },
       };
@@ -6702,9 +6944,21 @@ export function getHtmlTemplate(
     // Show environment details
     function showEnvDetail(env) {
       selectedEnvForDetail = env;
+      selectedEnvDetailConfig = null;
 
       document.getElementById('detail-env-name').textContent = env.env;
       renderEnvDetailUrls(env);
+      loadEnvEmailStatus(env.env);
+      document.getElementById('env-email-progress').classList.add('hidden');
+      document.getElementById('env-email-log').textContent = '';
+      document.getElementById('btn-enable-cloudflare-email').disabled = false;
+      const enableCloudflareBtnSpan = document
+        .getElementById('btn-enable-cloudflare-email')
+        ?.querySelector('span');
+      if (enableCloudflareBtnSpan) {
+        enableCloudflareBtnSpan.textContent =
+          t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
+      }
 
       // Render resource lists with loading state
       renderResourceList('detail-workers-list', 'detail-workers-count', env.workers, 'name', 'worker');
@@ -6813,8 +7067,8 @@ export function getHtmlTemplate(
       return row;
     }
 
-    function hasPagesProject(env, projectName) {
-      return (env.pages || []).some((page) => page && page.name === projectName);
+    function hasUiWorker(env, workerName) {
+      return (env.workers || []).some((worker) => worker && worker.name === workerName);
     }
 
     function resolveEnvDetailIssuerUrl(env, config) {
@@ -6838,8 +7092,11 @@ export function getHtmlTemplate(
 
     function resolveEnvDetailSharedLoginBase(env, config) {
       const envName = env.env;
+      const fallbackLoginWorkerUrl = workersSubdomain
+        ? 'https://' + envName + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : 'https://' + envName + '-ar-login-ui.workers.dev';
       return stripTrailingSlash(
-        config?.urls?.loginUi?.custom || config?.urls?.loginUi?.auto || ('https://' + envName + '-ar-login-ui.pages.dev')
+        config?.urls?.loginUi?.custom || config?.urls?.loginUi?.auto || fallbackLoginWorkerUrl
       );
     }
 
@@ -6847,12 +7104,15 @@ export function getHtmlTemplate(
       const envName = env.env;
       const loginProjectName = envName + '-ar-login-ui';
       const adminProjectName = envName + '-ar-admin-ui';
-      const loginUiDeployed = hasPagesProject(env, loginProjectName);
-      const adminUiDeployed = hasPagesProject(env, adminProjectName);
+      const loginUiDeployed = hasUiWorker(env, loginProjectName);
+      const adminUiDeployed = hasUiWorker(env, adminProjectName);
       const multiTenantConfigured = isMultiTenantConfigured(config);
       const issuerUrl = resolveEnvDetailIssuerUrl(env, config);
       const discoveryUrl = issuerUrl + '/.well-known/openid-configuration';
       const loginSharedBaseUrl = resolveEnvDetailSharedLoginBase(env, config);
+      const fallbackAdminWorkerUrl = workersSubdomain
+        ? 'https://' + envName + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : 'https://' + envName + '-ar-admin-ui.workers.dev';
       const loginEntryUrl = loginUiDeployed
         ? (
             multiTenantConfigured || config?.urls?.loginUi?.sameAsApi === true
@@ -6867,11 +7127,11 @@ export function getHtmlTemplate(
         ? (
             config?.urls?.adminUi?.sameAsApi === true
               ? issuerUrl
-              : stripTrailingSlash(
-                  config?.urls?.adminUi?.custom ||
-                    config?.urls?.adminUi?.auto ||
-                    ('https://' + envName + '-ar-admin-ui.pages.dev')
-                )
+	              : stripTrailingSlash(
+	                  config?.urls?.adminUi?.custom ||
+	                    config?.urls?.adminUi?.auto ||
+	                    fallbackAdminWorkerUrl
+	                )
           ) + '/admin/info'
         : null;
       const notDeployed = t('web.envDetail.notDeployed') || 'Not Deployed';
@@ -6934,6 +7194,137 @@ export function getHtmlTemplate(
       const urls = buildEnvDetailUrls(env, config);
       for (const item of urls) {
         listEl.appendChild(createEnvDetailUrlRow(item.label, item.value, item.description, item.href));
+      }
+    }
+
+    function renderEnvEmailStatus(configResponse) {
+      const providerEl = document.getElementById('env-email-provider');
+      const statusEl = document.getElementById('env-email-status');
+      const fromEl = document.getElementById('env-email-from');
+      const fromAddressInput = document.getElementById('env-email-from-address');
+      const fromNameInput = document.getElementById('env-email-from-name');
+      const emailConfig = configResponse?.config?.features?.email || null;
+      const provider = emailConfig?.provider || 'none';
+      const configured = emailConfig?.configured === true;
+      const fromAddress = emailConfig?.fromAddress || '';
+      const fromName = emailConfig?.fromName || '';
+
+      selectedEnvDetailConfig = configResponse?.config || null;
+
+      providerEl.textContent =
+        provider === 'none'
+          ? (t('web.envDetail.emailProviderNone') || 'Not configured')
+          : provider;
+      statusEl.textContent = configured
+        ? (t('web.envDetail.emailConfigured') || 'Configured')
+        : (t('web.envDetail.emailNotConfigured') || 'Not configured');
+      fromEl.textContent = fromAddress || '—';
+
+      fromAddressInput.value = fromAddress;
+      fromNameInput.value = fromName;
+    }
+
+    async function loadEnvEmailStatus(envName) {
+      try {
+        const configResponse = await api('/config?env=' + encodeURIComponent(envName));
+        if (configResponse.exists && configResponse.config) {
+          renderEnvEmailStatus(configResponse);
+          return;
+        }
+      } catch (error) {
+        console.warn('Failed to load env email config:', error);
+      }
+
+      renderEnvEmailStatus(null);
+    }
+
+    async function enableCloudflareEmailForEnv() {
+      if (!selectedEnvForDetail) {
+        alert('No environment selected');
+        return;
+      }
+
+      const btn = document.getElementById('btn-enable-cloudflare-email');
+      const btnSpan = btn.querySelector('span');
+      const progressDiv = document.getElementById('env-email-progress');
+      const logDiv = document.getElementById('env-email-log');
+      const fromAddress = document.getElementById('env-email-from-address').value.trim();
+      const fromName = document.getElementById('env-email-from-name').value.trim();
+      const currentProvider = selectedEnvDetailConfig?.features?.email?.provider;
+
+      if (!fromAddress) {
+        alert(t('web.envDetail.emailFromMissing') || 'Please enter a From email address.');
+        return;
+      }
+
+      const emailInput = document.getElementById('env-email-from-address');
+      if (emailInput && !emailInput.checkValidity()) {
+        alert(t('web.envDetail.emailFromInvalid') || 'Please enter a valid email address.');
+        return;
+      }
+
+      if (
+        currentProvider &&
+        currentProvider !== 'none' &&
+        currentProvider !== 'cloudflare' &&
+        !confirm(
+          t('web.envDetail.emailSwitchProviderConfirm') ||
+            'This environment already has another email provider configured. Switch it to Cloudflare Email Service?'
+        )
+      ) {
+        return;
+      }
+
+      btn.disabled = true;
+      if (btnSpan) {
+        btnSpan.textContent = t('web.envDetail.emailDeploying') || 'Applying...';
+      }
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      try {
+        addLog(t('web.envDetail.emailStarting') || 'Starting Cloudflare Email setup...');
+        const response = await api('/env/email/cloudflare/enable', {
+          method: 'POST',
+          body: {
+            env: selectedEnvForDetail.env,
+            fromAddress,
+            fromName,
+          },
+        });
+
+        if (response.progress && Array.isArray(response.progress)) {
+          for (const msg of response.progress) {
+            addLog(msg);
+          }
+        }
+
+        if (!response.success) {
+          addLog('');
+          addLog('❌ ' + (response.error || (t('web.envDetail.emailUpdateFailed') || 'Failed')));
+          return;
+        }
+
+        addLog('');
+        addLog('✅ ' + (t('web.envDetail.emailUpdatedSuccess') || 'Cloudflare Email enabled.'));
+        await loadEnvEmailStatus(selectedEnvForDetail.env);
+        resetWorkerUpdateUI();
+        await loadWorkerVersionComparison(selectedEnvForDetail.env);
+      } catch (error) {
+        addLog('❌ ' + error.message);
+      } finally {
+        btn.disabled = false;
+        if (btnSpan) {
+          btnSpan.textContent =
+            t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
+        }
       }
     }
 
@@ -7221,7 +7612,7 @@ export function getHtmlTemplate(
       }
     }
 
-    // Update UI component (Pages)
+    // Update UI component (Workers)
     async function updateUIComponent(componentName) {
       if (!currentEnvForUpdate) {
         alert('No environment selected');
@@ -7249,7 +7640,7 @@ export function getHtmlTemplate(
       };
 
       addLog('Updating ' + componentName + ' for ' + currentEnvForUpdate + '...');
-      addLog('This may take a few minutes (building and deploying to Pages)...');
+      addLog('This may take a few minutes (building and deploying to Workers)...');
 
       try {
         const response = await api('/deploy/component/' + encodeURIComponent(componentName), {
@@ -7293,6 +7684,7 @@ export function getHtmlTemplate(
     // Event listeners for UI Update
     document.getElementById('btn-update-admin-ui')?.addEventListener('click', () => updateUIComponent('ar-admin-ui'));
     document.getElementById('btn-update-login-ui')?.addEventListener('click', () => updateUIComponent('ar-login-ui'));
+    document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
 
     // ===========================================
     // Admin Setup Functions

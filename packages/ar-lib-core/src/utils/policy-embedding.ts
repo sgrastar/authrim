@@ -18,7 +18,9 @@
  * ```
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import { resolveEffectiveRoles } from './rbac-claims';
 
 /**
@@ -53,6 +55,8 @@ export interface PolicyEmbeddingOptions {
   cache?: KVNamespace;
   /** Cache TTL in seconds (default: 300 = 5 minutes) */
   cacheTTL?: number;
+  /** Tenant ID for multi-tenant isolation */
+  tenantId: string;
 }
 
 /**
@@ -116,28 +120,31 @@ export function parseScopeToActions(scope: string): ScopeAction[] {
  * @returns Set of permission strings (e.g., "documents:read")
  */
 async function getUserPermissionsFromRoles(
-  db: D1Database,
-  subjectId: string
+  db: DatabaseSource,
+  subjectId: string,
+  tenantId: string
 ): Promise<Set<string>> {
   const now = Math.floor(Date.now() / 1000);
 
   // Get permissions from all active roles
-  const result = await db
-    .prepare(
-      `SELECT DISTINCT r.permissions_json
+  const rows = await ensureDatabaseAdapter(db, 'policy-embedding').query<{
+    permissions_json: string;
+  }>(
+    `SELECT DISTINCT r.permissions_json
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
          AND r.permissions_json IS NOT NULL
-         AND r.permissions_json != '[]'`
-    )
-    .bind(subjectId, now)
-    .all<{ permissions_json: string }>();
+         AND r.permissions_json != '[]'`,
+    [subjectId, tenantId, tenantId, now]
+  );
 
   const permissionsSet = new Set<string>();
 
-  for (const r of result.results) {
+  for (const r of rows) {
     try {
       const perms = JSON.parse(r.permissions_json) as string[];
       for (const p of perms) {
@@ -176,10 +183,10 @@ async function getUserPermissionsFromRoles(
  * // 'users:manage' is excluded because user doesn't have that permission
  */
 export async function evaluatePermissionsForScope(
-  db: D1Database,
+  db: DatabaseSource,
   subjectId: string,
   scope: string,
-  options: PolicyEmbeddingOptions = {}
+  options: PolicyEmbeddingOptions
 ): Promise<string[]> {
   // Parse requested scopes
   const requestedActions = parseScopeToActions(scope);
@@ -188,7 +195,8 @@ export async function evaluatePermissionsForScope(
   }
 
   // Try cache first
-  const cacheKey = options.cache ? `${PERMISSION_CACHE_PREFIX}${subjectId}` : null;
+  const tenantId = options.tenantId;
+  const cacheKey = options.cache ? `${PERMISSION_CACHE_PREFIX}${tenantId}:${subjectId}` : null;
   let userPermissions: Set<string>;
 
   if (cacheKey && options.cache) {
@@ -197,10 +205,10 @@ export async function evaluatePermissionsForScope(
       try {
         userPermissions = new Set(JSON.parse(cached) as string[]);
       } catch {
-        userPermissions = await getUserPermissionsFromRoles(db, subjectId);
+        userPermissions = await getUserPermissionsFromRoles(db, subjectId, tenantId);
       }
     } else {
-      userPermissions = await getUserPermissionsFromRoles(db, subjectId);
+      userPermissions = await getUserPermissionsFromRoles(db, subjectId, tenantId);
       // Cache for next time
       const ttl = options.cacheTTL ?? 300;
       await options.cache.put(cacheKey, JSON.stringify([...userPermissions]), {
@@ -208,7 +216,7 @@ export async function evaluatePermissionsForScope(
       });
     }
   } else {
-    userPermissions = await getUserPermissionsFromRoles(db, subjectId);
+    userPermissions = await getUserPermissionsFromRoles(db, subjectId, tenantId);
   }
 
   // Check if user has wildcard permission for any resource
@@ -265,9 +273,10 @@ export async function evaluatePermissionsForScope(
  */
 export async function invalidatePermissionCache(
   cache: KVNamespace,
+  tenantId: string,
   subjectId: string
 ): Promise<void> {
-  const cacheKey = `${PERMISSION_CACHE_PREFIX}${subjectId}`;
+  const cacheKey = `${PERMISSION_CACHE_PREFIX}${tenantId}:${subjectId}`;
   await cache.delete(cacheKey);
 }
 

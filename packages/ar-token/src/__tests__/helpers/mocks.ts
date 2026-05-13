@@ -71,7 +71,13 @@ export interface MockDurableObjectStub {
   // RPC methods for RefreshTokenRotator
   rotateTokenRpc?: Mock<(params: object) => Promise<object>>;
   createFamilyRpc?: Mock<
-    (params: object) => Promise<{ version: number; expiresIn: number; allowedScope: string }>
+    (params: object) => Promise<{
+      version: number;
+      newJti: string;
+      expiresIn: number;
+      allowedScope: string;
+      resourceAudience?: string | string[];
+    }>
   >;
   // RPC methods for DeviceCodeStore
   getRequestRpc?: Mock<(params: object) => Promise<object | null>>;
@@ -229,7 +235,12 @@ export function createMockDurableObjectStub(options?: {
       vi.fn().mockRejectedValue(new Error('Token not found')),
     createFamilyRpc:
       options?.rpcMethods?.createFamilyRpc ??
-      vi.fn().mockResolvedValue({ version: 1, expiresIn: 2592000, allowedScope: 'openid profile' }),
+      vi.fn().mockResolvedValue({
+        version: 1,
+        newJti: 'mock-refresh-jti',
+        expiresIn: 2592000,
+        allowedScope: 'openid profile',
+      }),
     getRequestRpc: options?.rpcMethods?.getRequestRpc ?? vi.fn().mockResolvedValue(null),
     getRequestStatusRpc:
       options?.rpcMethods?.getRequestStatusRpc ?? vi.fn().mockResolvedValue(null),
@@ -310,6 +321,7 @@ export interface MockContextOptions {
   body?: Record<string, string>;
   env?: Partial<MockEnv>;
   params?: Record<string, string>;
+  tenantId?: string;
 }
 
 /**
@@ -326,6 +338,7 @@ export function createMockContext(options: MockContextOptions = {}): Context<{ B
     body = {},
     env = {},
     params = {},
+    tenantId = 'default',
   } = options;
 
   // Create URLSearchParams for form body
@@ -349,7 +362,7 @@ export function createMockContext(options: MockContextOptions = {}): Context<{ B
 
   // Create mock context
   const mockEnv = createMockEnv(env);
-  const contextData = new Map<string, unknown>();
+  const contextData = new Map<string, unknown>([['tenantId', tenantId]]);
 
   // Create a minimal mock context
   const mockContext = {
@@ -514,6 +527,9 @@ export function createArLibCoreMocks() {
     mockGetClientCached: vi.fn().mockResolvedValue(null),
     mockLoadTenantProfileCached: vi.fn().mockResolvedValue(null),
     mockGetSystemSettingsCached: vi.fn().mockResolvedValue(null),
+    mockGetChallengeStoreByChallengeId: vi.fn().mockResolvedValue({
+      consumeChallengeRpc: vi.fn().mockRejectedValue(new Error('Artifact not found')),
+    }),
 
     // Token Operations
     mockCreateAccessToken: vi.fn().mockResolvedValue('mock-access-token'),
@@ -673,6 +689,9 @@ export function resetMocks(mocks: ReturnType<typeof createArLibCoreMocks>): void
   mocks.mockGetClientCached.mockReset().mockResolvedValue(null);
   mocks.mockLoadTenantProfileCached.mockReset().mockResolvedValue(null);
   mocks.mockGetSystemSettingsCached.mockReset().mockResolvedValue(null);
+  mocks.mockGetChallengeStoreByChallengeId.mockReset().mockResolvedValue({
+    consumeChallengeRpc: vi.fn().mockRejectedValue(new Error('Artifact not found')),
+  });
 
   // Reset token mocks
   mocks.mockCreateAccessToken.mockReset().mockResolvedValue('mock-access-token');

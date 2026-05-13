@@ -7,10 +7,14 @@ export * from './types/admin-user';
 export * from './types/rbac';
 export * from './types/consent';
 export * from './types/saml';
+export * from './types/dr-bundle';
 export * from './types/policy-rules';
 export * from './types/jit-config';
 export * from './types/token-claim-rules';
 export * from './types/check-api';
+export * from './types/support-ops';
+export * from './types/runtime-profile';
+export * from './types/approval';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -55,7 +59,9 @@ export * from './utils/id';
 export * from './utils/d1-retry';
 export * from './utils/device-flow';
 export * from './utils/ciba';
+export * from './utils/delegated-write';
 export * from './utils/dpop';
+export * from './utils/dr-bundle';
 export * from './utils/errors';
 export * from './utils/issuer';
 export * from './utils/jwe';
@@ -82,7 +88,9 @@ export * from './utils/policy-embedding';
 export * from './utils/resource-permissions';
 export * from './utils/consent-rbac';
 export * from './utils/refresh-token-sharding';
+export * from './utils/refresh-token-store';
 export * from './utils/oauth-config';
+export * from './utils/oidc-claims';
 export * from './utils/dcr-config';
 export * from './utils/encryption-config';
 export * from './utils/settings-manager';
@@ -93,12 +101,15 @@ export * from './utils/token-revocation-sharding';
 export * from './utils/region-sharding';
 export * from './utils/dpop-jti-sharding';
 export * from './utils/par-sharding';
+export * from './utils/saml-request-store';
 export * from './utils/device-code-sharding';
 export * from './utils/ciba-sharding';
 export * from './utils/flow-state-sharding';
 export * from './utils/do-retry';
 export * from './utils/url-security';
+export * from './utils/body-limits';
 export * from './utils/basic-auth';
+export * from './utils/web-origin-registry';
 export * from './utils/jwks-cache';
 export * from './utils/tenant-settings';
 export * from './utils/email-domain-hash';
@@ -119,6 +130,7 @@ export * from './utils/rar-validation';
 
 // Native SSO (OIDC Native SSO 1.0)
 export * from './utils/native-sso-config';
+export * from './utils/native-sso-installation';
 
 // Consent Versioning (GDPR Article 7 - Informed Consent)
 export * from './utils/consent-versioning';
@@ -174,6 +186,23 @@ export * from './utils/cookie-config';
 
 // Settings History (Configuration Rollback)
 export * from './services/settings-history';
+export * from './services/auth-core-persistence-context';
+export * from './services/consent-store';
+export * from './services/refresh-token-family-index';
+export * from './services/object-artifact-crypto';
+export * from './services/object-artifact-store';
+export * from './services/object-catalog';
+export * from './services/storage-boundary-policy';
+export * from './services/approval-governance';
+export * from './services/step-up';
+export * from './services/downstream-elevation-grant';
+export * from './services/downstream-elevation-grant-client';
+export * from './services/downstream-grant-protected-resource';
+export * from './services/downstream-grant-protected-resource-client';
+export * from './services/downstream-grant-protected-resource-redaction';
+export * from './services/product-protected-resources';
+export * from './services/admin-role-templates';
+export * from './services/logout-device-secret-revocation';
 
 // Error System (Phase 10 - SDK public types)
 // Note: Exported with namespace to avoid conflicts with legacy error types
@@ -198,8 +227,31 @@ export {
   AR_ERROR_CODES,
   RFC_ERROR_CODES,
   ERROR_DEFINITIONS,
+  PHASE1_ERROR_DETAIL_CODES,
+  PHASE1_ERROR_DETAIL_DEFINITIONS,
+  getPhase1ErrorDetailDefinition,
+  createPhase1ErrorDetails,
   type RFCErrorCode,
   type ARErrorCode,
+  type Phase1ErrorDetailCode,
+  type NativeSSOErrorDetailCode,
+  type DeviceSecretPolicyErrorDetailCode,
+  type CompatibilityErrorDetailCode,
+  type Phase1ErrorDetailDefinition,
+  type Phase1ErrorDetailDefinitions,
+  type Phase1ErrorDetails,
+  type Phase1ErrorDetailsOverrides,
+  type Phase1ErrorDetailSeverity,
+  type Phase1ErrorDetailUserAction,
+  createStepUpErrorBody,
+  createStepUpErrorResponse,
+  type CreateStepUpErrorBodyInput,
+  type StepUpActionStatus,
+  type StepUpErrorDetailCode,
+  type StepUpErrorResponseBody,
+  type StepUpInputState,
+  type StepUpPreferredMethod,
+  type StepUpStatusObject,
 } from './errors';
 export { configureFactory, createError, createRFCError, Errors } from './errors';
 export {
@@ -228,19 +280,36 @@ export * from './vc/status-list-manager';
 export * from './services/rule-evaluator';
 export * from './services/org-domain-resolver';
 export * from './services/tenant-domain-resolver';
+export * from './services/tenant-vanity-domain-resolver';
 export * from './services/token-claim-evaluator';
 export * from './services/unified-check-service';
+export * from './services/support-ops';
 export * from './services/check-audit-service';
 export * from './services/permission-change-notifier';
+export * from './services/admin-database-adapter';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
+export * from './services/invitation-auth-core';
 export * from './services/policy-resolver';
 export * from './services/custom-claims';
 export * from './services/custom-claim-schema-history';
+export * from './services/profile-registry';
+export * from './services/runtime-profile-resolver';
+export * from './services/user-store-runtime-sources';
+export * from './services/refresh-token-family-store';
+
+// Repositories
+export * from './repositories/admin';
 
 // Audit Logging (Phase 10 - Unified Audit System)
 export * from './services/audit';
+export {
+  createAuditPrimaryDatabaseAdapter,
+  createAuditPrimaryStorageAdapter,
+  createExternalAuditDatabaseAdapter,
+  createExternalAuditStorageAdapter,
+} from './services/audit';
 
 // Diagnostic Logging (Debugging, Troubleshooting, OIDF Conformance)
 export * from './services/diagnostic';

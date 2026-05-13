@@ -32,6 +32,8 @@ import type { DatabaseAdapter } from '../../db/adapter';
 export interface Session {
   /** Unique session ID (UUID) */
   id: string;
+  /** Tenant ID for isolation */
+  tenant_id: string;
   /** User ID this session belongs to */
   user_id: string;
   /** Session expiration timestamp (Unix ms) */
@@ -93,6 +95,7 @@ export interface SessionFilterOptions {
  */
 interface SessionRow {
   id: string;
+  tenant_id: string;
   user_id: string;
   expires_at: number;
   created_at: number;
@@ -109,6 +112,14 @@ const MIN_SESSION_TTL_MS = 60 * 1000;
 /** Maximum allowed TTL: 30 days in milliseconds */
 const MAX_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Session Repository
  *
@@ -119,9 +130,11 @@ const MAX_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  */
 export class SessionRepository {
   protected readonly adapter: DatabaseAdapter;
+  protected readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter) {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
+    this.tenantId = requireTenantId(tenantId, 'SessionRepository');
   }
 
   /**
@@ -158,12 +171,13 @@ export class SessionRepository {
     const expiresAt = now + ttl;
 
     const sql = `
-      INSERT INTO sessions (id, user_id, expires_at, created_at, external_provider_id, external_provider_sub)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, tenant_id, user_id, expires_at, created_at, external_provider_id, external_provider_sub)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
       id,
+      this.tenantId,
       input.user_id,
       expiresAt,
       now,
@@ -173,6 +187,7 @@ export class SessionRepository {
 
     return {
       id,
+      tenant_id: this.tenantId,
       user_id: input.user_id,
       expires_at: expiresAt,
       created_at: now,
@@ -188,8 +203,8 @@ export class SessionRepository {
    * @returns Session or null if not found
    */
   async findById(id: string): Promise<Session | null> {
-    const sql = 'SELECT * FROM sessions WHERE id = ?';
-    const row = await this.adapter.queryOne<SessionRow>(sql, [id]);
+    const sql = 'SELECT * FROM sessions WHERE id = ? AND tenant_id = ?';
+    const row = await this.adapter.queryOne<SessionRow>(sql, [id, this.tenantId]);
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -201,8 +216,8 @@ export class SessionRepository {
    */
   async findValidById(id: string): Promise<Session | null> {
     const now = getCurrentTimestamp();
-    const sql = 'SELECT * FROM sessions WHERE id = ? AND expires_at > ?';
-    const row = await this.adapter.queryOne<SessionRow>(sql, [id, now]);
+    const sql = 'SELECT * FROM sessions WHERE id = ? AND tenant_id = ? AND expires_at > ?';
+    const row = await this.adapter.queryOne<SessionRow>(sql, [id, this.tenantId, now]);
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -214,8 +229,8 @@ export class SessionRepository {
    * @returns Array of sessions
    */
   async findByUserId(userId: string, validOnly = false): Promise<Session[]> {
-    let sql = 'SELECT * FROM sessions WHERE user_id = ?';
-    const params: unknown[] = [userId];
+    let sql = 'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?';
+    const params: unknown[] = [this.tenantId, userId];
 
     if (validOnly) {
       const now = getCurrentTimestamp();
@@ -239,11 +254,15 @@ export class SessionRepository {
   async findByExternalProvider(providerId: string, providerSub: string): Promise<Session[]> {
     const sql = `
       SELECT * FROM sessions
-      WHERE external_provider_id = ? AND external_provider_sub = ?
+      WHERE tenant_id = ? AND external_provider_id = ? AND external_provider_sub = ?
       ORDER BY created_at DESC
     `;
 
-    const rows = await this.adapter.query<SessionRow>(sql, [providerId, providerSub]);
+    const rows = await this.adapter.query<SessionRow>(sql, [
+      this.tenantId,
+      providerId,
+      providerSub,
+    ]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -258,11 +277,16 @@ export class SessionRepository {
     const now = getCurrentTimestamp();
     const sql = `
       SELECT * FROM sessions
-      WHERE external_provider_id = ? AND external_provider_sub = ? AND expires_at > ?
+      WHERE tenant_id = ? AND external_provider_id = ? AND external_provider_sub = ? AND expires_at > ?
       ORDER BY created_at DESC
     `;
 
-    const rows = await this.adapter.query<SessionRow>(sql, [providerId, providerSub, now]);
+    const rows = await this.adapter.query<SessionRow>(sql, [
+      this.tenantId,
+      providerId,
+      providerSub,
+      now,
+    ]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -333,8 +357,8 @@ export class SessionRepository {
       return existing;
     }
 
-    const sql = `UPDATE sessions SET ${updates.join(', ')} WHERE id = ?`;
-    params.push(id);
+    const sql = `UPDATE sessions SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`;
+    params.push(id, this.tenantId);
 
     await this.adapter.execute(sql, params);
     return this.findById(id);
@@ -374,8 +398,8 @@ export class SessionRepository {
    * @returns True if deleted, false if not found
    */
   async delete(id: string): Promise<boolean> {
-    const sql = 'DELETE FROM sessions WHERE id = ?';
-    const result = await this.adapter.execute(sql, [id]);
+    const sql = 'DELETE FROM sessions WHERE id = ? AND tenant_id = ?';
+    const result = await this.adapter.execute(sql, [id, this.tenantId]);
     return result.rowsAffected > 0;
   }
 
@@ -386,8 +410,8 @@ export class SessionRepository {
    * @returns Number of deleted sessions
    */
   async deleteByUserId(userId: string): Promise<number> {
-    const sql = 'DELETE FROM sessions WHERE user_id = ?';
-    const result = await this.adapter.execute(sql, [userId]);
+    const sql = 'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, userId]);
     return result.rowsAffected;
   }
 
@@ -401,9 +425,9 @@ export class SessionRepository {
   async deleteByExternalProvider(providerId: string, providerSub: string): Promise<number> {
     const sql = `
       DELETE FROM sessions
-      WHERE external_provider_id = ? AND external_provider_sub = ?
+      WHERE tenant_id = ? AND external_provider_id = ? AND external_provider_sub = ?
     `;
-    const result = await this.adapter.execute(sql, [providerId, providerSub]);
+    const result = await this.adapter.execute(sql, [this.tenantId, providerId, providerSub]);
     return result.rowsAffected;
   }
 
@@ -415,8 +439,8 @@ export class SessionRepository {
    */
   async isValid(id: string): Promise<boolean> {
     const now = getCurrentTimestamp();
-    const sql = 'SELECT 1 FROM sessions WHERE id = ? AND expires_at > ?';
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [id, now]);
+    const sql = 'SELECT 1 FROM sessions WHERE id = ? AND tenant_id = ? AND expires_at > ?';
+    const result = await this.adapter.queryOne<{ 1: number }>(sql, [id, this.tenantId, now]);
     return result !== null;
   }
 
@@ -428,8 +452,8 @@ export class SessionRepository {
    * @returns Number of sessions
    */
   async countByUserId(userId: string, validOnly = false): Promise<number> {
-    let sql = 'SELECT COUNT(*) as count FROM sessions WHERE user_id = ?';
-    const params: unknown[] = [userId];
+    let sql = 'SELECT COUNT(*) as count FROM sessions WHERE tenant_id = ? AND user_id = ?';
+    const params: unknown[] = [this.tenantId, userId];
 
     if (validOnly) {
       const now = getCurrentTimestamp();
@@ -448,8 +472,8 @@ export class SessionRepository {
    */
   async cleanupExpired(): Promise<number> {
     const now = getCurrentTimestamp();
-    const sql = 'DELETE FROM sessions WHERE expires_at <= ?';
-    const result = await this.adapter.execute(sql, [now]);
+    const sql = 'DELETE FROM sessions WHERE tenant_id = ? AND expires_at <= ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, now]);
     return result.rowsAffected;
   }
 
@@ -461,8 +485,8 @@ export class SessionRepository {
    */
   async cleanupExpiredOlderThan(maxAgeMs: number): Promise<number> {
     const cutoff = getCurrentTimestamp() - maxAgeMs;
-    const sql = 'DELETE FROM sessions WHERE expires_at <= ?';
-    const result = await this.adapter.execute(sql, [cutoff]);
+    const sql = 'DELETE FROM sessions WHERE tenant_id = ? AND expires_at <= ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, cutoff]);
     return result.rowsAffected;
   }
 
@@ -483,14 +507,14 @@ export class SessionRepository {
         COUNT(*) as total,
         SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) as active,
         SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired
-      FROM sessions WHERE user_id = ?
+      FROM sessions WHERE tenant_id = ? AND user_id = ?
     `;
 
     const result = await this.adapter.queryOne<{
       total: number;
       active: number;
       expired: number;
-    }>(sql, [now, now, userId]);
+    }>(sql, [now, now, this.tenantId, userId]);
 
     return {
       total: result?.total ?? 0,
@@ -505,6 +529,7 @@ export class SessionRepository {
   private rowToEntity(row: SessionRow): Session {
     return {
       id: row.id,
+      tenant_id: row.tenant_id,
       user_id: row.user_id,
       expires_at: row.expires_at,
       created_at: row.created_at,

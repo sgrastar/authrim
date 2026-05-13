@@ -18,7 +18,10 @@
  * - PII Separation: Only Non-PII data is embedded (roles, permissions, metadata)
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import type { DatabaseAdapter } from '../db';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import type {
   TokenClaimRule,
   TokenClaimRuleRow,
@@ -89,20 +92,20 @@ const PII_PATTERNS = new Set([
  * Supports caching via KV for performance.
  */
 export class TokenClaimEvaluator {
-  private db: D1Database;
+  private db: DatabaseAdapter;
   private cache?: KVNamespace;
   private cacheTtl: number;
   private maxCustomClaims: number;
 
   constructor(
-    db: D1Database,
+    db: DatabaseSource,
     cache?: KVNamespace,
     options?: {
       cacheTtlSeconds?: number;
       maxCustomClaims?: number;
     }
   ) {
-    this.db = db;
+    this.db = ensureDatabaseAdapter(db, 'token-claim-evaluator');
     this.cache = cache;
     this.cacheTtl = options?.cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
     this.maxCustomClaims = options?.maxCustomClaims ?? 20;
@@ -225,7 +228,7 @@ export class TokenClaimEvaluator {
   }
 
   /**
-   * Load rules from D1 database
+   * Load rules from the configured core database.
    */
   private async loadRulesFromDb(
     tenantId: string,
@@ -246,9 +249,9 @@ export class TokenClaimEvaluator {
       ORDER BY priority DESC, created_at ASC
     `;
 
-    const result = await this.db.prepare(query).bind(tenantId, tokenType).all<TokenClaimRuleRow>();
+    const rows = await this.db.query<TokenClaimRuleRow>(query, [tenantId, tokenType]);
 
-    return (result.results || []).map(this.rowToRule);
+    return rows.map(this.rowToRule);
   }
 
   /**
@@ -594,7 +597,7 @@ export class TokenClaimEvaluator {
  * Create a TokenClaimEvaluator instance
  */
 export function createTokenClaimEvaluator(
-  db: D1Database,
+  db: DatabaseSource,
   cache?: KVNamespace,
   options?: {
     cacheTtlSeconds?: number;

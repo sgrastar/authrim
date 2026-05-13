@@ -11,13 +11,14 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   createLogger,
-  D1Adapter,
+  ensureDatabaseAdapter,
   ClientRepository,
   DiagnosticLogR2Adapter,
   createSettingsManager,
   DIAGNOSTIC_LOGGING_CATEGORY_META,
   applyPrivacyModeToEntry,
   getDefaultTenantId,
+  isMultiTenantEnabled,
   type DiagnosticLogEntry,
   type DiagnosticLogPrivacyMode,
   type DiagnosticLoggingSettings,
@@ -36,6 +37,8 @@ interface IngestRequestBody {
   logs: DiagnosticLogEntry[];
   /** Client ID */
   client_id: string;
+  /** Tenant ID. Required in multi-tenant deployments because client_id is tenant-scoped. */
+  tenant_id?: string;
   /** Client secret (required for confidential clients) */
   client_secret?: string;
 }
@@ -55,12 +58,13 @@ const MAX_LOGS_PER_REQUEST = 100;
  */
 async function validateClient(
   env: Env,
+  tenantId: string,
   clientId: string,
   clientSecret?: string
 ): Promise<{ valid: boolean; client?: OAuthClient; error?: string }> {
   try {
-    const adapter = new D1Adapter({ db: env.DB });
-    const clientRepo = new ClientRepository(adapter);
+    const adapter = ensureDatabaseAdapter(env.DB, 'diagnostic-logging-client-validation');
+    const clientRepo = new ClientRepository(adapter, tenantId);
     const client = await clientRepo.findByClientId(clientId);
 
     if (!client) {
@@ -86,6 +90,14 @@ async function validateClient(
     log.error('Failed to validate client', { clientId, error: String(error) });
     return { valid: false, error: 'validation_error' };
   }
+}
+
+function resolveIngestTenantId(env: Env, tenantId?: string): string | null {
+  const normalized = tenantId?.trim();
+  if (normalized) {
+    return normalized;
+  }
+  return isMultiTenantEnabled(env) ? null : getDefaultTenantId(env);
 }
 
 /**
@@ -187,8 +199,19 @@ app.post('/', async (c) => {
     );
   }
 
+  const tenantId = resolveIngestTenantId(c.env, body.tenant_id);
+  if (!tenantId) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'tenant_id is required for diagnostic log ingestion',
+      },
+      400
+    );
+  }
+
   // Validate client credentials
-  const validation = await validateClient(c.env, body.client_id, body.client_secret);
+  const validation = await validateClient(c.env, tenantId, body.client_id, body.client_secret);
   if (!validation.valid) {
     log.warn('Client validation failed', {
       clientId: body.client_id,
@@ -204,7 +227,16 @@ app.post('/', async (c) => {
     );
   }
 
-  const tenantId = validation.client?.tenant_id || getDefaultTenantId(c.env);
+  const validatedTenantId = validation.client?.tenant_id;
+  if (validatedTenantId !== tenantId) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'Client tenant mismatch',
+      },
+      401
+    );
+  }
   let diagnosticSettings: DiagnosticLoggingSettings | null = null;
 
   try {

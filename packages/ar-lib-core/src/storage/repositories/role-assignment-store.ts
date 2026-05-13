@@ -31,10 +31,10 @@ function rowToRoleAssignment(row: RoleAssignmentRow): RoleAssignment {
 export class RoleAssignmentStore implements IRoleAssignmentStore {
   constructor(private adapter: IStorageAdapter) {}
 
-  async getRoleAssignment(assignmentId: string): Promise<RoleAssignment | null> {
+  async getRoleAssignment(tenantId: string, assignmentId: string): Promise<RoleAssignment | null> {
     const results = await this.adapter.query<RoleAssignmentRow>(
-      'SELECT * FROM role_assignments WHERE id = ?',
-      [assignmentId]
+      'SELECT * FROM role_assignments WHERE tenant_id = ? AND id = ?',
+      [tenantId, assignmentId]
     );
     return results[0] ? rowToRoleAssignment(results[0]) : null;
   }
@@ -83,10 +83,11 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
   }
 
   async updateRoleAssignment(
+    tenantId: string,
     assignmentId: string,
     updates: Partial<RoleAssignment>
   ): Promise<RoleAssignment> {
-    const existing = await this.getRoleAssignment(assignmentId);
+    const existing = await this.getRoleAssignment(tenantId, assignmentId);
     if (!existing) {
       throw new Error(`Role assignment not found: ${assignmentId}`);
     }
@@ -103,13 +104,14 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
       `UPDATE role_assignments SET
         scope_type = ?, scope_target = ?, expires_at = ?,
         metadata_json = ?, updated_at = ?
-      WHERE id = ?`,
+      WHERE tenant_id = ? AND id = ?`,
       [
         updated.scope_type,
         updated.scope_target,
         updated.expires_at ?? null,
         updated.metadata_json ?? null,
         updated.updated_at,
+        tenantId,
         assignmentId,
       ]
     );
@@ -117,8 +119,11 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
     return updated;
   }
 
-  async deleteRoleAssignment(assignmentId: string): Promise<void> {
-    await this.adapter.execute('DELETE FROM role_assignments WHERE id = ?', [assignmentId]);
+  async deleteRoleAssignment(tenantId: string, assignmentId: string): Promise<void> {
+    await this.adapter.execute('DELETE FROM role_assignments WHERE tenant_id = ? AND id = ?', [
+      tenantId,
+      assignmentId,
+    ]);
   }
 
   // ==========================================================================
@@ -126,12 +131,13 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
   // ==========================================================================
 
   async listAssignmentsBySubject(
+    tenantId: string,
     subjectId: string,
     options?: { scopeType?: ScopeType; scopeTarget?: string; includeExpired?: boolean }
   ): Promise<RoleAssignment[]> {
     const now = Math.floor(Date.now() / 1000); // UNIX seconds
-    let sql = 'SELECT * FROM role_assignments WHERE subject_id = ?';
-    const params: unknown[] = [subjectId];
+    let sql = 'SELECT * FROM role_assignments WHERE tenant_id = ? AND subject_id = ?';
+    const params: unknown[] = [tenantId, subjectId];
 
     if (options?.scopeType) {
       sql += ' AND scope_type = ?';
@@ -155,6 +161,7 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
   }
 
   async listAssignmentsByRole(
+    tenantId: string,
     roleId: string,
     options?: { limit?: number; offset?: number }
   ): Promise<RoleAssignment[]> {
@@ -162,14 +169,15 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
     const offset = options?.offset ?? 0;
 
     const results = await this.adapter.query<RoleAssignmentRow>(
-      `SELECT * FROM role_assignments WHERE role_id = ?
+      `SELECT * FROM role_assignments WHERE tenant_id = ? AND role_id = ?
        ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [roleId, limit, offset]
+      [tenantId, roleId, limit, offset]
     );
     return results.map(rowToRoleAssignment);
   }
 
   async getEffectiveRoles(
+    tenantId: string,
     subjectId: string,
     options?: { scopeType?: ScopeType; scopeTarget?: string }
   ): Promise<string[]> {
@@ -179,9 +187,11 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
       FROM role_assignments ra
       JOIN roles r ON ra.role_id = r.id
       WHERE ra.subject_id = ?
+        AND ra.tenant_id = ?
+        AND r.tenant_id = ?
         AND (ra.expires_at IS NULL OR ra.expires_at > ?)
     `;
-    const params: unknown[] = [subjectId, now];
+    const params: unknown[] = [subjectId, tenantId, tenantId, now];
 
     if (options?.scopeType) {
       if (options.scopeType === 'global') {
@@ -202,6 +212,7 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
   }
 
   async hasRole(
+    tenantId: string,
     subjectId: string,
     roleName: string,
     options?: { scopeType?: ScopeType; scopeTarget?: string }
@@ -212,10 +223,12 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
       FROM role_assignments ra
       JOIN roles r ON ra.role_id = r.id
       WHERE ra.subject_id = ?
+        AND ra.tenant_id = ?
+        AND r.tenant_id = ?
         AND r.name = ?
         AND (ra.expires_at IS NULL OR ra.expires_at > ?)
     `;
-    const params: unknown[] = [subjectId, roleName, now];
+    const params: unknown[] = [subjectId, tenantId, tenantId, roleName, now];
 
     if (options?.scopeType) {
       if (options.scopeType === 'global') {

@@ -171,11 +171,11 @@ export class VersionManager {
     }
 
     const token = authHeader.substring(7);
-    const secret = this.env.ADMIN_API_SECRET;
+    const secret = this.env.VERSION_MANAGER_SECRET;
 
     // If no secret is configured, deny all requests
     if (!secret) {
-      this.log.error('ADMIN_API_SECRET is not configured');
+      this.log.error('VERSION_MANAGER_SECRET is not configured');
       return false;
     }
 

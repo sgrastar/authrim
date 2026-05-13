@@ -48,6 +48,7 @@ const createMockContext = (
           first: vi.fn().mockResolvedValue(null),
         }),
       }),
+      batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
     AUTHRIM_CONFIG: {
       get: vi.fn().mockResolvedValue(null),
@@ -97,8 +98,8 @@ const createMockContext = (
         headers: { 'Content-Type': 'application/json' },
       });
     }),
-    // Mock get method for getLogger
-    get: vi.fn().mockReturnValue(undefined),
+    // Mock get method for getLogger and tenant context
+    get: vi.fn((key: string) => (key === 'tenantId' ? 'tenant-1' : undefined)),
   } as unknown as Context<{ Bindings: Env }>;
 };
 
@@ -178,11 +179,45 @@ describe('VP Authorize Route', () => {
     expect(mockStub.fetch).toHaveBeenCalled();
   });
 
-  it('should reject request without tenant_id', async () => {
+  it('should accept request without tenant_id and use context tenant', async () => {
+    const mockStub = {
+      fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+    };
+
     const c = createMockContext({
       req: {
         json: vi.fn().mockResolvedValue({
           client_id: 'client-1',
+          presentation_definition: {
+            id: 'pd-1',
+            input_descriptors: [],
+          },
+        }),
+      },
+      env: {
+        VP_REQUEST_STORE: {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
+          get: vi.fn().mockReturnValue(mockStub),
+        } as unknown as DurableObjectNamespace,
+      },
+    });
+
+    const response = await vpAuthorizeRoute(c);
+
+    expect(response.status).toBe(200);
+    expect(mockStub.fetch).toHaveBeenCalledWith(expect.any(Request));
+  });
+
+  it('should reject mismatched tenant_id', async () => {
+    const c = createMockContext({
+      req: {
+        json: vi.fn().mockResolvedValue({
+          tenant_id: 'tenant-other',
+          client_id: 'client-1',
+          presentation_definition: {
+            id: 'pd-1',
+            input_descriptors: [],
+          },
         }),
       },
     });
@@ -192,8 +227,6 @@ describe('VP Authorize Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
-    expect(data.error_description).toContain('required');
   });
 
   it('should reject request without client_id', async () => {

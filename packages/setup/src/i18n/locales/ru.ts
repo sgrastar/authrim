@@ -156,8 +156,8 @@ const ru: Translations = {
 
   // UI deployment
   'ui.prompt': 'Способ развёртывания UI',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Развернуть на Cloudflare Pages (рекомендуется)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Развернуть на Cloudflare Workers (рекомендуется)',
   'ui.customOption': 'Собственный домен',
   'ui.customDesc': 'Использовать собственный хостинг',
   'ui.skipOption': 'Пропустить',
@@ -753,7 +753,7 @@ const ru: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI для входа',
-  'web.config.loginUiDesc': 'Готовый UI аутентификации на Cloudflare Pages.',
+  'web.config.loginUiDesc': 'Готовый UI аутентификации на Cloudflare Workers.',
   'web.config.adminUi': 'Панель администратора',
   'web.config.adminUiDesc': 'Панель управления пользователями, клиентами и настройками.',
 
@@ -762,9 +762,9 @@ const ru: Translations = {
   'web.url.apiDomain': 'Домен API',
   'web.url.apiDomainHint': 'Оставьте пустым для использования поддомена workers.dev',
   'web.url.loginDomain': 'Домен UI для входа',
-  'web.url.loginDomainHint': 'Оставьте пустым для использования поддомена pages.dev',
+  'web.url.loginDomainHint': 'Оставьте пустым для использования поддомена workers.dev',
   'web.url.adminDomain': 'Домен панели администратора',
-  'web.url.adminDomainHint': 'Оставьте пустым для использования поддомена pages.dev',
+  'web.url.adminDomainHint': 'Оставьте пустым для использования поддомена workers.dev',
 
   // Web UI Database
   'web.db.title': 'Конфигурация базы данных',
@@ -930,7 +930,7 @@ const ru: Translations = {
   'web.section.apiDomain': 'Домен API / издателя',
   'web.section.uiDomains': 'Домены UI (необязательно)',
   'web.section.uiDomainsHint':
-    'Собственные домены для UI входа/администратора. Каждый можно настроить независимо. Оставьте пустым для использования Cloudflare Pages по умолчанию.',
+    'Собственные домены для UI входа/администратора. Каждый можно настроить независимо. Оставьте пустым для использования Cloudflare Workers по умолчанию.',
   'web.section.corsHint':
     'CORS: кросс-доменные запросы от UI входа/администратора к API разрешены автоматически.',
   'web.section.configPreview': 'Предпросмотр конфигурации',
@@ -942,7 +942,7 @@ const ru: Translations = {
   'web.preview.issuerUrl': 'URL издателя:',
   'web.preview.loginUi': 'UI для входа:',
   'web.preview.adminUi': 'Панель администратора:',
-  'web.preview.pagesUrl': 'UI для входа (Pages):',
+  'web.preview.pagesUrl': 'UI для входа (Worker):',
   'web.preview.tenantDiscover': 'Выбор тенанта (общий вход):',
   'web.preview.adminAccess': 'Доступ к панели администратора:',
   'web.preview.firstTenant': '{{name}} (основной тенант)',
@@ -1002,9 +1002,18 @@ const ru: Translations = {
     'Используется для отправки OTP по email и подтверждения адреса. Можете настроить позже.',
   'web.email.configureLater': 'Настроить позже',
   'web.email.configureLaterHint': 'Пропустить сейчас и настроить позже.',
+  'web.email.configureCloudflare': 'Настроить Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Использует нативный binding Workers Email Service. Требуется тариф Workers Paid и Cloudflare DNS.',
   'web.email.configureResend': 'Настроить Resend',
   'web.email.configureResendHint':
     'Настроить отправку email через Resend (рекомендуется для продакшна).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Требования',
+  'web.email.cloudflareRequirementPaid': 'Требуется тариф Workers Paid',
+  'web.email.cloudflareRequirementDns': 'Требуется Cloudflare DNS / онбординг домена',
+  'web.email.cloudflareRequirementManual':
+    'Настройка домена в панели Cloudflare по-прежнему выполняется вручную',
   'web.email.resendSetup': 'Конфигурация Resend',
   'web.email.beforeBegin': 'Перед началом:',
   'web.email.step1': 'Создайте аккаунт Resend на',
@@ -1012,10 +1021,18 @@ const ru: Translations = {
   'web.email.step3': 'Создайте API-ключ на',
   'web.email.resendApiKey': 'API-ключ Resend',
   'web.email.resendApiKeyHint': 'Ваш API-ключ начинается с "re_"',
+  'web.email.resendApiKeyMissing': 'Введите API-ключ Resend',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API-ключ не начинается с "re_". Возможно, это недействительный API-ключ Resend. Всё равно продолжить?',
   'web.email.fromEmailAddress': 'Адрес отправителя email',
+  'web.email.cloudflareFromHint':
+    'Должен относиться к домену, подключённому к Cloudflare Email Service',
   'web.email.fromEmailHint': 'Должен быть с подтверждённого домена в вашем аккаунте Resend',
+  'web.email.fromEmailMissing': 'Введите адрес отправителя email',
+  'web.email.fromEmailInvalid': 'Введите корректный email-адрес',
   'web.email.fromDisplayName': 'Отображаемое имя отправителя (необязательно)',
   'web.email.fromDisplayHint': 'Отображается как имя отправителя в почтовых клиентах',
+  'web.email.saveConfigFailed': 'Не удалось сохранить настройки email',
   'web.email.domainVerificationTitle': 'Требуется верификация домена',
   'web.email.domainVerificationDesc':
     'До верификации домена письма можно отправлять только с onboarding@resend.dev (для тестирования).',
@@ -1057,7 +1074,7 @@ const ru: Translations = {
   'web.envDetail.kvNamespaces': 'Пространства имён KV',
   'web.envDetail.queues': 'Очереди',
   'web.envDetail.r2Buckets': 'Бакеты R2',
-  'web.envDetail.pagesProjects': 'Проекты Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Обновить все Workers',
@@ -1078,9 +1095,9 @@ const ru: Translations = {
   'web.envDetail.action': 'Действие',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Обновить UI (Pages)',
+  'web.envDetail.uiUpdate': 'Обновить UI (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Обновить Admin UI или Login UI по отдельности. Они развёрнуты на Cloudflare Pages.',
+    'Обновить Admin UI или Login UI по отдельности. Они развёрнуты на Cloudflare Workers.',
   'web.envDetail.updateNow': 'Обновить',
 
   // Web UI Delete Section
@@ -1094,7 +1111,7 @@ const ru: Translations = {
   'web.delete.kvNamespaces': 'Пространства имён KV',
   'web.delete.queues': 'Очереди',
   'web.delete.r2Buckets': 'Бакеты R2',
-  'web.delete.pagesProjects': 'Проекты Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Отмена',
   'web.delete.confirmBtn': 'Удалить выбранное',
 

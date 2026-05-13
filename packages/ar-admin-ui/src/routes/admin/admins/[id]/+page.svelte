@@ -4,10 +4,15 @@
 	import { page } from '$app/stores';
 	import {
 		adminAdminsAPI,
+		type AdminRoleAssignment,
 		type AdminUserDetail,
 		type UpdateAdminUserInput
 	} from '$lib/api/admin-admins';
-	import { adminAdminRolesAPI, type AdminRole } from '$lib/api/admin-admin-roles';
+	import {
+		adminAdminRolesAPI,
+		type AdminRole,
+		type AssignableAdminRoleScopeType
+	} from '$lib/api/admin-admin-roles';
 	import { Modal } from '$lib/components';
 
 	let admin: AdminUserDetail | null = $state(null);
@@ -23,8 +28,20 @@
 	// Role assignment dialog
 	let showRoleDialog = $state(false);
 	let selectedRoleId = $state('');
+	let selectedScopeType: AssignableAdminRoleScopeType = $state('tenant');
+	let selectedScopeId = $state('');
+	let selectedExpiresAt = $state('');
 	let assigningRole = $state(false);
 	let roleError = $state('');
+
+	// Role assignment edit dialog
+	let showAssignmentEditDialog = $state(false);
+	let editingAssignment: AdminRoleAssignment | null = $state(null);
+	let editScopeType: AssignableAdminRoleScopeType = $state('tenant');
+	let editScopeId = $state('');
+	let editExpiresAt = $state('');
+	let savingAssignment = $state(false);
+	let assignmentEditError = $state('');
 
 	const adminId = $derived($page.params.id);
 
@@ -93,7 +110,10 @@
 
 	async function handleDelete() {
 		if (!admin) return;
-		if (!confirm(`Are you sure you want to delete ${admin.email}?`)) return;
+		const message = hasPlatformAdminRole(admin)
+			? `Warning: this account has a platform administrator role. Deleting it can lock out platform administration if no other active platform admin remains.\n\nDelete ${admin.email}?`
+			: `Are you sure you want to delete ${admin.email}?`;
+		if (!confirm(message)) return;
 
 		try {
 			await adminAdminsAPI.delete(admin.id);
@@ -105,7 +125,10 @@
 
 	async function handleSuspend() {
 		if (!admin) return;
-		if (!confirm(`Are you sure you want to suspend ${admin.email}?`)) return;
+		const message = hasPlatformAdminRole(admin)
+			? `Warning: this account has a platform administrator role. Suspending it can lock out platform administration if no other active platform admin remains.\n\nSuspend ${admin.email}?`
+			: `Are you sure you want to suspend ${admin.email}?`;
+		if (!confirm(message)) return;
 
 		try {
 			await adminAdminsAPI.suspend(admin.id);
@@ -139,12 +162,45 @@
 
 	function openRoleDialog() {
 		selectedRoleId = '';
+		selectedScopeType = 'tenant';
+		selectedScopeId = admin?.tenant_id || '';
+		selectedExpiresAt = '';
 		roleError = '';
 		showRoleDialog = true;
 	}
 
 	function closeRoleDialog() {
 		showRoleDialog = false;
+	}
+
+	function handleNewScopeTypeChange() {
+		if (selectedScopeType === 'tenant') {
+			selectedScopeId = admin?.tenant_id || '';
+		} else {
+			selectedScopeId = '';
+		}
+	}
+
+	function openAssignmentEditDialog(role: AdminRoleAssignment) {
+		editingAssignment = role;
+		editScopeType = role.scope_type === 'global' ? 'global' : 'tenant';
+		editScopeId = editScopeType === 'tenant' ? role.scope_id || admin?.tenant_id || '' : '';
+		editExpiresAt = timestampToDateTimeLocal(role.expires_at);
+		assignmentEditError = '';
+		showAssignmentEditDialog = true;
+	}
+
+	function closeAssignmentEditDialog() {
+		showAssignmentEditDialog = false;
+		editingAssignment = null;
+	}
+
+	function handleEditScopeTypeChange() {
+		if (editScopeType === 'tenant') {
+			editScopeId = editingAssignment?.scope_id || admin?.tenant_id || '';
+		} else {
+			editScopeId = '';
+		}
 	}
 
 	async function handleAssignRole() {
@@ -154,7 +210,12 @@
 		roleError = '';
 
 		try {
-			await adminAdminsAPI.assignRole(admin.id, { role_id: selectedRoleId });
+			await adminAdminsAPI.assignRole(admin.id, {
+				role_id: selectedRoleId,
+				scope_type: selectedScopeType,
+				scope_id: selectedScopeType === 'tenant' ? selectedScopeId.trim() || undefined : undefined,
+				expires_at: selectedExpiresAt ? new Date(selectedExpiresAt).getTime() : undefined
+			});
 			closeRoleDialog();
 			await loadAdmin();
 		} catch (err) {
@@ -164,12 +225,41 @@
 		}
 	}
 
-	async function handleRemoveRole(roleId: string, roleName: string) {
-		if (!admin) return;
-		if (!confirm(`Remove role "${roleName}" from ${admin.email}?`)) return;
+	async function handleUpdateAssignment() {
+		if (!admin || !editingAssignment) return;
+
+		savingAssignment = true;
+		assignmentEditError = '';
 
 		try {
-			await adminAdminsAPI.removeRole(admin.id, roleId);
+			await adminAdminRolesAPI.updateAssignment(
+				editingAssignment.role_id,
+				editingAssignment.assignment_id,
+				{
+					scope_type: editScopeType,
+					scope_id: editScopeType === 'tenant' ? editScopeId.trim() || undefined : undefined,
+					expires_at: editExpiresAt ? new Date(editExpiresAt).getTime() : null
+				}
+			);
+			closeAssignmentEditDialog();
+			await loadAdmin();
+		} catch (err) {
+			assignmentEditError = err instanceof Error ? err.message : 'Failed to update role assignment';
+		} finally {
+			savingAssignment = false;
+		}
+	}
+
+	async function handleRemoveRole(role: AdminRoleAssignment) {
+		if (!admin) return;
+		const isPlatformAdminRole = role.name === 'super_admin';
+		const message = isPlatformAdminRole
+			? `Warning: "${role.name}" is a platform administrator role. Removing it can lock out platform administration if no other active platform admin remains.\n\nRemove this role from ${admin.email}?`
+			: `Remove role "${role.name}" from ${admin.email}?`;
+		if (!confirm(message)) return;
+
+		try {
+			await adminAdminsAPI.removeRoleAssignment(admin.id, role.assignment_id);
 			await loadAdmin();
 		} catch (err) {
 			alert(err instanceof Error ? err.message : 'Failed to remove role');
@@ -179,6 +269,19 @@
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return '-';
 		return new Date(timestamp).toLocaleString();
+	}
+
+	function timestampToDateTimeLocal(timestamp: number | null): string {
+		if (!timestamp) return '';
+		const date = new Date(timestamp);
+		const offsetMs = date.getTimezoneOffset() * 60_000;
+		return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+	}
+
+	function formatScope(role: AdminRoleAssignment): string {
+		if (role.scope_type === 'global') return 'Global';
+		if (role.scope_type === 'tenant') return `Tenant: ${role.scope_id || admin?.tenant_id || '-'}`;
+		return `Unsupported scope: ${role.scope_type}${role.scope_id ? `:${role.scope_id}` : ''}`;
 	}
 
 	function getStatusBadgeClass(status: string): string {
@@ -194,9 +297,13 @@
 		}
 	}
 
+	function hasPlatformAdminRole(adminUser: AdminUserDetail): boolean {
+		return adminUser.roles.some((role) => role.name === 'super_admin');
+	}
+
 	// Filter available roles to exclude already assigned ones
 	let assignableRoles = $derived(
-		availableRoles.filter((r) => !admin?.roles.some((ar) => ar.id === r.id))
+		availableRoles.filter((r) => !admin?.roles.some((ar) => ar.role_id === r.id))
 	);
 </script>
 
@@ -363,15 +470,19 @@
 										<span class="role-id">{role.name}</span>
 									</div>
 									<div class="role-meta">
+										<span class="scope-chip">{formatScope(role)}</span>
 										<span class="text-muted">Assigned: {formatDate(role.assigned_at)}</span>
 										{#if role.expires_at}
 											<span class="text-muted">Expires: {formatDate(role.expires_at)}</span>
 										{/if}
 									</div>
 									<button
-										class="btn btn-sm btn-danger"
-										onclick={() => handleRemoveRole(role.id, role.name)}
+										class="btn btn-sm btn-secondary"
+										onclick={() => openAssignmentEditDialog(role)}
 									>
+										Edit
+									</button>
+									<button class="btn btn-sm btn-danger" onclick={() => handleRemoveRole(role)}>
 										Remove
 									</button>
 								</div>
@@ -401,6 +512,40 @@
 				{/each}
 			</select>
 		</div>
+		<div class="form-row">
+			<div class="form-group">
+				<label for="roleScopeType">Scope Type</label>
+				<select
+					id="roleScopeType"
+					class="select"
+					bind:value={selectedScopeType}
+					onchange={handleNewScopeTypeChange}
+				>
+					<option value="tenant">Tenant</option>
+					<option value="global">Global</option>
+				</select>
+			</div>
+			<div class="form-group">
+				<label for="roleScopeId">Scope ID</label>
+				<input
+					id="roleScopeId"
+					class="input"
+					type="text"
+					bind:value={selectedScopeId}
+					disabled={selectedScopeType === 'global'}
+					placeholder={admin?.tenant_id || 'tenant_id'}
+				/>
+			</div>
+		</div>
+		<div class="form-group">
+			<label for="roleExpiresAt">Expires At</label>
+			<input
+				id="roleExpiresAt"
+				class="input"
+				type="datetime-local"
+				bind:value={selectedExpiresAt}
+			/>
+		</div>
 	{/if}
 
 	{#snippet footer()}
@@ -413,6 +558,71 @@
 			disabled={assigningRole || !selectedRoleId}
 		>
 			{assigningRole ? 'Assigning...' : 'Assign'}
+		</button>
+	{/snippet}
+</Modal>
+
+<!-- Role Assignment Edit Dialog -->
+<Modal
+	open={showAssignmentEditDialog && !!editingAssignment}
+	onClose={closeAssignmentEditDialog}
+	title="Edit Role Assignment"
+	size="md"
+>
+	{#if assignmentEditError}
+		<div class="alert alert-danger">{assignmentEditError}</div>
+	{/if}
+	{#if editingAssignment}
+		<div class="form-group">
+			<!-- svelte-ignore a11y_label_has_associated_control -->
+			<label>Role</label>
+			<div class="readonly-value">{editingAssignment.display_name || editingAssignment.name}</div>
+		</div>
+		<div class="form-row">
+			<div class="form-group">
+				<label for="editScopeType">Scope Type</label>
+				<select
+					id="editScopeType"
+					class="select"
+					bind:value={editScopeType}
+					onchange={handleEditScopeTypeChange}
+				>
+					<option value="tenant">Tenant</option>
+					<option value="global">Global</option>
+				</select>
+			</div>
+			<div class="form-group">
+				<label for="editScopeId">Scope ID</label>
+				<input
+					id="editScopeId"
+					class="input"
+					type="text"
+					bind:value={editScopeId}
+					disabled={editScopeType === 'global'}
+					placeholder={admin?.tenant_id || 'tenant_id'}
+				/>
+			</div>
+		</div>
+		<div class="form-group">
+			<label for="editExpiresAt">Expires At</label>
+			<input id="editExpiresAt" class="input" type="datetime-local" bind:value={editExpiresAt} />
+		</div>
+	{/if}
+
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={closeAssignmentEditDialog}
+			disabled={savingAssignment}
+		>
+			Cancel
+		</button>
+		<button
+			class="btn btn-primary"
+			onclick={handleUpdateAssignment}
+			disabled={savingAssignment || !editingAssignment}
+		>
+			{savingAssignment ? 'Saving...' : 'Save'}
 		</button>
 	{/snippet}
 </Modal>
@@ -553,10 +763,38 @@
 		flex-direction: column;
 		align-items: flex-end;
 		font-size: 0.75rem;
+		gap: 0.25rem;
+	}
+
+	.scope-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.125rem 0.5rem;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-sm);
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		font-size: 0.75rem;
+		white-space: nowrap;
 	}
 
 	.form-group {
 		margin-bottom: 1rem;
+	}
+
+	.form-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+	}
+
+	.readonly-value {
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 0.875rem;
 	}
 
 	.form-group label {
@@ -723,6 +961,10 @@
 
 		.header-actions {
 			flex-wrap: wrap;
+		}
+
+		.form-row {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

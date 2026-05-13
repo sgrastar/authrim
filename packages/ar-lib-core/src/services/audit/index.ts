@@ -73,13 +73,27 @@ export type { IAnonymizationService } from './anonymization';
 export { AuditService, createAuditService } from './audit-service';
 
 export type { AuditServiceDependencies } from './audit-service';
+export {
+  resolveAuditPersistenceSourcesFromEnv,
+  resolveAuditPersistenceAdapterFromEnv,
+  resolveLegacyAuditLogAdapterFromEnv,
+} from './runtime-sources';
+export type { AuditPersistenceSourceEnv, AuditPersistenceSources } from './runtime-sources';
+export {
+  createAuditPrimaryDatabaseAdapter,
+  createAuditPrimaryStorageAdapter,
+  createExternalAuditDatabaseAdapter,
+  createExternalAuditStorageAdapter,
+} from './external-primary';
 
 // Queue Consumer
 export {
   processAuditQueue,
   processDLQQueue,
-  cleanupExpiredEventLogs,
-  cleanupExpiredPIILogs,
+  cleanupExpiredTenantEventLogs,
+  cleanupExpiredGlobalEventLogs,
+  cleanupExpiredTenantPIILogs,
+  cleanupExpiredGlobalPIILogs,
 } from './queue-consumer';
 
 export type { AuditQueueConsumerEnv } from './queue-consumer';
@@ -88,6 +102,10 @@ export type { AuditQueueConsumerEnv } from './queue-consumer';
 export {
   // Interface and types
   DEFAULT_AUDIT_STORAGE_CONFIG,
+  hasAuditStorageRoutingTargets,
+  normalizeAuditStorageRoutingTargets,
+  auditRoutingRuleMatches,
+  resolveAuditRoutingTargets,
   // D1 Adapter
   D1AuditAdapter,
   createD1EventLogAdapter,
@@ -98,7 +116,24 @@ export {
   // Hyperdrive Adapter
   HyperdriveAuditAdapter,
   createHyperdriveAuditAdapter,
+  MysqlAuditAdapter,
+  createMysqlAuditAdapter,
+  resolveHyperdriveBindingForAuditTarget,
 } from './storage';
+export {
+  AUDIT_CANONICAL_LOG_FORMAT_V1,
+  buildCanonicalAuditBatch,
+  buildCanonicalAuditArchiveRecordFromEntry,
+  buildCanonicalAuditRecord,
+  extractAuditEntryFromCanonicalPayload,
+} from './canonical-format';
+export {
+  auditTargetFromBackendConfig,
+  buildAuditStorageBackendsFromProfile,
+  buildAuditStorageConfigFromProfile,
+  buildPrimaryBackendMap,
+  targetToBackendId,
+} from './runtime-targets';
 
 export type {
   IAuditStorageAdapter,
@@ -110,12 +145,22 @@ export type {
   AuditStorageHealth,
   AuditBackendConfig,
   AuditRetentionConfig,
+  AuditRoutingContext,
+  ResolvedAuditRoutingTargets,
+  AuditStorageRoutingTargets,
   AuditStorageRoutingRule,
   AuditStorageConfig,
   D1AuditAdapterConfig,
   R2AuditAdapterConfig,
   HyperdriveAuditAdapterConfig,
+  MysqlAuditAdapterConfig,
 } from './storage';
+export type {
+  AuditCanonicalLogFormat,
+  CanonicalAuditBatchV1,
+  CanonicalAuditRecordV1,
+  CanonicalAuditDeliveryChannel,
+} from './canonical-format';
 
 // Operational Logs (reason_detail storage with encryption)
 export {
@@ -125,4 +170,9 @@ export {
   deleteUserOperationalLogs,
 } from './operational-logs';
 
-export type { OperationalLogEntry, StoreOperationalLogParams } from './operational-logs';
+export type {
+  OperationalLogEntry,
+  StoreOperationalLogParams,
+  OperationalLogObjectStorageOptions,
+  OperationalLogStorageOptions,
+} from './operational-logs';

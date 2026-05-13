@@ -154,32 +154,38 @@ describe('Client Credentials Grant Tests (RFC 6749 §4.4)', () => {
   describe('Audience Handling', () => {
     it('should use requested audience when provided', () => {
       const request = { audience: 'https://api.example.com' };
-      const clientConfig = { default_audience: 'https://default-api.example.com' };
-      const issuerUrl = 'https://auth.example.com';
+      const clientConfig = {
+        default_resource: 'svc://default-api',
+        default_audience: 'https://default-api.example.com',
+      };
 
-      const effectiveAudience = request.audience || clientConfig.default_audience || issuerUrl;
+      const effectiveAudience =
+        request.audience || clientConfig.default_resource || clientConfig.default_audience;
 
       expect(effectiveAudience).toBe('https://api.example.com');
     });
 
-    it('should fall back to default_audience when not provided', () => {
+    it('should fall back to default_resource when not provided', () => {
       const request = { audience: undefined };
-      const clientConfig = { default_audience: 'https://default-api.example.com' };
-      const issuerUrl = 'https://auth.example.com';
+      const clientConfig = {
+        default_resource: 'svc://default-api',
+        default_audience: 'https://default-api.example.com',
+      };
 
-      const effectiveAudience = request.audience || clientConfig.default_audience || issuerUrl;
+      const effectiveAudience =
+        request.audience || clientConfig.default_resource || clientConfig.default_audience;
 
-      expect(effectiveAudience).toBe('https://default-api.example.com');
+      expect(effectiveAudience).toBe('svc://default-api');
     });
 
-    it('should fall back to issuer when no audience configured', () => {
+    it('should reject when no request or configured target exists', () => {
       const request = { audience: undefined };
-      const clientConfig = { default_audience: undefined };
-      const issuerUrl = 'https://auth.example.com';
+      const clientConfig = { default_resource: undefined, default_audience: undefined };
 
-      const effectiveAudience = request.audience || clientConfig.default_audience || issuerUrl;
+      const effectiveAudience =
+        request.audience || clientConfig.default_resource || clientConfig.default_audience;
 
-      expect(effectiveAudience).toBe('https://auth.example.com');
+      expect(effectiveAudience).toBeUndefined();
     });
   });
 

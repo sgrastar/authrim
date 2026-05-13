@@ -2,14 +2,21 @@
  * External IdP Provider Management Proxy
  *
  * Proxies requests from Admin UI to ar-bridge's external IdP admin API.
- * Converts session-based authentication to Bearer token authentication.
+ * Propagates the caller's Admin authentication material so ar-bridge can
+ * authorize the same human session or scoped machine access token.
  *
  * @module external-providers
  */
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+  readResponseTextWithLimit,
+} from '@authrim/ar-lib-core';
 
 /**
  * Base URL path for external IdP admin API in ar-bridge
@@ -17,9 +24,6 @@ import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-
  */
 const EXTERNAL_IDP_ADMIN_PATH = '/api/admin/external-providers';
 
-/**
- * Creates a proxied request to ar-bridge with Bearer token authentication
- */
 async function proxyToExternalIdp(
   c: Context<{ Bindings: Env }>,
   path: string,
@@ -34,33 +38,40 @@ async function proxyToExternalIdp(
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  // Ensure ADMIN_API_SECRET is configured
-  if (!c.env.ADMIN_API_SECRET) {
-    log.error('ADMIN_API_SECRET not configured');
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-
   try {
-    // Debug: Log ADMIN_API_SECRET status (not the actual value)
     log.info('Proxying to ar-bridge', {
-      hasAdminApiSecret: !!c.env.ADMIN_API_SECRET,
-      secretLength: c.env.ADMIN_API_SECRET?.length || 0,
       path,
       method,
     });
 
-    // Build request to ar-bridge
-    const headers: HeadersInit = {
-      Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
-      'Content-Type': 'application/json',
-    };
+    const headers = new Headers({
+      Accept: 'application/json',
+      'X-Tenant-Id': getTenantIdFromContext(c),
+    });
 
-    // Forward tenant_id query parameter if present
-    const url = new URL(c.req.url);
-    const tenantId = url.searchParams.get('tenant_id');
-    const targetUrl = tenantId
-      ? `https://external-idp${path}?tenant_id=${encodeURIComponent(tenantId)}`
-      : `https://external-idp${path}`;
+    const contentType = c.req.header('Content-Type');
+    if (contentType) {
+      headers.set('Content-Type', contentType);
+    } else if (body) {
+      headers.set('Content-Type', 'application/json');
+    }
+
+    const authorization = c.req.header('Authorization');
+    if (authorization) {
+      headers.set('Authorization', authorization);
+    }
+
+    const cookie = c.req.header('Cookie');
+    if (cookie) {
+      headers.set('Cookie', cookie);
+    }
+
+    const sessionId = c.req.header('X-Session-Id');
+    if (sessionId) {
+      headers.set('X-Session-Id', sessionId);
+    }
+
+    const targetUrl = `https://external-idp${path}`;
 
     const requestInit: RequestInit = {
       method,
@@ -325,6 +336,7 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
           'User-Agent': 'Authrim OIDC Discovery/1.0',
         },
         redirect: 'manual', // Handle redirects explicitly for SSRF protection
+        signal: AbortSignal.timeout(10000),
       });
 
       if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -378,11 +390,11 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       return c.json({ error: 'Response too large' }, 400);
     }
 
-    // Read response with size limit
-    const responseText = await response.text();
-    if (responseText.length > MAX_DISCOVERY_RESPONSE_SIZE) {
+    let responseText: string;
+    try {
+      responseText = await readResponseTextWithLimit(response, MAX_DISCOVERY_RESPONSE_SIZE);
+    } catch {
       log.warn('OIDC discovery response too large', {
-        size: responseText.length,
         url: discoveryUrl,
       });
       return c.json({ error: 'Response too large' }, 400);

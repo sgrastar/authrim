@@ -6,7 +6,8 @@
  * - PII: users_pii.custom_attributes_json (D1_PII)
  */
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { DatabaseAdapter, DatabaseSource } from '../../db';
+import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../../db';
 import { createLogger } from '../../utils/logger';
 import type { CustomClaimSchema } from './resolver';
 
@@ -16,12 +17,12 @@ const log = createLogger().module('CUSTOM-CLAIMS-DATA-FETCHER');
 const MAX_NON_PII_FIELDS = 200;
 
 export class UserCustomDataFetcher {
-  private db: D1Database;
-  private dbPii: D1Database | null;
+  private coreAdapter: DatabaseAdapter;
+  private piiAdapter: DatabaseAdapter | null;
 
-  constructor(db: D1Database, dbPii: D1Database | null) {
-    this.db = db;
-    this.dbPii = dbPii;
+  constructor(db: DatabaseSource, dbPii: DatabaseSource | null) {
+    this.coreAdapter = ensureDatabaseAdapter(db, 'custom-claims-data-core');
+    this.piiAdapter = ensureOptionalDatabaseAdapter(dbPii, 'custom-claims-data-pii');
   }
 
   /**
@@ -52,15 +53,17 @@ export class UserCustomDataFetcher {
 
       try {
         const placeholders = keysToFetch.map(() => '?').join(', ');
-        const stmt = this.db.prepare(
+        const rows = await this.coreAdapter.query<{
+          field_name: string;
+          field_value: string | null;
+        }>(
           `SELECT field_name, field_value FROM user_custom_fields
-           WHERE user_id = ? AND tenant_id = ? AND field_name IN (${placeholders})`
+           WHERE tenant_id = ? AND user_id = ? AND field_name IN (${placeholders})`,
+          [tenantId, userId, ...keysToFetch]
         );
-        const rows = await stmt.bind(userId, tenantId, ...keysToFetch).all();
-        for (const row of rows.results ?? []) {
-          const r = row as { field_name: string; field_value: string | null };
-          if (r.field_value !== null) {
-            result.set(r.field_name, r.field_value);
+        for (const row of rows) {
+          if (row.field_value !== null) {
+            result.set(row.field_name, row.field_value);
           }
         }
       } catch (error) {
@@ -69,14 +72,12 @@ export class UserCustomDataFetcher {
     }
 
     // Fetch PII data
-    if (piiKeys.length > 0 && this.dbPii) {
+    if (piiKeys.length > 0 && this.piiAdapter) {
       try {
-        const stmt = this.dbPii.prepare(
-          `SELECT custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?`
+        const row = await this.piiAdapter.queryOne<{ custom_attributes_json: string | null }>(
+          'SELECT custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?',
+          [userId, tenantId]
         );
-        const row = await stmt
-          .bind(userId, tenantId)
-          .first<{ custom_attributes_json: string | null }>();
         if (row?.custom_attributes_json) {
           const attrs = JSON.parse(row.custom_attributes_json) as Record<string, unknown>;
           const piiKeySet = new Set(piiKeys);

@@ -7,6 +7,20 @@ import type { RateLimiterCounter } from '../durable-objects/RateLimiterCounter';
 import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 
+export interface EmailServiceBinding {
+  send(message: {
+    to: string | string[];
+    from: string | { email: string; name: string };
+    subject: string;
+    html?: string;
+    text?: string;
+    cc?: string | string[];
+    bcc?: string | string[];
+    replyTo?: string | { email: string; name: string };
+    headers?: Record<string, string>;
+  }): Promise<{ messageId?: string }>;
+}
+
 /**
  * Cloudflare Workers Environment Bindings
  *
@@ -42,6 +56,9 @@ export interface Env {
   // R2 Buckets
   AVATARS: R2Bucket;
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
+  IMPORT_ARTIFACTS?: R2Bucket; // Dedicated import input artifacts
+  EXPORT_ARTIFACTS?: R2Bucket; // Generated export/output artifacts
+  SENSITIVE_DETAILS?: R2Bucket; // Encrypted sensitive detail payloads (admin audit, webhook payloads, etc.)
 
   // KV Namespaces
   STATE_STORE: KVNamespace;
@@ -79,14 +96,17 @@ export interface Env {
 
   // Service Bindings (Worker-to-Worker communication)
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
+  EMAIL?: EmailServiceBinding; // Cloudflare Email Service send_email binding
 
   // ============================================================
   // Environment Variables - Token/Auth Expiry (unit: seconds)
   // ============================================================
   ISSUER_URL: string;
+  SAML_METADATA_SIGNING?: string; // "enabled"/"true"/"1" to sign generated IdP/SP metadata XML
   ALLOWED_ORIGINS?: string; // Comma-separated list of allowed origins (CORS + WebAuthn RP ID)
   ACCESS_TOKEN_EXPIRY: string; // Access token lifetime in seconds (default: 3600)
   AUTH_CODE_EXPIRY: string; // Authorization code lifetime in seconds (default: 60, OAuth 2.0 BCP)
+  HANDOFF_ARTIFACT_TTL_SECONDS?: string; // Handoff artifact lifetime in seconds (default: 60, clamped 30-300)
   STATE_EXPIRY: string; // OAuth state parameter lifetime in seconds (default: 300)
   NONCE_EXPIRY: string; // OIDC nonce lifetime in seconds (default: 300)
   REFRESH_TOKEN_EXPIRY: string; // Refresh token lifetime in seconds (default: 7776000 = 90 days)
@@ -106,6 +126,7 @@ export interface Env {
   ENABLE_CONFORMANCE_MODE?: string; // "true" to enable built-in forms instead of external UI
   OAUTH_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at tenant level (default: "false")
   CLIENT_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at client level (default: "false")
+  ENABLE_IFRAME_OIDC_AUTH?: string; // "true" to allow iframe-based OIDC auth after tenant/client origin opt-in
 
   // API & Versioning
   ENABLE_API_VERSIONING?: string; // "false" to disable API versioning middleware (default: enabled)
@@ -158,6 +179,7 @@ export interface Env {
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching
   ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
+  ADMIN_CREDENTIAL_ENCRYPTION_KEY?: string; // Encryption key for Admin-managed external credentials
 
   // PII Encryption
   ENABLE_PII_ENCRYPTION?: string; // "true" to enable PII field encryption
@@ -165,6 +187,15 @@ export interface Env {
   PII_ENCRYPTION_ALGORITHM?: string; // AES-256-GCM (default), AES-256-CBC, or NONE
   PII_ENCRYPTION_FIELDS?: string; // Comma-separated list of fields to encrypt
   PII_ENCRYPTION_KEY_VERSION?: string; // Key version for rotation (default: 1)
+
+  // Object Artifact Encryption
+  OBJECT_ENCRYPTION_ROOT_KEY?: string; // 32-byte hex string (64 characters) for object plane envelope encryption
+  OBJECT_ENCRYPTION_KEY_VERSION?: string; // Key version for object plane encryption (default: 1)
+
+  // Downstream Grant Service Integration
+  USERINFO_PROTECTED_RESOURCE_AUDIENCE?: string; // Expected audience for protected customer profile reads
+  DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID?: string; // Optional client_id for downstream online introspection
+  DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET?: string; // Optional client_secret for downstream online introspection
 
   // Token Introspection
   ENABLE_INTROSPECTION_STRICT_VALIDATION?: string; // "true" to enable strict audience/client_id validation
@@ -185,6 +216,12 @@ export interface Env {
   ENABLE_CHECK_API_DEBUG?: string; // "true" to include debug info in responses
   ENABLE_CHECK_API_WEBSOCKET?: string; // "true" to enable WebSocket Push
   ENABLE_CHECK_API_AUDIT?: string; // "true" to enable audit logging (default: enabled)
+
+  // Runtime Profile Registry / Defaults
+  PROFILE_REGISTRY_BACKEND?: string; // "kv" | "database"
+  DEFAULT_STORAGE_PROFILE_ID?: string; // Environment default storage profile pointer
+  DEFAULT_AUDIT_PROFILE_ID?: string; // Environment default audit profile pointer
+  DEFAULT_RESIDENCY_PROFILE_ID?: string; // Environment default residency profile pointer
 
   // Mock/Anonymous Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
@@ -208,7 +245,6 @@ export interface Env {
   AUTHRIM_SESSION_SHARDS?: string; // Number of session DO shards (default: 4)
   AUTHRIM_CHALLENGE_SHARDS?: string; // Number of challenge DO shards (default: 4)
   AUTHRIM_REVOCATION_SHARDS?: string; // Number of token revocation DO shards (default: 4)
-  AUTHRIM_FLOW_STATE_SHARDS?: string; // Number of flow state DO shards (default: 32)
 
   // Region-aware sharding settings (Priority: KV -> env -> defaults)
   REGION_SHARD_TOTAL_SHARDS?: string; // Total number of shards (default: 4)
@@ -254,15 +290,18 @@ export interface Env {
   PAIRWISE_SALT?: string; // Pairwise subject identifier salt (OIDC Core 8.1)
   OTP_HMAC_SECRET?: string; // Email OTP HMAC secret for code hashing
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
-  KEY_MANAGER_SECRET?: string; // Admin secret for Durable Objects management
-  ADMIN_API_SECRET?: string; // Admin API authentication secret (Bearer token)
+  KEY_MANAGER_SECRET?: string; // Scoped secret for KeyManager Durable Object access
+  VERSION_MANAGER_SECRET?: string; // Scoped secret for VersionManager Durable Object access
+  ADMIN_API_SECRET?: string; // Deprecated bootstrap/break-glass secret, not accepted by Admin API
   EMAIL_DOMAIN_HASH_SECRET?: string; // HMAC secret for email domain blind index
+  CLOUDFLARE_API_TOKEN?: string; // Cloudflare Custom Hostnames automation token
 
   // ============================================================
   // Email Configuration
   // ============================================================
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  EMAIL_FROM_NAME?: string;
 
   // ============================================================
   // URL Configuration

@@ -15,6 +15,7 @@ import {
 
 // Import handlers
 import { userinfoHandler } from './userinfo';
+import { createProtectedCustomerProfileRouter } from './protected-customer-profile';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -51,11 +52,16 @@ app.use(
   '*',
   cors({
     origin: '*',
-    allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'DPoP'],
+    allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      'DPoP',
+      'Idempotency-Key',
+      'Authrim-Step-Up-Receipt',
+    ],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
-    credentials: true,
   })
 );
 
@@ -72,6 +78,17 @@ app.use('/userinfo', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/userinfo'],
+  })(c, next);
+});
+
+app.use('/api/protected/customer-profiles/*', async (c, next) => {
+  if (c.env.ENABLE_RATE_LIMIT === 'false') {
+    return next();
+  }
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/protected/customer-profiles'],
   })(c, next);
 });
 
@@ -98,6 +115,7 @@ app.get('/health/ready', healthHandlers.readiness);
 // UserInfo endpoint
 app.get('/userinfo', userinfoHandler);
 app.post('/userinfo', userinfoHandler);
+app.route('/api/protected/customer-profiles', createProtectedCustomerProfileRouter());
 
 // 404 handler
 app.notFound((c) => {

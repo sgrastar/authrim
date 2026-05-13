@@ -9,17 +9,17 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   AdminAttributeRepository,
   AdminAttributeValueRepository,
-  AdminAuditLogRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { writeAdminAuditLog } from '../../admin-shared';
 
 // Define context type
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -42,10 +42,7 @@ adminAbacRouter.use(
  * Helper to get DB_ADMIN adapter
  */
 function getAdminAdapter(c: AdminContext) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
-  }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
 }
 
 /**
@@ -66,21 +63,11 @@ async function createAuditLog(
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const authContext = c.get('adminAuth') as AdminAuthContext;
-  const adapter = getAdminAdapter(c);
-  const auditRepo = new AdminAuditLogRepository(adapter);
-  const tenantId = getTenantIdFromContext(c);
-
-  await auditRepo.createAuditLog({
-    tenant_id: tenantId,
-    admin_user_id: authContext.userId,
-    admin_email: authContext.email || 'system',
+  await writeAdminAuditLog(c, {
     action,
-    resource_type: 'admin_attribute',
-    resource_id: resourceId,
+    resourceType: 'admin_attribute',
+    resourceId,
     result,
-    ip_address: c.req.header('CF-Connecting-IP') || undefined,
-    user_agent: c.req.header('User-Agent') || undefined,
     metadata,
   });
 }

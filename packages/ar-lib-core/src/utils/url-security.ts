@@ -258,7 +258,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
 
     // Check response size if Content-Length header is present
     if (maxResponseSize > 0) {
-      const contentLength = response.headers.get('Content-Length');
+      const contentLength = response.headers?.get?.('Content-Length');
       if (contentLength && parseInt(contentLength, 10) > maxResponseSize) {
         throw new Error(
           `Response size exceeds limit: ${contentLength} bytes > ${maxResponseSize} bytes`
@@ -309,15 +309,155 @@ export async function safeFetchJson<T = unknown>(
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
 
-  // Read body with size limit
   const maxSize = options.maxResponseSize ?? DEFAULT_MAX_RESPONSE_SIZE;
   if (maxSize > 0) {
-    const text = await response.text();
-    if (text.length > maxSize) {
-      throw new Error(`Response body exceeds limit: ${text.length} > ${maxSize} bytes`);
-    }
+    const text = await readResponseTextWithLimit(response, maxSize);
     return JSON.parse(text) as T;
   }
 
   return response.json() as Promise<T>;
+}
+
+/**
+ * Safe fetch for text responses with size-limited body reading.
+ *
+ * Use this for externally supplied XML, metadata, or other text payloads where
+ * `response.text()` would otherwise buffer an unbounded response body.
+ */
+export async function safeFetchText(url: string, options: SafeFetchOptions = {}): Promise<string> {
+  const response = await safeFetch(url, options);
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  const maxSize = options.maxResponseSize ?? DEFAULT_MAX_RESPONSE_SIZE;
+  if (maxSize > 0) {
+    return readResponseTextWithLimit(response, maxSize);
+  }
+
+  return response.text();
+}
+
+/**
+ * Read a response body as text while enforcing a byte limit.
+ *
+ * This caps streamed responses even when the peer omits Content-Length.
+ */
+export async function readResponseTextWithLimit(
+  response: Response,
+  maxBytes: number
+): Promise<string> {
+  if (maxBytes <= 0) {
+    return response.text();
+  }
+
+  if (!response.body) {
+    const text =
+      typeof response.text === 'function'
+        ? await response.text()
+        : typeof response.json === 'function'
+          ? JSON.stringify(await response.json())
+          : '';
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    if (byteLength > maxBytes) {
+      throw new Error(`Response body exceeds limit: ${byteLength} > ${maxBytes} bytes`);
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        void reader.cancel().catch(() => {});
+        throw new Error(`Response body exceeds limit: ${totalBytes} > ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(body);
+}
+
+/**
+ * Read at most `maxBytes` of a response body as text and cancel the remaining
+ * stream. Use for diagnostic previews where oversized responses should be
+ * truncated instead of rejected.
+ */
+export async function readResponseTextPreview(
+  response: Response,
+  maxBytes: number
+): Promise<string> {
+  if (maxBytes <= 0) {
+    return '';
+  }
+
+  if (!response.body) {
+    const text =
+      typeof response.text === 'function'
+        ? await response.text()
+        : typeof response.json === 'function'
+          ? JSON.stringify(await response.json())
+          : '';
+    return text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let truncated = false;
+
+  try {
+    while (totalBytes < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      const remaining = maxBytes - totalBytes;
+      if (value.byteLength > remaining) {
+        chunks.push(value.slice(0, remaining));
+        totalBytes += remaining;
+        truncated = true;
+        break;
+      }
+
+      chunks.push(value);
+      totalBytes += value.byteLength;
+    }
+    if (totalBytes >= maxBytes) {
+      truncated = true;
+    }
+    if (truncated) {
+      void reader.cancel().catch(() => {});
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(body);
 }

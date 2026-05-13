@@ -51,10 +51,10 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'マルチテナント用 DNS 前提を満たしているため、ネイキッドドメイン構成に必要な前提も満たしています。',
     nakedDomainReview:
       'マルチテナント用 DNS 前提を確認できません。ネイキッドドメイン構成は追加確認が必要です。',
-    pages: 'Cloudflare Pages',
+    pages: 'UI Workers',
     pagesOk:
-      'Pages API に到達できるため、Login/Admin UI の Pages 配備に必要な前提を満たしています。',
-    pagesReview: 'Pages API を確認できません。Pages 配備は追加確認が必要です。',
+      'Workers API に到達できるため、Login/Admin UI の Workers 配備に必要な前提を満たしています。',
+    pagesReview: 'Workers API を確認できません。Workers 配備は追加確認が必要です。',
   },
   en: {
     title: 'Estimated Feature Availability',
@@ -85,11 +85,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'The DNS prerequisites for multi-tenant routing appear available, meeting the requirements for naked-domain routing.',
     nakedDomainReview:
       'The DNS prerequisites for multi-tenant routing could not be verified, so naked-domain routing needs review.',
-    pages: 'Cloudflare Pages',
+    pages: 'UI Workers',
     pagesOk:
-      'The Pages API is reachable, meeting the prerequisites required for Login/Admin UI deployment on Pages.',
+      'The Workers API is reachable, meeting the prerequisites required for Login/Admin UI Workers deployment.',
     pagesReview:
-      'The Pages API could not be verified, so Pages deployment may still work but needs review.',
+      'The Workers API could not be verified, so Workers deployment may still work but needs review.',
   },
   'zh-CN': {
     title: '可用性预估',
@@ -112,9 +112,9 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomain: '裸域名',
     nakedDomainOk: '多租户路由所需的 DNS 前提已满足，裸域名配置所需条件已具备。',
     nakedDomainReview: '无法确认多租户路由所需的 DNS 前提，因此裸域名配置需要进一步确认。',
-    pages: 'Cloudflare Pages',
-    pagesOk: '可以访问 Pages API，满足 Login/Admin UI 的 Pages 部署所需的前提。',
-    pagesReview: '无法确认 Pages API，因此 Pages 部署可能可行，但需要进一步确认。',
+    pages: 'UI Workers',
+    pagesOk: '可以访问 Workers API，满足 Login/Admin UI 的 Workers 部署所需的前提。',
+    pagesReview: '无法确认 Workers API，因此 Workers 部署可能可行，但需要进一步确认。',
   },
   'zh-TW': {
     title: '可用性預估',
@@ -137,9 +137,9 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomain: '裸網域',
     nakedDomainOk: '多租戶路由所需的 DNS 前提已滿足，裸網域設定所需條件已具備。',
     nakedDomainReview: '無法確認多租戶路由所需的 DNS 前提，因此裸網域設定需要進一步確認。',
-    pages: 'Cloudflare Pages',
-    pagesOk: '可以存取 Pages API，滿足 Login/Admin UI 的 Pages 部署所需的前提。',
-    pagesReview: '無法確認 Pages API，因此 Pages 部署可能可行，但需要進一步確認。',
+    pages: 'UI Workers',
+    pagesOk: '可以存取 Workers API，滿足 Login/Admin UI 的 Workers 部署所需的前提。',
+    pagesReview: '無法確認 Workers API，因此 Workers 部署可能可行，但需要進一步確認。',
   },
   es: {
     title: 'Disponibilidad estimada',
@@ -171,11 +171,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Los requisitos DNS para el enrutamiento multi-tenant parecen disponibles, cumpliendo los requisitos para el dominio raíz.',
     nakedDomainReview:
       'No se pudieron verificar los requisitos DNS para el enrutamiento multi-tenant, por lo que el dominio raíz requiere revisión.',
-    pages: 'Cloudflare Pages',
+    pages: 'UI Workers',
     pagesOk:
-      'La API de Pages es accesible, cumpliendo los requisitos necesarios para el despliegue de Login/Admin UI en Pages.',
+      'La API Workers es accesible, cumpliendo los requisitos necesarios para el despliegue de Login/Admin UI en Workers.',
     pagesReview:
-      'No se pudo verificar la API de Pages, por lo que el despliegue en Pages podría funcionar, pero requiere revisión.',
+      'No se pudo verificar la API Workers, por lo que el despliegue en Workers podría funcionar, pero requiere revisión.',
   },
   pt: {
     title: 'Disponibilidade estimada',
@@ -206,11 +206,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Os pré-requisitos de DNS para roteamento multi-tenant parecem disponíveis, atendendo aos requisitos para o domínio raiz.',
     nakedDomainReview:
       'Os pré-requisitos de DNS para roteamento multi-tenant não puderam ser verificados, então o domínio raiz exige revisão.',
-    pages: 'Cloudflare Pages',
+    pages: 'UI Workers',
     pagesOk:
-      'A API do Pages está acessível, atendendo aos requisitos necessários para o deploy do Login/Admin UI no Pages.',
+      'A API Workers está acessível, atendendo aos requisitos necessários para o deploy do Login/Admin UI no Workers.',
     pagesReview:
-      'Não foi possível verificar a API do Pages, então o deploy no Pages pode funcionar, mas exige revisão.',
+      'Não foi possível verificar a API Workers, então o deploy no Workers pode funcionar, mas exige revisão.',
   },
   fr: {
     title: 'Disponibilité estimée',
@@ -241,11 +241,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Les prérequis DNS pour le routage multi-tenant semblent disponibles, remplissant les prérequis pour le domaine nu.',
     nakedDomainReview:
       "Les prérequis DNS pour le routage multi-tenant n'ont pas pu être vérifiés, le domaine nu doit donc être vérifié.",
-    pages: 'Cloudflare Pages',
+    pages: 'UI Workers',
     pagesOk:
-      "L'API Pages est accessible, remplissant les prérequis nécessaires au déploiement des UI Login/Admin sur Pages.",
+      "L'API Workers est accessible, remplissant les prérequis nécessaires au déploiement des UI Login/Admin sur Workers.",
     pagesReview:
-      "L'API Pages n'a pas pu être vérifiée, le déploiement sur Pages peut donc fonctionner mais doit être vérifié.",
+      "L'API Workers n'a pas pu être vérifiée, le déploiement sur Workers peut donc fonctionner mais doit être vérifié.",
   },
   de: {
     title: 'Geschätzte Verfügbarkeit',
@@ -276,11 +276,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Die DNS-Voraussetzungen für Multi-Tenant-Routing scheinen verfügbar zu sein und erfüllen die Anforderungen für die Naked-Domain-Konfiguration.',
     nakedDomainReview:
       'Die DNS-Voraussetzungen für Multi-Tenant-Routing konnten nicht verifiziert werden. Die Naked-Domain-Konfiguration muss geprüft werden.',
-    pages: 'Cloudflare Pages',
+    pages: 'UI Workers',
     pagesOk:
-      'Die Pages-API ist erreichbar und erfüllt die Voraussetzungen für die Bereitstellung von Login/Admin UI auf Pages.',
+      'Die Workers-API ist erreichbar und erfüllt die Voraussetzungen für die Bereitstellung von Login/Admin UI auf Workers.',
     pagesReview:
-      'Die Pages-API konnte nicht verifiziert werden. Die Pages-Bereitstellung kann funktionieren, muss aber geprüft werden.',
+      'Die Workers-API konnte nicht verifiziert werden. Die Workers-Bereitstellung kann funktionieren, muss aber geprüft werden.',
   },
   ko: {
     title: '기능 사용 가능성 추정',
@@ -309,10 +309,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       '멀티테넌트 라우팅에 필요한 DNS 전제가 충족되어 네이키드 도메인 구성에 필요한 조건을 만족합니다.',
     nakedDomainReview:
       '멀티테넌트 라우팅용 DNS 전제를 확인하지 못해 네이키드 도메인 구성은 추가 확인이 필요합니다.',
-    pages: 'Cloudflare Pages',
-    pagesOk: 'Pages API에 도달할 수 있어 Login/Admin UI의 Pages 배포에 필요한 전제를 충족합니다.',
+    pages: 'UI Workers',
+    pagesOk:
+      'Workers API에 도달할 수 있어 Login/Admin UI의 Workers 배포에 필요한 전제를 충족합니다.',
     pagesReview:
-      'Pages API를 확인하지 못해 Pages 배포가 가능할 수도 있지만 추가 확인이 필요합니다.',
+      'Workers API를 확인하지 못해 Workers 배포가 가능할 수도 있지만 추가 확인이 필요합니다.',
   },
   ru: {
     title: 'Оценка доступности',
@@ -343,10 +344,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'DNS-предпосылки для мультитенантной маршрутизации выглядят доступными и удовлетворяют требованиям для naked domain.',
     nakedDomainReview:
       'Не удалось проверить DNS-предпосылки для мультитенантной маршрутизации, поэтому конфигурация naked domain требует проверки.',
-    pages: 'Cloudflare Pages',
-    pagesOk: 'API Pages доступен и удовлетворяет требованиям для деплоя Login/Admin UI в Pages.',
+    pages: 'UI Workers',
+    pagesOk:
+      'API Workers доступен и удовлетворяет требованиям для деплоя Login/Admin UI в Workers.',
     pagesReview:
-      'Не удалось проверить API Pages, поэтому деплой в Pages может сработать, но требует проверки.',
+      'Не удалось проверить API Workers, поэтому деплой в Workers может сработать, но требует проверки.',
   },
   id: {
     title: 'Perkiraan Ketersediaan',
@@ -377,11 +379,11 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
       'Prasyarat DNS untuk routing multi-tenant tampak tersedia, memenuhi persyaratan untuk konfigurasi domain telanjang.',
     nakedDomainReview:
       'Prasyarat DNS untuk routing multi-tenant tidak dapat diverifikasi, jadi konfigurasi domain telanjang perlu diperiksa.',
-    pages: 'Cloudflare Pages',
+    pages: 'UI Workers',
     pagesOk:
-      'API Pages dapat dijangkau, memenuhi prasyarat yang diperlukan untuk deploy Login/Admin UI ke Pages.',
+      'API Workers dapat dijangkau, memenuhi prasyarat yang diperlukan untuk deploy Login/Admin UI ke Workers.',
     pagesReview:
-      'API Pages tidak dapat diverifikasi, jadi deploy ke Pages mungkin bisa berhasil tetapi perlu diperiksa.',
+      'API Workers tidak dapat diverifikasi, jadi deploy ke Workers mungkin bisa berhasil tetapi perlu diperiksa.',
   },
 };
 

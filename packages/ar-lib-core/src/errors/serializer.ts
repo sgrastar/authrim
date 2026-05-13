@@ -49,7 +49,7 @@ export function serializeError(descriptor: ErrorDescriptor, options: SerializeOp
  * @returns HTTP Response with OAuth error format
  */
 export function serializeToOAuth(descriptor: ErrorDescriptor): Response {
-  const body: OAuthErrorResponse = {
+  const body: OAuthErrorResponse & Record<string, unknown> = {
     error: descriptor.rfcError,
     error_description: descriptor.detail,
   };
@@ -65,6 +65,10 @@ export function serializeToOAuth(descriptor: ErrorDescriptor): Response {
 
   if (descriptor.state) {
     body.state = descriptor.state;
+  }
+
+  if (descriptor.extensions) {
+    Object.assign(body, descriptor.extensions);
   }
 
   const headers: Record<string, string> = {
@@ -104,7 +108,7 @@ export function serializeToProblemDetails(
   descriptor: ErrorDescriptor,
   baseUrl: string = DEFAULT_BASE_URL
 ): Response {
-  const body: ProblemDetailsResponse = {
+  const body: ProblemDetailsResponse & Record<string, unknown> = {
     type: `${baseUrl}/problems/${descriptor.typeSlug}`,
     title: descriptor.title,
     status: descriptor.status,
@@ -125,6 +129,10 @@ export function serializeToProblemDetails(
 
   // Add error metadata for AI Agents / SDKs
   body.error_meta = descriptor.meta;
+
+  if (descriptor.extensions) {
+    Object.assign(body, descriptor.extensions);
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/problem+json',

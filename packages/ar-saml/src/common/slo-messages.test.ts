@@ -139,6 +139,28 @@ describe('SLO Message Builder', () => {
       expect(parsed.nameIdFormat).toBe('urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress');
       expect(parsed.sessionIndex).toBe('_session_abc');
     });
+
+    it('should parse NameID qualifiers from LogoutRequest XML', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  ID="_qualifier_test"
+  Version="2.0"
+  IssueInstant="2024-01-15T10:30:00Z"
+  Destination="https://idp.example.com/slo">
+  <saml:Issuer>https://sp.example.com</saml:Issuer>
+  <saml:NameID
+    Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+    NameQualifier="https://idp.example.com/saml/idp"
+    SPNameQualifier="https://sp.example.com">pairwise-user</saml:NameID>
+</samlp:LogoutRequest>`;
+
+      const parsed = parseLogoutRequestXml(xml);
+
+      expect(parsed.nameId).toBe('pairwise-user');
+      expect(parsed.nameIdNameQualifier).toBe('https://idp.example.com/saml/idp');
+      expect(parsed.nameIdSPNameQualifier).toBe('https://sp.example.com');
+    });
   });
 
   describe('parseLogoutResponseXml', () => {

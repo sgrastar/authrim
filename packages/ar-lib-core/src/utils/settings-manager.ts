@@ -32,7 +32,7 @@ const log = createLogger().module('SETTINGS_MANAGER');
 export type SettingScope =
   | { type: 'platform' }
   | { type: 'tenant'; id: string }
-  | { type: 'client'; id: string };
+  | { type: 'client'; id: string; tenantId: string };
 
 /**
  * Setting value source
@@ -259,7 +259,7 @@ function getKVKey(category: string, scope: SettingScope): string {
     case 'tenant':
       return `settings:tenant:${validateKVKeyPart(scope.id, 'tenantId')}:${safeCategory}`;
     case 'client':
-      return `settings:client:${validateKVKeyPart(scope.id, 'clientId')}:${safeCategory}`;
+      return `settings:client:${validateKVKeyPart(scope.tenantId, 'tenantId')}:${validateKVKeyPart(scope.id, 'clientId')}:${safeCategory}`;
   }
 }
 

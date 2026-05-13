@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { adminStatsAPI, type DashboardStats } from '$lib/api/admin-stats';
 	import { adminCacheModeAPI, type PlatformCacheModeResponse } from '$lib/api/admin-cache-mode';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -17,6 +18,8 @@
 
 	onMount(async () => {
 		try {
+			await settingsContext.initialize();
+
 			// Load stats and cache mode in parallel
 			const [statsResult, cacheModeResult] = await Promise.allSettled([
 				adminStatsAPI.getDashboardStats(),

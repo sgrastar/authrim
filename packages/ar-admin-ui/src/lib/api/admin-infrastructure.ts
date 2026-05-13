@@ -3,7 +3,6 @@ import { adminFetch } from '$lib/api/admin-request';
  * Admin Infrastructure API Client
  *
  * Provides API calls for infrastructure sharding configuration:
- * - Flow State Shards: GET/PUT /api/admin/settings/flow-state-shards
  * - Session Shards: GET/PUT /api/admin/settings/session-shards
  * - Challenge Shards: GET/PUT /api/admin/settings/challenge-shards
  * - Code Shards: GET/PUT /api/admin/settings/code-shards
@@ -97,54 +96,6 @@ export interface RefreshTokenShardingResponse {
  * Admin Infrastructure API
  */
 export const adminInfrastructureAPI = {
-	/**
-	 * Get flow state shard configuration
-	 * GET /api/admin/settings/flow-state-shards
-	 */
-	async getFlowStateShards(): Promise<ShardConfig> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/flow-state-shards`, {
-			credentials: 'include'
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.message || error.error || 'Failed to fetch flow state shards');
-		}
-
-		return response.json();
-	},
-
-	/**
-	 * Update flow state shard count
-	 * PUT /api/admin/settings/flow-state-shards
-	 *
-	 * Note: Changing shard count affects routing of new sessions.
-	 * Existing sessions will continue to work as they use embedded routing.
-	 *
-	 * @param shards - Number of shards (1-256)
-	 */
-	async updateFlowStateShards(shards: number): Promise<ShardUpdateResponse> {
-		if (!Number.isInteger(shards) || shards < 1 || shards > 256) {
-			throw new Error('Shard count must be an integer between 1 and 256');
-		}
-
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/flow-state-shards`, {
-			method: 'PUT',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			credentials: 'include',
-			body: JSON.stringify({ shards })
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.message || error.error || 'Failed to update flow state shards');
-		}
-
-		return response.json();
-	},
-
 	// =========================================================================
 	// Session Shards API
 	// =========================================================================

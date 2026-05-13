@@ -42,6 +42,12 @@ const mocked = vi.hoisted(() => {
           .filter((user) => user.email === email && user.is_active === 1)
           .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
       }
+      if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
+        return state.tenants.filter((tenant) => tenant.is_active === 1).slice(0, 2) as T[];
+      }
+      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
+        return state.clients.filter((client) => client.client_id === params[0]) as T[];
+      }
 
       return [];
     }
@@ -60,9 +66,6 @@ const mocked = vi.hoisted(() => {
         return (state.tenants.find((tenant) => tenant.id === params[0] && tenant.is_active === 1) ??
           null) as T | null;
       }
-      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
-        return (state.clients.find((client) => client.client_id === params[0]) ?? null) as T | null;
-      }
       if (query.includes('FROM tenant_invitations')) {
         const token = params[0];
         const now = Number(params[1]);
@@ -77,6 +80,7 @@ const mocked = vi.hoisted(() => {
   return {
     state,
     discoveryCandidatesMock: vi.fn(),
+    resolveUserStoreRuntimeSourcesMock: vi.fn(),
     FakeD1Adapter,
   };
 });
@@ -87,11 +91,33 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     D1Adapter: mocked.FakeD1Adapter,
+    ensureDatabaseAdapter: vi.fn((source: unknown) => {
+      if (
+        source &&
+        typeof source === 'object' &&
+        'query' in source &&
+        'queryOne' in source &&
+        'execute' in source
+      ) {
+        return source;
+      }
+
+      return new mocked.FakeD1Adapter({ db: source });
+    }),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
+      async (_env: Partial<Env>) => new mocked.FakeD1Adapter({ db: {} })
+    ),
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
+    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
   };
 });
 
-import { getDiscoveryConfigHandler, postDiscoveryHandler } from '../discovery';
+import {
+  getDiscoveryConfigHandler,
+  postDiscoveryGrantHandler,
+  postDiscoveryGrantVerifyHandler,
+  postDiscoveryHandler,
+} from '../discovery';
 
 function createMockKV(data: Record<string, string> = {}): KVNamespace {
   const store = new Map<string, string>(Object.entries(data));
@@ -108,18 +134,55 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+) {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn(
+      async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
+    ),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    transaction: vi.fn(async (fn: any) => fn()),
+    batch: vi.fn().mockResolvedValue([]),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
-    (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+    const host = (
+      c.req.header('X-Authrim-Original-Host') ||
+      c.req.header('X-Forwarded-Host') ||
+      c.req.header('Host') ||
+      ''
+    )
+      .split(':')[0]
+      .toLowerCase();
+    const tenantId =
+      host === 'login.acme.example.com'
+        ? 'acme'
+        : host.startsWith('beta.')
+          ? 'beta'
+          : host.startsWith('acme.')
+            ? 'acme'
+            : 'default';
+    (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', tenantId);
     await next();
   });
   app.get('/api/auth/discovery', getDiscoveryConfigHandler);
   app.post('/api/auth/discovery', postDiscoveryHandler);
+  app.post('/api/auth/discovery/grant', postDiscoveryGrantHandler);
+  app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
   const env = {
-    DB: {},
-    DB_PII: {},
+    DB: createMockAdapter(),
+    DB_PII: createMockAdapter(),
     SETTINGS: createMockKV({
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
@@ -145,6 +208,8 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     AUTHRIM_CONFIG: createMockKV({
       'settings:tenant:acme:tenant': JSON.stringify({
         'tenant.logo_uri': 'https://cdn.example.com/acme-tenant.png',
+        'tenant.allowed_domains': 'login.acme.example.com',
+        'tenant.allowed_identifiers': 'https://login.acme.example.com',
       }),
       'settings:tenant:beta:tenant': JSON.stringify({
         'tenant.logo_uri': 'https://cdn.example.com/beta-tenant.png',
@@ -153,6 +218,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     BASE_DOMAIN: 'auth.example.com',
     DEFAULT_TENANT_ID: 'default',
     ISSUER_URL: 'https://default.auth.example.com',
+    KEY_MANAGER_SECRET: 'test-discovery-grant-secret',
     ...envOverrides,
   } as unknown as Env;
 
@@ -162,6 +228,34 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
 describe('discovery API', () => {
   beforeEach(() => {
     mocked.discoveryCandidatesMock.mockReset();
+    const defaultPiiAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
+          const email = String(params[0] ?? '');
+          const tenantId = String(params[1] ?? '');
+          const user =
+            mocked.state.users.find(
+              (candidate) =>
+                candidate.email === email &&
+                candidate.tenant_id === tenantId &&
+                candidate.is_active === 1
+            ) ?? null;
+          return user ? { id: user.id, tenant_id: user.tenant_id } : null;
+        }
+        return null;
+      },
+    });
+
+    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      coreDb: env.DB,
+      piiDb: defaultPiiAdapter,
+    }));
   });
 
   it('returns public config for the current host', async () => {
@@ -179,8 +273,11 @@ describe('discovery API', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       is_common_entry_host: boolean;
+      common_discover_url: string | null;
       config: {
         redirect_default_login_to_discovery: boolean;
+        require_common_discovery_before_login: boolean;
+        skip_discovery_if_only_one_tenant: boolean;
       };
       ui: {
         brand_name: string;
@@ -189,10 +286,47 @@ describe('discovery API', () => {
       };
     };
     expect(body.is_common_entry_host).toBe(true);
+    expect(body.common_discover_url).toBe('https://auth.example.com/discover');
     expect(body.config.redirect_default_login_to_discovery).toBe(true);
+    expect(body.config.require_common_discovery_before_login).toBe(true);
+    expect(body.config.skip_discovery_if_only_one_tenant).toBe(false);
     expect(body.ui.brand_name).toBe('Shared Discovery');
     expect(body.ui.theme).toBe('dark');
     expect(body.ui.title_text).toBe('Find your workspace');
+  });
+
+  it('uses platform login-entry settings for the common entry host', async () => {
+    const kv = createMockKV({
+      'settings:platform:login-entry': JSON.stringify({
+        'login-entry.discovery_methods': '["tenant_code"]',
+        'login-entry.email_resolution_policy': 'disabled',
+        'login-entry.selection_policy': 'manual_only',
+      }),
+    });
+    const { app, env } = createDiscoveryApp({ SETTINGS: kv });
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'login.example.com' },
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      is_common_entry_host: boolean;
+      config: {
+        discovery_methods: string[];
+        email_resolution_policy: string;
+        selection_policy: string;
+      };
+    };
+    expect(body.is_common_entry_host).toBe(true);
+    expect(body.config.discovery_methods).toEqual(['tenant_code']);
+    expect(body.config.email_resolution_policy).toBe('disabled');
+    expect(body.config.selection_policy).toBe('manual_only');
   });
 
   it('resolves a tenant by tenant_code with branding precedence', async () => {
@@ -268,6 +402,51 @@ describe('discovery API', () => {
     expect(body.candidate.tenant_id).toBe('acme');
   });
 
+  it('uses the runtime-resolved pii store for exact-email discovery', async () => {
+    mocked.discoveryCandidatesMock.mockResolvedValue([]);
+    const { app, env } = createDiscoveryApp({ DB_PII: undefined as any });
+    const acmePiiAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
+          return params[1] === 'acme' ? { id: 'user-1', tenant_id: 'acme' } : null;
+        }
+        return null;
+      },
+    });
+
+    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(
+      async (_env: Partial<Env>, tenantId: string) => ({
+        storageProfile: {
+          id: 'builtin:storage:tenant-override',
+          kind: 'storage',
+          label: 'Tenant Override',
+          slices: {},
+        },
+        coreDb: env.DB,
+        piiDb: tenantId === 'acme' ? acmePiiAdapter : null,
+      })
+    );
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'email', value: 'user@gmail.com' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      result: 'resolved';
+      candidate: { tenant_id: string };
+    };
+    expect(body.result).toBe('resolved');
+    expect(body.candidate.tenant_id).toBe('acme');
+    expect(mocked.resolveUserStoreRuntimeSourcesMock).toHaveBeenCalledWith(env, 'acme');
+  });
+
   it('resolves invitation tokens and returns invited_email', async () => {
     const { app, env } = createDiscoveryApp();
 
@@ -330,10 +509,13 @@ describe('discovery API', () => {
     });
 
     const response = await app.request(
-      'https://login.example.com/api/auth/discovery',
+      'https://default.auth.example.com/api/auth/discovery',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Host': 'default.auth.example.com',
+        },
         body: JSON.stringify({ mode: 'email', value: 'user@example.com' }),
       },
       env
@@ -357,10 +539,10 @@ describe('discovery API', () => {
     });
 
     const response = await app.request(
-      'https://login.example.com/api/auth/discovery',
+      'https://default.auth.example.com/api/auth/discovery',
       {
         method: 'GET',
-        headers: { 'X-Forwarded-Host': 'login.example.com' },
+        headers: { 'X-Forwarded-Host': 'default.auth.example.com' },
       },
       env
     );
@@ -374,10 +556,13 @@ describe('discovery API', () => {
     const { app, env } = createDiscoveryApp();
 
     const response = await app.request(
-      'https://login.example.com/api/auth/discovery',
+      'https://default.auth.example.com/api/auth/discovery',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Host': 'default.auth.example.com',
+        },
         body: JSON.stringify({ mode: 'app_hint', value: 'acme-web' }),
       },
       env
@@ -391,6 +576,40 @@ describe('discovery API', () => {
     expect(body.result).toBe('resolved');
     expect(body.candidate.tenant_id).toBe('acme');
     expect(body.candidate.source).toBe('app_hint');
+  });
+
+  it('returns multiple app_hint candidates when client_id exists in multiple tenants', async () => {
+    mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'acme' });
+    mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'beta' });
+    try {
+      const { app, env } = createDiscoveryApp();
+
+      const response = await app.request(
+        'https://default.auth.example.com/api/auth/discovery',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Forwarded-Host': 'default.auth.example.com',
+          },
+          body: JSON.stringify({ mode: 'app_hint', value: 'shared-native' }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        result: 'multiple';
+        candidates: Array<{ tenant_id: string; source: string }>;
+      };
+      expect(body.result).toBe('multiple');
+      expect(body.candidates.map((candidate) => candidate.tenant_id).sort()).toEqual([
+        'acme',
+        'beta',
+      ]);
+    } finally {
+      mocked.state.clients.splice(-2, 2);
+    }
   });
 
   it('returns not_found when app_hint resolves to an inactive tenant', async () => {
@@ -435,5 +654,114 @@ describe('discovery API', () => {
     const body = (await response.json()) as { result: 'not_found'; code: string };
     expect(body.result).toBe('not_found');
     expect(body.code).toBe('app_hint_not_found');
+  });
+
+  it('issues a discovery grant for the canonical tenant login URL', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { grant: string; login_url: string };
+    expect(body.grant).toBeTruthy();
+    expect(body.login_url).toMatch(/^https:\/\/acme\.auth\.example\.com\/login\?discovery_grant=/);
+  });
+
+  it('carries login_hint into the discovery grant target URL', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+          login_hint: 'user@example.com',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { login_url: string };
+    expect(body.login_url).toContain('login_hint=user%40example.com');
+  });
+
+  it('reuses the original tenant login URL when return_to matches the resolved tenant binding', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const response = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+          expected_tenant_id: 'acme',
+          return_to: 'https://login.acme.example.com/login',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { login_url: string };
+    expect(body.login_url).toMatch(/^https:\/\/login\.acme\.example\.com\/login\?discovery_grant=/);
+  });
+
+  it('verifies a discovery grant only for the bound tenant login URL', async () => {
+    const { app, env } = createDiscoveryApp();
+
+    const createResponse = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+          expected_tenant_id: 'acme',
+          return_to: 'https://login.acme.example.com/login',
+        }),
+      },
+      env
+    );
+    const created = (await createResponse.json()) as { grant: string };
+
+    const verifyResponse = await app.request(
+      'https://login.acme.example.com/api/auth/discovery/grant/verify',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Authrim-Original-Host': 'login.acme.example.com',
+        },
+        body: JSON.stringify({
+          grant: created.grant,
+          current_url: 'https://login.acme.example.com/login',
+        }),
+      },
+      { ...env, AUTHRIM_CONFIG: env.AUTHRIM_CONFIG } as Env
+    );
+
+    expect(verifyResponse.status).toBe(200);
+    const body = (await verifyResponse.json()) as {
+      valid: boolean;
+      tenant_id: string;
+      target_url: string;
+    };
+    expect(body.valid).toBe(true);
+    expect(body.tenant_id).toBe('acme');
+    expect(body.target_url).toBe('https://login.acme.example.com/login');
   });
 });

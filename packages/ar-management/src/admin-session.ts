@@ -17,9 +17,9 @@ import {
   parseAllowedOrigins,
   isAllowedOrigin,
   getLogger,
-  D1Adapter,
   type DatabaseAdapter,
   AdminSessionRepository,
+  requireDedicatedAdminDatabaseAdapter,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -70,7 +70,10 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get session from D1 admin_sessions table
-    const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter: DatabaseAdapter = requireDedicatedAdminDatabaseAdapter(
+      c.env,
+      'admin-session'
+    );
     const adminSessionRepo = new AdminSessionRepository(adminAdapter);
     const session = await adminSessionRepo.getSession(sessionId);
 
@@ -84,24 +87,31 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Check admin role from admin_role_assignments (DB_ADMIN)
-    const now = Date.now();
+    // Check admin role from admin_role_assignments (DB_ADMIN), scoped to the session tenant.
+    const nowSeconds = Math.floor(Date.now() / 1000);
 
-    const rolesResult = await adminAdapter.query<{ name: string }>(
-      `SELECT DISTINCT r.name
+    const rolesResult = await adminAdapter.query<{
+      name: string;
+      scope_type: string;
+      scope_id: string | null;
+    }>(
+      `SELECT DISTINCT r.name, ra.scope_type, ra.scope_id
        FROM admin_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.admin_user_id = ?
+         AND ra.tenant_id = ?
+         AND r.tenant_id = ra.tenant_id
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY r.name ASC`,
-      [session.admin_user_id, now]
+      [session.admin_user_id, session.tenant_id, nowSeconds]
     );
 
     const roles = rolesResult.map((r) => r.name);
 
     // Check if user has any admin role
-    const adminRoles = ['super_admin', 'admin', 'operator', 'viewer'];
+    const adminRoles = ['super_admin', 'security_admin', 'admin', 'operator', 'support', 'viewer'];
     const hasAdminRole = roles.some((role) => adminRoles.includes(role));
+    const isPlatformAdmin = rolesResult.some((role) => role.scope_type === 'global');
 
     if (!hasAdminRole) {
       return c.json(
@@ -139,9 +149,12 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       active: true,
       session_id: session.id,
       user_id: session.admin_user_id,
+      tenant_id: session.tenant_id,
       email: userEmail,
       name: userName,
       roles,
+      admin_scope: isPlatformAdmin ? 'platform' : 'tenant',
+      is_platform_admin: isPlatformAdmin,
       expires_at: session.expires_at,
       created_at: session.created_at,
       last_login_at: lastLoginAt,
@@ -241,7 +254,10 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (sessionId && c.env.DB_ADMIN) {
       try {
         // Get session from D1 admin_sessions for event publishing before deletion
-        const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+        const adminAdapter: DatabaseAdapter = requireDedicatedAdminDatabaseAdapter(
+          c.env,
+          'admin-session'
+        );
         const adminSessionRepo = new AdminSessionRepository(adminAdapter);
         const session = await adminSessionRepo.getSessionIncludingExpired(sessionId);
         const userId = session?.admin_user_id;

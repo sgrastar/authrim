@@ -174,6 +174,22 @@ async function showConfig(configPath: string, jsonOutput?: boolean, env?: string
     );
     console.log(`  Email:       ${chalk.cyan(config.features.email?.provider || 'none')}`);
 
+    // Runtime Profiles
+    console.log(chalk.bold('\n🧭 Runtime Profiles'));
+    console.log(
+      `  Default Storage:   ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:standard')}`
+    );
+    console.log(
+      `  Default Audit:     ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
+    );
+    console.log(
+      `  Default Residency: ${chalk.cyan(config.profiles.defaults.residency || 'builtin:residency:auto')}`
+    );
+    console.log(`  Registry Backend:  ${chalk.cyan(config.profiles.registry.backend || 'kv')}`);
+    console.log(`  Seeded Storage:    ${chalk.cyan(config.profiles.seed.storage.length)}`);
+    console.log(`  Seeded Audit:      ${chalk.cyan(config.profiles.seed.audit.length)}`);
+    console.log(`  Seeded Residency:  ${chalk.cyan(config.profiles.seed.residency.length)}`);
+
     // Keys
     console.log(chalk.bold('\n🔑 Keys'));
     console.log(`  Key ID:      ${chalk.cyan(config.keys.keyId || 'Not configured')}`);

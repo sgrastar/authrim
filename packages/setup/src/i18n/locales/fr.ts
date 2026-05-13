@@ -158,8 +158,8 @@ const fr: Translations = {
 
   // UI deployment
   'ui.prompt': "Méthode de déploiement de l'UI",
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Déployer sur Cloudflare Pages (recommandé)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Déployer sur Cloudflare Workers (recommandé)',
   'ui.customOption': 'Domaine personnalisé',
   'ui.customDesc': 'Utiliser votre propre hébergement',
   'ui.skipOption': 'Ignorer',
@@ -768,7 +768,7 @@ const fr: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI de Connexion',
-  'web.config.loginUiDesc': "UI d'authentification pré-construite déployée sur Cloudflare Pages.",
+  'web.config.loginUiDesc': "UI d'authentification pré-construite déployée sur Cloudflare Workers.",
   'web.config.adminUi': "UI d'Admin",
   'web.config.adminUiDesc':
     'Tableau de bord de gestion pour les utilisateurs, clients et paramètres.',
@@ -778,9 +778,9 @@ const fr: Translations = {
   'web.url.apiDomain': 'Domaine API',
   'web.url.apiDomainHint': 'Laisser vide pour utiliser le sous-domaine workers.dev',
   'web.url.loginDomain': 'Domaine UI de Connexion',
-  'web.url.loginDomainHint': 'Laisser vide pour utiliser le sous-domaine pages.dev',
+  'web.url.loginDomainHint': 'Laisser vide pour utiliser le sous-domaine workers.dev',
   'web.url.adminDomain': "Domaine UI d'Admin",
-  'web.url.adminDomainHint': 'Laisser vide pour utiliser le sous-domaine pages.dev',
+  'web.url.adminDomainHint': 'Laisser vide pour utiliser le sous-domaine workers.dev',
 
   // Web UI Database
   'web.db.title': 'Configuration de la Base de Données',
@@ -950,7 +950,7 @@ const fr: Translations = {
   'web.section.apiDomain': 'Domaine API / Émetteur',
   'web.section.uiDomains': 'Domaines UI (Optionnel)',
   'web.section.uiDomainsHint':
-    'Domaines personnalisés pour les UIs de Connexion/Admin. Chacun peut être configuré indépendamment. Laisser vide pour utiliser les valeurs par défaut de Cloudflare Pages.',
+    'Domaines personnalisés pour les UIs de Connexion/Admin. Chacun peut être configuré indépendamment. Laisser vide pour utiliser les valeurs par défaut de Cloudflare Workers.',
   'web.section.corsHint':
     "CORS : Les requêtes cross-origin depuis l'UI de Connexion/Admin vers l'API sont automatiquement autorisées.",
   'web.section.configPreview': 'Aperçu de la Configuration',
@@ -962,7 +962,7 @@ const fr: Translations = {
   'web.preview.issuerUrl': "URL de l'Émetteur :",
   'web.preview.loginUi': 'UI de Connexion :',
   'web.preview.adminUi': "UI d'Admin :",
-  'web.preview.pagesUrl': 'UI de Connexion (Pages) :',
+  'web.preview.pagesUrl': 'UI de Connexion (Worker) :',
   'web.preview.tenantDiscover': 'Sélection du Tenant (Entrée Commune) :',
   'web.preview.adminAccess': "Accès à l'UI Admin :",
   'web.preview.firstTenant': '{{name}} (Tenant Principal)',
@@ -1024,9 +1024,18 @@ const fr: Translations = {
     "Utilisé pour envoyer des OTP par email et la vérification d'adresse email. Vous pouvez configurer cela plus tard si vous préférez.",
   'web.email.configureLater': 'Configurer plus tard',
   'web.email.configureLaterHint': "Ignorer pour l'instant et configurer plus tard.",
+  'web.email.configureCloudflare': 'Configurer Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Utilise le binding natif Workers Email Service. Nécessite un plan Workers Paid et Cloudflare DNS.',
   'web.email.configureResend': 'Configurer Resend',
   'web.email.configureResendHint':
     "Configurer l'envoi d'email avec Resend (recommandé pour la production).",
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Prérequis',
+  'web.email.cloudflareRequirementPaid': 'Un plan Workers Paid est requis',
+  'web.email.cloudflareRequirementDns': "Cloudflare DNS / l'intégration du domaine est requis",
+  'web.email.cloudflareRequirementManual':
+    'La configuration du domaine dans le tableau de bord Cloudflare reste manuelle',
   'web.email.resendSetup': 'Configuration Resend',
   'web.email.beforeBegin': 'Avant de commencer :',
   'web.email.step1': 'Créez un compte Resend sur',
@@ -1034,10 +1043,17 @@ const fr: Translations = {
   'web.email.step3': 'Créez une clé API sur',
   'web.email.resendApiKey': 'Clé API Resend',
   'web.email.resendApiKeyHint': 'Votre clé API commence par "re_"',
+  'web.email.resendApiKeyMissing': 'Veuillez saisir votre clé API Resend',
+  'web.email.resendApiKeyConfirmInvalid':
+    'La clé API ne commence pas par "re_". Il se peut que ce ne soit pas une clé API Resend valide. Continuer quand même ?',
   'web.email.fromEmailAddress': "Adresse Email de l'Expéditeur",
+  'web.email.cloudflareFromHint': "Doit provenir d'un domaine intégré à Cloudflare Email Service",
   'web.email.fromEmailHint': "Doit être d'un domaine vérifié dans votre compte Resend",
+  'web.email.fromEmailMissing': "Veuillez saisir une adresse email d'expéditeur",
+  'web.email.fromEmailInvalid': 'Veuillez saisir une adresse email valide',
   'web.email.fromDisplayName': "Nom d'Affichage de l'Expéditeur (optionnel)",
   'web.email.fromDisplayHint': "Affiché comme le nom de l'expéditeur dans les clients email",
+  'web.email.saveConfigFailed': "Échec de l'enregistrement de la configuration email",
   'web.email.domainVerificationTitle': 'Vérification du Domaine Requise',
   'web.email.domainVerificationDesc':
     'Avant que votre domaine soit vérifié, les emails ne peuvent être envoyés que depuis onboarding@resend.dev (pour les tests).',
@@ -1079,7 +1095,7 @@ const fr: Translations = {
   'web.envDetail.kvNamespaces': 'Namespaces KV',
   'web.envDetail.queues': "Files d'attente",
   'web.envDetail.r2Buckets': 'Buckets R2',
-  'web.envDetail.pagesProjects': 'Projets Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Mettre à jour tous les Workers',
@@ -1100,9 +1116,9 @@ const fr: Translations = {
   'web.envDetail.action': 'Action',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Mettre à jour UI (Pages)',
+  'web.envDetail.uiUpdate': 'Mettre à jour UI (Worker)',
   'web.envDetail.uiUpdateDesc':
-    'Mettre à jour Admin UI ou Login UI individuellement. Ils sont déployés sur Cloudflare Pages.',
+    'Mettre à jour Admin UI ou Login UI individuellement. Ils sont déployés sur Cloudflare Workers.',
   'web.envDetail.updateNow': 'Mettre à jour',
 
   // Web UI Delete Section
@@ -1116,7 +1132,7 @@ const fr: Translations = {
   'web.delete.kvNamespaces': 'Namespaces KV',
   'web.delete.queues': "Files d'attente",
   'web.delete.r2Buckets': 'Buckets R2',
-  'web.delete.pagesProjects': 'Projets Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Annuler',
   'web.delete.confirmBtn': 'Supprimer la Sélection',
 

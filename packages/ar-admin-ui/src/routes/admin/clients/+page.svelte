@@ -128,6 +128,18 @@
 		return 'badge badge-neutral'; // Standard
 	}
 
+	function getIntegrationBadges(client: Client): string[] {
+		const badges: string[] = []
+		if (client.token_exchange_allowed) badges.push('Token Exchange')
+		if (client.client_credentials_allowed) badges.push('Client Credentials')
+		if (client.default_audience) badges.push(`Audience: ${client.default_audience}`)
+		return badges
+	}
+
+	function isSystemClient(client: Client): boolean {
+		return client.client_name === 'Login UI' || client.client_name === 'Downstream Grant Introspection';
+	}
+
 	// Selection handlers
 	function toggleSelectAll() {
 		if (isAllSelected) {
@@ -308,11 +320,28 @@
 									? client.client_id.substring(0, 20) + '...'
 									: client.client_id}
 							</td>
-							<td>{client.client_name || '-'}</td>
+							<td>
+								<div class="client-name-cell">
+									<span>{client.client_name || '-'}</span>
+									{#if isSystemClient(client)}
+										<span class="system-client-badge">System</span>
+									{/if}
+								</div>
+								{#if client.description}
+									<div class="client-description">{client.description}</div>
+								{/if}
+							</td>
 							<td>
 								<span class={getClientTypeBadgeClass(client.grant_types)}>
 									{formatGrantTypes(client.grant_types)}
 								</span>
+								{#if getIntegrationBadges(client).length > 0}
+									<div class="client-capability-list">
+										{#each getIntegrationBadges(client) as badge (badge)}
+											<span class="client-capability-badge">{badge}</span>
+										{/each}
+									</div>
+								{/if}
 							</td>
 							<td class="muted">{client.token_endpoint_auth_method || 'none'}</td>
 							<td class="muted">{formatDate(client.created_at)}</td>
@@ -421,3 +450,49 @@
 		{/if}
 	{/snippet}
 </Modal>
+
+<style>
+	.client-capability-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+		margin-top: 0.45rem;
+	}
+
+	.client-capability-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.2rem 0.5rem;
+		border-radius: 999px;
+		font-size: 0.72rem;
+		font-weight: 600;
+		background: color-mix(in srgb, var(--primary, #0f766e) 12%, white);
+		color: color-mix(in srgb, var(--primary, #0f766e) 85%, black);
+		border: 1px solid color-mix(in srgb, var(--primary, #0f766e) 20%, transparent);
+	}
+
+	.client-name-cell {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.client-description {
+		margin-top: 0.25rem;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.35;
+	}
+
+	.system-client-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.15rem 0.45rem;
+		border-radius: 999px;
+		border: 1px solid var(--border-color);
+		color: var(--text-secondary);
+		font-size: 0.68rem;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+</style>

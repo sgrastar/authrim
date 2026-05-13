@@ -28,7 +28,8 @@ import {
   getTenantIdFromContext,
   getTenantSettings,
 } from '@authrim/ar-lib-core';
-import { resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { getRequestIssuer } from './issuer';
 
 // Import handlers
@@ -74,6 +75,7 @@ import {
   directPasskeyRegisterFinishHandler,
   directEmailCodeSendHandler,
   directEmailCodeVerifyHandler,
+  directSessionCreateHandler,
   directTokenHandler,
   directSessionHandler,
   directLogoutHandler,
@@ -94,10 +96,20 @@ app.use(
   })
 );
 
-// Plugin Context - provides access to notifiers, idp handlers, authenticators
-// Plugins are loaded lazily on first request and cached per Worker lifecycle
-// Configuration resolved: KV → env → configSchema defaults
-const loadPlugins = createPluginLoader([{ plugin: resendEmailPlugin }]);
+// Plugin Context - provides access to notifiers, idp handlers, authenticators.
+// Bootstrap config comes from Worker env, but tenant/global KV overrides remain authoritative.
+const loadPlugins = createPluginLoader([
+  {
+    plugin: cloudflareEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, cloudflareEmailPlugin.id),
+  },
+  {
+    plugin: resendEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
+  },
+]);
 app.use('*', pluginContextMiddleware({ loadPlugins }));
 
 // Enhanced security headers
@@ -334,6 +346,7 @@ app.post('/auth/consent', consentPostHandler);
 
 // Login Challenge endpoints (for OIDC Dynamic OP conformance - logo_uri, policy_uri, tos_uri display)
 app.get('/api/auth/login-challenges', loginChallengeGetHandler);
+app.get('/auth/login-challenge', loginChallengeGetHandler);
 
 // Session Management endpoints (RESTful naming)
 app.post('/api/sessions', issueSessionTokenHandler); // Issue new session token
@@ -471,6 +484,7 @@ app.post('/api/v1/auth/direct/email-code/verify', directEmailCodeVerifyHandler);
 app.post('/api/v1/auth/direct/token', directTokenHandler);
 
 // Session endpoint
+app.post('/api/v1/auth/direct/session', directSessionCreateHandler);
 app.get('/api/v1/auth/direct/session', directSessionHandler);
 
 // Logout endpoint

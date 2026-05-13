@@ -154,7 +154,180 @@ export interface SAMLAttribute {
   name: string;
   nameFormat?: string;
   friendlyName?: string;
+  /** XML Schema type for AttributeValue. Defaults to xs:string. */
+  valueType?: SAMLAttributeValueType;
   values: string[];
+}
+
+export type SAMLAttributeValueType =
+  | 'xs:string'
+  | 'xs:boolean'
+  | 'xs:integer'
+  | 'xs:dateTime'
+  | 'xs:anyURI';
+
+/**
+ * SAML attribute release policy.
+ *
+ * This is the production-oriented replacement path for the legacy
+ * SAMLSPConfig.attributeMapping map. The legacy map remains supported for
+ * backward compatibility.
+ */
+export interface SAMLAttributeReleasePolicy {
+  attributes: SAMLAttributeReleaseRule[];
+}
+
+export interface SAMLAttributeReleaseRule {
+  /** SAML Attribute Name */
+  name: string;
+  /** SAML Attribute NameFormat */
+  nameFormat?: string;
+  /** SAML Attribute FriendlyName */
+  friendlyName?: string;
+  /** XML Schema type for AttributeValue. Defaults to xs:string. */
+  valueType?: SAMLAttributeValueType;
+  /** Where the value should be read from */
+  source: SAMLAttributeReleaseSource;
+  /** Claim or field key for claim/custom sources */
+  claim?: string;
+  /** Constant value for source=constant */
+  value?: string | string[];
+  /** Computed attribute resolver name for source=computed */
+  computed?: SAMLComputedAttribute;
+  /** Whether a missing value should be treated as policy failure */
+  required?: boolean;
+}
+
+export type SAMLAttributeReleaseSource =
+  | 'claim'
+  | 'attribute'
+  | 'custom_claim'
+  | 'custom_field'
+  | 'constant'
+  | 'computed';
+
+export type SAMLComputedAttribute = 'eduPersonScopedAffiliation';
+
+export interface SAMLMetadataRequestedAttribute {
+  /** SAML Attribute Name requested by SP metadata */
+  name: string;
+  /** SAML Attribute NameFormat requested by SP metadata */
+  nameFormat?: string;
+  /** SAML Attribute FriendlyName requested by SP metadata */
+  friendlyName?: string;
+  /** Whether the SP metadata marks this attribute as required */
+  isRequired?: boolean;
+  /** AttributeConsumingService index containing this request */
+  attributeConsumingServiceIndex?: number;
+  /** AttributeConsumingService ServiceName text when present */
+  attributeConsumingServiceName?: string;
+}
+
+export interface SAMLMetadataEndpointSnapshot {
+  type: 'sso' | 'slo' | 'acs';
+  binding: string;
+  location: string;
+  responseLocation?: string;
+  index?: number;
+}
+
+export interface SAMLMetadataCriticalFields {
+  entityId: string;
+  validUntil?: string;
+  certificates: string[];
+  endpoints: SAMLMetadataEndpointSnapshot[];
+}
+
+export interface SAMLMetadataDiffSummary {
+  changed: boolean;
+  previousHash?: string;
+  currentHash: string;
+  entityIdChanged: boolean;
+  validUntilChanged: boolean;
+  certificatesAdded: string[];
+  certificatesRemoved: string[];
+  endpointsAdded: SAMLMetadataEndpointSnapshot[];
+  endpointsRemoved: SAMLMetadataEndpointSnapshot[];
+  validUntil?: string;
+  expiresInSeconds?: number;
+  expired: boolean;
+}
+
+export interface SAMLMetadataRefreshStatus {
+  lastCheckedAt: number;
+  lastChangedAt?: number;
+  previousHash?: string;
+  currentHash: string;
+  previous?: SAMLMetadataCriticalFields;
+  current: SAMLMetadataCriticalFields;
+  diff: SAMLMetadataDiffSummary;
+}
+
+export interface SAMLErrorResponseOverride {
+  /** SAML policy failure kind, for example required_attribute_missing */
+  failureKind: string;
+  /** Override top-level SAML StatusCode URI */
+  statusCode?: string;
+  /** Override second-level SAML StatusCode URI. Use null to suppress it. */
+  secondLevelStatusCode?: string | null;
+  /** Override user-facing StatusMessage */
+  statusMessage?: string;
+}
+
+export type SAMLAuthnRequestSignaturePolicy = 'required' | 'optional' | 'disabled';
+export type SAMLAuthnRequestLegacyAlgorithmPolicy = 'disabled' | 'explicit_opt_in';
+export type SAMLAttributeReleaseFailureUserMessageMode = 'generic' | 'detailed';
+export type SAMLLogoutResponseBinding = 'auto' | 'post' | 'redirect';
+export type SAMLSPProfile = 'baseline' | 'strict' | 'academic_publisher' | 'legacy';
+export type SAMLAttributePresetId =
+  | 'academic_publisher.v1'
+  | 'enterprise_saas.v1'
+  | 'research_federation.v1';
+export type SAMLSigningRole = 'idp' | 'sp';
+export type SAMLSigningKeyScope = 'tenant_role' | 'provider';
+export type SAMLSigningCertificateSlot = 'active' | 'next' | 'backup';
+export type SAMLMetadataCertificatePublication =
+  | 'active_only'
+  | 'active_next'
+  | 'active_next_backup';
+export type SAMLAssertionEncryptionAlgorithm = 'aes256-gcm' | 'aes256-cbc';
+export type SAMLKeyEncryptionAlgorithm = 'rsa-oaep-256' | 'rsa-oaep-sha1';
+export type SAMLEncryptionAlgorithmPolicy = 'modern' | 'legacy_opt_in';
+export type SAMLSigningRolloverState =
+  | 'draft'
+  | 'published_next'
+  | 'active'
+  | 'overlap'
+  | 'retired';
+
+export interface SAMLSigningKeyReference {
+  /** Slot in the SAML certificate lifecycle */
+  slot: SAMLSigningCertificateSlot;
+  /** KeyManager Durable Object reference name */
+  keyRef?: string;
+  /** Optional KeyManager key id, for audit/display and future lookup */
+  kid?: string;
+  /** Public certificate to publish in metadata */
+  certificate?: string;
+  /** Rollover state for this slot */
+  state?: SAMLSigningRolloverState;
+  /** When this certificate should start appearing in metadata */
+  metadataPublishFrom?: number;
+  /** Planned manual or automated activation time */
+  plannedActivationAt?: number;
+}
+
+export interface SAMLSigningKeyPolicy {
+  /** Default is tenant_role; provider enables per-counterparty dedicated keys */
+  scope?: SAMLSigningKeyScope;
+  /** Metadata publication behavior for active/next/backup certificates */
+  metadataCertificatePublication?: SAMLMetadataCertificatePublication;
+  /** Current signing key slot */
+  active?: SAMLSigningKeyReference;
+  /** Next signing certificate, normally published before activation */
+  next?: SAMLSigningKeyReference;
+  /** Backup/DR certificate reference. Private key export is handled by DR bundle policy. */
+  backup?: SAMLSigningKeyReference;
 }
 
 /**
@@ -218,14 +391,70 @@ export interface SAMLSPConfig {
   entityId: string;
   /** Assertion Consumer Service URL */
   acsUrl: string;
+  /** Additional allowed Assertion Consumer Service URLs from metadata */
+  acsUrls?: string[];
+  /** Indexed Assertion Consumer Services from SP metadata */
+  acsServices?: SAMLAssertionConsumerService[];
   /** Single Logout URL */
   sloUrl?: string;
+  /** Single Logout response URL, from metadata ResponseLocation when present */
+  sloResponseUrl?: string;
+  /** Binding associated with the selected Single Logout URL */
+  sloBinding?: Extract<SAMLBinding, 'post' | 'redirect'>;
   /** SP certificate for signature verification (PEM format) */
   certificate?: string;
+  /** SP signing certificates for rollover-aware signature verification (PEM format) */
+  certificates?: string[];
+  /** SP certificate used for XML Encryption when Authrim encrypts assertions (PEM format) */
+  encryptionCertificate?: string;
+  /** SP encryption certificates imported from metadata (PEM format) */
+  encryptionCertificates?: string[];
+  /** Encrypt full SAML Assertion before sending the Response */
+  encryptAssertions?: boolean;
+  /** Encrypt only Subject NameID when full Assertion encryption is disabled */
+  encryptNameID?: boolean;
+  /** Legacy XML Encryption algorithms are disabled unless explicitly opted in. */
+  encryptionAlgorithmPolicy?: SAMLEncryptionAlgorithmPolicy;
+  /** XML Encryption content algorithm. Default: aes256-gcm. */
+  assertionEncryptionAlgorithm?: SAMLAssertionEncryptionAlgorithm;
+  /** XML Encryption key transport algorithm. Default: rsa-oaep-256. */
+  keyEncryptionAlgorithm?: SAMLKeyEncryptionAlgorithm;
+  /** AuthnRequest signature verification policy */
+  authnRequestSignaturePolicy?: SAMLAuthnRequestSignaturePolicy;
+  /** LogoutRequest signature verification policy */
+  logoutRequestSignaturePolicy?: SAMLAuthnRequestSignaturePolicy;
+  /** LogoutResponse signature verification policy */
+  logoutResponseSignaturePolicy?: SAMLAuthnRequestSignaturePolicy;
+  /** Binding to use when sending IdP LogoutResponse. Default auto mirrors the inbound binding. */
+  logoutResponseBinding?: SAMLLogoutResponseBinding;
+  /** Accepted AuthnRequest XML/Redirect signature algorithm URIs */
+  acceptedAuthnRequestSignatureAlgorithms?: string[];
+  /** Accepted AuthnRequest XML digest algorithm URIs */
+  acceptedAuthnRequestDigestAlgorithms?: string[];
+  /** Legacy algorithm escape hatch. SHA-1 remains disabled unless explicitly allowed here and in accepted algorithm lists. */
+  authnRequestLegacyAlgorithmPolicy?: SAMLAuthnRequestLegacyAlgorithmPolicy;
+  /** Authrim signing key policy when acting as IdP for this SP */
+  signingKeyPolicy?: SAMLSigningKeyPolicy;
+  /** Operational profile used to derive defaults when registering/importing this SP */
+  samlProfile?: SAMLSPProfile;
   /** NameID format preference */
   nameIdFormat: NameIDFormat;
   /** OIDC claim to SAML attribute mapping */
   attributeMapping: Record<string, string>;
+  /** Policy-based SAML attribute release rules */
+  attributeReleasePolicy?: SAMLAttributeReleasePolicy;
+  /** Built-in attribute preset used as the clone/edit source for the current release policy */
+  attributePresetId?: SAMLAttributePresetId;
+  /** Built-in attribute preset version used as the clone/edit source for the current release policy */
+  attributePresetVersion?: string;
+  /** Raw RequestedAttribute hints imported from SP metadata */
+  metadataRequestedAttributes?: SAMLMetadataRequestedAttribute[];
+  /** Candidate release policy inferred from SP metadata RequestedAttribute hints */
+  metadataAttributeReleasePolicySuggestion?: SAMLAttributeReleasePolicy;
+  /** User-facing StatusMessage detail for required attribute release failures */
+  attributeReleaseFailureUserMessageMode?: SAMLAttributeReleaseFailureUserMessageMode;
+  /** Per-SP SAML error response status/message overrides */
+  errorResponseOverrides?: SAMLErrorResponseOverride[];
   /** Sign SAML Assertions */
   signAssertions: boolean;
   /** Sign SAML Responses */
@@ -236,8 +465,23 @@ export interface SAMLSPConfig {
   assertionValiditySeconds?: number;
   /** SP metadata XML (cached) */
   metadataXml?: string;
+  /** SP metadata source URL */
+  metadataUrl?: string;
+  /** Last imported/refreshed metadata hash */
+  metadataHash?: string;
+  /** Last imported/refreshed critical metadata fields */
+  metadataCriticalFields?: SAMLMetadataCriticalFields;
+  /** Last manual/job metadata refresh status */
+  metadataRefreshStatus?: SAMLMetadataRefreshStatus;
   /** Metadata last fetched timestamp */
   metadataLastFetched?: number;
+}
+
+export interface SAMLAssertionConsumerService {
+  index: number;
+  binding: SAMLBinding;
+  location: string;
+  isDefault?: boolean;
 }
 
 /**
@@ -255,12 +499,28 @@ export interface SAMLIdPConfig {
   certificate: string;
   /** NameID format */
   nameIdFormat: NameIDFormat;
-  /** SAML attribute to OIDC claim mapping */
+  /** Authrim signing key policy when acting as SP for this IdP */
+  signingKeyPolicy?: SAMLSigningKeyPolicy;
+  /**
+   * SAML attribute to Authrim claim mapping.
+   * Standard targets are OIDC-style claims such as email or name.
+   * For JIT provisioning, targets may also use:
+   * - custom_claims.<field_key>
+   * - custom_fields.<field_key>
+   */
   attributeMapping: Record<string, string>;
   /** Allowed bindings */
   allowedBindings: SAMLBinding[];
   /** IdP metadata XML (cached) */
   metadataXml?: string;
+  /** IdP metadata source URL */
+  metadataUrl?: string;
+  /** Last imported/refreshed metadata hash */
+  metadataHash?: string;
+  /** Last imported/refreshed critical metadata fields */
+  metadataCriticalFields?: SAMLMetadataCriticalFields;
+  /** Last manual/job metadata refresh status */
+  metadataRefreshStatus?: SAMLMetadataRefreshStatus;
   /** Metadata last fetched timestamp */
   metadataLastFetched?: number;
 }
@@ -428,4 +688,8 @@ export interface MetadataImportRequest {
   metadataXml?: string;
   /** Metadata URL to fetch */
   metadataUrl?: string;
+  /** Optional Authrim profile defaults to apply after metadata import */
+  samlProfile?: SAMLSPProfile;
+  /** Optional built-in attribute preset to clone into the SP release policy */
+  attributePresetId?: SAMLAttributePresetId;
 }

@@ -1,6 +1,10 @@
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
+  createPIIContextFromHono,
+  createRefreshTokenFamily,
+  getRefreshTokenRotatorStubByJti,
   // Logging
   getLogger,
   createLogger,
@@ -15,34 +19,38 @@ import {
   buildDOInstanceName,
   remapShardIndex,
   getShardCount,
-  // Refresh Token Sharding
-  getRefreshTokenShardConfig,
-  getRefreshTokenShardIndex,
-  createRefreshTokenJti,
-  parseRefreshTokenJti,
-  buildRefreshTokenRotatorInstanceName,
-  generateRefreshTokenRandomPart,
+  getChallengeStoreByChallengeId,
   // Token Revocation Sharding (Region-aware)
   generateRegionAwareJti,
+  storeRefreshToken,
+  getRefreshToken,
+  deleteRefreshToken,
   // Configuration Manager (KV > env > default)
   createOAuthConfigManager,
-  // Database Adapter
-  D1Adapter,
-  type DatabaseAdapter,
+  recordRefreshTokenFamilyIndex,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
   loadTenantProfileCached,
   getSystemSettingsCached,
+  requireDedicatedAdminDatabaseAdapter,
+  resolveElevationGrantSubjectToken,
+  ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
+  getTenantSettings,
+  TENANT_DEFAULTS,
+  getDeviceSecretInstallationId,
+  AdminMachineAccessRepository,
+  hasAdminPermission,
+  parseClaimsRequest,
+  evaluateClaimsForTarget,
+  buildStandardUserClaims,
+  hasSAORulesForTarget,
 } from '@authrim/ar-lib-core';
 import {
   revokeToken,
-  storeRefreshToken,
-  getRefreshToken,
-  deleteRefreshToken,
   getCachedUser,
   getCachedUserCore,
-  SessionClientRepository,
   // Native SSO (OIDC Native SSO 1.0)
+  DeviceInstallationRepository,
   DeviceSecretRepository,
   isNativeSSOEnabled,
   getNativeSSOConfig,
@@ -89,6 +97,11 @@ import {
   type TokenTypeURN,
   type ActClaim,
   type ClientMetadata,
+  type DeviceInstallation,
+  type DeviceSecret,
+  type NativeSSOErrorDetailCode,
+  type Phase1ErrorDetailSeverity,
+  type Phase1ErrorDetailUserAction,
 } from '@authrim/ar-lib-core';
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
 import {
@@ -102,7 +115,7 @@ import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-cor
 // Custom Claim Schema Resolver
 import { loadFeatureConfig, createCustomClaimSchemaResolver } from '@authrim/ar-lib-core';
 // Tenant context
-import { getTenantIdFromContext } from '@authrim/ar-lib-core';
+import { getTenantIdFromContext, hasPIIDatabase } from '@authrim/ar-lib-core';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';
 // ID-JAG (Identity Assertion Authorization Grant)
@@ -114,6 +127,327 @@ import {
   DEFAULT_ID_JAG_CONFIG,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import {
+  NATIVE_SSO_ID_TOKEN_CLOCK_SKEW_SECONDS,
+  buildNativeSSOInstallationMetadata,
+  buildNativeSSOInstallationMetadataForIssuedInstallation,
+  buildNativeSSOTokenExchangeSuccessResponse,
+  isNativeSSOClientEnabled,
+  isNativeSSOIssuanceEligible,
+  nativeSSOError,
+  nativeSSOInvalidGrant,
+  normalizeDeviceSecretName,
+  normalizeDeviceSecretPlatform,
+  normalizeNativeSSOAudience,
+  validateNativeSSODeviceSecretBinding,
+  type NativeSSOFailureAuditContext,
+  type RefreshTokenExpiryMetadata,
+} from './native-sso-token-exchange';
+
+export { validateNativeSSODeviceSecretBinding } from './native-sso-token-exchange';
+
+const ADMIN_API_AUDIENCE = 'authrim:admin-api';
+const DIRECT_AUTH_FINISH_GRANT_TYPE = 'urn:authrim:params:oauth:grant-type:direct-auth-finish';
+const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
+type DirectAuthChannel = 'browser' | 'native' | 'server';
+type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
+type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+
+function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
+  return channel === 'browser' || channel === 'native' || channel === 'server';
+}
+
+function getClientTrustGroup(
+  clientMetadata: ClientMetadata | null | undefined
+): string | undefined {
+  if (!clientMetadata) {
+    return undefined;
+  }
+
+  const metadata = clientMetadata as ClientMetadata & {
+    trust_group?: unknown;
+    trust_group_id?: unknown;
+  };
+  const trustGroup = metadata.trust_group ?? metadata.trust_group_id;
+  return typeof trustGroup === 'string' && trustGroup.length > 0 ? trustGroup : undefined;
+}
+
+type AccessTokenAudience = string | string[];
+type AccessTokenAudienceSource =
+  | 'resource_param'
+  | 'audience_param'
+  | 'both'
+  | 'client_default_resource'
+  | 'client_default_audience';
+
+function normalizeTargetParameter(value: unknown): string[] {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return [value.trim()];
+  }
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  ) {
+    return value.map((item) => item.trim());
+  }
+  return [];
+}
+
+function getClientDefaultResource(clientMetadata: ClientMetadata): {
+  value?: string;
+  source?: 'client_default_resource' | 'client_default_audience';
+} {
+  const metadata = clientMetadata as ClientMetadata & {
+    default_resource?: unknown;
+    default_audience?: unknown;
+  };
+
+  if (typeof metadata.default_resource === 'string' && metadata.default_resource.length > 0) {
+    return { value: metadata.default_resource, source: 'client_default_resource' };
+  }
+
+  if (typeof metadata.default_audience === 'string' && metadata.default_audience.length > 0) {
+    return { value: metadata.default_audience, source: 'client_default_audience' };
+  }
+
+  return {};
+}
+
+function splitScope(scope: string | undefined): string[] {
+  return (scope ?? '')
+    .split(/\s+/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+function intersectScopes(requestedScopes: string[], allowedScopes: string[]): string[] {
+  return requestedScopes.filter((scope) => hasAdminPermission(allowedScopes, scope));
+}
+
+function intersectMachinePermissionSets(
+  principalPermissions: string[],
+  credentialPermissions: string[]
+): string[] {
+  const result = new Set<string>();
+  for (const principalPermission of principalPermissions) {
+    for (const credentialPermission of credentialPermissions) {
+      if (hasAdminPermission([principalPermission], credentialPermission)) {
+        result.add(credentialPermission);
+      } else if (hasAdminPermission([credentialPermission], principalPermission)) {
+        result.add(principalPermission);
+      }
+    }
+  }
+  return Array.from(result);
+}
+
+function resolveMachineTenantScope(
+  principalScopes: Array<{ scopeMode: string; tenantId: string | null }>,
+  credentialScopes: Array<{ scopeMode: string; tenantId: string | null }>
+): string[] {
+  const effectiveCredentialScopes =
+    credentialScopes.length > 0 ? credentialScopes : principalScopes;
+  const principalAll = principalScopes.some((scope) => scope.scopeMode === 'all');
+  const credentialAll = effectiveCredentialScopes.some((scope) => scope.scopeMode === 'all');
+
+  if (principalAll && credentialAll) {
+    return ['*'];
+  }
+
+  const principalTenants = principalAll
+    ? null
+    : new Set(
+        principalScopes
+          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
+          .map((scope) => scope.tenantId as string)
+      );
+  const credentialTenants = credentialAll
+    ? null
+    : new Set(
+        effectiveCredentialScopes
+          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
+          .map((scope) => scope.tenantId as string)
+      );
+
+  if (principalTenants === null) {
+    return Array.from(credentialTenants ?? []);
+  }
+  if (credentialTenants === null) {
+    return Array.from(principalTenants);
+  }
+
+  return Array.from(principalTenants).filter((tenantId) => credentialTenants.has(tenantId));
+}
+
+function toAccessTokenAudience(targets: string[]): AccessTokenAudience {
+  return targets.length === 1 ? targets[0] : targets;
+}
+
+function normalizeStoredAccessTokenAudience(value: unknown): AccessTokenAudience | undefined {
+  const normalized = normalizeTargetParameter(value);
+  return normalized.length > 0 ? toAccessTokenAudience(normalized) : undefined;
+}
+
+function resolveAccessTokenAudience(
+  c: Context<{ Bindings: Env }>,
+  clientMetadata: ClientMetadata,
+  input: {
+    resource?: unknown;
+    audience?: unknown;
+    rejectResourceAudienceMismatch?: boolean;
+  } = {}
+):
+  | {
+      ok: true;
+      audience: AccessTokenAudience;
+      targets: string[];
+      source: AccessTokenAudienceSource;
+    }
+  | { ok: false; description: string } {
+  const resources = normalizeTargetParameter(input.resource);
+  const audiences = normalizeTargetParameter(input.audience);
+
+  if (
+    input.rejectResourceAudienceMismatch &&
+    resources.length > 0 &&
+    audiences.length > 0 &&
+    resources.join('\u0000') !== audiences.join('\u0000')
+  ) {
+    return {
+      ok: false,
+      description: 'resource and audience identify different access token targets',
+    };
+  }
+
+  let targets: string[] = [];
+  let source: AccessTokenAudienceSource;
+
+  if (audiences.length > 0 && resources.length > 0) {
+    targets = [...audiences, ...resources];
+    source = 'both';
+  } else if (audiences.length > 0) {
+    targets = audiences;
+    source = 'audience_param';
+  } else if (resources.length > 0) {
+    targets = resources;
+    source = 'resource_param';
+  } else {
+    const clientDefault = getClientDefaultResource(clientMetadata);
+    if (clientDefault.value && clientDefault.source) {
+      targets = [clientDefault.value];
+      source = clientDefault.source;
+    } else {
+      return {
+        ok: false,
+        description: 'No target resource is configured for this access token',
+      };
+    }
+  }
+
+  const allowedTargets = clientMetadata.allowed_token_exchange_resources || [];
+  if (allowedTargets.length > 0) {
+    const disallowedTargets = targets.filter((target) => !allowedTargets.includes(target));
+    if (disallowedTargets.length > 0) {
+      return {
+        ok: false,
+        description: `Requested audience/resource not allowed: ${disallowedTargets.join(', ')}`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    audience: toAccessTokenAudience(targets),
+    targets,
+    source,
+  };
+}
+
+function buildRefreshTokenExpiryMetadata(
+  issuedAtEpochSeconds: number,
+  expiresInSeconds: number | null | undefined
+): RefreshTokenExpiryMetadata | undefined {
+  if (
+    expiresInSeconds === undefined ||
+    expiresInSeconds === null ||
+    !Number.isFinite(expiresInSeconds) ||
+    expiresInSeconds <= 0
+  ) {
+    return undefined;
+  }
+
+  const refreshTokenExpiresAtUnix = issuedAtEpochSeconds + expiresInSeconds;
+  const refreshTokenExpiresAt = formatEpochSecondsAsRfc3339(refreshTokenExpiresAtUnix);
+
+  return {
+    refresh_token_expires_in: expiresInSeconds,
+    refresh_token_expires_at: refreshTokenExpiresAt,
+    refresh_token_expires_at_unix: refreshTokenExpiresAtUnix,
+  };
+}
+
+function isValidBrowserPublicClientMode(value: unknown): value is BrowserPublicClientMode {
+  return value === 'strict' || value === 'cookie_fallback' || value === 'legacy';
+}
+
+function isPublicClientMetadata(clientMetadata: ClientMetadata): boolean {
+  return (
+    clientMetadata.token_endpoint_auth_method === 'none' ||
+    (!clientMetadata.client_secret_hash &&
+      clientMetadata.token_endpoint_auth_method !== 'client_secret_basic' &&
+      clientMetadata.token_endpoint_auth_method !== 'client_secret_post' &&
+      clientMetadata.token_endpoint_auth_method !== 'client_secret_jwt' &&
+      clientMetadata.token_endpoint_auth_method !== 'private_key_jwt')
+  );
+}
+
+function isBrowserPublicTokenRequest(
+  c: Context<{ Bindings: Env }>,
+  formData: Record<string, string>,
+  clientMetadata: ClientMetadata
+): boolean {
+  if (!isPublicClientMetadata(clientMetadata)) {
+    return false;
+  }
+
+  if (formData.channel === 'native') {
+    return false;
+  }
+
+  if (formData.channel === 'browser') {
+    return true;
+  }
+
+  return Boolean(c.req.header('Origin'));
+}
+
+async function resolveBrowserPublicClientMode(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientMetadata: ClientMetadata
+): Promise<BrowserPublicClientMode> {
+  if (isValidBrowserPublicClientMode(clientMetadata.browser_public_client_mode)) {
+    return clientMetadata.browser_public_client_mode;
+  }
+
+  const authrimSettings = await getTenantSettings(c.env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = authrimSettings ?? (await getTenantSettings(c.env.SETTINGS, tenantId, 'tenant'));
+  const tenantMode = settings?.['tenant.browser_public_client_mode'];
+  if (isValidBrowserPublicClientMode(tenantMode)) {
+    return tenantMode;
+  }
+
+  return TENANT_DEFAULTS['tenant.browser_public_client_mode'];
+}
+
+function getBrowserRefreshTokenPolicy(clientMetadata: ClientMetadata): BrowserRefreshTokenPolicy {
+  return clientMetadata.browser_refresh_token_policy === 'dpop_bound' ? 'dpop_bound' : 'disabled';
+}
+
+function formatEpochSecondsAsRfc3339(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
 
 // ===== RFC 6750 Compliant Error Response Helpers =====
 // RFC 6750 Section 3: WWW-Authenticate header MUST be included in 401 responses
@@ -157,6 +491,122 @@ function oauthError(
     },
     status
   );
+}
+
+type DPoPValidationResult = Awaited<ReturnType<typeof validateDPoPProof>>;
+
+type DPoPNoncePolicy = {
+  enabled: boolean;
+  source: 'client' | 'resource' | 'tenant' | 'default';
+};
+
+function generateDPoPNonce(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
+}
+
+function getBooleanSetting(record: unknown, key: string): boolean | undefined {
+  if (!record || typeof record !== 'object') {
+    return undefined;
+  }
+
+  const value = (record as Record<string, unknown>)[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function getRecordSetting(record: unknown, key: string): Record<string, unknown> | undefined {
+  if (!record || typeof record !== 'object') {
+    return undefined;
+  }
+
+  const value = (record as Record<string, unknown>)[key];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+async function resolveDPoPNoncePolicy(
+  c: Context<{ Bindings: Env }>,
+  options: {
+    clientMetadata?: ClientMetadata | null;
+    resources?: string[];
+  } = {}
+): Promise<DPoPNoncePolicy> {
+  const clientOverride =
+    getBooleanSetting(options.clientMetadata, 'dpop_nonce_enabled') ??
+    getBooleanSetting(options.clientMetadata, 'dpop_nonce_required');
+  if (clientOverride !== undefined) {
+    return { enabled: clientOverride, source: 'client' };
+  }
+
+  let settings: Awaited<ReturnType<typeof getSystemSettingsCached>> | null = null;
+  try {
+    settings = await getSystemSettingsCached(c, c.env);
+  } catch {
+    settings = null;
+  }
+
+  const securitySettings = getRecordSetting(settings, 'security');
+  const resourceOverrides =
+    getRecordSetting(settings, 'security.dpop_nonce_resource_overrides') ??
+    getRecordSetting(securitySettings, 'dpop_nonce_resource_overrides');
+  if (resourceOverrides && options.resources) {
+    for (const resource of options.resources) {
+      const resourceOverride = getBooleanSetting(resourceOverrides, resource);
+      if (resourceOverride !== undefined) {
+        return { enabled: resourceOverride, source: 'resource' };
+      }
+    }
+  }
+
+  const tenantOverride =
+    getBooleanSetting(settings, 'security.dpop_nonce_enabled') ??
+    getBooleanSetting(securitySettings, 'dpop_nonce_enabled');
+  if (tenantOverride !== undefined) {
+    return { enabled: tenantOverride, source: 'tenant' };
+  }
+
+  return { enabled: true, source: 'default' };
+}
+
+async function dpopValidationErrorResponse(
+  c: Context<{ Bindings: Env }>,
+  dpopValidation: DPoPValidationResult,
+  options: {
+    fallbackError?: string;
+    fallbackDescription?: string;
+    clientMetadata?: ClientMetadata | null;
+    resources?: string[];
+  } = {}
+): Promise<Response> {
+  const error = dpopValidation.error || options.fallbackError || 'invalid_dpop_proof';
+  const errorDescription =
+    dpopValidation.error_description || options.fallbackDescription || 'DPoP validation failed';
+
+  if (error !== 'use_dpop_nonce') {
+    return oauthError(c, error, errorDescription, 400);
+  }
+
+  const policy = await resolveDPoPNoncePolicy(c, {
+    clientMetadata: options.clientMetadata,
+    resources: options.resources,
+  });
+  if (!policy.enabled) {
+    return oauthError(c, options.fallbackError || 'invalid_dpop_proof', errorDescription, 400);
+  }
+
+  const response = oauthError(c, 'use_dpop_nonce', errorDescription, 400);
+  response.headers.set('DPoP-Nonce', generateDPoPNonce());
+  response.headers.set('Cache-Control', 'no-store');
+  response.headers.set('Pragma', 'no-cache');
+  return response;
 }
 
 // ===== Module-level Logger for Helper Functions =====
@@ -367,8 +817,10 @@ interface AuthCodeStoreResponse {
   state?: string;
   createdAt?: number;
   claims?: string; // JSON string of claims parameter
+  claimsRequestProtected?: boolean;
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -501,10 +953,14 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
 
   // Parse form data
   let formData: Record<string, string>;
+  let parsedBody: Record<string, string | File | (string | File)[]>;
   try {
-    const body = await c.req.parseBody();
+    parsedBody = await c.req.parseBody();
     formData = Object.fromEntries(
-      Object.entries(body).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
+      Object.entries(parsedBody).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? value : '',
+      ])
     );
   } catch {
     return c.json(
@@ -523,6 +979,8 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     return await handleRefreshTokenGrant(c, formData);
   } else if (grant_type === 'authorization_code') {
     return await handleAuthorizationCodeGrant(c, formData);
+  } else if (grant_type === DIRECT_AUTH_FINISH_GRANT_TYPE) {
+    return await handleDirectAuthFinishGrant(c, formData);
   } else if (grant_type === 'urn:ietf:params:oauth:grant-type:jwt-bearer') {
     return await handleJWTBearerGrant(c, formData);
   } else if (grant_type === 'urn:ietf:params:oauth:grant-type:device_code') {
@@ -531,9 +989,8 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     return await handleCIBAGrant(c, formData);
   } else if (grant_type === 'urn:ietf:params:oauth:grant-type:token-exchange') {
     // RFC 8693: Token Exchange (Feature Flag controlled)
-    // Pass raw body for multi-value parameter support (resource[], audience[])
-    const rawBody = await c.req.parseBody();
-    return await handleTokenExchangeGrant(c, formData, rawBody);
+    // Reuse the initially parsed body so multi-value params are preserved.
+    return await handleTokenExchangeGrant(c, formData, parsedBody);
   } else if (grant_type === 'client_credentials') {
     // RFC 6749 Section 4.4: Client Credentials Grant
     return await handleClientCredentialsGrant(c, formData);
@@ -547,6 +1004,102 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     },
     400
   );
+}
+
+/**
+ * Handle Direct Auth artifact redemption.
+ *
+ * Direct Auth is a headless authentication initiation layer; token issuance is
+ * delegated to the canonical authorization-code issuance path after the
+ * Direct Auth artifact binding is verified.
+ */
+async function handleDirectAuthFinishGrant(
+  c: Context<{ Bindings: Env }>,
+  formData: Record<string, string>
+) {
+  const log = getLogger(c).module('TOKEN');
+  const directAuthArtifact = formData.direct_auth_artifact;
+  const client_id = formData.client_id;
+  const code_verifier = formData.code_verifier;
+  const channel = formData.channel;
+  const provider_id = formData.provider_id;
+
+  if (!directAuthArtifact || !client_id || !code_verifier || !channel) {
+    return oauthError(
+      c,
+      'invalid_request',
+      'direct_auth_artifact, client_id, code_verifier, and channel are required',
+      400
+    );
+  }
+
+  if (!isDirectAuthChannel(channel)) {
+    return oauthError(c, 'invalid_request', 'channel must be browser, native, or server', 400);
+  }
+
+  const clientIdValidation = validateClientId(client_id);
+  if (!clientIdValidation.valid) {
+    return oauthError(c, 'invalid_client', clientIdValidation.error as string, 401);
+  }
+
+  const challengeStore = await getChallengeStoreByChallengeId(
+    c.env,
+    directAuthArtifact,
+    getTenantIdFromContext(c)
+  );
+  let artifactData: {
+    challenge: string;
+    userId: string;
+    metadata?: Record<string, unknown>;
+  };
+
+  try {
+    artifactData = (await challengeStore.consumeChallengeRpc({
+      id: `direct_auth:${directAuthArtifact}`,
+      tenantId: getTenantIdFromContext(c),
+      type: 'direct_auth_code',
+    })) as typeof artifactData;
+  } catch (error) {
+    log.warn('Direct Auth artifact consume failed', {
+      action: 'direct_auth_finish',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+    return oauthError(c, 'invalid_grant', 'Direct Auth artifact is invalid or expired', 400);
+  }
+
+  const metadata = artifactData.metadata || {};
+  if (metadata.client_id !== client_id) {
+    return oauthError(c, 'invalid_grant', 'Direct Auth artifact client binding mismatch', 400);
+  }
+
+  if (metadata.channel !== channel) {
+    return oauthError(c, 'invalid_grant', 'Direct Auth artifact channel binding mismatch', 400);
+  }
+
+  const allowedProviders = new Set<string>();
+  for (const key of ['provider_id', 'provider_slug', 'provider']) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value) {
+      allowedProviders.add(value);
+    }
+  }
+  if (allowedProviders.size > 0 && (!provider_id || !allowedProviders.has(provider_id))) {
+    return oauthError(c, 'invalid_grant', 'Direct Auth artifact provider binding mismatch', 400);
+  }
+
+  const pkceValid = await verifyPKCE(code_verifier, artifactData.challenge);
+  if (!pkceValid) {
+    return oauthError(c, 'invalid_grant', 'Direct Auth artifact PKCE verification failed', 400);
+  }
+
+  return await handleAuthorizationCodeGrant(c, {
+    ...formData,
+    grant_type: 'authorization_code',
+    code: directAuthArtifact,
+    redirect_uri: DIRECT_AUTH_GRANT_REDIRECT_URI,
+    client_id,
+    code_verifier,
+  });
 }
 
 /**
@@ -685,6 +1238,19 @@ async function handleAuthorizationCodeGrant(
     clientDpopBoundTokens
   );
   const dpopProof = extractDPoPProof(c.req.raw.headers);
+  const isBrowserPublicClientRequest = isBrowserPublicTokenRequest(c, formData, clientMetadata);
+  const browserPublicClientMode = isBrowserPublicClientRequest
+    ? await resolveBrowserPublicClientMode(c, tenantId, clientMetadata)
+    : undefined;
+
+  if (isBrowserPublicClientRequest && browserPublicClientMode === 'strict' && !dpopProof) {
+    return oauthError(
+      c,
+      'invalid_request',
+      'DPoP proof is required for strict browser clients',
+      400
+    );
+  }
 
   if ((fapiRequiresDpop || clientRequiresDpop) && !dpopProof) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
@@ -699,16 +1265,16 @@ async function handleAuthorizationCodeGrant(
       c.req.url,
       undefined, // No access token yet
       c.env, // Pass full Env for region-aware sharding
-      client_id
+      client_id,
+      getTenantIdFromContext(c)
     );
 
     if (!dpopValidation.valid) {
-      return oauthError(
-        c,
-        dpopValidation.error || 'invalid_dpop_proof',
-        dpopValidation.error_description || 'Invalid DPoP proof',
-        400
-      );
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'Invalid DPoP proof',
+        clientMetadata,
+        resources: formData.resource ? [formData.resource] : undefined,
+      });
     }
 
     dpopJkt = dpopValidation.jkt;
@@ -737,7 +1303,10 @@ async function handleAuthorizationCodeGrant(
       });
     }
 
-    const instanceName = buildAuthCodeShardInstanceName(actualShardIndex);
+    const instanceName = buildAuthCodeShardInstanceName(
+      actualShardIndex,
+      getTenantIdFromContext(c)
+    );
     authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
   } else {
     // Legacy format (no shard prefix) - use tenant-scoped legacy instance
@@ -752,6 +1321,7 @@ async function handleAuthorizationCodeGrant(
     // Use RPC for auth code consumption (atomic single-use guarantee)
     const consumedData = (await authCodeStore.consumeCodeRpc({
       code: validCode,
+      tenantId: getTenantIdFromContext(c),
       clientId: client_id,
       codeVerifier: code_verifier,
     })) as AuthCodeStoreResponse;
@@ -768,7 +1338,13 @@ async function handleAuthorizationCodeGrant(
       // Revoke the access token that was issued when the code was first used
       if (accessTokenJti) {
         try {
-          await revokeToken(c.env, accessTokenJti, 3600, 'Authorization code replay attack');
+          await revokeToken(
+            c.env,
+            accessTokenJti,
+            3600,
+            'Authorization code replay attack',
+            getTenantIdFromContext(c)
+          );
           log.info('Revoked access token', {
             jtiPrefix: accessTokenJti.substring(0, 8),
             action: 'Security',
@@ -785,7 +1361,8 @@ async function handleAuthorizationCodeGrant(
             c.env,
             refreshTokenJti,
             86400 * 30, // 30 days
-            'Authorization code replay attack'
+            'Authorization code replay attack',
+            getTenantIdFromContext(c)
           );
           log.info('Revoked refresh token', {
             jtiPrefix: refreshTokenJti.substring(0, 8),
@@ -814,7 +1391,11 @@ async function handleAuthorizationCodeGrant(
       state: consumedData.state,
       auth_time: consumedData.authTime || Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
       acr: consumedData.acr, // OIDC Core: Authentication Context Class Reference
+      amr: Array.isArray(consumedData.amr)
+        ? consumedData.amr.filter((method): method is string => typeof method === 'string')
+        : undefined, // OIDC Core: Authentication Methods References
       claims: consumedData.claims,
+      claimsRequestProtected: consumedData.claimsRequestProtected === true,
       dpopJkt: consumedData.dpopJkt, // DPoP JWK thumbprint for binding verification
       sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
       authorizationDetails: consumedData.authorizationDetails, // RFC 9396: Rich Authorization Requests
@@ -947,19 +1528,22 @@ async function handleAuthorizationCodeGrant(
   // Only response_type=id_token (Implicit Flow) should include these claims in the ID token.
   // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
   // phone scope values are returned from the UserInfo Endpoint"
+  const authCtx = createAuthContextFromHono(c, tenantId);
 
   // Phase 1 RBAC: Fetch RBAC claims for tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, authCodeData.sub, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        tenantId,
       }),
-      getIDTokenRBACClaims(c.env.DB, authCodeData.sub, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        tenantId,
       }),
     ]);
   } catch (rbacError) {
@@ -973,10 +1557,10 @@ async function handleAuthorizationCodeGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && authCodeData.scope) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         authCodeData.sub,
         authCodeData.scope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId }
       );
     }
   } catch (policyError) {
@@ -991,9 +1575,9 @@ async function handleAuthorizationCodeGrant(
     if (idLevelEnabled) {
       const limits = await getEmbeddingLimits(c.env);
       const allIdPerms = await evaluateIdLevelPermissions(
-        c.env.DB,
+        authCtx.coreAdapter,
         authCodeData.sub,
-        getTenantIdFromContext(c),
+        tenantId,
         { cache: c.env.REBAC_CACHE }
       );
       // Apply limits to prevent token bloat
@@ -1016,7 +1600,12 @@ async function handleAuthorizationCodeGrant(
   // Anonymous user claims (architecture-decisions.md §17)
   let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(c.env, authCodeData.sub);
+    const userCore = await getCachedUserCore(
+      c.env,
+      tenantId,
+      authCodeData.sub,
+      authCtx.coreAdapter
+    );
     if (userCore?.user_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
@@ -1034,7 +1623,7 @@ async function handleAuthorizationCodeGrant(
     const customClaimsEnabled = await isCustomClaimsEnabled(c.env);
     if (customClaimsEnabled) {
       const limits = await getEmbeddingLimits(c.env);
-      const evaluator = createTokenClaimEvaluator(c.env.DB, c.env.REBAC_CACHE, {
+      const evaluator = createTokenClaimEvaluator(authCtx.coreAdapter, c.env.REBAC_CACHE, {
         maxCustomClaims: limits.max_custom_claims,
       });
 
@@ -1068,14 +1657,24 @@ async function handleAuthorizationCodeGrant(
     log.error('Failed to evaluate custom claims', {}, customClaimsError as Error);
   }
 
+  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
+    resource: formData.resource,
+    audience: formData.audience,
+    rejectResourceAudienceMismatch: true,
+  });
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
+
   // Generate Access Token FIRST (needed for at_hash in ID token)
   const accessTokenClaims: {
     iss: string;
     sub: string;
-    aud: string;
+    aud: AccessTokenAudience;
     scope: string;
     client_id: string;
     claims?: string;
+    claims_request_protected?: boolean;
     cnf?: { jkt: string };
     // Phase 1 RBAC claims
     authrim_roles?: string[];
@@ -1090,7 +1689,7 @@ async function handleAuthorizationCodeGrant(
   } = {
     iss: getRequestIssuer(c),
     sub: authCodeData.sub,
-    aud: getRequestIssuer(c), // For MVP, access token audience is the issuer
+    aud: audienceResolution.audience,
     scope: authCodeData.scope,
     client_id: client_id,
     // Phase 1 RBAC: Add RBAC claims to access token
@@ -1114,6 +1713,7 @@ async function handleAuthorizationCodeGrant(
   // Add claims parameter if it was requested during authorization
   if (authCodeData.claims) {
     accessTokenClaims.claims = authCodeData.claims;
+    accessTokenClaims.claims_request_protected = authCodeData.claimsRequestProtected === true;
   }
 
   // Add DPoP confirmation (cnf) claim if DPoP is used
@@ -1134,7 +1734,7 @@ async function handleAuthorizationCodeGrant(
   let tokenJti: string;
   try {
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
       accessTokenClaims,
       privateKey,
@@ -1177,20 +1777,51 @@ async function handleAuthorizationCodeGrant(
   // (e.g., iOS Keychain, Android Keystore)
   let deviceSecret: string | undefined;
   let dsHash: string | undefined;
+  let issuedDeviceSecretEntity: DeviceSecret | undefined;
 
   // Check if Native SSO is enabled (feature flag + client configuration)
   const nativeSSOGloballyEnabled = await isNativeSSOEnabled(c.env);
-  const clientNativeSSOEnabled = Boolean(clientMetadata.native_sso_enabled);
+  const clientNativeSSOIssuanceEligible = isNativeSSOIssuanceEligible(
+    clientMetadata,
+    formData.channel
+  );
 
-  if (nativeSSOGloballyEnabled && clientNativeSSOEnabled && authCodeData.sid && c.env.DB) {
+  if (nativeSSOGloballyEnabled && clientNativeSSOIssuanceEligible && authCodeData.sid) {
     try {
       const nativeSSOConfig = await getNativeSSOConfig(c.env);
-      const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-      const deviceSecretRepo = new DeviceSecretRepository(coreAdapter);
+      const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+      const deviceInstallationRepo = new DeviceInstallationRepository(
+        authCtx.coreAdapter,
+        tenantId
+      );
 
       // Check max device secrets per user (revoke oldest if exceeded)
-      const userSecrets = await deviceSecretRepo.findByUserId(authCodeData.sub);
-      const activeSecrets = userSecrets.filter((s) => s.is_active === 1);
+      const userSecrets = await deviceSecretRepo.findByUserId(authCodeData.sub, tenantId);
+      let activeSecrets = userSecrets.filter((s) => s.is_active === 1);
+
+      if (
+        nativeSSOConfig.deviceSecretRotationPolicy === 'explicit' &&
+        nativeSSOConfig.deviceSecretRotationOverlapSeconds === 0
+      ) {
+        const rotationCandidates = activeSecrets.filter(
+          (secret) => secret.session_id === authCodeData.sid && secret.revoked_at === undefined
+        );
+
+        for (const secret of rotationCandidates) {
+          await deviceSecretRepo.revoke(secret.id, 'rotation', tenantId);
+        }
+
+        if (rotationCandidates.length > 0) {
+          const rotatedSecretIds = new Set(rotationCandidates.map((secret) => secret.id));
+          activeSecrets = activeSecrets.filter((secret) => !rotatedSecretIds.has(secret.id));
+          log.info('Rotated existing device secrets', {
+            count: rotationCandidates.length,
+            userIdPrefix: authCodeData.sub.substring(0, 8),
+            sessionIdPrefix: authCodeData.sid.substring(0, 8),
+            action: 'NativeSSO',
+          });
+        }
+      }
 
       if (activeSecrets.length >= nativeSSOConfig.maxDeviceSecretsPerUser) {
         if (nativeSSOConfig.maxSecretsBehavior === 'revoke_oldest') {
@@ -1201,7 +1832,7 @@ async function handleAuthorizationCodeGrant(
             activeSecrets.length - nativeSSOConfig.maxDeviceSecretsPerUser + 1
           );
           for (const secret of toRevoke) {
-            await deviceSecretRepo.revoke(secret.id, 'max_secrets_exceeded');
+            await deviceSecretRepo.revoke(secret.id, 'max_secrets_exceeded', tenantId);
           }
           log.info('Revoked oldest device secrets', {
             count: toRevoke.length,
@@ -1229,6 +1860,10 @@ async function handleAuthorizationCodeGrant(
         const result = await deviceSecretRepo.createSecret({
           user_id: authCodeData.sub,
           session_id: authCodeData.sid,
+          client_id,
+          trust_group_id: getClientTrustGroup(clientMetadata),
+          device_name: normalizeDeviceSecretName(formData.device_name),
+          device_platform: normalizeDeviceSecretPlatform(formData.device_platform),
           ttl_ms: deviceSecretTTLMs,
         });
 
@@ -1237,9 +1872,11 @@ async function handleAuthorizationCodeGrant(
         // DeviceSecretValidationResult has { ok: false, reason: ... } or { ok: true, entity: ... }
         if ('secret' in result) {
           deviceSecret = result.secret;
+          issuedDeviceSecretEntity = result.entity;
 
           // Calculate ds_hash (same algorithm as at_hash: SHA-256 left-half base64url)
           dsHash = await calculateDsHash(deviceSecret);
+          await deviceInstallationRepo.ensureForDeviceSecret(result.entity);
 
           log.info('Created device secret', {
             userIdPrefix: authCodeData.sub.substring(0, 8),
@@ -1267,9 +1904,10 @@ async function handleAuthorizationCodeGrant(
   try {
     const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
     if (ccFeatureConfig.enabled) {
+      const piiCtx = hasPIIDatabase(c) ? createPIIContextFromHono(c, tenantId) : null;
       const ccResolver = createCustomClaimSchemaResolver(
-        c.env.DB,
-        c.env.DB_PII || null,
+        authCtx.coreAdapter,
+        piiCtx?.defaultPiiAdapter ?? null,
         c.env.AUTHRIM_CONFIG || null,
         ccFeatureConfig
       );
@@ -1290,7 +1928,7 @@ async function handleAuthorizationCodeGrant(
   // Phase 1 RBAC: Include RBAC claims in ID Token
   // Note: sid is required for RP-Initiated Logout per OIDC Session Management 1.0
   // Note: ds_hash is included when Native SSO is enabled (OIDC Native SSO 1.0)
-  const idTokenClaims = {
+  let idTokenClaims: Record<string, unknown> = {
     ...idTokenCustomClaims, // Custom claims (first, so standard claims override on collision)
     iss: getRequestIssuer(c),
     sub: authCodeData.sub,
@@ -1299,6 +1937,7 @@ async function handleAuthorizationCodeGrant(
     at_hash: atHash, // OIDC spec requirement for code flow
     auth_time: authCodeData.auth_time, // OIDC Core Section 2: Time when End-User authentication occurred
     ...(authCodeData.acr && { acr: authCodeData.acr }),
+    ...(authCodeData.amr?.length && { amr: authCodeData.amr }),
     ...(authCodeData.sid && { sid: authCodeData.sid }), // OIDC Session Management: Session ID for RP-Initiated Logout
     ...(dsHash && { ds_hash: dsHash }), // OIDC Native SSO 1.0: Device Secret Hash
     // Phase 1 RBAC: Add RBAC claims to ID token
@@ -1306,6 +1945,55 @@ async function handleAuthorizationCodeGrant(
     // Anonymous user claims (architecture-decisions.md §17)
     ...anonymousClaims,
   };
+
+  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
+  if (!parsedClaimsRequest.ok) {
+    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
+  }
+
+  const shouldEvaluateIdTokenClaims =
+    parsedClaimsRequest.request &&
+    (Object.keys(parsedClaimsRequest.request.id_token).length > 0 ||
+      hasSAORulesForTarget(parsedClaimsRequest.request, 'id_token'));
+
+  if (shouldEvaluateIdTokenClaims && parsedClaimsRequest.request) {
+    try {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const user = await getCachedUser(c.env, tenantId, authCodeData.sub, {
+        coreDb: authCtx.coreAdapter,
+        piiDb: piiCtx.defaultPiiAdapter,
+      });
+      const availableClaims: Record<string, unknown> = {
+        ...(user ? buildStandardUserClaims(user) : {}),
+        sub: authCodeData.sub,
+        auth_time: authCodeData.auth_time,
+        ...(authCodeData.acr ? { acr: authCodeData.acr } : {}),
+        ...(authCodeData.amr?.length ? { amr: authCodeData.amr } : {}),
+      };
+      const requestedIdTokenClaims = evaluateClaimsForTarget({
+        target: 'id_token',
+        claimsRequest: parsedClaimsRequest.request,
+        initialClaims: idTokenClaims,
+        availableClaims,
+        grantedScopes: (authCodeData.scope || '').split(' ').filter(Boolean),
+        clientPolicy: clientMetadata,
+        includeScopeClaims: false,
+        requestIntegrityProtected: authCodeData.claimsRequestProtected === true,
+      });
+      if (!requestedIdTokenClaims.ok) {
+        return oauthError(
+          c,
+          requestedIdTokenClaims.error,
+          requestedIdTokenClaims.error_description,
+          400
+        );
+      }
+      idTokenClaims = requestedIdTokenClaims.claims;
+    } catch (claimsError) {
+      log.error('Failed to evaluate requested ID token claims', {}, claimsError as Error);
+      return oauthError(c, 'server_error', 'Failed to evaluate requested ID token claims', 500);
+    }
+  }
 
   let idToken: string;
   try {
@@ -1406,114 +2094,100 @@ async function handleAuthorizationCodeGrant(
 
   // Generate Refresh Token
   // https://tools.ietf.org/html/rfc6749#section-6
-  let refreshToken: string;
-  let refreshTokenJti: string;
-  const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
+  const browserRefreshTokenPolicy = getBrowserRefreshTokenPolicy(clientMetadata);
+  const shouldIssueRefreshToken =
+    !isBrowserPublicClientRequest ||
+    (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt));
+  let refreshToken: string | undefined;
+  let refreshTokenJti: string | undefined;
+  let refreshTokenExpiresIn: number | undefined;
 
-  try {
-    const refreshTokenClaims = {
-      iss: getRequestIssuer(c),
-      sub: authCodeData.sub,
-      aud: client_id,
-      scope: authCodeData.scope,
-      client_id: client_id,
-    };
+  if (shouldIssueRefreshToken) {
+    refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
 
-    // V2/V3: Register with RefreshTokenRotator first to get version
-    // V3: Uses sharded DO instances for horizontal scaling
-    let rtv: number = 1; // Default version for new family
-
-    if (c.env.REFRESH_TOKEN_ROTATOR) {
-      // V3: Get shard configuration and calculate shard index
-      const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
-      const shardIndex = await getRefreshTokenShardIndex(
-        authCodeData.sub,
-        client_id,
-        shardConfig.currentShardCount
-      );
-
-      // V3: Generate sharded JTI with generation and shard info
-      const randomPart = generateRefreshTokenRandomPart();
-      refreshTokenJti = createRefreshTokenJti(
-        shardConfig.currentGeneration,
-        shardIndex,
-        randomPart
-      );
-
-      // V3: Route to sharded DO instance
-      const instanceName = buildRefreshTokenRotatorInstanceName(
-        client_id,
-        shardConfig.currentGeneration,
-        shardIndex
-      );
-      const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-      const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
-
-      // Use RPC for family creation
-      let familyResult: {
-        version: number;
-        newJti: string;
-        expiresIn: number;
-        allowedScope: string;
+    try {
+      const refreshTokenClaims = {
+        iss: getRequestIssuer(c),
+        sub: authCodeData.sub,
+        aud: client_id,
+        scope: authCodeData.scope,
+        client_id: client_id,
+        resource_aud: audienceResolution.audience,
       };
-      try {
-        familyResult = await rotator.createFamilyRpc({
-          jti: refreshTokenJti,
-          userId: authCodeData.sub,
-          clientId: client_id,
-          scope: authCodeData.scope,
-          ttl: refreshTokenExpiresIn,
-          // V3: Include shard metadata (for debugging/audit)
-          generation: shardConfig.currentGeneration,
-          shardIndex: shardIndex,
-        });
-      } catch (error) {
-        log.error('Failed to register refresh token family', {}, error as Error);
-        return c.json(
-          {
-            error: 'server_error',
-            error_description: 'Failed to register refresh token',
-          },
-          500
+
+      // V2/V3: Register with RefreshTokenRotator first to get version
+      // V3: Uses sharded DO instances for horizontal scaling
+      let rtv: number = 1; // Default version for new family
+      let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+
+      if (c.env.REFRESH_TOKEN_ROTATOR) {
+        try {
+          familyResult = await createRefreshTokenFamily(c.env, {
+            userId: authCodeData.sub,
+            clientId: client_id,
+            scope: authCodeData.scope,
+            ttl: refreshTokenExpiresIn,
+            tenantId: getTenantIdFromContext(c),
+            resourceAudience: audienceResolution.audience,
+          });
+          refreshTokenJti = familyResult.jti;
+        } catch (error) {
+          log.error('Failed to register refresh token family', {}, error as Error);
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: 'Failed to register refresh token',
+            },
+            500
+          );
+        }
+        rtv = familyResult.family.version;
+
+        // V3: Record in the token family index for user-wide revocation support
+        // (non-blocking, fire-and-forget for performance)
+        void recordTokenFamilyIndex(
+          authCtx.coreAdapter,
+          getTenantIdFromContext(c),
+          refreshTokenJti,
+          authCodeData.sub,
+          client_id,
+          familyResult.resolution.generation,
+          refreshTokenExpiresIn
         );
+      } else {
+        refreshTokenJti = `rt_${crypto.randomUUID()}`;
       }
-      rtv = familyResult.version;
 
-      // V3: Record in D1 for user-wide revocation support
-      // (non-blocking, fire-and-forget for performance)
-      void recordTokenFamilyInD1(
-        c.env,
+      // Create JWT with rtv (Refresh Token Version) claim
+      const result = await createRefreshToken(
+        refreshTokenClaims,
+        privateKey,
+        keyId,
+        refreshTokenExpiresIn,
         refreshTokenJti,
-        authCodeData.sub,
-        client_id,
-        shardConfig.currentGeneration,
-        refreshTokenExpiresIn
+        rtv // V2: Include version for theft detection
       );
-    } else {
-      refreshTokenJti = `rt_${crypto.randomUUID()}`;
+      refreshToken = result.token;
+      // V2: Family is already registered via RefreshTokenRotator DO above
+      // No need to call storeRefreshToken() - it was a V1 artifact
+    } catch (error) {
+      log.error('Failed to create refresh token', {}, error as Error);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create refresh token',
+        },
+        500
+      );
     }
-
-    // Create JWT with rtv (Refresh Token Version) claim
-    const result = await createRefreshToken(
-      refreshTokenClaims,
-      privateKey,
-      keyId,
-      refreshTokenExpiresIn,
-      refreshTokenJti,
-      rtv // V2: Include version for theft detection
-    );
-    refreshToken = result.token;
-    // V2: Family is already registered via RefreshTokenRotator DO above
-    // No need to call storeRefreshToken() - it was a V1 artifact
-  } catch (error) {
-    log.error('Failed to create refresh token', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create refresh token',
-      },
-      500
-    );
+  } else {
+    log.debug('Skipped refresh token for browser public client policy', {
+      clientId: client_id,
+      browserPublicClientMode,
+      browserRefreshTokenPolicy,
+      tokenType,
+      action: 'TokenIssuance',
+    });
   }
 
   // Authorization code has been consumed and marked as used by AuthCodeStore DO
@@ -1543,19 +2217,17 @@ async function handleAuthorizationCodeGrant(
   // This enables frontchannel/backchannel logout to notify the correct RPs
   log.debug('Session-client check', {
     sidPresent: !!authCodeData.sid,
-    dbPresent: !!c.env.DB,
+    dbPresent: !!authCtx.coreAdapter,
     action: 'Logout',
   });
-  if (authCodeData.sid && c.env.DB) {
+  if (authCodeData.sid) {
     try {
       log.debug('Attempting to register session-client', {
         sid: authCodeData.sid,
         clientId: client_id,
         action: 'Logout',
       });
-      const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-      const sessionClientRepo = new SessionClientRepository(coreAdapter);
-      const result = await sessionClientRepo.createOrUpdate({
+      const result = await authCtx.repositories.sessionClient.createOrUpdate({
         session_id: authCodeData.sid,
         client_id: client_id,
       });
@@ -1572,7 +2244,7 @@ async function handleAuthorizationCodeGrant(
   } else {
     log.warn('Skipped session-client registration', {
       sid: authCodeData.sid,
-      dbAvailable: !!c.env.DB,
+      dbAvailable: !!authCtx.coreAdapter,
       action: 'Logout',
     });
   }
@@ -1580,6 +2252,12 @@ async function handleAuthorizationCodeGrant(
   // Return token response
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
+
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const refreshTokenExpiryMetadata = buildRefreshTokenExpiryMetadata(
+    nowEpoch,
+    refreshTokenExpiresIn
+  );
 
   // Build response object
   // Note: device_secret is only included when Native SSO is enabled and successfully generated
@@ -1589,13 +2267,25 @@ async function handleAuthorizationCodeGrant(
     token_type: tokenType, // 'Bearer' or 'DPoP' depending on DPoP usage
     expires_in: expiresIn,
     id_token: idToken,
-    refresh_token: refreshToken,
+    ...(refreshToken && { refresh_token: refreshToken }),
+    ...refreshTokenExpiryMetadata,
     scope: authCodeData.scope, // OAuth 2.0 spec: include scope for clarity
   };
 
   // OIDC Native SSO 1.0: Include device_secret if generated
   if (deviceSecret) {
     tokenResponse.device_secret = deviceSecret;
+    if (issuedDeviceSecretEntity) {
+      Object.assign(
+        tokenResponse,
+        buildNativeSSOInstallationMetadata(
+          issuedDeviceSecretEntity,
+          client_id,
+          clientMetadata,
+          Date.now()
+        )
+      );
+    }
   }
 
   // RFC 9396: Include authorization_details if present in the authorization request
@@ -1609,7 +2299,6 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Publish token events (non-blocking, use waitUntil to ensure completion)
-  const nowEpoch = Math.floor(Date.now() / 1000);
   c.executionCtx.waitUntil(
     Promise.all([
       publishEvent(c, {
@@ -1805,7 +2494,14 @@ async function handleRefreshTokenGrant(
   }
 
   // Retrieve refresh token metadata from RefreshTokenRotator DO (V2)
-  const refreshTokenData = await getRefreshToken(c.env, userId, version, client_id, jti);
+  const refreshTokenData = await getRefreshToken(
+    c.env,
+    userId,
+    version,
+    client_id,
+    jti,
+    getTenantIdFromContext(c)
+  );
   if (!refreshTokenData) {
     return oauthError(c, 'invalid_grant', 'Refresh token is invalid or expired', 400);
   }
@@ -1885,6 +2581,7 @@ async function handleRefreshTokenGrant(
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
+  const authCtx = createAuthContextFromHono(c, tenantId);
 
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
@@ -1892,13 +2589,15 @@ async function handleRefreshTokenGrant(
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, refreshTokenData.sub, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        tenantId,
       }),
-      getIDTokenRBACClaims(c.env.DB, refreshTokenData.sub, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        tenantId,
       }),
     ]);
   } catch (rbacError) {
@@ -1912,10 +2611,10 @@ async function handleRefreshTokenGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && grantedScope) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         refreshTokenData.sub,
         grantedScope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
     }
   } catch (policyError) {
@@ -1926,7 +2625,12 @@ async function handleRefreshTokenGrant(
   // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
   let anonymousClaimsRefresh: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(c.env, refreshTokenData.sub);
+    const userCore = await getCachedUserCore(
+      c.env,
+      tenantId,
+      refreshTokenData.sub,
+      authCtx.coreAdapter
+    );
     if (userCore?.user_type === 'anonymous') {
       anonymousClaimsRefresh = {
         user_type: 'anonymous',
@@ -1951,22 +2655,32 @@ async function handleRefreshTokenGrant(
       c.req.url,
       undefined, // No access token yet (this is token refresh)
       c.env, // Pass full Env for region-aware sharding
-      client_id // Bind JTI to client_id for additional security
+      client_id, // Bind JTI to client_id for additional security
+      getTenantIdFromContext(c)
     );
 
     if (!dpopValidation.valid) {
-      return oauthError(
-        c,
-        dpopValidation.error || 'invalid_dpop_proof',
-        dpopValidation.error_description || 'DPoP proof validation failed',
-        400
-      );
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP proof validation failed',
+        clientMetadata,
+      });
     }
 
     // DPoP proof is valid, bind access token to the public key
     dpopJkt = dpopValidation.jkt;
     tokenType = 'DPoP';
   }
+
+  const storedRefreshAudience =
+    normalizeStoredAccessTokenAudience(refreshTokenData.resource_aud) ??
+    normalizeStoredAccessTokenAudience(refreshTokenPayload.resource_aud);
+  const refreshAudienceResolution = storedRefreshAudience
+    ? resolveAccessTokenAudience(c, clientMetadata, { resource: storedRefreshAudience })
+    : resolveAccessTokenAudience(c, clientMetadata);
+  if (!refreshAudienceResolution.ok) {
+    return oauthError(c, 'invalid_target', refreshAudienceResolution.description, 400);
+  }
+  const refreshedAccessTokenAudience = refreshAudienceResolution.audience;
 
   // Generate new Access Token
   let accessToken: string;
@@ -1975,7 +2689,7 @@ async function handleRefreshTokenGrant(
     const accessTokenClaims: {
       iss: string;
       sub: string;
-      aud: string;
+      aud: AccessTokenAudience;
       scope: string;
       client_id: string;
       cnf?: { jkt: string };
@@ -1984,7 +2698,7 @@ async function handleRefreshTokenGrant(
     } = {
       iss: getRequestIssuer(c),
       sub: refreshTokenData.sub,
-      aud: getRequestIssuer(c),
+      aud: refreshedAccessTokenAudience,
       scope: grantedScope,
       client_id: client_id,
       // Phase 2 RBAC: Add RBAC claims to access token
@@ -2004,7 +2718,7 @@ async function handleRefreshTokenGrant(
     }
 
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
       accessTokenClaims,
       privateKey,
@@ -2071,15 +2785,13 @@ async function handleRefreshTokenGrant(
       return oauthError(c, 'server_error', 'Refresh token rotation unavailable', 500);
     }
 
-    // V3: Parse JTI to extract generation and shard info for routing
-    const parsedJti = parseRefreshTokenJti(jti);
-    const instanceName = buildRefreshTokenRotatorInstanceName(
+    const { stub: rotator } = getRefreshTokenRotatorStubByJti(
+      c.env,
       client_id,
-      parsedJti.generation,
-      parsedJti.shardIndex
+      jti,
+      getTenantIdFromContext(c)
     );
-    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-    const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+    const tenantId = getTenantIdFromContext(c);
 
     // V2: Get incoming version from JWT (default to 1 for legacy tokens without rtv)
     const incomingVersion =
@@ -2095,6 +2807,7 @@ async function handleRefreshTokenGrant(
         incomingJti: jti, // V3: Send full JTI (DO stores and compares full JTIs)
         userId: refreshTokenData.sub,
         clientId: client_id,
+        tenantId,
         requestedScope: scope || undefined, // Pass requested scope for validation
       });
 
@@ -2110,6 +2823,7 @@ async function handleRefreshTokenGrant(
         aud: client_id,
         scope: grantedScope,
         client_id: client_id,
+        resource_aud: refreshedAccessTokenAudience,
       };
 
       // V2: Include rtv (Refresh Token Version) for theft detection
@@ -2224,6 +2938,7 @@ async function handleRefreshTokenGrant(
     expires_in: expiresIn,
     id_token: idToken,
     refresh_token: newRefreshToken,
+    ...buildRefreshTokenExpiryMetadata(nowEpoch, refreshTokenExpiresIn),
     scope: grantedScope,
   });
 }
@@ -2273,6 +2988,8 @@ async function handleJWTBearerGrant(
   const log = getLogger(c).module('TOKEN');
   const assertion = formData.assertion;
   const scope = formData.scope;
+  const requestedAudience = formData.audience;
+  const requestedResource = formData.resource;
 
   // Validate assertion parameter
   if (!assertion) {
@@ -2322,6 +3039,21 @@ async function handleJWTBearerGrant(
 
   // Validate scope against allowed scopes for the issuer
   const trustedIssuer = trustedIssuers.get(claims.iss);
+  if (!trustedIssuer) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'JWT assertion issuer is not trusted',
+      },
+      400
+    );
+  }
+  const trustedIssuerTargetPolicy = trustedIssuer as typeof trustedIssuer & {
+    default_resource?: string;
+    default_audience?: string;
+    allowed_resources?: string[];
+  };
+
   if (trustedIssuer?.allowed_scopes) {
     const requestedScopes = grantedScope.split(' ');
     const hasDisallowedScope = requestedScopes.some(
@@ -2337,6 +3069,31 @@ async function handleJWTBearerGrant(
         400
       );
     }
+  }
+
+  const audienceResolution = resolveAccessTokenAudience(
+    c,
+    {
+      client_id: claims.iss,
+      tenant_id: getTenantIdFromContext(c),
+      default_resource: trustedIssuerTargetPolicy.default_resource,
+      default_audience: trustedIssuerTargetPolicy.default_audience,
+      allowed_token_exchange_resources: trustedIssuerTargetPolicy.allowed_resources,
+    } as ClientMetadata,
+    {
+      resource: requestedResource ?? claims.resource,
+      audience: requestedAudience,
+      rejectResourceAudienceMismatch: true,
+    }
+  );
+  if (!audienceResolution.ok) {
+    return c.json(
+      {
+        error: 'invalid_target',
+        error_description: audienceResolution.description,
+      },
+      400
+    );
   }
 
   // Load private key for signing tokens from KeyManager
@@ -2367,7 +3124,7 @@ async function handleJWTBearerGrant(
   const accessTokenClaims = {
     iss: getRequestIssuer(c),
     sub: claims.sub, // Subject from JWT assertion
-    aud: getRequestIssuer(c),
+    aud: audienceResolution.audience,
     scope: grantedScope,
     client_id: claims.iss, // Issuer acts as client_id for service accounts
   };
@@ -2376,7 +3133,7 @@ async function handleJWTBearerGrant(
   let accessTokenJti: string = '';
   try {
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
       accessTokenClaims,
       privateKey,
@@ -2444,6 +3201,11 @@ async function handleDeviceCodeGrant(
   const log = getLogger(c).module('TOKEN');
   const deviceCode = formData.device_code;
   const client_id = formData.client_id;
+  const tenantId = getTenantIdFromContext(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
 
   // Validate required parameters
   if (!deviceCode) {
@@ -2475,12 +3237,12 @@ async function handleDeviceCodeGrant(
 
   if (parsedDeviceCode) {
     // New region-sharded format: route via embedded shard info
-    const { stub } = getDeviceCodeStoreById(c.env, deviceCode, getTenantIdFromContext(c));
+    const { stub } = getDeviceCodeStoreById(c.env, deviceCode, tenantId);
     deviceCodeStore = stub;
   } else {
     // Legacy format: use tenant-scoped global DO
     const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
-      buildDOInstanceName('device', getTenantIdFromContext(c))
+      buildDOInstanceName('device', tenantId)
     );
     deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
   }
@@ -2490,7 +3252,7 @@ async function handleDeviceCodeGrant(
     await deviceCodeStore.fetch(
       new Request('https://internal/update-poll', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ device_code: deviceCode }),
       })
     );
@@ -2502,7 +3264,7 @@ async function handleDeviceCodeGrant(
   const getResponse = await deviceCodeStore.fetch(
     new Request('https://internal/get-by-device-code', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ device_code: deviceCode }),
     })
   );
@@ -2572,7 +3334,7 @@ async function handleDeviceCodeGrant(
     await deviceCodeStore.fetch(
       new Request('https://internal/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ device_code: deviceCode }),
       })
     );
@@ -2611,7 +3373,7 @@ async function handleDeviceCodeGrant(
   await deviceCodeStore.fetch(
     new Request('https://internal/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ device_code: deviceCode }),
     })
   );
@@ -2620,7 +3382,7 @@ async function handleDeviceCodeGrant(
   let privateKey: CryptoKey;
   let keyId: string;
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+    const signingKey = await getSigningKeyFromKeyManager(c.env, tenantId);
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -2637,19 +3399,30 @@ async function handleDeviceCodeGrant(
   // Token expiration (KV > env > default priority)
   const configManager = createOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
+  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
+  if (!clientMetadata) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata);
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        tenantId: authCtx.tenantId,
       }),
-      getIDTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        tenantId: authCtx.tenantId,
       }),
     ]);
   } catch (rbacError) {
@@ -2663,10 +3436,10 @@ async function handleDeviceCodeGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
     }
   } catch (policyError) {
@@ -2708,7 +3481,7 @@ async function handleDeviceCodeGrant(
   const accessTokenClaims: {
     iss: string;
     sub: string | undefined;
-    aud: string;
+    aud: AccessTokenAudience;
     scope: string | undefined;
     client_id: string;
     authrim_permissions?: string[];
@@ -2716,7 +3489,7 @@ async function handleDeviceCodeGrant(
   } = {
     iss: getRequestIssuer(c),
     sub: metadata.sub,
-    aud: getRequestIssuer(c),
+    aud: audienceResolution.audience,
     scope: metadata.scope,
     client_id,
     // Phase 2 RBAC: Add RBAC claims to access token
@@ -2732,7 +3505,7 @@ async function handleDeviceCodeGrant(
   let accessTokenJti: string = '';
   try {
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
       accessTokenClaims,
       privateKey,
@@ -2758,15 +3531,29 @@ async function handleDeviceCodeGrant(
   let refreshToken: string;
   let refreshJti: string;
   try {
-    // V3: Generate sharded JTI for proper DO routing
-    const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
-    const shardIndex = await getRefreshTokenShardIndex(
-      metadata.sub!,
-      client_id,
-      shardConfig.currentShardCount
-    );
-    const randomPart = generateRefreshTokenRandomPart();
-    refreshJti = createRefreshTokenJti(shardConfig.currentGeneration, shardIndex, randomPart);
+    let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+    if (c.env.REFRESH_TOKEN_ROTATOR) {
+      familyResult = await createRefreshTokenFamily(c.env, {
+        userId: metadata.sub!,
+        clientId: client_id,
+        scope: metadata.scope || '',
+        ttl: refreshTokenExpiry,
+        tenantId: getTenantIdFromContext(c),
+        resourceAudience: audienceResolution.audience,
+      });
+      refreshJti = familyResult.jti;
+      void recordTokenFamilyIndex(
+        authCtx.coreAdapter,
+        getTenantIdFromContext(c),
+        refreshJti,
+        metadata.sub!,
+        client_id,
+        familyResult.resolution.generation,
+        refreshTokenExpiry
+      );
+    } else {
+      refreshJti = `rt_${crypto.randomUUID()}`;
+    }
 
     const refreshTokenClaims = {
       sub: metadata.sub!,
@@ -2782,14 +3569,22 @@ async function handleDeviceCodeGrant(
     );
     refreshToken = result.token;
 
-    await storeRefreshToken(c.env, refreshJti, {
-      jti: refreshJti,
-      client_id,
-      sub: metadata.sub!,
-      scope: metadata.scope,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
-    });
+    if (!familyResult) {
+      await storeRefreshToken(
+        c.env,
+        refreshJti,
+        {
+          jti: refreshJti,
+          client_id,
+          sub: metadata.sub!,
+          scope: metadata.scope,
+          resource_aud: audienceResolution.audience,
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
+        },
+        getTenantIdFromContext(c)
+      );
+    }
   } catch (error) {
     log.error('Failed to create refresh token', {}, error as Error);
     return c.json(
@@ -2861,6 +3656,7 @@ async function handleDeviceCodeGrant(
     expires_in: expiresIn,
     id_token: idToken,
     refresh_token: refreshToken,
+    ...buildRefreshTokenExpiryMetadata(nowEpoch, refreshTokenExpiry),
     scope: metadata.scope,
   });
 }
@@ -2874,6 +3670,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const log = getLogger(c).module('TOKEN');
   const authReqId = formData.auth_req_id;
   const client_id = formData.client_id;
+  const tenantId = getTenantIdFromContext(c);
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
 
   // Validate required parameters
   if (!authReqId) {
@@ -2905,12 +3706,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   if (parsedCIBAId) {
     // New region-sharded format: route via embedded shard info
-    const { stub } = getCIBARequestStoreById(c.env, authReqId, getTenantIdFromContext(c));
+    const { stub } = getCIBARequestStoreById(c.env, authReqId, tenantId);
     cibaRequestStore = stub;
   } else {
     // Legacy format: use tenant-scoped global DO
     const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
-      buildDOInstanceName('ciba', getTenantIdFromContext(c))
+      buildDOInstanceName('ciba', tenantId)
     );
     cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
   }
@@ -2920,7 +3721,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     await cibaRequestStore.fetch(
       new Request('https://internal/update-poll', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -2932,7 +3733,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const getResponse = await cibaRequestStore.fetch(
     new Request('https://internal/get-by-auth-req-id', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ auth_req_id: authReqId }),
     })
   );
@@ -3017,7 +3818,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     await cibaRequestStore.fetch(
       new Request('https://internal/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -3056,7 +3857,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const markIssuedResponse = await cibaRequestStore.fetch(
     new Request('https://internal/mark-token-issued', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ auth_req_id: authReqId }),
     })
   );
@@ -3079,10 +3880,17 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }
   }
 
+  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+
   // Verify user exists in Core DB (PII/Non-PII separation: NO PII DB access in token endpoint)
   // Note: metadata.sub is guaranteed to exist due to the check at line 2340
   // Use getCachedUserCore() instead of getCachedUser() to avoid unnecessary PII DB access
-  const userCore = await getCachedUserCore(c.env, metadata.sub);
+  const userCore = await getCachedUserCore(
+    c.env,
+    getTenantIdFromContext(c),
+    metadata.sub,
+    authCtx.coreAdapter
+  );
 
   if (!userCore) {
     // Security: Internal error - don't leak user existence
@@ -3103,6 +3911,10 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     // RFC 6749: invalid_client should return 401
     return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
   }
+  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata);
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
 
   // Get signing key from KeyManager
   const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
@@ -3113,11 +3925,23 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   // Validate DPoP proof if provided
   if (dpopProof) {
-    const { validateDPoPProof: validateDPoP } = await import('@authrim/ar-lib-core');
-    const dpopValidation = await validateDPoP(dpopProof, 'POST', getRequestIssuer(c) + '/token');
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      'POST',
+      getRequestIssuer(c) + '/token',
+      undefined,
+      c.env,
+      metadata.client_id,
+      getTenantIdFromContext(c)
+    );
 
     if (dpopValidation.valid && dpopValidation.jkt) {
       dpopJkt = dpopValidation.jkt;
+    } else if (!dpopValidation.valid) {
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+        clientMetadata,
+      });
     }
   }
 
@@ -3131,13 +3955,15 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        tenantId: authCtx.tenantId,
       }),
-      getIDTokenRBACClaims(c.env.DB, metadata.sub!, {
+      getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        tenantId: authCtx.tenantId,
       }),
     ]);
   } catch (rbacError) {
@@ -3151,10 +3977,10 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       policyEmbeddingPermissions = await evaluatePermissionsForScope(
-        c.env.DB,
+        authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
     }
   } catch (policyError) {
@@ -3166,7 +3992,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const accessTokenClaims: {
     iss: string;
     sub: string;
-    aud: string;
+    aud: AccessTokenAudience;
     scope: string | undefined;
     client_id: string;
     cnf?: { jkt: string };
@@ -3175,7 +4001,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   } = {
     iss: getRequestIssuer(c),
     sub: metadata.sub!,
-    aud: getRequestIssuer(c),
+    aud: audienceResolution.audience,
     scope: metadata.scope,
     client_id: metadata.client_id,
     ...(dpopJkt && { cnf: { jkt: dpopJkt } }),
@@ -3189,7 +4015,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   }
 
   // Generate region-aware JTI for token revocation sharding
-  const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+  const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
   const { token: accessToken, jti: tokenJti } = await createAccessToken(
     accessTokenClaims,
     privateKey,
@@ -3244,27 +4070,39 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     idToken = await encryptJWT(idToken, clientPublicKey, { alg, enc });
   }
 
-  // Create Refresh Token with V3 sharding support
-  // V3: Generate sharded JTI for proper DO routing
-  const shardConfig = await getRefreshTokenShardConfig(c.env, metadata.client_id);
-  const shardIndex = await getRefreshTokenShardIndex(
-    metadata.sub!,
-    metadata.client_id,
-    shardConfig.currentShardCount
-  );
-  const randomPart = generateRefreshTokenRandomPart();
-  const refreshTokenJti = createRefreshTokenJti(
-    shardConfig.currentGeneration,
-    shardIndex,
-    randomPart
-  );
+  // Create Refresh Token with canonical family registration
+  let refreshTokenJti: string;
+  let cibaFamilyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+  if (c.env.REFRESH_TOKEN_ROTATOR) {
+    cibaFamilyResult = await createRefreshTokenFamily(c.env, {
+      userId: metadata.sub!,
+      clientId: metadata.client_id,
+      scope: metadata.scope || '',
+      ttl: refreshExpiresIn,
+      tenantId: getTenantIdFromContext(c),
+      resourceAudience: audienceResolution.audience,
+    });
+    refreshTokenJti = cibaFamilyResult.jti;
+    void recordTokenFamilyIndex(
+      authCtx.coreAdapter,
+      getTenantIdFromContext(c),
+      refreshTokenJti,
+      metadata.sub!,
+      metadata.client_id,
+      cibaFamilyResult.resolution.generation,
+      refreshExpiresIn
+    );
+  } else {
+    refreshTokenJti = `rt_${crypto.randomUUID()}`;
+  }
 
   const refreshTokenClaims = {
     iss: getRequestIssuer(c),
     sub: metadata.sub!,
-    aud: getRequestIssuer(c),
+    aud: metadata.client_id,
     client_id: metadata.client_id,
     scope: metadata.scope,
+    resource_aud: audienceResolution.audience,
   };
 
   const { token: refreshToken } = await createRefreshToken(
@@ -3275,21 +4113,28 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     refreshTokenJti // V3: Pass pre-generated sharded JTI
   );
 
-  // Store refresh token in KV
-  await storeRefreshToken(c.env, refreshTokenJti, {
-    client_id: metadata.client_id,
-    sub: metadata.sub!,
-    scope: metadata.scope,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + refreshExpiresIn,
-    jti: refreshTokenJti,
-  });
+  if (!cibaFamilyResult) {
+    await storeRefreshToken(
+      c.env,
+      refreshTokenJti,
+      {
+        client_id: metadata.client_id,
+        sub: metadata.sub!,
+        scope: metadata.scope,
+        resource_aud: audienceResolution.audience,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + refreshExpiresIn,
+        jti: refreshTokenJti,
+      },
+      getTenantIdFromContext(c)
+    );
+  }
 
   // Delete the CIBA request after successful token issuance
   await cibaRequestStore.fetch(
     new Request('https://internal/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ auth_req_id: authReqId }),
     })
   );
@@ -3354,29 +4199,31 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     expires_in: expiresIn,
     id_token: idToken,
     refresh_token: refreshToken,
+    ...buildRefreshTokenExpiryMetadata(nowEpoch, refreshExpiresIn),
     scope: metadata.scope,
   });
 }
 
 /**
- * Record token family in D1 for user-wide revocation support (V3 Sharding)
+ * Record token family in the relational index for user-wide revocation support (V3 Sharding)
  *
- * This is a non-blocking operation that records the token family in D1's
+ * This is a non-blocking operation that records the token family in the
  * user_token_families table. This enables efficient user-wide token revocation
  * by allowing the admin API to query all token families for a user.
  *
  * Note: This is fire-and-forget for performance. Failure does not affect
  * token issuance, but may impact user-wide revocation functionality.
  */
-async function recordTokenFamilyInD1(
-  env: Env,
+async function recordTokenFamilyIndex(
+  db: DatabaseSource | null | undefined,
+  tenantId: string,
   jti: string,
   userId: string,
   clientId: string,
   generation: number,
   ttlSeconds: number
 ): Promise<void> {
-  if (!env.DB) {
+  if (!db) {
     return;
   }
 
@@ -3384,16 +4231,17 @@ async function recordTokenFamilyInD1(
     const now = Date.now();
     const expiresAt = now + ttlSeconds * 1000;
 
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-    await coreAdapter.execute(
-      `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (jti) DO NOTHING`,
-      [jti, 'default', userId, clientId, generation, expiresAt]
-    );
+    await recordRefreshTokenFamilyIndex(db, {
+      jti,
+      tenantId,
+      userId,
+      clientId,
+      generation,
+      expiresAt,
+    });
   } catch (error) {
     // Log but don't fail - this is a non-critical operation
-    moduleLogger.error('Failed to record token family in D1', {}, error as Error);
+    moduleLogger.error('Failed to record token family in index', {}, error as Error);
   }
 }
 
@@ -3509,11 +4357,18 @@ async function handleTokenExchangeGrant(
 
   // Extract parameters
   const subject_token = formData.subject_token;
-  const subject_token_type = formData.subject_token_type as TokenTypeURN | undefined;
+  const subject_token_type = formData.subject_token_type as
+    | TokenTypeURN
+    | typeof ELEVATION_GRANT_SUBJECT_TOKEN_TYPE
+    | undefined;
   const actor_token = formData.actor_token;
   const actor_token_type = formData.actor_token_type as TokenTypeURN | undefined;
   const requestedScope = formData.scope;
   const requested_token_type = formData.requested_token_type as TokenTypeURN | undefined;
+  const isNativeSSORequest =
+    subject_token_type === 'urn:ietf:params:oauth:token-type:id_token' &&
+    (actor_token_type as string) === DEVICE_SECRET_TOKEN_TYPE;
+  const nativeSSOChannel = formData.channel;
 
   // RFC 8693 §2.1: Multiple resource/audience parameters are allowed
   // Helper to extract string array from raw body (handles single value or array)
@@ -3572,6 +4427,27 @@ async function handleTokenExchangeGrant(
     );
   }
 
+  if (isNativeSSORequest && !actor_token) {
+    return nativeSSOError(
+      c,
+      'invalid_request',
+      'actor_token is required for Native SSO token exchange',
+      'device_secret_missing',
+      400,
+      'reauthenticate',
+      {
+        audit: {
+          logger: log,
+          clientId: formData.client_id,
+          subjectTokenType: subject_token_type,
+          actorTokenType: actor_token_type as string | undefined,
+          requestedAudiences: audiences,
+          requestedResources: resources,
+        },
+      }
+    );
+  }
+
   // Validate subject_token_type against allowed types
   // Map short names to full URNs for comparison
   const tokenTypeMap: Record<string, string> = {
@@ -3579,12 +4455,16 @@ async function handleTokenExchangeGrant(
     jwt: 'urn:ietf:params:oauth:token-type:jwt',
     id_token: 'urn:ietf:params:oauth:token-type:id_token',
     refresh_token: 'urn:ietf:params:oauth:token-type:refresh_token',
+    elevation_grant: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
   };
 
   // Build allowed URNs from settings
   const allowedURNs = allowedSubjectTokenTypes
     .map((t) => tokenTypeMap[t] || t)
     .filter((t) => t !== undefined);
+  if (!allowedURNs.includes(ELEVATION_GRANT_SUBJECT_TOKEN_TYPE)) {
+    allowedURNs.push(ELEVATION_GRANT_SUBJECT_TOKEN_TYPE);
+  }
 
   // Check if subject_token_type is allowed
   if (!allowedURNs.includes(subject_token_type)) {
@@ -3672,8 +4552,52 @@ async function handleTokenExchangeGrant(
     );
   }
 
+  const isNativeSSOPublicClientAuthException =
+    isNativeSSORequest &&
+    !typedClient.client_secret_hash &&
+    typedClient.token_endpoint_auth_method === 'none';
+
   // 3. Authenticate client
-  if (
+  if (isNativeSSOPublicClientAuthException) {
+    if (nativeSSOChannel !== 'native') {
+      return oauthError(
+        c,
+        'invalid_request',
+        'Native SSO public client token exchange requires channel=native',
+        400
+      );
+    }
+
+    if (typedClient.application_type !== 'native') {
+      return oauthError(
+        c,
+        'unauthorized_client',
+        'Client is not eligible for Native SSO public client token exchange',
+        403
+      );
+    }
+
+    if (!extractDPoPProof(c.req.raw.headers)) {
+      return nativeSSOError(
+        c,
+        'invalid_request',
+        'DPoP proof is required for Native SSO token exchange',
+        'dpop_proof_missing',
+        400,
+        'reauthenticate',
+        {
+          audit: {
+            logger: log,
+            clientId: client_id,
+            subjectTokenType: subject_token_type,
+            actorTokenType: actor_token_type as string | undefined,
+            requestedAudiences: audiences,
+            requestedResources: resources,
+          },
+        }
+      );
+    }
+  } else if (
     client_assertion &&
     client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
   ) {
@@ -3725,9 +4649,8 @@ async function handleTokenExchangeGrant(
   // Detect Native SSO pattern: id_token + device-secret
   // Note: actor_token_type is compared as string because DEVICE_SECRET_TOKEN_TYPE
   // is a custom URN not included in the standard TokenTypeURN union
-  const isNativeSSORequest =
-    subject_token_type === 'urn:ietf:params:oauth:token-type:id_token' &&
-    (actor_token_type as string) === DEVICE_SECRET_TOKEN_TYPE;
+  const isElevationGrantSubjectTokenRequest =
+    subject_token_type === ELEVATION_GRANT_SUBJECT_TOKEN_TYPE;
 
   if (isNativeSSORequest) {
     return handleNativeSSOTokenExchange(
@@ -3737,7 +4660,8 @@ async function handleTokenExchangeGrant(
       client_id!,
       typedClient,
       requestedScope,
-      formData
+      resources,
+      audiences
     );
   }
 
@@ -3891,7 +4815,9 @@ async function handleTokenExchangeGrant(
     isIdJagTokenRequest
       ? Promise.resolve(null)
       : getVerificationKeyFromJWKS(c.env, getTenantIdFromContext(c), subjectTokenKid),
-    subjectJti ? isTokenRevoked(c.env, subjectJti) : Promise.resolve(false),
+    subjectJti
+      ? isTokenRevoked(c.env, subjectJti, getTenantIdFromContext(c))
+      : Promise.resolve(false),
   ]);
 
   // Verify subject_token signature (issuer only, aud validated separately)
@@ -3936,6 +4862,30 @@ async function handleTokenExchangeGrant(
       },
       400
     );
+  }
+
+  let elevationGrantContext: Awaited<ReturnType<typeof resolveElevationGrantSubjectToken>> | null =
+    null;
+  if (isElevationGrantSubjectTokenRequest) {
+    try {
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(
+        c.env,
+        'token-exchange-elevation-grant'
+      );
+      elevationGrantContext = await resolveElevationGrantSubjectToken({
+        adapter: adminAdapter,
+        tenantId,
+        requestingClientId: client_id!,
+        tokenPayload: subjectTokenPayload,
+      });
+    } catch (error) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        error instanceof Error ? error.message : 'Invalid elevation grant subject token',
+        400
+      );
+    }
   }
 
   // 7. Audience validation (Cross-tenant escalation prevention)
@@ -3996,7 +4946,13 @@ async function handleTokenExchangeGrant(
   // RFC 8693 allows multiple resource and audience parameters
   // aud claim will be an array combining both
   let targetAudiences: string[] = [];
-  let audienceSource: 'audience_param' | 'resource_param' | 'both' | 'default';
+  let audienceSource:
+    | 'audience_param'
+    | 'resource_param'
+    | 'both'
+    | 'default'
+    | 'client_default_resource'
+    | 'client_default_audience';
 
   // RFC 8693 §2.1: Each resource MUST be an absolute URI without fragment
   for (const res of resources) {
@@ -4045,8 +5001,18 @@ async function handleTokenExchangeGrant(
     targetAudiences = resources;
     audienceSource = 'resource_param';
   } else {
-    targetAudiences = [getRequestIssuer(c)];
-    audienceSource = 'default';
+    const clientDefault = getClientDefaultResource(typedClient);
+    if (!clientDefault.value || !clientDefault.source) {
+      return c.json(
+        {
+          error: 'invalid_target',
+          error_description: 'No target resource is configured for this access token',
+        },
+        400
+      );
+    }
+    targetAudiences = [clientDefault.value];
+    audienceSource = clientDefault.source;
   }
 
   // Validate against allowed resources (all targets must be allowed)
@@ -4156,7 +5122,7 @@ async function handleTokenExchangeGrant(
       // Check if actor_token is revoked
       const actorJti = actorTokenPayload.jti as string | undefined;
       if (actorJti) {
-        const actorRevoked = await isTokenRevoked(c.env, actorJti);
+        const actorRevoked = await isTokenRevoked(c.env, actorJti, getTenantIdFromContext(c));
         if (actorRevoked) {
           return c.json(
             {
@@ -4207,6 +5173,8 @@ async function handleTokenExchangeGrant(
         // Only nest 1 level (prevent infinite chains)
         ...(existingAct && !existingAct.act ? { act: existingAct } : {}),
       };
+    } else if (elevationGrantContext) {
+      actClaim = elevationGrantContext.actClaim;
     } else {
       // No actor_token, use client as actor
       actClaim = {
@@ -4252,16 +5220,15 @@ async function handleTokenExchangeGrant(
       c.req.url,
       undefined,
       c.env, // Pass full Env for region-aware sharding
-      client_id!
+      client_id!,
+      getTenantIdFromContext(c)
     );
     if (!dpopValidation.valid) {
-      return c.json(
-        {
-          error: 'invalid_dpop_proof',
-          error_description: dpopValidation.error_description || 'DPoP validation failed',
-        },
-        400
-      );
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+        clientMetadata: typedClient,
+        resources,
+      });
     }
     dpopJkt = dpopValidation.jkt;
   }
@@ -4285,6 +5252,20 @@ async function handleTokenExchangeGrant(
     client_id: client_id,
     // Add act claim for delegation
     ...(actClaim ? { act: actClaim } : {}),
+    ...(elevationGrantContext && {
+      authorization_details: elevationGrantContext.authorizationDetails,
+      authrim_elevation: {
+        grant_id: elevationGrantContext.grant.public_grant_id,
+        request_id: elevationGrantContext.request.public_request_id,
+        investigation_id: elevationGrantContext.request.investigation_id,
+        target_subject_type: elevationGrantContext.request.target_subject_type,
+        target_subject_id: elevationGrantContext.request.target_subject_id,
+        requester_subject_type: elevationGrantContext.request.requester_subject_type,
+        requester_subject_id: elevationGrantContext.request.requester_subject_id,
+        resource_class: elevationGrantContext.grant.resource_class,
+        redaction_level: elevationGrantContext.grant.redaction_level,
+      },
+    }),
     // Add resource URIs if specified (RFC 8693 §2.2.1)
     ...(resources.length > 0
       ? { resource: resources.length === 1 ? resources[0] : resources }
@@ -4310,7 +5291,7 @@ async function handleTokenExchangeGrant(
   let accessTokenJti: string;
   try {
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,
@@ -4348,6 +5329,7 @@ async function handleTokenExchangeGrant(
     delegationMode,
     hasActorToken: !!actor_token,
     actorSub: actClaim?.sub,
+    elevationGrantId: elevationGrantContext?.grant.public_grant_id,
     targetAudiences,
     audienceSource,
     resourceCount: resources.length,
@@ -4428,48 +5410,108 @@ async function handleNativeSSOTokenExchange(
   clientId: string,
   clientMetadata: ClientMetadata,
   requestedScope?: string,
-  formData?: Record<string, string>
+  requestedResources: string[] = [],
+  requestedAudiences: string[] = []
 ): Promise<Response> {
   const log = getLogger(c).module('TOKEN');
+  const tenantId = getTenantIdFromContext(c);
+  const failureAudit: NativeSSOFailureAuditContext = {
+    logger: log,
+    clientId,
+    subjectTokenType: 'urn:ietf:params:oauth:token-type:id_token',
+    actorTokenType: DEVICE_SECRET_TOKEN_TYPE,
+    requestedAudiences,
+    requestedResources,
+  };
+  const exchangeError = (
+    error: string,
+    errorDescription: string,
+    code: NativeSSOErrorDetailCode,
+    status: 400 | 401 | 403 | 429 | 500 = 400,
+    userAction: Phase1ErrorDetailUserAction = 'reauthenticate',
+    options: {
+      retryable?: boolean;
+      severity?: Phase1ErrorDetailSeverity;
+      retryAfterSeconds?: number;
+    } = {}
+  ) =>
+    nativeSSOError(c, error, errorDescription, code, status, userAction, {
+      ...options,
+      audit: failureAudit,
+    });
+  const exchangeInvalidGrant = (errorDescription: string, code: NativeSSOErrorDetailCode) =>
+    nativeSSOInvalidGrant(c, errorDescription, code, { audit: failureAudit });
+
   // 1. Check Native SSO feature flag
   const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
   if (!nativeSSOEnabled) {
-    return c.json(
-      {
-        error: 'unsupported_grant_type',
-        error_description: 'Native SSO is not enabled',
-      },
-      400
+    return exchangeError(
+      'unsupported_grant_type',
+      'Native SSO is not enabled',
+      'native_sso_disabled',
+      400,
+      'contact_support'
     );
   }
 
   // 2. Check if client supports Native SSO
-  const clientNativeSSOEnabled = Boolean(clientMetadata.native_sso_enabled);
+  const clientNativeSSOEnabled = isNativeSSOClientEnabled(clientMetadata);
   if (!clientNativeSSOEnabled) {
-    return c.json(
-      {
-        error: 'unauthorized_client',
-        error_description: 'Client is not configured for Native SSO',
-      },
-      403
+    return exchangeError(
+      'unauthorized_client',
+      'Client is not configured for Native SSO',
+      'native_sso_client_disabled',
+      403,
+      'contact_support'
     );
   }
 
-  // 3. Check if DB is available
-  if (!c.env.DB) {
-    log.error('D1 database not available', { action: 'NativeSSO' });
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Database not available',
-      },
-      500
-    );
-  }
-
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-  const deviceSecretRepo = new DeviceSecretRepository(coreAdapter);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+  const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const nativeSSOConfig = await getNativeSSOConfig(c.env);
+
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  if (!dpopProof) {
+    return exchangeError(
+      'invalid_request',
+      'DPoP proof is required for Native SSO token exchange',
+      'dpop_proof_missing'
+    );
+  }
+
+  const dpopValidation = await validateDPoPProof(
+    dpopProof,
+    c.req.method,
+    c.req.url,
+    undefined,
+    c.env,
+    clientId,
+    getTenantIdFromContext(c)
+  );
+  if (!dpopValidation.valid) {
+    if (dpopValidation.error === 'use_dpop_nonce') {
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+        clientMetadata,
+        resources: requestedResources,
+      });
+    }
+
+    return exchangeError(
+      'invalid_request',
+      dpopValidation.error_description || 'DPoP validation failed',
+      'dpop_proof_invalid'
+    );
+  }
+  const dpopJkt = dpopValidation.jkt;
+  if (!dpopJkt) {
+    return exchangeError(
+      'invalid_request',
+      'DPoP proof is missing key thumbprint',
+      'dpop_proof_invalid'
+    );
+  }
 
   // 3b. Rate limiting for brute-force protection (checked BEFORE validation)
   // Use client_id + IP as key since we don't know user_id until validation
@@ -4497,12 +5539,17 @@ async function handleNativeSSOTokenExchange(
             remainingSeconds,
             action: 'NativeSSO',
           });
-          return c.json(
+          return exchangeError(
+            'slow_down',
+            `Too many attempts. Please wait ${remainingSeconds} seconds.`,
+            'native_sso_rate_limited',
+            429,
+            'retry',
             {
-              error: 'slow_down',
-              error_description: `Too many attempts. Please wait ${remainingSeconds} seconds.`,
-            },
-            429
+              retryable: true,
+              severity: 'warning',
+              retryAfterSeconds: remainingSeconds,
+            }
           );
         }
 
@@ -4521,12 +5568,17 @@ async function handleNativeSSOTokenExchange(
             blockDurationMinutes,
             action: 'NativeSSO',
           });
-          return c.json(
+          return exchangeError(
+            'slow_down',
+            `Too many attempts. Please wait ${blockDurationMinutes} minutes.`,
+            'native_sso_rate_limited',
+            429,
+            'retry',
             {
-              error: 'slow_down',
-              error_description: `Too many attempts. Please wait ${blockDurationMinutes} minutes.`,
-            },
-            429
+              retryable: true,
+              severity: 'warning',
+              retryAfterSeconds: blockDurationMinutes * 60,
+            }
           );
         }
 
@@ -4550,6 +5602,7 @@ async function handleNativeSSOTokenExchange(
   // Pass maxUseCountPerSecret from config for replay attack prevention
   const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
     maxUseCount: nativeSSOConfig.maxUseCountPerSecret,
+    tenantId,
   });
   if (!deviceSecretValidation.ok) {
     const errorMessages: Record<string, string> = {
@@ -4559,12 +5612,9 @@ async function handleNativeSSOTokenExchange(
       mismatch: 'Device secret validation failed',
       limit_exceeded: 'Device secret use count exceeded - please re-authenticate',
     };
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: errorMessages[deviceSecretValidation.reason] || 'Invalid device secret',
-      },
-      400
+    return exchangeInvalidGrant(
+      errorMessages[deviceSecretValidation.reason] || 'Invalid device secret',
+      'device_secret_inactive'
     );
   }
 
@@ -4578,58 +5628,57 @@ async function handleNativeSSOTokenExchange(
     idTokenPayload = parseToken(idToken);
     idTokenHeader = parseTokenHeader(idToken);
   } catch {
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'Invalid ID token format',
-      },
-      400
-    );
+    return exchangeInvalidGrant('Invalid ID token format', 'id_token_malformed');
   }
 
   // Get verification key from header
   const idTokenKid = idTokenHeader.kid;
   if (!idTokenKid) {
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'ID token is missing kid in header',
-      },
-      400
-    );
+    return exchangeInvalidGrant('ID token is missing kid in header', 'id_token_signature_invalid');
+  }
+
+  const expectedIssuer = getRequestIssuer(c);
+  const idTokenIssuer = idTokenPayload.iss;
+  if (typeof idTokenIssuer !== 'string' || idTokenIssuer !== expectedIssuer) {
+    return exchangeInvalidGrant('ID token issuer is invalid', 'id_token_issuer_invalid');
+  }
+
+  const idTokenAudArray = normalizeNativeSSOAudience(idTokenPayload.aud);
+  if (!idTokenAudArray) {
+    return exchangeInvalidGrant('ID token audience is invalid', 'id_token_audience_invalid');
+  }
+  const idTokenClientId =
+    typeof idTokenPayload.client_id === 'string' ? idTokenPayload.client_id : undefined;
+  if (idTokenClientId && !idTokenAudArray.includes(idTokenClientId)) {
+    return exchangeInvalidGrant('ID token audience is invalid', 'id_token_audience_invalid');
+  }
+  if (!idTokenClientId && !idTokenAudArray.some((audience) => audience !== expectedIssuer)) {
+    return exchangeInvalidGrant('ID token audience is invalid', 'id_token_audience_invalid');
   }
 
   // Verify ID Token signature
   try {
-    const publicKey = await getVerificationKeyFromJWKS(
-      c.env,
-      getTenantIdFromContext(c),
-      idTokenKid
-    );
-    await verifyToken(idToken, publicKey, getRequestIssuer(c), {
+    const publicKey = await getVerificationKeyFromJWKS(c.env, tenantId, idTokenKid);
+    await verifyToken(idToken, publicKey, expectedIssuer, {
       skipAudienceCheck: true, // We validate audience ourselves
     });
   } catch (error) {
     log.error('ID token verification failed', { action: 'NativeSSO' }, error as Error);
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'ID token verification failed',
-      },
-      400
-    );
+    return exchangeInvalidGrant('ID token verification failed', 'id_token_signature_invalid');
   }
 
   // Check ID Token expiration
   const now = Math.floor(Date.now() / 1000);
-  const idTokenExp = idTokenPayload.exp as number | undefined;
-  if (idTokenExp && idTokenExp < now) {
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'ID token has expired',
-      },
-      400
+  const idTokenExp = typeof idTokenPayload.exp === 'number' ? idTokenPayload.exp : undefined;
+  if (!idTokenExp || idTokenExp + NATIVE_SSO_ID_TOKEN_CLOCK_SKEW_SECONDS < now) {
+    return exchangeInvalidGrant('ID token has expired', 'id_token_expired');
+  }
+
+  if (!(await validateNativeSSODeviceSecretBinding(idTokenPayload, deviceSecret))) {
+    log.warn('Device secret binding failed', { action: 'NativeSSO' });
+    return exchangeInvalidGrant(
+      'ID token device secret binding validation failed',
+      'device_secret_binding_failed'
     );
   }
 
@@ -4645,13 +5694,7 @@ async function handleNativeSSOTokenExchange(
         jtiPrefix: idTokenJti.substring(0, 8),
         action: 'NativeSSO',
       });
-      return c.json(
-        {
-          error: 'invalid_grant',
-          error_description: 'ID token has already been used',
-        },
-        400
-      );
+      return exchangeInvalidGrant('ID token has already been used', 'id_token_replayed');
     }
 
     // Store jti with expiration = remaining ID token lifetime + 60s buffer
@@ -4662,79 +5705,90 @@ async function handleNativeSSOTokenExchange(
 
   // 6. Verify user_id matches between ID Token and device_secret
   const idTokenSub = idTokenPayload.sub as string;
+  if (typeof idTokenSub !== 'string' || idTokenSub.length === 0) {
+    return exchangeInvalidGrant('ID token subject is missing', 'id_token_malformed');
+  }
+
   if (idTokenSub !== deviceSecretUserId) {
     log.warn('User mismatch', {
       idTokenSubPrefix: idTokenSub.substring(0, 8),
       deviceSecretUserPrefix: deviceSecretUserId.substring(0, 8),
       action: 'NativeSSO',
     });
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'ID token subject does not match device secret owner',
-      },
-      400
+    return exchangeInvalidGrant(
+      'ID token subject does not match device secret owner',
+      'device_secret_binding_failed'
     );
   }
 
   // 7. Cross-client SSO check
-  const idTokenAud = idTokenPayload.aud as string | string[] | undefined;
-  const idTokenAudArray = Array.isArray(idTokenAud) ? idTokenAud : idTokenAud ? [idTokenAud] : [];
-  const idTokenClientId = idTokenPayload.client_id as string | undefined;
   const originalClientId =
     idTokenClientId ||
     (idTokenAudArray[0] !== getRequestIssuer(c) ? idTokenAudArray[0] : undefined);
 
   const isSameClient = originalClientId === clientId || idTokenAudArray.includes(clientId);
 
+  let requestingTrustGroup: string | undefined;
+  let originalTrustGroup: string | undefined;
   if (!isSameClient) {
-    // Cross-client SSO security: ALL conditions must be met (AND logic, not OR)
-    // 1. Global setting must allow cross-client SSO
-    // 2. Requesting client (App B) must have cross-client SSO enabled
-    // 3. Original client (App A) must also allow its tokens to be used by other clients
-    const crossClientAllowed = nativeSSOConfig.allowCrossClientNativeSSO;
-    const requestingClientCrossClientAllowed = Boolean(
-      clientMetadata.allow_cross_client_native_sso
-    );
-
-    // Verify original client also allows cross-client SSO - request-level cached
-    let originalClientCrossClientAllowed = false;
+    requestingTrustGroup = getClientTrustGroup(clientMetadata);
     if (originalClientId) {
       try {
         const originalClientMetadata = await getClientCached(c, c.env, originalClientId);
-        originalClientCrossClientAllowed = Boolean(
-          originalClientMetadata?.allow_cross_client_native_sso
-        );
+        originalTrustGroup = getClientTrustGroup(originalClientMetadata as ClientMetadata | null);
       } catch {
         // If we can't verify original client, deny cross-client SSO for safety
         log.warn('Failed to verify original client', { originalClientId, action: 'NativeSSO' });
-        originalClientCrossClientAllowed = false;
+        originalTrustGroup = undefined;
       }
     }
 
-    // Security: Require ALL three conditions to allow cross-client SSO
-    if (
-      !crossClientAllowed ||
-      !requestingClientCrossClientAllowed ||
-      !originalClientCrossClientAllowed
-    ) {
+    const crossClientAllowed =
+      requestingTrustGroup !== undefined &&
+      originalTrustGroup !== undefined &&
+      timingSafeEqual(requestingTrustGroup, originalTrustGroup);
+
+    if (!crossClientAllowed) {
       log.warn('Cross-client SSO denied', {
         originalClientId,
         requestingClientId: clientId,
-        globalAllowed: crossClientAllowed,
-        requestingClientAllowed: requestingClientCrossClientAllowed,
-        originalClientAllowed: originalClientCrossClientAllowed,
+        requestingTrustGroupPresent: requestingTrustGroup !== undefined,
+        originalTrustGroupPresent: originalTrustGroup !== undefined,
         action: 'NativeSSO',
       });
-      return c.json(
-        {
-          error: 'invalid_target',
-          error_description: 'Cross-client Native SSO is not allowed',
-        },
-        403
+      return exchangeError(
+        'access_denied',
+        'Cross-client Native SSO is not allowed',
+        'trust_group_not_allowed',
+        403,
+        'contact_support'
       );
     }
   }
+
+  let issuedInstallation: DeviceInstallation | null = null;
+  try {
+    issuedInstallation = await deviceInstallationRepo.ensureForNativeSSOTokenExchange({
+      sourceDeviceSecret: validatedDeviceSecret,
+      targetClientId: clientId,
+      targetTrustGroupId: requestingTrustGroup ?? validatedDeviceSecret.trust_group_id,
+      sourceClientId: originalClientId ?? validatedDeviceSecret.client_id,
+      sameClient: isSameClient,
+      lastSeenAt: now * 1000,
+    });
+  } catch (error) {
+    log.error('Failed to resolve Native SSO installation', { action: 'NativeSSO' }, error as Error);
+    return exchangeError(
+      'server_error',
+      'Failed to resolve Native SSO installation',
+      'native_sso_server_error',
+      500,
+      'retry',
+      { retryable: true }
+    );
+  }
+  const issuedInstallationId =
+    issuedInstallation?.id ?? getDeviceSecretInstallationId(validatedDeviceSecret);
 
   // 8. Scope handling
   // Native SSO inherits scope from original ID Token or uses requested scope
@@ -4759,68 +5813,58 @@ async function handleNativeSSOTokenExchange(
 
   const grantedScope = grantedScopes.join(' ');
 
+  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
+    resource: requestedResources,
+    audience: requestedAudiences,
+  });
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
+  const accessTokenAudience = audienceResolution.audience;
+  const audienceSource = audienceResolution.source;
+
   // 9. Generate tokens
   let privateKey: CryptoKey;
   let keyId: string;
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+    const signingKey = await getSigningKeyFromKeyManager(c.env, tenantId);
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
     log.error('Failed to get signing key', { action: 'NativeSSO' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to load signing key',
-      },
-      500
+    return exchangeError(
+      'server_error',
+      'Failed to load signing key',
+      'native_sso_server_error',
+      500,
+      'retry',
+      { retryable: true }
     );
   }
 
   const configManager = createOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
-
-  // DPoP support
-  let dpopJkt: string | undefined;
-  const dpopProof = extractDPoPProof(c.req.raw.headers);
-  if (dpopProof) {
-    const dpopValidation = await validateDPoPProof(
-      dpopProof,
-      c.req.method,
-      c.req.url,
-      undefined,
-      c.env,
-      clientId
-    );
-    if (!dpopValidation.valid) {
-      return c.json(
-        {
-          error: 'invalid_dpop_proof',
-          error_description: dpopValidation.error_description || 'DPoP validation failed',
-        },
-        400
-      );
-    }
-    dpopJkt = dpopValidation.jkt;
-  }
+  const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
 
   // Build access token claims
   const accessTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
     sub: idTokenSub,
-    aud: getRequestIssuer(c),
+    aud: accessTokenAudience,
     scope: grantedScope,
     client_id: clientId,
     // Include session_id if available from device_secret
     ...(validatedDeviceSecret.session_id && { sid: validatedDeviceSecret.session_id }),
+    // Internal self-service device inventory binding.
+    authrim_installation_id: issuedInstallationId,
     // Add DPoP confirmation
-    ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+    cnf: { jkt: dpopJkt },
   };
 
   let accessToken: string;
   let accessTokenJti: string;
   try {
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,
@@ -4832,12 +5876,13 @@ async function handleNativeSSOTokenExchange(
     accessTokenJti = result.jti;
   } catch (error) {
     log.error('Failed to create access token', { action: 'NativeSSO' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create access token',
-      },
-      500
+    return exchangeError(
+      'server_error',
+      'Failed to create access token',
+      'native_sso_server_error',
+      500,
+      'retry',
+      { retryable: true }
     );
   }
 
@@ -4847,12 +5892,13 @@ async function handleNativeSSOTokenExchange(
     newAtHash = await calculateAtHash(accessToken);
   } catch (error) {
     log.error('Failed to calculate at_hash', { action: 'NativeSSO' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to calculate token hash',
-      },
-      500
+    return exchangeError(
+      'server_error',
+      'Failed to calculate token hash',
+      'native_sso_server_error',
+      500,
+      'retry',
+      { retryable: true }
     );
   }
 
@@ -4889,27 +5935,135 @@ async function handleNativeSSOTokenExchange(
     );
   } catch (error) {
     log.error('Failed to create ID token', { action: 'NativeSSO' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create ID token',
-      },
-      500
+    return exchangeError(
+      'server_error',
+      'Failed to create ID token',
+      'native_sso_server_error',
+      500,
+      'retry',
+      { retryable: true }
     );
   }
+
+  let refreshToken: string | undefined;
+  let refreshTokenJti: string | undefined;
+  let refreshTokenExpiryMetadata: RefreshTokenExpiryMetadata | undefined;
+  try {
+    const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
+
+    if (tenantProfile.allows_refresh_token !== false) {
+      const refreshTokenClaims = {
+        iss: getRequestIssuer(c),
+        sub: idTokenSub,
+        aud: clientId,
+        scope: grantedScope,
+        client_id: clientId,
+        resource_aud: accessTokenAudience,
+      };
+
+      let rtv: number | undefined;
+      let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
+
+      if (c.env.REFRESH_TOKEN_ROTATOR) {
+        familyResult = await createRefreshTokenFamily(c.env, {
+          userId: idTokenSub,
+          clientId,
+          scope: grantedScope,
+          ttl: refreshTokenExpiresIn,
+          tenantId,
+          resourceAudience: accessTokenAudience,
+        });
+        refreshTokenJti = familyResult.jti;
+        rtv = familyResult.family.version;
+        void recordTokenFamilyIndex(
+          authCtx.coreAdapter,
+          tenantId,
+          refreshTokenJti,
+          idTokenSub,
+          clientId,
+          familyResult.resolution.generation,
+          refreshTokenExpiresIn
+        );
+      } else {
+        refreshTokenJti = `rt_${crypto.randomUUID()}`;
+      }
+
+      const result = await createRefreshToken(
+        refreshTokenClaims,
+        privateKey,
+        keyId,
+        refreshTokenExpiresIn,
+        refreshTokenJti,
+        rtv
+      );
+      refreshToken = result.token;
+
+      if (!familyResult) {
+        await storeRefreshToken(
+          c.env,
+          refreshTokenJti,
+          {
+            jti: refreshTokenJti,
+            client_id: clientId,
+            sub: idTokenSub,
+            scope: grantedScope,
+            resource_aud: accessTokenAudience,
+            iat: now,
+            exp: now + refreshTokenExpiresIn,
+          },
+          tenantId
+        );
+      }
+
+      refreshTokenExpiryMetadata = buildRefreshTokenExpiryMetadata(now, refreshTokenExpiresIn);
+    }
+  } catch (error) {
+    log.error('Failed to create refresh token', { action: 'NativeSSO' }, error as Error);
+    return exchangeError(
+      'server_error',
+      'Failed to create refresh token',
+      'native_sso_server_error',
+      500,
+      'retry',
+      { retryable: true }
+    );
+  }
+
+  const installationMetadata = buildNativeSSOInstallationMetadataForIssuedInstallation(
+    issuedInstallation,
+    validatedDeviceSecret,
+    clientId,
+    clientMetadata,
+    now * 1000
+  );
 
   // 10. Audit log
   log.info('NativeSSO Token Exchange Success', {
     clientId,
+    subjectUserId: idTokenSub,
     userIdPrefix: idTokenSub.substring(0, 8),
     sessionIdPrefix: validatedDeviceSecret.session_id?.substring(0, 8),
     deviceSecretIdPrefix: validatedDeviceSecret.id.substring(0, 8),
     deviceSecretUseCount: validatedDeviceSecret.use_count + 1,
     isCrossClient: !isSameClient,
+    sourceClientId: originalClientId,
+    issuedClientId: clientId,
     originalClientId,
+    exchangeMode: isSameClient ? 'same_client' : 'cross_client',
     grantedScope,
-    tokenBinding: dpopProof ? 'DPoP' : 'Bearer',
+    tokenBinding: 'DPoP',
+    dpopJkt,
     accessTokenJti: accessTokenJti,
+    refreshTokenJti,
+    refreshTokenIssued: refreshToken !== undefined,
+    audienceSource,
+    requestedAudiences,
+    requestedResources,
+    targetAudiences: accessTokenAudience,
+    sourceInstallationId: getDeviceSecretInstallationId(validatedDeviceSecret),
+    issuedInstallationId: installationMetadata.installation_id,
+    ...(requestingTrustGroup && { trustGroupId: requestingTrustGroup }),
+    ...(originalTrustGroup && { originalTrustGroupId: originalTrustGroup }),
     action: 'NativeSSO',
   });
 
@@ -4919,7 +6073,7 @@ async function handleNativeSSOTokenExchange(
     Promise.all([
       publishEvent(c, {
         type: TOKEN_EVENTS.ACCESS_ISSUED,
-        tenantId: getTenantIdFromContext(c),
+        tenantId,
         data: {
           jti: accessTokenJti,
           clientId,
@@ -4934,7 +6088,7 @@ async function handleNativeSSOTokenExchange(
       // ID Token issued event (Native SSO token exchange)
       publishEvent(c, {
         type: TOKEN_EVENTS.ID_ISSUED,
-        tenantId: getTenantIdFromContext(c),
+        tenantId,
         data: {
           clientId,
           userId: idTokenSub,
@@ -4943,6 +6097,27 @@ async function handleNativeSSOTokenExchange(
       }).catch((err: unknown) => {
         log.error('Failed to publish token.id.issued event', { action: 'Event' }, err as Error);
       }),
+      ...(refreshToken && refreshTokenJti
+        ? [
+            publishEvent(c, {
+              type: TOKEN_EVENTS.REFRESH_ISSUED,
+              tenantId,
+              data: {
+                jti: refreshTokenJti,
+                clientId,
+                userId: idTokenSub,
+                scopes: grantedScope.split(' '),
+                grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
+              } satisfies TokenEventData,
+            }).catch((err: unknown) => {
+              log.error(
+                'Failed to publish token.refresh.issued event',
+                { action: 'Event' },
+                err as Error
+              );
+            }),
+          ]
+        : []),
     ])
   );
 
@@ -4950,14 +6125,17 @@ async function handleNativeSSOTokenExchange(
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
 
-  return c.json({
-    access_token: accessToken,
-    issued_token_type: 'urn:ietf:params:oauth:token-type:access_token' as TokenTypeURN,
-    token_type: dpopProof ? 'DPoP' : 'Bearer',
-    expires_in: expiresIn,
-    id_token: newIdToken,
-    scope: grantedScope,
-  });
+  return c.json(
+    buildNativeSSOTokenExchangeSuccessResponse({
+      accessToken,
+      expiresIn,
+      idToken: newIdToken,
+      installationMetadata,
+      refreshToken,
+      refreshTokenExpiryMetadata,
+      scope: grantedScope,
+    })
+  );
 }
 
 // =============================================================================
@@ -5001,6 +6179,11 @@ async function handleClientCredentialsGrant(
 
   const requestedScope = formData.scope;
   const requestedAudience = formData.audience;
+  const requestedResource = formData.resource;
+
+  if (requestedAudience === ADMIN_API_AUDIENCE) {
+    return handleAdminMachineClientCredentialsGrant(c, formData);
+  }
 
   // 1. Client Authentication (required for client_credentials)
   let client_id = formData.client_id;
@@ -5134,7 +6317,15 @@ async function handleClientCredentialsGrant(
   const grantedScope = grantedScopes.join(' ');
 
   // 5. Audience determination
-  const targetAudience = requestedAudience || typedClient.default_audience || getRequestIssuer(c);
+  const audienceResolution = resolveAccessTokenAudience(c, typedClient, {
+    resource: requestedResource,
+    audience: requestedAudience,
+    rejectResourceAudienceMismatch: true,
+  });
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
+  const targetAudience = audienceResolution.audience;
 
   // 6. Generate access token
   let privateKey: CryptoKey;
@@ -5165,15 +6356,15 @@ async function handleClientCredentialsGrant(
       c.req.url,
       undefined,
       c.env, // Pass full Env for region-aware sharding
-      client_id!
+      client_id!,
+      getTenantIdFromContext(c)
     );
     if (!dpopValidation.valid) {
-      return oauthError(
-        c,
-        'invalid_dpop_proof',
-        dpopValidation.error_description || 'DPoP validation failed',
-        400
-      );
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+        clientMetadata: typedClient,
+        resources: requestedResource ? [requestedResource] : undefined,
+      });
     }
     dpopJkt = dpopValidation.jkt;
   }
@@ -5194,7 +6385,7 @@ async function handleClientCredentialsGrant(
   let accessTokenJti: string = '';
   try {
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,
@@ -5240,5 +6431,269 @@ async function handleClientCredentialsGrant(
     token_type: dpopProof ? 'DPoP' : 'Bearer',
     expires_in: expiresIn,
     scope: grantedScope,
+  });
+}
+
+async function handleAdminMachineClientCredentialsGrant(
+  c: Context<{ Bindings: Env }>,
+  formData: Record<string, string>
+): Promise<Response> {
+  const log = getLogger(c).module('TOKEN');
+  const clientAssertion = formData.client_assertion;
+  const clientAssertionType = formData.client_assertion_type;
+
+  if (
+    !clientAssertion ||
+    clientAssertionType !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
+    return oauthError(
+      c,
+      'invalid_client',
+      'Admin API machine access requires private_key_jwt client authentication',
+      401
+    );
+  }
+
+  let assertionPayload: Record<string, unknown>;
+  try {
+    assertionPayload = parseToken(clientAssertion) as Record<string, unknown>;
+  } catch {
+    return oauthError(c, 'invalid_client', 'Invalid client_assertion format', 401);
+  }
+
+  const clientId =
+    formData.client_id ||
+    (typeof assertionPayload.sub === 'string' ? assertionPayload.sub : undefined);
+  const clientIdValidation = validateClientId(clientId);
+  if (!clientIdValidation.valid) {
+    return oauthError(c, 'invalid_client', clientIdValidation.error as string, 401);
+  }
+
+  const assertionHeader = parseTokenHeader(clientAssertion) as { kid?: unknown; alg?: unknown };
+  if (typeof assertionHeader.kid !== 'string' || assertionHeader.kid.length === 0) {
+    return oauthError(c, 'invalid_client', 'Admin machine client_assertion must include kid', 401);
+  }
+
+  const assertionJti = assertionPayload.jti;
+  const assertionIat = assertionPayload.iat;
+  const assertionExp = assertionPayload.exp;
+  if (typeof assertionHeader.alg !== 'string' || assertionHeader.alg.length === 0) {
+    return oauthError(c, 'invalid_client', 'Admin machine client_assertion must include alg', 401);
+  }
+  if (typeof assertionJti !== 'string' || assertionJti.length === 0) {
+    return oauthError(c, 'invalid_client', 'Admin machine client_assertion must include jti', 401);
+  }
+  if (typeof assertionIat !== 'number') {
+    return oauthError(c, 'invalid_client', 'Admin machine client_assertion must include iat', 401);
+  }
+  if (typeof assertionExp !== 'number') {
+    return oauthError(c, 'invalid_client', 'Admin machine client_assertion must include exp', 401);
+  }
+  const assertionNowEpoch = Math.floor(Date.now() / 1000);
+  if (assertionIat > assertionNowEpoch + 60 || assertionExp <= assertionIat) {
+    return oauthError(c, 'invalid_client', 'Admin machine client_assertion timing is invalid', 401);
+  }
+  if (assertionExp - assertionNowEpoch > 300) {
+    return oauthError(
+      c,
+      'invalid_client',
+      'Admin machine client_assertion lifetime must be 5 minutes or less',
+      401
+    );
+  }
+
+  let adminAdapter: DatabaseAdapter;
+  try {
+    adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-machine-access');
+  } catch (error) {
+    log.error('Admin machine database is not configured', {}, error as Error);
+    return oauthError(c, 'server_error', 'Admin machine access is not configured', 500);
+  }
+
+  const machineRepo = new AdminMachineAccessRepository(adminAdapter);
+  const machineCredential = await machineRepo.findCredentialForClient(
+    clientId!,
+    assertionHeader.kid
+  );
+  if (!machineCredential) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+
+  const { principal, credential } = machineCredential;
+  const nowMs = Date.now();
+  if (principal.status !== 'active') {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+  if (credential.status !== 'active' && credential.status !== 'rotating') {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+  if (assertionHeader.alg !== credential.alg) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+  if (credential.notBefore !== null && credential.notBefore > nowMs) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+  if (credential.expiresAt !== null && credential.expiresAt <= nowMs) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+
+  let publicJwk: Record<string, unknown>;
+  try {
+    publicJwk = JSON.parse(credential.publicJwkJson) as Record<string, unknown>;
+  } catch {
+    log.error('Admin machine credential has invalid public JWK JSON', {
+      credentialId: credential.id,
+    });
+    return oauthError(c, 'server_error', 'Admin machine credential is invalid', 500);
+  }
+
+  const assertionValidation = await validateClientAssertion(
+    clientAssertion,
+    `${getRequestIssuer(c)}/token`,
+    {
+      client_id: principal.clientId,
+      token_endpoint_auth_method: 'private_key_jwt',
+      jwks: {
+        keys: [
+          {
+            ...publicJwk,
+            kid: credential.kid,
+            alg: credential.alg,
+          },
+        ],
+      },
+    } as ClientMetadata,
+    { acceptIssuerIdAsAudience: false }
+  );
+  if (!assertionValidation.valid) {
+    log.error('Admin machine assertion validation failed', {
+      credentialId: credential.id,
+      errorDescription: assertionValidation.error_description,
+    });
+    return oauthError(c, 'invalid_client', 'Client assertion validation failed', 401);
+  }
+
+  const jtiRecorded = await machineRepo.recordAssertionJti({
+    clientId: principal.clientId,
+    credentialId: credential.id,
+    jti: assertionJti,
+    expiresAt: assertionExp,
+  });
+  if (!jtiRecorded) {
+    return oauthError(c, 'invalid_client', 'Client assertion replay detected', 401);
+  }
+
+  const requestedScopes = splitScope(formData.scope);
+  if (requestedScopes.length === 0) {
+    return oauthError(c, 'invalid_scope', 'Admin API machine access requires scope', 400);
+  }
+
+  const principalPermissions = await machineRepo.getPrincipalPermissions(principal.id);
+  const credentialPermissions = await machineRepo.getCredentialPermissions(credential.id);
+  const allowedPermissions =
+    credentialPermissions.length > 0
+      ? intersectMachinePermissionSets(principalPermissions, credentialPermissions)
+      : principalPermissions;
+  const grantedScopes = intersectScopes(requestedScopes, allowedPermissions);
+  if (grantedScopes.length === 0) {
+    return oauthError(
+      c,
+      'invalid_scope',
+      'None of the requested scopes are allowed for this machine client',
+      400
+    );
+  }
+
+  const principalTenantScopes = await machineRepo.getPrincipalTenantScopes(principal.id);
+  const credentialTenantScopes = await machineRepo.getCredentialTenantScopes(credential.id);
+  const tenantScope = resolveMachineTenantScope(principalTenantScopes, credentialTenantScopes);
+
+  let privateKey: CryptoKey;
+  let keyId: string;
+  try {
+    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+    privateKey = signingKey.privateKey;
+    keyId = signingKey.kid;
+  } catch (error) {
+    log.error('Failed to get signing key from KeyManager', {}, error as Error);
+    return oauthError(c, 'server_error', 'Failed to load signing key', 500);
+  }
+
+  const expiresIn = Math.min(principal.tokenTtlSeconds, 900);
+  const accessTokenClaims: Record<string, unknown> = {
+    iss: getRequestIssuer(c),
+    sub: `machine:${principal.id}`,
+    aud: ADMIN_API_AUDIENCE,
+    azp: principal.clientId,
+    client_id: principal.clientId,
+    actor_type: 'machine',
+    actor_id: principal.id,
+    credential_id: credential.id,
+    client_auth_method: 'private_key_jwt',
+    credential_strength: 'asymmetric_key',
+    sender_constrained: false,
+    scope: grantedScopes.join(' '),
+    tenant_scope: tenantScope,
+  };
+
+  let accessToken: string;
+  let accessTokenJti = '';
+  try {
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
+    const result = await createAccessToken(
+      accessTokenClaims as Parameters<typeof createAccessToken>[0],
+      privateKey,
+      keyId,
+      expiresIn,
+      regionAwareJti
+    );
+    accessToken = result.token;
+    accessTokenJti = result.jti;
+  } catch (error) {
+    log.error('Failed to create Admin API machine access token', {}, error as Error);
+    return oauthError(c, 'server_error', 'Failed to create access token', 500);
+  }
+
+  c.executionCtx.waitUntil(
+    machineRepo
+      .updateCredentialLastUsed({
+        credentialId: credential.id,
+        ipAddress: c.req.header('CF-Connecting-IP') ?? null,
+        userAgent: c.req.header('User-Agent') ?? null,
+      })
+      .catch((error: unknown) => {
+        log.warn('Failed to update Admin machine credential last-used metadata', {
+          credentialId: credential.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+  );
+
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  c.executionCtx.waitUntil(
+    publishEvent(c, {
+      type: TOKEN_EVENTS.ACCESS_ISSUED,
+      tenantId: getTenantIdFromContext(c),
+      data: {
+        jti: accessTokenJti,
+        clientId: principal.clientId,
+        userId: `machine:${principal.id}`,
+        scopes: grantedScopes,
+        expiresAt: nowEpoch + expiresIn,
+        grantType: 'client_credentials',
+      } satisfies TokenEventData,
+    }).catch((error: unknown) => {
+      log.error('Failed to publish token.access.issued event', {}, error as Error);
+    })
+  );
+
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+
+  return c.json({
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_in: expiresIn,
+    scope: grantedScopes.join(' '),
   });
 }

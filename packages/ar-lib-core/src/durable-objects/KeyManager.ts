@@ -23,9 +23,11 @@ import { generateECKeySet, type ECAlgorithm, type ECCurve } from '../utils/ec-ke
 import { timingSafeEqual } from '../utils/crypto';
 import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
+import { readRequestJsonWithLimit } from '../utils/body-limits';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('DO-KEY-MANAGER');
+const MAX_KEY_MANAGER_JSON_BODY_BYTES = 64 * 1024;
 
 /**
  * Stored key metadata (RSA)
@@ -58,6 +60,19 @@ interface StoredECKey {
   revokedReason?: string;
 }
 
+interface StoredSecretVersion {
+  kid: string;
+  value: string;
+  createdAt: number;
+}
+
+interface StoredSecret {
+  secretRef: string;
+  active: StoredSecretVersion;
+  previous?: StoredSecretVersion;
+  updatedAt: number;
+}
+
 /**
  * Key rotation configuration
  */
@@ -74,6 +89,7 @@ interface KeyManagerState {
   activeKeyId: string | null;
   config: KeyRotationConfig;
   lastRotation: number | null;
+  secrets?: Record<string, StoredSecret>;
 }
 
 /**
@@ -127,6 +143,7 @@ export class KeyManager extends DurableObject<Env> {
 
     if (stored) {
       this.keyManagerState = stored;
+      this.keyManagerState.secrets ??= {};
       // Run migration if needed
       await this.migrateIsActiveToStatus();
     } else {
@@ -139,6 +156,7 @@ export class KeyManager extends DurableObject<Env> {
           retentionPeriodDays: 30,
         },
         lastRotation: null,
+        secrets: {},
       };
 
       await this.saveState();
@@ -750,6 +768,14 @@ export class KeyManager extends DurableObject<Env> {
     return state.config;
   }
 
+  async getOrCreateSecretRpc(secretRef: string): Promise<StoredSecret> {
+    return this.getOrCreateSecret(secretRef);
+  }
+
+  async rotateSecretRpc(secretRef: string): Promise<StoredSecret> {
+    return this.rotateSecret(secretRef);
+  }
+
   /**
    * Generate a unique key ID using cryptographically secure random
    */
@@ -757,6 +783,51 @@ export class KeyManager extends DurableObject<Env> {
     const timestamp = Date.now();
     const random = crypto.randomUUID();
     return `key-${timestamp}-${random}`;
+  }
+
+  private async getOrCreateSecret(secretRef: string): Promise<StoredSecret> {
+    await this.initializeState();
+
+    const state = this.getState();
+    state.secrets ??= {};
+
+    const existing = state.secrets[secretRef];
+    if (existing) {
+      return existing;
+    }
+
+    const secret: StoredSecret = {
+      secretRef,
+      active: this.generateSecretVersion(),
+      updatedAt: Date.now(),
+    };
+    state.secrets[secretRef] = secret;
+    await this.saveState();
+    return secret;
+  }
+
+  private async rotateSecret(secretRef: string): Promise<StoredSecret> {
+    const current = await this.getOrCreateSecret(secretRef);
+    current.previous = current.active;
+    current.active = this.generateSecretVersion();
+    current.updatedAt = Date.now();
+    await this.saveState();
+    return current;
+  }
+
+  private generateSecretVersion(): StoredSecretVersion {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    const value = btoa(String.fromCharCode(...bytes))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    return {
+      kid: `secret-${Date.now()}-${crypto.randomUUID()}`,
+      value,
+      createdAt: Date.now(),
+    };
   }
 
   // ==========================================
@@ -1178,6 +1249,46 @@ export class KeyManager extends DurableObject<Env> {
         });
       }
 
+      const internalSecretPath = '/internal/secrets/';
+      if (path.startsWith(internalSecretPath)) {
+        const secretPath = path.slice(internalSecretPath.length);
+        const isSecretRotation = secretPath.endsWith('/rotate');
+        const secretRefPath = isSecretRotation
+          ? secretPath.slice(0, -'/rotate'.length)
+          : secretPath;
+        const secretRef = decodeURIComponent(secretRefPath);
+
+        if (request.method === 'GET' && !isSecretRotation) {
+          const secret = await this.getOrCreateSecret(secretRef);
+          return new Response(JSON.stringify(secret), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (request.method === 'POST' && isSecretRotation) {
+          const secret = await this.rotateSecret(secretRef);
+          return new Response(JSON.stringify(secret), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      const internalSecretMatch = path.match(/^\/internal\/secrets\/([^/]+)$/);
+      if (internalSecretMatch && request.method === 'GET') {
+        const secret = await this.getOrCreateSecret(decodeURIComponent(internalSecretMatch[1]));
+        return new Response(JSON.stringify(secret), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const internalSecretRotateMatch = path.match(/^\/internal\/secrets\/([^/]+)\/rotate$/);
+      if (internalSecretRotateMatch && request.method === 'POST') {
+        const secret = await this.rotateSecret(decodeURIComponent(internalSecretRotateMatch[1]));
+        return new Response(JSON.stringify(secret), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       // GET /should-rotate - Check if rotation is needed
       if (path === '/should-rotate' && request.method === 'GET') {
         const shouldRotate = await this.shouldRotateKeys();
@@ -1198,7 +1309,10 @@ export class KeyManager extends DurableObject<Env> {
 
       // POST /config - Update configuration
       if (path === '/config' && request.method === 'POST') {
-        const body = await request.json();
+        const body = await readRequestJsonWithLimit<Partial<KeyRotationConfig>>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
         await this.updateConfig(body as Partial<KeyRotationConfig>);
 
         return new Response(JSON.stringify({ success: true }), {
@@ -1208,7 +1322,10 @@ export class KeyManager extends DurableObject<Env> {
 
       // POST /emergency-rotate - Emergency key rotation (immediate revocation)
       if (path === '/emergency-rotate' && request.method === 'POST') {
-        const body = (await request.json()) as { reason: string };
+        const body = await readRequestJsonWithLimit<{ reason: string }>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
 
         if (!body.reason || body.reason.length < 10) {
           return new Response(
@@ -1426,7 +1543,10 @@ export class KeyManager extends DurableObject<Env> {
           );
         }
 
-        const body = (await request.json()) as { reason: string };
+        const body = await readRequestJsonWithLimit<{ reason: string }>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
 
         if (!body.reason || body.reason.length < 10) {
           return new Response(

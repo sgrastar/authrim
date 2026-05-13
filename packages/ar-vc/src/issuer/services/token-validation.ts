@@ -5,16 +5,22 @@
  */
 
 import type { Env } from '../../types';
-import {
-  decodeBase64Url,
-  safeFetch,
-  createLogger,
-  getDefaultTenantId,
-  buildIssuerUrl,
-} from '@authrim/ar-lib-core';
+import { decodeBase64Url, safeFetchJson, createLogger, buildIssuerUrl } from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
 
 const log = createLogger().module('VCI-TOKEN');
+
+const MAX_VCI_ACCESS_TOKEN_SIZE = 8 * 1024;
+const MAX_VCI_PROOF_JWT_SIZE = 8 * 1024;
+const MAX_EXTERNAL_JWKS_SIZE = 256 * 1024;
+
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
 
 export interface TokenValidationResult {
   valid: boolean;
@@ -62,7 +68,11 @@ interface VCIAccessTokenPayload {
   };
 }
 
-function resolveExpectedIssuerIdentifier(env: Env, expectedIssuerOverride?: string): string {
+function resolveExpectedIssuerIdentifier(
+  env: Env,
+  expectedTenantId: string,
+  expectedIssuerOverride?: string
+): string {
   if (expectedIssuerOverride) {
     return expectedIssuerOverride;
   }
@@ -74,7 +84,7 @@ function resolveExpectedIssuerIdentifier(env: Env, expectedIssuerOverride?: stri
   try {
     const issuerUrl = buildIssuerUrl(
       env as unknown as Parameters<typeof buildIssuerUrl>[0],
-      getDefaultTenantId(env as { DEFAULT_TENANT_ID?: string })
+      requireTenantId(expectedTenantId, 'VCI issuer identifier')
     );
     return `did:web:${new URL(issuerUrl).hostname}`;
   } catch {
@@ -88,9 +98,15 @@ function resolveExpectedIssuerIdentifier(env: Env, expectedIssuerOverride?: stri
 export async function validateVCIAccessToken(
   env: Env,
   accessToken: string,
-  expectedIssuerOverride?: string
+  expectedIssuerOverride: string | undefined,
+  expectedTenantId: string
 ): Promise<TokenValidationResult> {
   try {
+    const normalizedExpectedTenantId = requireTenantId(expectedTenantId, 'VCI access token');
+    if (accessToken.length > MAX_VCI_ACCESS_TOKEN_SIZE) {
+      return { valid: false, error: 'Token too large' };
+    }
+
     // Parse JWT without full verification (signature verification should use JWKS)
     const parts = accessToken.split('.');
     if (parts.length !== 3) {
@@ -114,7 +130,11 @@ export async function validateVCIAccessToken(
     }
 
     // Validate issuer (should be our auth server)
-    const expectedIssuer = resolveExpectedIssuerIdentifier(env, expectedIssuerOverride);
+    const expectedIssuer = resolveExpectedIssuerIdentifier(
+      env,
+      normalizedExpectedTenantId,
+      expectedIssuerOverride
+    );
     // Allow issuer to be URL or DID format
     if (!payload.iss || (!payload.iss.includes('authrim') && payload.iss !== expectedIssuer)) {
       return { valid: false, error: 'Invalid issuer' };
@@ -134,12 +154,18 @@ export async function validateVCIAccessToken(
     }
 
     // Verify signature using JWKS
+    const tenantId = payload.tenant_id;
+    if (!tenantId || tenantId !== normalizedExpectedTenantId) {
+      return { valid: false, error: 'Invalid tenant' };
+    }
+
     const signatureValid = await verifyTokenSignature(
       env,
       accessToken,
       header,
       payload,
-      expectedIssuer
+      expectedIssuer,
+      tenantId
     );
     if (!signatureValid) {
       return { valid: false, error: 'Invalid signature' };
@@ -151,7 +177,7 @@ export async function validateVCIAccessToken(
     return {
       valid: true,
       userId: payload.sub,
-      tenantId: payload.tenant_id || getDefaultTenantId(env as { DEFAULT_TENANT_ID?: string }),
+      tenantId,
       vct: payload.credential_configuration_id,
       claims: payload.credential_claims || {},
       holderBinding,
@@ -174,15 +200,21 @@ async function verifyTokenSignature(
   token: string,
   header: JWTHeader,
   payload: VCIAccessTokenPayload,
-  expectedIssuerOverride?: string
+  expectedIssuerOverride: string | undefined,
+  expectedTenantId: string
 ): Promise<boolean> {
   try {
     // For self-issued tokens (iss = our identifier), use our own keys
-    const expectedIssuer = resolveExpectedIssuerIdentifier(env, expectedIssuerOverride);
+    const expectedIssuer = resolveExpectedIssuerIdentifier(
+      env,
+      expectedTenantId,
+      expectedIssuerOverride
+    );
 
     if (payload.iss === expectedIssuer || payload.iss.includes('authrim')) {
       // Get public key from KeyManager
-      const doId = env.KEY_MANAGER.idFromName('issuer-keys');
+      const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
+      const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
       const stub = env.KEY_MANAGER.get(doId);
 
       const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
@@ -211,20 +243,12 @@ async function verifyTokenSignature(
     // For external issuers, fetch their JWKS
     // This is a simplified implementation - production should cache JWKS
     const jwksUri = `${payload.iss}/.well-known/jwks.json`;
-    // Use safeFetch for SSRF protection, timeout, and response size limits
-    const jwksResponse = await safeFetch(jwksUri, {
+    const jwks = await safeFetchJson<{ keys: Array<{ kid?: string; kty: string }> }>(jwksUri, {
       headers: { Accept: 'application/json' },
       requireHttps: true,
       timeoutMs: 10000,
-      maxResponseSize: 256 * 1024, // 256 KB max for JWKS
+      maxResponseSize: MAX_EXTERNAL_JWKS_SIZE,
     });
-    if (!jwksResponse.ok) {
-      log.error('Failed to fetch external JWKS', {});
-      return false;
-    }
-
-    const text = await jwksResponse.text();
-    const jwks = JSON.parse(text) as { keys: Array<{ kid?: string; kty: string }> };
     const key = header.kid ? jwks.keys.find((k) => k.kid === header.kid) : jwks.keys[0];
 
     if (!key) {
@@ -257,6 +281,10 @@ export async function validateProofOfPossession(
   }
 
   try {
+    if (proof.jwt.length > MAX_VCI_PROOF_JWT_SIZE) {
+      return { valid: false, error: 'Proof too large' };
+    }
+
     const parts = proof.jwt.split('.');
     if (parts.length !== 3) {
       return { valid: false, error: 'Invalid JWT format' };

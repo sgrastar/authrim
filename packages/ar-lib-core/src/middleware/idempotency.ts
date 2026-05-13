@@ -23,11 +23,11 @@
  */
 
 import type { Context, MiddlewareHandler, Next } from 'hono';
+import { createAuthContextFromHono } from '../context/hono-context';
 import type { Env } from '../types/env';
-import type { DatabaseAdapter, ExecuteResult } from '../db/adapter';
-import { D1Adapter } from '../db/adapters/d1-adapter';
+import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from '../utils/logger';
-import { getDefaultTenantId } from '../utils/issuer';
+import { createPhase1ErrorDetails } from '../errors/details';
 
 const log = createLogger().module('IDEMPOTENCY');
 
@@ -57,6 +57,8 @@ export interface IdempotencyConfig {
   ttlSeconds?: number;
   /** Fields to redact from cached responses (PII protection) */
   redactFields?: string[];
+  /** Whether Idempotency-Key is required instead of best-effort */
+  required?: boolean;
 }
 
 /**
@@ -76,6 +78,10 @@ const DEFAULT_REDACT_FIELDS = [
  * Default TTL: 24 hours
  */
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
+}
 
 /**
  * Generate SHA-256 hash of request body
@@ -136,14 +142,16 @@ function getActorId(c: Context<{ Bindings: Env }>): string {
  * Get tenant ID from context
  */
 function getTenantId(c: Context<{ Bindings: Env }>): string {
-  // Try to get from tenantId context (set by tenant middleware)
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const tenantId = (c as any).get('tenantId') as string | null;
-    return tenantId ?? getDefaultTenantId(c.env);
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    if (tenantId) {
+      return tenantId;
+    }
   } catch {
-    return getDefaultTenantId(c.env);
+    // Fall through to the fail-closed error below.
   }
+  throw new Error('Idempotency middleware requires tenant context');
 }
 
 /**
@@ -192,6 +200,15 @@ export function idempotencyMiddleware(
     // Check for Idempotency-Key header
     const idempotencyKey = c.req.header('Idempotency-Key');
     if (!idempotencyKey) {
+      if (config?.required) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Idempotency-Key header is required',
+          },
+          400
+        );
+      }
       // No idempotency key, proceed normally
       return next();
     }
@@ -207,7 +224,19 @@ export function idempotencyMiddleware(
       );
     }
 
-    const tenantId = getTenantId(c);
+    let tenantId: string;
+    try {
+      tenantId = getTenantId(c);
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Tenant context is required for idempotent requests',
+        },
+        400
+      );
+    }
+
     const actorId = getActorId(c);
     const method = c.req.method;
     const path = c.req.path;
@@ -229,7 +258,10 @@ export function idempotencyMiddleware(
     );
 
     // Create database adapter
-    const adapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const adapter: DatabaseAdapter = createAuthContextFromHono(
+      c as Context<{ Bindings: Env }>,
+      tenantId
+    ).coreAdapter;
 
     try {
       // Check for existing idempotency key
@@ -251,6 +283,7 @@ export function idempotencyMiddleware(
             {
               error: 'idempotency_conflict',
               error_description: 'Idempotency-Key already used with different request body',
+              error_details: createPhase1ErrorDetails('idempotency_conflict'),
             },
             409
           );
@@ -312,30 +345,50 @@ export function idempotencyMiddleware(
       const nowTs = Math.floor(Date.now() / 1000);
       const expiresAt = nowTs + ttlSeconds;
 
-      // Store the idempotency key and response
-      await adapter.execute(
-        `INSERT INTO idempotency_keys
-         (id, tenant_id, actor_id, method, path, resource_id, idempotency_key, body_hash, response_status, response_body, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           response_status = excluded.response_status,
-           response_body = excluded.response_body,
-           expires_at = excluded.expires_at`,
-        [
-          keyId,
-          tenantId,
-          actorId,
-          method,
-          normalizedPath,
-          resourceId,
-          idempotencyKey,
-          bodyHash,
-          responseStatus,
-          sanitizedBody,
-          nowTs,
-          expiresAt,
-        ]
+      // Store the idempotency key and response. A concurrent request may have
+      // inserted the key after the initial SELECT, so handle UNIQUE races
+      // explicitly instead of relying on dialect-specific upsert syntax.
+      const updateResult = await adapter.execute(
+        `UPDATE idempotency_keys
+         SET response_status = ?, response_body = ?, expires_at = ?
+         WHERE id = ?`,
+        [responseStatus, sanitizedBody, expiresAt, keyId]
       );
+
+      if (updateResult.rowsAffected === 0) {
+        try {
+          await adapter.execute(
+            `INSERT INTO idempotency_keys
+             (id, tenant_id, actor_id, method, path, resource_id, idempotency_key, body_hash, response_status, response_body, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              keyId,
+              tenantId,
+              actorId,
+              method,
+              normalizedPath,
+              resourceId,
+              idempotencyKey,
+              bodyHash,
+              responseStatus,
+              sanitizedBody,
+              nowTs,
+              expiresAt,
+            ]
+          );
+        } catch (error) {
+          if (!isUniqueConstraintError(error)) {
+            throw error;
+          }
+
+          await adapter.execute(
+            `UPDATE idempotency_keys
+             SET response_status = ?, response_body = ?, expires_at = ?
+             WHERE id = ?`,
+            [responseStatus, sanitizedBody, expiresAt, keyId]
+          );
+        }
+      }
 
       log.debug('Stored idempotency key', { keyId, status: responseStatus, expiresAt });
     } catch (error) {
@@ -349,15 +402,23 @@ export function idempotencyMiddleware(
   };
 }
 
+export function requiredIdempotencyMiddleware(
+  config?: Omit<IdempotencyConfig, 'required'>
+): MiddlewareHandler<{ Bindings: Env }> {
+  return idempotencyMiddleware({
+    ...config,
+    required: true,
+  });
+}
+
 /**
  * Cleanup expired idempotency keys
  * Should be called periodically by a scheduled worker
  */
 export async function cleanupExpiredIdempotencyKeys(adapter: DatabaseAdapter): Promise<number> {
   const nowTs = Math.floor(Date.now() / 1000);
-  const result: ExecuteResult = await adapter.execute(
-    'DELETE FROM idempotency_keys WHERE expires_at < ?',
-    [nowTs]
-  );
+  const result = await adapter.execute('DELETE FROM idempotency_keys WHERE expires_at < ?', [
+    nowTs,
+  ]);
   return result.rowsAffected;
 }

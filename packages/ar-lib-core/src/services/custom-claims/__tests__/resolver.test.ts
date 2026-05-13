@@ -39,17 +39,25 @@ function makeSchema(overrides: Partial<CustomClaimSchema> = {}): CustomClaimSche
 }
 
 const mockDb = {
-  prepare: vi.fn().mockReturnThis(),
-  bind: vi.fn().mockReturnThis(),
-  all: vi.fn(),
-  first: vi.fn(),
+  query: vi.fn(),
+  queryOne: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn().mockReturnValue('mock'),
+  close: vi.fn(),
 };
 
 const mockPiiDb = {
-  prepare: vi.fn().mockReturnThis(),
-  bind: vi.fn().mockReturnThis(),
-  all: vi.fn(),
-  first: vi.fn(),
+  query: vi.fn(),
+  queryOne: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn().mockReturnValue('mock'),
+  close: vi.fn(),
 };
 
 const mockKV = {
@@ -72,8 +80,8 @@ function createResolver(maxClaimsPerTarget = 50): CustomClaimSchemaResolver {
 describe('CustomClaimSchemaResolver', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.all.mockResolvedValue({ results: [] });
-    mockPiiDb.first.mockResolvedValue(null);
+    mockDb.query.mockResolvedValue([]);
+    mockPiiDb.queryOne.mockResolvedValue(null);
     mockKV.get.mockResolvedValue(null);
   });
 
@@ -99,9 +107,7 @@ describe('CustomClaimSchemaResolver', () => {
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
     // DataFetcher: non-PII data
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'dept', field_value: 'engineering' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'dept', field_value: 'engineering' }]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');
@@ -119,9 +125,7 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'dept', field_value: 'sales' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'dept', field_value: 'sales' }]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'userinfo');
@@ -137,9 +141,7 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'dept', field_value: 'engineering' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'dept', field_value: 'engineering' }]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'vc');
@@ -189,9 +191,7 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'role', field_value: 'admin' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'role', field_value: 'admin' }]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');
@@ -211,9 +211,7 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'email', field_value: 'test@example.com' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'email', field_value: 'test@example.com' }]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');
@@ -233,9 +231,7 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'employee_number', field_value: '42' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'employee_number', field_value: '42' }]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');
@@ -255,9 +251,7 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockDb.all.mockResolvedValue({
-      results: [{ field_name: 'bad_number', field_value: 'not-a-number' }],
-    });
+    mockDb.query.mockResolvedValue([{ field_name: 'bad_number', field_value: 'not-a-number' }]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');
@@ -277,9 +271,9 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockDb.all.mockResolvedValue({
-      results: schemas.map((s) => ({ field_name: s.field_key, field_value: 'val' })),
-    });
+    mockDb.query.mockResolvedValue(
+      schemas.map((s) => ({ field_name: s.field_key, field_value: 'val' }))
+    );
 
     const resolver = createResolver(3); // max 3
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');
@@ -298,7 +292,7 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockPiiDb.first.mockResolvedValue({
+    mockPiiDb.queryOne.mockResolvedValue({
       custom_attributes_json: JSON.stringify({ ssn: '123' }),
     });
 
@@ -385,18 +379,16 @@ describe('CustomClaimSchemaResolver', () => {
       );
 
       // Non-PII data
-      mockDb.all.mockResolvedValue({
-        results: [
-          { field_name: 'department', field_value: 'engineering' },
-          { field_name: 'salary_grade', field_value: 'L5' },
-          { field_name: 'badge_level', field_value: 'gold' },
-          { field_name: 'email', field_value: 'custom@test.com' },
-          { field_name: 'bad_metric', field_value: 'NaN' },
-        ],
-      });
+      mockDb.query.mockResolvedValue([
+        { field_name: 'department', field_value: 'engineering' },
+        { field_name: 'salary_grade', field_value: 'L5' },
+        { field_name: 'badge_level', field_value: 'gold' },
+        { field_name: 'email', field_value: 'custom@test.com' },
+        { field_name: 'bad_metric', field_value: 'NaN' },
+      ]);
 
       // PII data
-      mockPiiDb.first.mockResolvedValue({
+      mockPiiDb.queryOne.mockResolvedValue({
         custom_attributes_json: JSON.stringify({ tax_id: 'TX-123' }),
       });
 

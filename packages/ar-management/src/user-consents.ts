@@ -49,7 +49,11 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
   const sid = getCookie(c, 'sid');
   if (sid) {
     try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid);
+      const { stub: sessionStore } = getSessionStoreBySessionId(
+        c.env,
+        sid,
+        getTenantIdFromContext(c)
+      );
       const response = await sessionStore.fetch(
         new Request(`https://do/session/${sid}`, { method: 'GET' })
       );
@@ -108,7 +112,7 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
               c.privacy_policy_version, c.tos_version, c.consent_version,
               oc.client_name, oc.logo_uri
        FROM oauth_client_consents c
-       LEFT JOIN oauth_clients oc ON c.client_id = oc.client_id
+       LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
        WHERE c.user_id = ? AND c.tenant_id = ?
        ORDER BY c.granted_at DESC`,
       [userId, tenantId]
@@ -209,8 +213,8 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
       granted_at: number;
     }>(
       `SELECT id, scope, granted_at FROM oauth_client_consents
-       WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
-      [userId, clientId, tenantId]
+       WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+      [tenantId, userId, clientId]
     );
 
     if (existingConsent.length === 0) {
@@ -229,8 +233,8 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     // Delete consent
     await authCtx.coreAdapter.execute(
-      'DELETE FROM oauth_client_consents WHERE user_id = ? AND client_id = ? AND tenant_id = ?',
-      [userId, clientId, tenantId]
+      'DELETE FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ? AND client_id = ?',
+      [tenantId, userId, clientId]
     );
 
     // Record in consent history
@@ -242,7 +246,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
     );
 
     // Invalidate consent cache
-    await invalidateConsentCache(c.env, userId, clientId);
+    await invalidateConsentCache(c.env, userId, tenantId, clientId);
 
     // Revoke related tokens if requested
     let accessTokensRevoked = 0;
@@ -256,7 +260,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
         // Add to revocation list (tokens will be rejected on next use)
         const revocationKey = `consent_revoked:${userId}:${clientId}`;
         const revocationTTL = 86400 * 90; // 90 days (typical refresh token lifetime)
-        await revokeToken(c.env, revocationKey, revocationTTL);
+        await revokeToken(c.env, revocationKey, revocationTTL, undefined, tenantId);
         // Estimate - actual count would require querying token stores
         refreshTokensRevoked = 1;
       } catch (error) {

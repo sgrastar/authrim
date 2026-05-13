@@ -40,7 +40,6 @@
 		revocationShards: ShardConfig | null;
 		sessionShards: ShardConfig | null;
 		challengeShards: ShardConfig | null;
-		flowStateShards: ShardConfig | null;
 		regionShards: RegionShardConfig | null;
 	}
 
@@ -93,7 +92,6 @@
 		revocationShards: null,
 		sessionShards: null,
 		challengeShards: null,
-		flowStateShards: null,
 		regionShards: null
 	});
 
@@ -154,7 +152,6 @@
 			revocation: scale.unifiedScale,
 			session: scale.unifiedScale,
 			challenge: scale.unifiedScale,
-			flowState: scale.unifiedScale,
 			// Client-based (coefficient applied)
 			par: clientBased,
 			deviceCode: clientBased,
@@ -205,13 +202,12 @@
 		loading = true;
 		error = '';
 		try {
-			const [code, revocation, session, challenge, flowState, region, refreshToken] =
+			const [code, revocation, session, challenge, region, refreshToken] =
 				await Promise.all([
 					adminInfrastructureAPI.getCodeShards(),
 					adminInfrastructureAPI.getRevocationShards(),
 					adminInfrastructureAPI.getSessionShards(),
 					adminInfrastructureAPI.getChallengeShards(),
-					adminInfrastructureAPI.getFlowStateShards(),
 					adminInfrastructureAPI.getRegionShards().catch(() => null),
 					adminInfrastructureAPI.getRefreshTokenSharding().catch(() => null)
 				]);
@@ -221,7 +217,6 @@
 				revocationShards: revocation,
 				sessionShards: session,
 				challengeShards: challenge,
-				flowStateShards: flowState,
 				regionShards: region,
 				refreshTokenShards: refreshToken?.config || null
 			};
@@ -361,7 +356,6 @@
 				adminInfrastructureAPI.updateRevocationShards(shards.revocation),
 				adminInfrastructureAPI.updateSessionShards(shards.session),
 				adminInfrastructureAPI.updateChallengeShards(shards.challenge),
-				adminInfrastructureAPI.updateFlowStateShards(shards.flowState),
 				adminInfrastructureAPI.updateRefreshTokenSharding(shards.refreshToken)
 			]);
 
@@ -490,10 +484,6 @@
 				<div class="rps-mini-item">
 					<span class="rps-mini-label">Revoke</span>
 					<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.revocation)}</span>
-				</div>
-				<div class="rps-mini-item">
-					<span class="rps-mini-label">Flow</span>
-					<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.flowState)}</span>
 				</div>
 			</div>
 		</section>
@@ -633,10 +623,6 @@
 							<div class="shard-item">
 								<span class="shard-label">Challenge</span>
 								<span class="shard-value">{calculatedShards.challenge}</span>
-							</div>
-							<div class="shard-item">
-								<span class="shard-label">FlowState</span>
-								<span class="shard-value">{calculatedShards.flowState}</span>
 							</div>
 							<div class="shard-item client-based">
 								<span class="shard-label">PAR</span>

@@ -18,12 +18,12 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   generateId,
   createLogger,
-  D1Adapter,
   AdminUserRepository,
   AdminPasskeyRepository,
   AdminSessionRepository,
   getDefaultTenantId,
   getAdminCookieSameSite,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 
 import {
@@ -95,7 +95,7 @@ adminSetupApiApp.post('/api/admin/setup-token/verify', async (c) => {
       );
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Find the setup token
     const tokenResult = await adminAdapter.queryOne<{
@@ -175,7 +175,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/options', async (c) => {
       );
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Verify token (same as above)
     const tokenResult = await adminAdapter.queryOne<{
@@ -315,7 +315,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
       return c.json({ error: 'invalid_token', error_description: 'Token mismatch' }, 401);
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Verify token is still valid
     const tokenResult = await adminAdapter.queryOne<{
@@ -476,7 +476,7 @@ adminSetupApiApp.post('/api/admin/setup-token/generate', async (c) => {
       }
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Verify admin user exists and hasn't completed passkey setup
     const adminUserRepo = new AdminUserRepository(adminAdapter);
@@ -640,7 +640,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
 
     // Find passkey by credential ID
     const credentialIdB64 = toBase64URLString(credential.id);
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
     const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
 
     const passkey = await adminPasskeyRepo.findByCredentialId(credentialIdB64);

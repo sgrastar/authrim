@@ -23,11 +23,38 @@ import { handleSPACS } from '../sp/acs';
 import { handleSPSLO } from '../sp/slo';
 import { handleSPMetadata } from '../sp/metadata';
 import { handleIdPMetadata } from '../idp/metadata';
+import { handleIdPSLO } from '../idp/slo';
+import { getSAMLMetadataSigningCertificates } from '../common/saml-signing-keys';
+
+const {
+  mockValidateCustomClaimWrite,
+  mockPersistCustomClaimWrite,
+  mockSyncUserLifecycleState,
+  mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockGetSigningKey,
+  mockGetSigningCertificate,
+  mockGetSPConfig,
+} = vi.hoisted(() => ({
+  mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
+  mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
+  mockSyncUserLifecycleState: vi.fn().mockResolvedValue({
+    lifecycleState: 'active',
+    missingRequiredFields: [],
+  }),
+  mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+  mockGetSigningKey: vi.fn().mockResolvedValue({
+    kid: 'mock-kid',
+    privateKeyPem: 'mock-key',
+  }),
+  mockGetSigningCertificate: vi.fn().mockResolvedValue('mock-cert'),
+  mockGetSPConfig: vi.fn(),
+}));
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
 vi.mock('../admin/providers', () => ({
   getIdPConfigByEntityId: (...args: any[]) => mockGetIdPConfigByEntityId(...args),
+  getSPConfig: (...args: any[]) => mockGetSPConfig(...args),
 }));
 
 vi.mock('../common/signature', () => ({
@@ -37,8 +64,8 @@ vi.mock('../common/signature', () => ({
 }));
 
 vi.mock('../common/key-utils', () => ({
-  getSigningKey: vi.fn().mockResolvedValue({ privateKeyPem: 'mock-key' }),
-  getSigningCertificate: vi.fn().mockResolvedValue('mock-cert'),
+  getSigningKey: (...args: any[]) => mockGetSigningKey(...args),
+  getSigningCertificate: (...args: any[]) => mockGetSigningCertificate(...args),
 }));
 
 // Mock structured logger and event publisher
@@ -56,6 +83,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }),
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    validateCustomClaimWrite: mockValidateCustomClaimWrite,
+    persistCustomClaimWrite: mockPersistCustomClaimWrite,
+    syncUserLifecycleState: mockSyncUserLifecycleState,
+    resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
     // Mock getSessionStoreForNewSession to avoid crypto dependency issues in tests
     getSessionStoreForNewSession: vi.fn().mockResolvedValue({
       stub: {
@@ -68,6 +110,25 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+) {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn(
+      async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
+    ),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    transaction: vi.fn(async (fn: any) => fn()),
+    batch: vi.fn().mockResolvedValue([]),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 // Helper to create base64-encoded SAML Response
 function createMockSAMLResponse(
   options: {
@@ -79,6 +140,7 @@ function createMockSAMLResponse(
     notOnOrAfter?: string;
     audience?: string;
     inResponseTo?: string;
+    attributes?: Array<{ name: string; value: string; friendlyName?: string }>;
   } = {}
 ): string {
   const {
@@ -90,6 +152,7 @@ function createMockSAMLResponse(
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
     audience = 'https://auth.example.com/saml/sp',
     inResponseTo = undefined,
+    attributes = [],
   } = options;
 
   // SubjectConfirmation NotOnOrAfter for bearer assertion (same as Conditions NotOnOrAfter)
@@ -128,6 +191,21 @@ function createMockSAMLResponse(
         <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef>
       </saml:AuthnContext>
     </saml:AuthnStatement>
+    ${
+      attributes.length > 0
+        ? `<saml:AttributeStatement>
+${attributes
+  .map(
+    (attribute) => `      <saml:Attribute Name="${attribute.name}"${
+      attribute.friendlyName ? ` FriendlyName="${attribute.friendlyName}"` : ''
+    }>
+        <saml:AttributeValue>${attribute.value}</saml:AttributeValue>
+      </saml:Attribute>`
+  )
+  .join('\n')}
+    </saml:AttributeStatement>`
+        : ''
+    }
   </saml:Assertion>
 </samlp:Response>`;
 
@@ -201,6 +279,32 @@ describe('SAML Integration', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
+    mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
+    mockSyncUserLifecycleState.mockReset().mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
+    });
+    mockGetSigningKey.mockReset().mockResolvedValue({
+      kid: 'mock-kid',
+      privateKeyPem: 'mock-key',
+    });
+    mockGetSigningCertificate.mockReset().mockResolvedValue('mock-cert');
+    mockGetSPConfig
+      .mockReset()
+      .mockImplementation(async (_env: unknown, _tenantId: string, entityId: string) => {
+        if (entityId === 'https://sp.example.com/saml') {
+          return {
+            entityId: 'https://sp.example.com/saml',
+            acsUrl: 'https://sp.example.com/saml/acs',
+            sloUrl: 'https://sp.example.com/saml/slo',
+            certificate: 'mock-sp-certificate',
+            signingKeyPolicy: {},
+            allowedBindings: ['post', 'redirect'],
+          };
+        }
+        return null;
+      });
     mockUsers = new Map();
 
     // Seed test user
@@ -211,25 +315,38 @@ describe('SAML Integration', () => {
     });
 
     // Mock IdP config
-    mockGetIdPConfigByEntityId.mockImplementation(async (_env: any, entityId: string) => {
-      if (entityId === 'https://idp.example.com') {
-        return {
-          entityId: 'https://idp.example.com',
-          ssoUrl: 'https://idp.example.com/sso',
-          sloUrl: 'https://idp.example.com/slo',
-          certificate: 'mock-certificate',
-          attributeMapping: {
-            email: 'email',
-            name: 'displayName',
-          },
-        };
+    mockGetIdPConfigByEntityId.mockImplementation(
+      async (_env: any, _tenantId: string, entityId: string) => {
+        if (entityId === 'https://idp.example.com') {
+          return {
+            entityId: 'https://idp.example.com',
+            ssoUrl: 'https://idp.example.com/sso',
+            sloUrl: 'https://idp.example.com/slo',
+            certificate: 'mock-certificate',
+            attributeMapping: {
+              email: 'email',
+              name: 'displayName',
+            },
+          };
+        }
+        return null;
       }
-      return null;
-    });
+    );
+    mockResolveUserStoreRuntimeSourcesFromEnv.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      coreDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    }));
 
     // Mock environment
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
       UI_URL: 'https://ui.example.com',
       DB: {
         prepare: vi.fn().mockImplementation((sql: string) => ({
@@ -299,13 +416,21 @@ describe('SAML Integration', () => {
       Object.assign(c, { env: mockEnv });
       return handleSPSLO(c as any);
     });
+    app.post('/saml/idp/slo', (c) => {
+      Object.assign(c, { env: mockEnv });
+      return handleIdPSLO(c as any);
+    });
   });
 
   /**
    * Helper to call ACS handler directly (for success path tests)
    * This bypasses Hono to ensure mocks are properly applied
    */
-  async function callACSDirectly(samlResponse: string, relayState?: string): Promise<Response> {
+  async function callACSDirectly(
+    samlResponse: string,
+    relayState?: string,
+    options: { tenantId?: string; headerTenantId?: string } = {}
+  ): Promise<Response> {
     const formData = new FormData();
     formData.append('SAMLResponse', samlResponse);
     if (relayState) {
@@ -317,16 +442,72 @@ describe('SAML Integration', () => {
       env: mockEnv,
       req: {
         formData: async () => formData,
-        header: vi.fn().mockReturnValue(undefined),
+        header: vi.fn((name: string) =>
+          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
+        ),
       },
       json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
-      get: vi.fn().mockReturnValue('default'),
+      get: vi.fn((key: string) =>
+        key === 'tenantId' ? (options.tenantId ?? 'default') : undefined
+      ),
       executionCtx: {
         waitUntil: vi.fn(),
       },
     };
 
     return handleSPACS(context as unknown as Parameters<typeof handleSPACS>[0]);
+  }
+
+  async function callMetadataDirectly(
+    handler: typeof handleSPMetadata | typeof handleIdPMetadata,
+    options: {
+      tenantId?: string;
+      headerTenantId?: string;
+      env?: Partial<Env>;
+    } = {}
+  ): Promise<Response> {
+    const context = {
+      env: {
+        ...mockEnv,
+        ...options.env,
+      },
+      req: {
+        header: vi.fn((name: string) =>
+          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
+        ),
+      },
+      get: vi.fn((key: string) => (key === 'tenantId' ? options.tenantId : undefined)),
+    };
+
+    return handler(context as unknown as Parameters<typeof handler>[0]);
+  }
+
+  async function callIdPSLODirectly(
+    samlResponse: string,
+    options: { tenantId?: string; headerTenantId?: string } = {}
+  ): Promise<Response> {
+    const formData = new FormData();
+    formData.append('SAMLResponse', samlResponse);
+
+    const context = {
+      env: mockEnv,
+      req: {
+        method: 'POST',
+        formData: async () => formData,
+        header: vi.fn((name: string) =>
+          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
+        ),
+      },
+      json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
+      get: vi.fn((key: string) =>
+        key === 'tenantId' ? (options.tenantId ?? 'default') : undefined
+      ),
+      executionCtx: {
+        waitUntil: vi.fn(),
+      },
+    };
+
+    return handleIdPSLO(context as unknown as Parameters<typeof handleIdPSLO>[0]);
   }
 
   describe('POST /saml/sp/acs - Assertion Consumer Service', () => {
@@ -469,6 +650,78 @@ describe('SAML Integration', () => {
       expect(res.status).toBeGreaterThanOrEqual(400);
     });
 
+    it('should reject strict InResponseTo when the stored request is only present in another tenant', async () => {
+      const tenantBStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
+      const tenantAStoreFetch = vi
+        .fn()
+        .mockResolvedValue(new Response('Not found', { status: 404 }));
+      const idFromName = vi.fn((name: string) => name);
+
+      (mockEnv as Partial<Env> & { SAML_STRICT_INRESPONSETO: string }).SAML_STRICT_INRESPONSETO =
+        'true';
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName,
+        get: vi.fn((id: string) => ({
+          fetch: id.includes('tenant:tenant-b:') ? tenantBStoreFetch : tenantAStoreFetch,
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: '_tenant_b_request',
+        }),
+        undefined,
+        { tenantId: 'tenant-a' }
+      );
+
+      expect(res.status).toBe(400);
+      expect(idFromName).toHaveBeenCalledWith(
+        'tenant:tenant-a:saml:sp:idp:https%3A%2F%2Fidp.example.com'
+      );
+      expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-b:'));
+      expect(tenantAStoreFetch).toHaveBeenCalledWith(
+        'https://saml-request-store/consume/_tenant_b_request',
+        { method: 'POST' }
+      );
+      expect(tenantBStoreFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject strict InResponseTo when tenant-a has the request but tenant-b context does not', async () => {
+      const tenantAStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
+      const tenantBStoreFetch = vi
+        .fn()
+        .mockResolvedValue(new Response('Not found', { status: 404 }));
+      const idFromName = vi.fn((name: string) => name);
+
+      (mockEnv as Partial<Env> & { SAML_STRICT_INRESPONSETO: string }).SAML_STRICT_INRESPONSETO =
+        'true';
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName,
+        get: vi.fn((id: string) => ({
+          fetch: id.includes('tenant:tenant-a:') ? tenantAStoreFetch : tenantBStoreFetch,
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: '_shared_request',
+        }),
+        undefined,
+        { tenantId: 'tenant-b' }
+      );
+
+      expect(res.status).toBe(400);
+      expect(idFromName).toHaveBeenCalledWith(
+        'tenant:tenant-b:saml:sp:idp:https%3A%2F%2Fidp.example.com'
+      );
+      expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-a:'));
+      expect(tenantBStoreFetch).toHaveBeenCalledWith(
+        'https://saml-request-store/consume/_shared_request',
+        { method: 'POST' }
+      );
+      expect(tenantAStoreFetch).not.toHaveBeenCalled();
+    });
+
     it('should redirect on successful SAML Response', async () => {
       // Use direct handler call to ensure mocks are properly applied
       const res = await callACSDirectly(
@@ -489,6 +742,105 @@ describe('SAML Integration', () => {
       // Without RelayState, should redirect to UI_URL
       expect(res.headers.get('Location')).toBe('https://ui.example.com/');
     });
+
+    it('should reject JIT provisioning when required custom claims are missing', async () => {
+      mockValidateCustomClaimWrite.mockResolvedValueOnce({
+        ok: false,
+        error: 'Department is required',
+        missingRequiredFields: [
+          {
+            fieldKey: 'department',
+            label: 'Department',
+            fieldType: 'string',
+          },
+        ],
+      });
+
+      mockEnv.DB_PII = {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('SELECT id FROM users_pii WHERE')) {
+              return null;
+            }
+            return null;
+          }),
+          run: vi.fn().mockResolvedValue({ success: true }),
+        })),
+      } as any;
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'new-user@example.com',
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockValidateCustomClaimWrite).toHaveBeenCalled();
+      const body = (await res.json()) as {
+        error: string;
+        error_description?: string;
+        missing_required_fields?: Array<{
+          field_key: string;
+          label: string;
+          field_type: string;
+        }>;
+      };
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('invalid');
+      expect(body.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
+
+    it('should map SAML attributes into custom claims during JIT provisioning', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+          department: 'custom_claims.department',
+        },
+      });
+
+      mockEnv.DB_PII = {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('SELECT id FROM users_pii WHERE')) {
+              return null;
+            }
+            return null;
+          }),
+          run: vi.fn().mockResolvedValue({ success: true }),
+        })),
+      } as any;
+
+      await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'new-user@example.com',
+          attributes: [{ name: 'department', value: 'Engineering' }],
+        })
+      );
+
+      expect(mockValidateCustomClaimWrite).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'default',
+          submitted: {
+            department: 'Engineering',
+          },
+        })
+      );
+      expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
+      expect(mockSyncUserLifecycleState).toHaveBeenCalled();
+    });
   });
 
   describe('Metadata endpoints', () => {
@@ -499,6 +851,8 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toContain('application/samlmetadata+xml');
+      expect(res.headers.get('ETag')).toMatch(/^W\/"saml-metadata-[a-z0-9]+"$/);
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
       const body = await res.text();
       expect(body).toContain('<md:EntityDescriptor');
       expect(body).toContain('xml:lang="en"');
@@ -512,11 +866,129 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toContain('application/samlmetadata+xml');
+      expect(res.headers.get('ETag')).toMatch(/^W\/"saml-metadata-[a-z0-9]+"$/);
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
       const body = await res.text();
       expect(body).toContain('<md:EntityDescriptor');
       expect(body).toContain('xml:lang="en"');
       expect(body).toContain('https://auth.example.com/saml/idp');
     });
+
+    it('should return 304 when metadata If-None-Match matches the current ETag', async () => {
+      const firstRes = await app.fetch(new Request('http://localhost/saml/sp/metadata'));
+      const etag = firstRes.headers.get('ETag');
+
+      const secondRes = await app.fetch(
+        new Request('http://localhost/saml/sp/metadata', {
+          headers: {
+            'If-None-Match': etag ?? '',
+          },
+        })
+      );
+
+      expect(etag).toMatch(/^W\/"saml-metadata-[a-z0-9]+"$/);
+      expect(secondRes.status).toBe(304);
+      expect(secondRes.headers.get('ETag')).toBe(etag);
+    });
+
+    it('should reject metadata when public X-Tenant-Id conflicts with resolved tenant context', async () => {
+      await expect(
+        callMetadataDirectly(handleIdPMetadata, {
+          tenantId: 'tenant-a',
+          headerTenantId: 'tenant-b',
+        })
+      ).rejects.toThrow('SAML tenant header conflicts with resolved tenant context');
+      await expect(
+        callMetadataDirectly(handleSPMetadata, {
+          tenantId: 'tenant-a',
+          headerTenantId: 'tenant-b',
+        })
+      ).rejects.toThrow('SAML tenant header conflicts with resolved tenant context');
+
+      expect(mockGetSigningKey).not.toHaveBeenCalled();
+      expect(mockGetSigningCertificate).not.toHaveBeenCalled();
+    });
+
+    it('should not use public X-Tenant-Id to select metadata signing keys', async () => {
+      const res = await callMetadataDirectly(handleSPMetadata, {
+        headerTenantId: 'tenant-b',
+        env: {
+          DEFAULT_TENANT_ID: 'tenant-default',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('https://auth.example.com/saml/sp');
+      expect(mockGetSigningKey).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-default',
+        expect.objectContaining({
+          keyRef: 'tenant:tenant-default:saml:sp:signing',
+        })
+      );
+      expect(mockGetSigningCertificate).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-default',
+        expect.objectContaining({
+          keyRef: 'tenant:tenant-default:saml:sp:signing',
+        })
+      );
+      expect(mockGetSigningKey).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-b',
+        expect.anything()
+      );
+      expect(mockGetSigningCertificate).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-b',
+        expect.anything()
+      );
+    });
+
+    it('should fail closed for IdP and SP metadata when BASE_DOMAIN is set without request context', async () => {
+      await expect(
+        callMetadataDirectly(handleIdPMetadata, {
+          env: {
+            BASE_DOMAIN: 'auth.example.com',
+            DEFAULT_TENANT_ID: 'tenant-default',
+          },
+        })
+      ).rejects.toThrow('multi-tenant runtime requires request context resolution');
+      await expect(
+        callMetadataDirectly(handleSPMetadata, {
+          env: {
+            BASE_DOMAIN: 'auth.example.com',
+            DEFAULT_TENANT_ID: 'tenant-default',
+          },
+        })
+      ).rejects.toThrow('multi-tenant runtime requires request context resolution');
+
+      expect(mockGetSigningKey).not.toHaveBeenCalled();
+      expect(mockGetSigningCertificate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['next', 'tenant:tenant-b:saml:idp:next:signing'],
+      ['backup', 'tenant:tenant-b:saml:idp:backup:signing'],
+    ] as const)(
+      'should reject metadata certificate publication when %s keyRef belongs to another tenant',
+      async (slot, keyRef) => {
+        await expect(
+          getSAMLMetadataSigningCertificates(mockEnv as Env, {
+            tenantId: 'tenant-a',
+            role: 'idp',
+            policy: {
+              metadataCertificatePublication:
+                slot === 'next' ? 'active_next' : 'active_next_backup',
+              [slot]: {
+                slot,
+                keyRef,
+              },
+            },
+          })
+        ).rejects.toThrow('SAML signing key reference must be tenant-scoped');
+      }
+    );
   });
 
   describe('POST /saml/sp/slo - Single Logout (POST Binding)', () => {
@@ -622,6 +1094,44 @@ describe('SAML Integration', () => {
       expect(html).toContain('form');
     });
 
+    it('should resolve user lookup from runtime storage sources when DB_PII is unset', async () => {
+      const runtimePiiAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            expect(params).toEqual(['default', 'user@example.com']);
+            return { id: 'user-001' };
+          }
+          return null;
+        },
+      });
+
+      mockEnv.DB_PII = undefined as any;
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:single-db',
+          kind: 'storage',
+          label: 'Single DB',
+          slices: {},
+        },
+        coreDb: mockEnv.DB,
+        piiDb: runtimePiiAdapter,
+      });
+
+      const formData = new FormData();
+      formData.append('SAMLRequest', createMockLogoutRequest());
+
+      const req = new Request('http://localhost/saml/sp/slo', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBe(200);
+      expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(mockEnv, 'default');
+      expect(runtimePiiAdapter.queryOne).toHaveBeenCalled();
+    });
+
     it('should process LogoutResponse and redirect', async () => {
       const formData = new FormData();
       formData.append('SAMLResponse', createMockLogoutResponse());
@@ -637,6 +1147,47 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(302);
       expect(res.headers.get('Location')).toBe('https://app.example.com/logged-out');
       expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0'); // Cookie cleared
+    });
+  });
+
+  describe('POST /saml/idp/slo - Single Logout (POST Binding)', () => {
+    it('should isolate outbound LogoutResponse correlation by tenant for the same requestId', async () => {
+      const requestId = '_shared_logout_request';
+      const tenantAKey = `saml:logout-request:tenant:tenant-a:id:${requestId}`;
+      const tenantBKey = `saml:logout-request:tenant:tenant-b:id:${requestId}`;
+      const stateStoreGet = vi.fn(async (key: string) => {
+        if (key === tenantAKey) {
+          return JSON.stringify({
+            version: 1,
+            tenantId: 'tenant-a',
+            spEntityId: 'https://sp.example.com/saml',
+            requestId,
+            issuedAt: Date.now() - 1000,
+            expiresAt: Date.now() + 120000,
+          });
+        }
+        return null;
+      });
+      const stateStoreDelete = vi.fn();
+
+      mockEnv.STATE_STORE = {
+        get: stateStoreGet,
+        delete: stateStoreDelete,
+        put: vi.fn(),
+      } as unknown as Env['STATE_STORE'];
+
+      await expect(
+        callIdPSLODirectly(
+          createMockLogoutResponse({
+            issuer: 'https://sp.example.com/saml',
+            inResponseTo: requestId,
+          }),
+          { tenantId: 'tenant-b' }
+        )
+      ).rejects.toThrow('LogoutResponse InResponseTo does not match an outbound LogoutRequest');
+      expect(stateStoreGet).toHaveBeenCalledWith(tenantBKey);
+      expect(stateStoreGet).not.toHaveBeenCalledWith(tenantAKey);
+      expect(stateStoreDelete).not.toHaveBeenCalled();
     });
   });
 

@@ -15,10 +15,37 @@ describe('getHtmlTemplate', () => {
 
     expect(html).toContain('<html lang="ja">');
     expect(html).toContain('最初のテナントID');
+    expect(html).toContain('テナントID');
+    expect(html).toContain(
+      'テナント識別子です。1〜63文字で、先頭は小文字の英字、使用できるのは小文字英字・数字・ハイフンです。URLに使わない場合でも内部設定に使います。'
+    );
     expect(html).toContain('テナントURLの見え方');
     expect(html).toContain('ID des ersten Tenants');
     expect(html).toContain("copyByLocale[locale.split('-')[0]]");
     expect(html).toContain('copyByLocale.en');
+  });
+
+  it('renders the tenant ID input editable by default', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain(
+      '<input type="text" id="tenant-name" placeholder="default" value="default"'
+    );
+    expect(html).toContain(
+      '<button type="button" id="tenant-name-random" class="btn-secondary">Generate Random</button>'
+    );
+    expect(html).toContain('function generateRandomTenantIdInBrowser()');
+    expect(html).toContain('start with a lowercase letter');
+    expect(html).toContain('1-63 characters');
+    expect(html).not.toContain(
+      '<input type="text" id="tenant-name" placeholder="default" value="default" disabled readonly'
+    );
   });
 
   it('renders the keys saved panel with dark-mode styles and a copy button', () => {

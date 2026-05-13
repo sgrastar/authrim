@@ -270,11 +270,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_policies_priority ON admin_policies(priorit
 -- =============================================================================
 
 -- Department attribute
-INSERT OR IGNORE INTO admin_attributes (
+INSERT INTO admin_attributes (
   id, tenant_id, name, display_name, description,
   attribute_type, allowed_values_json, is_required, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'attr_department',
   'default',
   'department',
@@ -284,16 +284,20 @@ INSERT OR IGNORE INTO admin_attributes (
   '["engineering", "security", "operations", "support", "management"]',
   0,
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_attributes
+  WHERE id = 'attr_department'
 );
 
 -- Clearance Level attribute
-INSERT OR IGNORE INTO admin_attributes (
+INSERT INTO admin_attributes (
   id, tenant_id, name, display_name, description,
   attribute_type, min_value, max_value, is_required, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'attr_clearance_level',
   'default',
   'clearance_level',
@@ -304,16 +308,20 @@ INSERT OR IGNORE INTO admin_attributes (
   5,
   0,
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_attributes
+  WHERE id = 'attr_clearance_level'
 );
 
 -- Location attribute
-INSERT OR IGNORE INTO admin_attributes (
+INSERT INTO admin_attributes (
   id, tenant_id, name, display_name, description,
   attribute_type, is_required, is_system,
   created_at, updated_at
-) VALUES (
+) SELECT
   'attr_location',
   'default',
   'location',
@@ -322,8 +330,12 @@ INSERT OR IGNORE INTO admin_attributes (
   'string',
   0,
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_attributes
+  WHERE id = 'attr_location'
 );
 
 -- =============================================================================

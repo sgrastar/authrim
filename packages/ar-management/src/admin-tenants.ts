@@ -15,16 +15,16 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
-  generateId,
   getDefaultTenantId,
   getLogger,
   getPrimaryTenantId,
   getTenantIdFromContext,
+  seedCustomClaimSchemas,
   // Contract provisioning
   TENANT_POLICY_PRESETS,
   type TenantContract,
@@ -178,8 +178,12 @@ interface TenantRow {
 // Helpers
 // =============================================================================
 
+function getDefaultTenantGuard(isDefault: boolean): string | null {
+  return isDefault ? 'default' : null;
+}
+
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  return createAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter;
 }
 
 function formatTenant(row: TenantRow) {
@@ -435,53 +439,38 @@ export async function seedDefaultClaimsForTenant(
   log: ReturnType<typeof getLogger>,
   options: { throwOnError?: boolean } = {}
 ): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
   const { throwOnError = false } = options;
 
   for (const claim of DEFAULT_CLAIM_SCHEMAS) {
     try {
-      const existing = await adapter.queryOne<{ id: string }>(
-        'SELECT id FROM custom_claim_schemas WHERE tenant_id = ? AND field_key = ?',
-        [tenantId, claim.field_key]
-      );
-      if (existing) continue;
-
-      await adapter.execute(
-        `INSERT INTO custom_claim_schemas (
-          id, tenant_id, field_key, display_label, field_type,
-          is_pii, is_required, is_active, is_system,
-          is_searchable, is_exportable, is_vc_claim,
-          include_in_id_token, include_in_userinfo, include_in_introspection,
-          scope_mode, display_order, schema_version, operation_status,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, 1, 'active', ?, ?)`,
-        [
-          generateId(),
-          tenantId,
-          claim.field_key,
-          claim.display_label,
-          claim.field_type,
-          claim.is_pii,
-          // is_searchable: 1 for identifier-like fields, 0 for URL/meta fields
-          [
-            'name',
-            'given_name',
-            'family_name',
-            'email',
-            'preferred_username',
-            'phone_number',
-          ].includes(claim.field_key)
-            ? 1
-            : 0,
-          // is_exportable: 1 for most fields, 0 for verified-status and meta fields
-          ['email_verified', 'phone_number_verified', 'updated_at'].includes(claim.field_key)
-            ? 0
-            : 1,
-          claim.display_order,
-          now,
-          now,
-        ]
-      );
+      await seedCustomClaimSchemas({
+        db: adapter,
+        tenantId,
+        schemas: [
+          {
+            field_key: claim.field_key,
+            display_label: claim.display_label,
+            field_type: claim.field_type,
+            is_pii: claim.is_pii,
+            is_searchable: [
+              'name',
+              'given_name',
+              'family_name',
+              'email',
+              'preferred_username',
+              'phone_number',
+            ].includes(claim.field_key)
+              ? 1
+              : 0,
+            is_exportable: ['email_verified', 'phone_number_verified', 'updated_at'].includes(
+              claim.field_key
+            )
+              ? 0
+              : 1,
+            display_order: claim.display_order,
+          },
+        ],
+      });
     } catch (err) {
       if (throwOnError) throw err;
       log
@@ -686,9 +675,12 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     const nowTs = Math.floor(Date.now() / 1000);
 
     await adapter.execute(
-      `INSERT INTO tenants (id, tenant_code, name, description, is_active, is_default, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
-      [id, tenantCode, name, description ?? null, nowTs, nowTs]
+      `INSERT INTO tenants (
+         id, tenant_code, name, description, is_active, is_default,
+         default_tenant_guard, created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+      [id, tenantCode, name, description ?? null, getDefaultTenantGuard(false), nowTs, nowTs]
     );
 
     const created = await adapter.queryOne<TenantRow>(
@@ -1030,16 +1022,16 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
 
     const nowTs = Math.floor(Date.now() / 1000);
 
-    // Atomic swap using D1 batch
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        'UPDATE tenants SET is_default = 0, updated_at = ? WHERE is_default = 1'
-      ).bind(nowTs),
-      c.env.DB.prepare('UPDATE tenants SET is_default = 1, updated_at = ? WHERE id = ?').bind(
-        nowTs,
-        id
-      ),
-    ]);
+    await adapter.transaction(async (tx) => {
+      await tx.execute(
+        'UPDATE tenants SET is_default = 0, default_tenant_guard = NULL, updated_at = ? WHERE is_default = 1',
+        [nowTs]
+      );
+      await tx.execute(
+        'UPDATE tenants SET is_default = 1, default_tenant_guard = ?, updated_at = ? WHERE id = ?',
+        [getDefaultTenantGuard(true), nowTs, id]
+      );
+    });
 
     const updated = await adapter.queryOne<TenantRow>(
       'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',

@@ -1,8 +1,13 @@
 const TENANT_INVENTORY_PATH =
-  /^\/api\/admin\/tenants(?:\/([^/]+)(?:\/(info|set-default|clone|invitations(?:\/[^/]+)?))?)?\/?$/;
+  /^\/api\/admin\/tenants(?:\/([^/]+)(?:\/(info|runtime-profiles|set-default|clone|invitations(?:\/[^/]+)?))?)?\/?$/;
 const TENANT_SCOPED_PATH_TENANT_ID = /^\/api\/admin\/tenants\/([^/]+)\/(settings|audit)(?:\/.*)?$/;
 const SETTINGS_METADATA_PATH =
   /^\/api\/admin\/settings\/(?:schema|diff|validate|meta(?:\/.*)?)\/?$/;
+const SETTINGS_PLATFORM_PATH =
+  /^\/api\/admin\/settings\/(?:ui-config|ui-routing|cache-mode(?:\/info)?)\/?$/;
+const RUNTIME_PROFILE_PLATFORM_PATH = /^\/api\/admin\/runtime-profiles(?:\/.*)?\/?$/;
+const ADMIN_PLATFORM_AUTH_PATH =
+  /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|me\/session|logout)\/?$/;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 export type TenantRequestClass =
@@ -16,7 +21,10 @@ export type TenantRequestClass =
 export function classifyTenantRequestPath(path?: string | null): TenantRequestClass {
   const normalizedPath = path || '/';
 
-  if (normalizedPath === '/api/auth/discovery') {
+  if (
+    normalizedPath === '/api/auth/discovery' ||
+    normalizedPath.startsWith('/api/auth/discovery/')
+  ) {
     return 'discovery_ui';
   }
 
@@ -35,7 +43,19 @@ export function classifyTenantRequestPath(path?: string | null): TenantRequestCl
     return 'platform_admin';
   }
 
+  if (ADMIN_PLATFORM_AUTH_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
   if (SETTINGS_METADATA_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  if (SETTINGS_PLATFORM_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  if (RUNTIME_PROFILE_PLATFORM_PATH.test(normalizedPath)) {
     return 'platform_admin';
   }
 

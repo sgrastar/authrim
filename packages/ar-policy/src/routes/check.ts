@@ -13,31 +13,32 @@
  * - Access Token: Authorization: Bearer <JWT> (JWT format detection)
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { KVNamespace, ExecutionContext, Queue } from '@cloudflare/workers-types';
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
 import {
-  createUnifiedCheckService,
-  createReBACService,
   parsePermission,
   createErrorResponse,
   AR_ERROR_CODES,
   createLogger,
-  createCheckAuditService,
-  getDefaultTenantId,
   type CheckApiRequest,
+} from '@authrim/ar-lib-core';
+import {
+  createUnifiedCheckService,
   type UnifiedCheckService,
-  type ReBACConfig,
-  type IStorageAdapter,
+} from '@authrim/ar-lib-core/services/unified-check-service';
+import {
+  createCheckAuditService,
   type CheckAuditService,
   type CheckAuditServiceConfig,
   type AuditMode,
-} from '@authrim/ar-lib-core';
+} from '@authrim/ar-lib-core/services/check-audit-service';
 
 const log = createLogger().module('CHECK-API');
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
+  resolveAuthorizedCheckTenantId,
   type CheckAuthResult,
 } from '../middleware/check-auth';
 import {
@@ -45,6 +46,7 @@ import {
   addRateLimitHeaders,
   type RateLimitContext,
 } from '../middleware/rate-limit';
+import { createPolicyReBACService, getPolicyCoreAdapter } from '../rebac-storage-adapter';
 
 // =============================================================================
 // Types
@@ -81,49 +83,6 @@ interface Env extends SharedEnv {
   CHECK_API_AUDIT_RETENTION_DAYS?: string;
   /** Queue for audit log processing (required for queue mode) */
   CHECK_AUDIT_QUEUE?: Queue;
-}
-
-// =============================================================================
-// Storage Adapter for ReBAC
-// =============================================================================
-
-class D1StorageAdapter implements IStorageAdapter {
-  constructor(private db: D1Database) {}
-
-  async get(_key: string): Promise<string | null> {
-    return null;
-  }
-
-  async set(_key: string, _value: string, _ttl?: number): Promise<void> {}
-
-  async delete(_key: string): Promise<void> {}
-
-  async query<T = unknown>(sql: string, params?: unknown[]): Promise<T[]> {
-    const stmt = this.db.prepare(sql);
-    if (params && params.length > 0) {
-      stmt.bind(...params);
-    }
-    const result = await stmt.all<T>();
-    return result.results ?? [];
-  }
-
-  async execute(
-    sql: string,
-    params?: unknown[]
-  ): Promise<{ success: boolean; meta: { changes: number; last_row_id: number } }> {
-    const stmt = this.db.prepare(sql);
-    if (params && params.length > 0) {
-      stmt.bind(...params);
-    }
-    const result = await stmt.run();
-    return {
-      success: result.success,
-      meta: {
-        changes: result.meta?.changes ?? 0,
-        last_row_id: result.meta?.last_row_id ?? 0,
-      },
-    };
-  }
 }
 
 // =============================================================================
@@ -408,38 +367,29 @@ async function getAuditConfig(env: Env): Promise<{
  * Create UnifiedCheckService instance with optional audit service
  */
 async function getCheckService(
-  env: Env,
+  c: Context<{ Bindings: Env }>,
   debugMode: boolean
 ): Promise<{ checkService: UnifiedCheckService; auditService?: CheckAuditService } | null> {
-  if (!env.DB) {
-    return null;
-  }
+  const env = c.env;
+  const coreAdapter = getPolicyCoreAdapter(c);
 
   // Create ReBAC service if cache KV is available
-  const rebacAdapter = new D1StorageAdapter(env.DB);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rebacConfig: ReBACConfig = {
-    cache_namespace: env.REBAC_CACHE_KV as any,
-    cache_ttl: 60,
-    max_depth: 5,
-  };
-  const rebacService = createReBACService(rebacAdapter, rebacConfig);
+  const rebacService = createPolicyReBACService(coreAdapter, env.REBAC_CACHE_KV);
 
   // Create audit service if enabled
   let auditService: CheckAuditService | undefined;
   const auditConfig = await getAuditConfig(env);
   if (auditConfig.enabled) {
-    auditService = createCheckAuditService(env.DB, auditConfig.config, env.CHECK_AUDIT_QUEUE);
+    auditService = createCheckAuditService(coreAdapter, auditConfig.config, env.CHECK_AUDIT_QUEUE);
   }
 
   const checkService = createUnifiedCheckService({
-    db: env.DB,
+    db: coreAdapter,
     cache: env.CHECK_CACHE_KV,
     rebacService,
     cacheTTL: 60,
     debugMode,
     auditService,
-    defaultTenantId: getDefaultTenantId(env),
   });
 
   return { checkService, auditService };
@@ -482,7 +432,7 @@ checkRoutes.get('/health', async (c) => {
  * {
  *   "subject_id": "user_123",
  *   "permission": "documents:doc_456:read"  // or { resource, id?, action }
- *   "tenant_id": "default",                 // optional
+ *   "tenant_id": "tenant-a",                // required for system secret; optional for tenant-bound credentials
  *   "resource_context": { ... },            // optional, for ABAC
  *   "rebac": { relation, object }           // optional, for ReBAC
  * }
@@ -503,11 +453,11 @@ checkRoutes.post('/', async (c) => {
   }
 
   // Authenticate request using dual auth (API Key + Access Token)
+  const coreAdapter = getPolicyCoreAdapter(c);
   const auth = await authenticateCheckApiRequest(c.req.header('Authorization'), {
-    db: c.env.DB,
+    db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -546,7 +496,7 @@ checkRoutes.post('/', async (c) => {
 
   // Get check service
   const debugMode = isDebugModeEnabled(c.env);
-  const services = await getCheckService(c.env, debugMode);
+  const services = await getCheckService(c, debugMode);
   if (!services) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -630,13 +580,18 @@ checkRoutes.post('/', async (c) => {
       }
     }
 
-    // Build full request
-    // Use tenant from auth context if not specified in request
+    const tenantId = resolveAuthorizedCheckTenantId(auth, body.tenant_id);
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // Build full request using the authenticated tenant unless a system secret
+    // explicitly targets another tenant.
     const request: CheckApiRequest = {
       subject_id: body.subject_id,
       subject_type: body.subject_type ?? 'user',
       permission: body.permission,
-      tenant_id: body.tenant_id ?? auth.tenantId ?? getDefaultTenantId(c.env),
+      tenant_id: tenantId,
       resource_context: body.resource_context,
       rebac: body.rebac,
     };
@@ -673,11 +628,11 @@ checkRoutes.post('/batch', async (c) => {
   }
 
   // Authenticate request using dual auth (API Key + Access Token)
+  const coreAdapter = getPolicyCoreAdapter(c);
   const auth = await authenticateCheckApiRequest(c.req.header('Authorization'), {
-    db: c.env.DB,
+    db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -716,7 +671,7 @@ checkRoutes.post('/batch', async (c) => {
 
   // Get check service
   const debugMode = isDebugModeEnabled(c.env);
-  const services = await getCheckService(c.env, debugMode);
+  const services = await getCheckService(c, debugMode);
   if (!services) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -795,13 +750,19 @@ checkRoutes.post('/batch', async (c) => {
       }
     }
 
-    // Apply default tenant_id (use auth context tenant if available)
-    const defaultTenantId = auth.tenantId ?? getDefaultTenantId(c.env);
-    const normalizedChecks = body.checks.map((check) => ({
-      ...check,
-      subject_type: check.subject_type ?? 'user',
-      tenant_id: check.tenant_id ?? defaultTenantId,
-    }));
+    // Apply default tenant_id and reject cross-tenant overrides for tenant-bound auth.
+    const normalizedChecks: CheckApiRequest[] = [];
+    for (const check of body.checks) {
+      const tenantId = resolveAuthorizedCheckTenantId(auth, check.tenant_id);
+      if (!tenantId) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
+      normalizedChecks.push({
+        ...check,
+        subject_type: check.subject_type ?? 'user',
+        tenant_id: tenantId,
+      });
+    }
 
     // Execute batch check with audit options
     const result = await services.checkService.batchCheck(

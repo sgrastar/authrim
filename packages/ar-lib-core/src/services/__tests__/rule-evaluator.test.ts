@@ -29,7 +29,7 @@ const mockKV = {
 };
 
 // Import after setting up mocks
-import { RuleEvaluator } from '../rule-evaluator';
+import { RuleEvaluator, createRuleEvaluator } from '../rule-evaluator';
 
 describe('Rule Evaluator Service', () => {
   let evaluator: RuleEvaluator;
@@ -39,6 +39,25 @@ describe('Rule Evaluator Service', () => {
     mockD1.all.mockResolvedValue({ results: [] });
     mockKV.get.mockResolvedValue(null);
     evaluator = new RuleEvaluator(mockD1 as unknown as D1Database);
+  });
+
+  describe('createRuleEvaluator Factory', () => {
+    it('accepts a DatabaseAdapter source', () => {
+      const mockAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue(null),
+        execute: vi.fn(),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      };
+
+      const evaluator = createRuleEvaluator(mockAdapter as never);
+
+      expect(evaluator).toBeInstanceOf(RuleEvaluator);
+    });
   });
 
   describe('Basic Rule Evaluation', () => {

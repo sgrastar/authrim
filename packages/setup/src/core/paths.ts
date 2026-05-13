@@ -67,6 +67,8 @@ export interface KeyFilePaths {
   privateKey: string;
   publicKey: string;
   rpTokenEncryptionKey: string;
+  objectEncryptionRootKey: string;
+  versionManagerSecret: string;
   adminApiSecret: string;
   keyManagerSecret: string;
   setupToken: string;
@@ -207,6 +209,8 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
     privateKey: join(keysDir, 'private.pem'),
     publicKey: join(keysDir, 'public.jwk.json'),
     rpTokenEncryptionKey: join(keysDir, 'rp_token_encryption_key.txt'),
+    objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
+    versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
     adminApiSecret: join(keysDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(keysDir, 'key_manager_secret.txt'),
     setupToken: join(keysDir, 'setup_token.txt'),

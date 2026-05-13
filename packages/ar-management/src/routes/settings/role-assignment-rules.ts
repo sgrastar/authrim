@@ -14,9 +14,7 @@
 
 import type { Context } from 'hono';
 import {
-  D1Adapter,
   getLogger,
-  type DatabaseAdapter,
   type RoleAssignmentRule,
   type RoleAssignmentRuleRow,
   type RoleAssignmentRuleInput,
@@ -30,7 +28,7 @@ import {
   generateEmailDomainHash,
   getEmailDomainHashSecret,
 } from '@authrim/ar-lib-core';
-import { resolveSettingsTenantId } from './tenant-resolver';
+import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
@@ -114,7 +112,7 @@ export async function createRoleAssignmentRule(c: Context) {
   const id = `rar_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if name already exists
@@ -214,7 +212,7 @@ export async function listRoleAssignmentRules(c: Context) {
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const isActive = c.req.query('is_active');
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     let whereClause = 'WHERE tenant_id = ?';
@@ -232,19 +230,15 @@ export async function listRoleAssignmentRules(c: Context) {
     );
     const total = countResult?.count ?? 0;
 
-    // Get rules using D1 directly since DatabaseAdapter doesn't have queryAll
-    const result = await c.env.DB.prepare(
+    const rows = await coreAdapter.query<RoleAssignmentRuleRow>(
       `SELECT * FROM role_assignment_rules ${whereClause}
        ORDER BY priority DESC, created_at DESC
-       LIMIT ? OFFSET ?`
-    )
-      .bind(...[...values, limit, offset])
-      .all();
-
-    const rules = ((result.results || []) as RoleAssignmentRuleRow[]).map(rowToRule);
+       LIMIT ? OFFSET ?`,
+      [...values, limit, offset]
+    );
 
     return c.json({
-      rules,
+      rules: rows.map(rowToRule),
       total,
       limit,
       offset,
@@ -270,7 +264,7 @@ export async function getRoleAssignmentRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const row = await coreAdapter.queryOne<RoleAssignmentRuleRow>(
@@ -311,7 +305,7 @@ export async function updateRoleAssignmentRule(c: Context) {
   const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<Partial<RoleAssignmentRuleInput>>();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if rule exists
@@ -433,7 +427,7 @@ export async function deleteRoleAssignmentRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const result = await coreAdapter.execute(
@@ -491,7 +485,7 @@ export async function testRoleAssignmentRule(c: Context) {
     };
   }>();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get rule
@@ -589,7 +583,7 @@ export async function evaluateRoleAssignmentRules(c: Context) {
     };
 
     // Create evaluator and run
-    const evaluator = createRuleEvaluator(c.env.DB, c.env.SETTINGS);
+    const evaluator = createRuleEvaluator(resolveSettingsCoreAdapter(c), c.env.SETTINGS);
     const result = await evaluator.evaluate(evalContext);
 
     return c.json({

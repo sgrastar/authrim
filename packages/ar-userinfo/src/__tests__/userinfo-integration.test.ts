@@ -35,8 +35,13 @@ const mockGetCachedUser = vi.hoisted(() => vi.fn());
 // Mock shared module
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = (await vi.importActual('@authrim/ar-lib-core')) as Record<string, unknown>;
+  const oidcClaims = (await vi.importActual('@authrim/ar-lib-core/utils/oidc-claims')) as Record<
+    string,
+    unknown
+  >;
   return {
     ...actual,
+    ...oidcClaims,
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getClient: mockGetClient,
     getClientCached: mockGetClientCached,
@@ -47,7 +52,13 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getCachedUser: mockGetCachedUser,
     rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
     RateLimitProfiles: { moderate: {} },
-    requestContextMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
+    requestContextMiddleware:
+      () =>
+      async (c: { set?: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
+        c.set?.('tenantId', 'tenant-a');
+        await next();
+      },
+    pluginContextMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
   };
 });
 
@@ -646,6 +657,88 @@ describe('UserInfo Integration Tests', () => {
       expect(body.sub).toBe('user-123');
       expect(body.email).toBeUndefined(); // NOT included - strict mode
     });
+
+    it('should include requested claims using claim-level policy without corresponding scope', async () => {
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid',
+          client_id: 'client-123',
+          claims: JSON.stringify({
+            userinfo: {
+              email: null,
+            },
+          }),
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue({
+        client_id: 'client-123',
+        claims_parameter_policy: { email: 'claims_allowed' },
+      } as any);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      const req = new Request('http://localhost/userinfo', {
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      const res = await app.fetch(req, mockEnv);
+      const body = (await res.json()) as { email?: string };
+
+      expect(res.status).toBe(200);
+      expect(body.email).toBe('test@example.com');
+    });
+
+    it('should apply protected ASC predefined transformed claims and SAO omit', async () => {
+      vi.mocked(getCachedUser).mockResolvedValue({
+        ...sampleUser,
+        birthdate: '2000-01-01',
+        address: JSON.stringify({ country: 'JP' }),
+      });
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid',
+          client_id: 'client-123',
+          claims_request_protected: true,
+          claims: JSON.stringify({
+            userinfo: {
+              '::age_over_18': { value: true },
+              address: null,
+            },
+            _asc: {
+              sao: {
+                userinfo: [
+                  {
+                    loc: '/address/postal_code',
+                    method: 'exists',
+                    else: 'omit',
+                    what: ['/address'],
+                  },
+                ],
+              },
+            },
+          }),
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue({
+        client_id: 'client-123',
+        claims_parameter_policy: { birthdate: 'claims_allowed', address: 'claims_allowed' },
+      } as any);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      const req = new Request('http://localhost/userinfo', {
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      const res = await app.fetch(req, mockEnv);
+      const body = (await res.json()) as { '::age_over_18'?: boolean; address?: unknown };
+
+      expect(res.status).toBe(200);
+      expect(body['::age_over_18']).toBe(true);
+      expect(body.address).toBeUndefined();
+    });
   });
 
   describe('Security Headers', () => {
@@ -686,6 +779,7 @@ describe('UserInfo Integration Tests', () => {
       const res = await app.fetch(req, mockEnv);
 
       expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
     });
   });
 

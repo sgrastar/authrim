@@ -19,7 +19,8 @@ import {
   getClientCached,
   timingSafeEqual,
   arrayBufferToBase64Url,
-  D1Adapter,
+  createAuthContextFromHono,
+  getRequestCache,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -32,6 +33,7 @@ import {
   // Cache key builder
   buildKVKey,
   getTenantIdFromContext,
+  validateWebhookUrl,
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
@@ -66,6 +68,33 @@ function validateSecureUri(uri: string, fieldName: string): string | null {
   } catch {
     return `${fieldName} must be a valid URI`;
   }
+}
+
+/**
+ * Validate server-to-server callback URIs that Authrim will actively fetch.
+ *
+ * These need the normal OIDC URI checks plus SSRF protection because they are
+ * outbound requests from Authrim infrastructure.
+ */
+function validateOutboundCallbackUri(uri: string, fieldName: string): string | null {
+  const result = validateWebhookUrl(uri, true);
+  if (result.valid) {
+    return null;
+  }
+
+  if (result.error === 'Webhook URL must use HTTPS') {
+    return `${fieldName} must use HTTPS (except localhost for development)`;
+  }
+
+  if (result.error === 'Fragment identifiers are not allowed in webhook URLs') {
+    return `${fieldName} must not contain fragment identifiers`;
+  }
+
+  if (result.error === 'Invalid URL format') {
+    return `${fieldName} must be a valid URI`;
+  }
+
+  return `${fieldName} cannot point to internal addresses`;
 }
 
 /**
@@ -158,6 +187,21 @@ function validateUpdateRequest(
     }
   }
 
+  // Validate jwks_uri if provided. This URI is fetched server-side later, so
+  // reject internal/metadata targets at configuration time as well.
+  if (body.jwks_uri !== undefined) {
+    if (typeof body.jwks_uri !== 'string') {
+      return {
+        error: 'invalid_client_metadata',
+        error_description: 'jwks_uri must be a string',
+      };
+    }
+    const error = validateOutboundCallbackUri(body.jwks_uri, 'jwks_uri');
+    if (error) {
+      return { error: 'invalid_client_metadata', error_description: error };
+    }
+  }
+
   // Validate redirect_uris if provided
   if (body.redirect_uris !== undefined) {
     const error = validateRedirectUris(body.redirect_uris);
@@ -174,7 +218,10 @@ function validateUpdateRequest(
         error_description: 'backchannel_logout_uri must be a string',
       };
     }
-    const error = validateSecureUri(body.backchannel_logout_uri, 'backchannel_logout_uri');
+    const error = validateOutboundCallbackUri(
+      body.backchannel_logout_uri,
+      'backchannel_logout_uri'
+    );
     if (error) {
       return { error: 'invalid_client_metadata', error_description: error };
     }
@@ -378,6 +425,13 @@ function buildClientResponse(
   return response;
 }
 
+function coalesceNullable<T>(
+  newValue: T | undefined,
+  existingValue: T | null | undefined
+): T | null {
+  return newValue ?? existingValue ?? null;
+}
+
 /**
  * GET /clients/:client_id - Read Client Configuration
  *
@@ -511,7 +565,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
     }
 
     // Update client in D1
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const now = Date.now();
 
     // Helper function to serialize array/object fields
@@ -560,33 +614,51 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
         `,
         [
           // Basic client info
-          body.client_name ?? (existingClient.client_name as string | null),
+          coalesceNullable(
+            body.client_name,
+            existingClient.client_name as string | null | undefined
+          ),
           serializeField(body.redirect_uris, existingClient.redirect_uris),
           serializeField(body.grant_types, existingClient.grant_types),
           serializeField(body.response_types, existingClient.response_types),
-          body.scope ?? (existingClient.scope as string | null),
+          coalesceNullable(body.scope, existingClient.scope as string | null | undefined),
           serializeField(body.contacts, existingClient.contacts),
           // URIs
-          body.logo_uri ?? (existingClient.logo_uri as string | null),
-          body.client_uri ?? (existingClient.client_uri as string | null),
-          body.policy_uri ?? (existingClient.policy_uri as string | null),
-          body.tos_uri ?? (existingClient.tos_uri as string | null),
-          body.jwks_uri ?? (existingClient.jwks_uri as string | null),
+          coalesceNullable(body.logo_uri, existingClient.logo_uri as string | null | undefined),
+          coalesceNullable(body.client_uri, existingClient.client_uri as string | null | undefined),
+          coalesceNullable(body.policy_uri, existingClient.policy_uri as string | null | undefined),
+          coalesceNullable(body.tos_uri, existingClient.tos_uri as string | null | undefined),
+          coalesceNullable(body.jwks_uri, existingClient.jwks_uri as string | null | undefined),
           // JWKS
           serializeField(body.jwks, existingClient.jwks),
           // Subject type
-          body.subject_type ?? (existingClient.subject_type as string | null),
-          body.sector_identifier_uri ?? (existingClient.sector_identifier_uri as string | null),
+          coalesceNullable(
+            body.subject_type,
+            existingClient.subject_type as string | null | undefined
+          ),
+          coalesceNullable(
+            body.sector_identifier_uri,
+            existingClient.sector_identifier_uri as string | null | undefined
+          ),
           // Algorithm preferences
-          body.id_token_signed_response_alg ??
-            (existingClient.id_token_signed_response_alg as string | null),
-          body.userinfo_signed_response_alg ??
-            (existingClient.userinfo_signed_response_alg as string | null),
-          body.request_object_signing_alg ??
-            (existingClient.request_object_signing_alg as string | null),
+          coalesceNullable(
+            body.id_token_signed_response_alg,
+            existingClient.id_token_signed_response_alg as string | null | undefined
+          ),
+          coalesceNullable(
+            body.userinfo_signed_response_alg,
+            existingClient.userinfo_signed_response_alg as string | null | undefined
+          ),
+          coalesceNullable(
+            body.request_object_signing_alg,
+            existingClient.request_object_signing_alg as string | null | undefined
+          ),
           // Logout URIs
           serializeField(body.post_logout_redirect_uris, existingClient.post_logout_redirect_uris),
-          body.backchannel_logout_uri ?? (existingClient.backchannel_logout_uri as string | null),
+          coalesceNullable(
+            body.backchannel_logout_uri,
+            existingClient.backchannel_logout_uri as string | null | undefined
+          ),
           body.backchannel_logout_session_required !== undefined
             ? body.backchannel_logout_session_required
               ? 1
@@ -594,7 +666,10 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
             : existingClient.backchannel_logout_session_required
               ? 1
               : 0,
-          body.frontchannel_logout_uri ?? (existingClient.frontchannel_logout_uri as string | null),
+          coalesceNullable(
+            body.frontchannel_logout_uri,
+            existingClient.frontchannel_logout_uri as string | null | undefined
+          ),
           body.frontchannel_logout_session_required !== undefined
             ? body.frontchannel_logout_session_required
               ? 1
@@ -603,8 +678,14 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
               ? 1
               : 0,
           // OIDC 3rd Party Initiated Login
-          body.initiate_login_uri ?? (existingClient.initiate_login_uri as string | null),
-          body.login_ui_url ?? (existingClient.login_ui_url as string | null),
+          coalesceNullable(
+            body.initiate_login_uri,
+            existingClient.initiate_login_uri as string | null | undefined
+          ),
+          coalesceNullable(
+            body.login_ui_url,
+            existingClient.login_ui_url as string | null | undefined
+          ),
           // Timestamp
           now,
           // WHERE clause
@@ -619,10 +700,11 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
 
     const log = getLogger(c).module('RFC7592');
     // Invalidate cache (use same key format as kv.ts getClient)
-    const cacheKey = buildKVKey('client', clientId);
+    const cacheKey = buildKVKey('client', clientId, tenantId);
     await c.env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
       log.warn('Failed to invalidate client cache', { action: 'config_update', clientId });
     });
+    getRequestCache(c).clients.delete(clientId);
 
     // Fetch updated client and return response
     const updatedClient = await getClientCached(c, c.env, clientId);
@@ -634,6 +716,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
 
     // Audit log (non-blocking) - client self-modification is security-relevant
     createAuditLog(c.env, {
+      tenantId,
       userId: clientId, // Client acting on its own behalf
       action: 'client.config.updated',
       resource: 'oauth_clients',
@@ -694,18 +777,22 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
     }
 
     // Delete client from D1
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-    await coreAdapter.execute('DELETE FROM oauth_clients WHERE client_id = ?', [clientId]);
+    const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    await coreAdapter.execute('DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [
+      tenantId,
+      clientId,
+    ]);
 
     const log = getLogger(c).module('RFC7592');
     // Invalidate cache (use same key format as kv.ts getClient)
-    const cacheKey = buildKVKey('client', clientId);
+    const cacheKey = buildKVKey('client', clientId, tenantId);
     await c.env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
       log.warn('Failed to invalidate client cache', { action: 'config_delete', clientId });
     });
 
     // Audit log (non-blocking) - client deletion is security-critical
     createAuditLog(c.env, {
+      tenantId,
       userId: clientId, // Client acting on its own behalf
       action: 'client.config.deleted',
       resource: 'oauth_clients',

@@ -31,13 +31,22 @@ let mockKeyData: {
 function createMockEnv(listData: typeof mockListData | null = mockListData): Env {
   return {
     DB: {
-      prepare: vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue(listData),
-        }),
-      }),
+      prepare: vi.fn().mockImplementation((sql: string) => ({
+        bind: vi.fn().mockImplementation((tenantId?: string) => ({
+          first: vi
+            .fn()
+            .mockResolvedValue(
+              sql.includes('FROM status_lists') && listData?.tenant_id === tenantId
+                ? listData
+                : null
+            ),
+        })),
+      })),
+      batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
-    AUTHRIM_CONFIG: {} as KVNamespace,
+    AUTHRIM_CONFIG: {
+      get: vi.fn().mockResolvedValue(null),
+    } as unknown as KVNamespace,
     VP_REQUEST_STORE: {} as DurableObjectNamespace,
     CREDENTIAL_OFFER_STORE: {} as DurableObjectNamespace,
     KEY_MANAGER: {
@@ -171,6 +180,18 @@ describe('Status List Routes', () => {
       expect(res.status).toBe(404);
       const body = (await res.json()) as { error: string };
       expect(body.error).toBe('not_found');
+    });
+
+    it('should return 404 for a status list owned by another tenant', async () => {
+      const res = await app.request(
+        '/vci/status/sl_r_tenant1_abc123',
+        {
+          headers: { host: 'other.issuer.example.com' },
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(404);
     });
 
     it('should include correct cache headers', async () => {

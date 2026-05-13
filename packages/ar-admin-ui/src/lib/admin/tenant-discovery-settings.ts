@@ -1,6 +1,7 @@
 export type EmailResolutionPolicy = 'exact_email_then_domain' | 'exact_email_only' | 'disabled';
 
 export interface DiscoveryMethodFormState {
+	emailEnabled: boolean;
 	emailResolutionPolicy: EmailResolutionPolicy;
 	tenantCodeEnabled: boolean;
 	tenantSlugEnabled: boolean;
@@ -46,7 +47,7 @@ export function resolveEmailResolutionPolicy(
 export function buildDiscoveryMethodsValue(state: DiscoveryMethodFormState): string {
 	const methods: string[] = [];
 
-	if (state.emailResolutionPolicy !== 'disabled') {
+	if (state.emailEnabled && state.emailResolutionPolicy !== 'disabled') {
 		methods.push('email_domain');
 	}
 
@@ -62,11 +63,13 @@ export function buildDiscoveryMethodsValue(state: DiscoveryMethodFormState): str
 }
 
 export function getMethodToggles(discoveryMethodsValue: unknown): {
+	emailEnabled: boolean;
 	tenantCodeEnabled: boolean;
 	tenantSlugEnabled: boolean;
 } {
 	const methods = parseDiscoveryMethods(discoveryMethodsValue);
 	return {
+		emailEnabled: methods.includes('email_domain'),
 		tenantCodeEnabled: methods.includes('tenant_code'),
 		tenantSlugEnabled: methods.includes('tenant_slug')
 	};

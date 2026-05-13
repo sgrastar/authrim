@@ -16,7 +16,7 @@ function createDiagnostics(
     zoneReadAvailable: true,
     accessibleZoneCount: 1,
     dnsReadAvailable: true,
-    pagesReadAvailable: true,
+    uiWorkersApiAvailable: true,
     ...overrides,
   };
 }
@@ -77,7 +77,7 @@ describe('deriveSetupCapabilityEstimate', () => {
         zoneReadAvailable: false,
         accessibleZoneCount: 0,
         dnsReadAvailable: false,
-        pagesReadAvailable: false,
+        uiWorkersApiAvailable: false,
       })
     );
 
@@ -109,7 +109,7 @@ describe('deriveSetupCapabilityStatuses', () => {
       createDiagnostics({
         zoneReadAvailable: false,
         dnsReadAvailable: false,
-        pagesReadAvailable: false,
+        uiWorkersApiAvailable: false,
       })
     );
 

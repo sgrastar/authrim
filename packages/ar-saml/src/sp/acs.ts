@@ -10,15 +10,20 @@ import type { Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig, SAMLAssertion } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
-  D1Adapter,
   type DatabaseAdapter,
+  ensureDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
-  getTenantIdFromContext,
   buildIssuerUrl,
+  buildSAMLRequestStoreInstanceName,
   getLogger,
   createLogger,
+  validateCustomClaimWrite,
+  persistCustomClaimWrite,
+  syncUserLifecycleState,
+  resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveUserStoreRuntimeSourcesFromEnv,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -28,14 +33,18 @@ import {
   // Audit Log
   createAuditLog,
 } from '@authrim/ar-lib-core';
+import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   parseXml,
   findElement,
   findElements,
   getAttribute,
   getTextContent,
-  base64Decode,
 } from '../common/xml-utils';
+import {
+  decodePostBindingMessage,
+  parsePostBindingFormDataWithLimit,
+} from '../common/message-limits';
 import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { verifyXmlSignature, hasSignature } from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
@@ -46,11 +55,12 @@ import { getIdPConfigByEntityId } from '../admin/providers';
 export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
-  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const issuerUrl = buildIssuerUrl(env, tenantId);
 
   try {
     // Parse POST data
-    const formData = await c.req.formData();
+    const formData = await parsePostBindingFormDataWithLimit(c.req);
     const samlResponse = formData.get('SAMLResponse') as string;
     const relayState = formData.get('RelayState') as string | null;
 
@@ -61,13 +71,13 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     }
 
     // Decode SAML Response
-    const responseXml = base64Decode(samlResponse);
+    const responseXml = decodePostBindingMessage(samlResponse, 'SAML Response');
 
     // Parse and validate Response
     const { issuer, assertion, inResponseTo } = parseAndValidateResponse(responseXml, issuerUrl);
 
     // Get IdP configuration
-    const idpConfig = await getIdPConfigByEntityId(env, issuer);
+    const idpConfig = await getIdPConfigByEntityId(env, tenantId, issuer);
     if (!idpConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
     }
@@ -113,7 +123,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
 
     // Validate InResponseTo (if we sent an AuthnRequest)
     if (inResponseTo) {
-      const isValidRequest = await validateInResponseTo(env, inResponseTo, issuer);
+      const isValidRequest = await validateInResponseTo(env, tenantId, inResponseTo, issuer);
       if (!isValidRequest) {
         const strictMode = await getStrictInResponseToSetting(env);
         if (strictMode) {
@@ -129,6 +139,8 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     if (assertion.conditions?.oneTimeUse) {
       const isFirstUse = await checkAndRecordOneTimeUse(
         env,
+        tenantId,
+        issuer,
         assertion.id,
         assertion.conditions.notOnOrAfter
       );
@@ -141,13 +153,12 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const userInfo = extractUserInfo(assertion, idpConfig);
 
     // Find or create user
-    const userId = await findOrCreateUser(env, userInfo, issuer, getTenantIdFromContext(c));
+    const userId = await findOrCreateUser(env, userInfo, issuer, tenantId);
 
     // Create session
-    const sessionId = await createSession(env, userId, getTenantIdFromContext(c));
+    const sessionId = await createSession(env, userId, tenantId);
 
     // Publish SAML authentication success event (non-blocking)
-    const tenantId = getTenantIdFromContext(c);
     publishEvent(c, {
       type: AUTH_EVENTS.SAML_SUCCEEDED,
       tenantId,
@@ -205,7 +216,6 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     let returnUrl = relayState;
     if (!returnUrl) {
       const uiConfig = await getUIConfig(env);
-      const tenantId = getTenantIdFromContext(c);
       returnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${buildIssuerUrl(env, tenantId)}/`;
     }
 
@@ -220,8 +230,23 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
   } catch (error) {
     log.error('ACS Error', {}, error as Error);
 
+    if (error instanceof SamlProvisioningError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: 'custom_claims', reason: error.message },
+        extensions: error.missingRequiredFields
+          ? {
+              missing_required_fields: error.missingRequiredFields.map((field) => ({
+                field_key: field.fieldKey,
+                label: field.label,
+                field_type: field.fieldType,
+              })),
+            }
+          : undefined,
+      });
+    }
+
     // Publish SAML authentication failure event (non-blocking)
-    const failureTenantId = getTenantIdFromContext(c);
+    const failureTenantId = resolveSAMLTenantIdFromContext(c);
     publishEvent(c, {
       type: AUTH_EVENTS.SAML_FAILED,
       tenantId: failureTenantId,
@@ -612,12 +637,14 @@ function validateSubjectConfirmation(
  */
 async function checkAndRecordOneTimeUse(
   env: Env,
+  tenantId: string,
+  idpEntityId: string,
   assertionId: string,
   notOnOrAfter?: string
 ): Promise<boolean> {
   // Use NONCE_STORE KV for tracking used assertions
   const kvStore = env.NONCE_STORE;
-  const key = `saml:assertion:${assertionId}`;
+  const key = buildOneTimeUseAssertionReplayKey(tenantId, idpEntityId, assertionId);
 
   // Check if assertion ID has been used
   const existingEntry = await kvStore.get(key);
@@ -644,6 +671,23 @@ async function checkAndRecordOneTimeUse(
   await kvStore.put(key, Date.now().toString(), { expirationTtl });
 
   return true;
+}
+
+function buildOneTimeUseAssertionReplayKey(
+  tenantId: string,
+  idpEntityId: string,
+  assertionId: string
+): string {
+  // Assertion IDs are issuer-controlled, so replay markers must be scoped by tenant and IdP.
+  return [
+    'saml:assertion',
+    'tenant',
+    encodeURIComponent(tenantId),
+    'idp',
+    encodeURIComponent(idpEntityId),
+    'id',
+    encodeURIComponent(assertionId),
+  ].join(':');
 }
 
 /**
@@ -678,17 +722,21 @@ async function getStrictInResponseToSetting(env: Env): Promise<boolean> {
  */
 async function validateInResponseTo(
   env: Env,
+  tenantId: string,
   inResponseTo: string,
   issuer: string
 ): Promise<boolean> {
   try {
-    const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(`issuer:${issuer}`);
+    const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
+      buildSAMLRequestStoreInstanceName(tenantId, 'sp', issuer)
+    );
     const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
     const response = await samlRequestStore.fetch(
-      new Request(`https://saml-request-store/consume/${inResponseTo}`, {
+      `https://saml-request-store/consume/${inResponseTo}`,
+      {
         method: 'POST',
-      })
+      }
     );
 
     return response.ok;
@@ -702,6 +750,21 @@ interface UserInfo {
   name?: string;
   nameId: string;
   attributes: Record<string, string[]>;
+  customClaims: Record<string, unknown>;
+}
+
+class SamlProvisioningError extends Error {
+  constructor(
+    message: string,
+    public readonly missingRequiredFields?: Array<{
+      fieldKey: string;
+      label: string;
+      fieldType: string;
+    }>
+  ) {
+    super(message);
+    this.name = 'SamlProvisioningError';
+  }
 }
 
 /**
@@ -711,6 +774,7 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
   const userInfo: UserInfo = {
     nameId: assertion.subject.nameId,
     attributes: {},
+    customClaims: {},
   };
 
   // Build attributes map
@@ -731,6 +795,11 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
         userInfo.email = values[0];
       } else if (oidcClaim === 'name') {
         userInfo.name = values[0];
+      } else if (oidcClaim.startsWith('custom_claims.') || oidcClaim.startsWith('custom_fields.')) {
+        const fieldKey = oidcClaim.includes('.') ? oidcClaim.slice(oidcClaim.indexOf('.') + 1) : '';
+        if (fieldKey) {
+          userInfo.customClaims[fieldKey] = values[0];
+        }
       }
     }
   }
@@ -752,8 +821,15 @@ async function findOrCreateUser(
   idpEntityId: string,
   tenantId: string
 ): Promise<string> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
+  const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(
+    userStoreSources.coreDb,
+    'saml-acs-core'
+  );
+  const piiAdapter: DatabaseAdapter | null = userStoreSources.piiDb
+    ? ensureDatabaseAdapter(userStoreSources.piiDb, 'saml-acs-pii')
+    : null;
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
 
   // Try to find user by email (PII/Non-PII DB separation)
   if (userInfo.email && piiAdapter) {
@@ -765,13 +841,29 @@ async function findOrCreateUser(
     if (existingUserPII) {
       // Verify user is active in Core DB
       const userCore = await coreAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-        [existingUserPII.id]
+        'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+        [existingUserPII.id, tenantId]
       );
       if (userCore) {
         return userCore.id;
       }
     }
+  }
+
+  const customClaimValidation = await validateCustomClaimWrite({
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    tenantId,
+    submitted: userInfo.customClaims,
+    requireCompleteRecord: true,
+  });
+
+  if (!customClaimValidation.ok) {
+    throw new SamlProvisioningError(
+      customClaimValidation.error,
+      customClaimValidation.missingRequiredFields
+    );
   }
 
   // Create new user (JIT provisioning - PII/Non-PII DB separation)
@@ -781,8 +873,9 @@ async function findOrCreateUser(
 
   // Step 1: Insert into users_core with pii_status='pending'
   await coreAdapter.execute(
-    `INSERT INTO users_core (id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at)
-     VALUES (?, ?, 1, 'end_user', ?, 'pending', ?, ?)`,
+    `INSERT INTO users_core (
+      id, tenant_id, email_verified, user_type, pii_partition, pii_status, lifecycle_state, created_at, updated_at
+     ) VALUES (?, ?, 1, 'end_user', ?, 'pending', 'provisioning', ?, ?)`,
     [userId, tenantId, tenantId, now, now]
   );
 
@@ -795,11 +888,49 @@ async function findOrCreateUser(
     );
 
     // Step 3: Update pii_status to 'active'
-    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', [
-      'active',
-      userId,
-    ]);
+    await coreAdapter.execute(
+      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
+      ['active', userId, tenantId]
+    );
   }
+
+  try {
+    await persistCustomClaimWrite({
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      tenantId,
+      userId,
+      validation: customClaimValidation,
+    });
+  } catch (persistError) {
+    if (piiAdapter) {
+      await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+        userId,
+        tenantId,
+      ]);
+    }
+    await ensureDatabaseAdapter(
+      customClaimSources.nonPiiDb,
+      'saml-acs-custom-claim-cleanup'
+    ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
+      userId,
+      tenantId,
+    ]);
+    await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+      userId,
+      tenantId,
+    ]);
+    throw persistError;
+  }
+
+  await syncUserLifecycleState({
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    stateDb: coreAdapter,
+    tenantId,
+    userId,
+  });
 
   return userId;
 }
@@ -810,21 +941,19 @@ async function findOrCreateUser(
 async function createSession(env: Env, userId: string, tenantId: string): Promise<string> {
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env, tenantId);
 
-  const response = await sessionStore.fetch(
-    new Request('https://session-store/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId,
-        userId,
-        ttl: 3600, // 1 hour
-        data: {
-          amr: ['saml'],
-          acr: 'urn:mace:incommon:iap:bronze',
-        },
-      }),
-    })
-  );
+  const response = await sessionStore.fetch('https://session-store/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId,
+      userId,
+      ttl: 3600, // 1 hour
+      data: {
+        amr: ['saml'],
+        acr: 'urn:mace:incommon:iap:bronze',
+      },
+    }),
+  });
 
   if (!response.ok) {
     throw new Error('Session creation failed');

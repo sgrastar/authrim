@@ -22,6 +22,7 @@
  * NOT tenant_hint (untrusted UX hint).
  */
 
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 
@@ -46,7 +47,7 @@ export interface IssuerEnvLike {
  * @returns true if tenant exists and is active, false if not found or inactive
  */
 export async function validateTenantExistsAsync(
-  db: D1Database | undefined,
+  db: DatabaseSource | undefined,
   kv: KVNamespace | undefined,
   tenantId: string
 ): Promise<boolean> {
@@ -66,12 +67,18 @@ export async function validateTenantExistsAsync(
   if (!db) return true;
 
   try {
-    const row = await db
-      .prepare('SELECT id FROM tenants WHERE id = ? AND is_active = 1')
-      .bind(tenantId)
-      .first<{ id: string }>();
+    const adapter = ensureDatabaseAdapter(db, 'tenant-exists');
+    const row = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM tenants WHERE id = ? AND is_active = 1',
+      [tenantId]
+    );
 
-    if (!row) return false;
+    if (!row) {
+      const health = await adapter.isHealthy().catch(() => ({
+        healthy: false,
+      }));
+      return health.healthy ? false : true;
+    }
 
     // Write positive cache only (never cache negative to ensure immediate visibility)
     if (kv) {
@@ -108,15 +115,23 @@ export function getPrimaryTenantId(env: Partial<IssuerEnvLike>): string {
   return env.PRIMARY_TENANT_ID || getDefaultTenantId(env);
 }
 
+function requireIssuerTenantId(tenantId: string, context: string): string {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalizedTenantId;
+}
+
 /**
  * Returns true when the provided tenant should use the naked BASE_DOMAIN as its canonical issuer.
  */
-export function usesNakedDomainIssuer(env: Partial<IssuerEnvLike>, tenantId?: string): boolean {
+export function usesNakedDomainIssuer(env: Partial<IssuerEnvLike>, tenantId: string): boolean {
   if (env.NAKED_DOMAIN_AS_ISSUER !== 'true' || !env.BASE_DOMAIN) {
     return false;
   }
 
-  return (tenantId || getDefaultTenantId(env)) === getPrimaryTenantId(env);
+  return requireIssuerTenantId(tenantId, 'usesNakedDomainIssuer') === getPrimaryTenantId(env);
 }
 
 /**
@@ -126,22 +141,21 @@ export function usesNakedDomainIssuer(env: Partial<IssuerEnvLike>, tenantId?: st
  * from subdomain and BASE_DOMAIN.
  *
  * @param env - Cloudflare Workers environment bindings
- * @param tenantSubdomain - Tenant subdomain (optional)
+ * @param tenantSubdomain - Tenant subdomain
  * @returns The issuer URL string
  *
  * @example
  * // With BASE_DOMAIN = "authrim.com"
- * buildIssuerUrl(env)               // => 'https://default.authrim.com' (or primary tenant)
  * buildIssuerUrl(env, 'acme')       // => 'https://acme.authrim.com'
  * buildIssuerUrl(env, 'acme-test')  // => 'https://acme-test.authrim.com'
  *
  * // Legacy fallback (ISSUER_URL set, no BASE_DOMAIN)
- * buildIssuerUrl(env)               // => 'https://auth.example.com' (ISSUER_URL)
+ * buildIssuerUrl(env, tenantId)     // => 'https://auth.example.com' (ISSUER_URL)
  */
-export function buildIssuerUrl(env: IssuerEnvLike, tenantSubdomain?: string): string {
+export function buildIssuerUrl(env: IssuerEnvLike, tenantSubdomain: string): string {
   // Multi-tenant mode: construct from subdomain + BASE_DOMAIN
   if (env.BASE_DOMAIN) {
-    const sub = tenantSubdomain || getDefaultTenantId(env);
+    const sub = requireIssuerTenantId(tenantSubdomain, 'buildIssuerUrl');
 
     if (usesNakedDomainIssuer(env, sub)) {
       return `https://${env.BASE_DOMAIN}`;
@@ -186,7 +200,7 @@ export function getRequestHost(request?: Request | null): string | null {
 export function buildRequestIssuerUrl(
   request: Request | null | undefined,
   env: Partial<IssuerEnvLike>,
-  tenantId?: string
+  tenantId: string
 ): string {
   const explicitHost =
     request &&
@@ -223,7 +237,7 @@ export function buildRequestIssuerUrl(
 export function buildRequestIdentifier(
   request: Request | null | undefined,
   env: Partial<IssuerEnvLike>,
-  tenantId: string | undefined,
+  tenantId: string,
   configuredIdentifier?: string
 ): string {
   const issuerUrl = buildRequestIssuerUrl(request, env, tenantId);

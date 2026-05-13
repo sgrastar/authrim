@@ -29,19 +29,28 @@ interface DPoPHeader {
  * @param accessToken - Optional access token for validation (when present, ath claim must match)
  * @param envOrJTIStore - Environment with DO bindings (preferred) or legacy DPoP JTI Store DO namespace
  * @param clientId - Optional client ID for JTI binding (used for sharding)
- * @param tenantId - Optional tenant ID for multi-tenant support (defaults to 'default')
+ * @param tenantId - Tenant ID for multi-tenant replay protection
  * @returns Validation result with JWK thumbprint if valid
  */
 export async function validateDPoPProof(
   dpopProof: string,
   method: string,
   url: string,
-  accessToken?: string,
-  envOrJTIStore?: Env | DurableObjectNamespace,
-  clientId?: string,
-  tenantId: string = 'default'
+  accessToken: string | undefined,
+  envOrJTIStore: Env | DurableObjectNamespace,
+  clientId: string | undefined,
+  tenantId: string
 ): Promise<DPoPValidationResult> {
   try {
+    const resolvedTenantId = tenantId?.trim();
+    if (!resolvedTenantId) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'Missing tenant context for DPoP replay protection',
+      };
+    }
+
     // Parse JWT header without verification first to extract JWK
     const parts = dpopProof.split('.');
     if (parts.length !== 3) {
@@ -251,7 +260,7 @@ export async function validateDPoPProof(
       const shardKey = clientId || claims.jti;
       const { stub: shardedStub } = await getDPoPJTIStoreForNewJTI(
         env,
-        tenantId,
+        resolvedTenantId,
         shardKey,
         claims.jti
       );

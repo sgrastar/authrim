@@ -35,6 +35,7 @@ CREATE TABLE consent_statement_versions (
   effective_at INTEGER NOT NULL,         -- Effective date (Unix timestamp)
   content_hash TEXT,                     -- SHA-256 integrity hash
   is_current INTEGER NOT NULL DEFAULT 0, -- Currently active version
+  current_statement_guard TEXT,          -- statement_id when is_current=1, NULL otherwise
   status TEXT NOT NULL DEFAULT 'draft',  -- 'draft'|'active'|'archived'
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -43,8 +44,9 @@ CREATE TABLE consent_statement_versions (
 );
 CREATE INDEX idx_csv_statement ON consent_statement_versions(statement_id, is_current);
 CREATE INDEX idx_csv_effective ON consent_statement_versions(effective_at);
--- Partial unique index: ensure only one is_current=1 per statement_id per tenant
-CREATE UNIQUE INDEX idx_csv_unique_current ON consent_statement_versions(tenant_id, statement_id) WHERE is_current = 1;
+-- Portable uniqueness: only the current version materializes a statement guard
+CREATE UNIQUE INDEX idx_csv_unique_current
+  ON consent_statement_versions(tenant_id, current_statement_guard);
 
 -- 3. consent_statement_localizations — Multi-language content
 CREATE TABLE consent_statement_localizations (
@@ -91,7 +93,7 @@ CREATE TABLE user_consent_records (
 CREATE INDEX idx_ucr_user ON user_consent_records(tenant_id, user_id);
 CREATE INDEX idx_ucr_statement ON user_consent_records(tenant_id, statement_id);
 CREATE INDEX idx_ucr_status ON user_consent_records(status);
-CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at);
 
 -- 5. consent_item_history — Consent change audit log
 CREATE TABLE consent_item_history (
@@ -183,8 +185,8 @@ SELECT
     ELSE 10
   END,
   1,
-  CAST(strftime('%s', 'now') AS INTEGER) * 1000,
-  CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
 FROM consent_policy_versions
 GROUP BY tenant_id, policy_type;
 
@@ -207,14 +209,15 @@ FROM consent_policy_versions cpv;
 -- Set is_current=1 for the latest version of each statement
 -- (the one with the highest effective_at that is <= now)
 UPDATE consent_statement_versions
-SET is_current = 1
+SET is_current = 1,
+    current_statement_guard = statement_id
 WHERE id IN (
   SELECT csv.id
   FROM consent_statement_versions csv
   INNER JOIN (
     SELECT statement_id, tenant_id, MAX(effective_at) as max_effective
     FROM consent_statement_versions
-    WHERE effective_at <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+    WHERE effective_at <= __AUTHRIM_NOW_EPOCH_MILLISECONDS__
       AND id LIKE 'migrated_v_%'
     GROUP BY statement_id, tenant_id
   ) latest ON csv.statement_id = latest.statement_id
@@ -243,7 +246,7 @@ SELECT
     ELSE 'Please review this policy'
   END,
   cpv.policy_uri,
-  CAST(strftime('%s', 'now') AS INTEGER) * 1000,
-  CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
 FROM consent_policy_versions cpv
 WHERE cpv.policy_uri IS NOT NULL;

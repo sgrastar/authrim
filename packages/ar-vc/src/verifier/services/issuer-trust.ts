@@ -7,11 +7,10 @@
 import type { Env } from '../../types';
 import {
   importECPublicKey,
-  safeFetch,
+  safeFetchJson,
   resolveDID,
   createLogger,
   buildIssuerUrl,
-  getDefaultTenantId,
 } from '@authrim/ar-lib-core';
 import type { TrustedIssuerRepository, TrustedIssuerRecord } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
@@ -115,19 +114,12 @@ export async function getIssuerPublicKey(
  * Fetch public key from JWKS URI
  */
 async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
-  // Use safeFetch for SSRF protection, timeout, and response size limits
-  const response = await safeFetch(jwksUri, {
+  const jwks = await safeFetchJson<{ keys: JWK[] }>(jwksUri, {
     headers: { Accept: 'application/json' },
     requireHttps: true,
     timeoutMs: 10000,
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch JWKS: ${response.status}`);
-  }
-
-  const text = await response.text();
-  const jwks = JSON.parse(text) as { keys: JWK[] };
 
   // Find a signing key (ES256, ES384, or ES512)
   const signingKey = jwks.keys.find(
@@ -210,6 +202,12 @@ export async function checkSelfIssuance(
   issuerDid: string,
   tenantId: string
 ): Promise<boolean> {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    log.warn('Rejected issuer trust check without tenant context', {});
+    return false;
+  }
+
   const configuredIdentifier = env.VERIFIER_IDENTIFIER;
   let authrimDid = configuredIdentifier || 'did:web:authrim.com';
 
@@ -222,7 +220,7 @@ export async function checkSelfIssuance(
     try {
       const issuerUrl = buildIssuerUrl(
         env as unknown as Parameters<typeof buildIssuerUrl>[0],
-        tenantId || getDefaultTenantId(env as { DEFAULT_TENANT_ID?: string })
+        normalizedTenantId
       );
       authrimDid = `did:web:${new URL(issuerUrl).hostname}`;
     } catch {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DatabaseAdapter } from '../../db';
 import {
   resolveTenantCandidatesFromEmailDomain,
   resolveTenantFromEmailDomain,
@@ -10,23 +11,32 @@ vi.mock('../../utils/email-domain-hash', () => ({
 }));
 
 describe('tenant-domain-resolver', () => {
+  function createMockAdapter(): DatabaseAdapter {
+    return {
+      query: vi.fn(),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+      transaction: vi.fn(),
+      batch: vi.fn(),
+      isHealthy: vi.fn(),
+      getType: vi.fn().mockReturnValue('mock'),
+      close: vi.fn(),
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('returns all active candidates in priority order', async () => {
-    const all = vi.fn(async () => ({
-      results: [
-        { tenant_id: 'acme', priority: 20 },
-        { tenant_id: 'beta', priority: 10 },
-      ],
-    }));
-    const bind = vi.fn(() => ({ all }));
-    const prepare = vi.fn(() => ({ bind }));
-    const db = { prepare } as unknown as D1Database;
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      { tenant_id: 'acme', priority: 20 },
+      { tenant_id: 'beta', priority: 10 },
+    ]);
 
     const result = await resolveTenantCandidatesFromEmailDomain(
-      db,
+      adapter,
       'user@example.com',
       {} as never
     );
@@ -35,39 +45,30 @@ describe('tenant-domain-resolver', () => {
       { tenant_id: 'acme', priority: 20 },
       { tenant_id: 'beta', priority: 10 },
     ]);
-    expect(prepare).toHaveBeenCalledOnce();
+    expect(adapter.query).toHaveBeenCalledOnce();
   });
 
   it('returns the highest-priority tenant for the single-result helper', async () => {
-    const all = vi.fn(async () => ({
-      results: [
-        { tenant_id: 'acme', priority: 20 },
-        { tenant_id: 'beta', priority: 10 },
-      ],
-    }));
-    const db = {
-      prepare: vi.fn(() => ({
-        bind: vi.fn(() => ({ all })),
-      })),
-    } as unknown as D1Database;
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      { tenant_id: 'acme', priority: 20 },
+      { tenant_id: 'beta', priority: 10 },
+    ]);
 
-    const result = await resolveTenantFromEmailDomain(db, 'user@example.com', {} as never);
+    const result = await resolveTenantFromEmailDomain(adapter, 'user@example.com', {} as never);
 
     expect(result).toBe('acme');
   });
 
   it('fails open to an empty result on resolver errors', async () => {
-    const db = {
-      prepare: vi.fn(() => {
-        throw new Error('db failed');
-      }),
-    } as unknown as D1Database;
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockRejectedValue(new Error('db failed'));
 
     await expect(
-      resolveTenantCandidatesFromEmailDomain(db, 'user@example.com', {} as never)
+      resolveTenantCandidatesFromEmailDomain(adapter, 'user@example.com', {} as never)
     ).resolves.toEqual([]);
     await expect(
-      resolveTenantFromEmailDomain(db, 'user@example.com', {} as never)
+      resolveTenantFromEmailDomain(adapter, 'user@example.com', {} as never)
     ).resolves.toBeNull();
   });
 });

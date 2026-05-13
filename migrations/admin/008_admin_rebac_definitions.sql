@@ -60,10 +60,10 @@ CREATE INDEX IF NOT EXISTS idx_admin_rebac_def_name ON admin_rebac_definitions(t
 -- =============================================================================
 
 -- Supervises relationship
-INSERT OR IGNORE INTO admin_rebac_definitions (
+INSERT INTO admin_rebac_definitions (
   id, tenant_id, relation_name, display_name, description,
   priority, is_system, created_at, updated_at
-) VALUES (
+) SELECT
   'rebac_def_supervises',
   'default',
   'admin_supervises',
@@ -71,15 +71,19 @@ INSERT OR IGNORE INTO admin_rebac_definitions (
   'Admin user supervises another admin user',
   100,
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_rebac_definitions
+  WHERE id = 'rebac_def_supervises'
 );
 
 -- Team member relationship
-INSERT OR IGNORE INTO admin_rebac_definitions (
+INSERT INTO admin_rebac_definitions (
   id, tenant_id, relation_name, display_name, description,
   priority, is_system, created_at, updated_at
-) VALUES (
+) SELECT
   'rebac_def_team_member',
   'default',
   'admin_team_member',
@@ -87,15 +91,19 @@ INSERT OR IGNORE INTO admin_rebac_definitions (
   'Admin user is a member of a team',
   50,
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_rebac_definitions
+  WHERE id = 'rebac_def_team_member'
 );
 
 -- Escalation chain relationship
-INSERT OR IGNORE INTO admin_rebac_definitions (
+INSERT INTO admin_rebac_definitions (
   id, tenant_id, relation_name, display_name, description,
   priority, is_system, created_at, updated_at
-) VALUES (
+) SELECT
   'rebac_def_escalation',
   'default',
   'admin_escalation_chain',
@@ -103,8 +111,12 @@ INSERT OR IGNORE INTO admin_rebac_definitions (
   'Admin user is in escalation chain for another admin user',
   75,
   1,
-  strftime('%s', 'now') * 1000,
-  strftime('%s', 'now') * 1000
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+  __AUTHRIM_NOW_EPOCH_MILLISECONDS__
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM admin_rebac_definitions
+  WHERE id = 'rebac_def_escalation'
 );
 
 -- =============================================================================

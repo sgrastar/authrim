@@ -100,6 +100,7 @@ describe('PARRequestStore', () => {
   const createValidPARRequest = () => ({
     requestUri: `urn:ietf:params:oauth:request_uri:${Math.random().toString(36).substring(7)}`,
     data: {
+      tenant_id: 'default',
       client_id: 'test-client',
       redirect_uri: 'https://example.com/callback',
       scope: 'openid profile',
@@ -145,7 +146,12 @@ describe('PARRequestStore', () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            data: { client_id: 'test', redirect_uri: 'https://example.com', scope: 'openid' },
+            data: {
+              tenant_id: 'default',
+              client_id: 'test',
+              redirect_uri: 'https://example.com',
+              scope: 'openid',
+            },
             ttl: 600,
           }),
         })
@@ -178,7 +184,12 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: 'urn:ietf:params:oauth:request_uri:test',
-            data: { client_id: 'test', redirect_uri: 'https://example.com', scope: 'openid' },
+            data: {
+              tenant_id: 'default',
+              client_id: 'test',
+              redirect_uri: 'https://example.com',
+              scope: 'openid',
+            },
           }),
         })
       );
@@ -207,6 +218,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -238,6 +250,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -251,6 +264,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -282,6 +296,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: 'attacker-client',
           }),
         })
@@ -293,6 +308,38 @@ describe('PARRequestStore', () => {
       expect(body.error_description).toContain('PAR request');
     });
 
+    it('should reject consumption with wrong tenant_id', async () => {
+      const parRequest = createValidPARRequest();
+
+      await store.fetch(
+        new Request('http://localhost/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parRequest),
+        })
+      );
+
+      const stored = await store.getRequest(parRequest.requestUri);
+      expect(stored?.tenant_id).toBe('default');
+
+      const response = await store.fetch(
+        new Request('http://localhost/request/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestUri: parRequest.requestUri,
+            tenant_id: 'other-tenant',
+            client_id: parRequest.data.client_id,
+          }),
+        })
+      );
+
+      const responseText = await response.text();
+      expect(response.status, responseText).toBe(400);
+      const body = JSON.parse(responseText) as any;
+      expect(body.error_description).toContain('PAR request');
+    });
+
     it('should reject consumption of non-existent request_uri', async () => {
       const response = await store.fetch(
         new Request('http://localhost/request/consume', {
@@ -300,6 +347,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: 'urn:ietf:params:oauth:request_uri:nonexistent',
+            tenant_id: 'default',
             client_id: 'test-client',
           }),
         })
@@ -332,6 +380,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: 'urn:ietf:params:oauth:request_uri:test',
+            tenant_id: 'default',
           }),
         })
       );
@@ -364,6 +413,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -397,6 +447,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -438,6 +489,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -571,6 +623,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -615,6 +668,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -627,6 +681,7 @@ describe('PARRequestStore', () => {
       const parRequest = {
         requestUri: `urn:ietf:params:oauth:request_uri:full-params-${Date.now()}`,
         data: {
+          tenant_id: 'default',
           client_id: 'test-client',
           redirect_uri: 'https://example.com/callback',
           scope: 'openid profile email',
@@ -660,6 +715,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })
@@ -700,6 +756,7 @@ describe('PARRequestStore', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestUri: parRequest.requestUri,
+            tenant_id: parRequest.data.tenant_id,
             client_id: parRequest.data.client_id,
           }),
         })

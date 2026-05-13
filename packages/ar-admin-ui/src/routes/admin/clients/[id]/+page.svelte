@@ -4,10 +4,20 @@
 	import { goto } from '$app/navigation';
 	import {
 		adminClientsAPI,
+		type ClaimReleasePolicy,
+		type ClaimsParameterPolicy,
 		type Client,
 		type ClientUsage,
 		type UpdateClientInput
 	} from '$lib/api/admin-clients';
+	import {
+		buildClientDownstreamGrantFormFromClient,
+		createDefaultClientDownstreamGrantForm,
+		downstreamGrantFormEquals,
+		formatClientListForTextarea,
+		toClientDownstreamGrantUpdateInput,
+		type ClientDownstreamGrantForm
+	} from '$lib/admin/client-downstream-grant';
 	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
@@ -27,6 +37,9 @@
 	// Edit mode
 	let isEditing = $state(false);
 	let editForm = $state<UpdateClientInput>({});
+	let downstreamGrantEditForm = $state<ClientDownstreamGrantForm>(
+		createDefaultClientDownstreamGrantForm()
+	);
 	let settingsEditForm = $state<{
 		// General tab
 		pkce_required?: boolean;
@@ -112,7 +125,15 @@
 	let copiedField = $state<string | null>(null);
 
 	// Tabs
-	type TabId = 'general' | 'tokens' | 'security' | 'scopes' | 'session' | 'metadata' | 'advanced';
+	type TabId =
+		| 'general'
+		| 'tokens'
+		| 'security'
+		| 'scopes'
+		| 'claims'
+		| 'session'
+		| 'metadata'
+		| 'advanced';
 	let activeTab = $state<TabId>('general');
 
 	const TAB_DEFINITIONS: ReadonlyArray<{ id: TabId; label: string }> = [
@@ -120,16 +141,34 @@
 		{ id: 'tokens', label: 'Tokens' },
 		{ id: 'security', label: 'Security' },
 		{ id: 'scopes', label: 'Scopes & Permissions' },
+		{ id: 'claims', label: 'Claims & ASC' },
 		{ id: 'session', label: 'Session & Logout' },
 		{ id: 'metadata', label: 'Client Metadata' },
 		{ id: 'advanced', label: 'Advanced' }
 	];
+
+	const CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
+		'scope_required',
+		'claims_allowed',
+		'forbidden'
+	]);
+	const ASC_TRANSFORMED_CLAIMS = [
+		{ id: 'age_over_13', label: 'Age over 13' },
+		{ id: 'age_over_18', label: 'Age over 18' },
+		{ id: 'age_over_20', label: 'Age over 20' },
+		{ id: 'email_domain', label: 'Email domain' },
+		{ id: 'phone_country_code', label: 'Phone country code' },
+		{ id: 'address_country', label: 'Address country' }
+	] as const;
 
 	// Admin visibility toggle
 	let showAdminSettings = $state(false);
 
 	// Track unsaved changes
 	let initialEditForm = $state<UpdateClientInput | null>(null);
+	let claimsParameterPolicyText = $state('');
+	let initialClaimsParameterPolicyText = $state<string | null>(null);
+	let initialDownstreamGrantEditForm = $state<ClientDownstreamGrantForm | null>(null);
 	let initialSettingsEditForm = $state<{
 		// General tab
 		pkce_required?: boolean;
@@ -252,8 +291,53 @@
 			...input,
 			redirect_uris: toStringArray(input.redirect_uris),
 			grant_types: toStringArray(input.grant_types),
-			response_types: toStringArray(input.response_types)
+			response_types: toStringArray(input.response_types),
+			asc_allowed_transformed_claims: input.asc_allowed_transformed_claims
+				? toStringArray(input.asc_allowed_transformed_claims)
+				: input.asc_allowed_transformed_claims
 		};
+	}
+
+	function parseClaimsParameterPolicy(text: string): ClaimsParameterPolicy | null {
+		const policy: ClaimsParameterPolicy = {};
+		for (const [index, rawLine] of text.split('\n').entries()) {
+			const line = rawLine.trim();
+			if (!line) continue;
+			const separatorIndex = line.indexOf(':');
+			if (separatorIndex <= 0) {
+				throw new Error(`Claims policy line ${index + 1} must use "claim: policy"`);
+			}
+			const claim = line.slice(0, separatorIndex).trim();
+			const policyValue = line.slice(separatorIndex + 1).trim() as ClaimReleasePolicy;
+			if (!claim) {
+				throw new Error(`Claims policy line ${index + 1} has an empty claim name`);
+			}
+			if (!CLAIM_RELEASE_POLICIES.has(policyValue)) {
+				throw new Error(
+					`Claims policy line ${index + 1} must use scope_required, claims_allowed, or forbidden`
+				);
+			}
+			policy[claim] = policyValue;
+		}
+		return Object.keys(policy).length > 0 ? policy : null;
+	}
+
+	function formatClaimsParameterPolicy(policy?: ClaimsParameterPolicy | null): string {
+		if (!policy) return '';
+		return Object.entries(policy)
+			.map(([claim, policyValue]) => `${claim}: ${policyValue}`)
+			.join('\n');
+	}
+
+	function formatEnabled(value?: boolean): string {
+		return value === false ? 'Disabled' : 'Enabled';
+	}
+
+	function getEffectiveAscAllowedTransformedClaims(currentClient: Client | null): string[] {
+		return (
+			currentClient?.asc_allowed_transformed_claims ??
+			ASC_TRANSFORMED_CLAIMS.map((claim) => claim.id)
+		);
 	}
 
 	function syncClientSettingsWithClient(
@@ -281,12 +365,22 @@
 		if (!a || !b) return false;
 		return (
 			(a.client_name ?? '') === (b.client_name ?? '') &&
+			(a.description ?? '') === (b.description ?? '') &&
 			arraysEqual(a.redirect_uris, b.redirect_uris) &&
 			arraysEqual(a.grant_types, b.grant_types) &&
 			arraysEqual(a.response_types, b.response_types) &&
 			(a.token_endpoint_auth_method ?? '') === (b.token_endpoint_auth_method ?? '') &&
 			(a.scope ?? '') === (b.scope ?? '') &&
-			Boolean(a.require_pkce) === Boolean(b.require_pkce)
+			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
+			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
+			(a.asc_enabled ?? true) === (b.asc_enabled ?? true) &&
+			(a.asc_protected_request_required ?? true) === (b.asc_protected_request_required ?? true) &&
+			(a.asc_sao_enabled ?? true) === (b.asc_sao_enabled ?? true) &&
+			(a.asc_transformed_claims_enabled ?? true) === (b.asc_transformed_claims_enabled ?? true) &&
+			arraysEqual(
+				a.asc_allowed_transformed_claims ?? undefined,
+				b.asc_allowed_transformed_claims ?? undefined
+			)
 		);
 	}
 
@@ -493,9 +587,18 @@
 	}
 
 	let hasUnsavedChanges = $derived.by(() => {
-		if (!isEditing || !initialEditForm || !initialSettingsEditForm) return false;
+		if (
+			!isEditing ||
+			!initialEditForm ||
+			initialClaimsParameterPolicyText === null ||
+			!initialSettingsEditForm ||
+			!initialDownstreamGrantEditForm
+		)
+			return false;
 		return (
 			!clientFormEquals(editForm, initialEditForm) ||
+			claimsParameterPolicyText !== initialClaimsParameterPolicyText ||
+			!downstreamGrantFormEquals(downstreamGrantEditForm, initialDownstreamGrantEditForm) ||
 			!settingsFormEquals(settingsEditForm, initialSettingsEditForm)
 		);
 	});
@@ -545,12 +648,38 @@
 		}
 	}
 
+	function buildWebOriginRegistry(uris: string[], existing = client?.web_origin_registry) {
+		const byOrigin: Record<
+			string,
+			NonNullable<Client['web_origin_registry']>['origins'][number]
+		> = {};
+		for (const entry of existing?.origins ?? []) {
+			byOrigin[entry.origin] = entry;
+		}
+		for (const uri of uris) {
+			const origin = extractOrigin(uri);
+			if (!origin || byOrigin[origin]) continue;
+			byOrigin[origin] = {
+				origin,
+				cors: { allowed: true },
+				handoff_allowed: true,
+				iframe_allowed: false
+			};
+		}
+		return { origins: Object.values(byOrigin) };
+	}
+
 	/**
 	 * Check if an origin is in the CORS allowlist (with wildcard support)
 	 */
 	function isOriginInCors(redirectUri: string): boolean {
 		const origin = extractOrigin(redirectUri);
 		if (!origin) return false;
+
+		const registryOrigins = client?.web_origin_registry?.origins ?? [];
+		if (registryOrigins.some((entry) => entry.origin === origin && entry.cors?.allowed !== false)) {
+			return true;
+		}
 
 		for (const pattern of allowedOrigins) {
 			const normalizedPattern = pattern.trim();
@@ -581,32 +710,31 @@
 	 */
 	async function addToCors(redirectUri: string) {
 		const origin = extractOrigin(redirectUri);
-		if (!origin || !tenantSettings) return;
+		if (!origin || !client) return;
 
 		addingToCors = redirectUri;
 		try {
-			// Get current allowed_origins
-			const current = (tenantSettings.values['tenant.allowed_origins'] as string) || '';
-			const origins = current
-				? current
-						.split(',')
-						.map((o) => o.trim())
-						.filter((o) => o.length > 0)
-				: [];
-
-			// Add if not already present
-			if (!origins.includes(origin)) {
-				origins.push(origin);
-				await adminSettingsAPI.updateSettings('tenant', {
-					ifMatch: tenantSettings.version,
-					set: { 'tenant.allowed_origins': origins.join(',') }
-				});
-				// Reload tenant settings
-				tenantSettings = await adminSettingsAPI.getSettings('tenant');
-			}
+			const existingOrigins = client.web_origin_registry?.origins ?? [];
+			const origins = existingOrigins.some((entry) => entry.origin === origin)
+				? existingOrigins
+				: [
+						...existingOrigins,
+						{
+							origin,
+							cors: { allowed: true },
+							handoff_allowed: true,
+							iframe_allowed: false
+						}
+					];
+			client = normalizeClientArrays(
+				await adminClientsAPI.update(clientId, {
+					web_origin_registry: { origins }
+				})
+			);
+			return;
 		} catch (err) {
-			console.error('Failed to add to CORS:', err);
-			error = err instanceof Error ? err.message : 'Failed to add to CORS';
+			console.error('Failed to add to web origin registry:', err);
+			error = err instanceof Error ? err.message : 'Failed to update web origin registry';
 		} finally {
 			addingToCors = null;
 		}
@@ -677,13 +805,22 @@
 		if (!client || !clientSettings) return;
 		editForm = {
 			client_name: client.client_name,
+			description: client.description ?? null,
 			redirect_uris: toStringArray(client.redirect_uris),
 			grant_types: toStringArray(client.grant_types),
 			response_types: toStringArray(client.response_types),
 			token_endpoint_auth_method: client.token_endpoint_auth_method,
 			scope: client.scope,
-			require_pkce: client.require_pkce ?? false
+			require_pkce: client.require_pkce ?? false,
+			allow_claims_without_scope: client.allow_claims_without_scope ?? false,
+			asc_enabled: client.asc_enabled ?? true,
+			asc_protected_request_required: client.asc_protected_request_required ?? true,
+			asc_sao_enabled: client.asc_sao_enabled ?? true,
+			asc_transformed_claims_enabled: client.asc_transformed_claims_enabled ?? true,
+			asc_allowed_transformed_claims: getEffectiveAscAllowedTransformedClaims(client)
 		};
+		claimsParameterPolicyText = formatClaimsParameterPolicy(client.claims_parameter_policy);
+		downstreamGrantEditForm = buildClientDownstreamGrantFormFromClient(client);
 		// Initialize all Settings API fields
 		settingsEditForm = {
 			// General tab
@@ -752,13 +889,13 @@
 			// Metadata tab
 			logo_uri: (clientSettings.values['client.logo_uri'] as string) ?? '',
 			contacts: (clientSettings.values['client.contacts'] as string) ?? '',
-				tos_uri: (clientSettings.values['client.tos_uri'] as string) ?? '',
-				policy_uri: (clientSettings.values['client.policy_uri'] as string) ?? '',
-				client_uri: (clientSettings.values['client.client_uri'] as string) ?? '',
-				initiate_login_uri: (clientSettings.values['client.initiate_login_uri'] as string) ?? '',
-				login_ui_url:
-					client.login_ui_url ?? (clientSettings.values['client.login_ui_url'] as string) ?? '',
-				application_type: (clientSettings.values['client.application_type'] as string) ?? 'web',
+			tos_uri: (clientSettings.values['client.tos_uri'] as string) ?? '',
+			policy_uri: (clientSettings.values['client.policy_uri'] as string) ?? '',
+			client_uri: (clientSettings.values['client.client_uri'] as string) ?? '',
+			initiate_login_uri: (clientSettings.values['client.initiate_login_uri'] as string) ?? '',
+			login_ui_url:
+				client.login_ui_url ?? (clientSettings.values['client.login_ui_url'] as string) ?? '',
+			application_type: (clientSettings.values['client.application_type'] as string) ?? 'web',
 			sector_identifier_uri:
 				(clientSettings.values['client.sector_identifier_uri'] as string) ?? '',
 			// Advanced tab
@@ -787,6 +924,8 @@
 				(clientSettings.values['client.token_endpoint_auth_signing_alg'] as string) ?? 'RS256'
 		};
 		initialEditForm = { ...editForm };
+		initialClaimsParameterPolicyText = claimsParameterPolicyText;
+		initialDownstreamGrantEditForm = { ...downstreamGrantEditForm };
 		initialSettingsEditForm = { ...settingsEditForm };
 		isEditing = true;
 		setTimeout(() => {
@@ -794,11 +933,22 @@
 		}, 0);
 	}
 
+	function isSystemClient(currentClient: Client): boolean {
+		return (
+			currentClient.client_name === 'Login UI' ||
+			currentClient.client_name === 'Downstream Grant Introspection'
+		);
+	}
+
 	function cancelEditing() {
 		isEditing = false;
 		editForm = {};
+		claimsParameterPolicyText = '';
+		downstreamGrantEditForm = createDefaultClientDownstreamGrantForm();
 		settingsEditForm = {};
 		initialEditForm = null;
+		initialClaimsParameterPolicyText = null;
+		initialDownstreamGrantEditForm = null;
 		initialSettingsEditForm = null;
 		saveError = '';
 	}
@@ -808,10 +958,14 @@
 		saveError = '';
 
 		try {
+			const claimsParameterPolicy = parseClaimsParameterPolicy(claimsParameterPolicyText);
 			// Save to Client API
 			client = normalizeClientArrays(
 				await adminClientsAPI.update(clientId, {
 					...editForm,
+					claims_parameter_policy: claimsParameterPolicy,
+					web_origin_registry: buildWebOriginRegistry(editForm.redirect_uris ?? []),
+					...toClientDownstreamGrantUpdateInput(downstreamGrantEditForm),
 					login_ui_url: settingsEditForm.login_ui_url?.trim()
 						? settingsEditForm.login_ui_url.trim()
 						: null
@@ -829,8 +983,6 @@
 							'client.par_required': settingsEditForm.par_required,
 							'client.dpop_required': settingsEditForm.dpop_required,
 							'client.dpop_mode': settingsEditForm.dpop_mode,
-							'client.allowed_scopes': settingsEditForm.allowed_scopes,
-							'client.default_scope': settingsEditForm.default_scope,
 							// Tokens tab
 							'client.access_token_ttl': settingsEditForm.access_token_ttl,
 							'client.refresh_token_ttl': settingsEditForm.refresh_token_ttl,
@@ -838,8 +990,6 @@
 							'client.refresh_token_rotation': settingsEditForm.refresh_token_rotation,
 							'client.reuse_refresh_token': settingsEditForm.reuse_refresh_token,
 							'client.dpop_bound_access_tokens': settingsEditForm.dpop_bound_access_tokens,
-							'client.token_exchange_allowed': settingsEditForm.token_exchange_allowed,
-							'client.delegation_mode': settingsEditForm.delegation_mode,
 							// Security tab
 							'client.consent_required': settingsEditForm.consent_required,
 							'client.first_party': settingsEditForm.first_party,
@@ -851,10 +1001,8 @@
 							'client.require_auth_time': settingsEditForm.require_auth_time,
 							'client.subject_type': settingsEditForm.subject_type,
 							// Scopes tab
-							'client.default_audience': settingsEditForm.default_audience,
 							'client.allowed_scopes_restriction_enabled':
 								settingsEditForm.allowed_scopes_restriction_enabled,
-							'client.client_credentials_allowed': settingsEditForm.client_credentials_allowed,
 							'client.allow_authorization_code': settingsEditForm.allow_authorization_code,
 							'client.allow_client_credentials': settingsEditForm.allow_client_credentials,
 							'client.allow_refresh_token': settingsEditForm.allow_refresh_token,
@@ -910,23 +1058,23 @@
 						saveError = `Warning: Some settings could not be saved: ${rejectedKeys}`;
 					}
 
-						// Reload client settings to get the new version
-						clientSettings = syncClientSettingsWithClient(
-							await scopedSettingsAPI.getClientSettings(clientId, 'client'),
-							client
-						);
-					} catch (err) {
-						if (err instanceof SettingsConflictError) {
-							saveError = `設定が他のユーザーによって更新されました。現在の設定を確認して再度お試しください。(Current version: ${err.currentVersion})`;
-							// Reload settings to show current state
-							try {
-								clientSettings = syncClientSettingsWithClient(
-									await scopedSettingsAPI.getClientSettings(clientId, 'client'),
-									client
-								);
-							} catch (reloadErr) {
-								console.error('Failed to reload settings after conflict:', reloadErr);
-							}
+					// Reload client settings to get the new version
+					clientSettings = syncClientSettingsWithClient(
+						await scopedSettingsAPI.getClientSettings(clientId, 'client'),
+						client
+					);
+				} catch (err) {
+					if (err instanceof SettingsConflictError) {
+						saveError = `設定が他のユーザーによって更新されました。現在の設定を確認して再度お試しください。(Current version: ${err.currentVersion})`;
+						// Reload settings to show current state
+						try {
+							clientSettings = syncClientSettingsWithClient(
+								await scopedSettingsAPI.getClientSettings(clientId, 'client'),
+								client
+							);
+						} catch (reloadErr) {
+							console.error('Failed to reload settings after conflict:', reloadErr);
+						}
 						return;
 					}
 					throw err;
@@ -935,6 +1083,8 @@
 
 			isEditing = false;
 			initialEditForm = null;
+			initialClaimsParameterPolicyText = null;
+			initialDownstreamGrantEditForm = null;
 			initialSettingsEditForm = null;
 		} catch (err) {
 			console.error('Failed to update client:', err);
@@ -993,6 +1143,15 @@
 		if (num == null) return '0';
 		return num.toLocaleString();
 	}
+
+	function toggleEditAscAllowedTransformedClaim(claimId: string) {
+		const current = editForm.asc_allowed_transformed_claims ?? [];
+		if (current.includes(claimId)) {
+			editForm.asc_allowed_transformed_claims = current.filter((claim) => claim !== claimId);
+		} else {
+			editForm.asc_allowed_transformed_claims = [...current, claimId];
+		}
+	}
 </script>
 
 <svelte:head>
@@ -1013,8 +1172,16 @@
 		<!-- Header -->
 		<div class="page-header-with-status">
 			<div class="page-header-info">
-				<h1>{client.client_name}</h1>
+				<div class="client-title-row">
+					<h1>{client.client_name}</h1>
+					{#if isSystemClient(client)}
+						<span class="system-client-badge">System</span>
+					{/if}
+				</div>
 				<p class="mono">{client.client_id}</p>
+				{#if client.description}
+					<p class="client-header-description">{client.description}</p>
+				{/if}
 			</div>
 			<div class="action-buttons">
 				<div class="admin-toggle-inline">
@@ -1114,6 +1281,27 @@
 							/>
 						{:else}
 							<p class="display-text">{client.client_name}</p>
+						{/if}
+					</div>
+
+					<!-- Description -->
+					<div class="form-group">
+						<!-- svelte-ignore a11y_label_has_associated_control -->
+						<label class="form-label">Description</label>
+						{#if isEditing}
+							<textarea
+								id="client-description-input"
+								class="form-input textarea-input"
+								value={editForm.description ?? ''}
+								placeholder="Internal memo for admins"
+								oninput={(event) => {
+									const value = event.currentTarget.value.trim();
+									editForm.description = value.length > 0 ? value : null;
+								}}
+							></textarea>
+							<p class="form-hint">Optional admin memo. This is not exposed as OIDC metadata.</p>
+						{:else}
+							<p class="display-text">{client.description || 'No description'}</p>
 						{/if}
 					</div>
 
@@ -1310,13 +1498,15 @@
 								<input
 									type="text"
 									class="form-input"
-									bind:value={settingsEditForm.allowed_scopes}
+									bind:value={downstreamGrantEditForm.allowed_scopes}
 									placeholder="openid profile email (space-separated)"
 								/>
-								<p class="form-hint">Scopes allowed for this client (empty = all)</p>
+								<p class="form-hint">
+									Scopes allowed for token exchange and protected resource access (empty = all)
+								</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.allowed_scopes'] || 'All scopes allowed'}
+									{client?.allowed_scopes?.join(' ') || 'All scopes allowed'}
 								</p>
 							{/if}
 						</div>
@@ -1329,13 +1519,13 @@
 								<input
 									type="text"
 									class="form-input"
-									bind:value={settingsEditForm.default_scope}
+									bind:value={downstreamGrantEditForm.default_scope}
 									placeholder="openid profile"
 								/>
 								<p class="form-hint">Default scopes if none requested</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.default_scope'] || 'None'}
+									{client?.default_scope || 'None'}
 								</p>
 							{/if}
 						</div>
@@ -1391,14 +1581,14 @@
 									<span class="uri-text">{uri}</span>
 									{#if tenantSettings}
 										{#if isOriginInCors(uri)}
-											<span class="badge badge-success">CORS OK</span>
+											<span class="badge badge-success">Origin OK</span>
 										{:else}
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={() => addToCors(uri)}
 												disabled={addingToCors === uri}
 											>
-												{addingToCors === uri ? 'Adding...' : 'Add to CORS'}
+												{addingToCors === uri ? 'Adding...' : 'Add Origin'}
 											</button>
 										{/if}
 									{/if}
@@ -1407,8 +1597,8 @@
 						</ul>
 						{#if tenantSettings && client.redirect_uris.some((uri) => !isOriginInCors(uri))}
 							<p class="form-hint cors-hint">
-								Some redirect URIs are not in the CORS allowlist. Direct Auth API calls from these
-								origins may fail.
+								Some redirect URI origins are not in this client's web origin registry. Direct Auth
+								and browser handoff calls from these origins may fail.
 							</p>
 						{/if}
 					{:else}
@@ -1594,43 +1784,42 @@
 							{/if}
 						</div>
 
-						{#if showAdminSettings}
-							<!-- Token Exchange Allowed -->
-							<div class="form-group">
-								{#if isEditing}
-									<ToggleSwitch
-										bind:checked={settingsEditForm.token_exchange_allowed}
-										label="Token Exchange Allowed"
-										description="Allow token exchange (RFC 8693) for this client"
-									/>
-								{:else}
-									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Token Exchange Allowed</label>
-									<p class="display-text">
-										{clientSettings?.values['client.token_exchange_allowed'] ? 'Yes' : 'No'}
-									</p>
-									<p class="form-hint">Allow token exchange (RFC 8693) for this client</p>
-								{/if}
-							</div>
-
-							<!-- Delegation Mode -->
-							<div class="form-group">
+						<!-- Token Exchange Allowed -->
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={downstreamGrantEditForm.token_exchange_allowed}
+									label="Token Exchange Allowed"
+									description="Allow token exchange (RFC 8693) for this client"
+								/>
+							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Delegation Mode</label>
-								{#if isEditing}
-									<select class="form-select" bind:value={settingsEditForm.delegation_mode}>
-										<option value="delegation">Delegation</option>
-										<option value="impersonation">Impersonation</option>
-									</select>
-									<p class="form-hint">Token exchange delegation mode</p>
-								{:else}
-									<p class="display-text">
-										{clientSettings?.values['client.delegation_mode'] || 'delegation'}
-									</p>
-									<p class="form-hint">Token exchange delegation mode</p>
-								{/if}
-							</div>
-						{/if}
+								<label class="form-label">Token Exchange Allowed</label>
+								<p class="display-text">
+									{client?.token_exchange_allowed ? 'Yes' : 'No'}
+								</p>
+								<p class="form-hint">Allow token exchange (RFC 8693) for this client</p>
+							{/if}
+						</div>
+
+						<!-- Delegation Mode -->
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Delegation Mode</label>
+							{#if isEditing}
+								<select class="form-select" bind:value={downstreamGrantEditForm.delegation_mode}>
+									<option value="none">None</option>
+									<option value="delegation">Delegation</option>
+									<option value="impersonation">Impersonation</option>
+								</select>
+								<p class="form-hint">Token exchange delegation mode</p>
+							{:else}
+								<p class="display-text">
+									{client?.delegation_mode || 'delegation'}
+								</p>
+								<p class="form-hint">Token exchange delegation mode</p>
+							{/if}
+						</div>
 					</div>
 				</section>
 
@@ -1845,27 +2034,27 @@
 					<h2 class="section-title-border">Scope Settings</h2>
 
 					<div class="form-grid">
-						{#if showAdminSettings}
-							<!-- Default Audience -->
-							<div class="form-group">
-								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Default Audience</label>
-								{#if isEditing}
-									<input
-										type="text"
-										class="form-input"
-										bind:value={settingsEditForm.default_audience}
-										placeholder="https://api.example.com"
-									/>
-									<p class="form-hint">Default audience for tokens</p>
-								{:else}
-									<p class="display-text">
-										{clientSettings?.values['client.default_audience'] || 'None'}
-									</p>
-									<p class="form-hint">Default audience for tokens</p>
-								{/if}
-							</div>
+						<!-- Default Audience -->
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Default Audience</label>
+							{#if isEditing}
+								<input
+									type="text"
+									class="form-input"
+									bind:value={downstreamGrantEditForm.default_audience}
+									placeholder="https://api.example.com"
+								/>
+								<p class="form-hint">Default audience for exchanged downstream access tokens</p>
+							{:else}
+								<p class="display-text">
+									{client?.default_audience || 'None'}
+								</p>
+								<p class="form-hint">Default audience for exchanged downstream access tokens</p>
+							{/if}
+						</div>
 
+						{#if showAdminSettings}
 							<!-- Allowed Scopes Restriction Enabled -->
 							<div class="form-group">
 								{#if isEditing}
@@ -1885,25 +2074,79 @@
 									<p class="form-hint">Enable allowed_scopes restriction</p>
 								{/if}
 							</div>
-
-							<!-- Client Credentials Allowed -->
-							<div class="form-group">
-								{#if isEditing}
-									<ToggleSwitch
-										bind:checked={settingsEditForm.client_credentials_allowed}
-										label="Client Credentials Allowed"
-										description="Allow client credentials grant for machine-to-machine"
-									/>
-								{:else}
-									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Client Credentials Allowed</label>
-									<p class="display-text">
-										{clientSettings?.values['client.client_credentials_allowed'] ? 'Yes' : 'No'}
-									</p>
-									<p class="form-hint">Allow client credentials grant for machine-to-machine</p>
-								{/if}
-							</div>
 						{/if}
+
+						<!-- Client Credentials Allowed -->
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={downstreamGrantEditForm.client_credentials_allowed}
+									label="Client Credentials Allowed"
+									description="Allow client credentials grant for machine-to-machine"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Client Credentials Allowed</label>
+								<p class="display-text">
+									{client?.client_credentials_allowed ? 'Yes' : 'No'}
+								</p>
+								<p class="form-hint">Allow client credentials grant for machine-to-machine</p>
+							{/if}
+						</div>
+					</div>
+				</section>
+
+				<section class="section-spacing">
+					<h2 class="section-title-border">Downstream Grant Restrictions</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Allowed Subject Token Clients</label>
+							{#if isEditing}
+								<textarea
+									class="form-input textarea-input"
+									rows="5"
+									bind:value={downstreamGrantEditForm.allowed_subject_token_clients}
+									placeholder="svc-client-a&#10;svc-client-b"
+								></textarea>
+								<p class="form-hint">
+									One client ID per line. Leave blank to allow any subject-token client.
+								</p>
+							{:else}
+								<p class="display-text preformatted-text">
+									{formatClientListForTextarea(client?.allowed_subject_token_clients) ||
+										'Any subject-token client'}
+								</p>
+								<p class="form-hint">
+									Restricts which service clients may present downstream subject tokens.
+								</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Allowed Token Exchange Resources</label>
+							{#if isEditing}
+								<textarea
+									class="form-input textarea-input"
+									rows="5"
+									bind:value={downstreamGrantEditForm.allowed_token_exchange_resources}
+									placeholder="svc://op-userinfo/customer-profile&#10;svc://op-userinfo/customer-export"
+								></textarea>
+								<p class="form-hint">
+									One audience/resource per line. Leave blank to allow any downstream resource.
+								</p>
+							{:else}
+								<p class="display-text preformatted-text">
+									{formatClientListForTextarea(client?.allowed_token_exchange_resources) ||
+										'Any downstream resource'}
+								</p>
+								<p class="form-hint">
+									Restricts which protected resources this client can exchange into.
+								</p>
+							{/if}
+						</div>
 					</div>
 				</section>
 
@@ -2066,6 +2309,148 @@
 				</section>
 
 				<!-- Edit Actions for Scopes Tab -->
+				{#if isEditing}
+					<div class="edit-actions">
+						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button
+							class="btn btn-primary"
+							onclick={saveChanges}
+							disabled={saving || !hasUnsavedChanges}
+						>
+							{saving ? 'Saving...' : 'Save Changes'}
+						</button>
+					</div>
+				{/if}
+			{:else if activeTab === 'claims'}
+				<section class="section-spacing">
+					<h2 class="section-title-border">Claims Parameter</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.allow_claims_without_scope}
+									label="Allow Claims Without Scope"
+									description="Allow approved claims requests even when the matching scope is absent"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Allow Claims Without Scope</label>
+								<p class="display-text">
+									{client.allow_claims_without_scope ? 'Yes' : 'No'}
+								</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Claims Parameter Policy</label>
+							{#if isEditing}
+								<textarea
+									class="form-input textarea-input"
+									rows="6"
+									bind:value={claimsParameterPolicyText}
+									placeholder="email: claims_allowed&#10;birthdate: claims_allowed"
+								></textarea>
+								<p class="form-hint">
+									One claim per line. Policies: scope_required, claims_allowed, forbidden.
+								</p>
+							{:else}
+								<p class="display-text preformatted-text">
+									{formatClaimsParameterPolicy(client.claims_parameter_policy) || 'Scope required'}
+								</p>
+							{/if}
+						</div>
+					</div>
+				</section>
+
+				<section class="section-spacing">
+					<h2 class="section-title-border">Advanced Syntax for Claims</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_enabled}
+									label="Enable Advanced Syntax for Claims"
+									description="Accept _asc in the claims parameter"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">ASC</label>
+								<p class="display-text">{formatEnabled(client.asc_enabled)}</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_protected_request_required}
+									label="Require Protected ASC Requests"
+									description="Require PAR or JAR for ASC request processing"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Protected Request Required</label>
+								<p class="display-text">{formatEnabled(client.asc_protected_request_required)}</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_sao_enabled}
+									label="Enable Selective Abort/Omit"
+									description="Allow SAO rules under _asc"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Selective Abort/Omit</label>
+								<p class="display-text">{formatEnabled(client.asc_sao_enabled)}</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.asc_transformed_claims_enabled}
+									label="Enable Transformed Claims"
+									description="Allow predefined transformed claims"
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label">Transformed Claims</label>
+								<p class="display-text">{formatEnabled(client.asc_transformed_claims_enabled)}</p>
+							{/if}
+						</div>
+					</div>
+
+					<div class="form-group">
+						<!-- svelte-ignore a11y_label_has_associated_control -->
+						<label class="form-label">Allowed Transformed Claims</label>
+						{#if isEditing}
+							<div class="checkbox-list">
+								{#each ASC_TRANSFORMED_CLAIMS as transformedClaim (transformedClaim.id)}
+									<label class="checkbox-list-item">
+										<input
+											type="checkbox"
+											checked={editForm.asc_allowed_transformed_claims?.includes(
+												transformedClaim.id
+											)}
+											onchange={() => toggleEditAscAllowedTransformedClaim(transformedClaim.id)}
+										/>
+										{transformedClaim.label}
+									</label>
+								{/each}
+							</div>
+						{:else}
+							<p class="display-text">
+								{getEffectiveAscAllowedTransformedClaims(client).join(', ')}
+							</p>
+						{/if}
+					</div>
+				</section>
+
 				{#if isEditing}
 					<div class="edit-actions">
 						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
@@ -2333,12 +2718,10 @@
 									localhost.
 								</p>
 							{:else}
-									<p class="display-text">
-										{client?.login_ui_url || 'Not configured'}
-									</p>
-								<p class="form-hint">
-									Client-specific login UI base URL (overrides global UI_URL)
+								<p class="display-text">
+									{client?.login_ui_url || 'Not configured'}
 								</p>
+								<p class="form-hint">Client-specific login UI base URL (overrides global UI_URL)</p>
 							{/if}
 						</div>
 
@@ -2932,6 +3315,35 @@
 		outline-offset: 3px;
 	}
 
+	.client-title-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+	}
+
+	.client-title-row h1 {
+		margin: 0;
+	}
+
+	.client-header-description {
+		margin: 0.35rem 0 0;
+		color: var(--text-secondary, #64748b);
+		line-height: 1.4;
+	}
+
+	.system-client-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.18rem 0.5rem;
+		border-radius: 999px;
+		border: 1px solid var(--border-color, #d1d5db);
+		color: var(--text-secondary, #64748b);
+		font-size: 0.68rem;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
 	/* Admin Toggle */
 	.admin-toggle-inline {
 		display: flex;
@@ -3008,6 +3420,16 @@
 	.cors-hint {
 		margin-top: 8px;
 		color: var(--warning, #f59e0b);
+	}
+
+	.textarea-input {
+		min-height: 112px;
+		resize: vertical;
+	}
+
+	.preformatted-text {
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 
 	/* Dark mode support */

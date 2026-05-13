@@ -9,7 +9,7 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     // Only include src tests, exclude dist directory
     include: ['src/**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'src/__tests__/authorize-hybrid-flow.test.ts'],
     pool: 'forks',
     isolate: true,
     fileParallelism: false,

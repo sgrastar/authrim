@@ -46,7 +46,14 @@
     "setup:manage": "tsx packages/setup/src/index.ts manage",
     "setup:deploy": "tsx packages/setup/src/index.ts deploy",
     "setup:status": "tsx packages/setup/src/index.ts status",
-    "setup:info": "tsx packages/setup/src/index.ts info"
+    "setup:info": "tsx packages/setup/src/index.ts info",
+    "setup:validate-generated-env": "tsx test/environment-validation/validate-generated-env.ts",
+    "setup:smoke-generated-api": "tsx test/environment-validation/smoke-generated-api.ts",
+    "setup:smoke-generated-admin-api": "tsx test/environment-validation/smoke-generated-admin-api.ts",
+    "setup:smoke-generated-auth-flow": "tsx test/environment-validation/smoke-generated-auth-flow.ts",
+    "setup:smoke-generated-approvals": "tsx test/environment-validation/smoke-generated-approvals.ts",
+    "setup:smoke-generated-server-surfaces": "tsx test/environment-validation/smoke-generated-server-surfaces.ts",
+    "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts"
   },
   "workspaces": [
     "packages/*"
@@ -62,7 +69,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "hono": "^4.12.7",
+    "hono": "4.12.18",
     "jose": "^6.1.2"
   },
   "devDependencies": {
@@ -100,7 +107,12 @@
       "tmp": ">=0.2.4",
       "cookie": ">=0.7.0",
       "basic-ftp": ">=5.2.0",
-      "rollup": ">=4.59.0"
+      "rollup": ">=4.59.0",
+      "hono": "4.12.18",
+      "@hono/node-server": "^1.19.13",
+      "tar": "^7.5.14",
+      "devalue": "^5.8.0",
+      "@xmldom/xmldom": "^0.8.13"
     }
   }
 }

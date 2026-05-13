@@ -26,8 +26,11 @@ function rowToRole(row: RoleRow): Role {
 export class RoleStore implements IRoleStore {
   constructor(private adapter: IStorageAdapter) {}
 
-  async getRole(roleId: string): Promise<Role | null> {
-    const results = await this.adapter.query<RoleRow>('SELECT * FROM roles WHERE id = ?', [roleId]);
+  async getRole(tenantId: string, roleId: string): Promise<Role | null> {
+    const results = await this.adapter.query<RoleRow>(
+      'SELECT * FROM roles WHERE tenant_id = ? AND id = ?',
+      [tenantId, roleId]
+    );
     return results[0] ? rowToRole(results[0]) : null;
   }
 
@@ -78,8 +81,8 @@ export class RoleStore implements IRoleStore {
     return newRole;
   }
 
-  async updateRole(roleId: string, updates: Partial<Role>): Promise<Role> {
-    const existing = await this.getRole(roleId);
+  async updateRole(tenantId: string, roleId: string, updates: Partial<Role>): Promise<Role> {
+    const existing = await this.getRole(tenantId, roleId);
     if (!existing) {
       throw new Error(`Role not found: ${roleId}`);
     }
@@ -100,7 +103,7 @@ export class RoleStore implements IRoleStore {
       `UPDATE roles SET
         name = ?, description = ?, permissions_json = ?,
         is_assignable = ?, hierarchy_level = ?, parent_role_id = ?
-      WHERE id = ?`,
+      WHERE tenant_id = ? AND id = ?`,
       [
         updated.name,
         updated.description ?? null,
@@ -108,6 +111,7 @@ export class RoleStore implements IRoleStore {
         updated.is_assignable ? 1 : 0,
         updated.hierarchy_level,
         updated.parent_role_id ?? null,
+        tenantId,
         roleId,
       ]
     );
@@ -115,8 +119,8 @@ export class RoleStore implements IRoleStore {
     return updated;
   }
 
-  async deleteRole(roleId: string): Promise<void> {
-    const existing = await this.getRole(roleId);
+  async deleteRole(tenantId: string, roleId: string): Promise<void> {
+    const existing = await this.getRole(tenantId, roleId);
     if (!existing) {
       throw new Error(`Role not found: ${roleId}`);
     }
@@ -126,7 +130,10 @@ export class RoleStore implements IRoleStore {
       throw new Error(`Cannot delete ${existing.role_type} role: ${roleId}`);
     }
 
-    await this.adapter.execute('DELETE FROM roles WHERE id = ?', [roleId]);
+    await this.adapter.execute('DELETE FROM roles WHERE tenant_id = ? AND id = ?', [
+      tenantId,
+      roleId,
+    ]);
   }
 
   async listRoles(
@@ -151,10 +158,12 @@ export class RoleStore implements IRoleStore {
     return results.map(rowToRole);
   }
 
-  async getChildRoles(roleId: string): Promise<Role[]> {
+  async getChildRoles(tenantId: string, roleId: string): Promise<Role[]> {
     const results = await this.adapter.query<RoleRow>(
-      'SELECT * FROM roles WHERE parent_role_id = ? ORDER BY hierarchy_level DESC, name ASC',
-      [roleId]
+      `SELECT * FROM roles
+       WHERE tenant_id = ? AND parent_role_id = ?
+       ORDER BY hierarchy_level DESC, name ASC`,
+      [tenantId, roleId]
     );
     return results.map(rowToRole);
   }

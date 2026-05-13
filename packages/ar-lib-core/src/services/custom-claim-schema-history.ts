@@ -5,8 +5,7 @@
  * Pattern reference: SettingsHistoryManager (services/settings-history.ts)
  */
 
-import type { D1Database } from '@cloudflare/workers-types';
-import { D1Adapter, type DatabaseAdapter } from '../db';
+import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
 
 // =============================================================================
 // Types
@@ -110,8 +109,8 @@ export function calculateSchemaChanges(
 export class CustomClaimSchemaHistoryManager {
   private adapter: DatabaseAdapter;
 
-  constructor(db: D1Database) {
-    this.adapter = new D1Adapter({ db });
+  constructor(db: DatabaseSource) {
+    this.adapter = ensureDatabaseAdapter(db, 'custom-claims-history');
   }
 
   async recordChange(input: RecordSchemaChangeInput): Promise<SchemaHistoryEntry> {

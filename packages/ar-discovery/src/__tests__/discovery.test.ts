@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
-import { LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
+import { clearNativeSSOConfigCache, LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
 
 /**
  * Create a mock environment for testing
@@ -24,6 +24,7 @@ describe('Discovery Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
   beforeEach(() => {
+    clearNativeSSOConfigCache();
     app = new Hono<{ Bindings: Env }>();
     app.get('/.well-known/openid-configuration', discoveryHandler);
   });
@@ -207,8 +208,63 @@ describe('Discovery Handler', () => {
       expect(metadata.claims_supported).toContain('aud');
       expect(metadata.claims_supported).toContain('exp');
       expect(metadata.claims_supported).toContain('iat');
+      expect(metadata.claims_supported).toContain('auth_time');
+      expect(metadata.claims_supported).toContain('acr');
+      expect(metadata.claims_supported).toContain('amr');
       expect(metadata.claims_supported).toContain('name');
       expect(metadata.claims_supported).toContain('email');
+    });
+
+    it('should advertise implemented ASC capabilities', async () => {
+      const env = createMockEnv();
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.selective_abort_omit_supported).toBe(true);
+      expect(metadata.selective_abort_omit_schema_supported).toBe(false);
+      expect(metadata.transformed_claims_functions_supported).toContain('years_ago');
+      expect(metadata.transformed_claims_max_count).toBe(0);
+      expect(metadata.transformed_claims_predefined).toHaveProperty('age_over_18');
+    });
+
+    it('should expose only the canonical Native SSO discovery field when enabled', async () => {
+      const env = {
+        ...createMockEnv(),
+        NATIVE_SSO_ENABLED: 'true',
+      } as Env;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata & Record<string, unknown>;
+      expect(metadata.native_sso_supported).toBe(true);
+      expect(metadata.native_sso_token_exchange_supported).toBeUndefined();
+      expect(metadata.native_sso_device_secret_supported).toBeUndefined();
+    });
+
+    it('should expose Phase 1 DPoP signing algorithms', async () => {
+      const env = createMockEnv();
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.dpop_signing_alg_values_supported).toEqual(['ES256', 'PS256', 'EdDSA']);
     });
 
     it('should support multiple token endpoint auth methods', async () => {

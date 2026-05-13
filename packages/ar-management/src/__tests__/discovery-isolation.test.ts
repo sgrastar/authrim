@@ -102,6 +102,13 @@ const mocked = vi.hoisted(() => {
           .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
       }
 
+      if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
+        return state.tenants.filter((tenant) => tenant.is_active === 1) as T[];
+      }
+      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
+        return state.clients.filter((client) => client.client_id === params[0]) as T[];
+      }
+
       return [];
     }
 
@@ -123,11 +130,6 @@ const mocked = vi.hoisted(() => {
           null) as T | null;
       }
 
-      // OAuth client lookup for app_hint — no active constraint (client status managed separately)
-      if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
-        return (state.clients.find((c) => c.client_id === params[0]) ?? null) as T | null;
-      }
-
       // Invitation lookup — expires_at > now filter applied
       if (query.includes('FROM tenant_invitations')) {
         const token = params[0];
@@ -143,6 +145,7 @@ const mocked = vi.hoisted(() => {
   return {
     state,
     discoveryCandidatesMock: vi.fn(),
+    resolveUserStoreRuntimeSourcesMock: vi.fn(),
     FakeD1Adapter,
   };
 });
@@ -153,7 +156,24 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     D1Adapter: mocked.FakeD1Adapter,
+    ensureDatabaseAdapter: vi.fn((source: unknown) => {
+      if (
+        source &&
+        typeof source === 'object' &&
+        'query' in source &&
+        'queryOne' in source &&
+        'execute' in source
+      ) {
+        return source;
+      }
+
+      return new mocked.FakeD1Adapter({ db: source });
+    }),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
+      async (_env: Partial<Env>) => new mocked.FakeD1Adapter({ db: {} })
+    ),
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
+    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
   };
 });
 
@@ -178,6 +198,25 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+) {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn(
+      async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
+    ),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    transaction: vi.fn(async (fn: any) => fn()),
+    batch: vi.fn().mockResolvedValue([]),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 /**
  * Build a Hono test app wired to the discovery handlers.
  *
@@ -198,8 +237,8 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
   app.post('/api/auth/discovery', postDiscoveryHandler);
 
   const env = {
-    DB: {},
-    DB_PII: {},
+    DB: createMockAdapter(),
+    DB_PII: createMockAdapter(),
     SETTINGS: createMockKV({
       'settings:platform:tenant-discovery-ui': JSON.stringify({
         'tenant-discovery-ui.brand_name': 'Shared Discovery',
@@ -547,6 +586,35 @@ describe('Discovery API: tenant_slug resolution', () => {
 describe('Discovery API: data isolation', () => {
   beforeEach(() => {
     mocked.discoveryCandidatesMock.mockReset();
+    const defaultPiiAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
+          const email = String(params[0] ?? '');
+          const tenantId = String(params[1] ?? '');
+          const user =
+            mocked.state.users.find(
+              (candidate) =>
+                candidate.email === email &&
+                candidate.tenant_id === tenantId &&
+                candidate.is_active === 1
+            ) ?? null;
+          return user ? { id: user.id, tenant_id: user.tenant_id } : null;
+        }
+
+        return null;
+      },
+    });
+
+    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      coreDb: env.DB,
+      piiDb: defaultPiiAdapter,
+    }));
   });
 
   describe('email domain isolation', () => {

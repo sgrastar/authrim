@@ -3,7 +3,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import { buildSAMLResponse, buildErrorResponse } from './assertion';
-import { parseXml, findElement, getAttribute, getTextContent } from '../common/xml-utils';
+import {
+  parseXml,
+  findElement,
+  findElements,
+  getAttribute,
+  getTextContent,
+} from '../common/xml-utils';
 import { SAML_NAMESPACES, STATUS_CODES } from '../common/constants';
 
 describe('SAML Assertion Builder', () => {
@@ -80,6 +86,29 @@ describe('SAML Assertion Builder', () => {
       expect(getAttribute(authnStatement!, 'SessionIndex')).toBe('_session123');
     });
 
+    it('should bind assertion subject, conditions, and audience to the SP request', () => {
+      const xml = buildSAMLResponse(baseOptions);
+      const doc = parseXml(xml);
+
+      const assertion = findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion');
+      const subjectConfirmationData = findElement(
+        assertion!,
+        SAML_NAMESPACES.SAML2,
+        'SubjectConfirmationData'
+      );
+      const conditions = findElement(assertion!, SAML_NAMESPACES.SAML2, 'Conditions');
+      const audience = findElement(assertion!, SAML_NAMESPACES.SAML2, 'Audience');
+
+      expect(getAttribute(subjectConfirmationData!, 'Recipient')).toBe(
+        'https://sp.example.com/acs'
+      );
+      expect(getAttribute(subjectConfirmationData!, 'InResponseTo')).toBe('_request789');
+      expect(getAttribute(subjectConfirmationData!, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
+      expect(getAttribute(conditions!, 'NotBefore')).toBe('2024-01-15T10:29:00Z');
+      expect(getAttribute(conditions!, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
+      expect(getTextContent(audience)).toBe('https://sp.example.com');
+    });
+
     it('should include attributes when provided', () => {
       const optionsWithAttrs = {
         ...baseOptions,
@@ -101,6 +130,97 @@ describe('SAML Assertion Builder', () => {
       expect(xml).toContain('Name="displayName"');
       expect(xml).toContain('user@example.com');
       expect(xml).toContain('Test User');
+    });
+
+    it('should include multiple AttributeValue elements for multi-value attributes', () => {
+      const optionsWithAttrs = {
+        ...baseOptions,
+        attributes: [
+          {
+            name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.9',
+            friendlyName: 'eduPersonScopedAffiliation',
+            values: ['member@example.edu', 'staff@example.edu'],
+          },
+        ],
+      };
+
+      const xml = buildSAMLResponse(optionsWithAttrs);
+
+      expect(xml).toContain('member@example.edu');
+      expect(xml).toContain('staff@example.edu');
+      expect(xml.match(/<saml:AttributeValue/g)?.length).toBe(2);
+    });
+
+    it('should include SAML attribute metadata when provided', () => {
+      const optionsWithAttrs = {
+        ...baseOptions,
+        attributes: [
+          {
+            name: 'urn:oid:0.9.2342.19200300.100.1.3',
+            nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+            friendlyName: 'mail',
+            values: ['user@example.com'],
+          },
+        ],
+      };
+
+      const xml = buildSAMLResponse(optionsWithAttrs);
+
+      expect(xml).toContain('Name="urn:oid:0.9.2342.19200300.100.1.3"');
+      expect(xml).toContain('FriendlyName="mail"');
+      expect(xml).toContain('NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri"');
+    });
+
+    it('should declare xs/xsi namespaces for typed AttributeValue output', () => {
+      const xml = buildSAMLResponse({
+        ...baseOptions,
+        attributes: [{ name: 'email', values: ['user@example.com'] }],
+      });
+      const doc = parseXml(xml);
+      const response = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
+
+      expect(getAttribute(response!, 'xmlns:xs')).toBe('http://www.w3.org/2001/XMLSchema');
+      expect(getAttribute(response!, 'xmlns:xsi')).toBe(
+        'http://www.w3.org/2001/XMLSchema-instance'
+      );
+      expect(xml).toContain('xsi:type="xs:string"');
+    });
+
+    it('should support explicit AttributeValue XML Schema types', () => {
+      const xml = buildSAMLResponse({
+        ...baseOptions,
+        attributes: [
+          {
+            name: 'urn:example:active',
+            valueType: 'xs:boolean',
+            values: ['true'],
+          },
+        ],
+      });
+
+      expect(xml).toContain('xsi:type="xs:boolean"');
+    });
+
+    it('should support multiple audience values without duplicates', () => {
+      const xml = buildSAMLResponse({
+        ...baseOptions,
+        audienceRestrictions: ['https://sp.example.com', 'https://platform.example.com'],
+      });
+      const doc = parseXml(xml);
+      const audiences = findElements(doc, SAML_NAMESPACES.SAML2, 'Audience').map(getTextContent);
+
+      expect(audiences).toEqual(['https://sp.example.com', 'https://platform.example.com']);
+    });
+
+    it('should allow SessionNotOnOrAfter to be suppressed', () => {
+      const xml = buildSAMLResponse({
+        ...baseOptions,
+        sessionNotOnOrAfter: null,
+      });
+      const doc = parseXml(xml);
+      const authnStatement = findElement(doc, SAML_NAMESPACES.SAML2, 'AuthnStatement');
+
+      expect(authnStatement!.hasAttribute('SessionNotOnOrAfter')).toBe(false);
     });
 
     it('should not include assertion for error status', () => {
@@ -143,6 +263,28 @@ describe('SAML Assertion Builder', () => {
       const doc = parseXml(xml);
       const statusCode = findElement(doc, SAML_NAMESPACES.SAML2P, 'StatusCode');
       expect(getAttribute(statusCode!, 'Value')).toBe(STATUS_CODES.REQUEST_DENIED);
+    });
+
+    it('should include second-level status code for protocol-specific failures', () => {
+      const xml = buildErrorResponse({
+        responseId: '_error123',
+        issueInstant: '2024-01-15T10:30:00Z',
+        issuer: 'https://idp.example.com',
+        destination: 'https://sp.example.com/acs',
+        inResponseTo: '_request789',
+        statusCode: STATUS_CODES.RESPONDER,
+        secondLevelStatusCode: STATUS_CODES.INVALID_ATTR_NAME_OR_VALUE,
+        statusMessage: 'Required SAML attributes could not be released',
+      });
+
+      const doc = parseXml(xml);
+      const response = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
+      const statusCodes = response!.getElementsByTagNameNS(SAML_NAMESPACES.SAML2P, 'StatusCode');
+
+      expect(statusCodes.length).toBe(2);
+      expect(getAttribute(statusCodes[0], 'Value')).toBe(STATUS_CODES.RESPONDER);
+      expect(getAttribute(statusCodes[1], 'Value')).toBe(STATUS_CODES.INVALID_ATTR_NAME_OR_VALUE);
+      expect(findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion')).toBeNull();
     });
   });
 });

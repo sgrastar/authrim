@@ -15,13 +15,14 @@ describe('SessionClientRepository logout lookups', () => {
       execute: vi.fn(),
       transaction: vi.fn(),
     } as unknown as DatabaseAdapter;
-    repository = new SessionClientRepository(adapter);
+    repository = new SessionClientRepository(adapter, 'tenant-a');
   });
 
   it('maps backchannel logout rows into typed client records', async () => {
     queryMock.mockResolvedValue([
       {
         id: 'row-1',
+        tenant_id: 'tenant-a',
         session_id: 'session-123',
         client_id: 'client-123',
         first_token_at: 100,
@@ -39,11 +40,12 @@ describe('SessionClientRepository logout lookups', () => {
 
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining('c.backchannel_logout_uri IS NOT NULL'),
-      ['session-123']
+      ['tenant-a', 'session-123']
     );
     expect(result).toEqual([
       {
         id: 'row-1',
+        tenant_id: 'tenant-a',
         session_id: 'session-123',
         client_id: 'client-123',
         first_token_at: 100,
@@ -62,6 +64,7 @@ describe('SessionClientRepository logout lookups', () => {
     queryMock.mockResolvedValue([
       {
         id: 'row-2',
+        tenant_id: 'tenant-a',
         session_id: 'session-123',
         client_id: 'client-456',
         first_token_at: 300,
@@ -79,11 +82,12 @@ describe('SessionClientRepository logout lookups', () => {
 
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining('c.frontchannel_logout_uri IS NOT NULL'),
-      ['session-123']
+      ['tenant-a', 'session-123']
     );
     expect(result).toEqual([
       {
         id: 'row-2',
+        tenant_id: 'tenant-a',
         session_id: 'session-123',
         client_id: 'client-456',
         first_token_at: 300,
@@ -114,7 +118,7 @@ describe('SessionClientRepository logout lookups', () => {
 
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining('c.logout_webhook_uri IS NOT NULL'),
-      ['session-123']
+      ['tenant-a', 'session-123']
     );
     expect(result).toEqual([
       {

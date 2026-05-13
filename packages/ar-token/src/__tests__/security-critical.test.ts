@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
+import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   createMockEnv,
   createMockContext,
@@ -366,6 +367,19 @@ function resetAllMocks() {
 
 // ============================================================================
 
+function createRuntimeCoreAdapter(): DatabaseAdapter {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn().mockResolvedValue(null),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'runtime-core' }),
+    getType: vi.fn().mockReturnValue('runtime-core'),
+    close: vi.fn(),
+  } as unknown as DatabaseAdapter;
+}
+
 describe('Security-Critical Tests', () => {
   let mockEnv: MockEnv;
 
@@ -402,6 +416,154 @@ describe('Security-Critical Tests', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('Storage portability wiring', () => {
+    it('uses the runtime-resolved core adapter for authorization_code RBAC and policy lookups', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({
+        userId: 'user-001',
+        scope: 'openid profile',
+      });
+      const runtimeCoreAdapter = createRuntimeCoreAdapter();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockValidateGrantType.mockReturnValue({ valid: true });
+      mocks.mockValidateAuthCode.mockReturnValue({ valid: true });
+      mocks.mockValidateClientId.mockReturnValue({ valid: true });
+      mocks.mockValidateRedirectUri.mockReturnValue({ valid: true });
+      mocks.mockIsPolicyEmbeddingEnabled.mockResolvedValue(true);
+      mocks.mockEvaluatePermissionsForScope.mockResolvedValue(['perm:read']);
+
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const ctx = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'authorization_code',
+          code: 'valid-auth-code',
+          redirect_uri: authCodeData.redirectUri,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: {
+          ...mockEnv,
+          DB: undefined as any,
+        },
+      });
+      (ctx as any).set('runtimeUserStoreSources', {
+        storageProfile: {
+          id: 'tenant-default-storage',
+          kind: 'storage',
+          label: 'Tenant Default Storage',
+          slices: {},
+        },
+        coreDb: runtimeCoreAdapter,
+        piiDb: null,
+      });
+
+      const response = await tokenHandler(ctx);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockGetAccessTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        authCodeData.userId,
+        expect.any(Object)
+      );
+      expect(mocks.mockGetIDTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        authCodeData.userId,
+        expect.any(Object)
+      );
+      expect(mocks.mockEvaluatePermissionsForScope).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        authCodeData.userId,
+        authCodeData.scope,
+        expect.any(Object)
+      );
+    });
+
+    it('uses the runtime-resolved core adapter for refresh_token RBAC and policy lookups', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const refreshTokenPayload = createRefreshTokenPayload({
+        client_id: client.client_id,
+        sub: 'user-002',
+        scope: 'openid profile',
+      });
+      const refreshTokenJWT = createTestRefreshTokenJWT({
+        client_id: client.client_id,
+      });
+      const runtimeCoreAdapter = createRuntimeCoreAdapter();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+      mocks.mockGetRefreshToken.mockResolvedValue({
+        sub: refreshTokenPayload.sub,
+        scope: refreshTokenPayload.scope,
+        client_id: refreshTokenPayload.client_id,
+      });
+      mocks.mockParseRefreshTokenJti.mockReturnValue({
+        generation: 1,
+        shardIndex: 0,
+        randomPart: 'abc',
+      });
+      mocks.mockIsPolicyEmbeddingEnabled.mockResolvedValue(true);
+      mocks.mockEvaluatePermissionsForScope.mockResolvedValue(['perm:refresh']);
+
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+        rotateRpc: vi.fn().mockResolvedValue({
+          newJti: 'rt-new-jti-002',
+          newVersion: 2,
+        }),
+      });
+
+      const ctx = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'refresh_token',
+          refresh_token: refreshTokenJWT,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: {
+          ...mockEnv,
+          DB: undefined as any,
+        },
+      });
+      (ctx as any).set('runtimeUserStoreSources', {
+        storageProfile: {
+          id: 'tenant-default-storage',
+          kind: 'storage',
+          label: 'Tenant Default Storage',
+          slices: {},
+        },
+        coreDb: runtimeCoreAdapter,
+        piiDb: null,
+      });
+
+      const response = await tokenHandler(ctx);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockGetAccessTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        refreshTokenPayload.sub,
+        expect.any(Object)
+      );
+      expect(mocks.mockGetIDTokenRBACClaims).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        refreshTokenPayload.sub,
+        expect.any(Object)
+      );
+      expect(mocks.mockEvaluatePermissionsForScope).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
+        refreshTokenPayload.sub,
+        refreshTokenPayload.scope,
+        expect.any(Object)
+      );
+    });
   });
 
   // ==========================================================================
@@ -779,6 +941,78 @@ describe('Security-Critical Tests', () => {
         expect(body.error).toBe('invalid_dpop_proof');
       });
 
+      it('should return DPoP-Nonce when replay validation requires a nonce retry', async () => {
+        const client = createFAPIClient();
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockExtractDPoPProof.mockReturnValue('replayed-dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({
+          valid: false,
+          error: 'use_dpop_nonce',
+          error_description: 'DPoP proof jti has already been used',
+        });
+
+        const ctx = createMockContext({
+          method: 'POST',
+          headers: {
+            DPoP: 'replayed-dpop-proof',
+          },
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: 'https://app.example.com/callback',
+            client_id: client.client_id,
+          },
+          env: mockEnv,
+        });
+
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{ error: string; error_description: string }>(
+          response
+        );
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('use_dpop_nonce');
+        expect(body.error_description).toContain('jti');
+        expect(response.headers.get('DPoP-Nonce')).toMatch(/^[A-Za-z0-9_-]+$/);
+      });
+
+      it('should allow tenant policy to disable DPoP nonce challenges', async () => {
+        const client = createFAPIClient();
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({
+          'security.dpop_nonce_enabled': false,
+        });
+        mocks.mockExtractDPoPProof.mockReturnValue('replayed-dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({
+          valid: false,
+          error: 'use_dpop_nonce',
+          error_description: 'DPoP proof jti has already been used',
+        });
+
+        const ctx = createMockContext({
+          method: 'POST',
+          headers: {
+            DPoP: 'replayed-dpop-proof',
+          },
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: 'https://app.example.com/callback',
+            client_id: client.client_id,
+          },
+          env: mockEnv,
+        });
+
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{ error: string }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_dpop_proof');
+        expect(response.headers.get('DPoP-Nonce')).toBeNull();
+      });
+
       it('should reject DPoP proof with mismatched htm (HTTP method)', async () => {
         const client = createFAPIClient();
 
@@ -1088,13 +1322,15 @@ describe('Security-Critical Tests', () => {
           expect.anything(),
           'at-jti-to-revoke',
           expect.any(Number),
-          'Authorization code replay attack'
+          'Authorization code replay attack',
+          'default'
         );
         expect(mocks.mockRevokeToken).toHaveBeenCalledWith(
           expect.anything(),
           'rt-jti-to-revoke',
           expect.any(Number),
-          'Authorization code replay attack'
+          'Authorization code replay attack',
+          'default'
         );
       });
     });
@@ -1437,6 +1673,110 @@ describe('Security-Critical Tests', () => {
 
         expect(response.status).toBe(200);
         expect(body.scope).toBe('openid profile');
+      });
+    });
+
+    describe('Refresh Token Resource Audience Validation', () => {
+      it('should use durable refresh family resource audience instead of the JWT fallback', async () => {
+        const client = createConfidentialClient({
+          allowed_token_exchange_resources: ['svc://original-api'],
+          default_resource: 'svc://current-default',
+        });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+          resource_aud: 'svc://jwt-fallback',
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          resource_aud: 'svc://jwt-fallback',
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+          resource_aud: 'svc://original-api',
+        });
+        mocks.mockParseRefreshTokenJti.mockReturnValue({
+          generation: 1,
+          shardIndex: 0,
+          randomPart: 'abc',
+        });
+
+        const rotateRpcMock = vi.fn().mockResolvedValue({
+          newJti: 'rt-new-jti',
+          newVersion: 2,
+        });
+        mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+          rotateRpc: rotateRpcMock,
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: refreshTokenJWT,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        const accessTokenClaims = mocks.mockCreateAccessToken.mock.calls[0]?.[0] as
+          | Record<string, unknown>
+          | undefined;
+        const refreshTokenClaims = mocks.mockCreateRefreshToken.mock.calls[0]?.[0] as
+          | Record<string, unknown>
+          | undefined;
+
+        expect(response.status).toBe(200);
+        expect(accessTokenClaims?.aud).toBe('svc://original-api');
+        expect(refreshTokenClaims?.resource_aud).toBe('svc://original-api');
+      });
+
+      it('should reject refresh when the original resource audience is no longer allowed', async () => {
+        const client = createConfidentialClient({
+          allowed_token_exchange_resources: ['svc://still-allowed'],
+          default_resource: 'svc://current-default',
+        });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+          resource_aud: 'svc://revoked-api',
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          resource_aud: 'svc://revoked-api',
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+          resource_aud: 'svc://revoked-api',
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: refreshTokenJWT,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        const body = await parseJsonResponse<{ error: string }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_target');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       });
     });
 

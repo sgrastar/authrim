@@ -3,7 +3,7 @@
  *
  * Settings related to login entry mode and discovery routing behavior.
  * API: GET/PATCH /api/admin/tenants/:tenantId/settings/login-entry
- * Config Level: tenant
+ * Config Level: platform, tenant
  */
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
@@ -26,6 +26,9 @@ export interface LoginEntrySettings {
   'login-entry.allow_manual_tenant_entry': boolean;
   'login-entry.remember_last_tenant': boolean;
   'login-entry.redirect_default_login_to_discovery': boolean;
+  'login-entry.require_common_discovery_before_login': boolean;
+  'login-entry.skip_discovery_if_only_one_tenant': boolean;
+  'login-entry.redirect_tenant_discover_to_common_entry': boolean;
 }
 
 /**
@@ -94,6 +97,33 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
       'Redirect the common-entry /login page to /discover while keeping tenant-specific /login unchanged.',
     visibility: 'admin',
   },
+  'login-entry.require_common_discovery_before_login': {
+    key: 'login-entry.require_common_discovery_before_login',
+    type: 'boolean',
+    default: true,
+    label: 'Require Common Discovery Before Login',
+    description:
+      'When enabled, direct tenant-host /login visits must pass through the shared /discover screen first. Challenge-based OIDC login remains unchanged.',
+    visibility: 'admin',
+  },
+  'login-entry.skip_discovery_if_only_one_tenant': {
+    key: 'login-entry.skip_discovery_if_only_one_tenant',
+    type: 'boolean',
+    default: false,
+    label: 'Skip Discovery If Only One Tenant',
+    description:
+      'When enabled on the shared entry host, automatically continue to the tenant login page when exactly one active tenant exists.',
+    visibility: 'admin',
+  },
+  'login-entry.redirect_tenant_discover_to_common_entry': {
+    key: 'login-entry.redirect_tenant_discover_to_common_entry',
+    type: 'boolean',
+    default: true,
+    label: 'Redirect Tenant Discover To Common Entry',
+    description:
+      'Redirect tenant-host /discover requests to the shared common-entry /discover page.',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -117,4 +147,7 @@ export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.allow_manual_tenant_entry': true,
   'login-entry.remember_last_tenant': true,
   'login-entry.redirect_default_login_to_discovery': true,
+  'login-entry.require_common_discovery_before_login': true,
+  'login-entry.skip_discovery_if_only_one_tenant': false,
+  'login-entry.redirect_tenant_discover_to_common_entry': true,
 };

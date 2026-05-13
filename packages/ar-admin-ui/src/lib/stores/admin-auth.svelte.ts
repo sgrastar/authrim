@@ -78,7 +78,7 @@ function createAdminAuthStore() {
 		},
 
 		/**
-		 * Check authentication status by calling /api/admin/sessions/me
+		 * Check authentication status by calling /api/admin/me/session
 		 */
 		async checkAuth(): Promise<void> {
 			if (!browser) return;

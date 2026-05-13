@@ -11,17 +11,39 @@ CREATE TABLE tenants (
   description TEXT,
   is_active   INTEGER NOT NULL DEFAULT 1, -- 0=無効, 1=有効
   is_default  INTEGER NOT NULL DEFAULT 0, -- デフォルトテナント（1つのみ）
+  default_tenant_guard TEXT,              -- 'default' when is_default=1, NULL otherwise
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
 
--- is_default=1 は1行のみ（SQLite partial unique index）
-CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(is_default)
-  WHERE is_default = 1;
+CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(default_tenant_guard);
+
+CREATE TABLE trust_groups (
+  id          TEXT PRIMARY KEY,
+  tenant_id   TEXT NOT NULL,
+  name        TEXT,
+  description TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+
+CREATE UNIQUE INDEX idx_trust_groups_tenant_id ON trust_groups(tenant_id, id);
 
 -- 既存の 'default' テナントを初期挿入
-INSERT INTO tenants (id, tenant_code, name, is_active, is_default, created_at, updated_at)
-VALUES ('default', 'default', 'Default', 1, 1, unixepoch(), unixepoch());
+INSERT INTO tenants (
+  id, tenant_code, name, is_active, is_default, default_tenant_guard, created_at, updated_at
+)
+VALUES (
+  'default',
+  'default',
+  'Default',
+  1,
+  1,
+  'default',
+  __AUTHRIM_NOW_EPOCH_SECONDS__,
+  __AUTHRIM_NOW_EPOCH_SECONDS__
+);
 
 -- Platform-level email domain → tenant routing (system_admin only)
 CREATE TABLE tenant_domain_mappings (
@@ -31,6 +53,7 @@ CREATE TABLE tenant_domain_mappings (
   tenant_id               TEXT NOT NULL,
   priority                INTEGER NOT NULL DEFAULT 0,
   is_active               INTEGER NOT NULL DEFAULT 1,
+  active_domain_hash      TEXT,
   verified                INTEGER NOT NULL DEFAULT 0,
   verification_token      TEXT,
   verification_expires_at INTEGER,
@@ -40,10 +63,40 @@ CREATE TABLE tenant_domain_mappings (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
-CREATE UNIQUE INDEX idx_tdm_domain_hash ON tenant_domain_mappings(domain_hash)
-  WHERE is_active = 1;
+CREATE UNIQUE INDEX idx_tdm_domain_hash ON tenant_domain_mappings(active_domain_hash);
+CREATE INDEX idx_tdm_domain_lookup ON tenant_domain_mappings(domain_hash, is_active);
 CREATE INDEX idx_tdm_tenant ON tenant_domain_mappings(tenant_id);
 CREATE INDEX idx_tdm_verified ON tenant_domain_mappings(verified, is_active, priority DESC);
+
+-- Canonical per-tenant custom hostnames (Cloudflare Custom Hostnames)
+CREATE TABLE tenant_vanity_domains (
+  id                             TEXT PRIMARY KEY,
+  tenant_id                      TEXT NOT NULL,
+  hostname                       TEXT NOT NULL,
+  is_active                      INTEGER NOT NULL DEFAULT 1,
+  active_hostname                TEXT,
+  is_primary                     INTEGER NOT NULL DEFAULT 0,
+  primary_active_tenant_key      TEXT,
+  status                         TEXT NOT NULL DEFAULT 'pending',
+  cloudflare_zone_id             TEXT,
+  cloudflare_custom_hostname_id  TEXT,
+  ssl_status                     TEXT,
+  ownership_status               TEXT,
+  validation_method              TEXT,
+  validation_records_json        TEXT,
+  last_sync_at                   INTEGER,
+  created_by                     TEXT,
+  created_at                     INTEGER NOT NULL,
+  updated_at                     INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+
+CREATE UNIQUE INDEX idx_tvd_hostname_active ON tenant_vanity_domains(active_hostname);
+CREATE UNIQUE INDEX idx_tvd_primary_active ON tenant_vanity_domains(primary_active_tenant_key);
+CREATE INDEX idx_tvd_hostname_lookup ON tenant_vanity_domains(hostname, is_active);
+CREATE INDEX idx_tvd_primary_lookup ON tenant_vanity_domains(tenant_id, is_primary, is_active, status);
+CREATE INDEX idx_tvd_tenant ON tenant_vanity_domains(tenant_id);
+CREATE INDEX idx_tvd_status ON tenant_vanity_domains(status, is_active);
 
 CREATE TABLE access_review_items (
   id TEXT PRIMARY KEY,
@@ -104,6 +157,7 @@ CREATE TABLE admin_jobs (
 
   -- R2 key for result file (for completed jobs with large results)
   result_r2_key TEXT,
+  object_catalog_id TEXT,
 
   -- Result summary (JSON, for completed jobs)
   -- { "summary": {...}, "failures": [...] }
@@ -123,7 +177,13 @@ CREATE TABLE admin_jobs (
   completed_at INTEGER,
 
   -- Estimated completion time
-  estimated_completion INTEGER
+  estimated_completion INTEGER,
+
+  -- Generic job runner retry/dead-letter state
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  next_run_at INTEGER,
+  dead_lettered_at INTEGER
 );
 
 CREATE TABLE ai_grants (
@@ -162,7 +222,7 @@ CREATE TABLE attribute_verifications (
     status_valid INTEGER DEFAULT 0,
     -- JSON array of user_verified_attributes IDs
     mapped_attribute_ids TEXT,
-    verified_at TEXT DEFAULT (datetime('now')),
+    verified_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT
 );
 
@@ -236,7 +296,7 @@ CREATE TABLE "ciba_requests" (
   token_issued INTEGER DEFAULT 0,
   token_issued_at INTEGER,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
 );
 
@@ -252,7 +312,7 @@ CREATE TABLE client_consent_overrides (
   display_order INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
   FOREIGN KEY (statement_id) REFERENCES consent_statements(id) ON DELETE CASCADE,
   UNIQUE (tenant_id, client_id, statement_id)
 );
@@ -343,6 +403,7 @@ CREATE TABLE consent_statement_versions (
   effective_at INTEGER NOT NULL,
   content_hash TEXT,                     -- SHA-256 integrity hash
   is_current INTEGER NOT NULL DEFAULT 0,
+  current_statement_guard TEXT,
   status TEXT NOT NULL DEFAULT 'draft',  -- 'draft'|'active'|'archived'
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -383,8 +444,8 @@ CREATE TABLE credential_configurations (
     signing_alg TEXT DEFAULT 'ES256',
     -- Active status
     is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     UNIQUE(tenant_id, configuration_id)
 );
 
@@ -402,15 +463,16 @@ CREATE TABLE credential_offers (
     grants TEXT NOT NULL,
     -- Status: 'pending' | 'accepted' | 'issued' | 'failed' | 'expired'
     status TEXT DEFAULT 'pending',
-    created_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT NOT NULL,
     issued_at TEXT,
-    issued_credential_id TEXT REFERENCES issued_credentials(id)
+    issued_credential_id TEXT,
+    issued_credential_internal_id TEXT,
+    FOREIGN KEY (issued_credential_internal_id) REFERENCES issued_credentials(internal_id)
 );
 
 CREATE TABLE d1_migrations(
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		name       TEXT UNIQUE,
+		name       TEXT PRIMARY KEY,
 		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -426,9 +488,58 @@ CREATE TABLE data_export_requests (
   completed_at INTEGER,
   expires_at INTEGER,                      -- Download link expiration
   file_path TEXT,                          -- R2 object path (for async exports)
+  object_catalog_id TEXT,                  -- object_catalog pointer for materialized export artifacts
   file_size INTEGER,
   error_message TEXT,
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
+);
+
+CREATE TABLE object_catalog (
+  id TEXT PRIMARY KEY,
+  public_artifact_id TEXT NOT NULL UNIQUE,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  object_class TEXT NOT NULL CHECK (
+    object_class IN (
+      'admin_audit_detail',
+      'webhook_delivery_payload',
+      'operational_log_detail',
+      'user_export',
+      'user_import_input',
+      'user_import_result',
+      'admin_job_result',
+      'dr_bundle',
+      'approval_transport_detail'
+    )
+  ),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+
+CREATE TABLE object_catalog_objects (
+  id TEXT PRIMARY KEY,
+  catalog_id TEXT NOT NULL,
+  representation TEXT NOT NULL CHECK (
+    representation IN (
+      'canonical_json',
+      'csv_projection',
+      'ndjson_projection',
+      'zip_bundle'
+    )
+  ),
+  object_kind TEXT NOT NULL CHECK (object_kind IN ('single', 'manifest', 'chunk')),
+  object_index INTEGER NOT NULL DEFAULT 0,
+  bucket_binding TEXT NOT NULL CHECK (
+    bucket_binding IN ('IMPORT_ARTIFACTS', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS')
+  ),
+  object_key TEXT NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  checksum_sha256 TEXT,
+  total_bytes INTEGER,
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER,
+  FOREIGN KEY (catalog_id) REFERENCES object_catalog(id) ON DELETE CASCADE,
+  UNIQUE(catalog_id, representation, object_index)
 );
 
 CREATE TABLE device_codes (
@@ -442,6 +553,8 @@ CREATE TABLE device_codes (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   last_poll_at INTEGER,
+  token_issued INTEGER DEFAULT 0,
+  token_issued_at INTEGER,
   poll_count INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default',
   FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
 );
@@ -450,7 +563,7 @@ CREATE TABLE did_document_cache (
     did TEXT PRIMARY KEY,
     -- JSON of DID Document
     document TEXT NOT NULL,
-    resolved_at TEXT DEFAULT (datetime('now')),
+    resolved_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT NOT NULL
 );
 
@@ -535,7 +648,8 @@ CREATE TABLE identity_providers (
 , tenant_id TEXT NOT NULL DEFAULT 'default');
 
 CREATE TABLE issued_credentials (
-    id TEXT PRIMARY KEY,
+    internal_id TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL,
     tenant_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     -- Verifiable Credential Type
@@ -546,12 +660,18 @@ CREATE TABLE issued_credentials (
     claims TEXT NOT NULL,
     -- Status: 'active' | 'suspended' | 'revoked'
     status TEXT DEFAULT 'active',
-    -- Status list index for revocation
+    -- Status list for revocation/suspension
+    status_list_id TEXT,
+    status_list_internal_id TEXT,
     status_list_index INTEGER,
-    created_at TEXT DEFAULT (datetime('now')),
+    holder_binding TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
     expires_at TEXT,
     revoked_at TEXT,
-    revoked_reason TEXT
+    revoked_reason TEXT,
+    UNIQUE (tenant_id, public_id),
+    FOREIGN KEY (status_list_internal_id) REFERENCES status_lists(internal_id)
 );
 
 CREATE TABLE "linked_identities" (
@@ -598,17 +718,18 @@ CREATE TABLE "oauth_client_consents" (
   scope TEXT NOT NULL,
   granted_at INTEGER NOT NULL,
   expires_at INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   tenant_id TEXT NOT NULL DEFAULT 'default', selected_scopes TEXT, privacy_policy_version TEXT, tos_version TEXT, consent_version INTEGER DEFAULT 1,
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
-  UNIQUE (user_id, client_id)
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, user_id, client_id)
 );
 
 CREATE TABLE oauth_clients (
-  client_id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
   client_name TEXT NOT NULL,
+  description TEXT,
   redirect_uris TEXT NOT NULL,
   grant_types TEXT NOT NULL,
   response_types TEXT NOT NULL,
@@ -631,9 +752,36 @@ CREATE TABLE oauth_clients (
   allowed_scopes TEXT,  -- JSON array of allowed scopes
   default_scope TEXT,  -- Default scope for Client Credentials
   default_audience TEXT,  -- Default audience for Client Credentials
+  default_resource TEXT,  -- Default resource target for access tokens
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, login_ui_url TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0);
+, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, claims_parameter_policy TEXT, asc_enabled INTEGER DEFAULT 1, asc_protected_request_required INTEGER DEFAULT 1, asc_sao_enabled INTEGER DEFAULT 1, asc_transformed_claims_enabled INTEGER DEFAULT 1, asc_allowed_transformed_claims TEXT, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, login_ui_url TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0, application_type TEXT DEFAULT 'web', trust_group TEXT, trust_group_id TEXT, browser_public_client_mode TEXT, browser_refresh_token_policy TEXT NOT NULL DEFAULT 'disabled', native_sso_enabled INTEGER, native_channel_allowed INTEGER, allowed_channels TEXT, device_secret_revoke_enabled INTEGER, device_secret_revoke_trust_groups TEXT, device_secret_introspection_enabled INTEGER, device_secret_introspection_trust_groups TEXT, PRIMARY KEY (tenant_id, client_id));
+
+CREATE INDEX idx_oauth_clients_trust_group ON oauth_clients(tenant_id, trust_group);
+CREATE INDEX idx_oauth_clients_application_type ON oauth_clients(tenant_id, application_type);
+
+CREATE TABLE web_origin_registry (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  client_id TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  cors_allowed INTEGER NOT NULL DEFAULT 1,
+  csp_frame_ancestors TEXT,
+  handoff_allowed INTEGER NOT NULL DEFAULT 1,
+  iframe_allowed INTEGER NOT NULL DEFAULT 0,
+  environment TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, client_id, origin)
+);
+
+CREATE INDEX idx_web_origin_registry_client
+  ON web_origin_registry(tenant_id, client_id, is_active);
+
+CREATE INDEX idx_web_origin_registry_origin
+  ON web_origin_registry(tenant_id, origin, is_active);
 
 CREATE TABLE operational_logs (
     id TEXT PRIMARY KEY,
@@ -644,6 +792,7 @@ CREATE TABLE operational_logs (
     action TEXT NOT NULL,        -- 'user.suspend', 'user.lock', etc.
     reason_detail_encrypted TEXT,-- AES-GCM encrypted reason_detail
     encryption_key_version INTEGER NOT NULL DEFAULT 1, -- Code expects this column
+    detail_object_catalog_id TEXT,
     request_id TEXT,             -- X-Request-ID header value
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL, -- When this log should be deleted
@@ -826,8 +975,8 @@ CREATE TABLE presentation_definitions (
     dcql_query TEXT,
     -- Active status
     is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE TABLE refresh_token_shard_configs (
@@ -1010,11 +1159,20 @@ CREATE TABLE "role_assignments" (
 
 CREATE TABLE roles (
   id TEXT PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  name TEXT NOT NULL,
   description TEXT,
   permissions_json TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-, tenant_id TEXT NOT NULL DEFAULT 'default', role_type TEXT NOT NULL DEFAULT 'custom', hierarchy_level INTEGER DEFAULT 0, is_assignable INTEGER DEFAULT 1, parent_role_id TEXT REFERENCES roles(id), display_name TEXT, is_system INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
+  created_at INTEGER NOT NULL,
+  role_type TEXT NOT NULL DEFAULT 'custom',
+  hierarchy_level INTEGER DEFAULT 0,
+  is_assignable INTEGER DEFAULT 1,
+  parent_role_id TEXT REFERENCES roles(id),
+  display_name TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER,
+  UNIQUE(tenant_id, name)
+);
 
 CREATE TABLE schema_migrations (
   -- Migration version (from filename: 001_initial_schema.sql -> version = 1)
@@ -1043,8 +1201,8 @@ CREATE TABLE scope_mappings (
   source_column TEXT NOT NULL,
   transformation TEXT,
   condition TEXT,
-  created_at INTEGER NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default',
-  PRIMARY KEY (scope, claim_name)
+  created_at INTEGER NOT NULL, tenant_id TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, scope, claim_name)
 );
 
 CREATE TABLE security_alerts (
@@ -1102,16 +1260,16 @@ CREATE TABLE security_threats (
 
 CREATE TABLE "session_clients" (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
   session_id TEXT NOT NULL,
   client_id TEXT NOT NULL,
   first_token_at INTEGER NOT NULL,
   last_token_at INTEGER NOT NULL,
   last_seen_at INTEGER,
 
-  -- Only keep the client_id foreign key
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id) ON DELETE CASCADE,
 
-  UNIQUE (session_id, client_id)
+  UNIQUE (tenant_id, session_id, client_id)
 );
 
 CREATE TABLE "sessions" (
@@ -1161,8 +1319,18 @@ CREATE TABLE settings_history (
   UNIQUE(tenant_id, category, version)
 );
 
+CREATE TABLE profile_registry (
+  id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('storage', 'audit', 'residency')),
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  PRIMARY KEY (kind, id)
+);
+
 CREATE TABLE status_lists (
-    id TEXT PRIMARY KEY,
+    internal_id TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL,
     tenant_id TEXT NOT NULL,
     -- Purpose: 'revocation' | 'suspension'
     purpose TEXT NOT NULL DEFAULT 'revocation',
@@ -1172,8 +1340,12 @@ CREATE TABLE status_lists (
     current_index INTEGER DEFAULT 0,
     -- Total capacity
     capacity INTEGER DEFAULT 131072,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    used_count INTEGER DEFAULT 0,
+    state TEXT DEFAULT 'active',
+    sealed_at TEXT,
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    UNIQUE (tenant_id, public_id)
 );
 
 CREATE TABLE subject_identifiers (
@@ -1299,8 +1471,8 @@ CREATE TABLE trusted_issuers (
     jwks_uri TEXT,
     -- Issuer status: 'active' | 'suspended' | 'revoked'
     status TEXT DEFAULT 'active',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     UNIQUE(tenant_id, issuer_did)
 );
 
@@ -1372,19 +1544,22 @@ CREATE TABLE "user_custom_fields" (
   field_type TEXT,
   searchable INTEGER DEFAULT 1,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  PRIMARY KEY (user_id, field_name),
+  PRIMARY KEY (tenant_id, user_id, field_name),
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
 );
+
+CREATE INDEX idx_user_custom_fields_search ON user_custom_fields(tenant_id, field_name, field_value);
 
 CREATE TABLE "user_roles" (
   user_id TEXT NOT NULL,
   role_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  PRIMARY KEY (user_id, role_id),
+  PRIMARY KEY (tenant_id, user_id, role_id),
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
   FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 );
+CREATE INDEX idx_user_roles_role ON user_roles(tenant_id, role_id, created_at);
 
 CREATE TABLE "user_token_families" (
   jti TEXT PRIMARY KEY,
@@ -1411,7 +1586,7 @@ CREATE TABLE user_verified_attributes (
     issuer_did TEXT,
     -- Reference to verification record
     verification_id TEXT REFERENCES attribute_verifications(id),
-    verified_at TEXT DEFAULT (datetime('now')),
+    verified_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT,
     -- Each user can have only one value per attribute
     UNIQUE(tenant_id, user_id, attribute_name)
@@ -1473,6 +1648,8 @@ CREATE TABLE users_core (
   is_active INTEGER DEFAULT 1,
 
   -- User type: end_user | admin | m2m
+  -- m2m is reserved for non-human service principals represented as user rows.
+  -- Many OAuth client_credentials actors are modeled as OAuth clients instead.
   user_type TEXT NOT NULL DEFAULT 'end_user',
 
   -- PII partition info
@@ -1491,7 +1668,29 @@ CREATE TABLE users_core (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   last_login_at INTEGER
-, email_domain_hash_version INTEGER DEFAULT 1, external_id TEXT DEFAULT NULL, status TEXT DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'locked')), suspended_at INTEGER, suspended_until INTEGER, locked_at INTEGER, locked_until INTEGER);
+, email_domain_hash_version INTEGER DEFAULT 1, external_id TEXT DEFAULT NULL,
+  -- Operational access control only. Keep separate from future lifecycle_state.
+  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'locked')),
+  -- Account lifecycle stage. Keep separate from status and user_type.
+  -- Values: invited, pending_verification, provisioning, incomplete,
+  -- active, dormant, archived, deprovisioned.
+  lifecycle_state TEXT DEFAULT 'active' CHECK (
+    lifecycle_state IN (
+      'invited',
+      'pending_verification',
+      'provisioning',
+      'incomplete',
+      'active',
+      'dormant',
+      'archived',
+      'deprovisioned'
+    )
+  ),
+  suspended_at INTEGER,
+  suspended_until INTEGER,
+  locked_at INTEGER,
+  locked_until INTEGER
+);
 
 CREATE TABLE verified_attributes (
   id TEXT PRIMARY KEY,
@@ -1531,7 +1730,7 @@ CREATE TABLE vp_requests (
     -- Error information if failed
     error_code TEXT,
     error_description TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
+    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT NOT NULL,
     verified_at TEXT
 );
@@ -1567,6 +1766,27 @@ CREATE TABLE webhook_delivery_logs (
   error_message TEXT,
   duration_ms INTEGER,
   created_at TEXT NOT NULL,
+  FOREIGN KEY (webhook_id) REFERENCES webhook_configs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  event_type TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'failed', 'retrying')),
+  status_code INTEGER,
+  request_headers TEXT,
+  request_body TEXT,
+  response_body TEXT,
+  error_message TEXT,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  next_retry_at INTEGER,
+  created_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  duration_ms INTEGER,
+  detail_object_catalog_id TEXT,
   FOREIGN KEY (webhook_id) REFERENCES webhook_configs(id) ON DELETE CASCADE
 );
 
@@ -1624,13 +1844,16 @@ CREATE INDEX idx_admin_jobs_type ON admin_jobs(
   created_at DESC
 );
 
-CREATE INDEX idx_ai_grants_active ON ai_grants(is_active) WHERE is_active = 1;
+CREATE INDEX idx_admin_jobs_object_catalog
+  ON admin_jobs(object_catalog_id);
 
-CREATE INDEX idx_ai_grants_client ON ai_grants(client_id);
+CREATE INDEX idx_ai_grants_active ON ai_grants(tenant_id, is_active);
 
-CREATE INDEX idx_ai_grants_expires ON ai_grants(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_ai_grants_client ON ai_grants(tenant_id, client_id);
 
-CREATE INDEX idx_ai_grants_principal ON ai_grants(ai_principal);
+CREATE INDEX idx_ai_grants_expires ON ai_grants(expires_at);
+
+CREATE INDEX idx_ai_grants_principal ON ai_grants(tenant_id, ai_principal);
 
 CREATE INDEX idx_ai_grants_tenant ON ai_grants(tenant_id);
 
@@ -1660,11 +1883,11 @@ CREATE INDEX idx_check_api_keys_prefix
 CREATE INDEX idx_check_api_keys_tenant_active
     ON check_api_keys(tenant_id, is_active);
 
-CREATE INDEX idx_ciba_client ON ciba_requests(client_id);
+CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id);
 
-CREATE INDEX idx_ciba_status ON ciba_requests(status);
+CREATE INDEX idx_ciba_status ON ciba_requests(tenant_id, status);
 
-CREATE INDEX idx_ciba_user ON ciba_requests(user_id);
+CREATE INDEX idx_ciba_user ON ciba_requests(tenant_id, user_id);
 
 CREATE INDEX idx_clients_claims_setting ON oauth_clients(allow_claims_without_scope);
 
@@ -1702,7 +1925,7 @@ CREATE INDEX idx_cih_statement ON consent_item_history(statement_id, created_at)
 
 CREATE INDEX idx_cih_tenant ON consent_item_history(tenant_id, created_at);
 
-CREATE INDEX idx_cih_user ON consent_item_history(user_id, created_at);
+CREATE INDEX idx_cih_user ON consent_item_history(tenant_id, user_id, created_at);
 
 CREATE INDEX idx_consent_history_action
   ON consent_history(action, created_at);
@@ -1730,14 +1953,15 @@ CREATE INDEX idx_csv_effective ON consent_statement_versions(effective_at);
 
 CREATE INDEX idx_csv_statement ON consent_statement_versions(statement_id, is_current);
 
-CREATE UNIQUE INDEX idx_csv_unique_current ON consent_statement_versions(tenant_id, statement_id) WHERE is_current = 1;
+CREATE UNIQUE INDEX idx_csv_unique_current
+  ON consent_statement_versions(tenant_id, current_statement_guard);
 
-CREATE INDEX idx_consents_client ON oauth_client_consents(client_id);
+CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id);
 
 CREATE INDEX idx_consents_expires_at_active
-  ON oauth_client_consents(expires_at) WHERE expires_at IS NOT NULL;
+  ON oauth_client_consents(expires_at);
 
-CREATE INDEX idx_consents_user ON oauth_client_consents(user_id);
+CREATE INDEX idx_consents_user ON oauth_client_consents(tenant_id, user_id);
 
 CREATE INDEX idx_credential_configurations_tenant ON credential_configurations(tenant_id);
 
@@ -1746,7 +1970,7 @@ CREATE INDEX idx_credential_offers_code ON credential_offers(pre_authorized_code
 CREATE INDEX idx_credential_offers_status ON credential_offers(tenant_id, status);
 
 CREATE INDEX idx_data_export_expires
-  ON data_export_requests(expires_at) WHERE expires_at IS NOT NULL;
+  ON data_export_requests(expires_at);
 
 CREATE INDEX idx_data_export_status
   ON data_export_requests(status, requested_at);
@@ -1754,11 +1978,29 @@ CREATE INDEX idx_data_export_status
 CREATE INDEX idx_data_export_user
   ON data_export_requests(user_id, status);
 
-CREATE INDEX idx_device_codes_client_id ON device_codes(client_id);
+CREATE INDEX idx_data_export_object_catalog
+  ON data_export_requests(object_catalog_id);
+
+CREATE INDEX idx_object_catalog_tenant_class_created
+  ON object_catalog(tenant_id, object_class, created_at DESC);
+
+CREATE INDEX idx_object_catalog_deleted_at
+  ON object_catalog(deleted_at);
+
+CREATE INDEX idx_object_catalog_objects_catalog_repr
+  ON object_catalog_objects(catalog_id, representation, object_index);
+
+CREATE INDEX idx_object_catalog_objects_bucket_key
+  ON object_catalog_objects(bucket_binding, object_key);
+
+CREATE INDEX idx_object_catalog_objects_deleted_at
+  ON object_catalog_objects(deleted_at);
+
+CREATE INDEX idx_device_codes_client_id ON device_codes(tenant_id, client_id);
 
 CREATE INDEX idx_device_codes_expires_at ON device_codes(expires_at);
 
-CREATE INDEX idx_device_codes_status ON device_codes(status);
+CREATE INDEX idx_device_codes_status ON device_codes(tenant_id, status);
 
 CREATE INDEX idx_device_codes_user_code ON device_codes(user_code);
 
@@ -1791,26 +2033,29 @@ CREATE INDEX idx_idempotency_keys_lookup
 
 CREATE INDEX idx_identity_providers_type ON identity_providers(provider_type);
 
-CREATE INDEX idx_issued_credentials_status ON issued_credentials(status);
+CREATE INDEX idx_issued_credentials_status ON issued_credentials(tenant_id, status);
 
-CREATE INDEX idx_issued_credentials_type ON issued_credentials(credential_type);
+CREATE INDEX idx_issued_credentials_type ON issued_credentials(tenant_id, credential_type);
 
 CREATE INDEX idx_issued_credentials_user ON issued_credentials(tenant_id, user_id);
 
-CREATE INDEX idx_linked_identities_provider ON linked_identities(provider_id);
+CREATE INDEX idx_issued_credentials_status_list
+    ON issued_credentials(tenant_id, status_list_internal_id, status_list_index);
 
-CREATE INDEX idx_linked_identities_provider_sub ON linked_identities(provider_id, provider_user_id);
+CREATE INDEX idx_linked_identities_provider ON linked_identities(tenant_id, provider_id);
+
+CREATE INDEX idx_linked_identities_provider_sub ON linked_identities(tenant_id, provider_id, provider_user_id);
 
 CREATE INDEX idx_linked_identities_tenant_provider_user
     ON linked_identities(tenant_id, provider_id, provider_user_id);
 
-CREATE INDEX idx_linked_identities_user ON linked_identities(user_id);
+CREATE INDEX idx_linked_identities_user ON linked_identities(tenant_id, user_id);
 
 CREATE INDEX idx_linked_identities_tenant_user ON linked_identities(tenant_id, user_id);
 
-CREATE INDEX idx_membership_org ON subject_org_membership(org_id);
+CREATE INDEX idx_membership_org ON subject_org_membership(tenant_id, org_id);
 
-CREATE INDEX idx_membership_subject ON subject_org_membership(subject_id);
+CREATE INDEX idx_membership_subject ON subject_org_membership(tenant_id, subject_id);
 
 CREATE INDEX idx_oauth_clients_tenant_id ON oauth_clients(tenant_id);
 
@@ -1834,6 +2079,9 @@ CREATE INDEX idx_odm_version ON org_domain_mappings(domain_hash_version);
 CREATE INDEX idx_operational_logs_actor
     ON operational_logs(actor_id);
 
+CREATE INDEX idx_operational_logs_detail_object_catalog
+    ON operational_logs(detail_object_catalog_id);
+
 CREATE INDEX idx_operational_logs_expires
     ON operational_logs(expires_at);
 
@@ -1855,20 +2103,18 @@ CREATE UNIQUE INDEX idx_organizations_tenant_name ON organizations(tenant_id, na
 
 CREATE INDEX idx_passkeys_tenant ON passkeys(tenant_id);
 
-CREATE INDEX idx_passkeys_user ON passkeys(user_id);
+CREATE INDEX idx_passkeys_user ON passkeys(tenant_id, user_id);
 
-CREATE INDEX idx_password_reset_user ON password_reset_tokens(user_id);
+CREATE INDEX idx_password_reset_user ON password_reset_tokens(tenant_id, user_id);
 
 CREATE INDEX idx_pca_api_key
-    ON permission_check_audit(api_key_id)
-    WHERE api_key_id IS NOT NULL;
+    ON permission_check_audit(api_key_id);
 
 CREATE INDEX idx_pca_checked_at
     ON permission_check_audit(checked_at);
 
 CREATE INDEX idx_pca_denied
-    ON permission_check_audit(tenant_id, final_decision)
-    WHERE final_decision = 'deny';
+    ON permission_check_audit(tenant_id, final_decision);
 
 CREATE INDEX idx_pca_tenant_subject
     ON permission_check_audit(tenant_id, subject_id);
@@ -1915,33 +2161,32 @@ CREATE INDEX idx_relationships_evidence_type
 
 CREATE INDEX idx_relationships_expires_at ON relationships(expires_at);
 
-CREATE INDEX idx_relationships_from ON relationships(from_type, from_id);
+CREATE INDEX idx_relationships_from ON relationships(tenant_id, from_type, from_id);
 
 CREATE INDEX idx_relationships_tenant_id ON relationships(tenant_id);
 
-CREATE INDEX idx_relationships_to ON relationships(to_type, to_id);
+CREATE INDEX idx_relationships_to ON relationships(tenant_id, to_type, to_id);
 
-CREATE INDEX idx_relationships_type ON relationships(relationship_type);
+CREATE INDEX idx_relationships_type ON relationships(tenant_id, relationship_type);
 
 CREATE UNIQUE INDEX idx_relationships_unique
   ON relationships(tenant_id, relationship_type, from_type, from_id, to_type, to_id);
 
-CREATE INDEX idx_role_assignments_role ON role_assignments(role_id);
+CREATE INDEX idx_role_assignments_role ON role_assignments(tenant_id, role_id);
 
-CREATE INDEX idx_role_assignments_subject ON role_assignments(subject_id);
+CREATE INDEX idx_role_assignments_subject ON role_assignments(tenant_id, subject_id);
 
 CREATE INDEX idx_roles_hierarchy_level ON roles(hierarchy_level);
 
-CREATE INDEX idx_roles_name ON roles(name);
+CREATE INDEX idx_roles_name ON roles(tenant_id, name);
 
-CREATE INDEX idx_roles_parent_role_id ON roles(parent_role_id);
+CREATE INDEX idx_roles_parent_role_id ON roles(tenant_id, parent_role_id);
 
 CREATE INDEX idx_roles_role_type ON roles(role_type);
 
 CREATE INDEX idx_roles_tenant_id ON roles(tenant_id);
 
-CREATE INDEX idx_rp_expires ON resource_permissions(expires_at)
-WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_rp_expires ON resource_permissions(expires_at);
 
 CREATE INDEX idx_rp_lookup ON resource_permissions(
   tenant_id,
@@ -1971,7 +2216,7 @@ CREATE INDEX idx_schema_migrations_applied_at ON schema_migrations(applied_at DE
 
 CREATE INDEX idx_schema_migrations_checksum ON schema_migrations(checksum);
 
-CREATE INDEX idx_scope_mappings_scope ON scope_mappings(scope);
+CREATE INDEX idx_scope_mappings_scope ON scope_mappings(tenant_id, scope);
 
 CREATE INDEX idx_security_alerts_tenant_created
     ON security_alerts(tenant_id, created_at DESC);
@@ -1998,17 +2243,17 @@ CREATE INDEX idx_security_threats_tenant ON security_threats(tenant_id);
 
 CREATE INDEX idx_security_threats_type ON security_threats(tenant_id, type);
 
-CREATE INDEX idx_session_clients_client_id ON session_clients(client_id);
+CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id);
 
 CREATE INDEX idx_session_clients_last_seen_at ON session_clients(last_seen_at);
 
-CREATE INDEX idx_session_clients_session_id ON session_clients(session_id);
+CREATE INDEX idx_session_clients_session_id ON session_clients(tenant_id, session_id);
 
 CREATE INDEX idx_sessions_expires ON sessions(expires_at);
 
 CREATE INDEX idx_sessions_tenant ON sessions(tenant_id);
 
-CREATE INDEX idx_sessions_user ON sessions(user_id);
+CREATE INDEX idx_sessions_user ON sessions(tenant_id, user_id);
 
 CREATE INDEX idx_settings_history_actor ON settings_history(
   actor_id,
@@ -2028,6 +2273,7 @@ CREATE INDEX idx_settings_history_cleanup ON settings_history(
 );
 
 CREATE INDEX idx_status_lists_tenant ON status_lists(tenant_id);
+CREATE INDEX idx_status_lists_tenant_public ON status_lists(tenant_id, public_id);
 
 CREATE INDEX idx_subject_identifiers_lookup
   ON subject_identifiers(tenant_id, identifier_type, identifier_value);
@@ -2061,9 +2307,9 @@ CREATE INDEX idx_tcr_evaluation ON token_claim_rules(
   created_at ASC
 );
 
-CREATE INDEX idx_token_families_client ON user_token_families(client_id);
+CREATE INDEX idx_token_families_client ON user_token_families(tenant_id, client_id);
 
-CREATE INDEX idx_token_families_user ON user_token_families(user_id);
+CREATE INDEX idx_token_families_user ON user_token_families(tenant_id, user_id);
 
 CREATE INDEX idx_trusted_issuers_did ON trusted_issuers(issuer_did);
 
@@ -2079,13 +2325,12 @@ CREATE UNIQUE INDEX idx_upstream_providers_tenant_name
   ON upstream_providers(tenant_id, name);
 
 CREATE UNIQUE INDEX idx_upstream_providers_tenant_slug
-  ON upstream_providers(tenant_id, slug)
-  WHERE slug IS NOT NULL;
+  ON upstream_providers(tenant_id, slug);
 
 CREATE INDEX idx_upstream_providers_enable_sso
   ON upstream_providers(tenant_id, enable_sso);
 
-CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at);
 
 CREATE INDEX idx_ucr_statement ON user_consent_records(tenant_id, statement_id);
 
@@ -2140,7 +2385,7 @@ CREATE INDEX idx_vp_requests_nonce ON vp_requests(nonce);
 
 CREATE INDEX idx_vp_requests_tenant_status ON vp_requests(tenant_id, status);
 
-CREATE INDEX idx_webhook_configs_active ON webhook_configs(tenant_id, active) WHERE active = 1;
+CREATE INDEX idx_webhook_configs_active ON webhook_configs(tenant_id, active);
 
 CREATE INDEX idx_webhook_configs_client ON webhook_configs(tenant_id, client_id);
 
@@ -2156,9 +2401,20 @@ CREATE INDEX idx_webhook_delivery_logs_tenant ON webhook_delivery_logs(tenant_id
 
 CREATE INDEX idx_webhook_delivery_logs_webhook ON webhook_delivery_logs(webhook_id);
 
+CREATE INDEX idx_webhook_deliveries_detail_object_catalog
+  ON webhook_deliveries(detail_object_catalog_id);
+
+CREATE INDEX idx_webhook_deliveries_status_created
+  ON webhook_deliveries(status, created_at DESC);
+
+CREATE INDEX idx_webhook_deliveries_tenant_created
+  ON webhook_deliveries(tenant_id, created_at DESC);
+
+CREATE INDEX idx_webhook_deliveries_webhook_created
+  ON webhook_deliveries(webhook_id, created_at DESC);
+
 CREATE INDEX idx_ws_subs_active
-    ON websocket_subscriptions(is_active)
-    WHERE is_active = 1;
+    ON websocket_subscriptions(is_active);
 
 CREATE INDEX idx_ws_subs_connection
     ON websocket_subscriptions(connection_id);
@@ -2175,6 +2431,7 @@ CREATE TABLE custom_claim_schemas (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
   field_key TEXT NOT NULL,
+  active_field_key TEXT,
   display_label TEXT NOT NULL,
   field_type TEXT NOT NULL DEFAULT 'string',
   is_pii INTEGER NOT NULL DEFAULT 0,
@@ -2205,10 +2462,11 @@ CREATE TABLE custom_claim_schemas (
   registration_placeholder TEXT
 );
 
-CREATE UNIQUE INDEX uniq_ccs_active_key ON custom_claim_schemas(tenant_id, field_key) WHERE is_active = 1;
+CREATE UNIQUE INDEX uniq_ccs_active_key
+  ON custom_claim_schemas(tenant_id, active_field_key);
 CREATE INDEX idx_ccs_tenant_active ON custom_claim_schemas(tenant_id, is_active, display_order);
 CREATE INDEX idx_ccs_tenant_key ON custom_claim_schemas(tenant_id, field_key);
-CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status) WHERE operation_status != 'active';
+CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status);
 
 -- =============================================================================
 -- From 054: Custom Claim Schema History
@@ -2252,6 +2510,143 @@ CREATE TABLE tenant_invitations (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
-CREATE INDEX idx_ti_token  ON tenant_invitations(token)
-  WHERE expires_at > unixepoch();
+CREATE INDEX idx_ti_token ON tenant_invitations(token, expires_at);
 CREATE INDEX idx_ti_tenant ON tenant_invitations(tenant_id, created_at DESC);
+
+-- =============================================================================
+-- From 075: Privacy-Preserving Support Operations
+-- =============================================================================
+
+CREATE TABLE support_operation_cohorts (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  resource TEXT NOT NULL,
+  intended_action TEXT NOT NULL,
+  selector_json TEXT NOT NULL,
+  selector_hash TEXT NOT NULL,
+  matched_count INTEGER NOT NULL,
+  actionable_count INTEGER NOT NULL DEFAULT 0,
+  blocked_count INTEGER NOT NULL DEFAULT 0,
+  blocked_summary_json TEXT,
+  snapshot_status TEXT NOT NULL DEFAULT 'completed' CHECK (
+    snapshot_status IN ('pending', 'running', 'completed', 'failed', 'cancelled')
+  ),
+  snapshot_job_id TEXT,
+  snapshot_error TEXT,
+  risk_json TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  support_case_id TEXT,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE support_operation_cohort_targets (
+  id TEXT PRIMARY KEY,
+  cohort_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  resource TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_hash TEXT,
+  block_reason TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (cohort_id) REFERENCES support_operation_cohorts(id) ON DELETE CASCADE,
+  UNIQUE(cohort_id, target_id)
+);
+
+CREATE TABLE support_operation_actions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  cohort_id TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  action TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (
+    status IN ('approval_required', 'approved', 'running', 'completed', 'failed', 'cancelled')
+  ),
+  reason TEXT NOT NULL,
+  support_case_id TEXT,
+  approval_request_id TEXT,
+  job_id TEXT,
+  result_summary_json TEXT,
+  requested_by TEXT NOT NULL,
+  approved_by TEXT,
+  approved_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (cohort_id) REFERENCES support_operation_cohorts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE support_operation_break_glass_requests (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  resource TEXT NOT NULL,
+  cohort_id TEXT,
+  action_id TEXT,
+  target_id TEXT,
+  target_hash TEXT,
+  requested_detail_classes_json TEXT NOT NULL DEFAULT '[]',
+  redaction_level TEXT NOT NULL DEFAULT 'masked' CHECK (
+    redaction_level IN ('summary_only', 'masked', 'raw')
+  ),
+  reason TEXT NOT NULL,
+  support_case_id TEXT,
+  approval_request_id TEXT,
+  status TEXT NOT NULL CHECK (
+    status IN ('approval_required', 'approved', 'revealed', 'expired', 'denied', 'cancelled')
+  ),
+  requested_by TEXT NOT NULL,
+  approved_by TEXT,
+  approved_at INTEGER,
+  revealed_by TEXT,
+  revealed_at INTEGER,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (cohort_id) REFERENCES support_operation_cohorts(id) ON DELETE SET NULL,
+  FOREIGN KEY (action_id) REFERENCES support_operation_actions(id) ON DELETE SET NULL
+);
+
+CREATE TABLE support_operation_break_glass_reveals (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  break_glass_request_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  detail_classes_json TEXT NOT NULL DEFAULT '[]',
+  result_summary_json TEXT,
+  occurred_at INTEGER NOT NULL,
+  FOREIGN KEY (break_glass_request_id)
+    REFERENCES support_operation_break_glass_requests(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_soc_tenant_created
+  ON support_operation_cohorts(tenant_id, created_at DESC);
+CREATE INDEX idx_soc_tenant_expires
+  ON support_operation_cohorts(tenant_id, expires_at);
+CREATE INDEX idx_soc_selector_hash
+  ON support_operation_cohorts(tenant_id, resource, selector_hash);
+CREATE INDEX idx_soc_snapshot_status
+  ON support_operation_cohorts(tenant_id, snapshot_status, created_at DESC);
+
+CREATE INDEX idx_soct_cohort
+  ON support_operation_cohort_targets(tenant_id, cohort_id);
+CREATE INDEX idx_soct_cohort_block
+  ON support_operation_cohort_targets(tenant_id, cohort_id, block_reason);
+
+CREATE INDEX idx_soa_tenant_created
+  ON support_operation_actions(tenant_id, created_at DESC);
+CREATE INDEX idx_soa_tenant_status
+  ON support_operation_actions(tenant_id, status, updated_at DESC);
+CREATE INDEX idx_soa_cohort
+  ON support_operation_actions(tenant_id, cohort_id);
+CREATE INDEX idx_soa_approval_request
+  ON support_operation_actions(tenant_id, approval_request_id);
+
+CREATE INDEX idx_sobgr_tenant_status
+  ON support_operation_break_glass_requests(tenant_id, status, created_at DESC);
+CREATE INDEX idx_sobgr_approval_request
+  ON support_operation_break_glass_requests(tenant_id, approval_request_id);
+CREATE INDEX idx_sobgr_cohort
+  ON support_operation_break_glass_requests(tenant_id, cohort_id);
+CREATE INDEX idx_sobgr_action
+  ON support_operation_break_glass_requests(tenant_id, action_id);
+CREATE INDEX idx_sobgr_reveals_request
+  ON support_operation_break_glass_reveals(tenant_id, break_glass_request_id, occurred_at DESC);

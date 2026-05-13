@@ -20,19 +20,12 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  getDefaultTenantId,
-  getTenantIdFromContext,
   getJwksWithCache,
   publishEvent,
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
-
-function resolveTenantId(c: Context<{ Bindings: Env }>): string {
-  return typeof (c as { get?: unknown }).get === 'function'
-    ? getTenantIdFromContext(c)
-    : getDefaultTenantId(c.env);
-}
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * POST /bc-authorize
@@ -42,8 +35,13 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
  */
 export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
-  const tenantId = resolveTenantId(c);
-  const requestIssuer = getRequestIssuer(c);
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const requestIssuer = getRequestIssuer(c, tenantId);
 
   try {
     // Parse request body
@@ -190,6 +188,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // Create CIBA request metadata
     const metadata: CIBARequestMetadata = {
+      tenant_id: tenantId,
       auth_req_id: authReqId,
       client_id,
       scope,
@@ -223,7 +222,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     const storeResponse = await cibaRequestStore.fetch(
       new Request('https://internal/store', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
         body: JSON.stringify(metadata),
       })
     );

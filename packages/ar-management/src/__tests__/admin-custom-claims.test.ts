@@ -19,27 +19,190 @@ import type { Env } from '@authrim/ar-lib-core';
 // Mock ar-lib-core
 const mockGenerateId = vi.fn().mockReturnValue('test-id-123');
 const mockSchemaHistoryRecordChange = vi.fn().mockResolvedValue(undefined);
+const mockGetRequiredCustomClaimViolationStatuses = vi.fn();
+const mockCountUsersWithNonPiiCustomClaimData = vi.fn(async (_db: unknown, _tenantId: string) => {
+  const rows = await mockDbQuery('COUNT_NON_PII_USERS');
+  return rows[0]?.count || 0;
+});
+const mockCountUsersWithPiiCustomClaimData = vi.fn(async (_dbPii: unknown, _tenantId: string) => {
+  const rows = await mockPiiQuery('COUNT_PII_USERS');
+  return rows[0]?.count || 0;
+});
+const mockListNonPiiFieldUsage = vi.fn(async (_db: unknown, _tenantId: string) => {
+  const rows = await mockDbQuery('LIST_NON_PII_FIELD_USAGE');
+  return rows.map((row: { field_name: string; count: number }) => ({
+    fieldName: row.field_name,
+    count: row.count,
+  }));
+});
+const mockCountUsersWithNonPiiFieldData = vi.fn(
+  async (_db: unknown, _tenantId: string, fieldKey: string) => {
+    const rows = await mockDbQuery('COUNT_NON_PII_FIELD_USERS', fieldKey);
+    return rows[0]?.count || 0;
+  }
+);
+const mockDeleteStoredCustomClaimData = vi.fn(
+  async ({ fieldKey, isPii }: { fieldKey: string; isPii: boolean }) => {
+    if (!isPii) {
+      const result = await mockDbExecute(
+        'DELETE FROM user_custom_fields WHERE tenant_id = ? AND field_name = ?',
+        ['test-tenant', fieldKey]
+      );
+      return {
+        affectedUsers: result?.rowsAffected || 0,
+        processedUsers: result?.rowsAffected || 0,
+        failedUsers: 0,
+      };
+    }
+
+    const batch = await mockPiiQuery('SCAN_PII_DELETE', fieldKey);
+    let affectedUsers = 0;
+    let failedUsers = 0;
+
+    for (const row of batch) {
+      try {
+        const attrs = JSON.parse(row.custom_attributes_json);
+        if (fieldKey in attrs) {
+          delete attrs[fieldKey];
+          await mockPiiExecute(
+            'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+            [JSON.stringify(attrs), 0, row.id, 'test-tenant']
+          );
+          affectedUsers++;
+        }
+      } catch {
+        failedUsers++;
+      }
+    }
+
+    return {
+      affectedUsers,
+      processedUsers: batch.length,
+      failedUsers,
+    };
+  }
+);
+const mockRenameStoredCustomClaimData = vi.fn(
+  async ({ oldKey, newKey, isPii }: { oldKey: string; newKey: string; isPii: boolean }) => {
+    if (!isPii) {
+      const result = await mockDbExecute(
+        'UPDATE user_custom_fields SET field_name = ? WHERE tenant_id = ? AND field_name = ?',
+        [newKey, 'test-tenant', oldKey]
+      );
+      return {
+        affectedUsers: result?.rowsAffected || 0,
+        processedUsers: result?.rowsAffected || 0,
+        failedUsers: 0,
+      };
+    }
+
+    const batch = await mockPiiQuery('SCAN_PII_RENAME', oldKey, newKey);
+    let affectedUsers = 0;
+    let failedUsers = 0;
+
+    for (const row of batch) {
+      try {
+        const attrs = JSON.parse(row.custom_attributes_json);
+        if (oldKey in attrs && !(newKey in attrs)) {
+          attrs[newKey] = attrs[oldKey];
+          delete attrs[oldKey];
+          await mockPiiExecute(
+            'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+            [JSON.stringify(attrs), 0, row.id, 'test-tenant']
+          );
+          affectedUsers++;
+        }
+      } catch {
+        failedUsers++;
+      }
+    }
+
+    return {
+      affectedUsers,
+      processedUsers: batch.length,
+      failedUsers,
+    };
+  }
+);
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  const selectMockAdapter = (db: unknown) => {
+    const query = db === mockPiiDb ? mockPiiQuery : mockDbQuery;
+    const execute = db === mockPiiDb ? mockPiiExecute : mockDbExecute;
+
+    const queryOne = vi.fn(async (sql: string, params?: unknown[]) => {
+      const rows = await query(sql, params);
+      return Array.isArray(rows) ? (rows[0] ?? null) : null;
+    });
+
+    if (db === mockPiiDb) {
+      return {
+        query,
+        queryOne,
+        execute,
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue(true),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      };
+    }
+
+    return {
+      query,
+      queryOne,
+      execute,
+      transaction: vi.fn(),
+      batch: vi.fn(),
+      isHealthy: vi.fn().mockResolvedValue(true),
+      getType: vi.fn().mockReturnValue('mock'),
+      close: vi.fn(),
+    };
+  };
+
   return {
     ...actual,
     generateId: (...args: unknown[]) => mockGenerateId(...args),
     createAuditLogFromContext: vi.fn(),
     getTenantIdFromContext: vi.fn().mockReturnValue('test-tenant'),
+    ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => selectMockAdapter(db)),
+    countUsersWithNonPiiCustomClaimData: (db: unknown, tenantId: string) =>
+      mockCountUsersWithNonPiiCustomClaimData(db, tenantId),
+    countUsersWithPiiCustomClaimData: (dbPii: unknown, tenantId: string) =>
+      mockCountUsersWithPiiCustomClaimData(dbPii, tenantId),
+    listNonPiiFieldUsage: (db: unknown, tenantId: string) => mockListNonPiiFieldUsage(db, tenantId),
+    countUsersWithNonPiiFieldData: (db: unknown, tenantId: string, fieldKey: string) =>
+      mockCountUsersWithNonPiiFieldData(db, tenantId, fieldKey),
+    deleteStoredCustomClaimData: (params: {
+      db: unknown;
+      dbPii?: unknown;
+      tenantId: string;
+      fieldKey: string;
+      isPii: boolean;
+    }) => mockDeleteStoredCustomClaimData(params),
+    renameStoredCustomClaimData: (params: {
+      db: unknown;
+      dbPii?: unknown;
+      tenantId: string;
+      oldKey: string;
+      newKey: string;
+      isPii: boolean;
+    }) => mockRenameStoredCustomClaimData(params),
     D1Adapter: vi.fn().mockImplementation(function (opts: { db: unknown }) {
-      // Return different adapter based on which DB is passed
-      if (opts.db === mockPiiDb) {
-        return {
-          query: mockPiiQuery,
-          execute: mockPiiExecute,
-        };
-      }
-      return {
-        query: mockDbQuery,
-        execute: mockDbExecute,
-      };
+      return selectMockAdapter(opts.db);
     }),
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
     CustomClaimSchemaHistoryManager: vi
       .fn()
       .mockImplementation(function MockCustomClaimSchemaHistoryManager() {
@@ -47,6 +210,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           recordChange: mockSchemaHistoryRecordChange,
         };
       }),
+    getRequiredCustomClaimViolationStatuses: (...args: unknown[]) =>
+      mockGetRequiredCustomClaimViolationStatuses(...args),
   };
 });
 
@@ -55,6 +220,7 @@ import {
   adminCustomClaimCreateHandler,
   adminCustomClaimsReservedNamesHandler,
   adminCustomClaimsStatsHandler,
+  adminCustomClaimRequiredViolationsDetectHandler,
   adminCustomClaimGetHandler,
   adminCustomClaimUpdateHandler,
   adminCustomClaimDeleteHandler,
@@ -71,6 +237,22 @@ const mockDbExecute = vi.fn();
 const mockPiiQuery = vi.fn();
 const mockPiiExecute = vi.fn();
 const mockPiiDb = Symbol('PII_DB');
+
+function createMockDatabaseAdapter(query: typeof mockDbQuery, execute: typeof mockDbExecute) {
+  return {
+    query,
+    queryOne: vi.fn(async (sql: string, params?: unknown[]) => {
+      const rows = await query(sql, params);
+      return Array.isArray(rows) ? (rows[0] ?? null) : null;
+    }),
+    execute,
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn(),
+  };
+}
 
 function createMockKV(): KVNamespace & { _store: Map<string, string> } {
   const store = new Map<string, string>();
@@ -111,7 +293,7 @@ function createMockContext(options: {
       header: vi.fn().mockReturnValue(null),
     },
     env: {
-      DB: {} as D1Database,
+      DB: createMockDatabaseAdapter(mockDbQuery, mockDbExecute),
       DB_PII: mockPiiDb,
       SETTINGS: mockKV,
       AUTHRIM_CONFIG: mockKV,
@@ -182,6 +364,7 @@ describe('Custom Claims Admin API', () => {
     mockGenerateId.mockReturnValue('test-id-123');
     mockSchemaHistoryRecordChange.mockReset();
     mockSchemaHistoryRecordChange.mockResolvedValue(undefined);
+    mockGetRequiredCustomClaimViolationStatuses.mockReset();
   });
 
   // ===========================================================================
@@ -523,6 +706,31 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(400);
     });
+
+    it('should clear registration_required when signup visibility is disabled on create', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([createSchemaRow({ id: 'test-id-123' })]);
+      mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          field_key: 'employee_id',
+          display_label: 'Employee ID',
+          field_type: 'string',
+          is_pii: false,
+          show_on_registration: false,
+          registration_required: true,
+        },
+      });
+
+      const res = await adminCustomClaimCreateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(201);
+      expect(mockDbExecute.mock.calls[0][1].slice(-5)).toEqual([0, 0, 0, null, 'employee_id']);
+    });
   });
 
   // ===========================================================================
@@ -610,6 +818,86 @@ describe('Custom Claims Admin API', () => {
       expect(body.total).toBe(1);
       // Cache was deleted then re-written
       expect(mockKV.delete).toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/admin/custom-claims/required-violations/detect', () => {
+    it('should rescan active users and return violating previews', async () => {
+      mockDbQuery.mockResolvedValueOnce([{ id: 'user-1' }, { id: 'user-2' }]);
+      mockGetRequiredCustomClaimViolationStatuses.mockResolvedValue({
+        requiredSchemaCount: 1,
+        users: [
+          {
+            userId: 'user-1',
+            lifecycleState: 'incomplete',
+            missingRequiredFields: [
+              {
+                fieldKey: 'department',
+                label: 'Department',
+                fieldType: 'string',
+              },
+            ],
+          },
+          {
+            userId: 'user-2',
+            lifecycleState: 'active',
+            missingRequiredFields: [],
+          },
+        ],
+      });
+      mockPiiQuery.mockResolvedValueOnce([
+        { id: 'user-1', email: 'missing@example.com', name: 'Missing User' },
+      ]);
+
+      const c = createMockContext({
+        method: 'POST',
+        query: { limit: '5' },
+      });
+      const res = await adminCustomClaimRequiredViolationsDetectHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(body.summary.scanned_users).toBe(2);
+      expect(body.summary.violating_users).toBe(1);
+      expect(body.summary.required_schema_count).toBe(1);
+      expect(body.violations).toEqual([
+        {
+          user_id: 'user-1',
+          email: 'missing@example.com',
+          name: 'Missing User',
+          lifecycle_state: 'incomplete',
+          missing_required_fields: [
+            {
+              field_key: 'department',
+              label: 'Department',
+              field_type: 'string',
+            },
+          ],
+        },
+      ]);
+      expect(mockGetRequiredCustomClaimViolationStatuses).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'test-tenant',
+          userIds: ['user-1', 'user-2'],
+          syncLifecycleState: true,
+        })
+      );
+    });
+
+    it('should return empty results when there are no active users to scan', async () => {
+      mockDbQuery.mockResolvedValueOnce([]);
+
+      const c = createMockContext({
+        method: 'POST',
+      });
+      const res = await adminCustomClaimRequiredViolationsDetectHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(body.summary.scanned_users).toBe(0);
+      expect(body.summary.violating_users).toBe(0);
+      expect(body.violations).toEqual([]);
+      expect(mockPiiQuery).not.toHaveBeenCalled();
     });
   });
 
@@ -742,6 +1030,33 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(400);
     });
+
+    it('should clear registration_required when signup visibility is disabled on update', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([
+          createSchemaRow({ show_on_registration: 1, registration_required: 1 }),
+        ])
+        .mockResolvedValueOnce([
+          createSchemaRow({ show_on_registration: 0, registration_required: 0 }),
+        ]);
+      mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: {
+          show_on_registration: false,
+          registration_required: true,
+        },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(mockDbExecute.mock.calls[0][0]).toContain('registration_required = ?');
+      expect(mockDbExecute.mock.calls[0][1]).toContain(0);
+    });
   });
 
   // ===========================================================================
@@ -765,8 +1080,15 @@ describe('Custom Claims Admin API', () => {
       expect(body.success).toBe(true);
       expect(body.deleted_id).toBe('schema-1');
       // Phase 1: mark as deleting (CAS)
-      expect(mockDbExecute.mock.calls[0][0]).toContain("operation_status = 'deleting'");
-      expect(mockDbExecute.mock.calls[0][0]).toContain("IN ('active', 'error')");
+      expect(mockDbExecute.mock.calls[0][0]).toContain('UPDATE custom_claim_schemas SET');
+      expect(mockDbExecute.mock.calls[0][1]).toEqual([
+        'deleting',
+        expect.any(Number),
+        'schema-1',
+        'test-tenant',
+        'active',
+        'error',
+      ]);
       // Phase 2: delete user data
       expect(mockDbExecute.mock.calls[1][0]).toContain('DELETE FROM user_custom_fields');
       // Phase 3: delete schema
@@ -790,6 +1112,7 @@ describe('Custom Claims Admin API', () => {
     });
 
     it('should handle PII delete with partial failure → error state', async () => {
+      const mockKV = createMockKV();
       mockDbQuery.mockResolvedValueOnce([createSchemaRow({ is_pii: 1 })]);
       mockDbExecute.mockResolvedValue({ rowsAffected: 1 }); // CAS success
 
@@ -804,6 +1127,7 @@ describe('Custom Claims Admin API', () => {
       const c = createMockContext({
         method: 'DELETE',
         params: { id: 'schema-1' },
+        kv: mockKV,
       });
 
       const res = await adminCustomClaimDeleteHandler(c);
@@ -813,10 +1137,10 @@ describe('Custom Claims Admin API', () => {
       expect(body.success).toBe(false);
       // Should have set error state
       const errorUpdateCall = mockDbExecute.mock.calls.find(
-        (call: unknown[]) =>
-          typeof call[0] === 'string' && call[0].includes("operation_status = 'error'")
+        (call: unknown[]) => Array.isArray(call[1]) && call[1][0] === 'error'
       );
       expect(errorUpdateCall).toBeDefined();
+      expect(mockKV.delete).toHaveBeenCalledWith('custom_claim_schemas:test-tenant');
     });
 
     it('should block delete during renaming operation', async () => {
@@ -843,11 +1167,12 @@ describe('Custom Claims Admin API', () => {
       mockDbQuery
         .mockResolvedValueOnce([createSchemaRow()]) // fetch existing
         .mockResolvedValueOnce([]) // no conflict
+        .mockResolvedValueOnce([createSchemaRow({ field_key: 'emp_id' })]) // normalize active_field_key
         .mockResolvedValueOnce([createSchemaRow({ field_key: 'emp_id' })]); // fetch updated
       mockDbExecute
+        .mockResolvedValue({ rowsAffected: 1 })
         .mockResolvedValueOnce({ rowsAffected: 1 }) // CAS: mark renaming
-        .mockResolvedValueOnce({ rowsAffected: 5 }) // update user_custom_fields
-        .mockResolvedValueOnce({ rowsAffected: 1 }); // atomic update
+        .mockResolvedValueOnce({ rowsAffected: 5 }); // update user_custom_fields
 
       const c = createMockContext({
         method: 'PATCH',
@@ -943,6 +1268,7 @@ describe('Custom Claims Admin API', () => {
     });
 
     it('should handle PII rename with partial failure → error state', async () => {
+      const mockKV = createMockKV();
       mockDbQuery.mockResolvedValueOnce([createSchemaRow({ is_pii: 1 })]).mockResolvedValueOnce([]); // no conflict
       mockDbExecute.mockResolvedValue({ rowsAffected: 1 }); // CAS success
 
@@ -957,6 +1283,7 @@ describe('Custom Claims Admin API', () => {
         method: 'PATCH',
         params: { id: 'schema-1' },
         body: { new_field_key: 'emp_id' },
+        kv: mockKV,
       });
 
       const res = await adminCustomClaimRenameHandler(c);
@@ -964,6 +1291,7 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(500);
       expect(body.success).toBe(false);
+      expect(mockKV.delete).toHaveBeenCalledWith('custom_claim_schemas:test-tenant');
     });
   });
 
@@ -973,6 +1301,7 @@ describe('Custom Claims Admin API', () => {
 
   describe('POST /api/admin/custom-claims/:id/retry', () => {
     it('should reset delete error to active state', async () => {
+      const mockKV = createMockKV();
       mockDbQuery.mockResolvedValueOnce([
         createSchemaRow({
           operation_status: 'error',
@@ -984,6 +1313,7 @@ describe('Custom Claims Admin API', () => {
       const c = createMockContext({
         method: 'POST',
         params: { id: 'schema-1' },
+        kv: mockKV,
       });
 
       const res = await adminCustomClaimRetryHandler(c);
@@ -992,9 +1322,11 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(200);
       expect(body.success).toBe(true);
       expect(body.action).toBe('reset_to_active');
+      expect(mockKV.delete).toHaveBeenCalledWith('custom_claim_schemas:test-tenant');
     });
 
     it('should retry rename operation', async () => {
+      const mockKV = createMockKV();
       mockDbQuery.mockResolvedValueOnce([
         createSchemaRow({
           operation_status: 'error',
@@ -1009,6 +1341,7 @@ describe('Custom Claims Admin API', () => {
       // Non-PII: check remaining then update
       mockDbQuery
         .mockResolvedValueOnce([{ count: 3 }]) // remaining count
+        .mockResolvedValueOnce([createSchemaRow({ field_key: 'new_field' })]) // normalize active_field_key
         .mockResolvedValueOnce([createSchemaRow({ field_key: 'new_field' })]); // fetch updated
       mockDbExecute
         .mockResolvedValueOnce({ rowsAffected: 1 }) // CAS: mark renaming
@@ -1018,6 +1351,7 @@ describe('Custom Claims Admin API', () => {
       const c = createMockContext({
         method: 'POST',
         params: { id: 'schema-1' },
+        kv: mockKV,
       });
 
       const res = await adminCustomClaimRetryHandler(c);
@@ -1026,6 +1360,8 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(200);
       expect(body.success).toBe(true);
       expect(body.action).toBe('rename_completed');
+      expect(mockSchemaHistoryRecordChange).toHaveBeenCalledTimes(1);
+      expect(mockKV.delete).toHaveBeenCalledWith('custom_claim_schemas:test-tenant');
     });
 
     it('should reject retry on non-error schema', async () => {
@@ -1044,6 +1380,7 @@ describe('Custom Claims Admin API', () => {
     });
 
     it('should handle unparseable operation_detail by resetting to active', async () => {
+      const mockKV = createMockKV();
       mockDbQuery.mockResolvedValueOnce([
         createSchemaRow({
           operation_status: 'error',
@@ -1055,6 +1392,7 @@ describe('Custom Claims Admin API', () => {
       const c = createMockContext({
         method: 'POST',
         params: { id: 'schema-1' },
+        kv: mockKV,
       });
 
       const res = await adminCustomClaimRetryHandler(c);
@@ -1062,6 +1400,7 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(200);
       expect(body.action).toBe('reset_to_active');
+      expect(mockKV.delete).toHaveBeenCalledWith('custom_claim_schemas:test-tenant');
     });
 
     it('should return 404 for non-existent schema', async () => {

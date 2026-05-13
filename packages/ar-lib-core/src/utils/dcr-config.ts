@@ -4,7 +4,7 @@
  * Provides helper functions for reading DCR settings from KV/env.
  * Uses the Settings API v2 storage format for consistency.
  *
- * Priority: KV > Environment variable > Default value
+ * Priority: SETTINGS KV > legacy AUTHRIM_CONFIG KV > Environment variable > Default value
  *
  * Settings:
  * - dcr.enabled: Enable Dynamic Client Registration (default: false)
@@ -23,8 +23,16 @@ const log = createLogger().module('DCR_CONFIG');
  * KV key for DCR settings (Settings API v2 format)
  * Settings are stored per-tenant under: settings:tenant:{tenantId}:dcr
  */
-function getDCRSettingsKVKey(tenantId: string = 'default'): string {
+function getDCRSettingsKVKey(tenantId: string): string {
   return `settings:tenant:${tenantId}:dcr`;
+}
+
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
 }
 
 /**
@@ -41,10 +49,10 @@ const CACHE_TTL_MS = 30000; // 30 seconds
 /**
  * Load DCR settings from KV
  */
-async function loadDCRSettingsFromKV(
-  env: Env,
-  tenantId: string = 'default'
-): Promise<Record<string, unknown>> {
+async function loadDCRSettingsFromKV(env: Env, tenantId: string): Promise<Record<string, unknown>> {
+  if (!tenantId.trim()) {
+    throw new Error('DCR settings require tenantId');
+  }
   const cacheKey = getDCRSettingsKVKey(tenantId);
 
   // Check cache
@@ -53,20 +61,23 @@ async function loadDCRSettingsFromKV(
     return cached.data;
   }
 
-  // Try to load from AUTHRIM_CONFIG KV
-  if (!env.AUTHRIM_CONFIG) {
-    return {};
-  }
-
-  try {
-    const json = await env.AUTHRIM_CONFIG.get(cacheKey);
-    if (json) {
-      const data = JSON.parse(json) as Record<string, unknown>;
-      cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
-      return data;
+  // Settings API v2 stores category-scoped tenant settings in SETTINGS.
+  // Keep AUTHRIM_CONFIG as a legacy fallback for older deployments.
+  for (const kv of [env.SETTINGS, env.AUTHRIM_CONFIG]) {
+    if (!kv) {
+      continue;
     }
-  } catch (error) {
-    log.warn('Failed to load DCR settings from KV');
+
+    try {
+      const json = await kv.get(cacheKey);
+      if (json) {
+        const data = JSON.parse(json) as Record<string, unknown>;
+        cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+        return data;
+      }
+    } catch (error) {
+      log.warn('Failed to load DCR settings from KV');
+    }
   }
 
   return {};
@@ -88,13 +99,13 @@ function parseBool(value: string | undefined, defaultValue: boolean): boolean {
  *
  * @param key - Setting key (e.g., 'dcr.enabled')
  * @param env - Environment bindings
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Resolved setting value
  */
 export async function getDCRSetting<K extends keyof DCRSettings>(
   key: K,
   env: Env,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<DCRSettings[K]> {
   // Load KV settings
   const kvSettings = await loadDCRSettingsFromKV(env, tenantId);
@@ -126,10 +137,7 @@ export async function getDCRSetting<K extends keyof DCRSettings>(
 /**
  * Get all DCR settings
  */
-export async function getAllDCRSettings(
-  env: Env,
-  tenantId: string = 'default'
-): Promise<DCRSettings> {
+export async function getAllDCRSettings(env: Env, tenantId: string): Promise<DCRSettings> {
   return {
     'dcr.enabled': await getDCRSetting('dcr.enabled', env, tenantId),
     'dcr.require_initial_access_token': await getDCRSetting(
@@ -151,13 +159,17 @@ export async function getAllDCRSettings(
 }
 
 /**
- * Clear DCR settings cache
- * Call this when settings are updated via Admin API
+ * Clear DCR settings cache for one tenant.
+ * Call this when tenant DCR settings are updated via Admin API.
  */
-export function clearDCRSettingsCache(tenantId?: string): void {
-  if (tenantId) {
-    cache.delete(getDCRSettingsKVKey(tenantId));
-  } else {
-    cache.clear();
-  }
+export function clearDCRSettingsCache(tenantId: string): void {
+  cache.delete(getDCRSettingsKVKey(requireTenantId(tenantId, 'clearDCRSettingsCache')));
+}
+
+/**
+ * Clear DCR settings cache for all tenants.
+ * Use only for explicit platform/system-wide settings maintenance.
+ */
+export function clearAllDCRSettingsCache(): void {
+  cache.clear();
 }

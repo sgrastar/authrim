@@ -11,7 +11,7 @@ import {
   HaipPolicyEvaluator,
   getHaipPolicy,
   checkCredentialStatus,
-  D1Adapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
   TrustedIssuerRepository,
   decodeBase64Url,
   createLogger,
@@ -72,7 +72,10 @@ export async function verifyVPToken(
     const evaluator = new HaipPolicyEvaluator(policy);
 
     // 3. Check issuer trust using repository
-    const adapter = new D1Adapter({ db: env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      `vc-vp-verifier:${options.tenantId}`
+    );
     const trustedIssuerRepo = new TrustedIssuerRepository(adapter);
     const trustResult = await checkIssuerTrust(trustedIssuerRepo, issuerDid, options.tenantId);
     const issuerTrusted = trustResult.trusted;

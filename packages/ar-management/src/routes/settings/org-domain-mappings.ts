@@ -13,9 +13,7 @@
 
 import type { Context } from 'hono';
 import {
-  D1Adapter,
   getLogger,
-  type DatabaseAdapter,
   type OrgDomainMapping,
   type OrgDomainMappingRow,
   type OrgDomainMappingInput,
@@ -39,7 +37,7 @@ import {
   DOMAIN_EVENTS,
   type DomainEventData,
 } from '@authrim/ar-lib-core';
-import { resolveSettingsTenantId } from './tenant-resolver';
+import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
@@ -147,7 +145,7 @@ export async function createOrgDomainMapping(c: Context) {
     );
 
     // Verify org exists
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const coreAdapter = resolveSettingsCoreAdapter(c);
     const org = await coreAdapter.queryOne<{ id: string }>(
       'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
       [body.org_id, tenantId]
@@ -182,7 +180,7 @@ export async function createOrgDomainMapping(c: Context) {
 
     // Create mapping
     const mapping = await createDomainMapping(
-      c.env.DB,
+      coreAdapter,
       tenantId,
       hashResult.hash,
       hashResult.version,
@@ -228,9 +226,10 @@ export async function listOrgDomainMappings(c: Context) {
   const orgId = c.req.query('org_id');
   const verified = c.req.query('verified');
   const isActive = c.req.query('is_active');
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const result = await listDomainMappings(c.env.DB, tenantId, {
+    const result = await listDomainMappings(coreAdapter, tenantId, {
       orgId: orgId || undefined,
       verified: verified !== undefined ? verified === 'true' : undefined,
       isActive: isActive !== undefined ? isActive === 'true' : undefined,
@@ -264,9 +263,10 @@ export async function getOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const mapping = await getDomainMappingById(c.env.DB, id, tenantId);
+    const mapping = await getDomainMappingById(coreAdapter, id, tenantId);
 
     if (!mapping) {
       return c.json(
@@ -300,10 +300,11 @@ export async function updateOrgDomainMapping(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<Partial<OrgDomainMappingInput>>();
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Note: domain cannot be updated. Create a new mapping instead.
-    const updated = await updateDomainMapping(c.env.DB, id, tenantId, {
+    const updated = await updateDomainMapping(coreAdapter, id, tenantId, {
       autoJoinEnabled: body.auto_join_enabled,
       membershipType: body.membership_type,
       autoAssignRoleId: body.auto_assign_role_id,
@@ -343,9 +344,10 @@ export async function deleteOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const success = await deleteDomainMapping(c.env.DB, id, tenantId);
+    const success = await deleteDomainMapping(coreAdapter, id, tenantId);
 
     if (!success) {
       return c.json(
@@ -380,10 +382,10 @@ export async function listOrgDomainMappingsByOrg(c: Context) {
   const tenantId = resolveSettingsTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_MAPPINGS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Verify org exists
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
     const org = await coreAdapter.queryOne<{ id: string }>(
       'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
       [orgId, tenantId]
@@ -399,7 +401,7 @@ export async function listOrgDomainMappingsByOrg(c: Context) {
       );
     }
 
-    const result = await listDomainMappings(c.env.DB, tenantId, {
+    const result = await listDomainMappings(coreAdapter, tenantId, {
       orgId,
       limit,
       offset,
@@ -487,11 +489,11 @@ export async function verifyDomainOwnership(c: Context) {
   }
 
   const domain = body.domain.toLowerCase().trim();
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get existing mapping
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-    const mapping = await getDomainMappingById(c.env.DB, body.mapping_id, tenantId);
+    const mapping = await getDomainMappingById(coreAdapter, body.mapping_id, tenantId);
 
     if (!mapping) {
       return c.json(
@@ -614,10 +616,9 @@ export async function confirmDomainVerification(c: Context) {
   }
 
   const domain = body.domain.toLowerCase().trim();
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-
     // Get mapping with verification details
     const row = await coreAdapter.queryOne<{
       id: string;
@@ -710,7 +711,7 @@ export async function confirmDomainVerification(c: Context) {
 
     if (result.verified) {
       // Update mapping as verified
-      const updated = await updateDomainMapping(c.env.DB, body.mapping_id, tenantId, {
+      const updated = await updateDomainMapping(coreAdapter, body.mapping_id, tenantId, {
         verified: true,
       });
 

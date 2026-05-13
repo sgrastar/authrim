@@ -17,13 +17,18 @@
 import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../types';
 import {
-  D1Adapter,
   AttributeVerificationRepository,
   UserVerifiedAttributeRepository,
   getLogger,
   createLogger,
+  getTenantIdFromContext,
+  resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl, getRequestVerifierIdentifier } from '../../request-identifiers';
+import {
+  getVPRequestStoreById,
+  getVPRequestStoreForNewRequest,
+} from '../../utils/vp-request-sharding';
 
 const standaloneLog = createLogger().module('VC-ATTR-VERIFY');
 import { verifyVPToken } from '../services/vp-verifier';
@@ -87,9 +92,16 @@ export async function initiateAttributeVerification(
     }
 
     // Create VP request
-    const requestId = crypto.randomUUID();
+    const requestUuid = crypto.randomUUID();
     const nonce = crypto.randomUUID();
     const expirySeconds = parseInt(c.env.VP_REQUEST_EXPIRY_SECONDS || '300', 10);
+    const clientId = getRequestVerifierIdentifier(c);
+    const { stub, requestId } = await getVPRequestStoreForNewRequest(
+      c.env,
+      userInfo.tenantId,
+      clientId,
+      requestUuid
+    );
 
     const presentationDefinition = buildPresentationDefinition(
       body.attribute_type,
@@ -98,7 +110,7 @@ export async function initiateAttributeVerification(
 
     const vpRequest: VPRequestState = {
       id: requestId,
-      clientId: getRequestVerifierIdentifier(c),
+      clientId,
       tenantId: userInfo.tenantId,
       nonce,
       status: 'pending',
@@ -109,10 +121,6 @@ export async function initiateAttributeVerification(
       userId: userInfo.userId, // Link to authenticated user
       presentationDefinition,
     };
-
-    // Store in Durable Object
-    const doId = c.env.VP_REQUEST_STORE.idFromName(requestId);
-    const stub = c.env.VP_REQUEST_STORE.get(doId);
 
     const storeResponse = await stub.fetch(
       new Request('https://internal/create', {
@@ -186,8 +194,7 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Get VP request from Durable Object
-    const doId = c.env.VP_REQUEST_STORE.idFromName(body.state);
-    const stub = c.env.VP_REQUEST_STORE.get(doId);
+    const { stub } = getVPRequestStoreById(c.env, body.state, getTenantIdFromContext(c));
 
     const requestResponse = await stub.fetch(new Request('https://internal/get'));
     if (!requestResponse.ok) {
@@ -256,7 +263,7 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Link verification to user and store attributes
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core');
     const verificationRepo = new AttributeVerificationRepository(adapter);
     const attributeRepo = new UserVerifiedAttributeRepository(adapter);
 
@@ -321,7 +328,7 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
       return c.json({ error: 'invalid_token', error_description: 'Invalid access token' }, 401);
     }
 
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core');
     const attributeRepo = new UserVerifiedAttributeRepository(adapter);
     const attributes = await getUserVerifiedAttributes(
       attributeRepo,

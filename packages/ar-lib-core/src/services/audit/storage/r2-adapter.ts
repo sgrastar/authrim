@@ -11,6 +11,7 @@
  */
 
 import type { EventLogEntry, PIILogEntry } from '../types';
+import { extractAuditEntryFromCanonicalPayload } from '../canonical-format';
 import type {
   IAuditStorageAdapter,
   AuditStorageBackendType,
@@ -36,6 +37,12 @@ export interface R2AuditAdapterConfig {
 
   /** File format */
   format: 'json' | 'jsonl';
+
+  /** Optional serializer for archive event records */
+  eventSerializer?: (entry: EventLogEntry) => unknown;
+
+  /** Optional serializer for archive PII records */
+  piiSerializer?: (entry: PIILogEntry) => unknown;
 }
 
 /**
@@ -51,12 +58,16 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
   private readonly bucket: R2Bucket;
   private readonly pathPrefix: string;
   private readonly format: 'json' | 'jsonl';
+  private readonly eventSerializer?: (entry: EventLogEntry) => unknown;
+  private readonly piiSerializer?: (entry: PIILogEntry) => unknown;
 
   constructor(config: R2AuditAdapterConfig) {
     this.id = config.id;
     this.bucket = config.bucket;
     this.pathPrefix = config.pathPrefix.replace(/\/$/, ''); // Remove trailing slash
     this.format = config.format;
+    this.eventSerializer = config.eventSerializer;
+    this.piiSerializer = config.piiSerializer;
   }
 
   getBackendType(): AuditStorageBackendType {
@@ -76,7 +87,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
     try {
       const key = this.buildEntryKey('event', entry.tenantId, entry.id, entry.createdAt);
-      const body = JSON.stringify(entry);
+      const body = JSON.stringify(this.eventSerializer ? this.eventSerializer(entry) : entry);
 
       await this.bucket.put(key, body, {
         httpMetadata: { contentType: 'application/json' },
@@ -163,7 +174,9 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
         // Append to existing file or create new
         const existing = await this.bucket.get(r2Key);
         const existingContent = existing ? await existing.text() : '';
-        const newLines = groupEntries.map((e) => JSON.stringify(e)).join('\n');
+        const newLines = groupEntries
+          .map((e) => JSON.stringify(this.eventSerializer ? this.eventSerializer(e) : e))
+          .join('\n');
         const content = existingContent ? `${existingContent}\n${newLines}` : newLines;
 
         await this.bucket.put(r2Key, content, {
@@ -195,7 +208,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
     try {
       const key = this.buildEntryKey('pii', entry.tenantId, entry.id, entry.createdAt);
-      const body = JSON.stringify(entry);
+      const body = JSON.stringify(this.piiSerializer ? this.piiSerializer(entry) : entry);
 
       await this.bucket.put(key, body, {
         httpMetadata: { contentType: 'application/json' },
@@ -281,7 +294,9 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
         const existing = await this.bucket.get(r2Key);
         const existingContent = existing ? await existing.text() : '';
-        const newLines = groupEntries.map((e) => JSON.stringify(e)).join('\n');
+        const newLines = groupEntries
+          .map((e) => JSON.stringify(this.piiSerializer ? this.piiSerializer(e) : e))
+          .join('\n');
         const content = existingContent ? `${existingContent}\n${newLines}` : newLines;
 
         await this.bucket.put(r2Key, content, {
@@ -353,7 +368,8 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
           for (const line of lines) {
             if (entries.length >= limit + offset) break;
             try {
-              const entry = JSON.parse(line);
+              const parsed = JSON.parse(line);
+              const entry = extractAuditEntryFromCanonicalPayload(parsed) ?? parsed;
               if (this.matchesQueryOptions(entry, options)) {
                 entries.push(entry);
               }
@@ -364,7 +380,8 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
         } else {
           // Parse JSON
           try {
-            const entry = JSON.parse(text);
+            const parsed = JSON.parse(text);
+            const entry = extractAuditEntryFromCanonicalPayload(parsed) ?? parsed;
             if (this.matchesQueryOptions(entry, options)) {
               entries.push(entry);
             }
@@ -417,7 +434,98 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
   // Maintenance Operations
   // ---------------------------------------------------------------------------
 
-  async deleteByRetention(
+  async listTenantRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listTenantRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listTenantRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('Audit retention candidate listing requires tenantId');
+    }
+    return this.listRetentionCandidatesInternal(logType, beforeTime, normalizedTenantId, batchSize);
+  }
+
+  async listGlobalRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listGlobalRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listGlobalRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    return this.listRetentionCandidatesInternal(logType, beforeTime, undefined, batchSize);
+  }
+
+  async deleteTenantByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<number> {
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('Audit retention deletion requires tenantId');
+    }
+    return this.deleteByRetentionInternal(logType, beforeTime, normalizedTenantId, batchSize);
+  }
+
+  async deleteGlobalByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<number> {
+    return this.deleteByRetentionInternal(logType, beforeTime, undefined, batchSize);
+  }
+
+  private async listRetentionCandidatesInternal(
+    _logType: 'event',
+    _beforeTime: number,
+    _tenantId?: string,
+    _batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  private async listRetentionCandidatesInternal(
+    _logType: 'pii',
+    _beforeTime: number,
+    _tenantId?: string,
+    _batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  private async listRetentionCandidatesInternal(
+    _logType: AuditLogType,
+    _beforeTime: number,
+    _tenantId?: string,
+    _batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]>;
+  private async listRetentionCandidatesInternal(
+    _logType: AuditLogType,
+    _beforeTime: number,
+    _tenantId?: string,
+    _batchSize: number = 100
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    return [];
+  }
+
+  private async deleteByRetentionInternal(
     logType: AuditLogType,
     beforeTime: number,
     tenantId?: string,
@@ -582,6 +690,8 @@ export function createR2AuditAdapter(
     id?: string;
     pathPrefix?: string;
     format?: 'json' | 'jsonl';
+    eventSerializer?: (entry: EventLogEntry) => unknown;
+    piiSerializer?: (entry: PIILogEntry) => unknown;
   }
 ): R2AuditAdapter {
   return new R2AuditAdapter({
@@ -589,5 +699,7 @@ export function createR2AuditAdapter(
     bucket,
     pathPrefix: options?.pathPrefix ?? 'audit-logs',
     format: options?.format ?? 'jsonl',
+    eventSerializer: options?.eventSerializer,
+    piiSerializer: options?.piiSerializer,
   });
 }

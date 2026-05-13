@@ -5,7 +5,9 @@
  * Falls back to D1 database when cache is unavailable or corrupted.
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import type { DatabaseAdapter, DatabaseSource } from '../../db';
+import { ensureDatabaseAdapter } from '../../db';
 import { createLogger } from '../../utils/logger';
 import type { CustomClaimSchema } from './resolver';
 
@@ -21,12 +23,12 @@ interface CachedSchemaData {
 }
 
 export class SchemaLoader {
-  private db: D1Database;
+  private adapter: DatabaseAdapter;
   private cache: KVNamespace | null;
   private cacheTtl: number;
 
-  constructor(db: D1Database, cache: KVNamespace | null, cacheTtlSeconds?: number) {
-    this.db = db;
+  constructor(db: DatabaseSource, cache: KVNamespace | null, cacheTtlSeconds?: number) {
+    this.adapter = ensureDatabaseAdapter(db, 'custom-claims-schema');
     this.cache = cache;
     this.cacheTtl = cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
   }
@@ -84,12 +86,11 @@ export class SchemaLoader {
   }
 
   private async loadFromDb(tenantId: string): Promise<CustomClaimSchema[]> {
-    const stmt = this.db.prepare(
+    return this.adapter.query<CustomClaimSchema>(
       `SELECT * FROM custom_claim_schemas
        WHERE tenant_id = ? AND is_active = 1 AND operation_status = 'active'
-       ORDER BY display_order ASC`
+       ORDER BY display_order ASC`,
+      [tenantId]
     );
-    const result = await stmt.bind(tenantId).all();
-    return (result.results ?? []) as unknown as CustomClaimSchema[];
   }
 }

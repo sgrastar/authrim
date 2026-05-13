@@ -14,6 +14,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 
 /**
@@ -110,7 +111,7 @@ export class TombstoneRepository extends BaseRepository<Tombstone> {
 
     const tombstone: Tombstone = {
       id: input.id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       email_blind_index: input.email_blind_index ?? null,
       deleted_at: now,
       deleted_by: input.deleted_by ?? null,
@@ -152,9 +153,16 @@ export class TombstoneRepository extends BaseRepository<Tombstone> {
    * @param adapter - Optional partition-specific adapter
    * @returns Tombstone or null
    */
-  async findByUserId(userId: string, adapter?: DatabaseAdapter): Promise<Tombstone | null> {
+  async findByUserId(
+    tenantId: string,
+    userId: string,
+    adapter?: DatabaseAdapter
+  ): Promise<Tombstone | null> {
     const db = adapter ?? this.adapter;
-    return db.queryOne<Tombstone>('SELECT * FROM users_pii_tombstone WHERE id = ?', [userId]);
+    return db.queryOne<Tombstone>(
+      'SELECT * FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
   }
 
   /**

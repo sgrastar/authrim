@@ -5,8 +5,17 @@
 
 import { browser } from '$app/environment';
 import { getAuthConfig } from '$lib/auth';
-import { generatePKCE } from '$lib/utils/pkce';
+import { generateLoginUiPKCE } from '$lib/authrim/pkce';
 import { getDiagnosticSessionId as getLoggerSessionId } from '$lib/stores/diagnostic';
+import { authrimFetch } from '$lib/authrim/fetch';
+import {
+	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
+	LOGIN_UI_SESSION_STORAGE_KEYS
+} from '$lib/authrim/storage-keys';
+
+interface ApiFetchOptions extends RequestInit {
+	baseUrl?: string;
+}
 
 // Type definitions
 interface User {
@@ -90,13 +99,47 @@ interface ScimToken {
 	enabled: boolean;
 }
 
-interface APIError {
+export interface APIError {
 	error: string;
 	error_description: string;
 }
 
+interface DirectAuthPkceState {
+	codeVerifier: string;
+}
+
+interface DirectEmailCodeState extends DirectAuthPkceState {
+	attemptId: string;
+}
+
+interface ManagedDirectSessionResponse {
+	ok: boolean;
+	session: {
+		userId: string;
+		createdAt: number;
+		expiresAt: number;
+		authTime?: number;
+		acr?: string;
+		amr?: string[];
+	};
+	user: {
+		id: string;
+		email: string;
+		name?: string | null;
+	};
+	redirect_url?: string;
+	authorization?: {
+		challenge_id: string;
+		type: 'login' | 'reauth';
+	};
+}
+
+const directPasskeyLoginPkce = new Map<string, DirectAuthPkceState>();
+const directPasskeySignupPkce = new Map<string, DirectAuthPkceState>();
+const directEmailCodePkce = new Map<string, DirectEmailCodeState>();
+
 // Get API base URL from environment variable or use default
-// In production, separate Pages deployments either proxy same-origin requests
+// In production, separate UI Worker deployments either proxy same-origin requests
 // or inject a cross-origin PUBLIC_API_BASE_URL at build time.
 export function resolveApiBaseUrl(): string {
 	// Try to get from environment variable (if set during build)
@@ -133,8 +176,18 @@ export function getDiagnosticSessionId(): string | undefined {
 	if (fromLogger) return fromLogger;
 
 	// Fallback: generate/persist via sessionStorage when logger is disabled
-	const FALLBACK_KEY = 'authrim_diagnostic_session_id';
+	const FALLBACK_KEY = LOGIN_UI_SESSION_STORAGE_KEYS.diagnosticSessionId;
 	let sessionId = sessionStorage.getItem(FALLBACK_KEY);
+	if (!sessionId) {
+		const legacySessionId = sessionStorage.getItem(
+			LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.diagnosticSessionId
+		);
+		if (legacySessionId) {
+			sessionId = legacySessionId;
+			sessionStorage.removeItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.diagnosticSessionId);
+			sessionStorage.setItem(FALLBACK_KEY, sessionId);
+		}
+	}
 	if (!sessionId) {
 		try {
 			sessionId = crypto.randomUUID();
@@ -162,19 +215,20 @@ export function buildDiagnosticHeaders(headers?: HeadersInit): Headers {
  */
 async function apiFetch<T>(
 	endpoint: string,
-	options: RequestInit = {}
+	options: ApiFetchOptions = {}
 ): Promise<{ data?: T; error?: APIError }> {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT);
 
 	try {
-		const url = `${API_BASE_URL}${endpoint}`;
-		const headers = buildDiagnosticHeaders(options.headers);
+		const { baseUrl = API_BASE_URL, ...requestOptions } = options;
+		const headers = buildDiagnosticHeaders(requestOptions.headers);
 		if (!headers.has('Content-Type')) {
 			headers.set('Content-Type', 'application/json');
 		}
-		const response = await fetch(url, {
-			...options,
+		const response = await authrimFetch(endpoint, {
+			...requestOptions,
+			baseUrl,
 			signal: controller.signal,
 			headers
 		});
@@ -222,6 +276,126 @@ async function apiFetch<T>(
 	} finally {
 		clearTimeout(timeoutId);
 	}
+}
+
+async function createDirectAuthPkce() {
+	const pkce = await generateLoginUiPKCE();
+	return {
+		codeVerifier: pkce.codeVerifier,
+		codeChallenge: pkce.codeChallenge,
+		codeChallengeMethod: pkce.codeChallengeMethod
+	};
+}
+
+function normalizeDirectEmail(value: string): string {
+	return value.trim().toLowerCase();
+}
+
+function getDirectEmailCodeStateKey(email: string): string {
+	return `${LOGIN_UI_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${normalizeDirectEmail(email)}`;
+}
+
+function getLegacyDirectEmailCodeStateKey(email: string): string {
+	return `${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${normalizeDirectEmail(email)}`;
+}
+
+function persistDirectEmailCodeState(email: string, state: DirectEmailCodeState): void {
+	const normalizedEmail = normalizeDirectEmail(email);
+	directEmailCodePkce.set(normalizedEmail, state);
+	if (!browser) {
+		return;
+	}
+
+	try {
+		sessionStorage.setItem(getDirectEmailCodeStateKey(normalizedEmail), JSON.stringify(state));
+	} catch {
+		// Session storage is a convenience for page navigation; API errors remain fail-closed.
+	}
+}
+
+function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null {
+	const normalizedEmail = normalizeDirectEmail(email);
+	const memoryState = directEmailCodePkce.get(normalizedEmail);
+	directEmailCodePkce.delete(normalizedEmail);
+
+	if (!browser) {
+		return memoryState ?? null;
+	}
+
+	try {
+		const key = getDirectEmailCodeStateKey(normalizedEmail);
+		const legacyKey = getLegacyDirectEmailCodeStateKey(normalizedEmail);
+		const raw = sessionStorage.getItem(key) ?? sessionStorage.getItem(legacyKey);
+		sessionStorage.removeItem(key);
+		sessionStorage.removeItem(legacyKey);
+		if (!raw) {
+			return memoryState ?? null;
+		}
+
+		const parsed = JSON.parse(raw) as Partial<DirectEmailCodeState>;
+		if (typeof parsed.attemptId === 'string' && typeof parsed.codeVerifier === 'string') {
+			return {
+				attemptId: parsed.attemptId,
+				codeVerifier: parsed.codeVerifier
+			};
+		}
+	} catch {
+		return memoryState ?? null;
+	}
+
+	return memoryState ?? null;
+}
+
+async function finalizeManagedDirectAuthSession(
+	directAuthArtifact: string,
+	codeVerifier: string,
+	authorizationChallengeId?: string
+): Promise<{ data?: ManagedDirectSessionResponse; error?: APIError }> {
+	return apiFetch<ManagedDirectSessionResponse>('/api/v1/auth/direct/session', {
+		method: 'POST',
+		body: JSON.stringify({
+			direct_auth_artifact: directAuthArtifact,
+			client_id: getAuthConfig().clientId,
+			code_verifier: codeVerifier,
+			channel: 'browser',
+			authorization_challenge_id: authorizationChallengeId
+		})
+	});
+}
+
+function directSessionToLegacyAuthResponse(data: ManagedDirectSessionResponse): {
+	verified: boolean;
+	userId: string;
+	user: User;
+	session: {
+		authTime?: number;
+		acr?: string;
+		amr?: string[];
+		createdAt: number;
+		expiresAt: number;
+	};
+	redirect_url?: string;
+} {
+	return {
+		verified: true,
+		userId: data.user.id,
+		redirect_url: data.redirect_url,
+		session: {
+			authTime: data.session.authTime,
+			acr: data.session.acr,
+			amr: data.session.amr,
+			createdAt: data.session.createdAt,
+			expiresAt: data.session.expiresAt
+		},
+		user: {
+			id: data.user.id,
+			email: data.user.email,
+			email_verified: true,
+			name: data.user.name,
+			created_at: data.session.createdAt,
+			updated_at: data.session.createdAt
+		}
+	};
 }
 
 /**
@@ -527,53 +701,214 @@ export const passkeyAPI = {
 	/**
 	 * Get registration options for Passkey
 	 */
-	async getRegisterOptions(data: { email: string; name?: string; userId?: string }) {
-		return apiFetch<{ options: unknown; userId: string }>('/api/auth/passkeys/register/options', {
-			method: 'POST',
-			body: JSON.stringify(data)
-		});
+	async getRegisterOptions(data: {
+		email: string;
+		name?: string;
+		userId?: string;
+		custom_fields?: Record<string, unknown>;
+	}) {
+		const pkce = await createDirectAuthPkce();
+		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
+			'/api/v1/auth/direct/passkey/signup/start',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					client_id: getAuthConfig().clientId,
+					code_challenge: pkce.codeChallenge,
+					code_challenge_method: pkce.codeChallengeMethod,
+					channel: 'browser',
+					email: data.email,
+					display_name: data.name,
+					custom_fields: data.custom_fields
+				})
+			}
+		);
+		if (response.data) {
+			directPasskeySignupPkce.set(response.data.challenge_id, {
+				codeVerifier: pkce.codeVerifier
+			});
+			return {
+				data: {
+					options: response.data.options,
+					userId: response.data.challenge_id,
+					challengeId: response.data.challenge_id
+				},
+				error: undefined
+			};
+		}
+		return response as { data?: { options: unknown; userId: string }; error?: APIError };
 	},
 
 	/**
 	 * Verify Passkey registration
 	 */
-	async verifyRegistration(data: { userId: string; credential: unknown; deviceName?: string }) {
-		return apiFetch<{
-			verified: boolean;
-			passkeyId: string;
-			sessionId: string;
-			message: string;
-			userId: string;
-			user: User;
-		}>('/api/auth/passkeys/register/verify', {
-			method: 'POST',
-			body: JSON.stringify(data)
-		});
+	async verifyRegistration(data: {
+		userId: string;
+		credential: unknown;
+		deviceName?: string;
+		authorizationChallengeId?: string;
+	}) {
+		const pkce = directPasskeySignupPkce.get(data.userId);
+		if (!pkce) {
+			return {
+				error: {
+					error: 'missing_pkce_state',
+					error_description: 'Passkey registration state is missing or expired'
+				}
+			};
+		}
+		directPasskeySignupPkce.delete(data.userId);
+
+		const finish = await apiFetch<{ direct_auth_artifact: string; expires_in: number }>(
+			'/api/v1/auth/direct/passkey/signup/finish',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					challenge_id: data.userId,
+					credential: data.credential,
+					code_verifier: pkce.codeVerifier,
+					channel: 'browser'
+				})
+			}
+		);
+		if (finish.error || !finish.data) {
+			return finish as {
+				data?: {
+					verified: boolean;
+					passkeyId: string;
+					message: string;
+					userId: string;
+					user: User;
+				};
+				error?: APIError;
+			};
+		}
+
+		const session = await finalizeManagedDirectAuthSession(
+			finish.data.direct_auth_artifact,
+			pkce.codeVerifier,
+			data.authorizationChallengeId
+		);
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					verified: boolean;
+					passkeyId: string;
+					message: string;
+					userId: string;
+					user: User;
+				};
+				error?: APIError;
+			};
+		}
+
+		return {
+			data: {
+				...directSessionToLegacyAuthResponse(session.data),
+				passkeyId: '',
+				message: 'Passkey registration successful'
+			},
+			error: undefined
+		};
 	},
 
 	/**
 	 * Get authentication options for Passkey login
 	 */
 	async getLoginOptions(data: { email?: string }) {
-		return apiFetch<{ options: unknown; challengeId: string }>('/api/auth/passkeys/login/options', {
-			method: 'POST',
-			body: JSON.stringify(data)
-		});
+		const pkce = await createDirectAuthPkce();
+		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
+			'/api/v1/auth/direct/passkey/login/start',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					client_id: getAuthConfig().clientId,
+					code_challenge: pkce.codeChallenge,
+					code_challenge_method: pkce.codeChallengeMethod,
+					channel: 'browser',
+					email: data.email
+				})
+			}
+		);
+		if (response.data) {
+			directPasskeyLoginPkce.set(response.data.challenge_id, {
+				codeVerifier: pkce.codeVerifier
+			});
+			return {
+				data: {
+					options: response.data.options,
+					challengeId: response.data.challenge_id
+				},
+				error: undefined
+			};
+		}
+		return response as { data?: { options: unknown; challengeId: string }; error?: APIError };
 	},
 
 	/**
 	 * Verify Passkey authentication
 	 */
-	async verifyLogin(data: { challengeId: string; credential: unknown }) {
-		return apiFetch<{
-			verified: boolean;
-			sessionId: string;
-			userId: string;
-			user: User;
-		}>('/api/auth/passkeys/login/verify', {
-			method: 'POST',
-			body: JSON.stringify(data)
-		});
+	async verifyLogin(data: {
+		challengeId: string;
+		credential: unknown;
+		authorizationChallengeId?: string;
+	}) {
+		const pkce = directPasskeyLoginPkce.get(data.challengeId);
+		if (!pkce) {
+			return {
+				error: {
+					error: 'missing_pkce_state',
+					error_description: 'Passkey login state is missing or expired'
+				}
+			};
+		}
+		directPasskeyLoginPkce.delete(data.challengeId);
+
+		const finish = await apiFetch<{ direct_auth_artifact: string; expires_in: number }>(
+			'/api/v1/auth/direct/passkey/login/finish',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					challenge_id: data.challengeId,
+					credential: data.credential,
+					code_verifier: pkce.codeVerifier,
+					channel: 'browser'
+				})
+			}
+		);
+		if (finish.error || !finish.data) {
+			return finish as {
+				data?: {
+					verified: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
+
+		const session = await finalizeManagedDirectAuthSession(
+			finish.data.direct_auth_artifact,
+			pkce.codeVerifier,
+			data.authorizationChallengeId
+		);
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					verified: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
+
+		return {
+			data: directSessionToLegacyAuthResponse(session.data),
+			error: undefined
+		};
 	}
 };
 
@@ -584,31 +919,116 @@ export const emailCodeAPI = {
 	/**
 	 * Send verification code to email
 	 */
-	async send(data: { email: string; name?: string }) {
-		return apiFetch<{ success: boolean; message: string; messageId?: string; code?: string }>(
-			'/api/auth/email-codes/send',
-			{
-				method: 'POST',
-				body: JSON.stringify(data),
-				credentials: 'include'
-			}
-		);
+	async send(data: {
+		email: string;
+		name?: string;
+		invite_token?: string;
+		custom_fields?: Record<string, unknown>;
+	}) {
+		const pkce = await createDirectAuthPkce();
+		const response = await apiFetch<{
+			attempt_id: string;
+			expires_in: number;
+			masked_email: string;
+			_dev_code?: string;
+		}>('/api/v1/auth/direct/email-code/send', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_id: getAuthConfig().clientId,
+				email: data.email,
+				code_challenge: pkce.codeChallenge,
+				code_challenge_method: pkce.codeChallengeMethod,
+				channel: 'browser',
+				invite_token: data.invite_token,
+				custom_fields: data.custom_fields
+			})
+		});
+
+		if (response.error || !response.data) {
+			return response as {
+				data?: { success: boolean; message: string; messageId?: string; code?: string };
+				error?: APIError;
+			};
+		}
+
+		persistDirectEmailCodeState(data.email, {
+			attemptId: response.data.attempt_id,
+			codeVerifier: pkce.codeVerifier
+		});
+
+		return {
+			data: {
+				success: true,
+				message: 'Verification code sent',
+				messageId: response.data.attempt_id,
+				code: response.data._dev_code
+			},
+			error: undefined
+		};
 	},
 
 	/**
 	 * Verify email code
 	 */
-	async verify(data: { code: string; email: string }) {
-		return apiFetch<{
-			success: boolean;
-			sessionId: string;
-			userId: string;
-			user: User;
-		}>('/api/auth/email-codes/verify', {
-			method: 'POST',
-			body: JSON.stringify(data),
-			credentials: 'include'
-		});
+	async verify(data: { code: string; email: string; authorizationChallengeId?: string }) {
+		const state = consumeDirectEmailCodeState(data.email);
+		if (!state) {
+			return {
+				error: {
+					error: 'missing_pkce_state',
+					error_description: 'Email code state is missing or expired'
+				}
+			};
+		}
+
+		const finish = await apiFetch<{ direct_auth_artifact: string; expires_in: number }>(
+			'/api/v1/auth/direct/email-code/verify',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					attempt_id: state.attemptId,
+					code: data.code,
+					code_verifier: state.codeVerifier,
+					channel: 'browser'
+				})
+			}
+		);
+		if (finish.error || !finish.data) {
+			return finish as {
+				data?: {
+					success: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
+
+		const session = await finalizeManagedDirectAuthSession(
+			finish.data.direct_auth_artifact,
+			state.codeVerifier,
+			data.authorizationChallengeId
+		);
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					success: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
+
+		return {
+			data: {
+				success: true,
+				...directSessionToLegacyAuthResponse(session.data)
+			},
+			error: undefined
+		};
 	}
 };
 
@@ -628,6 +1048,23 @@ interface LoginChallengeClientInfo {
 	tos_uri?: string;
 }
 
+type LoginChallengeSessionMode = 'managed_browser_session' | 'cookie_session' | 'token_session';
+type LoginChallengeHandoffMethod = 'cookie_session_finalize' | 'dpop_token_verify';
+
+interface LoginChallengeWebOrigin {
+	origin: string;
+	client_ids: string[];
+	cors: {
+		allowed: boolean;
+	};
+	csp: {
+		frame_ancestors?: string[];
+	};
+	handoff_allowed: boolean;
+	iframe_allowed: boolean;
+	environment?: string;
+}
+
 /**
  * Login challenge response data
  */
@@ -636,6 +1073,18 @@ interface LoginChallengeData {
 	client: LoginChallengeClientInfo;
 	scope?: string;
 	login_hint?: string;
+	oidc?: {
+		prompt?: string;
+		max_age?: number;
+		acr_values?: string[];
+		nonce_present: boolean;
+		claims_present: boolean;
+	};
+	session_mode?: LoginChallengeSessionMode;
+	handoff_methods?: LoginChallengeHandoffMethod[];
+	web_origin_registry?: {
+		origins: LoginChallengeWebOrigin[];
+	};
 }
 
 /**
@@ -649,38 +1098,12 @@ export const loginChallengeAPI = {
 	 */
 	async getData(challengeId: string) {
 		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
-		try {
-			const response = await fetch(
-				`${apiBaseUrl}/api/auth/login-challenges?challenge_id=${challengeId}`,
-				{
-					method: 'GET',
-					headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-					credentials: 'include'
-				}
-			);
-
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				return {
-					error: {
-						error: errorData.error || 'login_challenge_error',
-						error_description: errorData.error_description || 'Failed to load login challenge data'
-					}
-				};
-			}
-
-			const data: LoginChallengeData = await response.json();
-			return { data };
-		} catch (error) {
-			console.error('Login challenge fetch error:', error);
-			// SECURITY: Do not expose internal error details to prevent information leakage
-			return {
-				error: {
-					error: 'network_error',
-					error_description: 'Network error occurred'
-				}
-			};
-		}
+		const params = new URLSearchParams({ challenge_id: challengeId });
+		return apiFetch<LoginChallengeData>(`/auth/login-challenge?${params.toString()}`, {
+			method: 'GET',
+			headers: { Accept: 'application/json' },
+			baseUrl: apiBaseUrl
+		});
 	}
 };
 
@@ -1085,7 +1508,7 @@ export const adminScimTokensAPI = {
 };
 
 // =============================================================================
-// External IdP API (Social Login)
+// External IdP API (external login)
 // =============================================================================
 
 /**
@@ -1104,7 +1527,7 @@ interface ExternalIdPProvider {
 
 /**
  * External IdP API
- * Handles social login and external identity provider integration
+ * Handles external identity provider login integration
  */
 export const externalIdpAPI = {
 	/**
@@ -1120,15 +1543,30 @@ export const externalIdpAPI = {
 	 */
 	async startLogin(
 		providerId: string,
-		redirectUri?: string
+		redirectUri?: string,
+		startUrl?: string,
+		startMode: 'oauth_redirect' | 'saml_sp' | 'direct' = 'oauth_redirect'
 	): Promise<{
 		url: string;
-		codeVerifier: string;
 	}> {
+		const encodedProviderId = encodeURIComponent(providerId);
+		const targetUrl = new URL(startUrl || `/api/external/${encodedProviderId}/start`, API_BASE_URL);
+
+		if (startMode === 'direct') {
+			return { url: targetUrl.toString() };
+		}
+
+		if (startMode === 'saml_sp') {
+			if (redirectUri) {
+				targetUrl.searchParams.set('return_url', redirectUri);
+			}
+			return { url: targetUrl.toString() };
+		}
+
 		// Generate PKCE parameters (using static import)
 		let pkceParams;
 		try {
-			pkceParams = await generatePKCE();
+			pkceParams = await generateLoginUiPKCE();
 		} catch (error) {
 			console.error('Failed to generate PKCE parameters:', error);
 			throw new Error(
@@ -1150,14 +1588,13 @@ export const externalIdpAPI = {
 			params.set('redirect_uri', redirectUri);
 		}
 
-		const query = params.toString();
+		for (const [key, value] of params.entries()) {
+			targetUrl.searchParams.set(key, value);
+		}
 
-		// This returns a redirect, so we need to handle it differently
-		const url = `${API_BASE_URL}/api/external/${providerId}/start${query ? '?' + query : ''}`;
-
+		// This returns a redirect, so callers navigate the browser instead of fetching it.
 		return {
-			url,
-			codeVerifier: pkceParams.codeVerifier
+			url: targetUrl.toString()
 		};
 	}
 };
@@ -1388,35 +1825,12 @@ export const consentAPI = {
 	 */
 	async getData(challengeId: string) {
 		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
-		try {
-			const response = await fetch(`${apiBaseUrl}/api/auth/consents?challenge_id=${challengeId}`, {
-				method: 'GET',
-				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-				credentials: 'include'
-			});
-
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				return {
-					error: {
-						error: errorData.error || 'consent_error',
-						error_description: errorData.error_description || 'Failed to load consent data'
-					}
-				};
-			}
-
-			const data: ConsentScreenData = await response.json();
-			return { data };
-		} catch (error) {
-			console.error('Consent getData error:', error);
-			// SECURITY: Do not expose internal error details to prevent information leakage
-			return {
-				error: {
-					error: 'network_error',
-					error_description: 'Network error occurred'
-				}
-			};
-		}
+		const params = new URLSearchParams({ challenge_id: challengeId });
+		return apiFetch<ConsentScreenData>(`/auth/consent?${params.toString()}`, {
+			method: 'GET',
+			headers: { Accept: 'application/json' },
+			baseUrl: apiBaseUrl
+		});
 	},
 
 	/**
@@ -1425,35 +1839,11 @@ export const consentAPI = {
 	 */
 	async submit(submission: ConsentSubmission) {
 		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
-		try {
-			const response = await fetch(`${apiBaseUrl}/api/auth/consents`, {
-				method: 'POST',
-				headers: buildDiagnosticHeaders({ 'Content-Type': 'application/json' }),
-				credentials: 'include',
-				body: JSON.stringify(submission)
-			});
-
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				return {
-					error: {
-						error: errorData.error || 'consent_error',
-						error_description: errorData.error_description || 'Failed to process consent'
-					}
-				};
-			}
-
-			const data: { redirect_url: string } = await response.json();
-			return { data };
-		} catch (error) {
-			console.error('Consent submit error:', error);
-			// SECURITY: Do not expose internal error details to prevent information leakage
-			return {
-				error: {
-					error: 'network_error',
-					error_description: 'Network error occurred'
-				}
-			};
-		}
+		return apiFetch<{ redirect_url: string }>('/auth/consent', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			baseUrl: apiBaseUrl,
+			body: JSON.stringify(submission)
+		});
 	}
 };

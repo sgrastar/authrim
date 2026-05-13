@@ -14,18 +14,95 @@
  * @packageDocumentation
  */
 
-import type { Context } from 'hono';
+import type { Context, Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  ADMIN_PERMISSIONS,
+  requireAdminPermissions,
+  requireAnyRole,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
   createAuditLogFromContext,
   getLogger,
+  listObjectCatalogObjects,
+  type ObjectCatalogListResult,
+  type ObjectCatalogPhysicalRecord,
+  type ObjectRepresentation,
 } from '@authrim/ar-lib-core';
+import {
+  loadCatalogObjectArtifact,
+  loadCatalogObjectRepresentation,
+} from '@authrim/ar-lib-core/services/object-artifact-store';
 import { z } from 'zod';
+import {
+  auditAdminSensitiveRead,
+  requireAdminPermissionOrElevationGrant,
+  type AdminElevationAccessResolution,
+} from './admin-elevation-access';
+import {
+  listAdminJobTypeDefinitions,
+  getAdminJobResultObjectClass,
+  isAdminJobTypeCreatableFromAdminApi,
+} from './admin-job-types';
+import { countBulkUserUpdateTargets, validateBulkUserUpdateConfig } from './admin-job-executor';
+import {
+  USER_IMPORT_MAX_UPLOAD_BYTES,
+  buildUserImportResultKey,
+  buildUserImportUploadKey,
+  sanitizeUserImportFilename,
+} from './user-import-jobs';
+
+const ADMIN_JOB_MANAGER_ROLES = ['system_admin', 'distributor_admin', 'tenant_admin'];
+
+export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
+  app.use('/api/admin/jobs', requireAnyRole(ADMIN_JOB_MANAGER_ROLES));
+  app.use('/api/admin/jobs/*', requireAnyRole(ADMIN_JOB_MANAGER_ROLES));
+
+  app.use('/api/admin/jobs', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
+  app.use(
+    '/api/admin/jobs/users/import/upload-url',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use(
+    '/api/admin/jobs/users/import/upload/:upload_id',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use('/api/admin/jobs/users/import', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE]));
+  app.use(
+    '/api/admin/jobs/users/bulk-update',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use(
+    '/api/admin/jobs/reports/generate',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use(
+    '/api/admin/jobs/organizations/:id/bulk-members',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
+  );
+  app.use('/api/admin/jobs/types', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
+  app.use(
+    '/api/admin/jobs/artifacts/:artifactId',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use(
+    '/api/admin/jobs/artifacts/:artifactId/download',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use(
+    '/api/admin/jobs/artifacts/:artifactId/chunks/:index',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use('/api/admin/jobs/:id/result', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
+  app.use(
+    '/api/admin/jobs/:id/result/download',
+    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
+  );
+  app.use('/api/admin/jobs/:id', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
+}
 
 // =============================================================================
 // Types
@@ -53,6 +130,7 @@ interface JobResultSummary {
   total: number;
   succeeded: number;
   failed: number;
+  skipped?: number;
 }
 
 /**
@@ -67,6 +145,8 @@ interface JobRow {
   config: string | null;
   input_r2_key: string | null;
   result_r2_key: string | null;
+  object_catalog_id: string | null;
+  public_artifact_id?: string | null;
   result: string | null;
   error_code: string | null;
   error_message: string | null;
@@ -76,6 +156,35 @@ interface JobRow {
   started_at: number | null;
   completed_at: number | null;
   estimated_completion: number | null;
+  attempt_count?: number | null;
+  max_attempts?: number | null;
+  next_run_at?: number | null;
+  dead_lettered_at?: number | null;
+}
+
+type JobArtifactFormat = 'json' | 'csv';
+
+interface JobArtifactManifestObject {
+  format: JobArtifactFormat | null;
+  representation: ObjectRepresentation;
+  objectKind: 'single' | 'manifest' | 'chunk';
+  objectIndex: number;
+  totalBytes?: number | null;
+  checksumSha256?: string | null;
+  downloadUrl?: string;
+  chunkUrl?: string;
+}
+
+interface JobArtifactManifestResponse {
+  artifactId: string;
+  jobId: string;
+  jobType: string;
+  status: JobStatus;
+  defaultFormat: JobArtifactFormat;
+  availableFormats: JobArtifactFormat[];
+  objectClass: string;
+  createdAt: number;
+  objects: JobArtifactManifestObject[];
 }
 
 // =============================================================================
@@ -128,6 +237,50 @@ const ALLOWED_FILTER_FIELDS = ['status', 'job_type'];
  */
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const USER_IMPORT_ALLOWED_CONTENT_TYPES = new Set([
+  'text/csv',
+  'application/csv',
+  'application/vnd.ms-excel',
+]);
+
+function jobArtifactFormatForRepresentation(
+  representation: ObjectRepresentation
+): JobArtifactFormat | null {
+  if (representation === 'csv_projection') {
+    return 'csv';
+  }
+  if (representation === 'canonical_json') {
+    return 'json';
+  }
+  return null;
+}
+
+function jobArtifactRepresentationForFormat(format: JobArtifactFormat): ObjectRepresentation {
+  return format === 'csv' ? 'csv_projection' : 'canonical_json';
+}
+
+function normalizeRequestedJobArtifactFormat(
+  value: string | undefined,
+  fallback: JobArtifactFormat = 'json'
+): JobArtifactFormat {
+  if (value === 'csv' || value === 'json') {
+    return value;
+  }
+  return fallback;
+}
+
+async function sha256HexFromBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function expectedObjectClassForJobType(
+  jobType: string
+): 'user_import_result' | 'admin_job_result' | null {
+  return getAdminJobResultObjectClass(jobType);
+}
 
 // =============================================================================
 // Validation Schemas
@@ -151,7 +304,205 @@ const ListJobsQuerySchema = z.object({
  * Create database adapter from context
  */
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  const tenantId = getTenantIdFromContext(c);
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+function getJobResultBucket(env: Env): R2Bucket | null {
+  return env.EXPORT_ARTIFACTS ?? null;
+}
+
+async function loadJobResultArtifact(
+  adapter: DatabaseAdapter,
+  env: Env,
+  row: Pick<JobRow, 'tenant_id' | 'object_catalog_id' | 'result_r2_key' | 'job_type'>,
+  options?: {
+    format?: JobArtifactFormat;
+    objectIndex?: number;
+  }
+): Promise<{ content: string; contentType: string } | null> {
+  const resultBucket = getJobResultBucket(env);
+  if (!resultBucket) {
+    return null;
+  }
+
+  if (row.object_catalog_id && env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    const expectedClass = expectedObjectClassForJobType(row.job_type);
+    if (!expectedClass) {
+      return null;
+    }
+    const representation = jobArtifactRepresentationForFormat(options?.format ?? 'json');
+    const loaded =
+      options?.objectIndex !== undefined
+        ? await loadCatalogObjectArtifact(adapter, env, {
+            tenantId: row.tenant_id,
+            objectCatalogId: row.object_catalog_id,
+            representation,
+            objectIndex: options.objectIndex,
+            expectedClass,
+            expectedBucketBinding: 'EXPORT_ARTIFACTS',
+            allowPlaintextFallback: false,
+          })
+        : await loadCatalogObjectRepresentation(adapter, env, {
+            tenantId: row.tenant_id,
+            objectCatalogId: row.object_catalog_id,
+            representation,
+            expectedClass,
+            expectedBucketBinding: 'EXPORT_ARTIFACTS',
+            allowPlaintextFallback: false,
+          });
+    if (loaded) {
+      return {
+        content: loaded.content,
+        contentType: loaded.contentType,
+      };
+    }
+  }
+
+  if (!row.result_r2_key) {
+    return null;
+  }
+
+  const object = await resultBucket.get(row.result_r2_key);
+  if (!object) {
+    return null;
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  return {
+    content: await object.text(),
+    contentType: headers.get('Content-Type') || 'application/json',
+  };
+}
+
+function buildJobResultArtifactFilename(
+  jobType: string,
+  jobId: string,
+  format: JobArtifactFormat
+): string {
+  const extension = format === 'csv' ? 'csv' : 'json';
+  return sanitizeUserImportFilename(`${jobType.replace(/[/:]/g, '-')}-${jobId}.${extension}`);
+}
+
+function buildJobResultManifestResponse(
+  row: Pick<JobRow, 'id' | 'job_type' | 'status'>,
+  catalog: ObjectCatalogListResult
+): JobArtifactManifestResponse {
+  const objects = catalog.physical.map<JobArtifactManifestObject>(
+    (physical: ObjectCatalogPhysicalRecord) => {
+      const format = jobArtifactFormatForRepresentation(physical.representation);
+      const manifestObject: JobArtifactManifestObject = {
+        format,
+        representation: physical.representation,
+        objectKind: physical.objectKind,
+        objectIndex: physical.chunkIndex ?? 0,
+        totalBytes: physical.totalBytes,
+        checksumSha256: physical.checksumSha256,
+      };
+
+      if (physical.objectKind === 'chunk') {
+        manifestObject.chunkUrl =
+          `/api/admin/jobs/artifacts/${catalog.logical.publicArtifactId}` +
+          `/chunks/${physical.chunkIndex ?? 0}${format ? `?format=${format}` : ''}`;
+      } else if (format) {
+        manifestObject.downloadUrl = `/api/admin/jobs/artifacts/${catalog.logical.publicArtifactId}/download?format=${format}`;
+      }
+
+      return manifestObject;
+    }
+  );
+
+  const availableFormats: JobArtifactFormat[] = Array.from(
+    new Set(
+      objects
+        .map((object: JobArtifactManifestObject) => object.format)
+        .filter(
+          (format: JobArtifactFormat | null): format is JobArtifactFormat =>
+            format === 'json' || format === 'csv'
+        )
+    )
+  );
+
+  return {
+    artifactId: catalog.logical.publicArtifactId,
+    jobId: row.id,
+    jobType: row.job_type,
+    status: row.status,
+    defaultFormat: availableFormats[0] ?? 'json',
+    availableFormats,
+    objectClass: catalog.logical.objectClass,
+    createdAt: catalog.logical.createdAt,
+    objects,
+  };
+}
+
+interface JobResultArtifactRow {
+  id: string;
+  tenant_id: string;
+  job_type: string;
+  status: JobStatus;
+  result_r2_key: string | null;
+  object_catalog_id: string | null;
+  public_artifact_id: string | null;
+}
+
+async function getJobResultArtifactRowById(
+  adapter: DatabaseAdapter,
+  jobId: string,
+  tenantId: string
+): Promise<JobResultArtifactRow | null> {
+  return adapter.queryOne<JobResultArtifactRow>(
+    `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result_r2_key,
+            aj.object_catalog_id, oc.public_artifact_id
+       FROM admin_jobs aj
+       LEFT JOIN object_catalog oc
+         ON oc.id = aj.object_catalog_id
+        AND oc.tenant_id = aj.tenant_id
+        AND oc.deleted_at IS NULL
+      WHERE aj.id = ? AND aj.tenant_id = ?`,
+    [jobId, tenantId]
+  );
+}
+
+async function getJobResultArtifactRowByArtifactId(
+  adapter: DatabaseAdapter,
+  artifactId: string,
+  tenantId: string
+): Promise<JobResultArtifactRow | null> {
+  return adapter.queryOne<JobResultArtifactRow>(
+    `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result_r2_key,
+            aj.object_catalog_id, oc.public_artifact_id
+       FROM admin_jobs aj
+       INNER JOIN object_catalog oc
+         ON oc.id = aj.object_catalog_id
+        AND oc.tenant_id = aj.tenant_id
+      WHERE oc.public_artifact_id = ?
+        AND oc.deleted_at IS NULL
+        AND aj.tenant_id = ?`,
+    [artifactId, tenantId]
+  );
+}
+
+async function requireJobArtifactAccess(
+  c: Context<{ Bindings: Env }>,
+  row: Pick<JobResultArtifactRow, 'id' | 'job_type' | 'object_catalog_id' | 'public_artifact_id'>,
+  artifactId?: string | null
+): Promise<Response | AdminElevationAccessResolution> {
+  const resourceClass = expectedObjectClassForJobType(row.job_type);
+  if (!resourceClass) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+
+  return requireAdminPermissionOrElevationGrant(c as any, {
+    directPermission: ADMIN_PERMISSIONS.JOBS_ARTIFACT_READ,
+    requestSurface: 'admin_jobs',
+    requestedAction: 'artifact_read',
+    resourceClass,
+    resourceIds: [row.id, artifactId ?? row.public_artifact_id, row.object_catalog_id],
+    detailClass: 'job_result_artifact',
+    targetAudience: 'admin_api',
+  });
 }
 
 /**
@@ -243,6 +594,37 @@ interface JobProgress {
   processed?: number;
   succeeded?: number;
   failed?: number;
+  stage?: string;
+}
+
+const SUPPORT_OPS_SNAPSHOT_JOB_TYPE = 'support-ops/cohort-snapshot';
+const SUPPORT_OPS_JOB_COUNT_PRECISION = 10;
+
+function bucketSupportOpsJobCount(value: unknown): number | null {
+  const count = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  if (count > 0 && count < SUPPORT_OPS_JOB_COUNT_PRECISION) {
+    return null;
+  }
+  return Math.floor(count / SUPPORT_OPS_JOB_COUNT_PRECISION) * SUPPORT_OPS_JOB_COUNT_PRECISION;
+}
+
+function sanitizeSupportOpsJobProgress(
+  progress: JobProgress | null
+): Record<string, unknown> | null {
+  if (!progress) {
+    return null;
+  }
+  return {
+    stage: typeof progress.stage === 'string' ? progress.stage : undefined,
+    total: bucketSupportOpsJobCount(progress.total),
+    processed: bucketSupportOpsJobCount(progress.processed),
+    succeeded: bucketSupportOpsJobCount(progress.succeeded),
+    failed: bucketSupportOpsJobCount(progress.failed),
+    privacy: {
+      count_exact: false,
+      count_precision: SUPPORT_OPS_JOB_COUNT_PRECISION,
+    },
+  };
 }
 
 /**
@@ -262,13 +644,20 @@ function formatJob(row: JobRow) {
     job_id: row.id,
     type: row.job_type,
     status: row.status,
-    progress,
+    progress:
+      row.job_type === SUPPORT_OPS_SNAPSHOT_JOB_TYPE
+        ? sanitizeSupportOpsJobProgress(progress)
+        : progress,
     created_by: row.created_by,
     created_at: toISOString(row.created_at),
     updated_at: toISOString(row.updated_at),
     started_at: toISOString(row.started_at),
     completed_at: toISOString(row.completed_at),
     estimated_completion: toISOString(row.estimated_completion),
+    next_run_at: toISOString(row.next_run_at ?? null),
+    attempts: row.attempt_count ?? 0,
+    max_attempts: row.max_attempts ?? 3,
+    dead_lettered_at: toISOString(row.dead_lettered_at ?? null),
     ...(row.error_code && { error_code: row.error_code }),
     ...(row.error_message && { error_message: row.error_message }),
   };
@@ -280,6 +669,14 @@ function formatJob(row: JobRow) {
 interface ParsedJobResult {
   summary?: JobResultSummary;
   failures?: JobFailure[];
+  logs?: Array<{
+    timestamp: string;
+    level: 'info' | 'warn' | 'error';
+    code: string;
+    message: string;
+    row?: number;
+    email?: string;
+  }>;
 }
 
 /**
@@ -288,12 +685,14 @@ interface ParsedJobResult {
 function formatJobResult(row: JobRow) {
   let summary: JobResultSummary | null = null;
   let failures: JobFailure[] = [];
+  let logs: ParsedJobResult['logs'] = [];
 
   if (row.result) {
     try {
       const parsed = JSON.parse(row.result) as ParsedJobResult;
       summary = parsed.summary ?? null;
       failures = parsed.failures ?? [];
+      logs = parsed.logs ?? [];
     } catch {
       // Invalid JSON, ignore
     }
@@ -303,15 +702,59 @@ function formatJobResult(row: JobRow) {
     job_id: row.id,
     summary,
     failures,
-    ...(row.result_r2_key && {
-      download_url: row.result_r2_key, // Actual signed URL would be generated
+    logs,
+    ...(row.public_artifact_id && {
+      artifact_id: row.public_artifact_id,
+      available_formats: ['json'],
+      manifest_url: `/api/admin/jobs/artifacts/${row.public_artifact_id}`,
+    }),
+    ...((row.object_catalog_id || row.result_r2_key) && {
+      download_url: `/api/admin/jobs/${row.id}/result/download`,
     }),
   };
+}
+
+function parseJobConfig(
+  config: string | null,
+  jobType?: string
+): Record<string, unknown> | undefined {
+  if (!config) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(config) as Record<string, unknown>;
+    if (jobType !== SUPPORT_OPS_SNAPSHOT_JOB_TYPE) {
+      return parsed;
+    }
+    return {
+      cohort_id: parsed.cohort_id,
+      resource: parsed.resource,
+      intended_action: parsed.intended_action,
+      selector_hash: parsed.selector_hash,
+      support_case_id: parsed.support_case_id ?? null,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 // =============================================================================
 // Handlers
 // =============================================================================
+
+function createUnsupportedJobTypeResponse(
+  c: Context<{ Bindings: Env }>,
+  jobType: string
+): Promise<Response> {
+  return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED, {
+    variables: {
+      field: 'job_type',
+      value: jobType,
+      reason: 'This job type is not enabled because its processor is not implemented.',
+    },
+  });
+}
 
 /**
  * GET /api/admin/jobs
@@ -419,7 +862,8 @@ export async function adminJobsListHandler(c: Context<{ Bindings: Env }>) {
     const limitPlusOne = query.limit + 1;
     const sql = `
       SELECT id, tenant_id, job_type, status, progress, error_code, error_message,
-             created_by, created_at, updated_at, started_at, completed_at, estimated_completion
+             created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
+             attempt_count, max_attempts, next_run_at, dead_lettered_at
       FROM admin_jobs
       WHERE ${whereClauses.join(' AND ')}
       ORDER BY ${orderBy}
@@ -472,8 +916,9 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
     const adapter = createAdapter(c);
 
     const row = await adapter.queryOne<JobRow>(
-      `SELECT id, tenant_id, job_type, status, progress, error_code, error_message,
-              created_by, created_at, updated_at, started_at, completed_at, estimated_completion
+      `SELECT id, tenant_id, job_type, status, progress, config, error_code, error_message,
+              created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
+              attempt_count, max_attempts, next_run_at, dead_lettered_at
        FROM admin_jobs
        WHERE id = ? AND tenant_id = ?`,
       [jobId, tenantId]
@@ -483,10 +928,148 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    return c.json(formatJob(row));
+    return c.json({
+      ...formatJob(row),
+      ...(parseJobConfig(row.config, row.job_type)
+        ? { parameters: parseJobConfig(row.config, row.job_type) }
+        : {}),
+    });
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');
     log.error('Failed to get job', { jobId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function adminJobTypesHandler(c: Context<{ Bindings: Env }>) {
+  return c.json({
+    result_delivery_options: [
+      {
+        value: 'auto',
+        description:
+          'Inline small results and materialize large results when artifact storage is configured.',
+      },
+      {
+        value: 'inline',
+        description: 'Keep the result summary in admin_jobs.result.',
+      },
+      {
+        value: 'artifact',
+        description:
+          'Require encrypted EXPORT_ARTIFACTS materialization and expose artifact download metadata.',
+      },
+    ],
+    job_types: listAdminJobTypeDefinitions().map((definition) => ({
+      job_type: definition.jobType,
+      processor_status: definition.processorStatus,
+      creatable_from_admin_api: definition.creatableFromAdminApi,
+      result_object_class: definition.resultObjectClass ?? null,
+      supported_result_delivery: definition.supportedResultDelivery ?? [],
+      create_endpoint: definition.createEndpoint ?? null,
+      notes: definition.notes ?? null,
+    })),
+  });
+}
+
+/**
+ * GET /api/admin/jobs/:id/result/download
+ * Download full job result artifact from R2
+ */
+export async function adminJobResultDownloadHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const jobId = c.req.param('id')!;
+
+  if (!jobId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await getJobResultArtifactRowById(adapter, jobId, tenantId);
+
+    if (!row || (!row.result_r2_key && !row.object_catalog_id)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result', id: jobId },
+      });
+    }
+
+    const access = await requireJobArtifactAccess(c, row);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const view = c.req.query('view');
+    const requestedFormat =
+      view === 'manifest' ? null : normalizeRequestedJobArtifactFormat(c.req.query('format'));
+    if (view === 'manifest') {
+      if (!row.object_catalog_id || !row.public_artifact_id) {
+        return c.json(
+          {
+            error: 'not_supported',
+            error_description: 'Manifest view is only available for object-backed job results',
+          },
+          409
+        );
+      }
+
+      const catalog = await listObjectCatalogObjects(adapter, tenantId, row.object_catalog_id);
+      if (!catalog) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+          variables: { resource: 'job_result_manifest', id: jobId },
+        });
+      }
+
+      await auditAdminSensitiveRead(c as any, access, {
+        action: 'admin_job.artifact_manifest_read',
+        resourceType: 'admin_job',
+        resourceId: row.id,
+        metadata: {
+          artifact_id: row.public_artifact_id ?? null,
+          route: 'job_result_manifest',
+        },
+      });
+
+      return c.json(buildJobResultManifestResponse(row, catalog));
+    }
+
+    const artifact = await loadJobResultArtifact(adapter, c.env, row, {
+      format: requestedFormat ?? 'json',
+    });
+    if (!artifact) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result', id: jobId },
+      });
+    }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_download',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: row.public_artifact_id ?? null,
+        route: 'job_result_download',
+        format: requestedFormat,
+      },
+    });
+
+    const headers = new Headers();
+    headers.set(
+      'Content-Type',
+      artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json')
+    );
+    headers.set(
+      'Content-Disposition',
+      `attachment; filename="${buildJobResultArtifactFilename(row.job_type, jobId, requestedFormat ?? 'json')}"`
+    );
+    return new Response(artifact.content, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to download job result', { jobId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -509,9 +1092,14 @@ export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
     const adapter = createAdapter(c);
 
     const row = await adapter.queryOne<JobRow>(
-      `SELECT id, tenant_id, job_type, status, result, result_r2_key
-       FROM admin_jobs
-       WHERE id = ? AND tenant_id = ?`,
+      `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result, aj.result_r2_key,
+              aj.object_catalog_id, oc.public_artifact_id
+       FROM admin_jobs aj
+       LEFT JOIN object_catalog oc
+         ON oc.id = aj.object_catalog_id
+        AND oc.tenant_id = aj.tenant_id
+        AND oc.deleted_at IS NULL
+       WHERE aj.id = ? AND aj.tenant_id = ?`,
       [jobId, tenantId]
     );
 
@@ -545,6 +1133,198 @@ export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
   }
 }
 
+export async function adminJobResultArtifactManifestHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const artifactId = c.req.param('artifactId')!;
+
+  if (!artifactId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'artifactId' },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
+    if (!row || !row.object_catalog_id || !row.public_artifact_id) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    const access = await requireJobArtifactAccess(c, row, artifactId);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const catalog = await listObjectCatalogObjects(adapter, tenantId, row.object_catalog_id);
+    if (!catalog) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_manifest', id: artifactId },
+      });
+    }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_manifest_read',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: artifactId,
+        route: 'artifact_manifest',
+      },
+    });
+
+    return c.json(buildJobResultManifestResponse(row, catalog));
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to get job result artifact manifest', { artifactId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function adminJobResultArtifactDownloadHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const artifactId = c.req.param('artifactId')!;
+
+  if (!artifactId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'artifactId' },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
+    if (!row || (!row.result_r2_key && !row.object_catalog_id)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    const access = await requireJobArtifactAccess(c, row, artifactId);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const requestedFormat = normalizeRequestedJobArtifactFormat(c.req.query('format'));
+    const artifact = await loadJobResultArtifact(adapter, c.env, row, {
+      format: requestedFormat,
+    });
+    if (!artifact) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_download',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: artifactId,
+        route: 'artifact_download',
+        format: requestedFormat,
+      },
+    });
+
+    const headers = new Headers();
+    headers.set(
+      'Content-Type',
+      artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json')
+    );
+    headers.set(
+      'Content-Disposition',
+      `attachment; filename="${buildJobResultArtifactFilename(row.job_type, row.id, requestedFormat)}"`
+    );
+    return new Response(artifact.content, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to download job result artifact', { artifactId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function adminJobResultArtifactChunkHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const artifactId = c.req.param('artifactId')!;
+  const chunkIndex = Number.parseInt(c.req.param('index') || '0', 10);
+
+  if (!artifactId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'artifactId' },
+    });
+  }
+
+  if (!Number.isFinite(chunkIndex) || chunkIndex < 0) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'index', reason: 'Chunk index must be a non-negative integer' },
+    });
+  }
+
+  try {
+    const adapter = createAdapter(c);
+    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
+    if (!row || !row.object_catalog_id) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_artifact', id: artifactId },
+      });
+    }
+
+    const access = await requireJobArtifactAccess(c, row, artifactId);
+    if (access instanceof Response) {
+      return access;
+    }
+
+    const requestedFormat = normalizeRequestedJobArtifactFormat(c.req.query('format'));
+    const artifact = await loadJobResultArtifact(adapter, c.env, row, {
+      format: requestedFormat,
+      objectIndex: chunkIndex,
+    });
+    if (!artifact) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'job_result_chunk', id: `${artifactId}:${chunkIndex}` },
+      });
+    }
+
+    await auditAdminSensitiveRead(c as any, access, {
+      action: 'admin_job.artifact_chunk_read',
+      resourceType: 'admin_job',
+      resourceId: row.id,
+      metadata: {
+        artifact_id: artifactId,
+        route: 'artifact_chunk',
+        chunk_index: chunkIndex,
+        format: requestedFormat,
+      },
+    });
+
+    const headers = new Headers();
+    headers.set(
+      'Content-Type',
+      artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json')
+    );
+    headers.set(
+      'Content-Disposition',
+      `attachment; filename="${buildJobResultArtifactFilename(row.job_type, row.id, requestedFormat)}"`
+    );
+    return new Response(artifact.content, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error(
+      'Failed to download job result artifact chunk',
+      { artifactId, chunkIndex },
+      error as Error
+    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
 // =============================================================================
 // Phase 2: Job Creation Endpoints
 // =============================================================================
@@ -558,6 +1338,8 @@ const ImportOptionsSchema = z.object({
   validate_only: z.boolean().default(false),
 });
 
+const JobResultDeliverySchema = z.enum(['auto', 'inline', 'artifact']).default('auto');
+
 /**
  * Bulk update options
  */
@@ -566,6 +1348,8 @@ const BulkUpdateOptionsSchema = z.object({
   filter: z.record(z.string(), z.unknown()).optional(),
   values: z.record(z.string(), z.unknown()),
   dry_run: z.boolean().default(false),
+  batch_size: z.number().int().min(1).max(1000).optional(),
+  result_delivery: JobResultDeliverySchema,
 });
 
 /**
@@ -575,8 +1359,9 @@ const ReportOptionsSchema = z.object({
   type: z.enum(['user_activity', 'access_summary', 'compliance_audit', 'security_events']),
   from_date: z.string().datetime(),
   to_date: z.string().datetime(),
-  format: z.enum(['json', 'csv', 'pdf']).default('json'),
+  format: z.enum(['json', 'csv']).default('json'),
   filters: z.record(z.string(), z.unknown()).optional(),
+  result_delivery: JobResultDeliverySchema,
 });
 
 /**
@@ -599,7 +1384,14 @@ export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env
       filename: string;
       content_type: string;
       size_bytes: number;
+      checksum_sha256?: string;
     }>();
+
+    if (!c.env.IMPORT_ARTIFACTS) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
+        variables: { reason: 'IMPORT_ARTIFACTS binding is not configured' },
+      });
+    }
 
     // Validate request
     if (!body.filename || typeof body.filename !== 'string') {
@@ -608,38 +1400,108 @@ export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env
       });
     }
 
-    if (!body.content_type || body.content_type !== 'text/csv') {
+    if (!body.content_type || !USER_IMPORT_ALLOWED_CONTENT_TYPES.has(body.content_type)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'content_type', reason: 'Only text/csv is supported' },
+        variables: { field: 'content_type', reason: 'Only CSV uploads are supported' },
       });
     }
 
-    // Size limit: 50MB
-    const MAX_SIZE = 50 * 1024 * 1024;
-    if (!body.size_bytes || body.size_bytes > MAX_SIZE) {
+    if (!body.size_bytes || body.size_bytes > USER_IMPORT_MAX_UPLOAD_BYTES) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'size_bytes', reason: `Maximum file size is ${MAX_SIZE} bytes` },
+        variables: {
+          field: 'size_bytes',
+          reason: `Maximum file size is ${USER_IMPORT_MAX_UPLOAD_BYTES} bytes`,
+        },
       });
     }
 
-    // Generate unique key for R2
-    const jobId = crypto.randomUUID();
-    const r2Key = `imports/${tenantId}/${jobId}/${body.filename}`;
+    const uploadId = crypto.randomUUID();
+    const sanitizedFilename = sanitizeUserImportFilename(body.filename);
+    const r2Key = buildUserImportUploadKey(tenantId, uploadId, sanitizedFilename);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-    // Note: Actual R2 presigned URL generation would require R2 bucket binding
-    // For now, return placeholder structure that shows the expected format
-    // Production implementation would use: await c.env.IMPORT_BUCKET.createMultipartUpload(r2Key)
-
     return c.json({
-      upload_url: `https://storage.authrim.com/upload/${r2Key}?signature=placeholder`,
+      upload_url: `/api/admin/jobs/users/import/upload/${uploadId}?filename=${encodeURIComponent(sanitizedFilename)}`,
+      upload_method: 'PUT',
+      file_key: r2Key,
       r2_key: r2Key,
       expires_at: expiresAt.toISOString(),
-      job_id: jobId,
+      upload_id: uploadId,
     });
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');
     log.error('Failed to generate upload URL', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * PUT /api/admin/jobs/users/import/upload/:upload_id
+ * Upload CSV payload to the dedicated import artifact bucket.
+ */
+export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const uploadId = c.req.param('upload_id')!;
+  const filename = c.req.query('filename');
+
+  if (!c.env.IMPORT_ARTIFACTS) {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
+      variables: { reason: 'IMPORT_ARTIFACTS binding is not configured' },
+    });
+  }
+
+  if (!uploadId || !filename) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: !uploadId ? 'upload_id' : 'filename' },
+    });
+  }
+
+  const contentType = c.req.header('Content-Type') || 'text/csv';
+  if (!USER_IMPORT_ALLOWED_CONTENT_TYPES.has(contentType)) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'content_type', reason: 'Only CSV uploads are supported' },
+    });
+  }
+
+  try {
+    const payload = await c.req.raw.arrayBuffer();
+    if (payload.byteLength === 0 || payload.byteLength > USER_IMPORT_MAX_UPLOAD_BYTES) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'size_bytes',
+          reason: `Maximum file size is ${USER_IMPORT_MAX_UPLOAD_BYTES} bytes`,
+        },
+      });
+    }
+
+    const payloadBytes = new Uint8Array(payload);
+    const checksumSha256 = await sha256HexFromBytes(payloadBytes);
+    const key = buildUserImportUploadKey(tenantId, uploadId, filename);
+    await c.env.IMPORT_ARTIFACTS.put(key, payload, {
+      httpMetadata: {
+        contentType: 'text/csv',
+      },
+      customMetadata: {
+        checksum_sha256: checksumSha256,
+        uploaded_bytes: String(payload.byteLength),
+        content_type: 'text/csv',
+      },
+    });
+
+    return c.json(
+      {
+        upload_id: uploadId,
+        file_key: key,
+        r2_key: key,
+        uploaded_bytes: payload.byteLength,
+        checksum_sha256: checksumSha256,
+        content_type: 'text/csv',
+      },
+      201
+    );
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-JOBS');
+    log.error('Failed to upload import artifact', { uploadId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -652,15 +1514,96 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
   const tenantId = getTenantIdFromContext(c);
 
   try {
+    if (!isAdminJobTypeCreatableFromAdminApi('users/import')) {
+      return createUnsupportedJobTypeResponse(c, 'users/import');
+    }
+
     const body = await c.req.json<{
-      r2_key: string;
+      file_key?: string;
+      r2_key?: string;
+      size_bytes?: number;
+      content_type?: string;
+      checksum_sha256?: string;
       options?: z.infer<typeof ImportOptionsSchema>;
     }>();
 
-    // Validate r2_key
-    if (!body.r2_key || typeof body.r2_key !== 'string') {
+    if (!c.env.IMPORT_ARTIFACTS) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR, {
+        variables: { reason: 'IMPORT_ARTIFACTS binding is not configured' },
+      });
+    }
+
+    const inputKey = body.file_key ?? body.r2_key;
+
+    if (!inputKey || typeof inputKey !== 'string') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'r2_key' },
+        variables: { field: 'file_key' },
+      });
+    }
+
+    if (!inputKey.startsWith(`imports/${tenantId}/`)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'file_key', reason: 'Import artifact does not belong to the tenant' },
+      });
+    }
+
+    const inputObject = await c.env.IMPORT_ARTIFACTS.get(inputKey);
+    if (!inputObject) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'import_artifact', id: inputKey },
+      });
+    }
+
+    const metadataHeaders = new Headers();
+    inputObject.writeHttpMetadata(metadataHeaders);
+    const storedContentType = metadataHeaders.get('Content-Type') || 'application/octet-stream';
+    if (!USER_IMPORT_ALLOWED_CONTENT_TYPES.has(storedContentType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'file_key', reason: 'Stored import artifact is not a CSV upload' },
+      });
+    }
+
+    const inputBytes = new Uint8Array(await inputObject.arrayBuffer());
+    if (inputBytes.byteLength === 0 || inputBytes.byteLength > USER_IMPORT_MAX_UPLOAD_BYTES) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'file_key',
+          reason: `Stored import artifact exceeds ${USER_IMPORT_MAX_UPLOAD_BYTES} bytes`,
+        },
+      });
+    }
+
+    const actualChecksumSha256 = await sha256HexFromBytes(inputBytes);
+    const storedMetadata = (
+      inputObject as unknown as {
+        customMetadata?: Record<string, string | undefined>;
+      }
+    ).customMetadata;
+    const storedChecksumSha256 = storedMetadata?.checksum_sha256;
+    if (storedChecksumSha256 && storedChecksumSha256 !== actualChecksumSha256) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'file_key', reason: 'Stored import artifact checksum mismatch' },
+      });
+    }
+    if (body.checksum_sha256 && body.checksum_sha256 !== actualChecksumSha256) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'checksum_sha256', reason: 'Import artifact checksum mismatch' },
+      });
+    }
+    if (body.size_bytes !== undefined && body.size_bytes !== inputBytes.byteLength) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'size_bytes',
+          reason: 'Import artifact size does not match upload receipt',
+        },
+      });
+    }
+    if (body.content_type && body.content_type !== storedContentType) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'content_type',
+          reason: 'Import artifact content type does not match upload receipt',
+        },
       });
     }
 
@@ -696,16 +1639,25 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     await adapter.execute(
       `INSERT INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config, input_r2_key,
-        created_by, created_at, updated_at, estimated_completion
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        result_r2_key, created_by, created_at, updated_at, estimated_completion
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         jobId,
         tenantId,
         'users/import',
         'pending',
-        JSON.stringify({ total: 0, processed: 0, succeeded: 0, failed: 0 }),
+        JSON.stringify({
+          total: 0,
+          processed: 0,
+          succeeded: 0,
+          failed: 0,
+          skipped: 0,
+          percentage: 0,
+          stage: options.validate_only ? 'validation' : 'queued',
+        }),
         JSON.stringify(options),
-        body.r2_key,
+        inputKey,
+        buildUserImportResultKey(tenantId, jobId),
         createdBy,
         nowTs,
         nowTs,
@@ -716,7 +1668,7 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     // Write audit log
     await createAuditLogFromContext(c, 'job.created', 'job', jobId, {
       job_type: 'users/import',
-      r2_key: body.r2_key,
+      r2_key: inputKey,
       options,
     });
 
@@ -744,6 +1696,10 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
 export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
 
+  if (!isAdminJobTypeCreatableFromAdminApi('users/bulk-update')) {
+    return createUnsupportedJobTypeResponse(c, 'users/bulk-update');
+  }
+
   try {
     const body = await c.req.json<z.infer<typeof BulkUpdateOptionsSchema>>();
 
@@ -758,33 +1714,26 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
     }
 
     const options = parseResult.data;
+    try {
+      validateBulkUserUpdateConfig(options);
+    } catch (validationError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'body',
+          reason:
+            validationError instanceof Error
+              ? validationError.message
+              : 'Invalid bulk update config',
+        },
+      });
+    }
+
     const adapter = createAdapter(c);
     const adminAuth = getAdminAuth(c);
     const createdBy = adminAuth?.adminId ?? 'unknown';
     const jobId = crypto.randomUUID();
     const nowTs = Math.floor(Date.now() / 1000);
-
-    // Count affected users (for estimation)
-    let affectedCount = 0;
-    if (options.filter) {
-      // Build filter query
-      const filterConditions = Object.entries(options.filter)
-        .map(([key]) => `${key} = ?`)
-        .join(' AND ');
-      const filterValues = Object.values(options.filter);
-
-      const countResult = await adapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND ${filterConditions}`,
-        [tenantId, ...filterValues]
-      );
-      affectedCount = countResult?.count ?? 0;
-    } else {
-      const countResult = await adapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ?',
-        [tenantId]
-      );
-      affectedCount = countResult?.count ?? 0;
-    }
+    const affectedCount = await countBulkUserUpdateTargets(adapter, tenantId, options);
 
     // Estimate completion (1 minute per 100 users)
     const estimatedDuration = Math.max(60, Math.ceil(affectedCount / 100) * 60);
@@ -843,6 +1792,10 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
  */
 export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
+
+  if (!isAdminJobTypeCreatableFromAdminApi('reports/generate')) {
+    return createUnsupportedJobTypeResponse(c, 'reports/generate');
+  }
 
   try {
     const body = await c.req.json<z.infer<typeof ReportOptionsSchema>>();
@@ -941,8 +1894,9 @@ export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env
  */
 const BulkMembersOptionsSchema = z.object({
   user_ids: z.array(z.string().uuid()).min(1).max(1000),
-  role: z.string().optional(),
+  role: z.enum(['member', 'admin', 'owner']).optional(),
   action: z.enum(['add', 'remove']).default('add'),
+  result_delivery: JobResultDeliverySchema,
 });
 
 /**
@@ -952,6 +1906,10 @@ const BulkMembersOptionsSchema = z.object({
 export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
   const organizationId = c.req.param('id')!;
+
+  if (!isAdminJobTypeCreatableFromAdminApi('organizations/bulk-members')) {
+    return createUnsupportedJobTypeResponse(c, 'organizations/bulk-members');
+  }
 
   if (!organizationId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -1038,6 +1996,7 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
           action: options.action,
           role: options.role,
           user_ids: options.user_ids,
+          result_delivery: options.result_delivery,
         }),
         createdBy,
         nowTs,

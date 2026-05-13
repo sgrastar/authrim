@@ -61,6 +61,13 @@ export interface OIDCProviderMetadata {
   // OIDC Core: Additional metadata
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
+  // OpenID Connect Advanced Syntax for Claims (ASC) 1.0 draft 01
+  selective_abort_omit_supported?: boolean;
+  selective_abort_omit_schema_supported?: boolean;
+  transformed_claims_functions_supported?: string[];
+  transformed_claims_predefined?: Record<string, unknown>;
+  transformed_claims_max_depth?: number;
+  transformed_claims_max_count?: number;
   acr_values_supported?: string[];
   // OIDC Session Management 1.0
   check_session_iframe?: string;
@@ -79,9 +86,8 @@ export interface OIDCProviderMetadata {
   display_values_supported?: string[];
   op_policy_uri?: string;
   op_tos_uri?: string;
-  // OIDC Native SSO 1.0 (draft-07)
-  native_sso_token_exchange_supported?: boolean;
-  native_sso_device_secret_supported?: boolean;
+  // OIDC Native SSO
+  native_sso_supported?: boolean;
   // RFC 9396: Rich Authorization Requests (RAR)
   authorization_details_types_supported?: string[];
 }
@@ -122,6 +128,9 @@ export interface TokenResponse {
   expires_in: number;
   scope?: string;
   refresh_token?: string;
+  refresh_token_expires_in?: number;
+  refresh_token_expires_at?: string;
+  refresh_token_expires_at_unix?: number;
   // RFC 9396: Rich Authorization Requests
   authorization_details?: AuthorizationDetails[];
 }
@@ -279,6 +288,13 @@ export interface ClientRegistrationRequest {
   id_token_signed_response_alg?: string;
   // JAR (JWT-Secured Authorization Request) - RFC 9101
   request_object_signing_alg?: string;
+  // Claims parameter and ASC client settings (Authrim extension)
+  claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[];
   // SD-JWT (Selective Disclosure JWT) - RFC 9901
   // When set to 'sd-jwt', ID tokens will be issued as SD-JWT format
   id_token_signed_response_type?: 'jwt' | 'sd-jwt';
@@ -354,6 +370,13 @@ export interface ClientRegistrationResponse {
   authorization_signed_response_alg?: string;
   authorization_encrypted_response_alg?: string;
   authorization_encrypted_response_enc?: string;
+  // Claims parameter and ASC client settings (Authrim extension)
+  claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[];
   // SD-JWT (Selective Disclosure JWT) - RFC 9901
   id_token_signed_response_type?: 'jwt' | 'sd-jwt';
   sd_jwt_selective_claims?: string[];
@@ -391,6 +414,8 @@ export interface ClientRegistrationResponse {
 export interface ClientMetadata extends ClientRegistrationResponse {
   created_at: number;
   updated_at: number;
+  /** Admin-only memo/description for operators. Not part of OIDC discovery metadata. */
+  description?: string | null;
   // SHA-256 hash of client_secret (used instead of plain text for secure storage)
   client_secret_hash?: string;
   // Multi-tenant support
@@ -403,6 +428,12 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   skip_consent?: boolean; // Skip consent screen for trusted clients
   // Claims Parameter Settings
   allow_claims_without_scope?: boolean; // Allow claims parameter to request claims without corresponding scope (default: false)
+  claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
+  asc_enabled?: boolean;
+  asc_protected_request_required?: boolean;
+  asc_sao_enabled?: boolean;
+  asc_transformed_claims_enabled?: boolean;
+  asc_allowed_transformed_claims?: string[];
   // JWE fields inherited from ClientRegistrationResponse
   id_token_encrypted_response_alg?: string;
   id_token_encrypted_response_enc?: string;
@@ -459,6 +490,8 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   default_scope?: string;
   /** Default audience when audience parameter is omitted */
   default_audience?: string;
+  /** Default resource target when token requests omit resource/audience. */
+  default_resource?: string;
 
   // ==========================================================================
   // Custom Redirect URIs (Authrim Extension)
@@ -478,12 +511,36 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   // OIDC Native SSO 1.0 (draft-07) Settings
   // ==========================================================================
   /**
-   * Enable Native SSO for this client.
-   * When true, Authorization Code Grant will return device_secret.
+   * Enable or disable Native SSO for this client.
+   * Eligible native clients default to same-client Native SSO unless explicitly disabled.
    */
   native_sso_enabled?: boolean;
+  /** Whether this native client is allowed to use the native channel. Defaults to true for native clients. */
+  native_channel_allowed?: boolean;
+  /** Product-specific channels allowed for this client, when configured explicitly. */
+  allowed_channels?: Array<'browser' | 'native' | 'server'>;
+  /**
+   * Tenant-scoped trust group for explicit cross-client Native SSO opt-in.
+   * A client may belong to at most one trust group.
+   */
+  trust_group?: string;
+  /** Internal normalized trust group identifier, when stored separately from public config. */
+  trust_group_id?: string;
+  /** Optional browser public client mode override. Empty/undefined inherits the tenant default. */
+  browser_public_client_mode?: 'strict' | 'cookie_fallback' | 'legacy';
+  /** Refresh token issuance policy for browser public clients. */
+  browser_refresh_token_policy?: 'disabled' | 'dpop_bound';
+  /** Allow this confidential/service client to revoke its own device_secret records. */
+  device_secret_revoke_enabled?: boolean;
+  /** Trust groups this confidential/service client may cross-client revoke device_secret records for. */
+  device_secret_revoke_trust_groups?: string[];
+  /** Allow this confidential/service client to introspect its own device_secret records. */
+  device_secret_introspection_enabled?: boolean;
+  /** Trust groups this confidential/service client may cross-client introspect device_secret records for. */
+  device_secret_introspection_trust_groups?: string[];
   /**
    * Allow cross-client Native SSO (Token Exchange from different client_id).
+   * @deprecated Phase 1 runtime policy uses trust_group instead.
    * When true, this client can accept Token Exchange requests where
    * the ID Token was issued to a different client_id.
    * Default: false (more secure, same client only)
@@ -531,6 +588,7 @@ export interface RefreshTokenData {
   scope: string;
   iat: number; // Issued at timestamp
   exp: number; // Expiration timestamp
+  resource_aud?: string | string[]; // Original access token resource audience
   familyId?: string; // Refresh token family ID for token rotation
 }
 
@@ -540,7 +598,7 @@ export interface RefreshTokenData {
  */
 export interface IntrospectionRequest {
   token: string;
-  token_type_hint?: 'access_token' | 'refresh_token';
+  token_type_hint?: 'access_token' | 'refresh_token' | 'device_secret';
 }
 
 /**
@@ -574,8 +632,34 @@ export interface IntrospectionResponse {
   };
   // Resource server URI (if token was issued via Token Exchange)
   resource?: string;
+  // Native SSO device_secret introspection metadata
+  installation_id?: string;
+  app_display_name?: string;
+  platform?: string;
+  display_name?: string;
+  fallback_display_name?: string;
   // RFC 9396: Rich Authorization Requests
   authorization_details?: AuthorizationDetails[];
+  // Authrim downstream elevation context
+  authrim_elevation?: {
+    grant_id: string;
+    request_id: string;
+    investigation_id: string;
+    target_subject_type: string;
+    target_subject_id: string;
+    requester_subject_type: string;
+    requester_subject_id: string;
+    resource_class: string;
+    redaction_level: string;
+    target_audience?: string | null;
+    scope?: {
+      audience?: string | null;
+      dataset?: string | null;
+      resource_ids?: string[];
+      detail_classes?: string[];
+      partial_access_allowed?: boolean;
+    };
+  };
 }
 
 /**
@@ -584,7 +668,7 @@ export interface IntrospectionResponse {
  */
 export interface RevocationRequest {
   token: string;
-  token_type_hint?: 'access_token' | 'refresh_token';
+  token_type_hint?: 'access_token' | 'refresh_token' | 'device_secret';
 }
 
 /**
@@ -593,7 +677,7 @@ export interface RevocationRequest {
  */
 export interface DPoPHeader {
   typ: 'dpop+jwt';
-  alg: string; // Signing algorithm (e.g., 'RS256', 'ES256')
+  alg: string; // Signing algorithm (Phase 1 policy: 'ES256', 'PS256', 'EdDSA')
   jwk: {
     kty: string;
     // RSA public key
@@ -666,6 +750,7 @@ export interface DeviceAuthorizationResponse {
  * Internal storage for device authorization flow
  */
 export interface DeviceCodeMetadata {
+  tenant_id?: string;
   device_code: string;
   user_code: string;
   client_id: string;
@@ -714,6 +799,7 @@ export interface CIBAAuthenticationResponse {
  * Internal storage for CIBA authentication flow
  */
 export interface CIBARequestMetadata {
+  tenant_id?: string;
   auth_req_id: string; // Unique authentication request identifier
   client_id: string;
   scope: string;
@@ -885,8 +971,18 @@ export type NativeSSOTokenTypeURN = TokenTypeURN | typeof DEVICE_SECRET_TOKEN_TY
 export interface DeviceSecret {
   /** Primary key (UUID) */
   id: string;
+  /** Canonical server-assigned installation identifier. Falls back to id for legacy rows. */
+  installation_id?: string;
   /** Tenant ID (multi-tenancy support) */
   tenant_id: string;
+  /** Client that owns this installation/device secret. */
+  client_id?: string;
+  /** Trust group boundary for cross-client Native SSO inventory. */
+  trust_group_id?: string;
+  /** Source installation id when this record was derived through cross-client Native SSO. */
+  source_installation_id?: string;
+  /** Source client id when this record was derived through cross-client Native SSO. */
+  source_client_id?: string;
   /** User ID this device secret belongs to */
   user_id: string;
   /** Session ID (for logout propagation) */
@@ -916,6 +1012,80 @@ export interface DeviceSecret {
 }
 
 /**
+ * Canonical Native SSO device installation.
+ *
+ * This is the public inventory unit exposed through Phase 1 `/me/devices`.
+ * A device_secret may point at this record, but cross-client Native SSO can
+ * create target-side installations that do not own a new device_secret.
+ */
+export interface DeviceInstallation {
+  /** Public server-assigned installation identifier. */
+  id: string;
+  /** Tenant ID (multi-tenancy support). */
+  tenant_id: string;
+  /** User ID this installation belongs to. */
+  user_id: string;
+  /** Client that owns this canonical installation. */
+  client_id?: string;
+  /** Explicit trust group boundary for cross-client Native SSO. */
+  trust_group_id?: string;
+  /** Source installation id when derived through cross-client Native SSO. */
+  source_installation_id?: string;
+  /** Source client id when derived through cross-client Native SSO. */
+  source_client_id?: string;
+  /** Device secret row currently linked to this installation, when any. */
+  linked_device_secret_id?: string;
+  /** Session ID used for current-device binding and logout propagation. */
+  session_id?: string;
+  /** User-defined display name for self-service inventory. */
+  display_name?: string;
+  /** Device platform. */
+  device_platform?: 'ios' | 'android' | 'macos' | 'windows' | 'other';
+  /** Created timestamp (ms). */
+  created_at: number;
+  /** Updated timestamp (ms). */
+  updated_at: number;
+  /** Last-seen timestamp (ms). */
+  last_seen_at?: number;
+  /** Revocation/unlink timestamp (ms). */
+  revoked_at?: number;
+  /** Revocation/unlink reason. */
+  revoke_reason?: string;
+  /** Soft delete flag (1 = active, 0 = deleted). */
+  is_active: number;
+}
+
+/**
+ * Canonical device installation creation input.
+ */
+export interface CreateDeviceInstallationInput {
+  /** Explicit id for lazy migration; generated when omitted. */
+  id?: string;
+  /** Tenant ID (defaults to 'default'). */
+  tenant_id?: string;
+  /** User ID. */
+  user_id: string;
+  /** Owning client id. */
+  client_id?: string;
+  /** Explicit trust group boundary. */
+  trust_group_id?: string;
+  /** Source installation id for cross-client Native SSO derived records. */
+  source_installation_id?: string;
+  /** Source client id for cross-client Native SSO derived records. */
+  source_client_id?: string;
+  /** Linked device_secret row id, when any. */
+  linked_device_secret_id?: string;
+  /** Session ID, when known. */
+  session_id?: string;
+  /** User-defined display name. */
+  display_name?: string;
+  /** Device platform. */
+  device_platform?: 'ios' | 'android' | 'macos' | 'windows' | 'other';
+  /** Last-seen timestamp (ms). */
+  last_seen_at?: number;
+}
+
+/**
  * Device Secret Validation Result
  *
  * Detailed error reasons for better SDK/Admin UX.
@@ -938,6 +1108,16 @@ export interface CreateDeviceSecretInput {
   session_id: string;
   /** Tenant ID (defaults to 'default') */
   tenant_id?: string;
+  /** Client that owns this installation/device secret. */
+  client_id?: string;
+  /** Trust group boundary for cross-client Native SSO inventory. */
+  trust_group_id?: string;
+  /** Existing installation id to link, primarily for migration/rotation. */
+  installation_id?: string;
+  /** Source installation id for cross-client Native SSO derived records. */
+  source_installation_id?: string;
+  /** Source client id for cross-client Native SSO derived records. */
+  source_client_id?: string;
   /** Device name (optional) */
   device_name?: string;
   /** Device platform (optional) */
@@ -958,4 +1138,20 @@ export interface NativeSSOTokenResponse extends TokenResponse {
    * Store in iOS Keychain / Android Keystore.
    */
   device_secret?: string;
+  /** Canonical installation identifier associated with the device_secret. */
+  installation_id?: string;
+  /** Client receiving the Native SSO token response. */
+  client_id?: string;
+  /** Canonical device platform. */
+  platform?: 'ios' | 'android' | 'macos' | 'windows' | 'other' | 'unknown';
+  /** User-defined device display name, or empty string when unset. */
+  display_name?: string;
+  /** Server-generated fallback display name when display_name is empty. */
+  fallback_display_name?: string;
+  /** Last-seen timestamp as UTC RFC3339 string. */
+  last_seen_at?: string;
+  /** Last-seen timestamp as Unix epoch seconds. */
+  last_seen_at_unix?: number;
+  /** App display name, omitted when it cannot be resolved. */
+  app_display_name?: string;
 }

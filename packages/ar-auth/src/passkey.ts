@@ -18,6 +18,7 @@ import {
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   // Event System
@@ -36,8 +37,12 @@ import {
   getSessionCookieSameSite,
   // Admin Session Repository
   AdminSessionRepository,
-  D1Adapter,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import {
+  persistRegistrationFieldValuesFromEnv,
+  validateRegistrationFieldSubmissionFromEnv,
+} from './registration-field-utils';
 
 // ===== Module-level Logger for Helper Functions =====
 const moduleLogger = createLogger().module('PASSKEY');
@@ -199,9 +204,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       email: string;
       userId?: string;
       name?: string;
+      custom_fields?: Record<string, unknown>;
     }>();
 
-    const { email, userId, name } = body;
+    const { email, userId, name, custom_fields } = body;
 
     if (!email) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -223,9 +229,29 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const rpID = originUrl.hostname;
     const origin = originHeader;
 
+    const tenantId = getTenantIdFromContext(c);
+    const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+      c.env,
+      tenantId,
+      custom_fields
+    );
+    if (!customFieldValidation.ok) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: 'custom_fields', reason: customFieldValidation.error },
+        extensions: customFieldValidation.missingRequiredFields
+          ? {
+              missing_required_fields: customFieldValidation.missingRequiredFields.map((field) => ({
+                field_key: field.fieldKey,
+                label: field.label,
+                field_type: field.fieldType,
+              })),
+            }
+          : undefined,
+      });
+    }
+
     // Check if user exists via Repository pattern
     // PII/Non-PII DB separation: email lookup uses PII DB, ID lookup uses Core DB
-    const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
@@ -233,7 +259,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       // Search by userId: Core DB has the ID, PII DB has email/name
       const userCore = await authCtx.repositories.userCore.findById(userId);
 
-      if (userCore && userCore.is_active && c.env.DB_PII) {
+      if (userCore && userCore.is_active) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         const userPII = await piiCtx.piiRepositories.userPII.findById(userId);
         if (userPII) {
@@ -243,12 +269,9 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
             name: userPII.name || null,
           };
         }
-      } else if (userCore && userCore.is_active) {
-        // No PII DB - use Core only (email will be missing)
-        user = { id: userCore.id, email: '', name: null };
       }
-    } else if (c.env.DB_PII) {
-      // Search by email: PII DB first to get user id
+    } else {
+      // Search by email: PII store first to get user id
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(tenantId, email);
 
@@ -282,41 +305,35 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         pii_status: 'pending',
       });
 
-      // Step 2: Create user in PII DB (if DB_PII is configured)
-      if (c.env.DB_PII) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        try {
-          await piiCtx.piiRepositories.userPII.createPII({
-            id: newUserId,
-            tenant_id: tenantId,
-            email,
-            name: defaultName,
-            preferred_username: preferredUsername,
-          });
-
-          // Step 3: Update pii_status to 'active' (only on successful PII DB write)
-          await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
-        } catch (piiError: unknown) {
-          // PII Protection: Don't log full error (may contain PII)
-          log.error('Failed to create user in PII DB', {
-            action: 'pii_create',
-            errorType: piiError instanceof Error ? piiError.name : 'Unknown',
-          });
-          // Update pii_status to 'failed' to indicate PII DB write failure
-          await authCtx.repositories.userCore
-            .updatePIIStatus(newUserId, 'failed')
-            .catch((statusError: unknown) => {
-              log.error('Failed to update pii_status to failed', {
-                action: 'pii_status_update',
-                errorType: statusError instanceof Error ? statusError.name : 'Unknown',
-              });
-            });
-          // Note: We continue with registration - Core DB user exists, PII can be retried
-        }
-      } else {
-        log.warn('DB_PII not configured - user created with pii_status=pending', {
-          action: 'pii_config',
+      // Step 2: Create user in the configured PII store
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      try {
+        await piiCtx.piiRepositories.userPII.createPII({
+          id: newUserId,
+          tenant_id: tenantId,
+          email,
+          name: defaultName,
+          preferred_username: preferredUsername,
         });
+
+        // Step 3: Update pii_status to 'active' (only on successful PII store write)
+        await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
+      } catch (piiError: unknown) {
+        // PII Protection: Don't log full error (may contain PII)
+        log.error('Failed to create user in PII store', {
+          action: 'pii_create',
+          errorType: piiError instanceof Error ? piiError.name : 'Unknown',
+        });
+        // Update pii_status to 'failed' to indicate PII write failure
+        await authCtx.repositories.userCore
+          .updatePIIStatus(newUserId, 'failed')
+          .catch((statusError: unknown) => {
+            log.error('Failed to update pii_status to failed', {
+              action: 'pii_status_update',
+              errorType: statusError instanceof Error ? statusError.name : 'Unknown',
+            });
+          });
+        // Note: We continue with registration - Core DB user exists, PII can be retried
       }
 
       user = { id: newUserId, email, name: defaultName || email.split('@')[0] };
@@ -364,15 +381,24 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     // Use userId-based sharding (UUID, no PII in DO instance name)
-    const challengeStore = await getChallengeStoreByUserId(c.env, user.id as string);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      user.id as string,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `passkey_reg:${user.id}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'passkey_registration',
       userId: user.id as string,
       challenge: options.challenge,
       ttl: 300, // 5 minutes
       email,
+      metadata:
+        Object.keys(customFieldValidation.values).length > 0
+          ? { custom_fields: customFieldValidation.values }
+          : undefined,
     });
 
     return c.json({
@@ -413,16 +439,25 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // This prevents parallel replay attacks
     // Use userId-based sharding (UUID, no PII) - must match the shard used during options generation
-    const challengeStore = await getChallengeStoreByUserId(c.env, userId);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      userId,
+      getTenantIdFromContext(c)
+    );
 
-    let challenge: string;
+    let challengeData: {
+      challenge: string;
+      metadata?: {
+        custom_fields?: Record<string, unknown>;
+      };
+    };
     try {
-      const challengeData = (await challengeStore.consumeChallengeRpc({
+      challengeData = (await challengeStore.consumeChallengeRpc({
         id: `passkey_reg:${userId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'passkey_registration',
         // No challenge value needed - DO will return it
-      })) as { challenge: string };
-      challenge = challengeData.challenge;
+      })) as typeof challengeData;
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
@@ -446,7 +481,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     try {
       verification = await verifyRegistrationResponse({
         response: credential,
-        expectedChallenge: challenge,
+        expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
       });
@@ -498,7 +533,8 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
-        }
+        },
+        getTenantIdFromContext(c)
       )) as Session;
       sessionData = { id: createdSession.id };
     } catch (error) {
@@ -526,8 +562,8 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Step 3: Update user's email_verified status via Adapter (direct SQL)
     await authCtx.coreAdapter.execute(
-      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ?',
-      [now, userId]
+      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [now, userId, tenantId]
     );
 
     // Get updated user details via Repository
@@ -537,7 +573,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       email: null,
       name: null,
     };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(userId);
       if (piiResult) {
@@ -545,6 +581,19 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
           email: piiResult.email,
           name: piiResult.name || null,
         };
+      }
+    }
+
+    const customFields = challengeData.metadata?.custom_fields;
+    if (customFields) {
+      try {
+        await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
+      } catch (persistError) {
+        log.warn(
+          'Failed to persist registration field values',
+          { action: 'registration_fields_persist' },
+          persistError as Error
+        );
       }
     }
 
@@ -611,7 +660,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
 
     // If email provided, get user's passkeys via Repository
     // PII/Non-PII DB separation: email lookup uses PII DB
-    if (email && c.env.DB_PII) {
+    if (email && hasPIIDatabase(c)) {
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       const piiCtx = createPIIContextFromHono(c, tenantId);
@@ -666,10 +715,15 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     // Use challengeId-based sharding for discoverable credentials (email may not be provided)
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `passkey_auth:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'passkey_authentication',
       userId: 'unknown', // Will be determined during verification
       challenge: options.challenge,
@@ -713,12 +767,17 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // Use challengeId-based sharding - must match the shard used during options generation
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     let challenge: string;
     try {
       const challengeData = (await challengeStore.consumeChallengeRpc({
         id: `passkey_auth:${challengeId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'passkey_authentication',
       })) as { challenge: string };
       challenge = challengeData.challenge;
@@ -742,10 +801,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (passkey) {
         // Update legacy credential ID to base64url format via Adapter
-        await authCtx.coreAdapter.execute('UPDATE passkeys SET credential_id = ? WHERE id = ?', [
-          credentialIDBase64URL,
-          passkey.id,
-        ]);
+        await authCtx.coreAdapter.execute(
+          'UPDATE passkeys SET credential_id = ? WHERE id = ? AND tenant_id = ?',
+          [credentialIDBase64URL, passkey.id, tenantId]
+        );
         passkey.credential_id = credentialIDBase64URL;
       }
     }
@@ -874,7 +933,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
-        }
+        },
+        getTenantIdFromContext(c)
       )) as Session;
       sessionData = { id: createdSession.id };
     } catch (error) {
@@ -902,7 +962,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       email: null,
       name: null,
     };
-    if (c.env.DB_PII) {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const piiResult = await piiCtx.piiRepositories.userPII.findById(passkey.user_id);
       if (piiResult) {
@@ -917,7 +977,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     // This is required because admin-auth middleware reads from admin_sessions (DB_ADMIN)
     if (userCore?.user_type === 'admin' && c.env.DB_ADMIN) {
       try {
-        const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+        const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'passkey-admin');
         const adminSessionRepo = new AdminSessionRepository(adminAdapter);
 
         // Get client IP from Cloudflare header

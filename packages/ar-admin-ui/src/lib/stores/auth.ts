@@ -15,7 +15,6 @@ export interface AuthUser {
 interface AuthState {
 	isAuthenticated: boolean;
 	user: AuthUser | null;
-	sessionId: string | null;
 }
 
 /**
@@ -50,23 +49,20 @@ async function fetchUserInfoFromSession(): Promise<{
 function createAuthStore() {
 	const initialState: AuthState = {
 		isAuthenticated: false,
-		user: null,
-		sessionId: null
+		user: null
 	};
 
 	const { subscribe, set } = writable<AuthState>(initialState);
 
 	// Initialize from localStorage on browser
 	if (browser) {
-		const sessionId = localStorage.getItem('sessionId');
 		const userId = localStorage.getItem('userId');
 		const userEmail = localStorage.getItem('userEmail');
 		const userName = localStorage.getItem('userName');
 
-		if (sessionId && userId) {
+		if (userId) {
 			set({
 				isAuthenticated: true,
-				sessionId,
 				user: {
 					userId,
 					email: userEmail || '',
@@ -82,9 +78,8 @@ function createAuthStore() {
 		/**
 		 * Login - store session and user info
 		 */
-		login: (sessionId: string, user: AuthUser) => {
+		login: (user: AuthUser) => {
 			if (browser) {
-				localStorage.setItem('sessionId', sessionId);
 				localStorage.setItem('userId', user.userId);
 				localStorage.setItem('userEmail', user.email);
 				if (user.name) {
@@ -94,7 +89,6 @@ function createAuthStore() {
 
 			set({
 				isAuthenticated: true,
-				sessionId,
 				user
 			});
 		},
@@ -104,7 +98,6 @@ function createAuthStore() {
 		 */
 		logout: () => {
 			if (browser) {
-				localStorage.removeItem('sessionId');
 				localStorage.removeItem('userId');
 				localStorage.removeItem('userEmail');
 				localStorage.removeItem('userName');
@@ -112,7 +105,6 @@ function createAuthStore() {
 
 			set({
 				isAuthenticated: false,
-				sessionId: null,
 				user: null
 			});
 		},
@@ -122,9 +114,8 @@ function createAuthStore() {
 		 */
 		checkAuth: (): boolean => {
 			if (!browser) return false;
-			const sessionId = localStorage.getItem('sessionId');
 			const userId = localStorage.getItem('userId');
-			return !!(sessionId && userId);
+			return !!userId;
 		},
 
 		/**
@@ -133,15 +124,13 @@ function createAuthStore() {
 		refresh: () => {
 			if (!browser) return;
 
-			const sessionId = localStorage.getItem('sessionId');
 			const userId = localStorage.getItem('userId');
 			const userEmail = localStorage.getItem('userEmail');
 			const userName = localStorage.getItem('userName');
 
-			if (sessionId && userId) {
+			if (userId) {
 				set({
 					isAuthenticated: true,
-					sessionId,
 					user: {
 						userId,
 						email: userEmail || '',
@@ -151,7 +140,6 @@ function createAuthStore() {
 			} else {
 				set({
 					isAuthenticated: false,
-					sessionId: null,
 					user: null
 				});
 			}
@@ -168,21 +156,17 @@ function createAuthStore() {
 			const userInfo = await fetchUserInfoFromSession();
 
 			if (userInfo) {
-				// User is authenticated via session cookie
-				const sessionId = 'session-from-cookie'; // Placeholder - actual session ID is in cookie
 				const userId = userInfo.sub;
 				const userEmail = userInfo.email || '';
 				const userName = userInfo.name;
 
-				// Store in localStorage for future use
-				localStorage.setItem('sessionId', sessionId);
+				// Store non-sensitive display state only. Session credentials remain in cookies.
 				localStorage.setItem('userId', userId);
 				if (userEmail) localStorage.setItem('userEmail', userEmail);
 				if (userName) localStorage.setItem('userName', userName);
 
 				set({
 					isAuthenticated: true,
-					sessionId,
 					user: {
 						userId,
 						email: userEmail,
@@ -191,14 +175,12 @@ function createAuthStore() {
 				});
 			} else {
 				// Not authenticated or session expired
-				localStorage.removeItem('sessionId');
 				localStorage.removeItem('userId');
 				localStorage.removeItem('userEmail');
 				localStorage.removeItem('userName');
 
 				set({
 					isAuthenticated: false,
-					sessionId: null,
 					user: null
 				});
 			}

@@ -11,22 +11,67 @@ import { adminFetch } from '$lib/api/admin-request';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
+export type ClaimReleasePolicy = 'scope_required' | 'claims_allowed' | 'forbidden';
+export type ClaimsParameterPolicy = Record<string, ClaimReleasePolicy>;
+
 export interface Client {
 	client_id: string;
 	client_name: string;
+	description?: string | null;
 	client_secret?: string;
 	grant_types: string[];
 	response_types: string[];
 	redirect_uris: string[];
 	token_endpoint_auth_method: string;
 	scope?: string;
+	contacts?: string[];
+	logo_uri?: string | null;
+	client_uri?: string | null;
+	policy_uri?: string | null;
+	tos_uri?: string | null;
+	is_trusted?: boolean;
+	skip_consent?: boolean;
+	allow_claims_without_scope?: boolean;
+	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	asc_enabled?: boolean;
+	asc_protected_request_required?: boolean;
+	asc_sao_enabled?: boolean;
+	asc_transformed_claims_enabled?: boolean;
+	asc_allowed_transformed_claims?: string[] | null;
 	login_ui_url?: string | null;
 	id_token_signed_response_alg?: string;
 	require_pkce?: boolean;
+	token_exchange_allowed?: boolean;
+	allowed_subject_token_clients?: string[];
+	allowed_token_exchange_resources?: string[];
+	delegation_mode?: 'none' | 'delegation' | 'impersonation';
+	client_credentials_allowed?: boolean;
+	allowed_scopes?: string[];
+	default_scope?: string | null;
+	default_audience?: string | null;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
+	web_origin_registry?: WebOriginRegistry;
 	created_at: number;
 	updated_at: number;
+}
+
+export interface WebOriginRegistry {
+	origins: WebOriginRegistryEntry[];
+}
+
+export interface WebOriginRegistryEntry {
+	origin: string;
+	client_ids?: string[];
+	cors?: {
+		allowed?: boolean;
+	};
+	csp?: {
+		frame_ancestors?: string[];
+	};
+	handoff_allowed?: boolean;
+	iframe_allowed?: boolean;
+	environment?: string;
 }
 
 export interface ClientListResponse {
@@ -49,18 +94,36 @@ export interface ClientListParams {
 
 export interface CreateClientInput {
 	client_name: string;
+	description?: string | null;
 	redirect_uris: string[];
 	grant_types?: string[];
 	response_types?: string[];
 	token_endpoint_auth_method?: string;
 	scope?: string;
 	require_pkce?: boolean;
+	allow_claims_without_scope?: boolean;
+	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	asc_enabled?: boolean;
+	asc_protected_request_required?: boolean;
+	asc_sao_enabled?: boolean;
+	asc_transformed_claims_enabled?: boolean;
+	asc_allowed_transformed_claims?: string[] | null;
+	token_exchange_allowed?: boolean;
+	allowed_subject_token_clients?: string[];
+	allowed_token_exchange_resources?: string[];
+	delegation_mode?: 'none' | 'delegation' | 'impersonation';
+	client_credentials_allowed?: boolean;
+	allowed_scopes?: string[];
+	default_scope?: string;
+	default_audience?: string;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
+	web_origin_registry?: WebOriginRegistry;
 }
 
 export interface UpdateClientInput {
 	client_name?: string;
+	description?: string | null;
 	redirect_uris?: string[];
 	grant_types?: string[];
 	response_types?: string[];
@@ -68,8 +131,24 @@ export interface UpdateClientInput {
 	scope?: string;
 	login_ui_url?: string | null;
 	require_pkce?: boolean;
+	allow_claims_without_scope?: boolean;
+	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	asc_enabled?: boolean;
+	asc_protected_request_required?: boolean;
+	asc_sao_enabled?: boolean;
+	asc_transformed_claims_enabled?: boolean;
+	asc_allowed_transformed_claims?: string[] | null;
+	token_exchange_allowed?: boolean;
+	allowed_subject_token_clients?: string[];
+	allowed_token_exchange_resources?: string[];
+	delegation_mode?: 'none' | 'delegation' | 'impersonation';
+	client_credentials_allowed?: boolean;
+	allowed_scopes?: string[];
+	default_scope?: string | null;
+	default_audience?: string | null;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
+	web_origin_registry?: WebOriginRegistry | null;
 }
 
 export interface ClientUsage {

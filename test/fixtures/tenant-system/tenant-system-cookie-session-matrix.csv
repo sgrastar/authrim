@@ -1,0 +1,16 @@
+case_id,cookie_session_item,condition,expect,test_type
+CS-001,remembered tenant cookie,remember_last_tenant=true and discovery resolves tenant,Cookie is set with tenant candidate data.,Server/action test
+CS-002,remembered tenant cookie,remember_last_tenant=false and discovery resolves tenant,Cookie is deleted/cleared.,Server/action test
+CS-003,remembered tenant cookie,stale JSON or invalid tenant,"Ignored, no crash, no unsafe redirect.",Server-load test
+CS-004,remembered tenant cookie,valid tenant candidate on common /discover,Recent tenant option appears.,Svelte/server + one UI test
+CS-005,discovery grant cookie,valid grant on tenant /login,Short-lived verified cookie is set before grant is stripped.,Server-load test
+CS-006,discovery grant cookie,redirected grant-stripped /login URL,Cookie is consumed and deleted; login renders once.,Server-load test
+CS-007,discovery grant cookie,replay without grant after consumption,Redirects to common discovery when require flag true.,Server-load test
+CS-008,discovery grant,expired grant,Redirects to common discovery.,Server/API test
+CS-009,discovery grant,tampered grant,Redirects to common discovery.,Server/API test
+CS-010,discovery grant return target,wrong host,"Rejects return_to, uses canonical login URL.",Server/API test
+CS-011,discovery grant return target,wrong path,"Rejects return_to, uses canonical login URL.",Server/API test
+CS-012,login session,session belongs to same tenant,Accepted for same tenant protocol flow.,Local integration test
+CS-013,login session,session belongs to different tenant,Not reused across tenant.,Local integration test
+CS-014,cookie attributes,Secure/HttpOnly/SameSite/path/max-age,Attributes match expected policy.,Server response assertion
+CS-015,real browser cookie behavior,cross-host navigation common discovery -> tenant login,Cookie/query behavior works under real browser navigation.,Playwright or real env smoke

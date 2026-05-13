@@ -17,6 +17,5 @@ CREATE TABLE IF NOT EXISTS tenant_invitations (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_ti_token  ON tenant_invitations(token)
-  WHERE expires_at > unixepoch();
+CREATE INDEX IF NOT EXISTS idx_ti_token ON tenant_invitations(token, expires_at);
 CREATE INDEX IF NOT EXISTS idx_ti_tenant ON tenant_invitations(tenant_id, created_at DESC);

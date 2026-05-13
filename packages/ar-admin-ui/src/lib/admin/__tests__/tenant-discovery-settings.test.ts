@@ -21,6 +21,7 @@ describe('tenant discovery settings helpers', () => {
 	it('builds discovery methods in stable order', () => {
 		expect(
 			buildDiscoveryMethodsValue({
+				emailEnabled: true,
 				emailResolutionPolicy: 'exact_email_then_domain',
 				tenantCodeEnabled: true,
 				tenantSlugEnabled: true
@@ -31,6 +32,7 @@ describe('tenant discovery settings helpers', () => {
 	it('omits email discovery when policy is disabled', () => {
 		expect(
 			buildDiscoveryMethodsValue({
+				emailEnabled: false,
 				emailResolutionPolicy: 'disabled',
 				tenantCodeEnabled: true,
 				tenantSlugEnabled: false
@@ -38,8 +40,20 @@ describe('tenant discovery settings helpers', () => {
 		).toBe('["tenant_code"]');
 	});
 
+	it('omits email discovery when email toggle is off even if a policy is selected', () => {
+		expect(
+			buildDiscoveryMethodsValue({
+				emailEnabled: false,
+				emailResolutionPolicy: 'exact_email_only',
+				tenantCodeEnabled: false,
+				tenantSlugEnabled: true
+			})
+		).toBe('["tenant_slug"]');
+	});
+
 	it('reads tenant code and slug toggles from stored methods', () => {
 		expect(getMethodToggles('["email_domain","tenant_slug"]')).toEqual({
+			emailEnabled: true,
 			tenantCodeEnabled: false,
 			tenantSlugEnabled: true
 		});

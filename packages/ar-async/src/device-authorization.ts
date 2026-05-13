@@ -17,17 +17,10 @@ import {
   // UI Configuration
   getUIConfig,
   buildRequestIssuerUrl,
-  getDefaultTenantId,
-  getTenantIdFromContext,
   getLogger,
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
-
-function resolveTenantId(c: Context<{ Bindings: Env }>): string {
-  return typeof (c as { get?: unknown }).get === 'function'
-    ? getTenantIdFromContext(c)
-    : getDefaultTenantId(c.env);
-}
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * POST /device_authorization
@@ -37,7 +30,12 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
  */
 export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
-  const tenantId = resolveTenantId(c);
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
 
   try {
     // Parse request body
@@ -75,6 +73,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     const expiresIn = DEVICE_FLOW_CONSTANTS.DEFAULT_EXPIRES_IN;
 
     const metadata: DeviceCodeMetadata = {
+      tenant_id: tenantId,
       device_code: deviceCode,
       user_code: userCode,
       client_id,
@@ -96,7 +95,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     const storeResponse = await deviceCodeStore.fetch(
       new Request('https://internal/store', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
         body: JSON.stringify(metadata),
       })
     );

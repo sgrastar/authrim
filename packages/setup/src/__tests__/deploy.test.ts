@@ -3,7 +3,12 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execa } from 'execa';
-import { buildPagesUiBuildEnv, deployAll, deployWorker } from '../core/deploy.js';
+import {
+  buildUiWorkerBuildEnv,
+  deployAll,
+  deployUiWorkerComponent,
+  deployWorker,
+} from '../core/deploy.js';
 
 vi.mock('execa', () => ({
   execa: vi.fn(),
@@ -30,6 +35,19 @@ function createWorkerPackage(rootDir: string, component: string, version: string
   );
 }
 
+function createUiPackage(rootDir: string, component: string): void {
+  const packageDir = join(rootDir, 'packages', component);
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: `@authrim/${component}`,
+      version: '1.0.0',
+      scripts: { build: 'echo build' },
+    })
+  );
+}
+
 beforeEach(() => {
   vi.mocked(execa).mockReset();
   vi.mocked(execa).mockResolvedValue({} as Awaited<ReturnType<typeof execa>>);
@@ -45,9 +63,9 @@ afterEach(() => {
   }
 });
 
-describe('buildPagesUiBuildEnv', () => {
+describe('buildUiWorkerBuildEnv', () => {
   it('strips leaked PUBLIC_* values and injects the runtime API base URL', () => {
-    const result = buildPagesUiBuildEnv(
+    const result = buildUiWorkerBuildEnv(
       {
         KEEP_ME: '1',
         PUBLIC_API_BASE_URL: 'https://stale.example.com',
@@ -65,7 +83,7 @@ describe('buildPagesUiBuildEnv', () => {
   });
 
   it('prefers package-local env files over shell PUBLIC_* variables', () => {
-    const result = buildPagesUiBuildEnv(
+    const result = buildUiWorkerBuildEnv(
       {
         PUBLIC_API_BASE_URL: 'https://shell.example.com',
         PUBLIC_LOGIN_UI_CLIENT_ID: 'client-from-shell',
@@ -117,6 +135,46 @@ describe('deployWorker', () => {
     expect(result.version).toBe('9.9.9');
     expect(progressMessages).toContain('[1/3] Deploying test-ar-auth...');
     expect(progressMessages).toContain('  [DRY RUN] Would deploy ar-auth with --env test');
+  });
+});
+
+describe('deployUiWorkerComponent', () => {
+  it('uploads Admin UI BFF machine credential secrets after Admin UI deploy', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-admin-ui');
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    } as Awaited<ReturnType<typeof execa>>);
+
+    const result = await deployUiWorkerComponent('ar-admin-ui', {
+      env: 'test',
+      rootDir,
+      adminUiBffSecrets: {
+        ADMIN_UI_BFF_CLIENT_ID: 'authrim-admin-ui-bff',
+        ADMIN_UI_BFF_KEY_ID: 'bff-key-1',
+        ADMIN_UI_BFF_PRIVATE_KEY_PEM:
+          '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
+        ADMIN_UI_BFF_SCOPES: 'admin-ui:proxy',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(vi.mocked(execa)).toHaveBeenCalledWith(
+      'npx',
+      ['wrangler', 'secret', 'put', 'ADMIN_UI_BFF_PRIVATE_KEY_PEM', '--env', 'test'],
+      expect.objectContaining({
+        input: '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
+      })
+    );
+    expect(vi.mocked(execa)).toHaveBeenCalledWith(
+      'npx',
+      ['wrangler', 'secret', 'put', 'ADMIN_UI_BFF_SCOPES', '--env', 'test'],
+      expect.objectContaining({
+        input: 'admin-ui:proxy',
+      })
+    );
   });
 });
 

@@ -213,6 +213,11 @@ export interface ISessionRepository {
    * List active sessions for a user
    * @param userId - User identifier
    * @returns Array of active sessions
+   *
+   * Note:
+   * Cloudflare's region-sharded SessionStore cannot implement this correctly
+   * without a separate user-session index. Callers should prefer higher-level
+   * admin/session APIs until that index exists.
    */
   listByUser(userId: string): Promise<Session[]>;
 }
@@ -568,6 +573,7 @@ export interface IPasskeyStore {
  */
 export interface Passkey {
   id: string; // UUID
+  tenant_id?: string;
   user_id: string;
   credential_id: string; // WebAuthn credential ID (unique)
   public_key: string; // Public key for verification
@@ -617,21 +623,26 @@ export type {
  */
 export interface IOrganizationStore {
   // Organization CRUD
-  getOrganization(orgId: string): Promise<Organization | null>;
+  getOrganization(tenantId: string, orgId: string): Promise<Organization | null>;
   getOrganizationByName(tenantId: string, name: string): Promise<Organization | null>;
   createOrganization(
     org: Omit<Organization, 'id' | 'created_at' | 'updated_at'>
   ): Promise<Organization>;
-  updateOrganization(orgId: string, updates: Partial<Organization>): Promise<Organization>;
-  deleteOrganization(orgId: string): Promise<void>;
+  updateOrganization(
+    tenantId: string,
+    orgId: string,
+    updates: Partial<Organization>
+  ): Promise<Organization>;
+  deleteOrganization(tenantId: string, orgId: string): Promise<void>;
   listOrganizations(
     tenantId: string,
     options?: { limit?: number; offset?: number; parentOrgId?: string }
   ): Promise<Organization[]>;
 
   // Membership CRUD
-  getMembership(membershipId: string): Promise<SubjectOrgMembership | null>;
+  getMembership(tenantId: string, membershipId: string): Promise<SubjectOrgMembership | null>;
   getMembershipBySubjectAndOrg(
+    tenantId: string,
     subjectId: string,
     orgId: string
   ): Promise<SubjectOrgMembership | null>;
@@ -639,18 +650,20 @@ export interface IOrganizationStore {
     membership: Omit<SubjectOrgMembership, 'id' | 'created_at' | 'updated_at'>
   ): Promise<SubjectOrgMembership>;
   updateMembership(
+    tenantId: string,
     membershipId: string,
     updates: Partial<SubjectOrgMembership>
   ): Promise<SubjectOrgMembership>;
-  deleteMembership(membershipId: string): Promise<void>;
+  deleteMembership(tenantId: string, membershipId: string): Promise<void>;
 
   // Membership queries
-  listMembershipsBySubject(subjectId: string): Promise<SubjectOrgMembership[]>;
+  listMembershipsBySubject(tenantId: string, subjectId: string): Promise<SubjectOrgMembership[]>;
   listMembershipsByOrg(
+    tenantId: string,
     orgId: string,
     options?: { limit?: number; offset?: number }
   ): Promise<SubjectOrgMembership[]>;
-  getPrimaryOrganization(subjectId: string): Promise<Organization | null>;
+  getPrimaryOrganization(tenantId: string, subjectId: string): Promise<Organization | null>;
 }
 
 /**
@@ -658,16 +671,16 @@ export interface IOrganizationStore {
  * Manages roles with extended attributes
  */
 export interface IRoleStore {
-  getRole(roleId: string): Promise<Role | null>;
+  getRole(tenantId: string, roleId: string): Promise<Role | null>;
   getRoleByName(tenantId: string, name: string): Promise<Role | null>;
   createRole(role: Omit<Role, 'id' | 'created_at'>): Promise<Role>;
-  updateRole(roleId: string, updates: Partial<Role>): Promise<Role>;
-  deleteRole(roleId: string): Promise<void>;
+  updateRole(tenantId: string, roleId: string, updates: Partial<Role>): Promise<Role>;
+  deleteRole(tenantId: string, roleId: string): Promise<void>;
   listRoles(
     tenantId: string,
     options?: { limit?: number; offset?: number; roleType?: string }
   ): Promise<Role[]>;
-  getChildRoles(roleId: string): Promise<Role[]>;
+  getChildRoles(tenantId: string, roleId: string): Promise<Role[]>;
 }
 
 /**
@@ -675,30 +688,35 @@ export interface IRoleStore {
  * Manages role assignments with scope support
  */
 export interface IRoleAssignmentStore {
-  getRoleAssignment(assignmentId: string): Promise<RoleAssignment | null>;
+  getRoleAssignment(tenantId: string, assignmentId: string): Promise<RoleAssignment | null>;
   createRoleAssignment(
     assignment: Omit<RoleAssignment, 'id' | 'created_at' | 'updated_at'>
   ): Promise<RoleAssignment>;
   updateRoleAssignment(
+    tenantId: string,
     assignmentId: string,
     updates: Partial<RoleAssignment>
   ): Promise<RoleAssignment>;
-  deleteRoleAssignment(assignmentId: string): Promise<void>;
+  deleteRoleAssignment(tenantId: string, assignmentId: string): Promise<void>;
 
   // Assignment queries
   listAssignmentsBySubject(
+    tenantId: string,
     subjectId: string,
     options?: { scopeType?: ScopeType; scopeTarget?: string; includeExpired?: boolean }
   ): Promise<RoleAssignment[]>;
   listAssignmentsByRole(
+    tenantId: string,
     roleId: string,
     options?: { limit?: number; offset?: number }
   ): Promise<RoleAssignment[]>;
   getEffectiveRoles(
+    tenantId: string,
     subjectId: string,
     options?: { scopeType?: ScopeType; scopeTarget?: string }
   ): Promise<string[]>;
   hasRole(
+    tenantId: string,
     subjectId: string,
     roleName: string,
     options?: { scopeType?: ScopeType; scopeTarget?: string }
@@ -710,25 +728,32 @@ export interface IRoleAssignmentStore {
  * Manages subject-subject (and future org-org) relationships
  */
 export interface IRelationshipStore {
-  getRelationship(relationshipId: string): Promise<Relationship | null>;
+  getRelationship(tenantId: string, relationshipId: string): Promise<Relationship | null>;
   createRelationship(
     relationship: Omit<Relationship, 'id' | 'created_at' | 'updated_at'>
   ): Promise<Relationship>;
-  updateRelationship(relationshipId: string, updates: Partial<Relationship>): Promise<Relationship>;
-  deleteRelationship(relationshipId: string): Promise<void>;
+  updateRelationship(
+    tenantId: string,
+    relationshipId: string,
+    updates: Partial<Relationship>
+  ): Promise<Relationship>;
+  deleteRelationship(tenantId: string, relationshipId: string): Promise<void>;
 
   // Relationship queries
   listRelationshipsFrom(
+    tenantId: string,
     fromType: string,
     fromId: string,
     options?: { relationshipType?: string; includeExpired?: boolean }
   ): Promise<Relationship[]>;
   listRelationshipsTo(
+    tenantId: string,
     toType: string,
     toId: string,
     options?: { relationshipType?: string; includeExpired?: boolean }
   ): Promise<Relationship[]>;
   findRelationship(
+    tenantId: string,
     fromType: string,
     fromId: string,
     toType: string,
@@ -737,6 +762,6 @@ export interface IRelationshipStore {
   ): Promise<Relationship | null>;
 
   // Parent-child convenience methods
-  getParentSubjects(childSubjectId: string): Promise<Relationship[]>;
-  getChildSubjects(parentSubjectId: string): Promise<Relationship[]>;
+  getParentSubjects(tenantId: string, childSubjectId: string): Promise<Relationship[]>;
+  getChildSubjects(tenantId: string, parentSubjectId: string): Promise<Relationship[]>;
 }

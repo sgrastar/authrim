@@ -12,8 +12,6 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  getDefaultTenantId,
-  getTenantIdFromContext,
   buildDOInstanceName,
   parseCIBARequestId,
   getCIBARequestStoreById,
@@ -23,12 +21,7 @@ import {
   RateLimitProfiles,
 } from '@authrim/ar-lib-core';
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
-
-function resolveTenantId(c: Context<{ Bindings: Env }>): string {
-  return typeof (c as { get?: unknown }).get === 'function'
-    ? getTenantIdFromContext(c)
-    : getDefaultTenantId(c.env);
-}
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * POST /api/ciba/approve
@@ -50,7 +43,16 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
  */
 export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
-  const tenantId = resolveTenantId(c);
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     // Get client IP for rate limiting using cloud provider configuration
     const cloudProvider = await getCloudProvider(c.env);
@@ -58,9 +60,14 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
 
     // Check rate limiting for CIBA approval requests (strict profile: 10 requests/minute)
     // This prevents brute-force attacks on auth_req_id
-    const rateLimitResult = await checkRateLimit(c.env, `ciba-approve:${clientIp}`, {
-      ...RateLimitProfiles.strict,
-    });
+    const rateLimitResult = await checkRateLimit(
+      c.env,
+      `ciba-approve:${clientIp}`,
+      {
+        ...RateLimitProfiles.strict,
+      },
+      tenantId
+    );
 
     if (!rateLimitResult.allowed) {
       log.warn('CIBA approve rate limit exceeded', {
@@ -109,7 +116,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     const getResponse = await cibaRequestStore.fetch(
       new Request('https://internal/get-by-auth-req-id', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -152,7 +159,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     const approveResponse = await cibaRequestStore.fetch(
       new Request('https://internal/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({
           auth_req_id: authReqId,
           user_id: finalUserId,

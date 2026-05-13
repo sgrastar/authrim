@@ -305,16 +305,18 @@ ChallengeStore uses sharded Durable Objects for scalability. **Always use UUID-b
 import { getChallengeStoreByChallengeId, getChallengeStoreByUserId } from '@authrim/shared';
 
 const challengeId = crypto.randomUUID();
+const tenantId = getTenantIdFromContext(c);
 
 // For UUID-based flows (OTP with otpSessionId, consent, login-challenge):
-const challengeStore = await getChallengeStoreByChallengeId(env, challengeId);
+const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
 
 // For userId-based flows (passkey registration where userId is known):
-const challengeStore = await getChallengeStoreByUserId(env, userId);
+const challengeStore = await getChallengeStoreByUserId(env, userId, tenantId);
 
 // Store using RPC pattern
 await challengeStore.storeChallengeRpc({
   id: challengeId,
+  tenantId,
   type: 'login', // or 'consent', 'reauth'
   userId: 'anonymous', // or actual userId for consent/reauth
   challenge: challengeId,
@@ -336,11 +338,12 @@ await challengeStore.storeChallengeRpc({
 
 ```typescript
 // Get the same shard used when storing (use same sharding key)
-const challengeStore = await getChallengeStoreByChallengeId(env, challengeId);
+const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
 
 try {
   const challengeData = await challengeStore.consumeChallengeRpc({
     id: challengeId,
+    tenantId,
     type: 'login', // Must match stored type
     challenge: challengeId,
   });

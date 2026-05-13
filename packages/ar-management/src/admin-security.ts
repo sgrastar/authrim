@@ -18,7 +18,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -27,6 +27,12 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
+import {
+  createAuditHotQueryUnsupportedResponse,
+  getAuditHotQuerySqlSpec,
+  getAuditHotQuerySupport,
+  getAuditTimeRange,
+} from './audit-hot-query';
 
 // =============================================================================
 // Constants
@@ -196,8 +202,8 @@ interface FormattedAlert {
 /**
  * Create database adapter from context
  */
-function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+function createAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 /**
@@ -385,7 +391,7 @@ export async function adminSecurityAlertsListHandler(c: Context<{ Bindings: Env 
   }
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Build query
     const whereClauses: string[] = ['tenant_id = ?'];
@@ -524,7 +530,7 @@ export async function adminSecurityAlertAcknowledgeHandler(c: Context<{ Bindings
     }
 
     const { notes, resolution } = parseResult.data;
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Get current alert state (verify tenant ownership)
     const alert = await adapter.queryOne<AlertRow>(
@@ -690,7 +696,7 @@ export async function adminSecuritySuspiciousActivitiesHandler(c: Context<{ Bind
   const query = parseResult.data;
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Build query
     const whereClauses: string[] = ['tenant_id = ?'];
@@ -857,7 +863,7 @@ export async function adminSecurityThreatsHandler(c: Context<{ Bindings: Env }>)
   const query = parseResult.data;
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Build query
     const whereClauses: string[] = ['tenant_id = ?'];
@@ -1043,19 +1049,30 @@ export async function adminSecurityIpReputationHandler(c: Context<{ Bindings: En
     }
 
     const { ip_addresses } = parseResult.data;
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+    const { tableName, actionColumn } = getAuditHotQuerySqlSpec(hotQuery.context);
+    const [auditWindowStart] = getAuditTimeRange(
+      Math.floor(Date.now() / 1000) - 24 * 60 * 60,
+      Math.floor(Date.now() / 1000),
+      hotQuery.context
+    );
+    const auditAdapter = hotQuery.context.adapter;
 
     // Check IP reputation from security events and known blocklists
     const results = await Promise.all(
       ip_addresses.map(async (ip) => {
         // Count failed auth attempts from this IP
-        const failedAuthCount = await adapter.queryOne<{ count: number }>(
-          `SELECT COUNT(*) as count FROM audit_log
+        const failedAuthCount = await auditAdapter.queryOne<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${tableName}
            WHERE tenant_id = ?
              AND ip_address = ?
-             AND action LIKE 'auth.%failed%'
+             AND ${actionColumn} LIKE 'auth.%failed%'
              AND created_at >= ?`,
-          [tenantId, ip, Math.floor(Date.now() / 1000) - 24 * 60 * 60] // Last 24 hours
+          [tenantId, ip, auditWindowStart]
         );
 
         // Check if IP is in blocklist
@@ -1066,13 +1083,13 @@ export async function adminSecurityIpReputationHandler(c: Context<{ Bindings: En
         );
 
         // Check for rate limit violations
-        const rateLimitViolations = await adapter.queryOne<{ count: number }>(
-          `SELECT COUNT(*) as count FROM audit_log
+        const rateLimitViolations = await auditAdapter.queryOne<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${tableName}
            WHERE tenant_id = ?
              AND ip_address = ?
-             AND action = 'rate_limit.exceeded'
+             AND ${actionColumn} = 'rate_limit.exceeded'
              AND created_at >= ?`,
-          [tenantId, ip, Math.floor(Date.now() / 1000) - 24 * 60 * 60]
+          [tenantId, ip, auditWindowStart]
         );
 
         // Calculate risk score (0-100)

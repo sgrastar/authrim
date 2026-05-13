@@ -4,7 +4,7 @@
  * Provides unified storage interface for audit logs with multiple backend support:
  * - D1: Hot data storage for recent logs (fast queries)
  * - R2: Archive storage for long-term retention (cost-efficient)
- * - Hyperdrive: External PostgreSQL for enterprise deployments
+ * - Hyperdrive: External PostgreSQL/MySQL for enterprise deployments
  */
 
 // Adapter Interface
@@ -18,11 +18,18 @@ export type {
   AuditStorageHealth,
   AuditBackendConfig,
   AuditRetentionConfig,
+  AuditStorageRoutingTargets,
   AuditStorageRoutingRule,
   AuditStorageConfig,
 } from './adapter';
 
-export { DEFAULT_AUDIT_STORAGE_CONFIG } from './adapter';
+export {
+  DEFAULT_AUDIT_STORAGE_CONFIG,
+  hasAuditStorageRoutingTargets,
+  normalizeAuditStorageRoutingTargets,
+} from './adapter';
+export { auditRoutingRuleMatches, resolveAuditRoutingTargets } from './routing';
+export type { AuditRoutingContext, ResolvedAuditRoutingTargets } from './routing';
 
 // D1 Adapter
 export { D1AuditAdapter, createD1EventLogAdapter, createD1PIILogAdapter } from './d1-adapter';
@@ -36,5 +43,8 @@ export type { R2AuditAdapterConfig } from './r2-adapter';
 
 // Hyperdrive Adapter
 export { HyperdriveAuditAdapter, createHyperdriveAuditAdapter } from './hyperdrive-adapter';
+export { MysqlAuditAdapter, createMysqlAuditAdapter } from './mysql-audit-adapter';
+export { resolveHyperdriveBindingForAuditTarget } from '../hyperdrive-binding';
 
 export type { HyperdriveAuditAdapterConfig } from './hyperdrive-adapter';
+export type { MysqlAuditAdapterConfig } from './mysql-audit-adapter';

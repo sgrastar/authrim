@@ -49,17 +49,23 @@ export type DeliveryStatus = 'pending' | 'success' | 'failed' | 'retrying';
 export interface WebhookDelivery {
 	id: string;
 	webhook_id: string;
+	detail_artifact_id?: string | null;
 	event_type: string;
 	event_id: string;
 	status: DeliveryStatus;
 	attempt_count: number;
-	request_body?: string;
-	response_status?: number;
-	response_body?: string;
-	error_message?: string;
+	request_headers?: Record<string, string> | null;
+	request_body_preview?: string | null;
+	response_status?: number | null;
+	response_body_preview?: string | null;
+	request_body?: string | null;
+	response_body?: string | null;
+	error_message?: string | null;
 	created_at: number;
-	completed_at?: number;
-	next_retry_at?: number;
+	completed_at?: number | null;
+	next_retry_at?: number | null;
+	duration_ms?: number | null;
+	has_detail?: boolean;
 }
 
 /**
@@ -77,8 +83,75 @@ export interface WebhookListResponse {
  */
 export interface WebhookDeliveryListResponse {
 	deliveries: WebhookDelivery[];
-	total: number;
 	cursor?: string;
+}
+
+interface RawWebhookDeliverySummary {
+	delivery_id: string;
+	webhook_id: string;
+	detail_artifact_id?: string | null;
+	event_type: string;
+	event_id: string;
+	status: DeliveryStatus;
+	status_code: number | null;
+	request_headers: Record<string, string> | null;
+	request_body_preview: string | null;
+	response_body_preview: string | null;
+	error_message: string | null;
+	attempts: number;
+	next_retry_at: string | null;
+	created_at: string;
+	completed_at: string | null;
+	duration_ms: number | null;
+	has_detail: boolean;
+}
+
+interface RawWebhookDeliveryDetail extends Omit<
+	RawWebhookDeliverySummary,
+	'request_body_preview' | 'response_body_preview'
+> {
+	request_body: string | null;
+	response_body: string | null;
+}
+
+function toTimestamp(value: string | null | undefined): number | null {
+	if (!value) return null;
+	const parsed = Date.parse(value);
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mapWebhookDeliverySummary(raw: RawWebhookDeliverySummary): WebhookDelivery {
+	return {
+		id: raw.delivery_id,
+		webhook_id: raw.webhook_id,
+		detail_artifact_id: raw.detail_artifact_id ?? null,
+		event_type: raw.event_type,
+		event_id: raw.event_id,
+		status: raw.status,
+		attempt_count: raw.attempts,
+		request_headers: raw.request_headers,
+		request_body_preview: raw.request_body_preview,
+		response_status: raw.status_code,
+		response_body_preview: raw.response_body_preview,
+		error_message: raw.error_message,
+		created_at: toTimestamp(raw.created_at) ?? Date.now(),
+		completed_at: toTimestamp(raw.completed_at),
+		next_retry_at: toTimestamp(raw.next_retry_at),
+		duration_ms: raw.duration_ms,
+		has_detail: raw.has_detail
+	};
+}
+
+function mapWebhookDeliveryDetail(raw: RawWebhookDeliveryDetail): WebhookDelivery {
+	return {
+		...mapWebhookDeliverySummary({
+			...raw,
+			request_body_preview: raw.request_body,
+			response_body_preview: raw.response_body
+		}),
+		request_body: raw.request_body,
+		response_body: raw.response_body
+	};
 }
 
 /**
@@ -302,7 +375,7 @@ export const adminWebhooksAPI = {
 		const searchParams = new URLSearchParams();
 		if (params.cursor) searchParams.set('cursor', params.cursor);
 		if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
-		if (params.status) searchParams.set('status', params.status);
+		if (params.status) searchParams.set('filter', `status=${params.status}`);
 		if (params.from) searchParams.set('from', params.from);
 		if (params.to) searchParams.set('to', params.to);
 
@@ -318,7 +391,36 @@ export const adminWebhooksAPI = {
 				error.error_description || error.message || 'Failed to fetch webhook deliveries'
 			);
 		}
-		return response.json();
+		const payload = (await response.json()) as {
+			data: RawWebhookDeliverySummary[];
+			pagination?: { next_cursor?: string };
+		};
+		return {
+			deliveries: payload.data.map(mapWebhookDeliverySummary),
+			cursor: payload.pagination?.next_cursor
+		};
+	},
+
+	/**
+	 * Get a single delivery with full request/response payloads
+	 */
+	async getDelivery(id: string, deliveryId: string): Promise<WebhookDelivery> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/webhooks/${encodeURIComponent(id)}/deliveries/${encodeURIComponent(deliveryId)}`,
+			{ credentials: 'include' }
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to fetch webhook delivery'
+			);
+		}
+
+		const payload = (await response.json()) as {
+			delivery: RawWebhookDeliveryDetail;
+		};
+		return mapWebhookDeliveryDetail(payload.delivery);
 	},
 
 	/**

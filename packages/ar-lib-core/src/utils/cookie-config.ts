@@ -70,10 +70,12 @@ export function getSessionCookieSameSite(env: Env): CookieSameSite {
  *
  * Decision logic:
  * 1. If ADMIN_COOKIE_SAME_SITE env var is set, use that value (explicit override)
- * 2. If COOKIE_SAME_SITE env var is set, use that value (general override)
- * 3. If ISSUER_URL and ADMIN_UI_URL are same origin, use 'Lax' (more secure)
- * 4. If ISSUER_URL and UI_URL are same origin (admin via same UI), use 'Lax'
- * 5. Otherwise, use 'None' (required for cross-origin)
+ * 2. If COOKIE_SAME_SITE env var is set to Strict or Lax, use that value
+ * 3. Otherwise, use 'Lax'
+ *
+ * Direct cross-site Admin UI browser calls are unsupported. Cross-site Admin UI
+ * deployments must use the Admin UI Worker BFF, so the browser cookie remains
+ * first-party to the Admin UI origin and does not require SameSite=None.
  *
  * @param env - Environment bindings
  * @returns The appropriate SameSite value
@@ -85,25 +87,13 @@ export function getAdminCookieSameSite(env: Env): CookieSameSite {
     return adminExplicit;
   }
 
-  // General override from environment variable
+  // Admin cookies must not silently inherit a global SameSite=None setting.
   const explicitValue = env.COOKIE_SAME_SITE as CookieSameSite | undefined;
-  if (explicitValue && ['Strict', 'Lax', 'None'].includes(explicitValue)) {
+  if (explicitValue && ['Strict', 'Lax'].includes(explicitValue)) {
     return explicitValue;
   }
 
-  // Dynamic detection: compare ISSUER_URL with ADMIN_UI_URL
-  const adminUiUrl = env.ADMIN_UI_URL;
-  if (adminUiUrl && isSameOrigin(env.ISSUER_URL, adminUiUrl)) {
-    return 'Lax';
-  }
-
-  // Fallback: check if admin is served via same UI_URL
-  if (isSameOrigin(env.ISSUER_URL, env.UI_URL)) {
-    return 'Lax';
-  }
-
-  // Default to None for cross-origin compatibility
-  return 'None';
+  return 'Lax';
 }
 
 /**

@@ -336,6 +336,7 @@ describe('User Consents API', () => {
       expect(mockInvalidateConsentCache).toHaveBeenCalledWith(
         expect.anything(),
         'user-123',
+        'default',
         'client-abc'
       );
 

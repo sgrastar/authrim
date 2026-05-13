@@ -25,9 +25,15 @@ const {
   mockValidateClientAssertion,
   mockCreateOAuthConfigManager,
   mockGetKeyByKid,
+  mockDeviceSecretRepository,
 } = vi.hoisted(() => {
   const clientRepo = {
     findByClientId: vi.fn(),
+  };
+  const deviceSecretRepo = {
+    findByRawSecret: vi.fn(),
+    revoke: vi.fn(),
+    revokeByRawSecret: vi.fn(),
   };
   // Mock ConfigManager with getNumber method
   const mockConfigManager = {
@@ -61,6 +67,7 @@ const {
       n: 'mock-n',
       e: 'AQAB',
     }),
+    mockDeviceSecretRepository: deviceSecretRepo,
   };
 });
 
@@ -82,6 +89,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateClientAssertion: mockValidateClientAssertion,
     createOAuthConfigManager: mockCreateOAuthConfigManager,
     getKeyByKid: mockGetKeyByKid,
+    DeviceSecretRepository: vi.fn(function DeviceSecretRepositoryMock() {
+      return mockDeviceSecretRepository;
+    }),
     buildIssuerUrl: (env: Partial<Env>, tenantId?: string) => {
       if (env.BASE_DOMAIN) {
         const resolvedTenantId = tenantId || env.DEFAULT_TENANT_ID || 'default';
@@ -150,6 +160,7 @@ function createMockContext(options: {
     env: mockEnv as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     body: vi.fn((body, status = 200) => new Response(body, { status })),
+    header: vi.fn(),
     // Add get method for context variables (required by getLogger)
     get: vi.fn().mockReturnValue(undefined),
   } as any;
@@ -162,11 +173,15 @@ describe('Token Revocation Endpoint', () => {
     vi.clearAllMocks();
     // Reset repository mock
     mockClientRepository.findByClientId.mockReset();
+    mockDeviceSecretRepository.findByRawSecret.mockReset().mockResolvedValue(null);
+    mockDeviceSecretRepository.revoke.mockReset().mockResolvedValue(true);
+    mockDeviceSecretRepository.revokeByRawSecret.mockReset().mockResolvedValue(true);
     // Re-setup createAuthContextFromHono to return the mock repository
     mockCreateAuthContextFromHono.mockReturnValue({
       repositories: {
         client: mockClientRepository,
       },
+      coreAdapter: {},
     });
     // Setup jose mocks for signature verification
     vi.mocked(importJWK).mockResolvedValue({} as any);
@@ -423,6 +438,43 @@ describe('Token Revocation Endpoint', () => {
       expect(verifyClientSecretHash).toHaveBeenCalledWith('client-secret', 'hash_client-secret');
     });
 
+    it('resolves duplicated client_id through the request tenant context', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('tenant-b');
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          token_type_hint: 'access_token',
+          client_id: 'shared-mobile',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        jti: 'token-jti-123',
+        client_id: 'shared-mobile',
+        aud: 'https://op.example.com',
+        sub: 'user-123',
+        rtv: 1,
+      });
+
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'shared-mobile',
+        tenant_id: 'tenant-b',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await revokeHandler(c);
+
+      expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(c, 'tenant-b');
+      expect(mockClientRepository.findByClientId).toHaveBeenCalledWith('shared-mobile');
+      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600, undefined, 'tenant-b');
+    });
+
     it('should use tenant subdomain issuer for non-primary private_key_jwt validation', async () => {
       mockGetTenantIdFromContext.mockReturnValue('acme');
 
@@ -568,7 +620,7 @@ describe('Token Revocation Endpoint', () => {
 
       await revokeHandler(c);
 
-      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600);
+      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600, undefined, 'tenant1');
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 
@@ -687,7 +739,12 @@ describe('Token Revocation Endpoint', () => {
 
       await revokeHandler(c);
 
-      expect(deleteRefreshToken).toHaveBeenCalledWith(c.env, 'refresh-token-jti', 'client-123');
+      expect(deleteRefreshToken).toHaveBeenCalledWith(
+        c.env,
+        'refresh-token-jti',
+        'client-123',
+        'tenant1'
+      );
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 
@@ -717,7 +774,13 @@ describe('Token Revocation Endpoint', () => {
 
       await revokeHandler(c);
 
-      expect(revokeToken).toHaveBeenCalledWith(c.env, 'access-token-jti', 3600);
+      expect(revokeToken).toHaveBeenCalledWith(
+        c.env,
+        'access-token-jti',
+        3600,
+        undefined,
+        'tenant1'
+      );
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 
@@ -873,6 +936,303 @@ describe('Token Revocation Endpoint', () => {
 
       // Should return success (not reveal that token belongs to different client)
       expect(c.body).toHaveBeenCalledWith(null, 200);
+    });
+  });
+
+  describe('Device Secret Revocation', () => {
+    it('allows native public clients to revoke a presented device_secret', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'native-client',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'native-client',
+        application_type: 'native',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'native-client',
+        trust_group_id: 'wallet-suite',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      await revokeHandler(c);
+
+      expect(mockDeviceSecretRepository.findByRawSecret).toHaveBeenCalledWith(
+        'raw-device-secret',
+        'tenant1'
+      );
+      expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith('ds-001', 'logout', 'tenant1');
+      expect(c.body).toHaveBeenCalledWith(null, 200);
+    });
+
+    it('denies native public clients from revoking cross-client device_secrets', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'native-client',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'native-client',
+        application_type: 'native',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'other-native-client',
+        trust_group_id: 'wallet-suite',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      const response = await revokeHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe('access_denied');
+      expect(body.error_details?.code).toBe('revoke_disabled');
+      expect(mockDeviceSecretRepository.revoke).not.toHaveBeenCalled();
+    });
+
+    it('denies confidential client device_secret revoke unless explicitly enabled by policy', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'client-123',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      const response = await revokeHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe('access_denied');
+      expect(body.error_details?.code).toBe('revoke_disabled');
+      expect(mockDeviceSecretRepository.revoke).not.toHaveBeenCalled();
+    });
+
+    it('allows confidential client device_secret revoke when policy opt-in is present', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+        device_secret_revoke_enabled: true,
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'client-123',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      await revokeHandler(c);
+
+      expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
+        'ds-001',
+        'token_revocation',
+        'tenant1'
+      );
+      expect(c.body).toHaveBeenCalledWith(null, 200);
+    });
+
+    it('denies confidential cross-client revoke without trust-group allowlist', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'service-client',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'service-client',
+        client_secret_hash: 'hash_client-secret',
+        trust_group_id: 'wallet-suite',
+        device_secret_revoke_enabled: true,
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'native-client',
+        trust_group_id: 'wallet-suite',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      const response = await revokeHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(response.status).toBe(403);
+      expect(body.error_details?.code).toBe('revoke_disabled');
+      expect(mockDeviceSecretRepository.revoke).not.toHaveBeenCalled();
+    });
+
+    it('allows confidential cross-client revoke with trust-group allowlist', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'service-client',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'service-client',
+        client_secret_hash: 'hash_client-secret',
+        trust_group_id: 'wallet-suite',
+        device_secret_revoke_trust_groups: ['wallet-suite'],
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'native-client',
+        trust_group_id: 'wallet-suite',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      await revokeHandler(c);
+
+      expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
+        'ds-001',
+        'token_revocation',
+        'tenant1'
+      );
+      expect(c.body).toHaveBeenCalledWith(null, 200);
+    });
+
+    it('treats unknown device_secret revoke as success', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'native-client',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'native-client',
+        application_type: 'native',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue(null);
+
+      await revokeHandler(c);
+
+      expect(c.body).toHaveBeenCalledWith(null, 200);
+      expect(mockDeviceSecretRepository.revoke).not.toHaveBeenCalled();
     });
   });
 

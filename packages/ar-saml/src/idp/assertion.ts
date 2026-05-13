@@ -17,7 +17,7 @@ import {
   type XMLDocument,
   type XMLElement,
 } from '../common/xml-utils';
-import type { NameIDFormat } from '@authrim/ar-lib-core';
+import type { NameIDFormat, SAMLAttribute } from '@authrim/ar-lib-core';
 
 /**
  * Options for building SAML Response
@@ -37,12 +37,16 @@ export interface SAMLResponseOptions {
   inResponseTo?: string;
   /** Status code */
   statusCode?: string;
+  /** Optional second-level StatusCode */
+  secondLevelStatusCode?: string;
   /** Status message */
   statusMessage?: string;
   /** Recipient URL for SubjectConfirmation */
   recipientUrl: string;
   /** Audience restriction (SP EntityID) */
   audienceRestriction: string;
+  /** Additional audience restrictions */
+  audienceRestrictions?: string[];
   /** Subject NameID value */
   nameId: string;
   /** Subject NameID format */
@@ -51,6 +55,8 @@ export interface SAMLResponseOptions {
   authnInstant: string;
   /** Session index */
   sessionIndex?: string;
+  /** SessionNotOnOrAfter. Defaults to NotOnOrAfter when omitted, pass null to suppress. */
+  sessionNotOnOrAfter?: string | null;
   /** NotBefore condition */
   notBefore: string;
   /** NotOnOrAfter condition */
@@ -58,7 +64,7 @@ export interface SAMLResponseOptions {
   /** AuthnContext class reference */
   authnContextClassRef: string;
   /** Attribute statements */
-  attributes?: Array<{ name: string; nameFormat?: string; values: string[] }>;
+  attributes?: SAMLAttribute[];
 }
 
 /**
@@ -76,14 +82,17 @@ export function buildSAMLResponse(options: SAMLResponseOptions): string {
     statusMessage,
     recipientUrl,
     audienceRestriction,
+    audienceRestrictions,
     nameId,
     nameIdFormat,
     authnInstant,
     sessionIndex,
+    sessionNotOnOrAfter,
     notBefore,
     notOnOrAfter,
     authnContextClassRef,
     attributes,
+    secondLevelStatusCode,
   } = options;
 
   const doc = createDocument();
@@ -102,6 +111,8 @@ export function buildSAMLResponse(options: SAMLResponseOptions): string {
   addNamespaceDeclarations(responseElement, {
     samlp: SAML_NAMESPACES.SAML2P,
     saml: SAML_NAMESPACES.SAML2,
+    xs: SAML_NAMESPACES.XS,
+    xsi: SAML_NAMESPACES.XSI,
   });
 
   // Add Issuer
@@ -113,6 +124,16 @@ export function buildSAMLResponse(options: SAMLResponseOptions): string {
   const statusElement = createElement(doc, SAML_NAMESPACES.SAML2P, 'Status', 'samlp');
   const statusCodeElement = createElement(doc, SAML_NAMESPACES.SAML2P, 'StatusCode', 'samlp');
   setAttribute(statusCodeElement, 'Value', statusCode);
+  if (secondLevelStatusCode) {
+    const secondLevelStatusCodeElement = createElement(
+      doc,
+      SAML_NAMESPACES.SAML2P,
+      'StatusCode',
+      'samlp'
+    );
+    setAttribute(secondLevelStatusCodeElement, 'Value', secondLevelStatusCode);
+    appendChild(statusCodeElement, secondLevelStatusCodeElement);
+  }
   appendChild(statusElement, statusCodeElement);
 
   if (statusMessage) {
@@ -136,10 +157,12 @@ export function buildSAMLResponse(options: SAMLResponseOptions): string {
       issuer,
       recipientUrl,
       audienceRestriction,
+      audienceRestrictions,
       nameId,
       nameIdFormat,
       authnInstant,
       sessionIndex,
+      sessionNotOnOrAfter,
       notBefore,
       notOnOrAfter,
       authnContextClassRef,
@@ -165,15 +188,17 @@ interface AssertionOptions {
   issuer: string;
   recipientUrl: string;
   audienceRestriction: string;
+  audienceRestrictions?: string[];
   nameId: string;
   nameIdFormat: NameIDFormat;
   authnInstant: string;
   sessionIndex?: string;
+  sessionNotOnOrAfter?: string | null;
   notBefore: string;
   notOnOrAfter: string;
   authnContextClassRef: string;
   inResponseTo?: string;
-  attributes?: Array<{ name: string; nameFormat?: string; values: string[] }>;
+  attributes?: SAMLAttribute[];
 }
 
 /**
@@ -186,10 +211,12 @@ function buildAssertion(doc: XMLDocument, options: AssertionOptions): XMLElement
     issuer,
     recipientUrl,
     audienceRestriction,
+    audienceRestrictions,
     nameId,
     nameIdFormat,
     authnInstant,
     sessionIndex,
+    sessionNotOnOrAfter,
     notBefore,
     notOnOrAfter,
     authnContextClassRef,
@@ -255,9 +282,12 @@ function buildAssertion(doc: XMLDocument, options: AssertionOptions): XMLElement
     'AudienceRestriction',
     'saml'
   );
-  const audienceElement = createElement(doc, SAML_NAMESPACES.SAML2, 'Audience', 'saml');
-  setTextContent(audienceElement, audienceRestriction);
-  appendChild(audienceRestrictionElement, audienceElement);
+  const audiences = Array.from(new Set([audienceRestriction, ...(audienceRestrictions ?? [])]));
+  for (const audience of audiences) {
+    const audienceElement = createElement(doc, SAML_NAMESPACES.SAML2, 'Audience', 'saml');
+    setTextContent(audienceElement, audience);
+    appendChild(audienceRestrictionElement, audienceElement);
+  }
   appendChild(conditionsElement, audienceRestrictionElement);
 
   appendChild(assertionElement, conditionsElement);
@@ -268,7 +298,11 @@ function buildAssertion(doc: XMLDocument, options: AssertionOptions): XMLElement
   if (sessionIndex) {
     setAttribute(authnStatementElement, 'SessionIndex', sessionIndex);
   }
-  setAttribute(authnStatementElement, 'SessionNotOnOrAfter', notOnOrAfter);
+  const effectiveSessionNotOnOrAfter =
+    sessionNotOnOrAfter === undefined ? notOnOrAfter : sessionNotOnOrAfter;
+  if (effectiveSessionNotOnOrAfter) {
+    setAttribute(authnStatementElement, 'SessionNotOnOrAfter', effectiveSessionNotOnOrAfter);
+  }
 
   // AuthnContext
   const authnContextElement = createElement(doc, SAML_NAMESPACES.SAML2, 'AuthnContext', 'saml');
@@ -296,6 +330,9 @@ function buildAssertion(doc: XMLDocument, options: AssertionOptions): XMLElement
     for (const attr of attributes) {
       const attributeElement = createElement(doc, SAML_NAMESPACES.SAML2, 'Attribute', 'saml');
       setAttribute(attributeElement, 'Name', attr.name);
+      if (attr.friendlyName) {
+        setAttribute(attributeElement, 'FriendlyName', attr.friendlyName);
+      }
       if (attr.nameFormat) {
         setAttribute(attributeElement, 'NameFormat', attr.nameFormat);
       } else {
@@ -314,7 +351,12 @@ function buildAssertion(doc: XMLDocument, options: AssertionOptions): XMLElement
           'AttributeValue',
           'saml'
         );
-        setAttributeNS(attributeValueElement, SAML_NAMESPACES.XSI, 'xsi:type', 'xs:string');
+        setAttributeNS(
+          attributeValueElement,
+          SAML_NAMESPACES.XSI,
+          'xsi:type',
+          attr.valueType ?? 'xs:string'
+        );
         setTextContent(attributeValueElement, value);
         appendChild(attributeElement, attributeValueElement);
       }
@@ -338,6 +380,7 @@ export function buildErrorResponse(options: {
   destination: string;
   inResponseTo?: string;
   statusCode: string;
+  secondLevelStatusCode?: string;
   statusMessage?: string;
 }): string {
   return buildSAMLResponse({

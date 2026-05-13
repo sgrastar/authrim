@@ -40,12 +40,13 @@ export async function handleListLinkedIdentities(c: Context<{ Bindings: Env }>):
   }
 
   try {
-    const identities = await listLinkedIdentities(c.env, session.userId);
+    const tenantId = getTenantIdFromContext(c);
+    const identities = await listLinkedIdentities(c.env, tenantId, session.userId);
 
     // Enrich with provider names
     const enrichedIdentities = await Promise.all(
       identities.map(async (identity) => {
-        const provider = await getProvider(c.env, identity.providerId);
+        const provider = await getProvider(c.env, tenantId, identity.providerId);
         return {
           id: identity.id,
           providerId: identity.providerId,
@@ -95,14 +96,15 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
       });
     }
 
+    const tenantId = getTenantIdFromContext(c);
+
     // Check if provider exists
-    const provider = await getProvider(c.env, body.provider_id);
+    const provider = await getProvider(c.env, tenantId, body.provider_id);
     if (!provider || !provider.enabled) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check if already linked to this provider
-    const tenantId = getTenantIdFromContext(c);
     const existing = await getLinkedIdentityForUserAndProvider(
       c.env,
       tenantId,
@@ -144,15 +146,16 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
   if (!linkedIdentityId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
+    const tenantId = getTenantIdFromContext(c);
     // Verify ownership
-    const identity = await getLinkedIdentityById(c.env, linkedIdentityId);
+    const identity = await getLinkedIdentityById(c.env, tenantId, linkedIdentityId);
     if (!identity || identity.userId !== session.userId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check if this is the only authentication method
-    const linkedCount = await countLinkedIdentities(c.env, session.userId);
-    const hasPasskey = await hasPasskeyCredential(c.env, session.userId);
+    const linkedCount = await countLinkedIdentities(c.env, tenantId, session.userId);
+    const hasPasskey = await hasPasskeyCredential(c.env, tenantId, session.userId);
 
     if (linkedCount === 1 && !hasPasskey) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -169,7 +172,7 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
     }
 
     // Delete linked identity (always proceed even if revocation failed)
-    await deleteLinkedIdentity(c.env, linkedIdentityId);
+    await deleteLinkedIdentity(c.env, tenantId, linkedIdentityId);
 
     // Include revocation status in response for transparency
     return c.json({
@@ -218,7 +221,11 @@ async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionToken);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionToken,
+      getTenantIdFromContext(c)
+    );
     const response = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionToken}`, {
         method: 'GET',

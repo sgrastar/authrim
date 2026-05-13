@@ -26,8 +26,7 @@
  */
 
 import { Hono, type Context } from 'hono';
-import type { D1Database } from '@cloudflare/workers-types';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, StorageProfile } from '@authrim/ar-lib-core';
 import migrateRouter from './migrate';
 import {
   listSettingsHistory,
@@ -58,6 +57,12 @@ import {
   sanitizeObject,
   // Admin Auth
   type AdminAuthContext,
+  ensureDatabaseAdapter,
+  createRuntimeProfileRegistryFromEnv,
+  loadEnvironmentProfileDefaultsFromEnv,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  getTenantIdFromContext,
+  validateTenantStorageProfileOverride,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 
@@ -108,30 +113,32 @@ function isCategoryWritableAtScope(category: CategoryName, scopeLevel: SettingSc
  * Get the tenant ID that owns a client
  * Returns null if client not found
  */
-async function getClientTenantId(env: Env, clientId: string): Promise<string | null> {
+async function getClientTenantId(
+  env: Env,
+  clientId: string,
+  tenantId: string
+): Promise<string | null> {
   try {
     // Try to get client metadata from KV
-    const clientKey = `client:${clientId}:metadata`;
+    const clientKey = `client:${tenantId}:${clientId}:metadata`;
     const clientData = (await env.AUTHRIM_CONFIG?.get(clientKey, 'json')) as {
       tenant_id?: string;
     } | null;
-    if (clientData?.tenant_id) {
+    if (clientData?.tenant_id === tenantId) {
       return clientData.tenant_id;
     }
 
-    // Fallback: Try to get from D1 database if available
-    const db = env.DB as D1Database | undefined;
-    if (db) {
-      const result = await db
-        .prepare('SELECT tenant_id FROM oauth_clients WHERE client_id = ?')
-        .bind(clientId)
-        .first<{ tenant_id: string }>();
-      return result?.tenant_id ?? null;
-    }
-
-    return null;
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'settings-v2-client-tenant'
+    );
+    const result = await adapter.queryOne<{ tenant_id: string }>(
+      'SELECT tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      [tenantId, clientId]
+    );
+    return result?.tenant_id ?? null;
   } catch {
-    log.warn('Failed to get client tenant ID', { clientId });
+    log.warn('Failed to get client tenant ID', { clientId, tenantId });
     return null;
   }
 }
@@ -241,6 +248,79 @@ function errorResponse(
   details?: Record<string, unknown>
 ) {
   return c.json({ error, message, ...details }, status);
+}
+
+async function validateTenantRuntimeProfilePatch(
+  env: Env,
+  category: CategoryName,
+  body: SettingsPatchRequest
+): Promise<
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      message: string;
+      details?: Record<string, unknown>;
+    }
+> {
+  if (category !== 'tenant') {
+    return { ok: true };
+  }
+
+  const requestedStorageProfileId = body.set?.['tenant.storage_profile_id'];
+  if (typeof requestedStorageProfileId !== 'string') {
+    return { ok: true };
+  }
+
+  const trimmedId = requestedStorageProfileId.trim();
+  if (!trimmedId) {
+    return { ok: true };
+  }
+
+  const registry = createRuntimeProfileRegistryFromEnv(env);
+  const [defaults, candidateProfile] = await Promise.all([
+    loadEnvironmentProfileDefaultsFromEnv(env),
+    registry.get<StorageProfile>('storage', trimmedId),
+  ]);
+
+  if (!candidateProfile) {
+    return {
+      ok: false,
+      status: 404,
+      error: 'not_found',
+      message: `Storage profile "${trimmedId}" not found`,
+    };
+  }
+
+  const defaultProfile = await registry.get<StorageProfile>('storage', defaults.storageProfileId);
+  if (!defaultProfile) {
+    return {
+      ok: false,
+      status: 500,
+      error: 'internal_error',
+      message: `Default storage profile "${defaults.storageProfileId}" not found`,
+    };
+  }
+
+  const violation = validateTenantStorageProfileOverride(defaultProfile, candidateProfile);
+  if (!violation) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    status: 400,
+    error: 'bad_request',
+    message: violation.message,
+    details: {
+      code: violation.code,
+      defaultStorageProfileId: defaultProfile.id,
+      candidateStorageProfileId: candidateProfile.id,
+    },
+  };
 }
 
 // =============================================================================
@@ -405,6 +485,17 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
+    const runtimeProfileValidation = await validateTenantRuntimeProfilePatch(c.env, category, body);
+    if (!runtimeProfileValidation.ok) {
+      return errorResponse(
+        c,
+        runtimeProfileValidation.error,
+        runtimeProfileValidation.message,
+        runtimeProfileValidation.status,
+        runtimeProfileValidation.details
+      );
+    }
+
     // Get actor from context (set by auth middleware)
     const actor = adminAuth?.userId ?? 'unknown';
 
@@ -478,7 +569,8 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
   }
 
   // Security Check 2: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -494,7 +586,7 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
   }
 
   const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     // Client settings are stored under a single category
@@ -540,7 +632,8 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
   }
 
   // Security Check 4: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -556,7 +649,7 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
   }
 
   const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     const result = await manager.getAll(category, scope);
@@ -586,7 +679,8 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
   }
 
   // Security Check 2: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -602,7 +696,7 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
   }
 
   const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     // Parse and sanitize request body (prevent prototype pollution)
@@ -683,7 +777,8 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
   }
 
   // Security Check 4: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -699,7 +794,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
   }
 
   const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     const rawBody = await c.req.json();

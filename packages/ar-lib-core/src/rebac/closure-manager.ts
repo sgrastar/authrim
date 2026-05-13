@@ -286,7 +286,7 @@ export class ClosureManager implements IClosureManager {
       const id = `closure_${crypto.randomUUID().replace(/-/g, '')}`;
 
       await this.adapter.execute(
-        `INSERT OR REPLACE INTO relationship_closure (
+        `INSERT INTO relationship_closure (
           id, tenant_id, ancestor_type, ancestor_id,
           descendant_type, descendant_id, relation,
           depth, path_json, effective_permission,
@@ -386,7 +386,7 @@ export class ClosureManager implements IClosureManager {
       const id = `closure_${crypto.randomUUID().replace(/-/g, '')}`;
 
       await this.adapter.execute(
-        `INSERT OR REPLACE INTO relationship_closure (
+        `INSERT INTO relationship_closure (
           id, tenant_id, ancestor_type, ancestor_id,
           descendant_type, descendant_id, relation,
           depth, path_json, effective_permission,

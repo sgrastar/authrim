@@ -36,7 +36,12 @@ const log = createLogger().module('DeviceSecret');
  */
 interface DeviceSecretRow {
   id: string;
+  installation_id?: string | null;
   tenant_id: string;
+  client_id?: string | null;
+  trust_group_id?: string | null;
+  source_installation_id?: string | null;
+  source_client_id?: string | null;
   user_id: string;
   session_id: string;
   secret_hash: string;
@@ -64,6 +69,17 @@ const MAX_DEVICE_SECRET_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 /** Default max device secrets per user */
 const DEFAULT_MAX_SECRETS_PER_USER = 10;
 
+function isMissingInstallationMetadataColumnsError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('installation_id') ||
+    message.includes('client_id') ||
+    message.includes('trust_group_id') ||
+    message.includes('source_installation_id') ||
+    message.includes('source_client_id')
+  );
+}
+
 /**
  * Result of device secret creation
  * Raw secret is returned only once during initial issuance
@@ -89,6 +105,14 @@ export interface DeviceSecretCreateOptions {
   maxSecretsBehavior?: 'revoke_oldest' | 'reject';
 }
 
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Device Secret Repository
  *
@@ -99,13 +123,20 @@ export interface DeviceSecretCreateOptions {
  * - Soft delete via is_active flag
  */
 export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
-  constructor(adapter: DatabaseAdapter) {
+  private readonly tenantId: string;
+
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     super(adapter, {
       tableName: 'device_secrets',
       softDelete: true,
       softDeleteField: 'is_active',
       allowedFields: [
         'tenant_id',
+        'installation_id',
+        'client_id',
+        'trust_group_id',
+        'source_installation_id',
+        'source_client_id',
         'user_id',
         'session_id',
         'secret_hash',
@@ -119,6 +150,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
         'is_active',
       ],
     });
+    this.tenantId = requireTenantId(tenantId, 'DeviceSecretRepository');
   }
 
   /**
@@ -195,11 +227,15 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
   ): Promise<CreateDeviceSecretResult | DeviceSecretValidationResult> {
     const maxSecrets = options?.maxSecretsPerUser ?? DEFAULT_MAX_SECRETS_PER_USER;
     const maxBehavior = options?.maxSecretsBehavior ?? 'revoke_oldest';
+    const tenantId = requireTenantId(
+      input.tenant_id ?? this.tenantId,
+      'DeviceSecretRepository.createSecret'
+    );
 
     // Check existing secrets count for user
     const existingCount = await this.countByUserId(
       input.user_id,
-      input.tenant_id ?? 'default',
+      tenantId,
       true // valid only
     );
 
@@ -209,9 +245,9 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
       }
 
       // revoke_oldest: find and revoke the oldest active secret
-      const oldest = await this.findOldestByUserId(input.user_id, input.tenant_id ?? 'default');
+      const oldest = await this.findOldestByUserId(input.user_id, tenantId);
       if (oldest) {
-        await this.revoke(oldest.id, 'auto_revoke_max_limit');
+        await this.revoke(oldest.id, 'auto_revoke_max_limit', oldest.tenant_id);
       }
     }
 
@@ -225,7 +261,12 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
 
     const entity: DeviceSecret = {
       id: generateId(),
-      tenant_id: input.tenant_id ?? 'default',
+      installation_id: input.installation_id ?? `inst_${generateId()}`,
+      tenant_id: tenantId,
+      client_id: input.client_id,
+      trust_group_id: input.trust_group_id,
+      source_installation_id: input.source_installation_id,
+      source_client_id: input.source_client_id,
       user_id: input.user_id,
       session_id: input.session_id,
       secret_hash: secretHash,
@@ -244,15 +285,21 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
     // Insert into database
     const sql = `
       INSERT INTO device_secrets (
-        id, tenant_id, user_id, session_id, secret_hash,
+        id, installation_id, tenant_id, client_id, trust_group_id,
+        source_installation_id, source_client_id, user_id, session_id, secret_hash,
         device_name, device_platform, created_at, updated_at,
         expires_at, last_used_at, use_count, revoked_at, revoke_reason, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    await this.adapter.execute(sql, [
+    const params = [
       entity.id,
+      entity.installation_id,
       entity.tenant_id,
+      entity.client_id ?? null,
+      entity.trust_group_id ?? null,
+      entity.source_installation_id ?? null,
+      entity.source_client_id ?? null,
       entity.user_id,
       entity.session_id,
       entity.secret_hash,
@@ -266,7 +313,46 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
       entity.revoked_at ?? null,
       entity.revoke_reason ?? null,
       entity.is_active,
-    ]);
+    ];
+
+    try {
+      await this.adapter.execute(sql, params);
+    } catch (error) {
+      if (!isMissingInstallationMetadataColumnsError(error)) {
+        throw error;
+      }
+
+      entity.installation_id = entity.id;
+      log.warn('device_secrets installation metadata columns missing; using legacy id fallback', {
+        action: 'NativeSSO',
+      });
+      await this.adapter.execute(
+        `
+          INSERT INTO device_secrets (
+            id, tenant_id, user_id, session_id, secret_hash,
+            device_name, device_platform, created_at, updated_at,
+            expires_at, last_used_at, use_count, revoked_at, revoke_reason, is_active
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          entity.id,
+          entity.tenant_id,
+          entity.user_id,
+          entity.session_id,
+          entity.secret_hash,
+          entity.device_name ?? null,
+          entity.device_platform ?? null,
+          entity.created_at,
+          entity.updated_at,
+          entity.expires_at,
+          entity.last_used_at ?? null,
+          entity.use_count,
+          entity.revoked_at ?? null,
+          entity.revoke_reason ?? null,
+          entity.is_active,
+        ]
+      );
+    }
 
     return {
       secret: rawSecret,
@@ -294,9 +380,13 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    */
   async validateAndUse(
     deviceSecret: string,
-    options: { maxUseCount?: number } = {}
+    options: { maxUseCount?: number; tenantId?: string } = {}
   ): Promise<DeviceSecretValidationResult> {
     const { maxUseCount = 10 } = options; // Default: 10 uses max
+    const tenantId = requireTenantId(
+      options.tenantId ?? this.tenantId,
+      'DeviceSecretRepository.validateAndUse'
+    );
 
     // Hash the raw secret for lookup
     const secretHash = await this.hashDeviceSecret(deviceSecret);
@@ -304,11 +394,11 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
     // Look up by secret_hash
     const sql = `
       SELECT * FROM device_secrets
-      WHERE secret_hash = ?
+      WHERE secret_hash = ? AND tenant_id = ?
       LIMIT 1
     `;
 
-    const row = await this.adapter.queryOne<DeviceSecretRow>(sql, [secretHash]);
+    const row = await this.adapter.queryOne<DeviceSecretRow>(sql, [secretHash, tenantId]);
 
     if (!row) {
       // Add intentional delay to prevent timing attacks on not_found
@@ -333,7 +423,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
     // Note: We check BEFORE incrementing, so use_count >= maxUseCount means limit exceeded
     if (entity.use_count >= maxUseCount) {
       // Auto-revoke when limit exceeded
-      await this.revoke(entity.id, 'use_count_exceeded');
+      await this.revoke(entity.id, 'use_count_exceeded', tenantId);
       log.warn('Auto-revoked device secret due to use count limit', {
         secretIdPrefix: entity.id.substring(0, 8),
         useCount: entity.use_count,
@@ -346,10 +436,10 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
     const updateSql = `
       UPDATE device_secrets
       SET last_used_at = ?, use_count = use_count + 1, updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND tenant_id = ?
     `;
 
-    await this.adapter.execute(updateSql, [now, now, entity.id]);
+    await this.adapter.execute(updateSql, [now, now, entity.id, tenantId]);
 
     // Return updated entity
     return {
@@ -361,6 +451,129 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
         updated_at: now,
       },
     };
+  }
+
+  /**
+   * Find a device secret by its raw secret without recording usage.
+   *
+   * Used by RFC 7662 introspection and RFC 7009 revocation. The raw secret is
+   * hashed internally so callers do not need to know storage details.
+   */
+  async findByRawSecret(
+    deviceSecret: string,
+    tenantId: string = this.tenantId
+  ): Promise<DeviceSecret | null> {
+    const secretHash = await this.hashDeviceSecret(deviceSecret);
+    const sql = `
+      SELECT * FROM device_secrets
+      WHERE secret_hash = ? AND tenant_id = ?
+      LIMIT 1
+    `;
+
+    const row = await this.adapter.queryOne<DeviceSecretRow>(sql, [secretHash, tenantId]);
+    return row ? this.rowToEntity(row) : null;
+  }
+
+  async findById(id: string, tenantId: string = this.tenantId): Promise<DeviceSecret | null> {
+    const row = await this.adapter.queryOne<DeviceSecretRow>(
+      'SELECT * FROM device_secrets WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
+    return row ? this.rowToEntity(row) : null;
+  }
+
+  async update(
+    id: string,
+    data: Partial<Omit<DeviceSecret, 'id' | 'created_at' | 'updated_at'>>,
+    tenantId: string = this.tenantId
+  ): Promise<DeviceSecret | null> {
+    const existing = await this.findById(id, tenantId);
+    if (!existing) {
+      return null;
+    }
+
+    const now = getCurrentTimestamp();
+    const updateData = {
+      ...data,
+      updated_at: now,
+    };
+    const fields = Object.keys(updateData).filter((field) => {
+      const value = updateData[field as keyof typeof updateData];
+      return value !== undefined && this.isAllowedField(field);
+    });
+
+    if (fields.length === 0) {
+      return existing;
+    }
+
+    const setClause = fields.map((field) => `${field} = ?`).join(', ');
+    const values = fields.map((field) => updateData[field as keyof typeof updateData]);
+    await this.adapter.execute(
+      `UPDATE device_secrets SET ${setClause} WHERE id = ? AND tenant_id = ?`,
+      [...values, id, tenantId]
+    );
+
+    return this.findById(id, tenantId);
+  }
+
+  async delete(id: string, tenantId: string = this.tenantId): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'UPDATE device_secrets SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [getCurrentTimestamp(), id, tenantId]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  async hardDelete(id: string, tenantId: string = this.tenantId): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'DELETE FROM device_secrets WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
+   * Find a device secret by canonical installation id, falling back to legacy row id.
+   */
+  async findByInstallationId(
+    installationId: string,
+    tenantId: string = this.tenantId
+  ): Promise<DeviceSecret | null> {
+    try {
+      const row = await this.adapter.queryOne<DeviceSecretRow>(
+        `
+          SELECT * FROM device_secrets
+          WHERE tenant_id = ? AND installation_id = ?
+          LIMIT 1
+        `,
+        [tenantId, installationId]
+      );
+      if (row) {
+        return this.rowToEntity(row);
+      }
+    } catch (error) {
+      if (!isMissingInstallationMetadataColumnsError(error)) {
+        throw error;
+      }
+    }
+    return this.findById(installationId, tenantId);
+  }
+
+  /**
+   * Revoke a device secret by its raw secret value.
+   */
+  async revokeByRawSecret(
+    deviceSecret: string,
+    reason?: string,
+    tenantId: string = this.tenantId
+  ): Promise<boolean> {
+    const entity = await this.findByRawSecret(deviceSecret, tenantId);
+    if (!entity) {
+      await this.addSecurityDelay();
+      return false;
+    }
+
+    return this.revoke(entity.id, reason ?? 'token_revocation', tenantId);
   }
 
   /**
@@ -376,13 +589,13 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    * Find device secrets by user ID
    *
    * @param userId - User ID
-   * @param tenantId - Tenant ID (default: 'default')
+   * @param tenantId - Tenant ID
    * @param validOnly - If true, return only non-expired, non-revoked secrets
    * @returns Array of device secrets
    */
   async findByUserId(
     userId: string,
-    tenantId: string = 'default',
+    tenantId: string = this.tenantId,
     validOnly: boolean = false
   ): Promise<DeviceSecret[]> {
     let sql = `
@@ -410,14 +623,17 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    * @param sessionId - Session ID
    * @returns Array of device secrets
    */
-  async findBySessionId(sessionId: string): Promise<DeviceSecret[]> {
+  async findBySessionId(
+    sessionId: string,
+    tenantId: string = this.tenantId
+  ): Promise<DeviceSecret[]> {
     const sql = `
       SELECT * FROM device_secrets
-      WHERE session_id = ? AND is_active = 1
+      WHERE session_id = ? AND tenant_id = ? AND is_active = 1
       ORDER BY created_at DESC
     `;
 
-    const rows = await this.adapter.query<DeviceSecretRow>(sql, [sessionId]);
+    const rows = await this.adapter.query<DeviceSecretRow>(sql, [sessionId, tenantId]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -453,7 +669,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    */
   async countByUserId(
     userId: string,
-    tenantId: string = 'default',
+    tenantId: string = this.tenantId,
     validOnly: boolean = false
   ): Promise<number> {
     let sql = `
@@ -479,15 +695,15 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    * @param reason - Revocation reason (for audit)
    * @returns True if revoked, false if not found
    */
-  async revoke(id: string, reason?: string): Promise<boolean> {
+  async revoke(id: string, reason?: string, tenantId: string = this.tenantId): Promise<boolean> {
     const now = getCurrentTimestamp();
     const sql = `
       UPDATE device_secrets
       SET revoked_at = ?, revoke_reason = ?, updated_at = ?
-      WHERE id = ? AND is_active = 1 AND revoked_at IS NULL
+      WHERE id = ? AND tenant_id = ? AND is_active = 1 AND revoked_at IS NULL
     `;
 
-    const result = await this.adapter.execute(sql, [now, reason ?? null, now, id]);
+    const result = await this.adapter.execute(sql, [now, reason ?? null, now, id, tenantId]);
     return result.rowsAffected > 0;
   }
 
@@ -499,12 +715,16 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    * @param reason - Revocation reason
    * @returns Number of revoked secrets
    */
-  async revokeBySessionId(sessionId: string, reason?: string): Promise<number> {
+  async revokeBySessionId(
+    sessionId: string,
+    reason?: string,
+    tenantId: string = this.tenantId
+  ): Promise<number> {
     const now = getCurrentTimestamp();
     const sql = `
       UPDATE device_secrets
       SET revoked_at = ?, revoke_reason = ?, updated_at = ?
-      WHERE session_id = ? AND is_active = 1 AND revoked_at IS NULL
+      WHERE session_id = ? AND tenant_id = ? AND is_active = 1 AND revoked_at IS NULL
     `;
 
     const result = await this.adapter.execute(sql, [
@@ -512,6 +732,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
       reason ?? 'session_logout',
       now,
       sessionId,
+      tenantId,
     ]);
     return result.rowsAffected;
   }
@@ -527,7 +748,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    */
   async revokeByUserId(
     userId: string,
-    tenantId: string = 'default',
+    tenantId: string = this.tenantId,
     reason?: string
   ): Promise<number> {
     const now = getCurrentTimestamp();
@@ -553,14 +774,14 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    *
    * @returns Number of deleted secrets
    */
-  async cleanupExpired(): Promise<number> {
+  async cleanupExpired(tenantId: string = this.tenantId): Promise<number> {
     const now = getCurrentTimestamp();
     const sql = `
       DELETE FROM device_secrets
-      WHERE is_active = 1 AND expires_at <= ?
+      WHERE tenant_id = ? AND is_active = 1 AND expires_at <= ?
     `;
 
-    const result = await this.adapter.execute(sql, [now]);
+    const result = await this.adapter.execute(sql, [tenantId, now]);
     return result.rowsAffected;
   }
 
@@ -570,14 +791,17 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    * @param maxAgeMs - Maximum age in milliseconds
    * @returns Number of deleted secrets
    */
-  async cleanupRevokedOlderThan(maxAgeMs: number): Promise<number> {
+  async cleanupRevokedOlderThan(
+    maxAgeMs: number,
+    tenantId: string = this.tenantId
+  ): Promise<number> {
     const cutoff = getCurrentTimestamp() - maxAgeMs;
     const sql = `
       DELETE FROM device_secrets
-      WHERE revoked_at IS NOT NULL AND revoked_at <= ?
+      WHERE tenant_id = ? AND revoked_at IS NOT NULL AND revoked_at <= ?
     `;
 
-    const result = await this.adapter.execute(sql, [cutoff]);
+    const result = await this.adapter.execute(sql, [tenantId, cutoff]);
     return result.rowsAffected;
   }
 
@@ -590,7 +814,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    */
   async getStatsForUser(
     userId: string,
-    tenantId: string = 'default'
+    tenantId: string = this.tenantId
   ): Promise<{
     total: number;
     active: number;
@@ -633,7 +857,12 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
   private rowToEntity(row: DeviceSecretRow): DeviceSecret {
     return {
       id: row.id,
+      installation_id: row.installation_id ?? row.id,
       tenant_id: row.tenant_id,
+      client_id: row.client_id ?? undefined,
+      trust_group_id: row.trust_group_id ?? undefined,
+      source_installation_id: row.source_installation_id ?? undefined,
+      source_client_id: row.source_client_id ?? undefined,
       user_id: row.user_id,
       session_id: row.session_id,
       secret_hash: row.secret_hash,

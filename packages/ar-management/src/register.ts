@@ -22,11 +22,9 @@ import {
   validateExternalUrl,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  getDefaultTenantId,
-  getTenantIdFromContext,
-  D1Adapter,
-  type DatabaseAdapter,
+  hasPIIDatabase,
   createErrorResponse,
+  createCompatibilityErrorResponse,
   AR_ERROR_CODES,
   getLogger,
   createLogger,
@@ -34,6 +32,7 @@ import {
   validateAllowedOrigins,
   // Simple Logout Webhook (Authrim Extension)
   validateWebhookUrl,
+  safeFetchJson,
   encryptValue,
   // RFC 7592: Token hashing for registration_access_token
   arrayBufferToBase64Url,
@@ -45,6 +44,29 @@ import {
   putClient,
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || null;
+  } catch {
+    return null;
+  }
+}
+
+function formatOutboundCallbackUriError(fieldName: string, error?: string): string {
+  if (error === 'Webhook URL must use HTTPS') {
+    return `${fieldName} must use HTTPS (except http://localhost for development)`;
+  }
+  if (error === 'Fragment identifiers are not allowed in webhook URLs') {
+    return `${fieldName} must not contain fragment identifiers`;
+  }
+  if (error === 'Invalid URL format') {
+    return `Invalid ${fieldName}`;
+  }
+  return `${fieldName} cannot point to internal addresses`;
+}
 
 /**
  * Validate sector_identifier_uri content (OIDC Core 8.1)
@@ -66,23 +88,13 @@ async function validateSectorIdentifierContent(
       return { valid: false, error: ssrfError };
     }
 
-    const response = await fetch(sectorUri, {
+    const content = (await safeFetchJson<unknown>(sectorUri, {
       headers: {
         Accept: 'application/json',
       },
-    });
-
-    if (!response.ok) {
-      return {
-        valid: false,
-        error: {
-          error: 'invalid_client_metadata',
-          error_description: `Failed to fetch sector_identifier_uri: HTTP ${response.status}`,
-        },
-      };
-    }
-
-    const content = (await response.json()) as unknown;
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
+    })) as unknown;
 
     if (!Array.isArray(content)) {
       return {
@@ -148,6 +160,30 @@ function validateRegistrationRequest(
   }
 
   const data = body as Partial<ClientRegistrationRequest>;
+  const rawData = body as Record<string, unknown>;
+
+  // Public runtime registration does not accept internal trust_group fields.
+  // Managed application_group assignment is performed by Admin/setup surfaces.
+  for (const unsupportedField of [
+    'app_suite',
+    'trust_group',
+    'trust_group_id',
+    'allow_cross_client_native_sso',
+    'device_secret_revoke_enabled',
+    'device_secret_revoke_trust_groups',
+    'device_secret_introspection_enabled',
+    'device_secret_introspection_trust_groups',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(rawData, unsupportedField)) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `${unsupportedField} is not supported in public runtime client registration. Use managed application_group assignment instead.`,
+        },
+      };
+    }
+  }
 
   // Validate redirect_uris (required)
   if (
@@ -216,7 +252,7 @@ function validateRegistrationRequest(
   }
 
   // Validate optional URI fields
-  const uriFields = ['client_uri', 'logo_uri', 'tos_uri', 'policy_uri', 'jwks_uri'];
+  const uriFields = ['client_uri', 'logo_uri', 'tos_uri', 'policy_uri'];
   for (const field of uriFields) {
     const value = data[field as keyof ClientRegistrationRequest];
     if (value !== undefined) {
@@ -241,6 +277,29 @@ function validateRegistrationRequest(
           },
         };
       }
+    }
+  }
+
+  if (data.jwks_uri !== undefined) {
+    if (typeof data.jwks_uri !== 'string') {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'jwks_uri must be a string',
+        },
+      };
+    }
+
+    const uriValidation = validateWebhookUrl(data.jwks_uri, true);
+    if (!uriValidation.valid) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: formatOutboundCallbackUriError('jwks_uri', uriValidation.error),
+        },
+      };
     }
   }
 
@@ -492,40 +551,16 @@ function validateRegistrationRequest(
       };
     }
 
-    try {
-      const parsed = new URL(data.backchannel_logout_uri);
-
-      // HTTPS required (allow http://localhost for development)
-      if (
-        parsed.protocol !== 'https:' &&
-        !(parsed.protocol === 'http:' && parsed.hostname === 'localhost')
-      ) {
-        return {
-          valid: false,
-          error: {
-            error: 'invalid_client_metadata',
-            error_description:
-              'backchannel_logout_uri must use HTTPS (except http://localhost for development)',
-          },
-        };
-      }
-
-      // Fragment identifier not allowed
-      if (parsed.hash) {
-        return {
-          valid: false,
-          error: {
-            error: 'invalid_client_metadata',
-            error_description: 'backchannel_logout_uri must not contain fragment identifiers',
-          },
-        };
-      }
-    } catch {
+    const uriValidation = validateWebhookUrl(data.backchannel_logout_uri, true);
+    if (!uriValidation.valid) {
       return {
         valid: false,
         error: {
           error: 'invalid_client_metadata',
-          error_description: `Invalid backchannel_logout_uri: ${data.backchannel_logout_uri}`,
+          error_description: formatOutboundCallbackUriError(
+            'backchannel_logout_uri',
+            uriValidation.error
+          ),
         },
       };
     }
@@ -727,6 +762,7 @@ function validateRegistrationRequest(
 
   // ==========================================================================
   // Custom Redirect URIs (Authrim Extension)
+  // Public web_origin_registry membership is currently stored as allowed_redirect_origins.
   // x_allowed_redirect_origins: Array of origins for error_uri/cancel_uri
   // ==========================================================================
   const allowedOrigins = (data as Record<string, unknown>).x_allowed_redirect_origins;
@@ -790,19 +826,32 @@ function generateClientSecret(): string {
  * Store client metadata in D1 (source of truth)
  * Cache will be populated via Read-Through pattern on first access
  */
-async function storeClient(env: Env, clientId: string, metadata: ClientMetadata): Promise<void> {
-  // Store in D1 (source of truth)
+async function storeClient(
+  env: Env,
+  coreAdapter: ReturnType<typeof createAuthContextFromHono>['coreAdapter'],
+  clientId: string,
+  metadata: ClientMetadata
+): Promise<void> {
+  // Store in auth core relational source of truth.
   const now = Date.now(); // Store in milliseconds
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const metadataTenantId = metadata.tenant_id?.trim();
+  if (!metadataTenantId) {
+    throw new Error('storeClient requires metadata.tenant_id');
+  }
   await coreAdapter.execute(
     `
-    INSERT OR REPLACE INTO oauth_clients (
+    INSERT INTO oauth_clients (
       client_id, client_secret_hash, client_name, redirect_uris,
       grant_types, response_types, scope, logo_uri,
       client_uri, policy_uri, tos_uri, contacts,
+      application_type, trust_group, trust_group_id,
+      browser_public_client_mode, browser_refresh_token_policy,
+      native_sso_enabled, native_channel_allowed, allowed_channels,
       subject_type, sector_identifier_uri,
       token_endpoint_auth_method, is_trusted, skip_consent,
       allow_claims_without_scope,
+      claims_parameter_policy, asc_enabled, asc_protected_request_required,
+      asc_sao_enabled, asc_transformed_claims_enabled, asc_allowed_transformed_claims,
       jwks, jwks_uri,
       userinfo_signed_response_alg,
       id_token_signed_response_alg,
@@ -815,7 +864,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       initiate_login_uri, registration_access_token_hash,
       software_id, software_version, requestable_scopes,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -830,12 +879,32 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.policy_uri || null,
       metadata.tos_uri || null,
       metadata.contacts ? JSON.stringify(metadata.contacts) : null,
+      metadata.application_type || 'web',
+      metadata.trust_group || null,
+      metadata.trust_group_id || metadata.trust_group || null,
+      metadata.browser_public_client_mode || null,
+      metadata.browser_refresh_token_policy || 'disabled',
+      metadata.native_sso_enabled === undefined ? null : metadata.native_sso_enabled ? 1 : 0,
+      metadata.native_channel_allowed === undefined
+        ? null
+        : metadata.native_channel_allowed
+          ? 1
+          : 0,
+      metadata.allowed_channels ? JSON.stringify(metadata.allowed_channels) : null,
       metadata.subject_type || 'public',
       metadata.sector_identifier_uri || null,
       metadata.token_endpoint_auth_method || 'client_secret_basic',
       metadata.is_trusted ? 1 : 0,
       metadata.skip_consent ? 1 : 0,
       metadata.allow_claims_without_scope ? 1 : 0,
+      metadata.claims_parameter_policy ? JSON.stringify(metadata.claims_parameter_policy) : null,
+      metadata.asc_enabled === false ? 0 : 1,
+      metadata.asc_protected_request_required === false ? 0 : 1,
+      metadata.asc_sao_enabled === false ? 0 : 1,
+      metadata.asc_transformed_claims_enabled === false ? 0 : 1,
+      metadata.asc_allowed_transformed_claims
+        ? JSON.stringify(metadata.asc_allowed_transformed_claims)
+        : null,
       metadata.jwks ? JSON.stringify(metadata.jwks) : null,
       metadata.jwks_uri || null,
       metadata.userinfo_signed_response_alg || null,
@@ -861,7 +930,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.software_version || null,
       metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
       // Tenant ID
-      metadata.tenant_id || getDefaultTenantId(env),
+      metadataTenantId,
       metadata.created_at || now,
       metadata.updated_at || now,
     ]
@@ -872,6 +941,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
   await putClient(env, {
     ...metadata,
     client_id: clientId,
+    tenant_id: metadataTenantId,
     created_at: metadata.created_at || now,
     updated_at: metadata.updated_at || now,
   });
@@ -888,7 +958,17 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // DCR Master Switch Check
     // If dcr.enabled is false, reject all registration requests
     // ==========================================================================
-    const tenantId = getTenantIdFromContext(c);
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Tenant context is required for dynamic client registration',
+        },
+        400
+      );
+    }
+
     const dcrEnabled = await getDCRSetting('dcr.enabled', c.env, tenantId);
     if (!dcrEnabled) {
       return c.json(
@@ -900,8 +980,14 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
 
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
     // Parse request body
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+
+    if (body && Object.prototype.hasOwnProperty.call(body, 'app_suite')) {
+      return createCompatibilityErrorResponse('legacy_app_suite_not_supported', 400);
+    }
 
     // Validate registration request
     // Allow localhost HTTP webhooks only in development environment
@@ -960,8 +1046,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         tenantId
       );
       if (!allowDuplicateSoftwareId) {
-        const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-        const existingClient = await coreAdapter.queryOne<{ client_id: string }>(
+        const existingClient = await authCtx.coreAdapter.queryOne<{ client_id: string }>(
           'SELECT client_id FROM oauth_clients WHERE software_id = ? AND tenant_id = ?',
           [request.software_id, tenantId]
         );
@@ -1043,6 +1128,16 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // RFC 9101 (JAR): Request Object signing algorithm
     if (request.request_object_signing_alg)
       response.request_object_signing_alg = request.request_object_signing_alg;
+    if (request.claims_parameter_policy)
+      response.claims_parameter_policy = request.claims_parameter_policy;
+    if (request.asc_enabled !== undefined) response.asc_enabled = request.asc_enabled;
+    if (request.asc_protected_request_required !== undefined)
+      response.asc_protected_request_required = request.asc_protected_request_required;
+    if (request.asc_sao_enabled !== undefined) response.asc_sao_enabled = request.asc_sao_enabled;
+    if (request.asc_transformed_claims_enabled !== undefined)
+      response.asc_transformed_claims_enabled = request.asc_transformed_claims_enabled;
+    if (request.asc_allowed_transformed_claims)
+      response.asc_allowed_transformed_claims = request.asc_allowed_transformed_claims;
     // OIDC RP-Initiated Logout 1.0: post_logout_redirect_uris
     if (request.post_logout_redirect_uris)
       response.post_logout_redirect_uris = request.post_logout_redirect_uris;
@@ -1156,6 +1251,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       is_trusted: isTrusted,
       skip_consent: isTrusted, // Trusted clients skip consent by default
       allow_claims_without_scope: isCertificationTest, // OIDC conformance tests need flexible claims parameter handling
+      claims_parameter_policy: request.claims_parameter_policy,
+      asc_enabled: request.asc_enabled,
+      asc_protected_request_required: request.asc_protected_request_required,
+      asc_sao_enabled: request.asc_sao_enabled,
+      asc_transformed_claims_enabled: request.asc_transformed_claims_enabled,
+      asc_allowed_transformed_claims: request.asc_allowed_transformed_claims,
       // Store hashed client secret, not plaintext
       client_secret_hash: clientSecretHash,
     };
@@ -1203,7 +1304,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Store tenant_id in metadata
     metadata.tenant_id = tenantId;
 
-    await storeClient(c.env, clientId, metadata);
+    await storeClient(c.env, authCtx.coreAdapter, clientId, metadata);
 
     // Log client registration for debugging/auditing
     log.info('Client registered', { action: 'register', clientId });
@@ -1222,68 +1323,55 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       };
 
       // Create fixed test user with complete profile (PII/Non-PII DB separation) via Adapter
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-
-      // Insert into users_core (non-PII database) - use INSERT OR IGNORE for idempotency
-      await authCtx.coreAdapter.execute(
-        `INSERT OR IGNORE INTO users_core (
-          id, tenant_id, email_verified, phone_number_verified,
-          is_active, pii_partition, pii_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          testUserId,
-          tenantId,
-          1, // email_verified
-          1, // phone_number_verified
-          1, // is_active
-          tenantId, // pii_partition
-          'active', // pii_status
-          issuedAt,
-          issuedAt,
-        ]
-      );
+      const existingTestUser = await authCtx.repositories.userCore.findById(testUserId);
+      if (!existingTestUser) {
+        await authCtx.repositories.userCore.createUser({
+          id: testUserId,
+          tenant_id: tenantId,
+          email_verified: true,
+          phone_number_verified: true,
+          is_active: true,
+          pii_partition: tenantId,
+          pii_status: 'active',
+        });
+      }
 
       // Insert into users_pii (PII database) via PIIContext
-      if (c.env.DB_PII) {
+      if (hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
-        await piiCtx.getPiiAdapter(tenantId).execute(
-          `INSERT OR IGNORE INTO users_pii (
-            id, tenant_id, email, name, given_name, family_name,
-            middle_name, nickname, preferred_username, profile, picture,
-            website, gender, birthdate, zoneinfo, locale, phone_number,
-            address_formatted, address_street_address, address_locality,
-            address_region, address_postal_code, address_country,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            testUserId,
-            tenantId,
-            'test@example.com',
-            'John Doe',
-            'John',
-            'Doe',
-            'Q',
-            'Johnny',
-            'test',
-            'https://example.com/johndoe',
-            'https://example.com/avatar.jpg',
-            'https://example.com',
-            'male',
-            '1990-01-01',
-            'America/New_York',
-            'en-US',
-            '+1-555-0100',
-            testAddress.formatted,
-            testAddress.street_address,
-            testAddress.locality,
-            testAddress.region,
-            testAddress.postal_code,
-            testAddress.country,
-            issuedAt,
-            issuedAt,
-          ]
+        const piiAdapter = piiCtx.getPiiAdapter(tenantId);
+        const existingTestUserPII = await piiCtx.piiRepositories.userPII.findByUserId(
+          testUserId,
+          piiAdapter
         );
+        if (!existingTestUserPII) {
+          await piiCtx.piiRepositories.userPII.createPII(
+            {
+              id: testUserId,
+              tenant_id: tenantId,
+              email: 'test@example.com',
+              name: 'John Doe',
+              given_name: 'John',
+              family_name: 'Doe',
+              nickname: 'Johnny',
+              preferred_username: 'test',
+              picture: 'https://example.com/avatar.jpg',
+              website: 'https://example.com',
+              gender: 'male',
+              birthdate: '1990-01-01',
+              zoneinfo: 'America/New_York',
+              locale: 'en-US',
+              phone_number: '+1-555-0100',
+              address_formatted: testAddress.formatted,
+              address_street_address: testAddress.street_address,
+              address_locality: testAddress.locality,
+              address_region: testAddress.region,
+              address_postal_code: testAddress.postal_code,
+              address_country: testAddress.country,
+            },
+            piiAdapter
+          );
+        }
       }
 
       log.info('Test user created/verified: user-oidc-conformance-test', { action: 'register' });

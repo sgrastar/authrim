@@ -16,18 +16,13 @@ import {
   getUIConfig,
   shouldUseBuiltinForms,
   createConfigurationError,
-  getDefaultTenantId,
-  getTenantIdFromContext,
+  createErrorResponse,
+  AR_ERROR_CODES,
   getLogger,
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
 import { html } from 'hono/html';
-
-function resolveTenantId(c: Context<{ Bindings: Env }>): string {
-  return typeof (c as { get?: unknown }).get === 'function'
-    ? getTenantIdFromContext(c)
-    : getDefaultTenantId(c.env);
-}
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * GET /device
@@ -97,7 +92,16 @@ async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
  */
 async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
-  const tenantId = resolveTenantId(c);
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     const body = await c.req.parseBody();
     let userCode = body.user_code as string;
@@ -122,7 +126,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     const getResponse = await deviceCodeStore.fetch(
       new Request('https://internal/get-by-user-code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ user_code: userCode }),
       })
     );
@@ -175,7 +179,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     const approveResponse = await deviceCodeStore.fetch(
       new Request('https://internal/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({
           user_code: userCode,
           user_id: mockUserId,

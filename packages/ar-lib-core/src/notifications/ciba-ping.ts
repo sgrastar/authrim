@@ -12,7 +12,7 @@
  * - HTTPS required: Ensures secure transport (configurable for dev)
  */
 
-import { safeFetch, isInternalUrl } from '../utils/url-security';
+import { safeFetch, isInternalUrl, readResponseTextPreview } from '../utils/url-security';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('CIBA_PING');
@@ -71,8 +71,7 @@ export async function sendPingNotification(
     });
 
     if (!response.ok) {
-      // Read error response with size limit already applied by safeFetch
-      const errorText = await response.text();
+      const errorText = await readResponseTextPreview(response, 1024);
       log.error('Ping notification failed', {
         status: response.status,
         statusText: response.statusText,

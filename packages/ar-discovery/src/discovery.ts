@@ -3,6 +3,7 @@ import type { Env, OIDCProviderMetadata, LogoutConfig, TenantProfile } from '@au
 import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
+  ALLOWED_DPOP_ALGS,
   buildRequestIssuerUrl,
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
@@ -17,6 +18,7 @@ import {
   // KV caching utilities (Phase 2)
   buildVersionedKey,
   getCacheTTL,
+  PREDEFINED_TRANSFORMED_CLAIMS,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -306,6 +308,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'at_hash',
       'auth_time', // OIDC Core: Authentication timestamp
       'acr', // OIDC Core: Authentication Context Class Reference
+      'amr', // OIDC Core: Authentication Methods References
       // OIDC Native SSO 1.0: ds_hash (conditionally included when enabled)
       ...(nativeSSOEnabled ? ['ds_hash'] : []),
       // Profile scope claims (OIDC Core 5.4)
@@ -343,7 +346,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
     code_challenge_methods_supported: ['S256'],
     // RFC 9449: DPoP (Demonstrating Proof of Possession) support
-    dpop_signing_alg_values_supported: ['RS256', 'ES256'],
+    dpop_signing_alg_values_supported: [...ALLOWED_DPOP_ALGS],
     // RFC 9101 (JAR): Request Object support
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
@@ -375,6 +378,20 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // OIDC Core: Additional metadata
     claim_types_supported: ['normal'],
     claims_parameter_supported: true,
+    // OpenID Connect Advanced Syntax for Claims (ASC) 1.0 draft 01.
+    // Authrim supports SAO without JSON Schema and OP-predefined transformed claims only.
+    selective_abort_omit_supported: true,
+    selective_abort_omit_schema_supported: false,
+    transformed_claims_functions_supported: [
+      'years_ago',
+      'gte',
+      'domain',
+      'phone_country_code',
+      'country',
+    ],
+    transformed_claims_predefined: PREDEFINED_TRANSFORMED_CLAIMS,
+    transformed_claims_max_depth: 2,
+    transformed_claims_max_count: 0,
     // ACR (Authentication Context Class Reference) support
     acr_values_supported: ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
     // OIDC Discovery: Recommended metadata fields
@@ -395,11 +412,10 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // OIDC Back-Channel Logout 1.0 (configurable via KV)
     backchannel_logout_supported: logoutConfig.backchannel.enabled,
     backchannel_logout_session_supported: logoutConfig.backchannel.enabled,
-    // OIDC Native SSO 1.0 (draft-07) - conditionally included when enabled
+    // OIDC Native SSO - conditionally included when enabled
     ...(nativeSSOEnabled
       ? {
-          native_sso_token_exchange_supported: true,
-          native_sso_device_secret_supported: true,
+          native_sso_supported: true,
         }
       : {}),
     // ID-JAG (Identity Assertion Authorization Grant) - conditionally included when enabled

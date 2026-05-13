@@ -16,7 +16,7 @@
 import { Context } from 'hono';
 import { z } from 'zod';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   type Env,
   createErrorResponse,
@@ -60,8 +60,8 @@ interface CategoryConfig {
 // Helpers
 // =============================================================================
 
-function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+function createAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 function toISOString(timestamp: number | null): string | null {
@@ -111,7 +111,7 @@ export async function getDataRetentionEstimate(c: Context<{ Bindings: Env }>) {
   const categoryFilter = c.req.query('category');
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
     const estimates: CleanupEstimate[] = [];
 
@@ -213,7 +213,7 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
     }
 
     const { retention_days } = validation.data;
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
 
     // Get current settings
@@ -296,7 +296,7 @@ export async function runDataRetentionCleanup(c: Context<{ Bindings: Env }>) {
     }
 
     const { categories: requestedCategories, idempotency_key } = validation.data;
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
 
     // Determine which categories to clean
@@ -442,7 +442,7 @@ export async function listRetentionCategories(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
 
   try {
-    const adapter = createAdapter(c);
+    const adapter = createAdapter(c, tenantId);
 
     // Get tenant settings
     const tenantSettings = await adapter.queryOne<{ settings: string | null }>(

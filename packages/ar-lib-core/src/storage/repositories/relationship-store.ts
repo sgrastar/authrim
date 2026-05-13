@@ -29,10 +29,10 @@ function rowToRelationship(row: RelationshipRow): Relationship {
 export class RelationshipStore implements IRelationshipStore {
   constructor(private adapter: IStorageAdapter) {}
 
-  async getRelationship(relationshipId: string): Promise<Relationship | null> {
+  async getRelationship(tenantId: string, relationshipId: string): Promise<Relationship | null> {
     const results = await this.adapter.query<RelationshipRow>(
-      'SELECT * FROM relationships WHERE id = ?',
-      [relationshipId]
+      'SELECT * FROM relationships WHERE tenant_id = ? AND id = ?',
+      [tenantId, relationshipId]
     );
     return results[0] ? rowToRelationship(results[0]) : null;
   }
@@ -86,10 +86,11 @@ export class RelationshipStore implements IRelationshipStore {
   }
 
   async updateRelationship(
+    tenantId: string,
     relationshipId: string,
     updates: Partial<Relationship>
   ): Promise<Relationship> {
-    const existing = await this.getRelationship(relationshipId);
+    const existing = await this.getRelationship(tenantId, relationshipId);
     if (!existing) {
       throw new Error(`Relationship not found: ${relationshipId}`);
     }
@@ -113,13 +114,14 @@ export class RelationshipStore implements IRelationshipStore {
       `UPDATE relationships SET
         permission_level = ?, expires_at = ?, is_bidirectional = ?,
         metadata_json = ?, updated_at = ?
-      WHERE id = ?`,
+      WHERE tenant_id = ? AND id = ?`,
       [
         updated.permission_level,
         updated.expires_at ?? null,
         updated.is_bidirectional ? 1 : 0,
         updated.metadata_json ?? null,
         updated.updated_at,
+        tenantId,
         relationshipId,
       ]
     );
@@ -127,8 +129,11 @@ export class RelationshipStore implements IRelationshipStore {
     return updated;
   }
 
-  async deleteRelationship(relationshipId: string): Promise<void> {
-    await this.adapter.execute('DELETE FROM relationships WHERE id = ?', [relationshipId]);
+  async deleteRelationship(tenantId: string, relationshipId: string): Promise<void> {
+    await this.adapter.execute('DELETE FROM relationships WHERE tenant_id = ? AND id = ?', [
+      tenantId,
+      relationshipId,
+    ]);
   }
 
   // ==========================================================================
@@ -136,13 +141,14 @@ export class RelationshipStore implements IRelationshipStore {
   // ==========================================================================
 
   async listRelationshipsFrom(
+    tenantId: string,
     fromType: string,
     fromId: string,
     options?: { relationshipType?: string; includeExpired?: boolean }
   ): Promise<Relationship[]> {
     const now = Math.floor(Date.now() / 1000); // UNIX seconds
-    let sql = 'SELECT * FROM relationships WHERE from_type = ? AND from_id = ?';
-    const params: unknown[] = [fromType, fromId];
+    let sql = 'SELECT * FROM relationships WHERE tenant_id = ? AND from_type = ? AND from_id = ?';
+    const params: unknown[] = [tenantId, fromType, fromId];
 
     if (options?.relationshipType) {
       sql += ' AND relationship_type = ?';
@@ -161,13 +167,14 @@ export class RelationshipStore implements IRelationshipStore {
   }
 
   async listRelationshipsTo(
+    tenantId: string,
     toType: string,
     toId: string,
     options?: { relationshipType?: string; includeExpired?: boolean }
   ): Promise<Relationship[]> {
     const now = Math.floor(Date.now() / 1000); // UNIX seconds
-    let sql = 'SELECT * FROM relationships WHERE to_type = ? AND to_id = ?';
-    const params: unknown[] = [toType, toId];
+    let sql = 'SELECT * FROM relationships WHERE tenant_id = ? AND to_type = ? AND to_id = ?';
+    const params: unknown[] = [tenantId, toType, toId];
 
     if (options?.relationshipType) {
       sql += ' AND relationship_type = ?';
@@ -186,6 +193,7 @@ export class RelationshipStore implements IRelationshipStore {
   }
 
   async findRelationship(
+    tenantId: string,
     fromType: string,
     fromId: string,
     toType: string,
@@ -194,9 +202,9 @@ export class RelationshipStore implements IRelationshipStore {
   ): Promise<Relationship | null> {
     const results = await this.adapter.query<RelationshipRow>(
       `SELECT * FROM relationships
-       WHERE from_type = ? AND from_id = ? AND to_type = ? AND to_id = ?
+       WHERE tenant_id = ? AND from_type = ? AND from_id = ? AND to_type = ? AND to_id = ?
          AND relationship_type = ?`,
-      [fromType, fromId, toType, toId, relationshipType]
+      [tenantId, fromType, fromId, toType, toId, relationshipType]
     );
     return results[0] ? rowToRelationship(results[0]) : null;
   }
@@ -205,15 +213,15 @@ export class RelationshipStore implements IRelationshipStore {
   // Parent-child convenience methods
   // ==========================================================================
 
-  async getParentSubjects(childSubjectId: string): Promise<Relationship[]> {
-    return this.listRelationshipsTo('subject', childSubjectId, {
+  async getParentSubjects(tenantId: string, childSubjectId: string): Promise<Relationship[]> {
+    return this.listRelationshipsTo(tenantId, 'subject', childSubjectId, {
       relationshipType: 'parent_child',
       includeExpired: false,
     });
   }
 
-  async getChildSubjects(parentSubjectId: string): Promise<Relationship[]> {
-    return this.listRelationshipsFrom('subject', parentSubjectId, {
+  async getChildSubjects(tenantId: string, parentSubjectId: string): Promise<Relationship[]> {
+    return this.listRelationshipsFrom(tenantId, 'subject', parentSubjectId, {
       relationshipType: 'parent_child',
       includeExpired: false,
     });

@@ -109,6 +109,12 @@ describe('Logger', () => {
     });
 
     it('should include error object in error logs', () => {
+      setLoggerConfig({
+        level: 'info',
+        format: 'json',
+        hashUserId: false,
+        includeErrorStack: false,
+      });
       const logger = createLogger();
       const error = new Error('Something went wrong');
       logger.error('Operation failed', {}, error);
@@ -116,6 +122,21 @@ describe('Logger', () => {
       const output = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
       expect(output.error).toBeDefined();
       expect(output.error.message).toBe('Something went wrong');
+      expect(output.error.stack).toBeUndefined();
+    });
+
+    it('should include error stack when explicitly enabled', () => {
+      setLoggerConfig({
+        level: 'info',
+        format: 'json',
+        hashUserId: false,
+        includeErrorStack: true,
+      });
+      const logger = createLogger();
+      const error = new Error('Something went wrong');
+      logger.error('Operation failed', {}, error);
+
+      const output = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
       expect(output.error.stack).toBeDefined();
     });
   });

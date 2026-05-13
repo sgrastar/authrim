@@ -30,7 +30,9 @@
 			: ''
 	);
 
-	let isValid = $derived(name.length > 0 && !nameError && selectedPermissions.size > 0);
+	let isValid = $derived(
+		name.length > 0 && !nameError && (selectedPermissions.size > 0 || !!inheritsFrom)
+	);
 
 	// Load available roles for inheritance selection
 	async function loadAvailableRoles() {
@@ -96,7 +98,8 @@
 				display_name: displayName || undefined,
 				description: description || undefined,
 				permissions: Array.from(selectedPermissions),
-				hierarchy_level: inheritsFrom ? undefined : 0
+				hierarchy_level: inheritsFrom ? undefined : 0,
+				inherits_from: inheritsFrom || null
 			};
 
 			const newRole = await adminAdminRolesAPI.create(data);
@@ -121,7 +124,9 @@
 	<a href="/admin/admin-rbac" class="back-link">← Back to Admin Roles</a>
 
 	<h1 class="page-title">Create Custom Admin Role</h1>
-	<p class="modal-description">Create a new custom role with specific permissions for Admin Operators.</p>
+	<p class="modal-description">
+		Create a new custom role with specific permissions for Admin Operators.
+	</p>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>

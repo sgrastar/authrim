@@ -112,8 +112,8 @@ ENABLE_CLIENT_CREDENTIALS
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `KEY_MANAGER_SECRET` | string | - | Secret for KeyManager DO encryption |
-| `ADMIN_API_SECRET` | string | - | Secret for Admin API authentication |
+| `KEY_MANAGER_SECRET` | string | - | Internal secret for KeyManager DO access |
+| `ADMIN_API_SECRET` | string | - | Deprecated legacy secret; not accepted by `/api/admin/*`. Use Admin Machine Access tokens. |
 | `POLICY_API_SECRET` | string | - | Secret for Policy service communication |
 | `KEY_ID` | string | - | Current signing key ID |
 | `PRIVATE_KEY_PEM` | string | - | RSA private key (PEM format) |
@@ -289,31 +289,32 @@ TRUSTED_DOMAINS = "www.certification.openid.net"
 
 ### Background
 
-Safari's Intelligent Tracking Prevention (ITP) blocks cross-site cookies. When Admin UI and API are on different domains (e.g., `ar-admin-ui.pages.dev` and `ar-router.workers.dev`), Safari won't send cookies, breaking authentication.
+Safari's Intelligent Tracking Prevention (ITP) blocks cross-site cookies. When Admin UI and API are on different domains (e.g., `admin.example.com` and `api.example.com`, or separate `workers.dev` hosts), Safari may not send cookies, breaking authentication.
 
 ### Solution: SvelteKit Server Proxy
 
 The Admin UI uses a server-side proxy in `hooks.server.ts` to forward `/api/*` requests to the backend. This makes requests appear same-origin to the browser, bypassing ITP restrictions.
 
-```
-Browser → pages.dev/api/* → (SvelteKit Server Proxy) → workers.dev/api/*
+```text
+Browser -> UI Worker /api/* -> SvelteKit server proxy -> Router Worker /api/*
 ```
 
-### UI Environment Variables
+### UI Worker Environment Variables
 
-These are configured in `.authrim/{env}/ui.env` and set in Cloudflare Pages:
+These are configured in `.authrim/{env}/ui.env` and applied to the Login UI / Admin UI Workers:
 
 | Variable | Type | Description |
 |----------|------|-------------|
 | `PUBLIC_API_BASE_URL` | string | Frontend API base URL (empty for proxy mode) |
-| `PUBLIC_API_PROXY_BACKEND_URL` | string | Public fallback backend URL for the Pages proxy |
+| `PUBLIC_API_PROXY_BACKEND_URL` | string | Public fallback backend URL for the UI Worker proxy |
 | `API_BACKEND_URL` | string | Backend URL for server-side proxy |
+| `AR_ROUTER` | service binding | Optional Workers service binding from UI Worker to router |
 
 ### Configuration Modes
 
 #### Proxy Mode (Default - Cross-Domain)
 
-Used when Admin UI and API are on different registrable domains (e.g., `pages.dev` vs `workers.dev`):
+Used when Admin UI and API are on different registrable domains or when same-origin proxying is preferred:
 
 ```env
 # .authrim/{env}/ui.env
@@ -345,19 +346,18 @@ API_BACKEND_URL=
 The `authrim-setup deploy` command automatically detects the configuration:
 
 - **Custom domain set for both Admin UI and API**: Direct mode (proxy disabled)
-- **Default workers.dev/pages.dev URLs**: Proxy mode (enabled)
+- **Default workers.dev URLs or cross-domain UI/API**: Proxy mode (enabled)
 
 ### Manual Configuration
 
 To switch modes after deployment:
 
 ```bash
-# Enable proxy mode
-wrangler pages secret put API_BACKEND_URL --project-name {env}-ar-admin-ui
-# Enter: https://xxx-ar-router.workers.dev
+# Enable proxy mode through generated Workers vars/secrets
+authrim-setup deploy --env {env}
 
-# Disable proxy mode (custom domain)
-wrangler pages secret delete API_BACKEND_URL --project-name {env}-ar-admin-ui
+# Disable proxy mode by setting PUBLIC_API_BASE_URL to the API origin and clearing API_BACKEND_URL
+authrim-setup deploy --env {env}
 ```
 
 Or edit `.authrim/{env}/ui.env` and redeploy:

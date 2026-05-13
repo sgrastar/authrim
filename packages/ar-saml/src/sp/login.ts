@@ -12,11 +12,12 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
-  getTenantIdFromContext,
   buildIssuerUrl,
+  buildSAMLRequestStoreInstanceName,
   getLogger,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
+import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import { SAML_NAMESPACES, BINDING_URIS, NAMEID_FORMATS } from '../common/constants';
 import {
   createDocument,
@@ -31,7 +32,7 @@ import {
   base64Encode,
 } from '../common/xml-utils';
 import { signRedirectBinding } from '../common/signature';
-import { getSigningKey } from '../common/key-utils';
+import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
 
 /**
@@ -44,7 +45,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
   try {
     // Get IdP ID from query parameter
     const idpId = c.req.query('idp');
-    const tenantId = getTenantIdFromContext(c);
+    const tenantId = resolveSAMLTenantIdFromContext(c);
     const issuerUrl = buildIssuerUrl(env, tenantId);
 
     // Determine return URL with UI config fallback
@@ -56,12 +57,12 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     if (!idpId) {
       // Return list of available IdPs if no IdP specified
-      const idps = await listIdPConfigs(env);
+      const idps = await listIdPConfigs(env, tenantId);
       return c.html(buildIdPSelectionPage(issuerUrl, idps, returnUrl));
     }
 
     // Get IdP configuration
-    const idpConfig = await getIdPConfig(env, idpId);
+    const idpConfig = await getIdPConfig(env, tenantId, idpId);
     if (!idpConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -71,11 +72,11 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     // Store request in SAMLRequestStore for later validation
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
-    await storeAuthnRequest(env, requestId, issuerUrl, idpConfig.entityId, returnUrl);
+    await storeAuthnRequest(env, tenantId, requestId, issuerUrl, idpConfig.entityId, returnUrl);
 
     // Redirect to IdP based on preferred binding
     if (idpConfig.allowedBindings.includes('redirect')) {
-      return redirectToIdP(c, env, idpConfig, authnRequestXml, returnUrl);
+      return await redirectToIdP(c, env, idpConfig, authnRequestXml, returnUrl);
     } else {
       return postToIdP(c, idpConfig, authnRequestXml, returnUrl);
     }
@@ -132,29 +133,30 @@ function buildAuthnRequest(issuerUrl: string, idpConfig: SAMLIdPConfig): string 
  */
 async function storeAuthnRequest(
   env: Env,
+  tenantId: string,
   requestId: string,
   issuerUrl: string,
   idpEntityId: string,
   returnUrl: string
 ): Promise<void> {
-  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(`issuer:${idpEntityId}`);
+  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
+    buildSAMLRequestStoreInstanceName(tenantId, 'sp', idpEntityId)
+  );
   const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
-  await samlRequestStore.fetch(
-    new Request('https://saml-request-store/store', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId,
-        issuer: `${issuerUrl}/saml/sp`,
-        destination: issuerUrl,
-        binding: 'post',
-        type: 'authn_request',
-        relayState: returnUrl,
-        expiresAt: Date.now() + 300 * 1000, // 5 minutes
-      }),
-    })
-  );
+  await samlRequestStore.fetch('https://saml-request-store/store', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requestId,
+      issuer: `${issuerUrl}/saml/sp`,
+      destination: issuerUrl,
+      binding: 'post',
+      type: 'authn_request',
+      relayState: returnUrl,
+      expiresAt: Date.now() + 300 * 1000, // 5 minutes
+    }),
+  });
 }
 
 /**
@@ -171,25 +173,20 @@ async function redirectToIdP(
   const deflated = pako.deflateRaw(authnRequestXml);
   const base64Encoded = base64Encode(String.fromCharCode(...deflated));
 
-  // Build redirect URL
-  const url = new URL(idpConfig.ssoUrl);
-  url.searchParams.set('SAMLRequest', base64Encoded);
-  url.searchParams.set('RelayState', returnUrl);
-
-  // Sign if we have signing capability
-  try {
-    const { privateKeyPem } = await getSigningKey(env, getTenantIdFromContext(c));
-    const { signedUrl } = await signRedirectBinding(
-      'SAMLRequest',
-      base64Encoded,
-      returnUrl,
-      privateKeyPem
-    );
-    return c.redirect(`${idpConfig.ssoUrl}?${signedUrl}`);
-  } catch {
-    // If signing fails, redirect without signature
-    return c.redirect(url.toString());
-  }
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const { privateKeyPem } = await getSAMLSigningMaterial(env, {
+    tenantId,
+    role: 'sp',
+    counterpartyEntityId: idpConfig.entityId,
+    policy: getSAMLSigningPolicy(idpConfig),
+  });
+  const { signedUrl } = await signRedirectBinding(
+    'SAMLRequest',
+    base64Encoded,
+    returnUrl,
+    privateKeyPem
+  );
+  return c.redirect(`${idpConfig.ssoUrl}?${signedUrl}`);
 }
 
 /**

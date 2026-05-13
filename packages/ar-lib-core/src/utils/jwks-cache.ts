@@ -279,17 +279,30 @@ export async function getPublicKeyByKid(
   }
 }
 
-/**
- * Invalidate the in-memory JWKS cache for a specific tenant (or all tenants).
- *
- * @param tenantId - Tenant to invalidate; if omitted, clears all tenant caches
- */
-export function invalidateJwksCache(tenantId?: string): void {
-  if (tenantId !== undefined) {
-    jwksCacheMap.delete(tenantId);
-  } else {
-    jwksCacheMap.clear();
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
   }
+  return normalized;
+}
+
+/**
+ * Invalidate the in-memory JWKS cache for a specific tenant.
+ *
+ * @param tenantId - Tenant to invalidate
+ */
+export function invalidateJwksCache(tenantId: string): void {
+  jwksCacheMap.delete(requireTenantId(tenantId, 'invalidateJwksCache'));
+}
+
+/**
+ * Invalidate all in-memory JWKS tenant caches.
+ *
+ * Use only for explicit platform/system-wide key maintenance.
+ */
+export function invalidateAllJwksCaches(): void {
+  jwksCacheMap.clear();
 }
 
 /**

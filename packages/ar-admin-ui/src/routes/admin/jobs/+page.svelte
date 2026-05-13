@@ -1,16 +1,23 @@
-<script lang="ts">
-	import { onMount } from 'svelte';
+	<script lang="ts">
+		import { onMount } from 'svelte';
+		import { SvelteDate } from 'svelte/reactivity';
 	import {
 		adminJobsAPI,
 		getJobStatusColor,
+		getJobStatusDisplayName,
 		getJobTypeDisplayName,
 		getReportTypeDisplayName,
 		formatJobDuration,
 		type Job,
 		type JobStatus,
 		type JobType,
+		type JobTypeDefinition,
 		type ReportType
 	} from '$lib/api/admin-jobs';
+	import {
+		adminStorageDestinationsAPI,
+		type StorageDestination
+	} from '$lib/api/admin-storage-destinations';
 	import {
 		formatDate,
 		isValidDownloadUrl,
@@ -24,6 +31,8 @@
 	let loading = $state(true);
 	let error = $state('');
 	let jobs = $state<Job[]>([]);
+	let jobTypes = $state<JobTypeDefinition[]>([]);
+	let jobTypeError = $state('');
 
 	// Filters
 	let statusFilter = $state<JobStatus | ''>('');
@@ -36,6 +45,19 @@
 	let reportType = $state<ReportType>('user_activity');
 	let reportFromDate = $state('');
 	let reportToDate = $state('');
+	let reportFormat = $state<'json' | 'csv'>('json');
+	let reportResultDelivery = $state<'auto' | 'inline' | 'artifact'>('auto');
+	let reportStorageDestinationId = $state('');
+	let storageDestinations = $state<StorageDestination[]>([]);
+
+	// Create Import Dialog
+	let showCreateImportDialog = $state(false);
+	let creatingImport = $state(false);
+	let createImportError = $state('');
+	let importFile = $state<File | null>(null);
+	let importSkipHeader = $state(true);
+	let importOnDuplicate = $state<'skip' | 'update' | 'error'>('skip');
+	let importValidateOnly = $state(false);
 
 	// Job Detail Dialog
 	let showJobDetailDialog = $state(false);
@@ -62,6 +84,10 @@
 			result: job.result
 				? {
 						...job.result,
+						logs: job.result.logs.map((entry) => ({
+							...entry,
+							message: sanitizeText(entry.message || '')
+						})),
 						failures: job.result.failures.map((f) => ({
 							...f,
 							error: sanitizeText(f.error || '')
@@ -86,11 +112,31 @@
 		}
 	}
 
+	async function loadJobTypes() {
+		try {
+			const response = await adminJobsAPI.listTypes();
+			jobTypes = response.job_types.filter((jobType) => jobType.creatable_from_admin_api);
+			jobTypeError = '';
+		} catch (e) {
+			jobTypeError = e instanceof Error ? e.message : 'Failed to load job types';
+			jobTypes = [];
+		}
+	}
+
 	async function loadData() {
 		loading = true;
 		error = '';
-		await loadJobs();
+		await Promise.all([loadJobs(), loadJobTypes(), loadStorageDestinations()]);
 		loading = false;
+	}
+
+	async function loadStorageDestinations() {
+		try {
+			const response = await adminStorageDestinationsAPI.listUsable();
+			storageDestinations = response.items;
+		} catch {
+			storageDestinations = [];
+		}
 	}
 
 	onMount(() => {
@@ -104,6 +150,13 @@
 				isPolling = true;
 				try {
 					await loadJobs();
+					if (
+						selectedJob &&
+						showJobDetailDialog &&
+						(selectedJob.status === 'pending' || selectedJob.status === 'running')
+					) {
+						await refreshSelectedJob(selectedJob.id);
+					}
 				} catch (e) {
 					// Log polling errors in development for debugging, but don't show to user
 					if (import.meta.env.DEV) {
@@ -124,15 +177,40 @@
 	});
 
 	function openCreateReportDialog() {
+		const now = new SvelteDate();
+		const to = new SvelteDate(now.getFullYear(), now.getMonth(), now.getDate());
+		const from = new SvelteDate(to);
+		from.setDate(from.getDate() - 7);
 		reportType = 'user_activity';
-		reportFromDate = '';
-		reportToDate = '';
+		reportFromDate = from.toISOString().slice(0, 10);
+		reportToDate = to.toISOString().slice(0, 10);
+		reportFormat = 'json';
+		reportResultDelivery = 'auto';
+		reportStorageDestinationId = '';
 		createReportError = '';
 		showCreateReportDialog = true;
 	}
 
 	function closeCreateReportDialog() {
 		showCreateReportDialog = false;
+	}
+
+	function openCreateImportDialog() {
+		importFile = null;
+		importSkipHeader = true;
+		importOnDuplicate = 'skip';
+		importValidateOnly = false;
+		createImportError = '';
+		showCreateImportDialog = true;
+	}
+
+	function closeCreateImportDialog() {
+		showCreateImportDialog = false;
+	}
+
+	function handleImportFileChange(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		importFile = input.files?.[0] ?? null;
 	}
 
 	const MAX_DATE_RANGE_DAYS = 730; // 2 years
@@ -181,19 +259,28 @@
 		creatingReport = true;
 
 		try {
-			const params: {
-				type: ReportType;
-				parameters?: { from?: string; to?: string };
-			} = { type: reportType };
+			const fromDate = reportFromDate
+				? new Date(reportFromDate).toISOString()
+				: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+			const toDate = reportToDate ? new Date(reportToDate).toISOString() : new Date().toISOString();
 
-			if (reportFromDate || reportToDate) {
-				params.parameters = {};
-				if (reportFromDate) params.parameters.from = new Date(reportFromDate).toISOString();
-				if (reportToDate) params.parameters.to = new Date(reportToDate).toISOString();
+			const job = await adminJobsAPI.createReport({
+				type: reportType,
+				from_date: fromDate,
+				to_date: toDate,
+				format: reportFormat,
+				result_delivery: reportResultDelivery,
+				result_storage_destination_id: reportStorageDestinationId || undefined
+			});
+			if (reportStorageDestinationId) {
+				await adminStorageDestinationsAPI.recordUsage(reportStorageDestinationId, {
+					feature: 'jobs',
+					resource_type: 'admin_job',
+					resource_id: job.id,
+					metadata: { report_type: reportType, result_delivery: reportResultDelivery }
+				});
 			}
-
-			const job = await adminJobsAPI.createReport(params);
-			jobs = [job, ...jobs];
+			jobs = [sanitizeJob(job), ...jobs];
 			closeCreateReportDialog();
 		} catch (e) {
 			createReportError = e instanceof Error ? e.message : 'Failed to create report job';
@@ -202,14 +289,61 @@
 		}
 	}
 
+	async function handleCreateImport() {
+		createImportError = '';
+		if (!importFile) {
+			createImportError = 'CSV file is required';
+			return;
+		}
+
+		creatingImport = true;
+		try {
+			const upload = await adminJobsAPI.getUploadUrl(
+				importFile.name,
+				importFile.type || 'text/csv',
+				importFile.size
+			);
+			const uploaded = await adminJobsAPI.uploadImportFile(upload.upload_url, importFile);
+			const job = await adminJobsAPI.createUserImport({
+				file_key: uploaded.file_key || upload.file_key,
+				options: {
+					skip_header: importSkipHeader,
+					on_duplicate: importOnDuplicate,
+					validate_only: importValidateOnly
+				}
+			});
+			jobs = [sanitizeJob(job), ...jobs];
+			closeCreateImportDialog();
+		} catch (e) {
+			createImportError = e instanceof Error ? e.message : 'Failed to create import job';
+		} finally {
+			creatingImport = false;
+		}
+	}
+
+	async function refreshSelectedJob(jobId: string) {
+		const updatedJob = sanitizeJob(await adminJobsAPI.get(jobId));
+		if (
+			updatedJob.status === 'completed' ||
+			updatedJob.status === 'partial_failure' ||
+			updatedJob.status === 'failed'
+		) {
+			try {
+				updatedJob.result = await adminJobsAPI.getResult(jobId);
+			} catch {
+				// Result may not exist for infrastructure failures.
+			}
+		}
+		selectedJob = updatedJob;
+	}
+
 	async function viewJobDetail(job: Job) {
-		selectedJob = job;
+		selectedJob = sanitizeJob(job);
 		showJobDetailDialog = true;
 		loadingJobDetail = true;
 
 		try {
-			const updatedJob = await adminJobsAPI.get(job.id);
-			selectedJob = updatedJob;
+			await refreshSelectedJob(job.id);
 		} catch {
 			// Keep the original job data if refresh fails
 		} finally {
@@ -233,6 +367,7 @@
 			}
 		}
 		if (job.status === 'completed') return 100;
+		if (job.status === 'partial_failure') return 100;
 		if (job.status === 'pending') return 0;
 		return 50; // Running without progress info
 	}
@@ -245,6 +380,8 @@
 				return 'badge badge-info';
 			case 'pending':
 				return 'badge badge-warning';
+			case 'partial_failure':
+				return 'badge badge-warning';
 			case 'failed':
 				return 'badge badge-danger';
 			case 'cancelled':
@@ -252,6 +389,15 @@
 			default:
 				return 'badge badge-neutral';
 		}
+	}
+
+	function getDeliveryLabel(value: 'auto' | 'inline' | 'artifact'): string {
+		const labels = {
+			auto: 'Auto',
+			inline: 'Inline',
+			artifact: 'Artifact'
+		};
+		return labels[value];
 	}
 
 	// Track if initial data load has completed
@@ -293,6 +439,8 @@
 		if (event.key === 'Escape') {
 			if (showJobDetailDialog) {
 				closeJobDetailDialog();
+			} else if (showCreateImportDialog) {
+				closeCreateImportDialog();
 			} else if (showCreateReportDialog) {
 				closeCreateReportDialog();
 			}
@@ -317,6 +465,10 @@
 			</p>
 		</div>
 		<div class="page-actions">
+			<button class="btn btn-secondary" onclick={openCreateImportDialog}>
+				<i class="i-ph-upload-simple"></i>
+				Import Users
+			</button>
 			<button class="btn btn-primary" onclick={openCreateReportDialog}>
 				<i class="i-ph-file-text"></i>
 				Generate Report
@@ -326,6 +478,33 @@
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
+	{/if}
+	{#if jobTypeError}
+		<div class="alert alert-warning">{jobTypeError}</div>
+	{/if}
+
+	{#if jobTypes.length > 0}
+		<div class="panel">
+			<div class="panel-header">
+				<h2 class="panel-title">Enabled Job Types</h2>
+			</div>
+			<div class="job-type-grid">
+				{#each jobTypes as jobType (jobType.job_type)}
+					<div class="job-type-item">
+						<div>
+							<div class="cell-primary">{getJobTypeDisplayName(jobType.type)}</div>
+							<div class="cell-secondary mono">{jobType.job_type}</div>
+						</div>
+						<div class="job-type-badges">
+							<span class="badge badge-info">{jobType.processor_status}</span>
+							{#each jobType.supported_result_delivery as delivery (delivery)}
+								<span class="badge badge-neutral">{getDeliveryLabel(delivery)}</span>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+		</div>
 	{/if}
 
 	<!-- Filters -->
@@ -338,6 +517,7 @@
 					<option value="pending">Pending</option>
 					<option value="running">Running</option>
 					<option value="completed">Completed</option>
+					<option value="partial_failure">Partial Failure</option>
 					<option value="failed">Failed</option>
 					<option value="cancelled">Cancelled</option>
 				</select>
@@ -373,7 +553,9 @@
 				{#if statusFilter || typeFilter}
 					<p class="empty-state-hint">
 						Current filters:
-						{#if statusFilter}<span class="badge badge-neutral">{statusFilter}</span>{/if}
+						{#if statusFilter}
+							<span class="badge badge-neutral">{getJobStatusDisplayName(statusFilter)}</span>
+						{/if}
 						{#if typeFilter}<span class="badge badge-neutral"
 								>{getJobTypeDisplayName(typeFilter)}</span
 							>{/if}
@@ -417,7 +599,7 @@
 									{#if job.status === 'running'}
 										<span class="pulse-dot"></span>
 									{/if}
-									{job.status}
+									{getJobStatusDisplayName(job.status)}
 								</span>
 							</td>
 							<td>
@@ -448,6 +630,68 @@
 	{/if}
 </div>
 
+<!-- Create Import Dialog -->
+<Modal
+	open={showCreateImportDialog}
+	onClose={closeCreateImportDialog}
+	title="Import Users"
+	size="md"
+>
+	{#if createImportError}
+		<div class="alert alert-error">{createImportError}</div>
+	{/if}
+
+	<div class="form-group">
+		<label for="import-file" class="form-label">CSV File</label>
+		<input
+			id="import-file"
+			type="file"
+			accept=".csv,text/csv"
+			class="form-input"
+			onchange={handleImportFileChange}
+		/>
+		<p class="muted">
+			Expected headers: <code>email</code>, <code>name</code>, <code>given_name</code>,
+			<code>family_name</code>, <code>nickname</code>, <code>preferred_username</code>,
+			<code>picture</code>, <code>email_verified</code>, <code>phone_number</code>,
+			<code>phone_number_verified</code>, <code>user_type</code>, <code>status</code>,
+			<code>lifecycle_state</code>, plus any custom claim keys.
+		</p>
+	</div>
+
+	<div class="filter-row">
+		<div class="form-group">
+			<label for="import-duplicate" class="form-label">On Duplicate</label>
+			<select id="import-duplicate" class="form-select" bind:value={importOnDuplicate}>
+				<option value="skip">Skip existing users</option>
+				<option value="update">Update existing users</option>
+				<option value="error">Fail duplicate rows</option>
+			</select>
+		</div>
+		<div class="form-group">
+			<label for="import-header" class="form-label">CSV Header</label>
+			<select id="import-header" class="form-select" bind:value={importSkipHeader}>
+				<option value={true}>First row is header</option>
+				<option value={false}>Use default column order</option>
+			</select>
+		</div>
+	</div>
+
+	<label class="checkbox-row">
+		<input type="checkbox" bind:checked={importValidateOnly} />
+		<span>Validate only (do not write users)</span>
+	</label>
+
+	{#snippet footer()}
+		<button class="btn btn-secondary" onclick={closeCreateImportDialog} disabled={creatingImport}
+			>Cancel</button
+		>
+		<button class="btn btn-primary" onclick={handleCreateImport} disabled={creatingImport}>
+			{creatingImport ? 'Uploading...' : 'Start Import'}
+		</button>
+	{/snippet}
+</Modal>
+
 <!-- Create Report Dialog -->
 <Modal
 	open={showCreateReportDialog}
@@ -477,6 +721,41 @@
 		<div class="form-group">
 			<label for="report-to" class="form-label">To Date (optional)</label>
 			<input id="report-to" type="date" class="form-input" bind:value={reportToDate} />
+		</div>
+	</div>
+
+	<div class="filter-row">
+		<div class="form-group">
+			<label for="report-format" class="form-label">Format</label>
+			<select id="report-format" class="form-select" bind:value={reportFormat}>
+				<option value="json">JSON</option>
+				<option value="csv">CSV</option>
+			</select>
+		</div>
+		<div class="form-group">
+			<label for="report-delivery" class="form-label">Result Delivery</label>
+			<select id="report-delivery" class="form-select" bind:value={reportResultDelivery}>
+				<option value="auto">Auto</option>
+				<option value="inline">Inline</option>
+				<option value="artifact">Artifact</option>
+			</select>
+		</div>
+	</div>
+
+	<div class="filter-row">
+		<div class="form-group">
+			<label for="report-storage-destination" class="form-label">Storage Destination</label>
+			<select
+				id="report-storage-destination"
+				class="form-select"
+				bind:value={reportStorageDestinationId}
+			>
+				<option value="">Runtime default</option>
+				{#each storageDestinations as destination (destination.id)}
+					<option value={destination.id}>{destination.display_name} ({destination.provider})</option
+					>
+				{/each}
+			</select>
 		</div>
 	</div>
 
@@ -518,7 +797,9 @@
 		<div class="info-grid">
 			<div class="info-card">
 				<span class="info-label">Status</span>
-				<span class={getStatusBadgeClass(selectedJob.status)}>{selectedJob.status}</span>
+				<span class={getStatusBadgeClass(selectedJob.status)}>
+					{getJobStatusDisplayName(selectedJob.status)}
+				</span>
 			</div>
 			<div class="info-card">
 				<span class="info-label">Duration</span>
@@ -534,6 +815,16 @@
 				<span class="info-label">Created By</span>
 				<span class="info-value">{selectedJob.created_by}</span>
 			</div>
+			<div class="info-card">
+				<span class="info-label">Attempts</span>
+				<span class="info-value">{selectedJob.attempts}/{selectedJob.max_attempts}</span>
+			</div>
+			{#if selectedJob.next_run_at}
+				<div class="info-card">
+					<span class="info-label">Next Run</span>
+					<span class="info-value">{formatDate(selectedJob.next_run_at)}</span>
+				</div>
+			{/if}
 		</div>
 
 		{#if selectedJob.progress}
@@ -554,6 +845,9 @@
 				</div>
 				{#if selectedJob.progress.current_item}
 					<p class="muted">Processing: {selectedJob.progress.current_item}</p>
+				{/if}
+				{#if selectedJob.progress.stage}
+					<p class="muted">Stage: {selectedJob.progress.stage}</p>
 				{/if}
 			</div>
 		{/if}
@@ -576,6 +870,16 @@
 					</div>
 				</div>
 
+				{#if selectedJob.progress}
+					<p class="muted">
+						Processed {selectedJob.progress.processed} of {selectedJob.progress.total}
+						{#if selectedJob.progress.succeeded !== undefined}
+							({selectedJob.progress.succeeded} succeeded / {selectedJob.progress.failed ?? 0}
+							failed / {selectedJob.progress.skipped ?? 0} skipped)
+						{/if}
+					</p>
+				{/if}
+
 				{#if selectedJob.result.failures.length > 0}
 					<div class="failures-section">
 						<h4 class="failures-title">Failures ({selectedJob.result.failures.length})</h4>
@@ -591,6 +895,22 @@
 									... and {selectedJob.result.failures.length - 10} more
 								</div>
 							{/if}
+						</div>
+					</div>
+				{/if}
+
+				{#if selectedJob.result.logs.length > 0}
+					<div class="detail-section">
+						<h4 class="failures-title">Recent Logs</h4>
+						<div class="failures-list">
+							{#each selectedJob.result.logs as entry, i (i)}
+								<div class="failure-item">
+									<strong>{entry.level.toUpperCase()}</strong>
+									{#if entry.row}
+										row {entry.row}:{/if}
+									{entry.message}
+								</div>
+							{/each}
 						</div>
 					</div>
 				{/if}
@@ -621,3 +941,29 @@
 		<button class="btn btn-secondary" onclick={closeJobDetailDialog}>Close</button>
 	{/snippet}
 </Modal>
+
+<style>
+	.job-type-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+		gap: 12px;
+	}
+
+	.job-type-item {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 12px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+	}
+
+	.job-type-badges {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 6px;
+	}
+</style>

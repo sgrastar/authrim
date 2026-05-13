@@ -495,6 +495,32 @@ describe('EventDispatcher', () => {
       expect(result.delivery.auditLog).toBe(true);
     });
 
+    it('should use a custom auditLogWriter when provided', async () => {
+      const auditLogWriter = vi.fn().mockResolvedValue(undefined);
+      const customDispatcher = createEventDispatcher({
+        adapter,
+        kv,
+        webhookRegistry,
+        handlerRegistry,
+        hookRegistry,
+        decryptSecret,
+        auditLogWriter,
+      });
+
+      const result = await customDispatcher.publish({
+        type: 'auth.login.succeeded',
+        tenantId: 'tenant_default',
+        data: { userId: 'user_123' },
+      });
+
+      expect(auditLogWriter).toHaveBeenCalledTimes(1);
+      expect(adapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit_log'),
+        expect.any(Array)
+      );
+      expect(result.delivery.auditLog).toBe(true);
+    });
+
     it('should skip audit log when skipAuditLog is true', async () => {
       const result = await dispatcher.publish(
         { type: 'auth.login.succeeded', tenantId: 'tenant_default', data: {} },

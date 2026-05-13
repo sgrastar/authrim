@@ -22,7 +22,7 @@ import {
   getSessionStoreForNewSession,
   getTenantIdFromContext,
   LinkedIdentityRepository,
-  D1Adapter,
+  createPIIContextFromHono,
   resolveDID,
   type DIDDocument,
   type VerificationMethod,
@@ -112,9 +112,10 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
     const nonce = crypto.randomUUID();
 
     // Store challenge in ChallengeStore
-    const challengeStore = getChallengeStoreByDID(c.env, did);
+    const challengeStore = getChallengeStoreByDID(c.env, did, getTenantIdFromContext(c));
     await challengeStore.storeChallengeRpc({
       id: `did_auth:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'did_authentication',
       userId: '', // Will be resolved after verification
       challenge,
@@ -198,11 +199,12 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     const did = didMatch[1];
 
     // Get challenge store and consume challenge
-    const challengeStore = getChallengeStoreByDID(c.env, did);
+    const challengeStore = getChallengeStoreByDID(c.env, did, getTenantIdFromContext(c));
     let challengeData: ConsumeChallengeResponse;
     try {
       challengeData = await challengeStore.consumeChallengeRpc({
         id: `did_auth:${challenge_id}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'did_authentication',
       });
     } catch {
@@ -284,8 +286,8 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Find linked user (use DB_PII for linked identities)
-    const adapter = new D1Adapter({ db: c.env.DB_PII });
+    // Linked identities live in the configured PII store, which may resolve to DB in single-db mode.
+    const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
     const linkedIdentity = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
 
@@ -310,13 +312,19 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     const sessionTtl = DEFAULT_SESSION_TTL;
 
-    await sessionStore.createSessionRpc(sessionId, linkedIdentity.user_id, sessionTtl, {
-      amr: ['did'],
-      acr: 'urn:authrim:acr:did',
-      auth_time: Math.floor(Date.now() / 1000),
-      did,
-      verification_method: kid,
-    });
+    await sessionStore.createSessionRpc(
+      sessionId,
+      linkedIdentity.user_id,
+      sessionTtl,
+      {
+        amr: ['did'],
+        acr: 'urn:authrim:acr:did',
+        auth_time: Math.floor(Date.now() / 1000),
+        did,
+        verification_method: kid,
+      },
+      tenantId
+    );
 
     // Publish DID authentication success event (non-blocking)
     publishEvent(c, {

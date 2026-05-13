@@ -26,6 +26,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
+  getDefaultTenantId,
   getPARRequestStoreByUri,
   parsePARRequestUri,
   // UI Configuration
@@ -42,9 +43,6 @@ import {
   getClientCached,
   loadTenantProfileCached,
   loadClientContractCached,
-  // Database Adapter and Session-Client Repository (for implicit/hybrid logout support)
-  D1Adapter,
-  SessionClientRepository,
   // Logging
   getLogger,
   createLogger,
@@ -56,11 +54,16 @@ import {
   createSettingsManager,
   CLIENT_CATEGORY_META,
   OAUTH_CATEGORY_META,
+  parseClaimsRequest,
+  evaluateClaimsForTarget,
+  buildStandardUserClaims,
+  hasSAORulesForTarget,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
 import type { PublicJWK, JWKS } from '@authrim/ar-lib-core';
 import { isSigningJWK, isEncryptionJWK } from '@authrim/ar-lib-core';
+import { safeFetchJson } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
 import {
   generateSecureRandomString,
@@ -93,6 +96,48 @@ import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 
 // NIST SP 800-63-4 Assurance Levels
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+
+const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
+const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
+const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
+
+function clampHandoffArtifactTtlSeconds(value: number): number {
+  return Math.min(
+    MAX_HANDOFF_ARTIFACT_TTL_SECONDS,
+    Math.max(MIN_HANDOFF_ARTIFACT_TTL_SECONDS, value)
+  );
+}
+
+function parseHandoffArtifactTtlSeconds(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return clampHandoffArtifactTtlSeconds(Math.trunc(value));
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return clampHandoffArtifactTtlSeconds(Math.trunc(parsed));
+    }
+  }
+  return undefined;
+}
+
+function resolveHandoffArtifactTtlSeconds(
+  c: Context<{ Bindings: Env }>,
+  clientMetadata: Record<string, unknown>
+): number {
+  const clientTtl =
+    parseHandoffArtifactTtlSeconds(clientMetadata.handoff_artifact_ttl_seconds) ??
+    parseHandoffArtifactTtlSeconds(clientMetadata.handoff_artifact_ttl);
+  if (clientTtl !== undefined) {
+    return clientTtl;
+  }
+
+  return (
+    parseHandoffArtifactTtlSeconds(
+      (c.env as unknown as Record<string, unknown>).HANDOFF_ARTIFACT_TTL_SECONDS
+    ) ?? DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS
+  );
+}
 
 // ===== Key Caching for Performance Optimization =====
 // Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
@@ -426,6 +471,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let ui_locales: string | undefined;
   let login_hint: string | undefined;
   let handoff: string | undefined; // Authrim Extension: Session Token Handoff SSO
+  let claimsRequestIntegrityProtected = false;
   let _confirmed: string | undefined;
   let _auth_time: string | undefined;
   let _session_user_id: string | undefined;
@@ -852,9 +898,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         if (parsedPar) {
           // New region-sharded format: route via embedded shard info
-          const { stub } = getPARRequestStoreByUri(c.env, request_uri!, getTenantIdFromContext(c));
+          const tenantId = getTenantIdFromContext(c);
+          const { stub } = getPARRequestStoreByUri(c.env, request_uri!, tenantId);
           consumed = (await stub.consumeRequestRpc({
             requestUri: request_uri!,
+            tenant_id: tenantId,
             client_id: client_id || '', // May be empty for new format
           })) as PARRequestData;
         } else {
@@ -872,6 +920,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           const stub = c.env.PAR_REQUEST_STORE.get(id);
           consumed = (await stub.consumeRequestRpc({
             requestUri: request_uri!,
+            tenant_id: getTenantIdFromContext(c),
             client_id: client_id,
           })) as PARRequestData;
         }
@@ -941,6 +990,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge = parData.code_challenge;
         code_challenge_method = parData.code_challenge_method;
         claims = parData.claims;
+        claimsRequestIntegrityProtected = true;
         authorization_details = parData.authorization_details; // RFC 9396 RAR
         response_mode = parData.response_mode;
       } catch {
@@ -1080,6 +1130,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             algorithm: 'none',
           });
           requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
+          claimsRequestIntegrityProtected = false;
         } else {
           // Signed request object - verify using client's public key
           // Get client metadata to retrieve jwks or jwks_uri
@@ -1144,18 +1195,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             }
 
             try {
-              const jwksResponse = await fetch(clientResult.jwks_uri);
-              if (!jwksResponse.ok) {
-                return c.json(
-                  {
-                    error: 'invalid_request_object',
-                    error_description: 'Failed to fetch client jwks_uri',
-                  },
-                  400
-                );
-              }
-
-              const jwks = (await jwksResponse.json()) as JWKS;
+              const jwks = await safeFetchJson<JWKS>(clientResult.jwks_uri, {
+                timeoutMs: 5000,
+                maxResponseSize: 256 * 1024,
+              });
               const signingKey = jwks.keys.find((key) => isSigningJWK(key));
 
               if (!signingKey) {
@@ -1217,6 +1260,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             audience: getRequestIssuer(c),
           });
           requestObjectClaims = verified as Record<string, unknown>;
+          claimsRequestIntegrityProtected = true;
         }
       }
 
@@ -1259,7 +1303,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           code_challenge = requestObjectClaims.code_challenge as string;
         if (requestObjectClaims.code_challenge_method)
           code_challenge_method = requestObjectClaims.code_challenge_method as string;
-        if (requestObjectClaims.claims) claims = requestObjectClaims.claims as string;
+        if (requestObjectClaims.claims)
+          claims =
+            typeof requestObjectClaims.claims === 'string'
+              ? requestObjectClaims.claims
+              : JSON.stringify(requestObjectClaims.claims);
         if (requestObjectClaims.response_mode)
           response_mode = requestObjectClaims.response_mode as string;
         if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
@@ -1378,7 +1426,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
-  const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
+  const requestTenantId = getTenantIdFromContext(c);
+  const clientTenantId =
+    typeof clientMetadata.tenant_id === 'string' && clientMetadata.tenant_id.length > 0
+      ? clientMetadata.tenant_id
+      : null;
+  if (
+    clientTenantId &&
+    requestTenantId !== getDefaultTenantId(c.env) &&
+    clientTenantId !== requestTenantId
+  ) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'client_id is invalid for this tenant',
+      },
+      400
+    );
+  }
+
+  const tenantId = clientTenantId || requestTenantId;
   const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
   const profileAllowedResponseTypes = filterResponseTypesByProfile(
     ['code', 'id_token', 'id_token token', 'code id_token', 'code token', 'code id_token token'],
@@ -1969,47 +2036,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Validate claims parameter (optional, per OIDC Core 5.5)
-  if (claims) {
-    try {
-      const parsedClaims: unknown = JSON.parse(claims);
-
-      // Validate claims structure
-      if (
-        typeof parsedClaims !== 'object' ||
-        parsedClaims === null ||
-        Array.isArray(parsedClaims)
-      ) {
-        return sendError('invalid_request', 'claims parameter must be a JSON object');
-      }
-
-      // Validate that claims object contains valid sections (userinfo and/or id_token)
-      const validSections = ['userinfo', 'id_token'];
-      const claimsSections = Object.keys(parsedClaims as Record<string, unknown>);
-
-      if (claimsSections.length === 0) {
-        return sendError(
-          'invalid_request',
-          'claims parameter must contain at least one of: userinfo, id_token'
-        );
-      }
-
-      for (const section of claimsSections) {
-        if (!validSections.includes(section)) {
-          return sendError(
-            'invalid_request',
-            `Invalid claims section: ${section}. Must be one of: ${validSections.join(', ')}`
-          );
-        }
-
-        // Validate section contains an object
-        const claimsObj = parsedClaims as Record<string, unknown>;
-        if (typeof claimsObj[section] !== 'object' || claimsObj[section] === null) {
-          return sendError('invalid_request', `claims.${section} must be an object`);
-        }
-      }
-    } catch {
-      return sendError('invalid_request', 'claims parameter must be valid JSON');
-    }
+  const parsedClaimsRequest = parseClaimsRequest(claims);
+  if (!parsedClaimsRequest.ok) {
+    return sendError(parsedClaimsRequest.error, parsedClaimsRequest.error_description);
   }
 
   // Validate PKCE parameters if provided
@@ -2040,6 +2069,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let sessionUserId: string | undefined;
   let authTime: number | undefined;
   let sessionAcr: string | undefined;
+  let sessionAmr: string[] | undefined;
   let isAnonymousSession: boolean = false;
 
   // Check for existing session (cookie)
@@ -2063,7 +2093,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Legacy sessions without shard prefix are treated as invalid (user must re-login)
   if (sessionId && c.env.SESSION_STORE && isShardedSessionId(sessionId)) {
     try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
 
       const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
@@ -2082,6 +2112,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           sessionUserId = session.userId;
           // Check if this is an anonymous session (architecture-decisions.md §17)
           isAnonymousSession = session.data?.is_anonymous === true;
+          if (typeof session.data?.acr === 'string' && session.data.acr.length > 0) {
+            sessionAcr = session.data.acr;
+          }
+          if (Array.isArray(session.data?.amr)) {
+            const normalizedAmr = session.data.amr.filter(
+              (method): method is string => typeof method === 'string' && method.length > 0
+            );
+            if (normalizedAmr.length > 0) {
+              sessionAmr = normalizedAmr;
+            }
+          }
           // Don't set authTime from session if this is a confirmed re-authentication
           // (it will be set later based on prompt parameter)
           if (_confirmed !== 'true') {
@@ -2161,6 +2202,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           .get('client.sso_enabled', {
             type: 'client',
             id: validClientId,
+            tenantId,
           })
           .catch(() => null),
         settingsManager
@@ -2261,6 +2303,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sessionUserId = idTokenPayload.sub as string;
         authTime = idTokenPayload.auth_time as number;
         sessionAcr = idTokenPayload.acr as string;
+        if (Array.isArray(idTokenPayload.amr)) {
+          const normalizedAmr = idTokenPayload.amr.filter(
+            (method): method is string => typeof method === 'string' && method.length > 0
+          );
+          if (normalizedAmr.length > 0) {
+            sessionAmr = normalizedAmr;
+          }
+        }
         log.info('id_token_hint verified successfully', {
           action: 'id_token_hint_verify',
           sub: sessionUserId,
@@ -2438,14 +2488,24 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         // Generate handoff token
         const handoffToken = crypto.randomUUID();
-        const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken);
+        const handoffStore = await getChallengeStoreByChallengeId(
+          c.env,
+          handoffToken,
+          getTenantIdFromContext(c)
+        );
+
+        const handoffArtifactTtlSeconds = resolveHandoffArtifactTtlSeconds(
+          c,
+          clientMetadata as unknown as Record<string, unknown>
+        );
 
         await handoffStore.storeChallengeRpc({
           id: `handoff:${handoffToken}`,
+          tenantId: getTenantIdFromContext(c),
           type: 'handoff',
           userId: sessionUserId!,
           challenge: sessionId!,
-          ttl: 30, // 30 seconds
+          ttl: handoffArtifactTtlSeconds,
           metadata: {
             client_id: validClientId,
             state,
@@ -2478,10 +2538,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Store authorization request parameters in ChallengeStore (RPC)
     // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: challengeId,
+      tenantId: getTenantIdFromContext(c),
       type: 'reauth',
       userId: sessionUserId || 'anonymous',
       challenge: challengeId,
@@ -2506,6 +2571,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         login_hint,
         sessionUserId,
         authTime, // Preserve original auth_time
+        issuer: getRequestIssuer(c),
+        session_mode:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? 'token_session'
+            : 'managed_browser_session',
+        handoff_methods:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? ['dpop_token_verify']
+            : ['cookie_session_finalize'],
+        allowed_redirect_origins: clientMetadata?.allowed_redirect_origins ?? [],
+        iframe_allowed:
+          (clientMetadata as unknown as { iframe_allowed?: boolean } | null)?.iframe_allowed ===
+          true,
+        tenant_id: tenantId,
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
         cancel_uri: validatedCancelUri,
@@ -2544,10 +2623,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Store authorization request parameters in ChallengeStore (RPC)
     // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: challengeId,
+      tenantId: getTenantIdFromContext(c),
       type: 'login',
       userId: 'anonymous',
       challenge: challengeId,
@@ -2570,12 +2654,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         display,
         ui_locales,
         login_hint,
+        session_mode:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? 'token_session'
+            : 'managed_browser_session',
+        handoff_methods:
+          clientMetadata?.browser_public_client_mode === 'strict'
+            ? ['dpop_token_verify']
+            : ['cookie_session_finalize'],
+        allowed_redirect_origins: clientMetadata?.allowed_redirect_origins ?? [],
+        iframe_allowed:
+          (clientMetadata as unknown as { iframe_allowed?: boolean } | null)?.iframe_allowed ===
+          true,
         // Client metadata for login page display (OIDC Dynamic OP requirement)
         client_name: clientMetadata?.client_name || client_id,
         logo_uri: clientMetadata?.logo_uri,
         policy_uri: clientMetadata?.policy_uri,
         tos_uri: clientMetadata?.tos_uri,
         client_uri: clientMetadata?.client_uri,
+        tenant_id: tenantId,
+        issuer: getRequestIssuer(c),
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
         cancel_uri: validatedCancelUri,
@@ -2636,6 +2734,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const consentRequiredSetting = await settingsManager.get('client.consent_required', {
         type: 'client',
         id: validClientId,
+        tenantId,
       });
       consentRequired = (consentRequiredSetting as boolean | undefined) ?? true;
 
@@ -2643,6 +2742,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const firstPartySetting = await settingsManager.get('client.first_party', {
         type: 'client',
         id: validClientId,
+        tenantId,
       });
       firstParty = (firstPartySetting as boolean | undefined) ?? false;
     } catch (error) {
@@ -2677,10 +2777,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       willSkipConsent: isTrustedClient && !prompt?.includes('consent'),
     });
 
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (isTrustedClient && !prompt?.includes('consent')) {
       // Check if consent already exists (using cache)
-      const existingConsent = await getCachedConsent(c.env, sub, validClientId);
+      const existingConsent = await getCachedConsent(
+        c.env,
+        sub,
+        validClientId,
+        tenantId,
+        authCtx.coreAdapter
+      );
 
       if (!existingConsent) {
         // Auto-grant consent for trusted client
@@ -2688,17 +2796,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const now = Date.now();
 
         // Use DatabaseAdapter for consent insert (portable across D1/PostgreSQL/MySQL)
-        const tenantId = getTenantIdFromContext(c);
-        const authCtx = createAuthContextFromHono(c, tenantId);
         await authCtx.coreAdapter.execute(
           `INSERT INTO oauth_client_consents
-           (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [consentId, sub, validClientId, scope, now, null, now, now]
+           (id, tenant_id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [consentId, tenantId, sub, validClientId, scope, now, null, now, now]
         );
 
         // Invalidate consent cache after insert so next read picks up new consent
-        await invalidateConsentCache(c.env, sub, validClientId);
+        await invalidateConsentCache(c.env, sub, tenantId, validClientId);
 
         log.info('Auto-granted consent for trusted client', {
           action: 'consent_auto_grant',
@@ -2714,7 +2820,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       let consentRequired = false;
       try {
         // Use cached consent check (Read-Through Cache)
-        const existingConsent = await getCachedConsent(c.env, sub, validClientId);
+        const existingConsent = await getCachedConsent(
+          c.env,
+          sub,
+          validClientId,
+          tenantId,
+          authCtx.coreAdapter
+        );
 
         if (!existingConsent) {
           // No consent record exists
@@ -2785,10 +2897,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Store authorization request parameters in ChallengeStore for consent flow (RPC)
         // Use challengeId-based sharding for better scalability
         const challengeId = crypto.randomUUID();
-        const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+        const challengeStore = await getChallengeStoreByChallengeId(
+          c.env,
+          challengeId,
+          getTenantIdFromContext(c)
+        );
 
         await challengeStore.storeChallengeRpc({
           id: challengeId,
+          tenantId: getTenantIdFromContext(c),
           type: 'consent',
           userId: sub,
           challenge: challengeId,
@@ -2915,10 +3032,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
             // Store challenge with consent item metadata
             const challengeId = crypto.randomUUID();
-            const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+            const challengeStore = await getChallengeStoreByChallengeId(
+              c.env,
+              challengeId,
+              getTenantIdFromContext(c)
+            );
 
             await challengeStore.storeChallengeRpc({
               id: challengeId,
+              tenantId: getTenantIdFromContext(c),
               type: 'consent',
               userId: sub,
               challenge: challengeId,
@@ -3083,8 +3205,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       c.req.method,
       c.req.url,
       undefined, // No access token yet
-      c.env.DPOP_JTI_STORE,
-      validClientId
+      c.env,
+      validClientId,
+      getTenantIdFromContext(c)
     );
 
     if (dpopValidation.valid && dpopValidation.jkt) {
@@ -3162,7 +3285,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         ? parsedSession.shardIndex % shardCount // Session Sticky: same shard as session
         : getAuthCodeShardIndex(sub, validClientId, shardCount); // Fallback: hash-based
       code = createShardedAuthCode(shardIndex, randomCode);
-      const instanceName = buildAuthCodeShardInstanceName(shardIndex);
+      const instanceName = buildAuthCodeShardInstanceName(shardIndex, getTenantIdFromContext(c));
       authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
     } else {
       // Sharding disabled - use tenant-scoped legacy instance
@@ -3178,6 +3301,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       await authCodeStore.storeCodeRpc({
         code,
+        tenantId: getTenantIdFromContext(c),
         clientId: validClientId,
         redirectUri: validRedirectUri,
         userId: sub,
@@ -3187,8 +3311,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         nonce,
         state,
         claims,
+        claimsRequestProtected: claimsRequestIntegrityProtected,
         authTime: currentAuthTime,
         acr: selectedAcr,
+        amr: sessionAmr,
         dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
         sid: sessionId, // OIDC Session Management: Session ID for RP-Initiated Logout
         authorizationDetails: authorization_details, // RFC 9396 RAR
@@ -3213,7 +3339,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
 
       // Generate region-aware JTI for token revocation sharding
-      const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+      const { jti: regionAwareJti } = await generateRegionAwareJti(
+        c.env,
+        getTenantIdFromContext(c)
+      );
 
       const tokenResult = await createAccessToken(
         {
@@ -3223,6 +3352,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           scope: validScope,
           client_id: validClientId,
           claims,
+          ...(claims ? { claims_request_protected: claimsRequestIntegrityProtected === true } : {}),
         },
         privateKey,
         signingKeyId,
@@ -3277,7 +3407,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Create ID token with appropriate claims
       // Build base claims for ID token
       // Note: sid (session ID) is required for RP-Initiated Logout per OIDC Session Management 1.0
-      const idTokenClaims: Record<string, unknown> = {
+      let idTokenClaims: Record<string, unknown> = {
         iss: issuer,
         sub,
         aud: validClientId,
@@ -3292,126 +3422,49 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       if (selectedAcr) {
         idTokenClaims.acr = selectedAcr;
       }
+      if (sessionAmr?.length) {
+        idTokenClaims.amr = sessionAmr;
+      }
 
       // OIDC Core 5.4: For response_type=id_token (no access token), scope-based claims
       // must be included in the ID token since UserInfo endpoint is not accessible
-      // Also include essential claims from claims parameter
+      // Also include individual claims from the claims parameter.
       const isIdTokenOnly = includesIdToken && !includesToken && !includesCode;
       const scopes = validScope.split(' ');
+      const hasRequestedIdTokenClaims =
+        Object.keys(parsedClaimsRequest.request?.id_token ?? {}).length > 0;
+      const hasIdTokenSAORules = hasSAORulesForTarget(parsedClaimsRequest.request, 'id_token');
 
-      // Parse claims parameter for id_token essential claims
-      let idTokenEssentialClaims: Record<string, { essential?: boolean; value?: unknown }> = {};
-      if (claims) {
-        try {
-          const parsedClaims = JSON.parse(claims) as Record<string, unknown>;
-          if (parsedClaims.id_token && typeof parsedClaims.id_token === 'object') {
-            idTokenEssentialClaims = parsedClaims.id_token as Record<
-              string,
-              { essential?: boolean; value?: unknown }
-            >;
-          }
-        } catch {
-          // Ignore parsing errors, claims was already validated earlier
-        }
-      }
-
-      // Check if we need to add scope-based or essential claims
-      const hasEssentialClaims = Object.entries(idTokenEssentialClaims).some(
-        ([, v]) => v?.essential === true
-      );
-
-      if (isIdTokenOnly || hasEssentialClaims) {
+      if (isIdTokenOnly || hasRequestedIdTokenClaims || hasIdTokenSAORules) {
         // Fetch user data from cache (Read-Through Cache) or D1
-        const user = await getCachedUser(c.env, sub);
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        const user = await getCachedUser(c.env, tenantId, sub, {
+          coreDb: piiCtx.coreAdapter,
+          piiDb: piiCtx.defaultPiiAdapter,
+        });
 
-        if (user) {
-          // Parse address JSON if present (CachedUser.address is already JSON string)
-          let address = null;
-          if (user.address) {
-            try {
-              address = JSON.parse(user.address);
-            } catch {
-              // Ignore address parsing errors
-            }
-          }
+        const userData: Record<string, unknown> = {
+          ...(user ? buildStandardUserClaims(user) : {}),
+          sub,
+          auth_time: currentAuthTime,
+          ...(selectedAcr ? { acr: selectedAcr } : {}),
+          ...(sessionAmr?.length ? { amr: sessionAmr } : {}),
+        };
 
-          // Map user data to OIDC claims
-          const userData: Record<string, unknown> = {
-            name: user.name || undefined,
-            family_name: user.family_name || undefined,
-            given_name: user.given_name || undefined,
-            middle_name: user.middle_name || undefined,
-            nickname: user.nickname || undefined,
-            preferred_username: user.preferred_username || undefined,
-            profile: user.profile || undefined,
-            picture: user.picture || undefined,
-            website: user.website || undefined,
-            gender: user.gender || undefined,
-            birthdate: user.birthdate || undefined,
-            zoneinfo: user.zoneinfo || undefined,
-            locale: user.locale || undefined,
-            updated_at: user.updated_at
-              ? user.updated_at >= 1e12
-                ? Math.floor(user.updated_at / 1000)
-                : user.updated_at
-              : Math.floor(Date.now() / 1000),
-            email: user.email || undefined,
-            email_verified: user.email_verified,
-            phone_number: user.phone_number || undefined,
-            phone_number_verified: user.phone_number_verified,
-            address: address || undefined,
-          };
-
-          // Profile scope claims
-          const profileClaims = [
-            'name',
-            'family_name',
-            'given_name',
-            'middle_name',
-            'nickname',
-            'preferred_username',
-            'profile',
-            'picture',
-            'website',
-            'gender',
-            'birthdate',
-            'zoneinfo',
-            'locale',
-            'updated_at',
-          ];
-
-          // Add scope-based claims for response_type=id_token
-          if (isIdTokenOnly) {
-            if (scopes.includes('profile')) {
-              for (const claim of profileClaims) {
-                if (userData[claim] !== undefined) {
-                  idTokenClaims[claim] = userData[claim];
-                }
-              }
-            }
-            if (scopes.includes('email')) {
-              if (userData.email !== undefined) idTokenClaims.email = userData.email;
-              if (userData.email_verified !== undefined)
-                idTokenClaims.email_verified = userData.email_verified;
-            }
-            if (scopes.includes('phone')) {
-              if (userData.phone_number !== undefined)
-                idTokenClaims.phone_number = userData.phone_number;
-              if (userData.phone_number_verified !== undefined)
-                idTokenClaims.phone_number_verified = userData.phone_number_verified;
-            }
-            if (scopes.includes('address') && userData.address !== undefined) {
-              idTokenClaims.address = userData.address;
-            }
-          }
-
-          // Add essential claims from claims parameter
-          for (const [claimName, claimSpec] of Object.entries(idTokenEssentialClaims)) {
-            if (claimSpec?.essential === true && userData[claimName] !== undefined) {
-              idTokenClaims[claimName] = userData[claimName];
-            }
-          }
+        const requestedClaims = evaluateClaimsForTarget({
+          target: 'id_token',
+          claimsRequest: parsedClaimsRequest.request,
+          initialClaims: idTokenClaims,
+          availableClaims: userData,
+          grantedScopes: scopes,
+          clientPolicy: clientMetadata,
+          includeScopeClaims: isIdTokenOnly,
+          requestIntegrityProtected: claimsRequestIntegrityProtected,
+        });
+        if (!requestedClaims.ok) {
+          return sendError(requestedClaims.error, requestedClaims.error_description);
         }
+        idTokenClaims = requestedClaims.claims;
       }
 
       idToken = await createIDToken(
@@ -3437,16 +3490,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // OIDC Session Management: Register session-client association for logout (Implicit/Hybrid flows)
   // This enables frontchannel/backchannel logout to notify the correct RPs
   // For code flow, this is done in the token endpoint; for implicit/hybrid, we do it here
-  if ((includesIdToken || includesToken) && sessionId && c.env.DB) {
+  if ((includesIdToken || includesToken) && sessionId) {
     try {
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
       log.debug('Registering session-client for implicit/hybrid logout', {
         action: 'session_client_register',
         sidPrefix: sessionId.substring(0, 25),
         clientIdPrefix: validClientId.substring(0, 25),
       });
-      const coreAdapter = new D1Adapter({ db: c.env.DB });
-      const sessionClientRepo = new SessionClientRepository(coreAdapter);
-      const result = await sessionClientRepo.createOrUpdate({
+      const result = await authCtx.repositories.sessionClient.createOrUpdate({
         session_id: sessionId,
         client_id: validClientId,
       });
@@ -3966,12 +4019,10 @@ async function createJARMResponse(
         }
 
         // Fetch JWKS from jwks_uri
-        const jwksResponse = await fetch(client.jwks_uri);
-        if (!jwksResponse.ok) {
-          throw new Error('Failed to fetch client jwks_uri');
-        }
-
-        const jwks = (await jwksResponse.json()) as JWKS;
+        const jwks = await safeFetchJson<JWKS>(client.jwks_uri, {
+          timeoutMs: 5000,
+          maxResponseSize: 256 * 1024,
+        });
         const encKey = jwks.keys.find((key) => isEncryptionJWK(key));
 
         if (!encKey) {
@@ -4097,7 +4148,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     let tosUri: string | undefined;
 
     try {
-      const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        challenge_id,
+        getTenantIdFromContext(c)
+      );
       const challengeData = (await challengeStore.getChallengeRpc(challenge_id)) as {
         id: string;
         type: string;
@@ -4244,7 +4299,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   // POST request: Process login (stub - accepts any credentials) (RPC)
   // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+  const challengeStore = await getChallengeStoreByChallengeId(
+    c.env,
+    challenge_id,
+    getTenantIdFromContext(c)
+  );
 
   let challengeData: {
     userId: string;
@@ -4266,6 +4325,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   try {
     challengeData = await challengeStore.consumeChallengeRpc({
       id: challenge_id,
+      tenantId: getTenantIdFromContext(c),
       type: 'login',
       challenge: challenge_id,
     });
@@ -4336,53 +4396,51 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
           });
         });
 
-      // Step 2: Insert into users_pii (if DB_PII is configured)
-      if (c.env.DB_PII) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        await piiCtx.piiRepositories.userPII
-          .createPII({
-            id: userId,
-            tenant_id: tenantId,
-            pii_class: 'PROFILE',
-            email: 'test@example.com',
-            name: 'John Doe',
-            given_name: 'John',
-            family_name: 'Doe',
-            nickname: 'Johnny',
-            preferred_username: 'test',
-            picture: 'https://example.com/avatar.jpg',
-            website: 'https://example.com',
-            gender: 'male',
-            birthdate: '1990-01-01',
-            zoneinfo: 'America/New_York',
-            locale: 'en-US',
-            phone_number: '+1-555-0100',
-            address_formatted: '1234 Main St, Anytown, ST 12345, USA',
-            address_street_address: '1234 Main St',
-            address_locality: 'Anytown',
-            address_region: 'ST',
-            address_postal_code: '12345',
-            address_country: 'USA',
-          })
-          .catch((error: unknown) => {
-            // PII Protection: Don't log full error
-            log.error('Failed to create test user in PII DB', {
-              action: 'login_test_user_pii',
-              errorName: error instanceof Error ? error.name : 'Unknown error',
-            });
+      // Step 2: Insert into the configured PII store
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      await piiCtx.piiRepositories.userPII
+        .createPII({
+          id: userId,
+          tenant_id: tenantId,
+          pii_class: 'PROFILE',
+          email: 'test@example.com',
+          name: 'John Doe',
+          given_name: 'John',
+          family_name: 'Doe',
+          nickname: 'Johnny',
+          preferred_username: 'test',
+          picture: 'https://example.com/avatar.jpg',
+          website: 'https://example.com',
+          gender: 'male',
+          birthdate: '1990-01-01',
+          zoneinfo: 'America/New_York',
+          locale: 'en-US',
+          phone_number: '+1-555-0100',
+          address_formatted: '1234 Main St, Anytown, ST 12345, USA',
+          address_street_address: '1234 Main St',
+          address_locality: 'Anytown',
+          address_region: 'ST',
+          address_postal_code: '12345',
+          address_country: 'USA',
+        })
+        .catch((error: unknown) => {
+          // PII Protection: Don't log full error
+          log.error('Failed to create test user in PII store', {
+            action: 'login_test_user_pii',
+            errorName: error instanceof Error ? error.name : 'Unknown error',
           });
+        });
 
-        // Step 3: Update pii_status to 'active'
-        await authCtx.repositories.userCore
-          .updatePIIStatus(userId, 'active')
-          .catch((error: unknown) => {
-            // PII Protection: Don't log full error
-            log.error('Failed to update pii_status', {
-              action: 'login_pii_status_update',
-              errorName: error instanceof Error ? error.name : 'Unknown error',
-            });
+      // Step 3: Update pii_status to 'active'
+      await authCtx.repositories.userCore
+        .updatePIIStatus(userId, 'active')
+        .catch((error: unknown) => {
+          // PII Protection: Don't log full error
+          log.error('Failed to update pii_status', {
+            action: 'login_pii_status_update',
+            errorName: error instanceof Error ? error.name : 'Unknown error',
           });
-      }
+        });
     }
   } else {
     // Normal client: create new random user
@@ -4434,39 +4492,33 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         });
       });
 
-    // Step 2: Insert into users_pii (if DB_PII is configured)
-    if (c.env.DB_PII) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      try {
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: userId,
-          tenant_id: tenantId,
-          email: userEmail,
-        });
-
-        // Step 3: Update pii_status to 'active' (only on successful PII DB write)
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-      } catch (error: unknown) {
-        // PII Protection: Don't log full error
-        log.error('Failed to create user in PII DB', {
-          action: 'login_user_pii_create',
-          errorName: error instanceof Error ? error.name : 'Unknown error',
-        });
-        // Update pii_status to 'failed' to indicate PII DB write failure
-        await authCtx.repositories.userCore
-          .updatePIIStatus(userId, 'failed')
-          .catch((statusError: unknown) => {
-            // PII Protection: Don't log full error
-            log.error('Failed to update pii_status to failed', {
-              action: 'login_pii_status_failed',
-              errorName: statusError instanceof Error ? statusError.name : 'Unknown error',
-            });
-          });
-      }
-    } else {
-      log.warn('DB_PII not configured - user created with pii_status=pending', {
-        action: 'login_pii_missing',
+    // Step 2: Insert into the configured PII store
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    try {
+      await piiCtx.piiRepositories.userPII.createPII({
+        id: userId,
+        tenant_id: tenantId,
+        email: userEmail,
       });
+
+      // Step 3: Update pii_status to 'active' (only on successful PII store write)
+      await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
+    } catch (error: unknown) {
+      // PII Protection: Don't log full error
+      log.error('Failed to create user in PII store', {
+        action: 'login_user_pii_create',
+        errorName: error instanceof Error ? error.name : 'Unknown error',
+      });
+      // Update pii_status to 'failed' to indicate PII write failure
+      await authCtx.repositories.userCore
+        .updatePIIStatus(userId, 'failed')
+        .catch((statusError: unknown) => {
+          // PII Protection: Don't log full error
+          log.error('Failed to update pii_status to failed', {
+            action: 'login_pii_status_failed',
+            errorName: statusError instanceof Error ? statusError.name : 'Unknown error',
+          });
+        });
     }
   }
 
@@ -4487,7 +4539,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   if (sessionTenantProfile.uses_do_for_state) {
     // Human profile: Create session using sharded SessionStore
     const { stub: sessionStore, sessionId: newSessionId } = await getSessionStoreForNewSession(
-      c.env
+      c.env,
+      tenantId
     );
 
     try {
@@ -4498,7 +4551,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         {
           clientId: metadata.client_id as string,
           authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
-        }
+        },
+        tenantId
       );
 
       // Set session cookie with the pre-generated sharded session ID (HttpOnly for security)
@@ -4680,7 +4734,11 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
 
   // POST request: Process confirmation and redirect to /authorize (RPC)
   // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+  const challengeStore = await getChallengeStoreByChallengeId(
+    c.env,
+    challenge_id,
+    getTenantIdFromContext(c)
+  );
 
   let challengeData: {
     userId: string;
@@ -4703,6 +4761,7 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
   try {
     challengeData = await challengeStore.consumeChallengeRpc({
       id: challenge_id,
+      tenantId: getTenantIdFromContext(c),
       type: 'reauth',
       challenge: challenge_id,
     });

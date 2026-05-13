@@ -112,11 +112,13 @@ describe('PIIPartitionRouter', () => {
       coreAdapter.seed('users_core', [
         {
           id: 'user-eu',
+          tenant_id: 'tenant-a',
           pii_partition: 'eu',
           is_active: 1,
         },
         {
           id: 'user-default',
+          tenant_id: 'tenant-a',
           pii_partition: 'default',
           is_active: 1,
         },
@@ -124,17 +126,22 @@ describe('PIIPartitionRouter', () => {
     });
 
     it('should return partition from users_core', async () => {
-      const partition = await router.resolvePartitionForUser('user-eu');
+      const partition = await router.resolvePartitionForUser('tenant-a', 'user-eu');
       expect(partition).toBe('eu');
     });
 
     it('should return default for user with default partition', async () => {
-      const partition = await router.resolvePartitionForUser('user-default');
+      const partition = await router.resolvePartitionForUser('tenant-a', 'user-default');
       expect(partition).toBe('default');
     });
 
+    it('should not resolve a partition across tenants for the same user ID', async () => {
+      const partition = await router.resolvePartitionForUser('tenant-b', 'user-eu');
+      expect(partition).toBe(DEFAULT_PARTITION);
+    });
+
     it('should return default for non-existent user', async () => {
-      const partition = await router.resolvePartitionForUser('non-existent');
+      const partition = await router.resolvePartitionForUser('tenant-a', 'non-existent');
       expect(partition).toBe(DEFAULT_PARTITION);
     });
   });

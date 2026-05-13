@@ -18,11 +18,22 @@ import type { Env } from '../types/env';
 import type { ClientMetadata } from '../types/oidc';
 import type { TenantProfile } from '../types/contracts/tenant-profile';
 import type { ClientContract } from '../types/contracts';
+import { createAuthContextFromHono } from '../context';
 import { getClient } from './kv';
 import { loadTenantProfile, loadTenantContract, loadClientContract } from './contract-loader';
 import { getTenantProfile } from '../types/contracts/tenant-profile';
 import { buildVersionedKey, getCacheTTL } from './cache-config';
 import { buildKVKey } from './tenant-context';
+
+function getTenantIdFromRequestCacheContext(c: Context<{ Bindings: Env }>): string {
+  // Hono's generic context type does not know about middleware-injected values.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tenantId = ((c as any).get?.('tenantId') as string | undefined)?.trim();
+  if (!tenantId) {
+    throw new Error('Request cache requires tenant context');
+  }
+  return tenantId;
+}
 
 // =============================================================================
 // Types
@@ -98,7 +109,7 @@ export interface TenantFeatureFlags {
  * Request-scoped cache structure
  */
 interface RequestCache {
-  /** Cached client metadata (clientId → metadata or null) */
+  /** Cached client metadata (tenantId:clientId → metadata or null) */
   clients: Map<string, ClientMetadata | null>;
   /** Cached tenant profiles (tenantId → profile) */
   tenantProfiles: Map<string, TenantProfile>;
@@ -204,19 +215,21 @@ export async function getClientCached(
   clientId: string
 ): Promise<ClientMetadata | null> {
   const cache = getRequestCache(c);
+  const authCtx = createAuthContextFromHono(c, getTenantIdFromRequestCacheContext(c));
+  const cacheKey = `${authCtx.tenantId}:${clientId}`;
 
   // Check request-level cache
-  if (cache.clients.has(clientId)) {
+  if (cache.clients.has(cacheKey)) {
     cache.stats.clientHit++;
-    return cache.clients.get(clientId) ?? null;
+    return cache.clients.get(cacheKey) ?? null;
   }
 
   // Cache miss - fetch from KV/D1
   cache.stats.clientMiss++;
-  const clientMetadata = await getClient(env, clientId);
+  const clientMetadata = await getClient(env, authCtx.tenantId, clientId, authCtx.coreAdapter);
 
   // Store in request cache (including null for not-found)
-  cache.clients.set(clientId, clientMetadata);
+  cache.clients.set(cacheKey, clientMetadata);
 
   return clientMetadata;
 }
@@ -548,12 +561,12 @@ async function loadTenantProfileWithKVCache(
  *
  * @param env - Cloudflare environment bindings
  * @param clientId - Client ID to invalidate
- * @param tenantId - Optional tenant ID (defaults to 'default')
+ * @param tenantId - Tenant ID
  */
 export async function invalidateClientCache(
   env: Env,
   clientId: string,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<void> {
   // Use the same key format as kv.ts getClient()
   const cacheKey = buildKVKey('client', clientId, tenantId);
@@ -568,12 +581,12 @@ export async function invalidateClientCache(
  *
  * @param env - Cloudflare environment bindings
  * @param clientId - Client ID to invalidate
- * @param tenantId - Optional tenant ID (defaults to 'default')
+ * @param tenantId - Tenant ID
  */
 export async function invalidateClientCacheOnDelete(
   env: Env,
   clientId: string,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<void> {
   // Use the same key format as kv.ts getClient()
   const cacheKey = buildKVKey('client', clientId, tenantId);

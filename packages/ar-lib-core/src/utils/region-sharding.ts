@@ -652,13 +652,16 @@ export function buildRegionShardConfigKvKey(tenantId: string): string {
  * Get region shard configuration from KV with caching.
  *
  * @param env - Environment with KV binding
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Region shard configuration
  */
-export async function getRegionShardConfig(
-  env: Env,
-  tenantId: string = DEFAULT_TENANT_ID
-): Promise<RegionShardConfig> {
+export async function getRegionShardConfig(env: Env, tenantId: string): Promise<RegionShardConfig> {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('getRegionShardConfig requires tenantId');
+  }
+
+  tenantId = normalizedTenantId;
   const cacheKey = `region-shard-config:${tenantId}`;
   const now = Date.now();
 

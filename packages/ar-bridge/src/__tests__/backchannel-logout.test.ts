@@ -7,6 +7,7 @@ const {
   mockFindByProviderSub,
   mockUpdateLinkedIdentity,
   mockGetProvider,
+  mockSafeFetchJson,
   mockJwtVerify,
   mockCreateLocalJwkSet,
   MockD1Adapter,
@@ -33,6 +34,7 @@ const {
   });
   const jwtVerify = vi.fn();
   const createLocalJwkSet = vi.fn().mockReturnValue({});
+  const safeFetchJson = vi.fn().mockResolvedValue({ keys: [] });
 
   class D1AdapterClass {
     constructor(_options: { db: unknown }) {}
@@ -55,6 +57,7 @@ const {
     mockFindByProviderSub: findByProviderSub,
     mockUpdateLinkedIdentity: updateLinkedIdentity,
     mockGetProvider: getProvider,
+    mockSafeFetchJson: safeFetchJson,
     mockJwtVerify: jwtVerify,
     mockCreateLocalJwkSet: createLocalJwkSet,
     MockD1Adapter: D1AdapterClass,
@@ -64,6 +67,9 @@ const {
 
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  resolveAuthCorePersistenceAdapterFromEnv: vi
+    .fn()
+    .mockResolvedValue(new MockD1Adapter({ db: {} })),
   getSessionStoreBySessionId: vi.fn(() => ({
     stub: {
       fetch: mockSessionFetch,
@@ -85,6 +91,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
     })),
   })),
   getTenantIdFromContext: vi.fn((c: { get?: (key: string) => unknown }) => c.get?.('tenantId')),
+  safeFetchJson: mockSafeFetchJson,
 }));
 
 vi.mock('../services/provider-store', () => ({
@@ -110,6 +117,7 @@ describe('backchannel logout', () => {
     mockCoreQuery.mockReset().mockResolvedValue([{ id: 'sess-1' }]);
     mockCoreExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
     mockSessionFetch.mockReset().mockResolvedValue(new Response(null, { status: 200 }));
+    mockSafeFetchJson.mockReset().mockResolvedValue({ keys: [] });
     mockFindByProviderSub.mockReset().mockResolvedValue([
       {
         id: 'link-1',

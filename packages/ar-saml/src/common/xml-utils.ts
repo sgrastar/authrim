@@ -81,8 +81,8 @@ export function parseXml(xmlString: string): XMLDocument {
   // Security: Validate XML before parsing to prevent XXE attacks
   validateXmlSecurity(xmlString);
 
-  // ErrorHandlerFunction signature: (level: 'error' | 'warning' | 'fatalError', msg: string, context: any) => void
-  const errorHandler = (level: 'error' | 'warning' | 'fatalError', msg: string) => {
+  // xmldom 0.8.x types pass a plain string for the level.
+  const errorHandler = (level: string, msg: string) => {
     if (level === 'error') {
       throw new Error(`XML Parse Error: ${msg}`);
     } else if (level === 'fatalError') {

@@ -24,9 +24,32 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
+  DeviceSecretRepository,
+  createPhase1ErrorDetails,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import {
+  evaluateDeviceSecretRevokePolicy,
+  type DeviceSecretPolicyErrorCode,
+} from './device-secret-policy';
+
+function deviceSecretPolicyErrorResponse(
+  c: Context<{ Bindings: Env }>,
+  code: DeviceSecretPolicyErrorCode,
+  description: string
+): Response {
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  return c.json(
+    {
+      error: 'access_denied',
+      error_description: description,
+      error_details: createPhase1ErrorDetails(code),
+    },
+    403
+  );
+}
 
 /**
  * Token Revocation Endpoint Handler
@@ -53,7 +76,11 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const token = formData.token;
-  const token_type_hint = formData.token_type_hint as 'access_token' | 'refresh_token' | undefined;
+  const token_type_hint = formData.token_type_hint as
+    | 'access_token'
+    | 'refresh_token'
+    | 'device_secret'
+    | undefined;
 
   // Extract client credentials from either form data or Authorization header
   let client_id = formData.client_id;
@@ -146,9 +173,67 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   // Track if this is a public client for token ownership verification
   const isPublicClient = !clientMetadata.client_secret_hash;
+  const log = getLogger(c).module('REVOKE');
+
+  if (token_type_hint === 'device_secret') {
+    const tenantId = getTenantIdFromContext(c);
+    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+    const deviceSecret = await deviceSecretRepo.findByRawSecret(token, tenantId);
+    const nowMs = Date.now();
+
+    if (
+      !deviceSecret ||
+      deviceSecret.is_active !== 1 ||
+      deviceSecret.revoked_at ||
+      deviceSecret.expires_at <= nowMs
+    ) {
+      log.info('Inactive or unknown device secret revoke requested', {
+        action: 'revoke',
+        type: 'device_secret',
+        clientId: client_id,
+        isPublicClient,
+      });
+      return c.body(null, 200);
+    }
+
+    const deviceSecretPolicy = evaluateDeviceSecretRevokePolicy(clientMetadata, {
+      clientId: deviceSecret.client_id,
+      trustGroupId: deviceSecret.trust_group_id,
+    });
+    if (!deviceSecretPolicy.allowed) {
+      log.warn('Device secret revoke denied by caller policy', {
+        action: 'revoke',
+        type: 'device_secret',
+        clientId: client_id,
+        callerClass: deviceSecretPolicy.callerClass,
+        code: deviceSecretPolicy.code,
+      });
+      return deviceSecretPolicyErrorResponse(
+        c,
+        deviceSecretPolicy.code,
+        deviceSecretPolicy.description
+      );
+    }
+
+    const revokeReason =
+      deviceSecretPolicy.callerClass === 'native_public_client' ? 'logout' : 'token_revocation';
+    await deviceSecretRepo.revoke(deviceSecret.id, revokeReason, tenantId);
+
+    log.info('Device secret revoke requested', {
+      action: 'revoke',
+      type: 'device_secret',
+      clientId: client_id,
+      targetClientId: deviceSecret.client_id,
+      targetInstallationId: deviceSecret.installation_id ?? deviceSecret.id,
+      isPublicClient,
+      callerClass: deviceSecretPolicy.callerClass,
+      revokeReason,
+    });
+
+    return c.body(null, 200);
+  }
 
   // Parse token to extract claims (without verification yet)
-  const log = getLogger(c).module('REVOKE');
   let tokenPayload;
   try {
     tokenPayload = parseToken(token);
@@ -250,7 +335,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     try {
       // Also add the refresh token to the access token revocation list
       // This handles cases where access tokens might share JTI prefix with refresh tokens
-      await revokeToken(c.env, refreshTokenJti, expiresIn);
+      await revokeToken(c.env, refreshTokenJti, expiresIn, undefined, tenantId);
 
       // Log cascade revocation for audit
       log.info('Cascade revocation triggered', {
@@ -271,30 +356,30 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   if (token_type_hint === 'refresh_token') {
     // Revoke refresh token
-    await deleteRefreshToken(c.env, jti, tokenClientId);
+    await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
     // P1: Cascade - also revoke related access tokens
     await performCascadeRevocation(jti);
     revokedTokenType = 'refresh_token';
   } else if (token_type_hint === 'access_token') {
     // Revoke access token
-    await revokeToken(c.env, jti, expiresIn);
+    await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
     revokedTokenType = 'access_token';
   } else {
     // No hint provided, try both types
     // First, check if it's a refresh token (V2 API)
     const refreshTokenData = userId
-      ? await getRefreshToken(c.env, userId, version, tokenClientId, jti)
+      ? await getRefreshToken(c.env, userId, version, tokenClientId, jti, tenantId)
       : null;
     if (refreshTokenData) {
       // It's a refresh token
-      await deleteRefreshToken(c.env, jti, tokenClientId);
+      await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
       // P1: Cascade - also revoke related access tokens
       const familyId = refreshTokenData.familyId;
       await performCascadeRevocation(jti, familyId);
       revokedTokenType = 'refresh_token';
     } else {
       // Assume it's an access token
-      await revokeToken(c.env, jti, expiresIn);
+      await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
       revokedTokenType = 'access_token';
     }
   }
@@ -342,7 +427,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
 interface BatchRevokeTokenItem {
   token: string;
-  token_type_hint?: 'access_token' | 'refresh_token';
+  token_type_hint?: 'access_token' | 'refresh_token' | 'device_secret';
 }
 
 interface BatchRevokeRequest {
@@ -427,7 +512,8 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
     if (
       item.token_type_hint &&
       item.token_type_hint !== 'access_token' &&
-      item.token_type_hint !== 'refresh_token'
+      item.token_type_hint !== 'refresh_token' &&
+      item.token_type_hint !== 'device_secret'
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -502,6 +588,13 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
           : '***';
 
       try {
+        if (item.token_type_hint === 'device_secret') {
+          const tenantId = getTenantIdFromContext(c);
+          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+          await deviceSecretRepo.revokeByRawSecret(item.token, 'batch_token_revocation', tenantId);
+          return { token_hint: tokenHint, status: 'revoked' };
+        }
+
         // Parse token to extract claims
         const tokenPayload = parseToken(item.token);
         const jti = tokenPayload.jti as string;
@@ -557,20 +650,20 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
 
         // Revoke the token
         if (item.token_type_hint === 'refresh_token') {
-          await deleteRefreshToken(c.env, jti, tokenClientId);
-          await revokeToken(c.env, jti, expiresIn); // Cascade
+          await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
+          await revokeToken(c.env, jti, expiresIn, undefined, tenantId); // Cascade
         } else if (item.token_type_hint === 'access_token') {
-          await revokeToken(c.env, jti, expiresIn);
+          await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
         } else {
           // No hint - check if refresh token first
           const refreshTokenData = userId
-            ? await getRefreshToken(c.env, userId, version, tokenClientId, jti)
+            ? await getRefreshToken(c.env, userId, version, tokenClientId, jti, tenantId)
             : null;
           if (refreshTokenData) {
-            await deleteRefreshToken(c.env, jti, tokenClientId);
-            await revokeToken(c.env, jti, expiresIn); // Cascade
+            await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
+            await revokeToken(c.env, jti, expiresIn, undefined, tenantId); // Cascade
           } else {
-            await revokeToken(c.env, jti, expiresIn);
+            await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
           }
         }
 

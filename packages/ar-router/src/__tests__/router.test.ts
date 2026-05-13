@@ -33,6 +33,7 @@ const createMockEnv = () => ({
   OP_MANAGEMENT: createMockFetcher('OP_MANAGEMENT'),
   OP_ASYNC: createMockFetcher('OP_ASYNC'),
   OP_SAML: createMockFetcher('OP_SAML'),
+  EXTERNAL_IDP: createMockFetcher('EXTERNAL_IDP'),
 });
 
 describe('Router Worker', () => {
@@ -156,6 +157,13 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /api/v1/registration-fields to OP_AUTH', async () => {
+        const req = new Request('https://example.com/api/v1/registration-fields');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route /api/sessions/* to OP_AUTH', async () => {
         const req = new Request('https://example.com/api/sessions/status');
         await app.fetch(req, mockEnv);
@@ -204,6 +212,13 @@ describe('Router Worker', () => {
 
       it('should route POST /userinfo to OP_USERINFO', async () => {
         const req = new Request('https://example.com/userinfo', { method: 'POST' });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_USERINFO.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/protected/customer-profiles/* to OP_USERINFO', async () => {
+        const req = new Request('https://example.com/api/protected/customer-profiles/user-123');
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_USERINFO.fetch).toHaveBeenCalledTimes(1);
@@ -263,6 +278,54 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route GET /clients/:client_id to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/clients/client-123');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route PUT /clients/:client_id to OP_MANAGEMENT without router CSRF rejection', async () => {
+        const req = new Request('https://example.com/clients/client-123', {
+          method: 'PUT',
+          headers: {
+            Origin: 'https://foreign.example.test',
+            Authorization: 'Bearer reg-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ client_name: 'Updated smoke client' }),
+        });
+
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route DELETE /clients/:client_id to OP_MANAGEMENT without router CSRF rejection', async () => {
+        const req = new Request('https://example.com/clients/client-123', {
+          method: 'DELETE',
+          headers: {
+            Origin: 'https://foreign.example.test',
+            Authorization: 'Bearer reg-token',
+          },
+        });
+
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/auth/discovery/grant/verify to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/auth/discovery/grant/verify', {
+          method: 'POST',
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route POST /introspect to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/introspect', { method: 'POST' });
         await app.fetch(req, mockEnv);
@@ -281,6 +344,66 @@ describe('Router Worker', () => {
         const req = new Request('https://example.com/api/admin/clients');
         await app.fetch(req, mockEnv);
 
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/approval-artifacts/* to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/approval-artifacts/apc_123/portal');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/approval-receipts/* to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/approval-receipts/adr_123');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /auth/step-up/* to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/auth/step-up/start', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://app.example.test',
+            Authorization: 'Bearer actor-token',
+            'Content-Type': 'application/json',
+            'Idempotency-Key': 'idem-123',
+          },
+          body: JSON.stringify({ step_up_token: 'stu_123' }),
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route self-service /me/devices to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/me/devices?limit=50', {
+          headers: {
+            Origin: 'https://app.example.test',
+            Authorization: 'Bearer user-token',
+          },
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route self-service /me/devices/:id mutations without router CSRF rejection', async () => {
+        const req = new Request('https://example.com/me/devices/ins_123', {
+          method: 'PATCH',
+          headers: {
+            Origin: 'https://app.example.test',
+            Authorization: 'Bearer user-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ display_name: 'My iPhone' }),
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
@@ -309,6 +432,25 @@ describe('Router Worker', () => {
 
       it('should route /saml/sp/* to OP_SAML', async () => {
         const req = new Request('https://example.com/saml/sp/acs');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /api/admin/saml-providers to OP_SAML instead of OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/admin/saml-providers', {
+          headers: { 'X-Tenant-Id': 'default' },
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
+      it('should route /api/admin/saml-attribute-presets to OP_SAML', async () => {
+        const req = new Request('https://example.com/api/admin/saml-attribute-presets', {
+          headers: { 'X-Tenant-Id': 'default' },
+        });
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
@@ -429,6 +571,25 @@ describe('Router Worker', () => {
       expect(res.headers.get('Access-Control-Allow-Headers')).toContain('Authorization');
     });
 
+    it('should allow step-up and delegated-write request headers in preflight', async () => {
+      const req = new Request('https://example.com/auth/step-up/actions/action_123/complete', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://app.example.com',
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers':
+            'Content-Type, Authorization, Idempotency-Key, Authrim-Step-Up-Receipt',
+        },
+      });
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(204);
+      const allowHeaders = res.headers.get('Access-Control-Allow-Headers');
+      expect(allowHeaders).toContain('Idempotency-Key');
+      expect(allowHeaders).toContain('Authrim-Step-Up-Receipt');
+      expect(allowHeaders).not.toContain('X-Session-Id');
+    });
+
     it('should expose rate limit and ETag headers', async () => {
       const req = new Request('https://example.com/api/health', {
         headers: { Origin: 'https://app.example.com' },
@@ -439,6 +600,95 @@ describe('Router Worker', () => {
       expect(exposeHeaders).toContain('X-RateLimit-Limit');
       expect(exposeHeaders).toContain('ETag');
       expect(exposeHeaders).toContain('Location');
+    });
+
+    it('should allow exact Admin UI origin with credentials for Admin API preflight', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://admin.example.com',
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'Content-Type, X-Tenant-Id',
+        },
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://admin.example.com');
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+      const allowHeaders = res.headers.get('Access-Control-Allow-Headers');
+      expect(allowHeaders).toContain('X-Tenant-Id');
+      expect(allowHeaders).not.toContain('X-Session-Id');
+    });
+
+    it('should not allow unrelated origins for Admin API credentialed CORS', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://evil.example.com',
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'Content-Type, X-Tenant-Id',
+        },
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+    });
+  });
+
+  describe('Bearer Token Transport', () => {
+    it('should reject query access_token on canonical Authrim endpoints', async () => {
+      const req = new Request('https://example.com/userinfo?access_token=leaked-token');
+      const res = await app.fetch(req, mockEnv);
+      const body = (await res.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_details?.code).toBe('bearer_token_transport_unsupported');
+      expect(mockEnv.OP_USERINFO.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject form access_token on canonical Authrim endpoints', async () => {
+      const req = new Request('https://example.com/userinfo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'access_token=leaked-token',
+      });
+      const res = await app.fetch(req, mockEnv);
+      const body = (await res.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_details?.code).toBe('bearer_token_transport_unsupported');
+      expect(mockEnv.OP_USERINFO.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should not apply query access_token rejection to external IdP callbacks', async () => {
+      const req = new Request(
+        'https://example.com/auth/external/github/callback?access_token=provider-token'
+      );
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -551,6 +801,52 @@ describe('Router Worker', () => {
       expect(body.error).toBe('csrf_validation_failed');
     });
 
+    it('should allow state-changing Admin API requests from exact Admin UI origin', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://admin.example.com',
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': 'first',
+        },
+        body: JSON.stringify({ client_name: 'Test Client' }),
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      const forwardedRequest = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0];
+      expect(new URL(forwardedRequest.url).pathname).toBe('/api/admin/clients');
+      expect(forwardedRequest.headers.get('X-Tenant-Id')).toBe('first');
+    });
+
+    it('should block state-changing Admin API requests from unrelated origins', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://evil.example.com',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ client_name: 'Test Client' }),
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+      const body = (await res.json()) as { error: string };
+
+      expect(res.status).toBe(403);
+      expect(body.error).toBe('csrf_validation_failed');
+      expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+    });
+
     it('should bypass router CSRF for initial admin setup API and forward the request', async () => {
       const envWithOrigins = {
         ...mockEnv,
@@ -592,7 +888,7 @@ describe('Router Worker', () => {
         BASE_DOMAIN: 'example.com',
         DEFAULT_TENANT_ID: 'first',
         ENABLE_LOGIN_UI_PROXY: 'true',
-        AR_LOGIN_UI_URL: 'https://example-login.pages.dev',
+        AR_LOGIN_UI_URL: 'https://login-ui.example.com',
       };
 
       const req = new Request('https://example.com/discover?/resolve', {

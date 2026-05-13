@@ -6,11 +6,13 @@
  * Architecture:
  * - DatabaseAdapter: Interface for database operations
  * - D1Adapter: Cloudflare D1 implementation
+ * - PostgresAdapter: PostgreSQL via Hyperdrive
+ * - MysqlAdapter: MySQL via Hyperdrive
  * - PIIPartitionRouter: Routes PII access to correct database (Phase 3)
  *
  * Usage:
  * ```typescript
- * import { createD1Adapter, type DatabaseAdapter } from '@authrim/ar-lib-core/db';
+ * import { createD1Adapter, createPostgresAdapter, type DatabaseAdapter } from '@authrim/ar-lib-core/db';
  *
  * // Create adapter for Core DB
  * const coreAdapter = createD1Adapter(env.DB, 'core');
@@ -32,12 +34,30 @@ export type {
   PIIStatus,
   PIIClass,
 } from './adapter';
+export type { DatabaseSource } from './adapter-source';
 
 // Utilities
 export { escapeLikePattern } from './adapter';
+export {
+  ensureDatabaseAdapter,
+  ensureOptionalDatabaseAdapter,
+  isDatabaseAdapter,
+  isD1DatabaseLike,
+  isDatabaseSource,
+} from './adapter-source';
 
 // Adapters
-export { D1Adapter, createD1Adapter, type D1AdapterConfig } from './adapters';
+export {
+  D1Adapter,
+  createD1Adapter,
+  type D1AdapterConfig,
+  PostgresAdapter,
+  createPostgresAdapter,
+  type PostgresAdapterConfig,
+  MysqlAdapter,
+  createMysqlAdapter,
+  type MysqlAdapterConfig,
+} from './adapters';
 
 // Partition Router
 export {

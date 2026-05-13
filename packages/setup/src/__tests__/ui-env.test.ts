@@ -117,8 +117,8 @@ describe('ui-env module', () => {
       const config = createDefaultConfig('test');
       config.urls = {
         api: { custom: 'https://api.example.com', auto: 'https://test-ar-router.workers.dev' },
-        loginUi: { custom: null, auto: 'https://test-ar-login-ui.pages.dev', sameAsApi: false },
-        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.pages.dev', sameAsApi: false },
+        loginUi: { custom: null, auto: 'https://test-ar-login-ui.workers.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.workers.dev', sameAsApi: false },
       };
 
       expect(buildInitialUiEnvConfig(config)).toEqual({
@@ -132,8 +132,8 @@ describe('ui-env module', () => {
       const config = createDefaultConfig('test');
       config.urls = {
         api: { custom: null, auto: 'test.authrim.com' },
-        loginUi: { custom: null, auto: 'https://test-ar-login-ui.pages.dev', sameAsApi: false },
-        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.pages.dev', sameAsApi: false },
+        loginUi: { custom: null, auto: 'https://test-ar-login-ui.workers.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.workers.dev', sameAsApi: false },
       };
 
       expect(buildInitialUiEnvConfig(config)).toEqual({
@@ -147,8 +147,8 @@ describe('ui-env module', () => {
       const config = createDefaultConfig('test');
       config.urls = {
         api: { custom: null },
-        loginUi: { custom: null, auto: 'https://test-ar-login-ui.pages.dev', sameAsApi: false },
-        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.pages.dev', sameAsApi: false },
+        loginUi: { custom: null, auto: 'https://test-ar-login-ui.workers.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.workers.dev', sameAsApi: false },
       };
 
       expect(buildInitialUiEnvConfig(config)).toBeNull();

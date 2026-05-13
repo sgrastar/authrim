@@ -44,8 +44,13 @@ CREATE TABLE IF NOT EXISTS migration_metadata (
   metadata_json TEXT
 );
 
-INSERT OR IGNORE INTO migration_metadata (id, current_version, environment)
-VALUES ('global', 0, 'development');
+INSERT INTO migration_metadata (id, current_version, environment)
+SELECT 'global', 0, 'development'
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM migration_metadata
+  WHERE id = 'global'
+);
 
 -- =============================================================================
 -- users_pii Table (PII Data)

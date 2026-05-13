@@ -16,16 +16,16 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   AdminPasskeyRepository,
-  AdminAuditLogRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
   adminAuthMiddleware,
   generateId,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
+import { writeAdminAuditLog } from '../../admin-shared';
 import type {
   RegistrationResponseJSON,
   AuthenticatorTransportFuture,
@@ -82,10 +82,7 @@ function toBase64URLString(input: CredentialIDLike): string {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getAdminAdapter(c: Context<any, any, any>) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
-  }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
 }
 
 /**
@@ -99,21 +96,11 @@ async function createAuditLog(
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const authContext = c.get('adminAuth') as AdminAuthContext;
-  const adapter = getAdminAdapter(c);
-  const auditRepo = new AdminAuditLogRepository(adapter);
-  const tenantId = getTenantIdFromContext(c);
-
-  await auditRepo.createAuditLog({
-    tenant_id: tenantId,
-    admin_user_id: authContext.userId,
-    admin_email: authContext.email,
+  await writeAdminAuditLog(c, {
     action,
-    resource_type: 'admin_passkey',
-    resource_id: resourceId,
+    resourceType: 'admin_passkey',
+    resourceId,
     result,
-    ip_address: c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
-    user_agent: c.req.header('user-agent') || undefined,
     metadata,
   });
 }

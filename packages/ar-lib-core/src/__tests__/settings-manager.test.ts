@@ -628,10 +628,18 @@ describe('SettingsManager', () => {
 
   describe('client scope', () => {
     it('should use correct KV key for client scope', async () => {
-      const result = await manager.getAll('test', { type: 'client', id: 'client_123' });
+      const result = await manager.getAll('test', {
+        type: 'client',
+        id: 'client_123',
+        tenantId: 'tenant_abc',
+      });
 
-      expect(result.scope).toEqual({ type: 'client', id: 'client_123' });
-      expect(mockKV.get).toHaveBeenCalledWith('settings:client:client_123:test');
+      expect(result.scope).toEqual({
+        type: 'client',
+        id: 'client_123',
+        tenantId: 'tenant_abc',
+      });
+      expect(mockKV.get).toHaveBeenCalledWith('settings:client:tenant_abc:client_123:test');
     });
   });
 

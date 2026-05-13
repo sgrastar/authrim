@@ -17,6 +17,8 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
+  resolveOptionalCoreAdapterFromHono,
   type PartitionSettings,
   type PartitionRule,
   type UserPartitionAttributes,
@@ -49,8 +51,8 @@ interface UpdatePartitionSettingsRequest {
  * Request body for POST /api/admin/settings/pii-partitions/test
  */
 interface TestPartitionRoutingRequest {
-  /** Tenant ID */
-  tenantId: string;
+  /** Tenant ID. When provided, it must match the current tenant context. */
+  tenantId?: string;
   /** User attributes for rule evaluation */
   attributes?: UserPartitionAttributes;
   /** Simulated CF geo properties */
@@ -217,7 +219,7 @@ export async function updatePartitionSettings(c: Context<{ Bindings: Env }>) {
  * Does not create any data, just returns the resolved partition.
  *
  * Request Body:
- * - tenantId: string (required)
+ * - tenantId: string (optional; must match the current tenant context when present)
  * - attributes: UserPartitionAttributes (optional)
  * - cfData: CfGeoProperties (optional)
  *
@@ -234,8 +236,10 @@ export async function testPartitionRouting(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
-  if (!body.tenantId) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+  const tenantId = resolveSettingsTenantId(c);
+  const requestedTenantId = body.tenantId?.trim();
+  if (requestedTenantId && requestedTenantId !== tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
       variables: { field: 'tenantId' },
     });
   }
@@ -262,7 +266,7 @@ export async function testPartitionRouting(c: Context<{ Bindings: Env }>) {
 
   // Simulate partition resolution
   const resolution = resolvePartitionForTest(
-    body.tenantId,
+    tenantId,
     body.attributes ?? {},
     body.cfData,
     settings,
@@ -270,7 +274,7 @@ export async function testPartitionRouting(c: Context<{ Bindings: Env }>) {
   );
 
   return c.json({
-    tenantId: body.tenantId,
+    tenantId,
     attributes: body.attributes ?? {},
     cfData: body.cfData,
     resolution: {
@@ -301,31 +305,51 @@ export async function testPartitionRouting(c: Context<{ Bindings: Env }>) {
  * - byPartition: Map of partition → user count
  */
 export async function getPartitionStats(c: Context<{ Bindings: Env }>) {
-  const db = c.env.DB;
-  if (!db) {
-    return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
+  const tenantId = resolveSettingsTenantId(c);
+  return getPartitionStatsForTenant(c, tenantId);
+}
+
+export async function getPlatformPartitionStats(c: Context<{ Bindings: Env }>) {
+  const tenantId = c.req.query('tenant_id');
+  if (tenantId) {
+    return getPartitionStatsForTenant(c, tenantId);
   }
 
-  const tenantId = c.req.query('tenant_id');
   const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);
+  const coreAdapter = resolveOptionalCoreAdapterFromHono(c, 'pii-partition-stats');
+  if (!coreAdapter) {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
 
-  // Query partition statistics
-  const sql = tenantId
-    ? 'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_partition'
-    : 'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE is_active = 1 GROUP BY pii_partition';
+  const sql =
+    'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE is_active = 1 GROUP BY pii_partition';
 
-  const params = tenantId ? [tenantId] : [];
+  return queryPartitionStats(c, availablePartitions, coreAdapter, sql, [], 'all');
+}
 
+async function getPartitionStatsForTenant(c: Context<{ Bindings: Env }>, tenantId: string) {
+  const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);
+  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+  const sql =
+    'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_partition';
+
+  return queryPartitionStats(c, availablePartitions, coreAdapter, sql, [tenantId], tenantId);
+}
+
+async function queryPartitionStats(
+  c: Context<{ Bindings: Env }>,
+  availablePartitions: string[],
+  coreAdapter: ReturnType<typeof createAuthContextFromHono>['coreAdapter'],
+  sql: string,
+  params: unknown[],
+  tenantId: string
+) {
   try {
-    const result = await db
-      .prepare(sql)
-      .bind(...params)
-      .all();
-
+    const result = await coreAdapter.query<{ pii_partition: string; count: number }>(sql, params);
     const byPartition: Record<string, number> = {};
     let total = 0;
 
-    for (const row of result.results as { pii_partition: string; count: number }[]) {
+    for (const row of result) {
       byPartition[row.pii_partition] = row.count;
       total += row.count;
     }
@@ -341,7 +365,7 @@ export async function getPartitionStats(c: Context<{ Bindings: Env }>) {
       total,
       byPartition,
       availablePartitions,
-      tenantId: tenantId ?? 'all',
+      tenantId,
     });
   } catch (error) {
     // Table may not exist yet (before migration)
@@ -349,7 +373,7 @@ export async function getPartitionStats(c: Context<{ Bindings: Env }>) {
       total: 0,
       byPartition: {},
       availablePartitions,
-      tenantId: tenantId ?? 'all',
+      tenantId,
       note: 'users_core table may not exist yet. Run migrations first.',
     });
   }

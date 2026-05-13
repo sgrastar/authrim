@@ -160,7 +160,8 @@
 				is_exportable: editForm.is_exportable,
 				is_vc_claim: editForm.is_vc_claim,
 				show_on_registration: editForm.show_on_registration,
-				registration_required: editForm.registration_required,
+				registration_required:
+					editForm.show_on_registration && editForm.registration_required,
 				registration_order: editForm.registration_order,
 				registration_placeholder: editForm.registration_placeholder || null
 			});
@@ -236,8 +237,15 @@
 		loadSchema();
 	});
 
+	$effect(() => {
+		if (!editForm.show_on_registration && editForm.registration_required) {
+			editForm.registration_required = false;
+		}
+	});
+
 	const isSystem = $derived(!!schema?.is_system);
 	const isEditable = $derived(schema?.operation_status === 'active');
+	const registrationConfigDisabled = $derived(!isEditable || !editForm.show_on_registration);
 	const statusInfo = $derived(schema ? getOperationStatusInfo(schema.operation_status) : null);
 </script>
 
@@ -568,37 +576,47 @@
 							<input
 								type="checkbox"
 								bind:checked={editForm.registration_required}
-								disabled={!isEditable || !editForm.show_on_registration}
+								disabled={registrationConfigDisabled}
 							/>
 							Required on signup
 						</label>
 					</div>
-					{#if editForm.show_on_registration}
-						<div class="flex gap-4 flex-wrap">
-							<div style="min-width:120px;">
-								<label class="form-label" for="reg-order">Display order</label>
-								<input
-									id="reg-order"
-									type="number"
-									bind:value={editForm.registration_order}
-									disabled={!isEditable}
-									min="0"
-									class="form-input"
-								/>
+					<div
+						class="registration-settings"
+						class:is-disabled={registrationConfigDisabled}
+						aria-disabled={registrationConfigDisabled}
+					>
+						{#if editForm.show_on_registration}
+							<div class="flex gap-4 flex-wrap">
+								<div style="min-width:120px;">
+									<label class="form-label" for="reg-order">Display order</label>
+									<input
+										id="reg-order"
+										type="number"
+										bind:value={editForm.registration_order}
+										disabled={!isEditable}
+										min="0"
+										class="form-input"
+									/>
+								</div>
+								<div style="flex:1; min-width:200px;">
+									<label class="form-label" for="reg-placeholder">Placeholder text</label>
+									<input
+										id="reg-placeholder"
+										type="text"
+										bind:value={editForm.registration_placeholder}
+										disabled={!isEditable}
+										placeholder="e.g. Enter your department"
+										class="form-input"
+									/>
+								</div>
 							</div>
-							<div style="flex:1; min-width:200px;">
-								<label class="form-label" for="reg-placeholder">Placeholder text</label>
-								<input
-									id="reg-placeholder"
-									type="text"
-									bind:value={editForm.registration_placeholder}
-									disabled={!isEditable}
-									placeholder="e.g. Enter your department"
-									class="form-input"
-								/>
-							</div>
-						</div>
-					{/if}
+						{:else}
+							<p class="registration-disabled-hint">
+								Enable "Show on signup form" to edit required, order, and placeholder settings.
+							</p>
+						{/if}
+					</div>
 				</div>
 
 				<!-- Save button -->
@@ -912,6 +930,32 @@
 		font-size: 0.75rem;
 		color: #6b7280;
 		margin-top: 0.25rem;
+	}
+
+	.registration-settings {
+		border: 1px dashed color-mix(in srgb, var(--border, #e5e7eb) 85%, transparent);
+		border-radius: 8px;
+		padding: 0.875rem;
+		transition:
+			opacity 0.15s ease,
+			border-color 0.15s ease;
+	}
+
+	.registration-settings.is-disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.registration-settings.is-disabled :global(input),
+	.registration-settings.is-disabled :global(select),
+	.registration-settings.is-disabled :global(textarea) {
+		cursor: not-allowed;
+	}
+
+	.registration-disabled-hint {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--text-secondary, #6b7280);
 	}
 
 	.detail-dl {

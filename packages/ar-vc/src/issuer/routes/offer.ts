@@ -12,7 +12,12 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+} from '@authrim/ar-lib-core';
 import { getRequestIssuerIdentifier } from '../../request-identifiers';
 
 interface CredentialOffer {
@@ -52,7 +57,7 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
 
     // Get DO stub using region-aware sharding (self-routing from ID)
     // Offer ID format: g{gen}:{region}:{shard}:co_{uuid}
-    const { stub } = getCredentialOfferStoreById(c.env, offerId);
+    const { stub } = getCredentialOfferStoreById(c.env, offerId, getTenantIdFromContext(c));
 
     const response = await stub.fetch(new Request('https://internal/get'));
 

@@ -15,14 +15,15 @@
  * - API key expiration support
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
 import {
+  ensureDatabaseAdapter,
   timingSafeEqual,
   verifyToken,
   importPublicKeyFromJWK,
   parseTokenHeader,
   createLogger,
-  DEFAULT_TENANT_ID,
+  type DatabaseSource,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import type { CheckApiKey, RateLimitTier, CheckApiOperation } from '@authrim/ar-lib-core';
@@ -76,10 +77,9 @@ export interface CheckAuthResult {
  * Authentication context for Check API
  */
 export interface CheckAuthContext {
-  db: D1Database;
+  db: DatabaseSource;
   cache?: KVNamespace;
   policyApiSecret?: string;
-  defaultTenantId?: string;
   /** Issuer URL for JWT verification (e.g., https://auth.example.com) */
   issuerUrl?: string;
   /** Expected audience for JWT verification */
@@ -196,32 +196,31 @@ async function validateApiKey(
 
   // Query database by prefix (narrow down candidates) then verify hash
   try {
-    const result = await ctx.db
-      .prepare(
-        `SELECT id, tenant_id, client_id, name, key_hash, key_prefix,
+    const adapter = ensureDatabaseAdapter(ctx.db, 'policy-check-auth');
+    const rows = await adapter.query<{
+      id: string;
+      tenant_id: string;
+      client_id: string;
+      name: string;
+      key_hash: string;
+      key_prefix: string;
+      allowed_operations: string;
+      rate_limit_tier: string;
+      is_active: number;
+      expires_at: number | null;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT id, tenant_id, client_id, name, key_hash, key_prefix,
                 allowed_operations, rate_limit_tier, is_active, expires_at,
                 created_at, updated_at
          FROM check_api_keys
          WHERE key_prefix = ?
-         LIMIT 10`
-      )
-      .bind(keyPrefix)
-      .all<{
-        id: string;
-        tenant_id: string;
-        client_id: string;
-        name: string;
-        key_hash: string;
-        key_prefix: string;
-        allowed_operations: string;
-        rate_limit_tier: string;
-        is_active: number;
-        expires_at: number | null;
-        created_at: number;
-        updated_at: number;
-      }>();
+         LIMIT 10`,
+      [keyPrefix]
+    );
 
-    for (const row of result.results) {
+    for (const row of rows) {
       // Use timing-safe comparison to prevent timing attacks
       if (timingSafeEqual(row.key_hash, keyHash)) {
         // Check if active
@@ -297,8 +296,6 @@ async function validateAccessToken(
   token: string
 ): Promise<AccessTokenValidationResult> {
   try {
-    const fallbackTenantId = ctx.defaultTenantId ?? DEFAULT_TENANT_ID;
-
     // Parse JWT parts for validation
     const parts = token.split('.');
     if (parts.length !== 3) {
@@ -323,7 +320,10 @@ async function validateAccessToken(
         valid: true,
         clientId: payload.client_id || payload.azp,
         subjectId: payload.sub,
-        tenantId: payload.tenant_id || fallbackTenantId,
+        tenantId:
+          typeof payload.tenant_id === 'string' && payload.tenant_id.trim()
+            ? payload.tenant_id.trim()
+            : undefined,
       };
     }
 
@@ -362,7 +362,10 @@ async function validateAccessToken(
       valid: true,
       clientId: tokenPayload.client_id || tokenPayload.azp,
       subjectId: payload.sub,
-      tenantId: tokenPayload.tenant_id || fallbackTenantId,
+      tenantId:
+        typeof tokenPayload.tenant_id === 'string' && tokenPayload.tenant_id.trim()
+          ? tokenPayload.tenant_id.trim()
+          : undefined,
     };
   } catch (error) {
     if (error instanceof Error) {
@@ -487,6 +490,15 @@ export async function authenticateCheckApiRequest(
   if (isJwtFormat(token)) {
     const result = await validateAccessToken(ctx, token);
 
+    if (result.valid && !result.tenantId) {
+      return {
+        authenticated: false,
+        error: 'invalid_token',
+        errorDescription: 'Access token is missing tenant_id',
+        statusCode: 401,
+      };
+    }
+
     if (!result.valid) {
       const errorMap: Record<string, { error: string; description: string; status: number }> = {
         invalid_jwt_format: {
@@ -541,7 +553,7 @@ export async function authenticateCheckApiRequest(
       method: 'access_token',
       clientId: result.clientId,
       subjectId: result.subjectId,
-      tenantId: result.tenantId || ctx.defaultTenantId || DEFAULT_TENANT_ID,
+      tenantId: result.tenantId,
       // Access tokens get moderate rate limiting by default
       rateLimitTier: 'moderate',
       // Access tokens can do check and batch by default
@@ -554,7 +566,6 @@ export async function authenticateCheckApiRequest(
     return {
       authenticated: true,
       method: 'policy_secret',
-      tenantId: ctx.defaultTenantId || DEFAULT_TENANT_ID,
       // Policy secret gets lenient rate limiting (internal use)
       rateLimitTier: 'lenient',
       allowedOperations: ['check', 'batch', 'subscribe'],
@@ -579,6 +590,33 @@ export function isOperationAllowed(auth: CheckAuthResult, operation: CheckApiOpe
   }
 
   return auth.allowedOperations.includes(operation);
+}
+
+/**
+ * Resolve the tenant for a Check API request.
+ *
+ * API keys and access tokens are tenant-bound, so request-level tenant overrides
+ * must not cross the authenticated tenant. The shared policy secret is an
+ * internal system credential and may target any explicit tenant.
+ */
+export function resolveAuthorizedCheckTenantId(
+  auth: CheckAuthResult,
+  requestedTenantId: string | undefined
+): string | null {
+  const requested = requestedTenantId?.trim() || undefined;
+
+  if (auth.method === 'policy_secret') {
+    return requested ?? null;
+  }
+
+  const authTenantId = auth.tenantId?.trim();
+  const tenantId = requested ?? authTenantId;
+
+  if (!authTenantId || tenantId !== authTenantId) {
+    return null;
+  }
+
+  return tenantId;
 }
 
 // =============================================================================

@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { getDefaultDiscoveryMode, getInteractiveDiscoveryMethods } from '$lib/discovery-ui';
+	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 	import { isValidImageUrl } from '$lib/utils/url-validation';
 	import { LL } from '$i18n/i18n-svelte';
+	import { onMount } from 'svelte';
 
 	interface DiscoveryCandidate {
 		tenant_id: string;
@@ -20,6 +23,8 @@
 				email_resolution_policy: 'exact_email_then_domain' | 'exact_email_only' | 'disabled';
 				selection_policy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
 				allow_manual_tenant_entry: boolean;
+				require_common_discovery_before_login: boolean;
+				redirect_tenant_discover_to_common_entry: boolean;
 			};
 			ui: {
 				theme: string;
@@ -37,11 +42,15 @@
 		rememberedCandidate: DiscoveryCandidate | null;
 		inviteToken?: string | null;
 		inviteErrorCode?: string | null;
+		expectedTenantId?: string | null;
+		returnTo?: string | null;
+		loginHint?: string | null;
 	}
 
 	interface ActionData {
 		mode?: string;
 		value?: string;
+		loginHint?: string;
 		errorCode?: string;
 		candidates?: DiscoveryCandidate[];
 		result?: 'multiple' | 'manual_required' | 'not_found';
@@ -65,6 +74,7 @@
 	let value = $derived(submittedValue);
 
 	const candidates = $derived(form?.candidates || []);
+	const loginHint = $derived(form?.loginHint || data.loginHint || '');
 	const errorCode = $derived(form?.errorCode || data.inviteErrorCode || '');
 	const errorMessage = $derived(errorCode ? getErrorMessage(errorCode) : '');
 	const pageTitle = $derived(ui.page_title || $LL.discover_pageTitle());
@@ -72,6 +82,12 @@
 	const titleText = $derived(ui.title_text || $LL.discover_title());
 	const subtitleText = $derived(ui.subtitle_text || $LL.discover_subtitle());
 	const brandName = $derived(ui.brand_name || $LL.app_title());
+
+	let discoverySubmitting = $state(false);
+
+	onMount(() => {
+		themeStore.setTenantDefaults(ui.theme, ui.variant);
+	});
 
 	function modeLabel(mode: string): string {
 		switch (mode) {
@@ -137,14 +153,24 @@
 	function shouldPostCandidateSelection(): boolean {
 		return data.config.is_common_entry_host;
 	}
+
+	function shouldPostRememberedCandidate(): boolean {
+		return data.config.is_common_entry_host;
+	}
+
+	function handleDiscoverySubmit() {
+		discoverySubmitting = true;
+	}
 </script>
 
 <svelte:head>
 	<title>{pageTitle}</title>
 </svelte:head>
 
-<div class="discover-page" data-theme={ui.theme} data-variant={ui.variant}>
+<div class="discover-page">
 	<div class="discover-card">
+		<LanguageSwitcher />
+
 		<div class="discover-brand">
 			{#if ui.logo_url && isValidImageUrl(ui.logo_url)}
 				<img src={ui.logo_url} alt={brandName} class="discover-brand-logo" />
@@ -177,25 +203,79 @@
 		{#if showTenantChooser && rememberedCandidate}
 			<div class="recent-tenant">
 				<p class="recent-label">{$LL.discover_recentTenant()}</p>
-				<a class="tenant-option" href={rememberedCandidateHref(rememberedCandidate)}>
-					<div class="tenant-branding">
-						{#if rememberedCandidate.logo_url}
-							<img src={rememberedCandidate.logo_url} alt={rememberedCandidate.display_name} />
+				{#if shouldPostRememberedCandidate()}
+					<form
+						method="POST"
+						action="/discover?/resolve"
+						class="tenant-option-form"
+						onsubmit={handleDiscoverySubmit}
+					>
+						{#if data.inviteToken}
+							<input type="hidden" name="invite_token" value={data.inviteToken} />
 						{/if}
-						<div>
-							<strong>{rememberedCandidate.display_name}</strong>
-							<p>{rememberedCandidate.tenant_code}</p>
+						{#if data.expectedTenantId}
+							<input type="hidden" name="expected_tenant_id" value={data.expectedTenantId} />
+						{/if}
+						{#if data.returnTo}
+							<input type="hidden" name="return_to" value={data.returnTo} />
+						{/if}
+						{#if loginHint}
+							<input type="hidden" name="login_hint" value={loginHint} />
+						{/if}
+						<input type="hidden" name="mode" value="tenant_code" />
+						<input type="hidden" name="value" value={rememberedCandidate.tenant_code} />
+						<button
+							type="submit"
+							class="tenant-option tenant-option-button"
+							disabled={discoverySubmitting}
+						>
+							<div class="tenant-branding">
+								{#if rememberedCandidate.logo_url}
+									<img src={rememberedCandidate.logo_url} alt={rememberedCandidate.display_name} />
+								{/if}
+								<div>
+									<strong>{rememberedCandidate.display_name}</strong>
+									<p>{rememberedCandidate.tenant_code}</p>
+								</div>
+							</div>
+							<span>{loginPath(rememberedCandidate.login_url)}</span>
+						</button>
+					</form>
+				{:else}
+					<a class="tenant-option" href={rememberedCandidateHref(rememberedCandidate)}>
+						<div class="tenant-branding">
+							{#if rememberedCandidate.logo_url}
+								<img src={rememberedCandidate.logo_url} alt={rememberedCandidate.display_name} />
+							{/if}
+							<div>
+								<strong>{rememberedCandidate.display_name}</strong>
+								<p>{rememberedCandidate.tenant_code}</p>
+							</div>
 						</div>
-					</div>
-					<span>{loginPath(rememberedCandidate.login_url)}</span>
-				</a>
+						<span>{loginPath(rememberedCandidate.login_url)}</span>
+					</a>
+				{/if}
 			</div>
 		{/if}
 
 		{#if showTenantChooser}
-			<form method="POST" action="/discover?/resolve" class="discover-form">
+			<form
+				method="POST"
+				action="/discover?/resolve"
+				class="discover-form"
+				onsubmit={handleDiscoverySubmit}
+			>
 				{#if data.inviteToken}
 					<input type="hidden" name="invite_token" value={data.inviteToken} />
+				{/if}
+				{#if data.expectedTenantId}
+					<input type="hidden" name="expected_tenant_id" value={data.expectedTenantId} />
+				{/if}
+				{#if data.returnTo}
+					<input type="hidden" name="return_to" value={data.returnTo} />
+				{/if}
+				{#if loginHint}
+					<input type="hidden" name="login_hint" value={loginHint} />
 				{/if}
 
 				{#if interactiveMethods.length > 1}
@@ -229,7 +309,12 @@
 					/>
 				</div>
 
-				<button type="submit" class="primary-button">{$LL.common_continue()}</button>
+				<button type="submit" class="primary-button" disabled={discoverySubmitting}>
+					{#if discoverySubmitting}
+						<span class="button-spinner" aria-hidden="true"></span>
+					{/if}
+					{$LL.common_continue()}
+				</button>
 			</form>
 		{/if}
 
@@ -238,13 +323,31 @@
 				<h2>{$LL.discover_selectTenant()}</h2>
 				{#each candidates as candidate (candidate.tenant_id)}
 					{#if shouldPostCandidateSelection()}
-						<form method="POST" action="/discover?/resolve" class="tenant-option-form">
+						<form
+							method="POST"
+							action="/discover?/resolve"
+							class="tenant-option-form"
+							onsubmit={handleDiscoverySubmit}
+						>
 							{#if data.inviteToken}
 								<input type="hidden" name="invite_token" value={data.inviteToken} />
 							{/if}
+							{#if data.expectedTenantId}
+								<input type="hidden" name="expected_tenant_id" value={data.expectedTenantId} />
+							{/if}
+							{#if data.returnTo}
+								<input type="hidden" name="return_to" value={data.returnTo} />
+							{/if}
+							{#if loginHint}
+								<input type="hidden" name="login_hint" value={loginHint} />
+							{/if}
 							<input type="hidden" name="mode" value="tenant_code" />
 							<input type="hidden" name="value" value={candidate.tenant_code} />
-							<button type="submit" class="tenant-option tenant-option-button">
+							<button
+								type="submit"
+								class="tenant-option tenant-option-button"
+								disabled={discoverySubmitting}
+							>
 								<div class="tenant-branding">
 									{#if candidate.logo_url}
 										<img src={candidate.logo_url} alt={candidate.display_name} />
@@ -292,14 +395,20 @@
 
 	.discover-card {
 		width: min(100%, 680px);
+		position: relative;
 		background: var(--bg-card);
 		border: 1px solid var(--border);
 		border-radius: 24px;
-		padding: 2rem;
+		padding: 4.5rem 2rem 2rem;
 		box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
 		display: flex;
 		flex-direction: column;
 		gap: 1.25rem;
+	}
+
+	.discover-card :global(.auth-topbar) {
+		top: 1.25rem;
+		right: 1.25rem;
 	}
 
 	.discover-brand {
@@ -327,6 +436,7 @@
 	.discover-header h1 {
 		margin: 0.25rem 0 0.5rem;
 		font-size: clamp(1.8rem, 4vw, 2.4rem);
+		color: var(--text-primary);
 	}
 
 	.discover-header p,
@@ -357,9 +467,9 @@
 	}
 
 	.alert-error {
-		background: rgba(220, 38, 38, 0.1);
-		color: #b91c1c;
-		border: 1px solid rgba(220, 38, 38, 0.15);
+		background: var(--danger-light);
+		color: var(--danger);
+		border: 1px solid rgba(239, 68, 68, 0.24);
 	}
 
 	.discover-form {
@@ -374,6 +484,7 @@
 
 	label {
 		font-weight: 600;
+		color: var(--text-primary);
 	}
 
 	input,
@@ -386,7 +497,22 @@
 		color: var(--text-primary);
 	}
 
+	input::placeholder {
+		color: var(--text-muted);
+	}
+
+	input:focus,
+	select:focus {
+		outline: none;
+		border-color: var(--border-focus);
+		box-shadow: 0 0 0 4px var(--primary-light);
+	}
+
 	.primary-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
 		padding: 0.95rem 1.1rem;
 		border: none;
 		border-radius: 14px;
@@ -394,6 +520,27 @@
 		color: white;
 		font-weight: 700;
 		cursor: pointer;
+	}
+
+	.primary-button:disabled,
+	.tenant-option-button:disabled {
+		cursor: wait;
+		opacity: 0.72;
+	}
+
+	.button-spinner {
+		width: 1rem;
+		height: 1rem;
+		border-radius: 50%;
+		border: 2px solid rgba(255, 255, 255, 0.45);
+		border-top-color: white;
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.recent-tenant,
@@ -412,7 +559,11 @@
 		border-radius: 16px;
 		text-decoration: none;
 		color: inherit;
-		background: rgba(255, 255, 255, 0.02);
+		background: var(--bg-input, var(--bg-page));
+		transition:
+			border-color var(--transition-fast),
+			transform var(--transition-fast),
+			background var(--transition-fast);
 	}
 
 	.tenant-option-form {
@@ -426,7 +577,7 @@
 		cursor: pointer;
 	}
 
-	.tenant-option:hover {
+	.tenant-option:hover:not(:disabled) {
 		border-color: rgba(14, 116, 144, 0.5);
 		transform: translateY(-1px);
 	}
@@ -447,7 +598,7 @@
 
 	@media (max-width: 640px) {
 		.discover-card {
-			padding: 1.25rem;
+			padding: 4rem 1.25rem 1.25rem;
 		}
 
 		.tenant-option {

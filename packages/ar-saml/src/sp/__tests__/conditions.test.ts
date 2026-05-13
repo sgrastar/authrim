@@ -143,19 +143,21 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
     usedAssertions = new Map();
 
     // Mock IdP config
-    mockGetIdPConfigByEntityId.mockImplementation(async (_env: unknown, entityId: string) => {
-      if (entityId === 'https://idp.example.com') {
-        return {
-          entityId: 'https://idp.example.com',
-          ssoUrl: 'https://idp.example.com/sso',
-          certificate: 'mock-certificate',
-          attributeMapping: {
-            email: 'email',
-          },
-        };
+    mockGetIdPConfigByEntityId.mockImplementation(
+      async (_env: unknown, _tenantId: string, entityId: string) => {
+        if (entityId === 'https://idp.example.com') {
+          return {
+            entityId: 'https://idp.example.com',
+            ssoUrl: 'https://idp.example.com/sso',
+            certificate: 'mock-certificate',
+            attributeMapping: {
+              email: 'email',
+            },
+          };
+        }
+        return null;
       }
-      return null;
-    });
+    );
 
     // Mock environment
     mockEnv = {
@@ -166,18 +168,22 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
           return {
             bind: vi.fn().mockReturnThis(),
             first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockResolvedValue({ results: [] }),
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
+        batch: vi.fn().mockResolvedValue([]),
       } as unknown as Env['DB'],
       DB_PII: {
         prepare: vi.fn().mockImplementation(function () {
           return {
             bind: vi.fn().mockReturnThis(),
             first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockResolvedValue({ results: [] }),
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
+        batch: vi.fn().mockResolvedValue([]),
       } as unknown as Env['DB_PII'],
       SAML_REQUEST_STORE: {
         idFromName: vi.fn().mockReturnValue('mock-store-id'),
@@ -207,7 +213,10 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
   /**
    * Helper to create request and call ACS
    */
-  async function callACS(samlResponse: string): Promise<Response> {
+  async function callACS(
+    samlResponse: string,
+    options: { tenantId?: string } = {}
+  ): Promise<Response> {
     const formData = new FormData();
     formData.append('SAMLResponse', samlResponse);
 
@@ -219,7 +228,9 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
         header: vi.fn().mockReturnValue(undefined), // Mock header() for IP/UA extraction
       },
       json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
-      get: vi.fn().mockReturnValue('default'), // Mock Hono's c.get() for tenantId
+      get: vi.fn((key: string) =>
+        key === 'tenantId' ? (options.tenantId ?? 'tenant-a') : undefined
+      ),
       executionCtx: {
         waitUntil: vi.fn(), // Mock waitUntil for async operations
       },
@@ -398,6 +409,36 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
 
       const res2 = await callACS(samlResponse2);
       expect(res2.status).toBe(302);
+    });
+
+    it('should scope OneTimeUse replay tracking by tenant and IdP issuer', async () => {
+      const assertionId = '_assertion_scoped_onetimeuse';
+      const issuer = 'https://idp.example.com';
+      const samlResponse = createSAMLResponseWithConditions({
+        assertionId,
+        issuer,
+        includeOneTimeUse: true,
+      });
+
+      const res1 = await callACS(samlResponse, { tenantId: 'tenant-a' });
+      expect(res1.status).toBe(302);
+
+      const res2 = await callACS(samlResponse, { tenantId: 'tenant-b' });
+      expect(res2.status).toBe(302);
+
+      const res3 = await callACS(samlResponse, { tenantId: 'tenant-a' });
+      expect(res3.status).toBe(400);
+
+      expect([...usedAssertions.keys()]).toEqual(
+        expect.arrayContaining([
+          `saml:assertion:tenant:tenant-a:idp:${encodeURIComponent(issuer)}:id:${encodeURIComponent(
+            assertionId
+          )}`,
+          `saml:assertion:tenant:tenant-b:idp:${encodeURIComponent(issuer)}:id:${encodeURIComponent(
+            assertionId
+          )}`,
+        ])
+      );
     });
   });
 

@@ -352,7 +352,7 @@
 	<div class="page-header">
 		<div class="page-header-info">
 			<h1 class="page-title">Security</h1>
-			<p class="modal-description">
+			<p class="page-description">
 				Monitor security alerts, suspicious activities, detected threats, and check IP reputation.
 			</p>
 		</div>
