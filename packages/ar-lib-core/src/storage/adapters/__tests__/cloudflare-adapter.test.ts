@@ -173,13 +173,27 @@ describe('CloudflareStorageAdapter', () => {
 
   beforeEach(() => {
     env = createMockEnv();
-    adapter = new CloudflareStorageAdapter(env);
+    adapter = new CloudflareStorageAdapter(env, 'default');
+  });
+
+  it('rejects missing tenant id at construction time', () => {
+    expect(() => new CloudflareStorageAdapter(env, '')).toThrow(
+      'CloudflareStorageAdapter requires tenantId'
+    );
   });
 
   describe('Routing Logic', () => {
     it('should route session: prefix to SessionStore DO', async () => {
       await adapter.get('session:123');
       expect(env.SESSION_STORE.get).toHaveBeenCalled();
+    });
+
+    it('should route legacy session DO by configured tenant', async () => {
+      adapter = new CloudflareStorageAdapter(env, 'acme');
+
+      await adapter.get('session:123');
+
+      expect(env.SESSION_STORE.idFromName).toHaveBeenCalledWith('tenant:acme:session');
     });
 
     it('should route client: prefix to D1 with KV cache', async () => {
@@ -244,6 +258,27 @@ describe('CloudflareStorageAdapter', () => {
       await adapter.set('client:test-client', JSON.stringify({ client_id: 'test-client' }));
       expect(env.DB.prepare).toHaveBeenCalled();
       expect(env.CLIENTS_CACHE?.delete).toHaveBeenCalled();
+    });
+
+    it('should attach configured tenant to legacy authcode writes', async () => {
+      adapter = new CloudflareStorageAdapter(env, 'acme');
+      const authCodeStub = createMockAuthCodeStoreDO();
+      (env.AUTH_CODE_STORE.get as any).mockReturnValue(authCodeStub);
+
+      await adapter.set(
+        'authcode:abc123',
+        JSON.stringify({
+          code: 'abc123',
+          clientId: 'client-1',
+          redirectUri: 'https://client.example/cb',
+          userId: 'user-1',
+          scope: 'openid',
+        })
+      );
+
+      expect(authCodeStub.storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'abc123', tenantId: 'acme' })
+      );
     });
 
     it('should set value with refreshtoken: prefix via sharded refresh token helper', async () => {
@@ -332,7 +367,7 @@ describe('UserStore', () => {
 
   beforeEach(() => {
     env = createMockEnv();
-    adapter = new CloudflareStorageAdapter(env);
+    adapter = new CloudflareStorageAdapter(env, 'default');
     userStore = new UserStore(adapter);
   });
 
@@ -548,7 +583,7 @@ describe('ClientStore', () => {
 
   beforeEach(() => {
     env = createMockEnv();
-    adapter = new CloudflareStorageAdapter(env);
+    adapter = new CloudflareStorageAdapter(env, 'default');
     clientStore = new ClientStore(adapter);
   });
 
@@ -651,7 +686,7 @@ describe('SessionStore', () => {
 
   beforeEach(() => {
     env = createMockEnv();
-    adapter = new CloudflareStorageAdapter(env);
+    adapter = new CloudflareStorageAdapter(env, 'default');
     sessionStore = new SessionStore(adapter, env);
   });
 
@@ -682,12 +717,14 @@ describe('SessionStore', () => {
   it('should create new session', async () => {
     const mockCreateSessionRpc = vi
       .fn()
-      .mockImplementation(async (sessionId: string, userId: string, ttl: number, data: unknown) => ({
-        id: sessionId,
-        userId,
-        expiresAt: Date.now() + ttl * 1000,
-        data,
-      }));
+      .mockImplementation(
+        async (sessionId: string, userId: string, ttl: number, data: unknown) => ({
+          id: sessionId,
+          userId,
+          expiresAt: Date.now() + ttl * 1000,
+          data,
+        })
+      );
     const getSessionStoreForNewSessionSpy = vi
       .spyOn(sessionHelper, 'getSessionStoreForNewSession')
       .mockResolvedValue({
@@ -709,7 +746,8 @@ describe('SessionStore', () => {
       'g1:wnam:7:session_test',
       'user_123',
       expect.any(Number), // ttl
-      { amr: ['pwd'] }
+      { amr: ['pwd'] },
+      'default'
     );
     getSessionStoreForNewSessionSpy.mockRestore();
   });
@@ -753,7 +791,7 @@ describe('PasskeyStore', () => {
 
   beforeEach(() => {
     env = createMockEnv();
-    adapter = new CloudflareStorageAdapter(env);
+    adapter = new CloudflareStorageAdapter(env, 'default');
     passkeyStore = new PasskeyStore(adapter);
   });
 
@@ -848,8 +886,10 @@ describe('PasskeyStore', () => {
 describe('createStorageAdapter', () => {
   it('should create storage adapter with all stores', () => {
     const env = createMockEnv();
-    const { adapter, userStore, clientStore, sessionStore, passkeyStore } =
-      createStorageAdapter(env);
+    const { adapter, userStore, clientStore, sessionStore, passkeyStore } = createStorageAdapter(
+      env,
+      'default'
+    );
 
     expect(adapter).toBeInstanceOf(CloudflareStorageAdapter);
     expect(userStore).toBeInstanceOf(UserStore);

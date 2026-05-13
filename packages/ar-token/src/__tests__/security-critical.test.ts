@@ -1322,13 +1322,15 @@ describe('Security-Critical Tests', () => {
           expect.anything(),
           'at-jti-to-revoke',
           expect.any(Number),
-          'Authorization code replay attack'
+          'Authorization code replay attack',
+          'default'
         );
         expect(mocks.mockRevokeToken).toHaveBeenCalledWith(
           expect.anything(),
           'rt-jti-to-revoke',
           expect.any(Number),
-          'Authorization code replay attack'
+          'Authorization code replay attack',
+          'default'
         );
       });
     });

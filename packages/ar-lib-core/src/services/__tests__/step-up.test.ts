@@ -23,6 +23,7 @@ class InMemoryChallengeStore {
     const now = Date.now();
     this.challenges.set(request.id, {
       id: request.id,
+      tenantId: request.tenantId,
       type: request.type,
       userId: request.userId,
       challenge: request.challenge,
@@ -51,6 +52,9 @@ class InMemoryChallengeStore {
     }
     if (challenge.type !== request.type) {
       throw new Error('Challenge type mismatch');
+    }
+    if (challenge.tenantId !== request.tenantId) {
+      throw new Error('Challenge tenant mismatch');
     }
     if (request.challenge && challenge.challenge !== request.challenge) {
       throw new Error('Challenge value mismatch');
@@ -152,10 +156,12 @@ describe('Step-Up service', () => {
 
     const first = await startStepUpAction(env, {
       stepUpToken: requirement.step_up_token,
+      tenantId: 'tenant-a',
       preferredMethod: { method: 'portal_confirm' },
     });
     const second = await startStepUpAction(env, {
       stepUpToken: requirement.step_up_token,
+      tenantId: 'tenant-a',
       preferredMethod: { method: 'portal_confirm' },
     });
 
@@ -181,6 +187,7 @@ describe('Step-Up service', () => {
     await expect(
       startStepUpAction(env, {
         stepUpToken: requirement.step_up_token,
+        tenantId: 'tenant-a',
         preferredMethod: { method: 'email_otp' },
       })
     ).rejects.toMatchObject({
@@ -208,10 +215,12 @@ describe('Step-Up service', () => {
     });
     const action = await startStepUpAction(env, {
       stepUpToken: requirement.step_up_token,
+      tenantId: 'tenant-a',
     });
 
     const completed = await completeStepUpAction(env, {
       actionId: action.action_id,
+      tenantId: 'tenant-a',
       method: 'portal_confirm',
       input: { confirmed: true },
     });
@@ -253,11 +262,13 @@ describe('Step-Up service', () => {
     });
     const action = await startStepUpAction(env, {
       stepUpToken: requirement.step_up_token,
+      tenantId: 'tenant-a',
     });
 
     await expect(
       completeStepUpAction(env, {
         actionId: action.action_id,
+        tenantId: 'tenant-a',
         method: 'portal_confirm',
         input: { confirmed: false },
       })
@@ -287,11 +298,14 @@ describe('Step-Up service', () => {
     });
     const action = await startStepUpAction(env, {
       stepUpToken: requirement.step_up_token,
+      tenantId: 'tenant-a',
       preferredMethod: { method: 'email_otp' },
     });
 
-    await resendStepUpAction(env, { actionId: action.action_id });
-    await expect(resendStepUpAction(env, { actionId: action.action_id })).rejects.toMatchObject({
+    await resendStepUpAction(env, { actionId: action.action_id, tenantId: 'tenant-a' });
+    await expect(
+      resendStepUpAction(env, { actionId: action.action_id, tenantId: 'tenant-a' })
+    ).rejects.toMatchObject({
       error: 'resend_limit_exceeded',
       detailCode: 'resend_limit_exceeded',
       httpStatus: 429,

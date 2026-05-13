@@ -130,6 +130,10 @@ describe('Dynamic Client Registration Handler', () => {
 
     // Create fresh app instance
     app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+      await next();
+    });
     app.post('/register', registerHandler);
 
     // Setup mock KV namespaces
@@ -824,8 +828,7 @@ describe('Dynamic Client Registration Handler', () => {
       const json = (await res.json()) as RegistrationResponse;
       expect(json).toMatchObject({
         error: 'legacy_app_suite_not_supported',
-        error_uri:
-          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_uri: 'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
         error_details: expect.objectContaining({
           code: 'legacy_app_suite_not_supported',
           severity: 'fatal',

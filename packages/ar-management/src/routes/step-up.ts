@@ -5,6 +5,7 @@ import {
   completeStepUpAction,
   createStepUpErrorResponse,
   getStepUpActionStatus,
+  getTenantIdFromContext,
   requiredIdempotencyMiddleware,
   resendStepUpAction,
   startStepUpAction,
@@ -174,6 +175,7 @@ stepUpRouter.post('/start', async (c) => {
 
     const response = await startStepUpAction(c.env, {
       stepUpToken: body.step_up_token,
+      tenantId: getTenantIdFromContext(c),
       preferredMethod,
     });
     return jsonNoStore(c, response);
@@ -184,7 +186,11 @@ stepUpRouter.post('/start', async (c) => {
 
 stepUpRouter.get('/actions/:actionId', async (c) => {
   try {
-    const response = await getStepUpActionStatus(c.env, c.req.param('actionId'));
+    const response = await getStepUpActionStatus(
+      c.env,
+      c.req.param('actionId'),
+      getTenantIdFromContext(c)
+    );
     return jsonNoStore(c, response);
   } catch (error) {
     return unknownErrorToResponse(error);
@@ -220,6 +226,7 @@ stepUpRouter.post(
 
       const response = await completeStepUpAction(c.env, {
         actionId: c.req.param('actionId'),
+        tenantId: getTenantIdFromContext(c),
         method: body.method,
         input: body.input,
       });
@@ -237,6 +244,7 @@ stepUpRouter.post(
     try {
       const response = await resendStepUpAction(c.env, {
         actionId: c.req.param('actionId'),
+        tenantId: getTenantIdFromContext(c),
       });
       return jsonNoStore(c, response);
     } catch (error) {
@@ -247,7 +255,11 @@ stepUpRouter.post(
 
 stepUpRouter.delete('/actions/:actionId', async (c) => {
   try {
-    const response = await cancelStepUpAction(c.env, c.req.param('actionId'));
+    const response = await cancelStepUpAction(
+      c.env,
+      c.req.param('actionId'),
+      getTenantIdFromContext(c)
+    );
     return jsonNoStore(c, response);
   } catch (error) {
     return unknownErrorToResponse(error);

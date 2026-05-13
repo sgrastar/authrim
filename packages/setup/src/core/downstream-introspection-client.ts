@@ -6,10 +6,14 @@ import {
   readResponseJsonWithLimit,
   readResponseTextWithLimit,
 } from './http-limits.js';
+import {
+  requestAdminMachineAccessToken,
+  setupMachineKeyFilesExist,
+} from './admin-machine-access.js';
 
 export interface DownstreamIntrospectionClientConfig {
   apiBaseUrl: string;
-  adminApiSecretPath: string;
+  adminApiSecretPath?: string;
   keysDir: string;
   tenantId?: string;
   onProgress?: (message: string) => void;
@@ -30,6 +34,7 @@ interface AdminClientListResponse {
   clients: Array<{
     client_id: string;
     client_name: string;
+    description?: string | null;
   }>;
 }
 
@@ -47,6 +52,8 @@ interface AdminClientRegenerateSecretResponse {
 }
 
 const DOWNSTREAM_INTROSPECTION_CLIENT_NAME = 'Downstream Grant Introspection';
+const DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION =
+  'System-managed confidential client used by Authrim for downstream grant introspection.';
 const CLIENT_ID_FILE = 'downstream_grant_introspection_client_id.txt';
 const CLIENT_SECRET_FILE = 'downstream_grant_introspection_client_secret.txt';
 const DOWNSTREAM_INTROSPECTION_CLIENT_MAX_RETRIES = 8;
@@ -94,9 +101,9 @@ async function readAdminApiSecret(secretPath: string): Promise<string> {
   return secret.trim();
 }
 
-function buildAdminHeaders(adminSecret: string, tenantId?: string): Record<string, string> {
+function buildAdminHeaders(adminBearerToken: string, tenantId?: string): Record<string, string> {
   return {
-    Authorization: `Bearer ${adminSecret}`,
+    Authorization: `Bearer ${adminBearerToken}`,
     Accept: 'application/json',
     'Content-Type': 'application/json',
     ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
@@ -105,14 +112,14 @@ function buildAdminHeaders(adminSecret: string, tenantId?: string): Record<strin
 
 async function findClientByName(
   apiBaseUrl: string,
-  adminSecret: string,
+  adminBearerToken: string,
   tenantId?: string
-): Promise<{ clientId: string } | null> {
+): Promise<{ clientId: string; needsDescriptionUpdate: boolean } | null> {
   const response = await fetchWithTimeout(
     `${apiBaseUrl}/api/admin/clients?search=${encodeURIComponent(DOWNSTREAM_INTROSPECTION_CLIENT_NAME)}&limit=10`,
     {
       method: 'GET',
-      headers: buildAdminHeaders(adminSecret, tenantId),
+      headers: buildAdminHeaders(adminBearerToken, tenantId),
     }
   );
 
@@ -134,18 +141,44 @@ async function findClientByName(
 
   return {
     clientId: existing.client_id,
+    needsDescriptionUpdate: existing.description !== DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
   };
+}
+
+async function updateClientDescription(
+  apiBaseUrl: string,
+  adminBearerToken: string,
+  clientId: string,
+  tenantId?: string
+): Promise<void> {
+  const response = await fetchWithTimeout(
+    `${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`,
+    {
+      method: 'PUT',
+      headers: buildAdminHeaders(adminBearerToken, tenantId),
+      body: JSON.stringify({
+        description: DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
+    throw new Error(
+      `Failed to update downstream introspection client description (${response.status}): ${errorBody}`
+    );
+  }
 }
 
 async function getClientById(
   apiBaseUrl: string,
-  adminSecret: string,
+  adminBearerToken: string,
   clientId: string,
   tenantId?: string
 ): Promise<boolean> {
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`, {
     method: 'GET',
-    headers: buildAdminHeaders(adminSecret, tenantId),
+    headers: buildAdminHeaders(adminBearerToken, tenantId),
   });
 
   if (response.status === 404) {
@@ -164,7 +197,7 @@ async function getClientById(
 
 async function regenerateClientSecret(
   apiBaseUrl: string,
-  adminSecret: string,
+  adminBearerToken: string,
   clientId: string,
   tenantId?: string
 ): Promise<string> {
@@ -172,7 +205,7 @@ async function regenerateClientSecret(
     `${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}/regenerate-secret`,
     {
       method: 'POST',
-      headers: buildAdminHeaders(adminSecret, tenantId),
+      headers: buildAdminHeaders(adminBearerToken, tenantId),
       body: JSON.stringify({ revoke_existing_tokens: false }),
     }
   );
@@ -194,7 +227,7 @@ async function regenerateClientSecret(
 
 async function createClient(
   apiBaseUrl: string,
-  adminSecret: string,
+  adminBearerToken: string,
   tenantId?: string
 ): Promise<{
   clientId: string;
@@ -202,9 +235,10 @@ async function createClient(
 }> {
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients`, {
     method: 'POST',
-    headers: buildAdminHeaders(adminSecret, tenantId),
+    headers: buildAdminHeaders(adminBearerToken, tenantId),
     body: JSON.stringify({
       client_name: DOWNSTREAM_INTROSPECTION_CLIENT_NAME,
+      description: DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
       application_type: 'service',
       token_endpoint_auth_method: 'client_secret_basic',
       redirect_uris: ['https://downstream-introspection.authrim.invalid/callback'],
@@ -282,20 +316,36 @@ export async function ensureDownstreamIntrospectionClient(
   } = input;
 
   try {
-    if (!existsSync(adminApiSecretPath)) {
+    let adminBearerToken: string;
+    if (setupMachineKeyFilesExist(keysDir)) {
+      onProgress?.('Requesting Admin API access token with setup machine private_key_jwt');
+      adminBearerToken = (
+        await requestAdminMachineAccessToken({
+          apiBaseUrl,
+          keysDir,
+          tenantId,
+        })
+      ).accessToken;
+    } else if (adminApiSecretPath && existsSync(adminApiSecretPath)) {
+      adminBearerToken = await readAdminApiSecret(adminApiSecretPath);
+    } else {
       return {
         success: false,
-        error: `Admin API secret not found: ${adminApiSecretPath}`,
+        error: adminApiSecretPath
+          ? `Admin API credential not found: ${adminApiSecretPath}`
+          : 'Admin API credential not found',
       };
     }
 
-    const adminSecret = await readAdminApiSecret(adminApiSecretPath);
     const stored = await readStoredCredentials(keysDir);
 
     if (stored.clientId && stored.clientSecret) {
-      const exists = await getClientById(apiBaseUrl, adminSecret, stored.clientId, tenantId).catch(
-        () => false
-      );
+      const exists = await getClientById(
+        apiBaseUrl,
+        adminBearerToken,
+        stored.clientId,
+        tenantId
+      ).catch(() => false);
       if (exists) {
         onProgress?.(`Downstream introspection client exists: ${stored.clientId}`);
         return {
@@ -309,13 +359,21 @@ export async function ensureDownstreamIntrospectionClient(
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const existing = await findClientByName(apiBaseUrl, adminSecret, tenantId);
+        const existing = await findClientByName(apiBaseUrl, adminBearerToken, tenantId);
 
         if (existing) {
+          if (existing.needsDescriptionUpdate) {
+            await updateClientDescription(
+              apiBaseUrl,
+              adminBearerToken,
+              existing.clientId,
+              tenantId
+            );
+          }
           onProgress?.(`Regenerating downstream introspection client secret: ${existing.clientId}`);
           const clientSecret = await regenerateClientSecret(
             apiBaseUrl,
-            adminSecret,
+            adminBearerToken,
             existing.clientId,
             tenantId
           );
@@ -330,7 +388,7 @@ export async function ensureDownstreamIntrospectionClient(
         }
 
         onProgress?.('Creating downstream introspection client');
-        const created = await createClient(apiBaseUrl, adminSecret, tenantId);
+        const created = await createClient(apiBaseUrl, adminBearerToken, tenantId);
         await writeClientCredentials(keysDir, created.clientId, created.clientSecret);
 
         return {

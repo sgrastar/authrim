@@ -3,26 +3,33 @@ import { Hono } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 
-const repoMocks = vi.hoisted(() => ({
-  findByTenantAndId: vi.fn(),
-  findByEmail: vi.fn(),
-  createAdminUser: vi.fn(),
-  updateAdminUser: vi.fn(),
-  suspendAccount: vi.fn(),
-  activateAccount: vi.fn(),
-  unlockAccount: vi.fn(),
-  getRole: vi.fn(),
-  assignRole: vi.fn(),
-  removeAssignment: vi.fn(),
-  countByUser: vi.fn(),
-  getAssignmentsByUser: vi.fn(),
-  getUsersByRole: vi.fn(),
-  createAuditLog: vi.fn(),
+const { repoMocks, mockAdminAdapter } = vi.hoisted(() => ({
+  repoMocks: {
+    findByTenantAndId: vi.fn(),
+    findByEmail: vi.fn(),
+    createAdminUser: vi.fn(),
+    updateAdminUser: vi.fn(),
+    suspendAccount: vi.fn(),
+    activateAccount: vi.fn(),
+    unlockAccount: vi.fn(),
+    getRole: vi.fn(),
+    assignRole: vi.fn(),
+    assignmentExists: vi.fn(),
+    getAssignment: vi.fn(),
+    removeAssignment: vi.fn(),
+    removeAssignmentById: vi.fn(),
+    countByUser: vi.fn(),
+    getAssignmentsByUser: vi.fn(),
+    getUsersByRole: vi.fn(),
+    createAuditLog: vi.fn(),
+  },
+  mockAdminAdapter: {
+    queryOne: vi.fn(),
+  },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
-  const mockAdminAdapter = {};
 
   class MockAdminUserRepository {
     findByTenantAndId = repoMocks.findByTenantAndId;
@@ -41,7 +48,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
   class MockAdminRoleAssignmentRepository {
     assignRole = repoMocks.assignRole;
+    assignmentExists = repoMocks.assignmentExists;
+    getAssignment = repoMocks.getAssignment;
     removeAssignment = repoMocks.removeAssignment;
+    removeAssignmentById = repoMocks.removeAssignmentById;
     getAssignmentsByUser = repoMocks.getAssignmentsByUser;
     getUsersByRole = repoMocks.getUsersByRole;
   }
@@ -120,6 +130,7 @@ function createTestApp() {
 describe('adminUsersRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAdminAdapter.queryOne.mockResolvedValue({ count: 2 });
   });
 
   it('should reject updates to another admin without wildcard authority', async () => {
@@ -175,6 +186,64 @@ describe('adminUsersRouter', () => {
     expect(repoMocks.updateAdminUser).not.toHaveBeenCalled();
   });
 
+  it('should prevent deleting the last active platform admin account', async () => {
+    repoMocks.findByTenantAndId.mockResolvedValue({
+      id: 'admin_target',
+      email: 'target@example.com',
+    });
+    mockAdminAdapter.queryOne
+      .mockResolvedValueOnce({ id: 'assignment_super_admin' })
+      .mockResolvedValueOnce({ id: 'role_super_admin' })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admins/admin_target',
+      {
+        method: 'DELETE',
+        headers: {
+          'x-test-user-id': 'admin_1',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_USERS_DELETE,
+        },
+      },
+      env
+    );
+    const body = (await response.json()) as { error?: string; error_description?: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('last_platform_admin');
+    expect(repoMocks.updateAdminUser).not.toHaveBeenCalled();
+  });
+
+  it('should prevent suspending the last active platform admin account', async () => {
+    repoMocks.findByTenantAndId.mockResolvedValue({
+      id: 'admin_target',
+      email: 'target@example.com',
+    });
+    mockAdminAdapter.queryOne
+      .mockResolvedValueOnce({ id: 'assignment_super_admin' })
+      .mockResolvedValueOnce({ id: 'role_super_admin' })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admins/admin_target/suspend',
+      {
+        method: 'POST',
+        headers: {
+          'x-test-user-id': 'admin_1',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_USERS_WRITE,
+        },
+      },
+      env
+    );
+    const body = (await response.json()) as { error?: string; error_description?: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('last_platform_admin');
+    expect(repoMocks.suspendAccount).not.toHaveBeenCalled();
+  });
+
   it('should reject assigning a role from another tenant', async () => {
     repoMocks.findByTenantAndId.mockResolvedValue({
       id: 'admin_target',
@@ -207,6 +276,45 @@ describe('adminUsersRouter', () => {
 
     expect(response.status).toBe(404);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
+  it('should reject assigning a tenant-scoped role for another tenant', async () => {
+    repoMocks.findByTenantAndId.mockResolvedValue({
+      id: 'admin_target',
+      email: 'target@example.com',
+    });
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      hierarchy_level: 1,
+      name: 'support',
+    });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admins/admin_target/roles',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+          'x-test-tenant-id': 'tenant_123',
+          'x-test-hierarchy-level': '10',
+        },
+        body: JSON.stringify({
+          role_id: 'role_support',
+          scope_type: 'tenant',
+          scope_id: 'tenant_other',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     expect(repoMocks.assignRole).not.toHaveBeenCalled();
   });
 
@@ -270,6 +378,37 @@ describe('adminUsersRouter', () => {
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    expect(repoMocks.removeAssignment).not.toHaveBeenCalled();
+  });
+
+  it('should prevent removing the last active platform admin role', async () => {
+    repoMocks.findByTenantAndId.mockResolvedValue({
+      id: 'admin_target',
+      email: 'target@example.com',
+    });
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_super_admin',
+      name: 'super_admin',
+    });
+    mockAdminAdapter.queryOne.mockResolvedValue({ count: 1 });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admins/admin_target/roles/role_super_admin',
+      {
+        method: 'DELETE',
+        headers: {
+          'x-test-user-id': 'admin_1',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+        },
+      },
+      env
+    );
+    const body = (await response.json()) as { error?: string; error_description?: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('last_platform_admin');
+    expect(body.error_description).toContain('At least one active platform administrator');
     expect(repoMocks.removeAssignment).not.toHaveBeenCalled();
   });
 });

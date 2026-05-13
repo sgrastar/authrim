@@ -25,9 +25,7 @@
 
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
-import { getTenantIdFromContext } from './request-context';
 import { createLogger } from '../utils/logger';
-import { getDefaultTenantId } from '../utils/issuer';
 
 const log = createLogger().module('PluginContext');
 
@@ -201,11 +199,18 @@ const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_TTL_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 
 let registryCacheByEnv = new WeakMap<Env, Map<string, CachedValue<PluginCapabilityRegistry>>>();
-let registryInitPromisesByEnv = new WeakMap<
-  Env,
-  Map<string, Promise<PluginCapabilityRegistry>>
->();
+let registryInitPromisesByEnv = new WeakMap<Env, Map<string, Promise<PluginCapabilityRegistry>>>();
 let runtimeValueCacheByEnv = new WeakMap<Env, Map<string, CachedValue<unknown>>>();
+
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function getCacheTTLMs(env: Env): number {
   const ttl = env.SETTINGS_CACHE_TTL;
@@ -374,7 +379,16 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
   const { required = false, loadPlugins } = options;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const tenantId = getTenantIdFromContext(c);
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Tenant context is required for plugin context',
+        },
+        400
+      );
+    }
 
     // Initialize or get cached registry
     let registry: PluginCapabilityRegistry;
@@ -455,11 +469,16 @@ export function getPluginContext(c: Context<{ Bindings: Env }>): WorkerPluginCon
   const ctx = (c as any).get('pluginContext') as WorkerPluginContext | undefined;
 
   if (!ctx) {
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      throw new Error('Plugin context requires tenant context');
+    }
+
     // Return a default context if middleware wasn't applied
     return {
       registry: emptyRegistry,
       initialized: false,
-      tenantId: getDefaultTenantId(c.env),
+      tenantId,
       getPluginConfig: async <T>(_pluginId: string, defaultValue: T) => defaultValue,
       isPluginEnabled: async () => true,
     };
@@ -495,7 +514,10 @@ async function getPluginConfigFromKV<T>(
 /**
  * Get global plugin configuration from KV
  */
-async function getGlobalPluginConfigRecord(env: Env, pluginId: string): Promise<Record<string, unknown>> {
+async function getGlobalPluginConfigRecord(
+  env: Env,
+  pluginId: string
+): Promise<Record<string, unknown>> {
   const cacheKey = getPluginConfigGlobalCacheKey(pluginId);
   const cached = getCachedValue<Record<string, unknown>>(env, cacheKey);
   if (cached) {
@@ -1031,7 +1053,9 @@ class WorkerPluginConfigStore {
   }
 
   async set<T>(_pluginId: string, _config: T): Promise<void> {
-    throw new Error('Worker plugin loader does not support writing plugin config during initialize()');
+    throw new Error(
+      'Worker plugin loader does not support writing plugin config during initialize()'
+    );
   }
 }
 
@@ -1045,9 +1069,7 @@ function createUnsupportedService<T>(serviceName: string): T {
         );
       },
       set() {
-        throw new Error(
-          `Worker plugin loader does not provide ${serviceName} during initialize()`
-        );
+        throw new Error(`Worker plugin loader does not provide ${serviceName} during initialize()`);
       },
     }
   ) as T;

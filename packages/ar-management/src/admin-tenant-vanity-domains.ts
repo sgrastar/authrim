@@ -4,7 +4,6 @@ import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
-  createAuthContextFromHono,
   createAuditLogFromContext,
   createErrorResponse,
   ensureDatabaseAdapter,
@@ -12,13 +11,13 @@ import {
   getTenantIdFromContext,
   hasAdminPermission,
   invalidateTenantVanityDomainCache,
+  resolveOptionalCoreAdapterFromHono,
   readResponseTextWithLimit,
   safeFetch,
   type DatabaseSource,
 } from '@authrim/ar-lib-core';
 
-const HOSTNAME_REGEX =
-  /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+const HOSTNAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const MAX_HOSTNAME_LENGTH = 253;
 
 type DomainStatus = 'pending' | 'pending_manual' | 'active' | 'failed' | 'deleted';
@@ -101,7 +100,11 @@ function permissionDenied(c: Context<{ Bindings: Env }>) {
 }
 
 function getCoreAdapter(c: Context<{ Bindings: Env }>) {
-  return createAuthContextFromHono(c).coreAdapter;
+  const adapter = resolveOptionalCoreAdapterFromHono(c, 'tenant-vanity-domains');
+  if (!adapter) {
+    throw new Error('Core database is not configured');
+  }
+  return adapter;
 }
 
 function formatDomain(row: TenantVanityDomainRow) {
@@ -177,7 +180,10 @@ async function callCloudflare<T>(
     .then((text) => JSON.parse(text))
     .catch(() => null)) as CloudflareResponse<T> | null;
   if (!response.ok || !body?.success) {
-    const message = body?.errors?.map((error) => error.message).filter(Boolean).join(', ');
+    const message = body?.errors
+      ?.map((error) => error.message)
+      .filter(Boolean)
+      .join(', ');
     throw new Error(message || `Cloudflare API failed with HTTP ${response.status}`);
   }
   return body.result;
@@ -531,7 +537,10 @@ export async function setPrimaryTenantVanityDomainHandler(c: Context<{ Bindings:
     return c.json(formatDomain(updated));
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-      variables: { field: 'id', reason: error instanceof Error ? error.message : 'invalid primary' },
+      variables: {
+        field: 'id',
+        reason: error instanceof Error ? error.message : 'invalid primary',
+      },
     });
   }
 }
@@ -624,7 +633,11 @@ export async function deleteTenantVanityDomainHandler(c: Context<{ Bindings: Env
   const existing = await getDomainById(adapter, id, tenantId);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
-  if (existing.cloudflare_zone_id && existing.cloudflare_custom_hostname_id && c.env.CLOUDFLARE_API_TOKEN) {
+  if (
+    existing.cloudflare_zone_id &&
+    existing.cloudflare_custom_hostname_id &&
+    c.env.CLOUDFLARE_API_TOKEN
+  ) {
     await deleteCloudflareHostname(
       c.env,
       existing.cloudflare_zone_id,
@@ -657,7 +670,10 @@ export async function setPrimaryPlatformTenantVanityDomainHandler(c: Context<{ B
     return c.json(formatDomain(updated));
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-      variables: { field: 'id', reason: error instanceof Error ? error.message : 'invalid primary' },
+      variables: {
+        field: 'id',
+        reason: error instanceof Error ? error.message : 'invalid primary',
+      },
     });
   }
 }
@@ -746,7 +762,11 @@ export async function deletePlatformTenantVanityDomainHandler(c: Context<{ Bindi
   const existing = await getDomainById(adapter, id);
   if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
-  if (existing.cloudflare_zone_id && existing.cloudflare_custom_hostname_id && c.env.CLOUDFLARE_API_TOKEN) {
+  if (
+    existing.cloudflare_zone_id &&
+    existing.cloudflare_custom_hostname_id &&
+    c.env.CLOUDFLARE_API_TOKEN
+  ) {
     await deleteCloudflareHostname(
       c.env,
       existing.cloudflare_zone_id,

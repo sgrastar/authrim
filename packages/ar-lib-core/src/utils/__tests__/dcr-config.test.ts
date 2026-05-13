@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { clearDCRSettingsCache, getAllDCRSettings, getDCRSetting } from '../dcr-config';
+import {
+  clearAllDCRSettingsCache,
+  clearDCRSettingsCache,
+  getAllDCRSettings,
+  getDCRSetting,
+} from '../dcr-config';
 
 function createKv(value: string | null) {
   return {
@@ -9,7 +14,11 @@ function createKv(value: string | null) {
 
 describe('dcr-config', () => {
   afterEach(() => {
-    clearDCRSettingsCache();
+    clearAllDCRSettingsCache();
+  });
+
+  it('rejects tenant cache clears without a tenant ID', () => {
+    expect(() => clearDCRSettingsCache('')).toThrow('clearDCRSettingsCache requires tenantId');
   });
 
   it('prefers SETTINGS over legacy AUTHRIM_CONFIG', async () => {

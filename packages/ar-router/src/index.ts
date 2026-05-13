@@ -103,6 +103,10 @@ function isBearerTokenCanonicalPath(path: string): boolean {
   );
 }
 
+function matchesPathGroup(path: string, basePath: string): boolean {
+  return path === basePath || path.startsWith(`${basePath}/`);
+}
+
 function bearerTokenTransportError(): Response {
   return Response.json(
     {
@@ -336,8 +340,8 @@ app.use('*', async (c, next) => {
       'DPoP',
       'If-Match',
       'If-None-Match',
+      'X-Tenant-Id',
       'X-Diagnostic-Session-Id',
-      'X-Session-Id',
       'Idempotency-Key',
       'Authrim-Step-Up-Receipt',
     ],
@@ -403,6 +407,7 @@ app.use(
       '/scim/v2', // SCIM provisioning (Bearer token)
       '/api/internal', // Internal API (Bearer token)
       '/saml', // SAML endpoints (XML-based protocol, not browser fetch)
+      '/api/admin/saml', // SAML admin APIs are served by the SAML worker
       '/.well-known', // Discovery endpoints (read-only, GET only)
       '/jwks.json', // JWKS endpoint (read-only)
     ],
@@ -779,6 +784,17 @@ app.all('/api/admin/*', async (c) => {
   // Route admin setup token endpoints to OP_AUTH
   if (path.startsWith('/api/admin/setup-token/')) {
     return c.env.OP_AUTH.fetch(request);
+  }
+
+  // Route SAML admin endpoints to OP_SAML.
+  if (
+    matchesPathGroup(path, '/api/admin/saml-providers') ||
+    matchesPathGroup(path, '/api/admin/saml-attribute-presets')
+  ) {
+    if (!c.env.OP_SAML) {
+      return notFoundResponse();
+    }
+    return c.env.OP_SAML.fetch(request);
   }
 
   // Route all other admin endpoints to OP_MANAGEMENT

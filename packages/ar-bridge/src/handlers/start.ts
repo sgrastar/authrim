@@ -89,7 +89,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const loginHint = c.req.query('login_hint');
     const maxAgeParam = c.req.query('max_age');
     const acrValues = c.req.query('acr_values');
-    const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const clientId = c.req.query('client_id');
     const codeChallenge = c.req.query('code_challenge');
     const codeChallengeMethod = c.req.query('code_challenge_method');
@@ -313,6 +313,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
             const clientSsoSetting = await settingsManager.get('client.sso_enabled', {
               type: 'client',
               id: clientId,
+              tenantId,
             });
             if (typeof clientSsoSetting === 'boolean') {
               ssoEnabled = clientSsoSetting;
@@ -395,11 +396,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       }
 
       // セッション有効性チェック
-      const { stub: sessionStore } = getSessionStoreBySessionId(
-        c.env,
-        sessionId,
-        tenantIdResolved
-      );
+      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantIdResolved);
       const session: Session | null = await sessionStore.getSessionRpc(sessionId);
 
       if (!session) {
@@ -454,10 +451,15 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       if (enableSso) {
         // ハンドオフトークン生成（callback.tsのパターンを再利用）
         const handoffToken = crypto.randomUUID();
-        const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken);
+        const handoffStore = await getChallengeStoreByChallengeId(
+          c.env,
+          handoffToken,
+          getTenantIdFromContext(c)
+        );
 
         await handoffStore.storeChallengeRpc({
           id: `handoff:${handoffToken}`,
+          tenantId: getTenantIdFromContext(c),
           type: 'handoff',
           userId: validSession.userId,
           challenge: sessionId,
@@ -486,15 +488,21 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       } else {
         // SSO無効時：authorization code発行
         // codeChallenge は上でチェック済みなので安全に使用可能
-        const authCode = await generateAuthCode(c.env, validSession.userId, codeChallenge, {
-          method: 'silent_auth',
-          provider: provider.id,
-          provider_id: provider.id,
-          provider_slug: provider.slug ?? provider.id,
-          client_id: clientId!,
-          is_new_user: false,
-          stitched_from_existing: false,
-        });
+        const authCode = await generateAuthCode(
+          c.env,
+          tenantId,
+          validSession.userId,
+          codeChallenge,
+          {
+            method: 'silent_auth',
+            provider: provider.id,
+            provider_id: provider.id,
+            provider_slug: provider.slug ?? provider.id,
+            client_id: clientId!,
+            is_new_user: false,
+            stitched_from_existing: false,
+          }
+        );
 
         const successRedirectUrl = new URL(redirectUri);
         successRedirectUrl.searchParams.set('code', authCode);
@@ -624,7 +632,8 @@ async function checkRateLimit(c: Context<{ Bindings: Env }>): Promise<RateLimitR
 
   // Get client IP
   const clientIp = getClientIp(c);
-  const key = `rate_limit:external_idp:start:${clientIp}`;
+  const tenantId = getTenantIdFromContext(c);
+  const key = `tenant:${tenantId}:rate_limit:external_idp:start:${clientIp}`;
 
   try {
     // Get current count from KV
@@ -907,15 +916,17 @@ async function validateRedirectUri(
  */
 async function generateAuthCode(
   env: Env,
+  tenantId: string,
   userId: string,
   codeChallenge: string,
   metadata?: Record<string, unknown>
 ): Promise<string> {
   const authCode = crypto.randomUUID();
-  const challengeStore = await getChallengeStoreByChallengeId(env, authCode);
+  const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
 
   await challengeStore.storeChallengeRpc({
     id: `direct_auth:${authCode}`,
+    tenantId,
     type: 'direct_auth_code',
     userId,
     challenge: codeChallenge, // Store code_challenge for verification

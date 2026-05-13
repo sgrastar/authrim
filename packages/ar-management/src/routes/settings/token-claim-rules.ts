@@ -112,7 +112,7 @@ function validateRuleInput(input: TokenClaimRuleInput): {
 }
 
 function resolveTenantId(c: Context): string {
-  return resolveSettingsTenantId(c, c.req.query('tenantId'));
+  return resolveSettingsTenantId(c);
 }
 
 // =============================================================================
@@ -148,7 +148,7 @@ export async function createTokenClaimRule(c: Context) {
   const id = `tcr_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if name already exists
@@ -246,7 +246,7 @@ export async function listTokenClaimRules(c: Context) {
   const isActive = c.req.query('is_active');
   const tokenType = c.req.query('token_type') as TokenType | undefined;
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     let whereClause = 'WHERE tenant_id = ?';
@@ -304,7 +304,7 @@ export async function getTokenClaimRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveTenantId(c);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const row = await coreAdapter.queryOne<TokenClaimRuleRow>(
@@ -345,7 +345,7 @@ export async function updateTokenClaimRule(c: Context) {
   const tenantId = resolveTenantId(c);
   const body = await c.req.json<Partial<TokenClaimRuleInput>>();
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if rule exists
@@ -478,7 +478,7 @@ export async function deleteTokenClaimRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveTenantId(c);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const result = await coreAdapter.execute(
@@ -541,7 +541,7 @@ export async function testTokenClaimRuleHandler(c: Context) {
     };
   }>();
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get rule
@@ -630,7 +630,7 @@ export async function evaluateTokenClaimRules(c: Context) {
     };
 
     // Create evaluator and run
-    const evaluator = createTokenClaimEvaluator(resolveSettingsCoreAdapter(c, tenantId), c.env.SETTINGS);
+    const evaluator = createTokenClaimEvaluator(resolveSettingsCoreAdapter(c), c.env.SETTINGS);
     const result = await evaluator.evaluate(evalContext, body.token_type);
 
     return c.json({

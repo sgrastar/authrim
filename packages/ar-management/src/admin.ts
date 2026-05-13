@@ -1148,8 +1148,8 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       authCtx.repositories.passkey.deleteByUserId(userId),
       authCtx.repositories.role.removeAllRolesFromUser(userId),
       authCtx.coreAdapter.execute(
-        'DELETE FROM subject_org_membership WHERE subject_id = ? AND tenant_id = ?',
-        [userId, tenantId]
+        'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
+        [tenantId, userId]
       ),
     ]);
 
@@ -2288,7 +2288,12 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: rotator, resolution } = getRefreshTokenRotatorStubByJti(c.env, clientId, jti);
+    const { stub: rotator, resolution } = getRefreshTokenRotatorStubByJti(
+      c.env,
+      clientId,
+      jti,
+      getTenantIdFromContext(c)
+    );
 
     // Create token family using V3 API (with generation and shard info)
     // V3 stores generation/shardIndex for proper JTI generation during rotation
@@ -2673,11 +2678,12 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     const [codeHash, emailHash, challengeStore] = await Promise.all([
       hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
       hashEmail(email.toLowerCase()),
-      getChallengeStoreByChallengeId(c.env, otpSessionId),
+      getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
     ]);
 
     await challengeStore.storeChallengeRpc({
       id: `email_code:${otpSessionId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'email_code',
       userId: userId as string,
       challenge: codeHash,
@@ -2845,8 +2851,8 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
       scope: string;
     }>(
       `SELECT id, scope FROM oauth_client_consents
-       WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
-      [userId, clientId, tenantId]
+       WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+      [tenantId, userId, clientId]
     );
 
     if (existingConsent.length === 0) {
@@ -2865,8 +2871,8 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
 
     // Delete consent
     await authCtx.coreAdapter.execute(
-      'DELETE FROM oauth_client_consents WHERE user_id = ? AND client_id = ? AND tenant_id = ?',
-      [userId, clientId, tenantId]
+      'DELETE FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ? AND client_id = ?',
+      [tenantId, userId, clientId]
     );
 
     // Record in consent history
@@ -2885,7 +2891,7 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
     try {
       const revocationKey = `consent_revoked:${userId}:${clientId}`;
       const revocationTTL = 86400 * 90;
-      await revokeToken(c.env, revocationKey, revocationTTL);
+      await revokeToken(c.env, revocationKey, revocationTTL, undefined, tenantId);
     } catch (error) {
       log.warn('Token revocation warning', { action: 'token_revocation', userId, clientId });
     }

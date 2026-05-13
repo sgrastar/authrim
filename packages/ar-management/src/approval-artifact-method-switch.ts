@@ -175,7 +175,7 @@ export async function switchApprovalArtifactMethod(
     }
   );
 
-  await consumeApprovalCompletionArtifact(c.env, input.currentArtifactId);
+  await consumeApprovalCompletionArtifact(c.env, input.currentArtifactId, input.request.tenant_id);
 
   return {
     requestWithDetail,

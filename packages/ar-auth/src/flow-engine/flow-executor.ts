@@ -20,7 +20,6 @@ import type {
   FlowStateResponse,
   CompiledPlan,
   CompiledNode,
-  RuntimeState,
   OAuthFlowParams,
   DecisionNodeConfig,
   SwitchNodeConfig,
@@ -94,7 +93,9 @@ interface DOStateResponse {
     currentNodeId: string;
     visitedNodeIds: string[];
     completedCapabilities: string[];
+    startedAt: number;
     expiresAt: number;
+    requestTimestamps?: number[];
     collectedData?: Record<string, unknown>;
     oauthParams?: DOOAuthParams;
   };
@@ -117,7 +118,9 @@ interface DOCheckRequestResponse {
     currentNodeId: string;
     visitedNodeIds: string[];
     completedCapabilities: string[];
+    startedAt: number;
     expiresAt: number;
+    requestTimestamps?: number[];
     collectedData?: Record<string, unknown>;
     oauthParams?: DOOAuthParams;
   };
@@ -170,7 +173,7 @@ export class FlowExecutor {
     }
 
     // 2. CompiledPlanを取得またはコンパイル
-    const compiledPlan = this.getOrCompilePlan(graphDef);
+    const compiledPlan = this.getOrCompilePlan(graphDef, tenantId);
 
     // 3. セッションIDを生成
     const sessionId = `flow_${crypto.randomUUID()}`;
@@ -194,7 +197,7 @@ export class FlowExecutor {
 
     // 5. FlowStateStore DOを呼び出して初期化
     // DOには実際に表示するノードIDを保存（startノードはスキップ済み）
-    const doResponse = await this.callDO<DOInitResponse>(sessionId, '/init', 'POST', {
+    const doResponse = await this.callDO<DOInitResponse>(tenantId, sessionId, '/init', 'POST', {
       sessionId,
       flowId: graphDef.id,
       flowType, // flowTypeを保存（再コンパイル時に必要）
@@ -228,9 +231,20 @@ export class FlowExecutor {
   async submitCapability(params: FlowSubmitRequest): Promise<FlowSubmitResponse> {
     const { sessionId, requestId, capabilityId, response, tenantId, clientId } = params;
 
+    if (!tenantId?.trim()) {
+      return {
+        type: 'error',
+        error: {
+          code: 'tenant_required',
+          message: 'Tenant context is required',
+        },
+      };
+    }
+
     // 1. 冪等性チェック（/check-request）
     // これにより同一requestIdのリクエストは処理をスキップしてキャッシュ結果を返す
     const checkResponse = await this.callDO<DOCheckRequestResponse>(
+      tenantId,
       sessionId,
       '/check-request',
       'POST',
@@ -275,7 +289,7 @@ export class FlowExecutor {
     // セキュリティ対策: セッション検証（Critical 4）
     // リクエストコンテキストのtenantId/clientIdがセッションのものと一致するか検証
     // これによりセッションハイジャック攻撃を防止
-    if (tenantId && checkResponse.state.tenantId !== tenantId) {
+    if (checkResponse.state.tenantId !== tenantId) {
       console.error(
         `[Security] Session tenant mismatch: expected=${tenantId}, got=${checkResponse.state.tenantId}`
       );
@@ -303,7 +317,7 @@ export class FlowExecutor {
     // セキュリティ対策: レート制限（Critical 3）
     // セッション状態からリクエストタイムスタンプを取得（DO側で実装されていない場合は空配列）
     let requestTimestamps =
-      (checkResponse.state as { requestTimestamps?: number[] }).requestTimestamps || [];
+      checkResponse.state.requestTimestamps || [];
     const now = Date.now();
     const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1分間のウィンドウ
     const MAX_REQUESTS_PER_WINDOW = 30; // 1分間に最大30リクエスト
@@ -335,11 +349,10 @@ export class FlowExecutor {
     }
 
     // 3. セッションタイムアウトチェック
-    // セキュリティ: createdAt が存在しない場合は 0 とし、即座に期限切れとする（安全側に倒す）
-    const sessionCreatedAt = (checkResponse.state as { createdAt?: number }).createdAt || 0;
-    if (now - sessionCreatedAt > SESSION_TIMEOUT_MS) {
+    const sessionStartedAt = checkResponse.state.startedAt;
+    if (now - sessionStartedAt > SESSION_TIMEOUT_MS) {
       console.error(
-        `[Security] Session timeout: ${Math.floor((now - sessionCreatedAt) / 1000 / 60)} minutes elapsed (max: ${SESSION_TIMEOUT_MS / 1000 / 60})`
+        `[Security] Session timeout: ${Math.floor((now - sessionStartedAt) / 1000 / 60)} minutes elapsed (max: ${SESSION_TIMEOUT_MS / 1000 / 60})`
       );
       return {
         type: 'error',
@@ -352,7 +365,7 @@ export class FlowExecutor {
 
     // セキュリティ対策: 循環参照検出（High 6）
     // セッション状態から訪問履歴を取得（DO側で実装されていない場合は空配列）
-    const rawVisitedNodes = (checkResponse.state as { visitedNodes?: unknown }).visitedNodes;
+    const rawVisitedNodes = checkResponse.state.visitedNodeIds;
     // セキュリティ対策（Medium 8）: 型安全性を保証（配列でない場合は空配列にフォールバック）
     let visitedNodes: string[] = Array.isArray(rawVisitedNodes) ? rawVisitedNodes : [];
     const MAX_VISITS_PER_NODE = 3; // 同じノードへの最大訪問回数
@@ -397,7 +410,9 @@ export class FlowExecutor {
     }
 
     // 2. CompiledPlanを取得
-    const compiledPlan = this.compiledPlans.get(`compiled-${flowId}`);
+    const compiledPlan = this.compiledPlans.get(
+      this.getCompiledPlanCacheKey(checkResponse.state.tenantId, flowId)
+    );
     if (!compiledPlan) {
       // キャッシュにない場合、再コンパイル
       // flowTypeはDOに保存されているため、セッションから取得
@@ -414,10 +429,12 @@ export class FlowExecutor {
           },
         };
       }
-      this.getOrCompilePlan(graphDef);
+      this.getOrCompilePlan(graphDef, checkResponse.state.tenantId);
     }
 
-    const plan = this.compiledPlans.get(`compiled-${flowId}`);
+    const plan = this.compiledPlans.get(
+      this.getCompiledPlanCacheKey(checkResponse.state.tenantId, flowId)
+    );
     if (!plan) {
       return {
         type: 'error',
@@ -513,7 +530,7 @@ export class FlowExecutor {
     // リクエストタイムスタンプを更新（現在時刻を追加）
     const updatedRequestTimestamps = [...recentTimestamps, now];
 
-    await this.callDO(sessionId, '/submit', 'POST', {
+    await this.callDO(tenantId, sessionId, '/submit', 'POST', {
       requestId,
       capabilityId,
       response,
@@ -529,9 +546,9 @@ export class FlowExecutor {
   /**
    * 現在の状態を取得
    */
-  async getFlowState(sessionId: string): Promise<FlowStateResponse> {
+  async getFlowState(sessionId: string, tenantId: string): Promise<FlowStateResponse> {
     // 1. DOから状態を取得
-    const stateResponse = await this.callDO<DOStateResponse>(sessionId, '/state', 'GET');
+    const stateResponse = await this.callDO<DOStateResponse>(tenantId, sessionId, '/state', 'GET');
 
     if (stateResponse.error || !stateResponse.state) {
       throw new Error(stateResponse.error || 'Session not found');
@@ -540,7 +557,7 @@ export class FlowExecutor {
     const {
       flowId,
       flowType,
-      tenantId,
+      tenantId: stateTenantId,
       currentNodeId,
       visitedNodeIds,
       completedCapabilities,
@@ -548,13 +565,13 @@ export class FlowExecutor {
     } = stateResponse.state;
 
     // 2. CompiledPlanを取得
-    let plan = this.compiledPlans.get(`compiled-${flowId}`);
+    let plan = this.compiledPlans.get(this.getCompiledPlanCacheKey(stateTenantId, flowId));
     if (!plan) {
       // キャッシュにない場合、再コンパイル
       // flowTypeはDOに保存されているため、セッションから取得
-      const graphDef = await this.registry.getFlow(flowType as FlowType, tenantId);
+      const graphDef = await this.registry.getFlow(flowType as FlowType, stateTenantId);
       if (graphDef) {
-        plan = this.getOrCompilePlan(graphDef);
+        plan = this.getOrCompilePlan(graphDef, stateTenantId);
       }
     }
 
@@ -591,8 +608,8 @@ export class FlowExecutor {
   /**
    * Flowをキャンセル
    */
-  async cancelFlow(sessionId: string): Promise<void> {
-    await this.callDO(sessionId, '/cancel', 'DELETE');
+  async cancelFlow(sessionId: string, tenantId: string): Promise<void> {
+    await this.callDO(tenantId, sessionId, '/cancel', 'DELETE');
   }
 
   // =============================================================================
@@ -602,17 +619,20 @@ export class FlowExecutor {
   /**
    * CompiledPlanを取得またはコンパイル
    */
-  private getOrCompilePlan(graphDef: {
-    id: string;
-    flowVersion: string;
-    profileId: string;
-    nodes: unknown[];
-    edges: unknown[];
-    name: string;
-    description: string;
-    metadata: unknown;
-  }): CompiledPlan {
-    const cacheKey = `compiled-${graphDef.id}`;
+  private getOrCompilePlan(
+    graphDef: {
+      id: string;
+      flowVersion: string;
+      profileId: string;
+      nodes: unknown[];
+      edges: unknown[];
+      name: string;
+      description: string;
+      metadata: unknown;
+    },
+    tenantId: string
+  ): CompiledPlan {
+    const cacheKey = this.getCompiledPlanCacheKey(tenantId, graphDef.id);
 
     // キャッシュにあればそれを返す
     const cached = this.compiledPlans.get(cacheKey);
@@ -627,28 +647,34 @@ export class FlowExecutor {
     return compiled;
   }
 
+  private getCompiledPlanCacheKey(tenantId: string, flowId: string): string {
+    return `compiled:${tenantId}:${flowId}`;
+  }
+
   /**
    * FlowStateStore DOを呼び出す
    *
-   * シャーディング戦略:
-   * - sessionIdをFNV-1aハッシュでシャードインデックスに変換
-   * - シャード数はKV/環境変数/デフォルト(32)の優先順で取得
-   * - DOインスタンス名: flow-{shardIndex}
+   * Routing strategy:
+   * - one Durable Object per tenant + flow session
+   * - the DO stores exactly one RuntimeState and serializes that session only
    */
   private async callDO<T>(
+    tenantId: string,
     sessionId: string,
     path: string,
     method: 'GET' | 'POST' | 'DELETE',
     body?: unknown
   ): Promise<T> {
     // シャーディングユーティリティを使用してDO stubを取得
-    const { stub } = await getFlowStateStoreStub(this.env, sessionId);
+    const { stub } = await getFlowStateStoreStub(this.env, sessionId, tenantId);
 
     // リクエストを作成
     const requestInit: RequestInit = {
       method,
       headers: {
         'Content-Type': 'application/json',
+        'X-Tenant-Id': tenantId,
+        'X-Flow-Session-Id': sessionId,
       },
     };
 

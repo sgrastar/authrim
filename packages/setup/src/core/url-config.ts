@@ -29,6 +29,25 @@ export function getUiWorkersDevUrl(workerName: string, workersSubdomain?: string
   return getWorkersDevUrl(workerName, workersSubdomain);
 }
 
+function normalizeWorkersDevUrl(url: string | null | undefined, workersSubdomain?: string | null): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.endsWith('.workers.dev')) {
+      const parts = parsed.hostname.split('.');
+      if (parts.length === 3 && workersSubdomain) {
+        parsed.hostname = `${parts[0]}.${workersSubdomain}.workers.dev`;
+      }
+    }
+    return stripTrailingSlash(parsed.toString());
+  } catch {
+    return url;
+  }
+}
+
 export function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
 }
@@ -194,11 +213,17 @@ export function buildUrlsConfig(options: BuildUrlsConfigOptions): UrlsConfig {
   const adminUiCustomUrl = ensureHttps(adminUiDomain);
 
   // If existingUrls.api.auto matches the custom domain, it was incorrectly set — regenerate.
-  const existingAutoUrl = existingUrls?.api?.auto;
+  const existingAutoUrl = normalizeWorkersDevUrl(existingUrls?.api?.auto, workersSubdomain);
   const autoUrlIsCustomDomain = existingAutoUrl && apiCustomUrl && existingAutoUrl === apiCustomUrl;
   const resolvedAutoUrl =
     (!autoUrlIsCustomDomain && existingAutoUrl) ||
     getWorkersDevUrl(`${env}-ar-router`, workersSubdomain);
+  const resolvedLoginUiAutoUrl =
+    normalizeWorkersDevUrl(existingUrls?.loginUi?.auto, workersSubdomain) ||
+    getUiWorkersDevUrl(`${env}-ar-login-ui`, workersSubdomain);
+  const resolvedAdminUiAutoUrl =
+    normalizeWorkersDevUrl(existingUrls?.adminUi?.auto, workersSubdomain) ||
+    getUiWorkersDevUrl(`${env}-ar-admin-ui`, workersSubdomain);
 
   return {
     api: {
@@ -209,12 +234,12 @@ export function buildUrlsConfig(options: BuildUrlsConfigOptions): UrlsConfig {
     },
     loginUi: {
       custom: loginUiCustomUrl,
-      auto: existingUrls?.loginUi?.auto || getUiWorkersDevUrl(`${env}-ar-login-ui`, workersSubdomain),
+      auto: resolvedLoginUiAutoUrl,
       sameAsApi: apiCustomUrl !== null && loginUiCustomUrl === apiCustomUrl,
     },
     adminUi: {
       custom: adminUiCustomUrl,
-      auto: existingUrls?.adminUi?.auto || getUiWorkersDevUrl(`${env}-ar-admin-ui`, workersSubdomain),
+      auto: resolvedAdminUiAutoUrl,
       sameAsApi: apiCustomUrl !== null && adminUiCustomUrl === apiCustomUrl,
     },
   };

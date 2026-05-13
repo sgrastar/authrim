@@ -472,7 +472,7 @@ describe('Token Revocation Endpoint', () => {
 
       expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(c, 'tenant-b');
       expect(mockClientRepository.findByClientId).toHaveBeenCalledWith('shared-mobile');
-      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600);
+      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600, undefined, 'tenant-b');
     });
 
     it('should use tenant subdomain issuer for non-primary private_key_jwt validation', async () => {
@@ -620,7 +620,7 @@ describe('Token Revocation Endpoint', () => {
 
       await revokeHandler(c);
 
-      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600);
+      expect(revokeToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 3600, undefined, 'tenant1');
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 
@@ -739,7 +739,12 @@ describe('Token Revocation Endpoint', () => {
 
       await revokeHandler(c);
 
-      expect(deleteRefreshToken).toHaveBeenCalledWith(c.env, 'refresh-token-jti', 'client-123');
+      expect(deleteRefreshToken).toHaveBeenCalledWith(
+        c.env,
+        'refresh-token-jti',
+        'client-123',
+        'tenant1'
+      );
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 
@@ -769,7 +774,13 @@ describe('Token Revocation Endpoint', () => {
 
       await revokeHandler(c);
 
-      expect(revokeToken).toHaveBeenCalledWith(c.env, 'access-token-jti', 3600);
+      expect(revokeToken).toHaveBeenCalledWith(
+        c.env,
+        'access-token-jti',
+        3600,
+        undefined,
+        'tenant1'
+      );
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 

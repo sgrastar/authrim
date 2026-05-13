@@ -7,7 +7,11 @@ export interface AdminRoleTemplateDefinition {
     | 'support_operator'
     | 'customer_support_approver'
     | 'technical_investigator'
-    | 'compliance_reviewer';
+    | 'compliance_reviewer'
+    | 'storage_destination_viewer'
+    | 'storage_destination_admin'
+    | 'platform_database_viewer'
+    | 'platform_database_admin';
   name: string;
   displayName: string;
   description: string;
@@ -129,6 +133,75 @@ const BUILTIN_ADMIN_ROLE_TEMPLATES: AdminRoleTemplateDefinition[] = [
       ADMIN_PERMISSIONS.APPROVALS_DETAIL_READ,
       ADMIN_PERMISSIONS.APPROVALS_APPROVE,
       ADMIN_PERMISSIONS.APPROVALS_GRANT_ISSUE,
+    ],
+  },
+  {
+    key: 'storage_destination_viewer',
+    name: 'storage_destination_viewer',
+    displayName: 'Storage Destination Viewer',
+    description:
+      'View tenant storage destinations and usage without credential management privileges.',
+    hierarchyLevel: 32,
+    permissions: [
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_LIST,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_READ,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_USAGE_READ,
+    ],
+  },
+  {
+    key: 'storage_destination_admin',
+    name: 'storage_destination_admin',
+    displayName: 'Storage Destination Admin',
+    description:
+      'Manage tenant storage destinations and allow feature owners to select approved destinations.',
+    hierarchyLevel: 55,
+    permissions: [
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_LIST,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_READ,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_DELETE,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_TEST,
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_USAGE_READ,
+      ADMIN_PERMISSIONS.DIAGNOSTIC_LOGGING_DESTINATION_SELECT,
+      ADMIN_PERMISSIONS.JOBS_DESTINATION_SELECT,
+      ADMIN_PERMISSIONS.DR_BACKUP_DESTINATION_SELECT,
+    ],
+  },
+  {
+    key: 'platform_database_viewer',
+    name: 'platform_database_viewer',
+    displayName: 'Platform Database Viewer',
+    description:
+      'View platform database connections and routing state without changing runtime storage.',
+    hierarchyLevel: 60,
+    permissions: [
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_LIST,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_TEST,
+      ADMIN_PERMISSIONS.DATABASE_ROUTING_READ,
+    ],
+  },
+  {
+    key: 'platform_database_admin',
+    name: 'platform_database_admin',
+    displayName: 'Platform Database Admin',
+    description:
+      'Manage platform database connections and perform controlled database routing changes.',
+    hierarchyLevel: 85,
+    permissions: [
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_LIST,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_CREATE,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_DELETE,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_CREDENTIALS_WRITE,
+      ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_TEST,
+      ADMIN_PERMISSIONS.DATABASE_ROUTING_READ,
+      ADMIN_PERMISSIONS.DATABASE_ROUTING_WRITE,
+      ADMIN_PERMISSIONS.DATABASE_ROUTING_SWITCH,
+      ADMIN_PERMISSIONS.DATABASE_ROUTING_ROLLBACK,
     ],
   },
 ];

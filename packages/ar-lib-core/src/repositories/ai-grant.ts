@@ -109,8 +109,8 @@ export class AIGrantRepository extends BaseRepository<AIGrant> {
    */
   async findByClientId(clientId: string, tenantId: string): Promise<AIGrant[]> {
     return this.adapter.query<AIGrant>(
-      'SELECT * FROM ai_grants WHERE client_id = ? AND tenant_id = ? AND is_active = 1 ORDER BY created_at DESC',
-      [clientId, tenantId]
+      'SELECT * FROM ai_grants WHERE tenant_id = ? AND client_id = ? AND is_active = 1 ORDER BY created_at DESC',
+      [tenantId, clientId]
     );
   }
 
@@ -320,23 +320,38 @@ export class AIGrantRepository extends BaseRepository<AIGrant> {
   }
 
   /**
-   * Delete expired grants (cleanup job)
+   * Delete expired grants for a tenant-owned cleanup job.
    *
-   * @param tenantId - Optional tenant ID to limit scope
+   * @param tenantId - Tenant ID
    * @returns Number of deleted grants
    */
-  async deleteExpiredGrants(tenantId?: string): Promise<number> {
+  async deleteExpiredGrants(tenantId: string): Promise<number> {
     const now = Math.floor(Date.now() / 1000);
-
-    let sql = 'DELETE FROM ai_grants WHERE expires_at IS NOT NULL AND expires_at < ?';
-    const params: unknown[] = [now];
-
-    if (tenantId) {
-      sql += ' AND tenant_id = ?';
-      params.push(tenantId);
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('AIGrantRepository.deleteExpiredGrants requires tenantId');
     }
 
-    const result = await this.adapter.execute(sql, params);
+    const result = await this.adapter.execute(
+      'DELETE FROM ai_grants WHERE expires_at IS NOT NULL AND expires_at < ? AND tenant_id = ?',
+      [now, normalizedTenantId]
+    );
+    return result.rowsAffected;
+  }
+
+  /**
+   * Delete expired grants across all tenants.
+   *
+   * This is a system maintenance operation and should not be used from tenant request paths.
+   *
+   * @returns Number of deleted grants
+   */
+  async deleteExpiredGrantsGlobal(): Promise<number> {
+    const now = Math.floor(Date.now() / 1000);
+    const result = await this.adapter.execute(
+      'DELETE FROM ai_grants WHERE expires_at IS NOT NULL AND expires_at < ?',
+      [now]
+    );
     return result.rowsAffected;
   }
 }

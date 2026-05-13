@@ -35,6 +35,7 @@ import {
   pluginContextMiddleware,
   createErrorResponse,
   AR_ERROR_CODES,
+  adminAuthMiddleware,
   // Health Check
   createHealthCheckHandlers,
   // Logger
@@ -62,10 +63,16 @@ import {
   handleAdminUpdateProvider,
   handleAdminDeleteProvider,
 } from './admin/providers';
+import {
+  handleAdminGetTokenRefreshConfig,
+  handleAdminListTokenRefreshRuns,
+  handleAdminRunTokenRefresh,
+  handleAdminUpdateTokenRefreshConfig,
+} from './admin/token-refresh';
 
 // Import maintenance utilities
 import { cleanupExpiredStates } from './utils/state';
-import { refreshExpiringTokens } from './services/token-refresh';
+import { refreshExpiringTokensForScheduledTenants } from './services/token-refresh';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -202,6 +209,8 @@ app.delete('/auth/external/links/:id', handleUnlinkIdentity);
 // Admin API
 // =============================================================================
 
+app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
+
 // List all providers (admin)
 app.get('/api/admin/external-providers', handleAdminListProviders);
 
@@ -217,7 +226,12 @@ app.put('/api/admin/external-providers/:id', handleAdminUpdateProvider);
 // Delete provider
 app.delete('/api/admin/external-providers/:id', handleAdminDeleteProvider);
 
-// =============================================================================
+// External IdP token refresh operations
+app.get('/api/admin/external-token-refresh/config', handleAdminGetTokenRefreshConfig);
+app.put('/api/admin/external-token-refresh/config', handleAdminUpdateTokenRefreshConfig);
+app.get('/api/admin/external-token-refresh/runs', handleAdminListTokenRefreshRuns);
+app.post('/api/admin/external-token-refresh/run', handleAdminRunTokenRefresh);
+
 // Error Handlers
 // =============================================================================
 
@@ -256,9 +270,15 @@ async function scheduled(
     const statesDeleted = await cleanupExpiredStates(env);
     log.info('Cleaned up expired/consumed auth states', { statesDeleted });
 
-    // 2. Refresh tokens that are about to expire
-    const tokensRefreshed = await refreshExpiringTokens(env);
-    log.info('Refreshed expiring tokens', { tokensRefreshed });
+    // 2. Refresh tokens for a bounded batch of active tenants.
+    const tokenRefresh = await refreshExpiringTokensForScheduledTenants(env);
+    log.info('Refreshed expiring tokens for scheduled tenant batch', {
+      selected_tenants: tokenRefresh.selectedTenants.length,
+      processed_tenants: tokenRefresh.processedTenants,
+      failed_tenants: tokenRefresh.failedTenants,
+      tokens_refreshed: tokenRefresh.tokensRefreshed,
+      cursor: tokenRefresh.cursor,
+    });
   } catch (error) {
     log.error('Scheduled maintenance failed', {}, error as Error);
     // Don't throw - we don't want to fail the entire scheduled run

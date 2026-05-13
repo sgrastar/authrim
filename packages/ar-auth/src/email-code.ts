@@ -21,6 +21,7 @@ import {
   getSessionStoreBySessionId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
+  buildDOKey,
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
@@ -136,8 +137,12 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
+      const tenantId = getTenantIdFromContext(c);
+
       // Rate limiting check: 3 requests per 15 minutes per email via RPC
-      const rateLimiterId = c.env.RATE_LIMITER.idFromName('email-code');
+      const rateLimiterId = c.env.RATE_LIMITER.idFromName(
+        buildDOKey('rate-limit', 'email-code', tenantId)
+      );
       const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
       const rateLimitResult = await rateLimiter.incrementRpc(`email_code:${email.toLowerCase()}`, {
@@ -151,7 +156,6 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
-      const tenantId = getTenantIdFromContext(c);
       const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
         c.env,
         tenantId,
@@ -162,11 +166,13 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           variables: { field: 'custom_fields', reason: customFieldValidation.error },
           extensions: customFieldValidation.missingRequiredFields
             ? {
-                missing_required_fields: customFieldValidation.missingRequiredFields.map((field) => ({
-                  field_key: field.fieldKey,
-                  label: field.label,
-                  field_type: field.fieldType,
-                })),
+                missing_required_fields: customFieldValidation.missingRequiredFields.map(
+                  (field) => ({
+                    field_key: field.fieldKey,
+                    label: field.label,
+                    field_type: field.fieldType,
+                  })
+                ),
               }
             : undefined,
         });
@@ -263,11 +269,12 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       const [codeHash, emailHash, challengeStore] = await Promise.all([
         hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
         hashEmail(email.toLowerCase()),
-        getChallengeStoreByChallengeId(c.env, otpSessionId),
+        getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
       ]);
 
       await challengeStore.storeChallengeRpc({
         id: `email_code:${otpSessionId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'email_code',
         userId: user.id as string,
         challenge: codeHash, // Store hash, not plaintext
@@ -401,7 +408,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Get challenge from ChallengeStore (RPC)
       // Use otpSessionId-based sharding - same UUID always routes to same shard
-      const challengeStore = await getChallengeStoreByChallengeId(c.env, otpSessionId);
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        otpSessionId,
+        getTenantIdFromContext(c)
+      );
 
       let challengeData: {
         challenge: string;
@@ -421,6 +432,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         // This replaces the previous getChallengeRpc + consumeChallengeRpc pattern
         challengeData = (await challengeStore.consumeChallengeRpc({
           id: `email_code:${otpSessionId}`,
+          tenantId: getTenantIdFromContext(c),
           type: 'email_code',
         })) as typeof challengeData;
       } catch (error) {
@@ -532,7 +544,12 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       const customFields = challengeData.metadata?.custom_fields;
       if (customFields) {
         try {
-          await persistRegistrationFieldValuesFromEnv(c.env, tenantId, challengeData.userId, customFields);
+          await persistRegistrationFieldValuesFromEnv(
+            c.env,
+            tenantId,
+            challengeData.userId,
+            customFields
+          );
         } catch (persistError) {
           log.warn(
             'Failed to persist registration field values',

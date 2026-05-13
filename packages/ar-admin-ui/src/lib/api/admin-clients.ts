@@ -17,6 +17,7 @@ export type ClaimsParameterPolicy = Record<string, ClaimReleasePolicy>;
 export interface Client {
 	client_id: string;
 	client_name: string;
+	description?: string | null;
 	client_secret?: string;
 	grant_types: string[];
 	response_types: string[];
@@ -93,6 +94,7 @@ export interface ClientListParams {
 
 export interface CreateClientInput {
 	client_name: string;
+	description?: string | null;
 	redirect_uris: string[];
 	grant_types?: string[];
 	response_types?: string[];
@@ -121,6 +123,7 @@ export interface CreateClientInput {
 
 export interface UpdateClientInput {
 	client_name?: string;
+	description?: string | null;
 	redirect_uris?: string[];
 	grant_types?: string[];
 	response_types?: string[];

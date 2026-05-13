@@ -6,7 +6,7 @@ export const DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE: DeviceSecretLogoutScope = 'grou
 
 export interface RevokeDeviceSecretsForLogoutScopeInput {
   adapter: DatabaseAdapter;
-  tenantId?: string;
+  tenantId: string;
   sessionIds: string[];
   userId?: string;
   clientId?: string;
@@ -318,6 +318,7 @@ async function revokeInstallationsByPredicate(input: {
 
 async function revokeDeviceSecretsByIds(input: {
   adapter: DatabaseAdapter;
+  tenantId: string;
   ids: Array<string | null | undefined>;
   reason: string;
 }): Promise<number> {
@@ -332,10 +333,11 @@ async function revokeDeviceSecretsByIds(input: {
       UPDATE device_secrets
       SET revoked_at = ?, revoke_reason = ?, updated_at = ?
       WHERE id IN (${placeholders(ids)})
+        AND tenant_id = ?
         AND is_active = 1
         AND revoked_at IS NULL
     `,
-    [now, input.reason, now, ...ids]
+    [now, input.reason, now, ...ids, input.tenantId]
   );
   return result.rowsAffected;
 }
@@ -364,7 +366,10 @@ async function revokeDeviceSecretsByPredicate(input: {
 export async function revokeDeviceSecretsForLogoutScope(
   input: RevokeDeviceSecretsForLogoutScopeInput
 ): Promise<RevokeDeviceSecretsForLogoutScopeResult> {
-  const tenantId = input.tenantId ?? 'default';
+  const tenantId = input.tenantId.trim();
+  if (!tenantId) {
+    throw new Error('Device secret logout revocation requires tenantId');
+  }
   const sessionIds = uniq(input.sessionIds);
   const scope = normalizeDeviceSecretLogoutScope(input.scope);
   const reason = input.reason ?? 'logout';
@@ -424,6 +429,7 @@ export async function revokeDeviceSecretsForLogoutScope(
 
   const revokedLinkedDeviceSecrets = await revokeDeviceSecretsByIds({
     adapter: input.adapter,
+    tenantId,
     ids: linkedDeviceSecretIds,
     reason,
   });

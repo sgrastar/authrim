@@ -623,19 +623,89 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
   // Maintenance Operations
   // ---------------------------------------------------------------------------
 
-  async listRetentionCandidates(
+  async listTenantRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listTenantRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listTenantRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('Audit retention candidate listing requires tenantId');
+    }
+    return this.listRetentionCandidatesInternal(logType, beforeTime, normalizedTenantId, batchSize);
+  }
+
+  async listGlobalRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listGlobalRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listGlobalRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    return this.listRetentionCandidatesInternal(logType, beforeTime, undefined, batchSize);
+  }
+
+  async deleteTenantByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<number> {
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('Audit retention deletion requires tenantId');
+    }
+    return this.deleteByRetentionInternal(logType, beforeTime, normalizedTenantId, batchSize);
+  }
+
+  async deleteGlobalByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<number> {
+    return this.deleteByRetentionInternal(logType, beforeTime, undefined, batchSize);
+  }
+
+  private async listRetentionCandidatesInternal(
     logType: 'event',
     beforeTime: number,
     tenantId?: string,
     batchSize?: number
   ): Promise<EventLogEntry[]>;
-  async listRetentionCandidates(
+  private async listRetentionCandidatesInternal(
     logType: 'pii',
     beforeTime: number,
     tenantId?: string,
     batchSize?: number
   ): Promise<PIILogEntry[]>;
-  async listRetentionCandidates(
+  private async listRetentionCandidatesInternal(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]>;
+  private async listRetentionCandidatesInternal(
     logType: AuditLogType,
     beforeTime: number,
     tenantId?: string,
@@ -689,7 +759,7 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     }
   }
 
-  async deleteByRetention(
+  private async deleteByRetentionInternal(
     logType: AuditLogType,
     beforeTime: number,
     tenantId?: string,

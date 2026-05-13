@@ -19,12 +19,7 @@
 import { Hono } from 'hono';
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  AR_ERROR_CODES,
-  getLogger,
-  getDefaultTenantId,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
@@ -121,7 +116,6 @@ subscribeRoutes.get('/subscribe', async (c) => {
     db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   };
 
   const auth = await authenticateCheckApiRequest(`Bearer ${token}`, authContext);
@@ -135,11 +129,7 @@ subscribeRoutes.get('/subscribe', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
   }
 
-  const tenantId = resolveAuthorizedCheckTenantId(
-    auth,
-    c.req.query('tenant_id'),
-    getDefaultTenantId(c.env)
-  );
+  const tenantId = resolveAuthorizedCheckTenantId(auth, c.req.query('tenant_id'));
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
   }
@@ -190,7 +180,6 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
     db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -202,11 +191,7 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  const tenantId = resolveAuthorizedCheckTenantId(
-    auth,
-    c.req.query('tenant_id'),
-    getDefaultTenantId(c.env)
-  );
+  const tenantId = resolveAuthorizedCheckTenantId(auth, c.req.query('tenant_id'));
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
   }

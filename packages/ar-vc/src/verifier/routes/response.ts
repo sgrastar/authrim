@@ -18,6 +18,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { verifyVPToken } from '../services/vp-verifier';
 import { getVPRequestStoreById } from '../../utils/vp-request-sharding';
@@ -91,7 +92,7 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const requestId = body.state;
 
     // Get the DO stub using region-aware sharding (self-routing from ID)
-    const { stub } = getVPRequestStoreById(c.env, requestId);
+    const { stub } = getVPRequestStoreById(c.env, requestId, getTenantIdFromContext(c));
 
     // Get the stored request
     const requestResponse = await stub.fetch(new Request('https://internal/get'));

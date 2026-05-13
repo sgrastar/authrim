@@ -6,10 +6,7 @@ import type {
   Env,
   StoreChallengeRequest,
 } from '@authrim/ar-lib-core';
-import {
-  consumeStepUpReceipt,
-  issueStepUpToken,
-} from '@authrim/ar-lib-core';
+import { consumeStepUpReceipt, issueStepUpToken } from '@authrim/ar-lib-core';
 import { stepUpRouter } from '../routes/step-up';
 
 class InMemoryChallengeStore {
@@ -19,6 +16,7 @@ class InMemoryChallengeStore {
     const now = Date.now();
     this.challenges.set(request.id, {
       id: request.id,
+      tenantId: request.tenantId,
       type: request.type,
       userId: request.userId,
       challenge: request.challenge,
@@ -47,6 +45,9 @@ class InMemoryChallengeStore {
     }
     if (challenge.type !== request.type) {
       throw new Error('Challenge type mismatch');
+    }
+    if (challenge.tenantId !== request.tenantId) {
+      throw new Error('Challenge tenant mismatch');
     }
     if (request.challenge && challenge.challenge !== request.challenge) {
       throw new Error('Challenge value mismatch');
@@ -165,6 +166,10 @@ function createEnv(settings: Record<string, string> = {}) {
 
 function createApp() {
   const app = new Hono<{ Bindings: Env }>();
+  app.use('*', async (c, next) => {
+    (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'tenant-a');
+    await next();
+  });
   app.route('/auth/step-up', stepUpRouter);
   return app;
 }
@@ -197,7 +202,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const payload = await response.json() as Record<string, unknown>;
+    const payload = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(400);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
@@ -226,7 +231,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       error: string;
       error_details?: { code?: string };
       step_up?: { step_up_token?: string };
@@ -254,7 +259,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const startPayload = await start.json() as { action_id: string };
+    const startPayload = (await start.json()) as { action_id: string };
 
     const response = await createApp().request(
       `/auth/step-up/actions/${startPayload.action_id}/complete`,
@@ -268,7 +273,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const payload = await response.json() as Record<string, unknown>;
+    const payload = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(400);
     expect(payload.error).toBe('invalid_request');
@@ -290,7 +295,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const startPayload = await start.json() as { action_id: string };
+    const startPayload = (await start.json()) as { action_id: string };
 
     const response = await createApp().request(
       `/auth/step-up/actions/${startPayload.action_id}/complete`,
@@ -307,7 +312,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       step_up_receipt?: string;
       next_action?: unknown;
     };
@@ -355,7 +360,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const startPayload = await start.json() as { action_id: string };
+    const startPayload = (await start.json()) as { action_id: string };
 
     const first = await createApp().request(
       `/auth/step-up/actions/${startPayload.action_id}/resend`,
@@ -373,7 +378,7 @@ describe('/auth/step-up router', () => {
       },
       env
     );
-    const payload = await second.json() as {
+    const payload = (await second.json()) as {
       error: string;
       error_details?: { code?: string };
       input_state?: { retry_after_seconds?: number };

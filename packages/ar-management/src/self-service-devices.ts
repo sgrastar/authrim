@@ -425,7 +425,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
   const limit = normalizeLimit(c.req.query('limit'));
   const authCtx = createAuthContextFromHono(c, tenantId);
   const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
+  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const legacySecrets = await repo.findByUserId(access.sub, tenantId, true);
   const migratedInstallations = await Promise.all(
     legacySecrets.map((device) => installationRepo.ensureForDeviceSecret(device))
@@ -521,7 +521,7 @@ export async function updateMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
   }
   const authCtx = createAuthContextFromHono(c, tenantId);
   const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
+  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const existingInstallation = await findOwnedInstallation(
     installationRepo,
     access.sub,
@@ -579,7 +579,7 @@ export async function deleteMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
   }
   const authCtx = createAuthContextFromHono(c, tenantId);
   const repo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter);
+  const installationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const existingInstallation = await findOwnedInstallation(
     installationRepo,
     access.sub,

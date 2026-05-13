@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { KeyManager } from '../KeyManager';
+import { KeyManager } from '../KeyManager.ts';
 import type { Env } from '../../types/env';
 
 /**
@@ -330,6 +330,71 @@ describe('KeyManager Durable Object', () => {
       expect(statusData.keys.length).toBe(2);
       const revokedKey = statusData.keys.find((k: { status: string }) => k.status === 'revoked');
       expect(revokedKey).toBeDefined();
+    });
+  });
+
+  describe('Secret management', () => {
+    it('should create and return a stable internal secret', async () => {
+      const firstResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid',
+          'GET',
+          'test-secret-token'
+        )
+      );
+      const secondResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid',
+          'GET',
+          'test-secret-token'
+        )
+      );
+
+      expect(firstResponse.status).toBe(200);
+      expect(secondResponse.status).toBe(200);
+
+      const first = (await firstResponse.json()) as {
+        secretRef: string;
+        active: { kid: string; value: string };
+        previous?: { value: string };
+      };
+      const second = (await secondResponse.json()) as {
+        secretRef: string;
+        active: { kid: string; value: string };
+      };
+
+      expect(first.secretRef).toBe('tenant:test:saml:pairwise-nameid');
+      expect(first.active.value).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(second.active.value).toBe(first.active.value);
+      expect(first.previous).toBeUndefined();
+    });
+
+    it('should rotate an internal secret while retaining the previous value', async () => {
+      const initialResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid',
+          'GET',
+          'test-secret-token'
+        )
+      );
+      const initial = (await initialResponse.json()) as { active: { value: string } };
+
+      const rotateResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid/rotate',
+          'POST',
+          'test-secret-token'
+        )
+      );
+
+      expect(rotateResponse.status).toBe(200);
+      const rotated = (await rotateResponse.json()) as {
+        active: { value: string };
+        previous?: { value: string };
+      };
+
+      expect(rotated.active.value).not.toBe(initial.active.value);
+      expect(rotated.previous?.value).toBe(initial.active.value);
     });
   });
 

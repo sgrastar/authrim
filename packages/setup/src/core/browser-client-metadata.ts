@@ -5,6 +5,7 @@ export type BrowserClientSessionProfile =
 
 export interface BrowserClientMetadataOptions {
   clientName: string;
+  description?: string;
   redirectUris: string[];
   sessionProfile: BrowserClientSessionProfile;
   allowedRedirectOrigins?: string[];
@@ -15,6 +16,7 @@ export interface BrowserClientMetadataOptions {
 
 export interface BrowserClientMetadata {
   client_name: string;
+  description?: string;
   redirect_uris: string[];
   grant_types: ['authorization_code'];
   response_types: ['code'];
@@ -68,6 +70,7 @@ export function buildBrowserClientMetadata(
   const tokenSession = options.sessionProfile === 'token_session';
   const metadata: BrowserClientMetadata = {
     client_name: options.clientName,
+    ...(options.description ? { description: options.description } : {}),
     redirect_uris: options.redirectUris,
     grant_types: ['authorization_code'],
     response_types: ['code'],

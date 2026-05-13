@@ -119,6 +119,14 @@ interface PasskeyRow {
   last_used_at: number | null;
 }
 
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Passkey Repository
  *
@@ -131,9 +139,9 @@ export class PasskeyRepository {
   protected readonly adapter: DatabaseAdapter;
   protected readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'PasskeyRepository');
   }
 
   /**
@@ -220,8 +228,8 @@ export class PasskeyRepository {
    * @returns Passkey or null if not found
    */
   async findByCredentialId(credentialId: string): Promise<Passkey | null> {
-    const sql = 'SELECT * FROM passkeys WHERE credential_id = ? AND tenant_id = ?';
-    const row = await this.adapter.queryOne<PasskeyRow>(sql, [credentialId, this.tenantId]);
+    const sql = 'SELECT * FROM passkeys WHERE tenant_id = ? AND credential_id = ?';
+    const row = await this.adapter.queryOne<PasskeyRow>(sql, [this.tenantId, credentialId]);
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -233,8 +241,8 @@ export class PasskeyRepository {
    */
   async findByUserId(userId: string): Promise<Passkey[]> {
     const sql =
-      'SELECT * FROM passkeys WHERE user_id = ? AND tenant_id = ? ORDER BY created_at DESC';
-    const rows = await this.adapter.query<PasskeyRow>(sql, [userId, this.tenantId]);
+      'SELECT * FROM passkeys WHERE tenant_id = ? AND user_id = ? ORDER BY created_at DESC';
+    const rows = await this.adapter.query<PasskeyRow>(sql, [this.tenantId, userId]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -351,8 +359,8 @@ export class PasskeyRepository {
    * @returns Number of deleted passkeys
    */
   async deleteByUserId(userId: string): Promise<number> {
-    const sql = 'DELETE FROM passkeys WHERE user_id = ? AND tenant_id = ?';
-    const result = await this.adapter.execute(sql, [userId, this.tenantId]);
+    const sql = 'DELETE FROM passkeys WHERE tenant_id = ? AND user_id = ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, userId]);
     return result.rowsAffected;
   }
 
@@ -363,10 +371,10 @@ export class PasskeyRepository {
    * @returns True if exists
    */
   async credentialIdExists(credentialId: string): Promise<boolean> {
-    const sql = 'SELECT 1 FROM passkeys WHERE credential_id = ? AND tenant_id = ?';
+    const sql = 'SELECT 1 FROM passkeys WHERE tenant_id = ? AND credential_id = ?';
     const result = await this.adapter.queryOne<{ 1: number }>(sql, [
-      credentialId,
       this.tenantId,
+      credentialId,
     ]);
     return result !== null;
   }
@@ -378,8 +386,8 @@ export class PasskeyRepository {
    * @returns True if user has at least one passkey
    */
   async userHasPasskeys(userId: string): Promise<boolean> {
-    const sql = 'SELECT 1 FROM passkeys WHERE user_id = ? AND tenant_id = ? LIMIT 1';
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [userId, this.tenantId]);
+    const sql = 'SELECT 1 FROM passkeys WHERE tenant_id = ? AND user_id = ? LIMIT 1';
+    const result = await this.adapter.queryOne<{ 1: number }>(sql, [this.tenantId, userId]);
     return result !== null;
   }
 
@@ -390,8 +398,8 @@ export class PasskeyRepository {
    * @returns Number of passkeys
    */
   async countByUserId(userId: string): Promise<number> {
-    const sql = 'SELECT COUNT(*) as count FROM passkeys WHERE user_id = ? AND tenant_id = ?';
-    const result = await this.adapter.queryOne<{ count: number }>(sql, [userId, this.tenantId]);
+    const sql = 'SELECT COUNT(*) as count FROM passkeys WHERE tenant_id = ? AND user_id = ?';
+    const result = await this.adapter.queryOne<{ count: number }>(sql, [this.tenantId, userId]);
     return result?.count ?? 0;
   }
 
@@ -407,10 +415,10 @@ export class PasskeyRepository {
     const cutoff = getCurrentTimestamp() - unusedSinceMs;
     const sql = `
       SELECT * FROM passkeys
-      WHERE user_id = ? AND tenant_id = ? AND (last_used_at IS NULL OR last_used_at < ?)
+      WHERE tenant_id = ? AND user_id = ? AND (last_used_at IS NULL OR last_used_at < ?)
       ORDER BY last_used_at ASC NULLS FIRST
     `;
-    const rows = await this.adapter.query<PasskeyRow>(sql, [userId, this.tenantId, cutoff]);
+    const rows = await this.adapter.query<PasskeyRow>(sql, [this.tenantId, userId, cutoff]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -434,7 +442,7 @@ export class PasskeyRepository {
         SUM(CASE WHEN last_used_at > ? THEN 1 ELSE 0 END) as recently_used,
         SUM(CASE WHEN last_used_at IS NULL THEN 1 ELSE 0 END) as never_used,
         AVG(counter) as avg_counter
-      FROM passkeys WHERE user_id = ? AND tenant_id = ?
+      FROM passkeys WHERE tenant_id = ? AND user_id = ?
     `;
 
     const result = await this.adapter.queryOne<{
@@ -442,7 +450,7 @@ export class PasskeyRepository {
       recently_used: number;
       never_used: number;
       avg_counter: number;
-    }>(sql, [thirtyDaysAgo, userId, this.tenantId]);
+    }>(sql, [thirtyDaysAgo, this.tenantId, userId]);
 
     return {
       total: result?.total ?? 0,

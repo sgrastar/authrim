@@ -140,6 +140,7 @@
 
 	// Form state
 	let clientName = $state('');
+	let clientDescription = $state('');
 	let redirectUris = $state<string[]>(['']);
 	let grantTypes = $state<string[]>([]);
 	let responseTypes = $state<string[]>(['code']);
@@ -405,6 +406,7 @@
 
 			const input: CreateClientInput = {
 				client_name: clientName.trim(),
+				description: clientDescription.trim() || null,
 				redirect_uris: validRedirectUris,
 				grant_types: grantTypes,
 				response_types: responseTypes,
@@ -520,6 +522,17 @@
 						placeholder="My Application"
 						required
 					/>
+				</div>
+
+				<div class="form-group">
+					<label for="clientDescription" class="form-label">Description</label>
+					<textarea
+						id="clientDescription"
+						class="form-input textarea-input"
+						bind:value={clientDescription}
+						placeholder="Internal memo for admins"
+					></textarea>
+					<p class="form-hint">Optional admin memo. This is not exposed as OIDC metadata.</p>
 				</div>
 
 				<!-- Redirect URIs -->

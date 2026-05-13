@@ -52,6 +52,11 @@ export interface UiEnvConfig {
    * Defaults to 'false' to avoid affecting OIDC conformance test results.
    */
   PUBLIC_DIAGNOSTIC_LOGGING_ENABLED?: string;
+  /**
+   * Admin UI to Admin API browser deployment mode.
+   * Generated only for Admin UI builds.
+   */
+  ADMIN_UI_API_MODE?: string;
 }
 
 // =============================================================================

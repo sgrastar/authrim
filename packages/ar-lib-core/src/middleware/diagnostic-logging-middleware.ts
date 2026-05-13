@@ -22,8 +22,6 @@ import type { DiagnosticLoggingSettings } from '../types/settings/diagnostic-log
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from '../types/settings/diagnostic-logging';
 import { createLogger } from '../utils/logger';
 import { parseBasicAuth } from '../utils/basic-auth';
-import { DEFAULT_TENANT_ID } from '../utils/tenant-context';
-import { getTenantIdFromContext } from './request-context';
 
 const log = createLogger().module('DiagnosticLoggingMiddleware');
 
@@ -45,6 +43,16 @@ export interface DiagnosticLoggingMiddlewareConfig {
  * Context variable name for diagnostic session ID
  */
 const DIAGNOSTIC_SESSION_ID_VAR = 'diagnosticSessionId';
+
+function getContextTenantId(c: Context<any>): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Diagnostic logging middleware
@@ -75,11 +83,12 @@ export function diagnosticLoggingMiddleware(config: DiagnosticLoggingMiddlewareC
       c.set(DIAGNOSTIC_SESSION_ID_VAR as any, diagnosticSessionId);
     }
 
-    const tenantId =
-      config.tenantId ??
-      getTenantIdFromContext(c) ??
-      c.req.header('X-Tenant-Id') ??
-      DEFAULT_TENANT_ID;
+    const tenantId = config.tenantId?.trim() || getContextTenantId(c);
+    if (!tenantId) {
+      log.warn('Skipping diagnostic logging because tenant context is missing');
+      return next();
+    }
+
     const clientId = config.clientId ?? (await resolveClientIdFromRequest(c));
 
     // Load diagnostic logging settings

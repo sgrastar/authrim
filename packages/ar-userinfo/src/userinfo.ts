@@ -210,20 +210,16 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   try {
     const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
     if (ccFeatureConfig.enabled) {
-      const authCtx = createAuthContextFromHono(c);
-      const piiCtx = createPIIContextFromHono(c, getTenantIdFromContext(c));
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
       const ccResolver = createCustomClaimSchemaResolver(
         authCtx.coreAdapter,
         piiCtx.defaultPiiAdapter,
         c.env.AUTHRIM_CONFIG || null,
         ccFeatureConfig
       );
-      const ccResult = await ccResolver.resolveClaimsForTarget(
-        getTenantIdFromContext(c),
-        sub,
-        scopes,
-        'userinfo'
-      );
+      const ccResult = await ccResolver.resolveClaimsForTarget(tenantId, sub, scopes, 'userinfo');
       for (const [key, value] of Object.entries(ccResult.claims)) {
         if (!(key in userClaims)) userClaims[key] = value; // Prevent overwriting standard claims
       }

@@ -57,6 +57,17 @@ describe('hono-context runtime user store sources', () => {
     expect(authCtx.coreAdapter).toBe(coreAdapter);
   });
 
+  it('rejects auth context creation when tenant context is missing', () => {
+    const c = {
+      env: { DB: createMockD1() },
+      get() {
+        return undefined;
+      },
+    } as unknown as Parameters<typeof createAuthContextFromHono>[0];
+
+    expect(() => createAuthContextFromHono(c)).toThrow('requires tenant context');
+  });
+
   it('resolves an optional core adapter from pre-resolved user store sources', () => {
     const coreAdapter = createMockAdapter('core-profiled');
     const c = {
@@ -121,5 +132,29 @@ describe('hono-context runtime user store sources', () => {
     expect(piiCtx.coreAdapter).toBe(sharedAdapter);
     expect(piiCtx.defaultPiiAdapter).toBe(sharedAdapter);
     expect(hasPIIDatabase(c)).toBe(true);
+  });
+
+  it('rejects pii context creation when tenant context is missing', () => {
+    const sharedAdapter = createMockAdapter('shared-profiled');
+    const c = {
+      env: { DB: createMockD1(), AUTHRIM_CONFIG: undefined },
+      get(key: string) {
+        if (key === 'runtimeUserStoreSources') {
+          return {
+            storageProfile: {
+              id: 'builtin:storage:single-db',
+              kind: 'storage',
+              label: 'Single Database',
+              slices: {},
+            },
+            coreDb: sharedAdapter,
+            piiDb: sharedAdapter,
+          };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof createPIIContextFromHono>[0];
+
+    expect(() => createPIIContextFromHono(c)).toThrow('requires tenant context');
   });
 });

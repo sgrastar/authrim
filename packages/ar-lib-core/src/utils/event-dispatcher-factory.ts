@@ -24,7 +24,7 @@ import { EventHandlerRegistryImpl } from '../services/event-handler-registry';
 import { EventHookRegistryImpl } from '../services/event-hook-registry';
 import { createWebhookRegistry } from '../services/webhook-registry';
 import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
-import { createAuthContextFromHono } from '../context';
+import { resolveOptionalCoreAdapterFromHono } from '../context';
 import { createAuditLog } from './audit-log';
 import { decryptValue } from './pii-encryption';
 
@@ -73,7 +73,12 @@ function extractAuditResourceType(eventType: string): string {
 }
 
 function buildRuntimeAuditLogWriter(env: Env) {
-  return async (event: { type: string; tenantId: string; data: Record<string, unknown>; metadata?: { actor?: { id?: string } } }) => {
+  return async (event: {
+    type: string;
+    tenantId: string;
+    data: Record<string, unknown>;
+    metadata?: { actor?: { id?: string } };
+  }) => {
     const resourceId =
       (typeof event.data.clientId === 'string' && event.data.clientId) ||
       (typeof event.data.userId === 'string' && event.data.userId) ||
@@ -161,7 +166,10 @@ export async function createEventDispatcherFromContext(
   const settingsKv = options?.settingsKv ?? env.SETTINGS;
   const adapter = options?.adapter
     ? ensureDatabaseAdapter(options.adapter, 'event-dispatcher')
-    : createAuthContextFromHono(c).coreAdapter;
+    : resolveOptionalCoreAdapterFromHono(c, 'event-dispatcher');
+  if (!adapter) {
+    throw new Error('Core database is required for EventDispatcher');
+  }
   const environment = options?.environment ?? env.ENVIRONMENT ?? 'production';
 
   // SETTINGS KV is required for event deduplication
@@ -300,7 +308,7 @@ export async function createEventDispatcherFromEnv(
  *
  * await publishEvent(c, {
  *   type: 'auth.login.succeeded',
- *   tenantId: 'default',
+ *   tenantId: 'tenant-a',
  *   data: { userId: 'user123' },
  * });
  * ```

@@ -85,6 +85,8 @@ export interface VerifyOptions {
    * Default: false (for backward compatibility)
    */
   strictXswProtection?: boolean;
+  /** Allow deprecated SHA-1 XML Signature. Only use for explicit legacy SP opt-in. */
+  allowSha1SignatureAlgorithm?: boolean;
 }
 
 /**
@@ -178,7 +180,12 @@ export function signXml(xml: string, options: SignOptions): string {
  * @see https://www.usenix.org/conference/usenixsecurity12/technical-sessions/presentation/somorovsky
  */
 export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean {
-  const { certificateOrKey, expectedId, strictXswProtection = false } = options;
+  const {
+    certificateOrKey,
+    expectedId,
+    strictXswProtection = false,
+    allowSha1SignatureAlgorithm = false,
+  } = options;
 
   const doc = parseXml(xml);
 
@@ -253,7 +260,7 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
     )[0];
     if (signatureMethod) {
       const algorithm = signatureMethod.getAttribute('Algorithm');
-      if (algorithm === SIGNATURE_ALGORITHMS.RSA_SHA1) {
+      if (algorithm === SIGNATURE_ALGORITHMS.RSA_SHA1 && !allowSha1SignatureAlgorithm) {
         throw new Error('SHA-1 signature algorithm is not allowed');
       }
     }
@@ -403,10 +410,14 @@ export async function verifyRedirectBindingSignature(
   relayState: string | undefined,
   signature: string,
   sigAlg: string,
-  certificatePem: string
+  certificatePem: string,
+  options: { acceptedSignatureAlgorithms?: string[] } = {}
 ): Promise<boolean> {
-  // Only allow RSA-SHA256
-  if (sigAlg !== SIGNATURE_ALGORITHMS.RSA_SHA256) {
+  const acceptedSignatureAlgorithms = options.acceptedSignatureAlgorithms ?? [
+    SIGNATURE_ALGORITHMS.RSA_SHA256,
+  ];
+
+  if (!acceptedSignatureAlgorithms.includes(sigAlg)) {
     throw new Error(`Unsupported signature algorithm: ${sigAlg}`);
   }
 
@@ -419,7 +430,9 @@ export async function verifyRedirectBindingSignature(
   signInput += `&SigAlg=${encodeURIComponent(sigAlg)}`;
 
   // Import certificate/public key
-  const publicKey = await importPublicKeyFromCertificate(certificatePem);
+  const publicKey = await importPublicKeyFromCertificate(certificatePem, {
+    hash: sigAlg === SIGNATURE_ALGORITHMS.RSA_SHA1 ? 'SHA-1' : 'SHA-256',
+  });
 
   // Decode signature
   const signatureBytes = Uint8Array.from(atob(signature), (c) => c.charCodeAt(0));
@@ -538,7 +551,10 @@ function extractSubjectPublicKeyInfo(certDer: Uint8Array): Uint8Array {
 /**
  * Import public key from X.509 certificate PEM
  */
-async function importPublicKeyFromCertificate(pem: string): Promise<CryptoKey> {
+async function importPublicKeyFromCertificate(
+  pem: string,
+  options: { hash?: 'SHA-1' | 'SHA-256' } = {}
+): Promise<CryptoKey> {
   // Remove headers and newlines
   const pemContents = pem
     .replace(/-----BEGIN CERTIFICATE-----/g, '')
@@ -554,7 +570,7 @@ async function importPublicKeyFromCertificate(pem: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'spki',
     spkiBytes,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    { name: 'RSASSA-PKCS1-v1_5', hash: options.hash ?? 'SHA-256' },
     true,
     ['verify']
   );

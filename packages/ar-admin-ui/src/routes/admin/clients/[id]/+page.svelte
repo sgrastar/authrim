@@ -365,6 +365,7 @@
 		if (!a || !b) return false;
 		return (
 			(a.client_name ?? '') === (b.client_name ?? '') &&
+			(a.description ?? '') === (b.description ?? '') &&
 			arraysEqual(a.redirect_uris, b.redirect_uris) &&
 			arraysEqual(a.grant_types, b.grant_types) &&
 			arraysEqual(a.response_types, b.response_types) &&
@@ -804,6 +805,7 @@
 		if (!client || !clientSettings) return;
 		editForm = {
 			client_name: client.client_name,
+			description: client.description ?? null,
 			redirect_uris: toStringArray(client.redirect_uris),
 			grant_types: toStringArray(client.grant_types),
 			response_types: toStringArray(client.response_types),
@@ -929,6 +931,13 @@
 		setTimeout(() => {
 			document.getElementById('client-name-input')?.focus();
 		}, 0);
+	}
+
+	function isSystemClient(currentClient: Client): boolean {
+		return (
+			currentClient.client_name === 'Login UI' ||
+			currentClient.client_name === 'Downstream Grant Introspection'
+		);
 	}
 
 	function cancelEditing() {
@@ -1163,8 +1172,16 @@
 		<!-- Header -->
 		<div class="page-header-with-status">
 			<div class="page-header-info">
-				<h1>{client.client_name}</h1>
+				<div class="client-title-row">
+					<h1>{client.client_name}</h1>
+					{#if isSystemClient(client)}
+						<span class="system-client-badge">System</span>
+					{/if}
+				</div>
 				<p class="mono">{client.client_id}</p>
+				{#if client.description}
+					<p class="client-header-description">{client.description}</p>
+				{/if}
 			</div>
 			<div class="action-buttons">
 				<div class="admin-toggle-inline">
@@ -1264,6 +1281,27 @@
 							/>
 						{:else}
 							<p class="display-text">{client.client_name}</p>
+						{/if}
+					</div>
+
+					<!-- Description -->
+					<div class="form-group">
+						<!-- svelte-ignore a11y_label_has_associated_control -->
+						<label class="form-label">Description</label>
+						{#if isEditing}
+							<textarea
+								id="client-description-input"
+								class="form-input textarea-input"
+								value={editForm.description ?? ''}
+								placeholder="Internal memo for admins"
+								oninput={(event) => {
+									const value = event.currentTarget.value.trim();
+									editForm.description = value.length > 0 ? value : null;
+								}}
+							></textarea>
+							<p class="form-hint">Optional admin memo. This is not exposed as OIDC metadata.</p>
+						{:else}
+							<p class="display-text">{client.description || 'No description'}</p>
 						{/if}
 					</div>
 
@@ -3275,6 +3313,35 @@
 	.client-tab:focus-visible {
 		outline: 2px solid color-mix(in srgb, var(--primary, #2c2724) 55%, transparent);
 		outline-offset: 3px;
+	}
+
+	.client-title-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+	}
+
+	.client-title-row h1 {
+		margin: 0;
+	}
+
+	.client-header-description {
+		margin: 0.35rem 0 0;
+		color: var(--text-secondary, #64748b);
+		line-height: 1.4;
+	}
+
+	.system-client-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.18rem 0.5rem;
+		border-radius: 999px;
+		border: 1px solid var(--border-color, #d1d5db);
+		color: var(--text-secondary, #64748b);
+		font-size: 0.68rem;
+		font-weight: 700;
+		text-transform: uppercase;
 	}
 
 	/* Admin Toggle */

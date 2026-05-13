@@ -60,6 +60,19 @@ interface StoredECKey {
   revokedReason?: string;
 }
 
+interface StoredSecretVersion {
+  kid: string;
+  value: string;
+  createdAt: number;
+}
+
+interface StoredSecret {
+  secretRef: string;
+  active: StoredSecretVersion;
+  previous?: StoredSecretVersion;
+  updatedAt: number;
+}
+
 /**
  * Key rotation configuration
  */
@@ -76,6 +89,7 @@ interface KeyManagerState {
   activeKeyId: string | null;
   config: KeyRotationConfig;
   lastRotation: number | null;
+  secrets?: Record<string, StoredSecret>;
 }
 
 /**
@@ -129,6 +143,7 @@ export class KeyManager extends DurableObject<Env> {
 
     if (stored) {
       this.keyManagerState = stored;
+      this.keyManagerState.secrets ??= {};
       // Run migration if needed
       await this.migrateIsActiveToStatus();
     } else {
@@ -141,6 +156,7 @@ export class KeyManager extends DurableObject<Env> {
           retentionPeriodDays: 30,
         },
         lastRotation: null,
+        secrets: {},
       };
 
       await this.saveState();
@@ -752,6 +768,14 @@ export class KeyManager extends DurableObject<Env> {
     return state.config;
   }
 
+  async getOrCreateSecretRpc(secretRef: string): Promise<StoredSecret> {
+    return this.getOrCreateSecret(secretRef);
+  }
+
+  async rotateSecretRpc(secretRef: string): Promise<StoredSecret> {
+    return this.rotateSecret(secretRef);
+  }
+
   /**
    * Generate a unique key ID using cryptographically secure random
    */
@@ -759,6 +783,51 @@ export class KeyManager extends DurableObject<Env> {
     const timestamp = Date.now();
     const random = crypto.randomUUID();
     return `key-${timestamp}-${random}`;
+  }
+
+  private async getOrCreateSecret(secretRef: string): Promise<StoredSecret> {
+    await this.initializeState();
+
+    const state = this.getState();
+    state.secrets ??= {};
+
+    const existing = state.secrets[secretRef];
+    if (existing) {
+      return existing;
+    }
+
+    const secret: StoredSecret = {
+      secretRef,
+      active: this.generateSecretVersion(),
+      updatedAt: Date.now(),
+    };
+    state.secrets[secretRef] = secret;
+    await this.saveState();
+    return secret;
+  }
+
+  private async rotateSecret(secretRef: string): Promise<StoredSecret> {
+    const current = await this.getOrCreateSecret(secretRef);
+    current.previous = current.active;
+    current.active = this.generateSecretVersion();
+    current.updatedAt = Date.now();
+    await this.saveState();
+    return current;
+  }
+
+  private generateSecretVersion(): StoredSecretVersion {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    const value = btoa(String.fromCharCode(...bytes))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    return {
+      kid: `secret-${Date.now()}-${crypto.randomUUID()}`,
+      value,
+      createdAt: Date.now(),
+    };
   }
 
   // ==========================================
@@ -1176,6 +1245,46 @@ export class KeyManager extends DurableObject<Env> {
 
         // Return full key data including privatePEM for internal use
         return new Response(jsonString, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const internalSecretPath = '/internal/secrets/';
+      if (path.startsWith(internalSecretPath)) {
+        const secretPath = path.slice(internalSecretPath.length);
+        const isSecretRotation = secretPath.endsWith('/rotate');
+        const secretRefPath = isSecretRotation
+          ? secretPath.slice(0, -'/rotate'.length)
+          : secretPath;
+        const secretRef = decodeURIComponent(secretRefPath);
+
+        if (request.method === 'GET' && !isSecretRotation) {
+          const secret = await this.getOrCreateSecret(secretRef);
+          return new Response(JSON.stringify(secret), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (request.method === 'POST' && isSecretRotation) {
+          const secret = await this.rotateSecret(secretRef);
+          return new Response(JSON.stringify(secret), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      const internalSecretMatch = path.match(/^\/internal\/secrets\/([^/]+)$/);
+      if (internalSecretMatch && request.method === 'GET') {
+        const secret = await this.getOrCreateSecret(decodeURIComponent(internalSecretMatch[1]));
+        return new Response(JSON.stringify(secret), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const internalSecretRotateMatch = path.match(/^\/internal\/secrets\/([^/]+)\/rotate$/);
+      if (internalSecretRotateMatch && request.method === 'POST') {
+        const secret = await this.rotateSecret(decodeURIComponent(internalSecretRotateMatch[1]));
+        return new Response(JSON.stringify(secret), {
           headers: { 'Content-Type': 'application/json' },
         });
       }

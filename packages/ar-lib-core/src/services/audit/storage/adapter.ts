@@ -225,16 +225,26 @@ export interface IAuditStorageAdapter {
    * Implementations should return entries in a stable oldest-first order so a
    * follow-up delete operation can operate on the same batch window.
    */
-  listRetentionCandidates(
+  listTenantRetentionCandidates(
     logType: 'event',
     beforeTime: number,
-    tenantId?: string,
+    tenantId: string,
     batchSize?: number
   ): Promise<EventLogEntry[]>;
-  listRetentionCandidates(
+  listTenantRetentionCandidates(
     logType: 'pii',
     beforeTime: number,
-    tenantId?: string,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  listGlobalRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  listGlobalRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
     batchSize?: number
   ): Promise<PIILogEntry[]>;
 
@@ -243,14 +253,29 @@ export interface IAuditStorageAdapter {
    *
    * @param logType - Type of log to clean up
    * @param beforeTime - Delete entries with retention_until < beforeTime (epoch ms)
-   * @param tenantId - Optional tenant ID to scope the cleanup
    * @param batchSize - Maximum entries to delete in one call
    * @returns Number of entries deleted
    */
-  deleteByRetention(
+  deleteTenantByRetention(
     logType: AuditLogType,
     beforeTime: number,
-    tenantId?: string,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<number>;
+
+  /**
+   * Delete entries that have exceeded their retention period across all tenants.
+   *
+   * This is a system maintenance operation and must not be used from tenant request paths.
+   *
+   * @param logType - Type of log to clean up
+   * @param beforeTime - Delete entries with retention_until < beforeTime (epoch ms)
+   * @param batchSize - Maximum entries to delete in one call
+   * @returns Number of entries deleted
+   */
+  deleteGlobalByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
     batchSize?: number
   ): Promise<number>;
 

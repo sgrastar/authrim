@@ -12,6 +12,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import {
   BaseRepository,
   type BaseEntity,
@@ -103,7 +104,7 @@ export class AdminUserRepository extends BaseRepository<AdminUserEntity> {
 
     const adminUser: AdminUserEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       email: input.email,
       email_verified: false,
       name: input.name ?? null,

@@ -51,7 +51,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getCachedUser: mockGetCachedUser,
     rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
     RateLimitProfiles: { moderate: {} },
-    requestContextMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
+    requestContextMiddleware: () => async (c: { set?: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
+      c.set?.('tenantId', 'tenant-a');
+      await next();
+    },
+    pluginContextMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
   };
 });
 

@@ -14,12 +14,11 @@
  *   db: env.DB,
  *   cache: env.REBAC_CACHE,
  *   permissionChangeHub: env.PERMISSION_CHANGE_HUB,
- *   tenantId: 'default',
  * });
  *
  * await notifier.publish({
  *   event: 'grant',
- *   tenant_id: 'default',
+ *   tenant_id: tenantId,
  *   subject_id: 'user_123',
  *   resource: 'document:doc_456',
  *   relation: 'viewer',
@@ -50,8 +49,6 @@ export interface PermissionChangeNotifierConfig {
   cache?: KVNamespace;
   /** PermissionChangeHub Durable Object namespace */
   permissionChangeHub?: DurableObjectNamespace;
-  /** Default tenant ID */
-  tenantId?: string;
   /** Audit log configuration */
   auditConfig?: AuditLogConfig;
   /** Enable debug logging */
@@ -104,6 +101,14 @@ const CHECK_CACHE_PREFIX = 'check:';
 /** Cache key prefix for ReBAC */
 const REBAC_CACHE_PREFIX = 'rebac:';
 
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 // =============================================================================
 // Implementation
 // =============================================================================
@@ -114,14 +119,7 @@ const REBAC_CACHE_PREFIX = 'rebac:';
 export function createPermissionChangeNotifier(
   config: PermissionChangeNotifierConfig
 ): PermissionChangeNotifier {
-  const {
-    db,
-    cache,
-    permissionChangeHub,
-    tenantId = 'default',
-    auditConfig,
-    debug = false,
-  } = config;
+  const { db, cache, permissionChangeHub, auditConfig, debug = false } = config;
 
   const debugLog = debug
     ? (message: string, context?: Record<string, unknown>) => log.debug(message, context)
@@ -137,16 +135,17 @@ export function createPermissionChangeNotifier(
     }
 
     try {
+      const eventTenantId = requireTenantId(event.tenant_id, 'Permission change event');
       const keysToDelete: string[] = [];
 
       // Invalidate subject-based cache entries
-      keysToDelete.push(`${CHECK_CACHE_PREFIX}${event.tenant_id}:${event.subject_id}:*`);
-      keysToDelete.push(`${REBAC_CACHE_PREFIX}${event.tenant_id}:${event.subject_id}:*`);
+      keysToDelete.push(`${CHECK_CACHE_PREFIX}${eventTenantId}:${event.subject_id}:*`);
+      keysToDelete.push(`${REBAC_CACHE_PREFIX}${eventTenantId}:${event.subject_id}:*`);
 
       // Invalidate resource-based cache entries if resource is specified
       if (event.resource) {
-        keysToDelete.push(`${CHECK_CACHE_PREFIX}${event.tenant_id}:*:${event.resource}:*`);
-        keysToDelete.push(`${REBAC_CACHE_PREFIX}${event.tenant_id}:*:${event.resource}:*`);
+        keysToDelete.push(`${CHECK_CACHE_PREFIX}${eventTenantId}:*:${event.resource}:*`);
+        keysToDelete.push(`${REBAC_CACHE_PREFIX}${eventTenantId}:*:${event.resource}:*`);
       }
 
       // Note: KV doesn't support wildcard deletion
@@ -156,20 +155,20 @@ export function createPermissionChangeNotifier(
       // Delete specific known keys based on the event
       const specificKeys = [
         // Subject's permission cache
-        `${CHECK_CACHE_PREFIX}${event.tenant_id}:subject:${event.subject_id}`,
+        `${CHECK_CACHE_PREFIX}${eventTenantId}:subject:${event.subject_id}`,
         // Subject's role cache
-        `${REBAC_CACHE_PREFIX}${event.tenant_id}:roles:${event.subject_id}`,
+        `${REBAC_CACHE_PREFIX}${eventTenantId}:roles:${event.subject_id}`,
       ];
 
       // Add resource-specific keys if resource is specified
       if (event.resource) {
-        specificKeys.push(`${CHECK_CACHE_PREFIX}${event.tenant_id}:resource:${event.resource}`);
-        specificKeys.push(`${REBAC_CACHE_PREFIX}${event.tenant_id}:relations:${event.resource}`);
+        specificKeys.push(`${CHECK_CACHE_PREFIX}${eventTenantId}:resource:${event.resource}`);
+        specificKeys.push(`${REBAC_CACHE_PREFIX}${eventTenantId}:relations:${event.resource}`);
 
         // If permission is specified, add exact permission cache key
         if (event.permission) {
           specificKeys.push(
-            `${CHECK_CACHE_PREFIX}${event.tenant_id}:${event.subject_id}:${event.permission}`
+            `${CHECK_CACHE_PREFIX}${eventTenantId}:${event.subject_id}:${event.permission}`
           );
         }
       }
@@ -206,6 +205,7 @@ export function createPermissionChangeNotifier(
     // Check if audit logging is enabled for this type of event
     // Permission change events are always logged (separate from check audits)
     try {
+      const eventTenantId = requireTenantId(event.tenant_id, 'Permission change event');
       const id = crypto.randomUUID();
       const now = Math.floor(Date.now() / 1000);
 
@@ -215,7 +215,7 @@ export function createPermissionChangeNotifier(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
-          event.tenant_id,
+          eventTenantId,
           event.event,
           event.subject_id,
           event.resource ?? null,
@@ -250,8 +250,9 @@ export function createPermissionChangeNotifier(
     }
 
     try {
+      const eventTenantId = requireTenantId(event.tenant_id, 'Permission change event');
       // Get or create the hub for this tenant
-      const hubId = permissionChangeHub.idFromName(event.tenant_id);
+      const hubId = permissionChangeHub.idFromName(eventTenantId);
       const hub = permissionChangeHub.get(hubId);
 
       // Send broadcast request to the hub
@@ -277,6 +278,7 @@ export function createPermissionChangeNotifier(
 
   return {
     async publish(event: PermissionChangeEvent): Promise<PublishResult> {
+      requireTenantId(event.tenant_id, 'Permission change event');
       debugLog('Publishing event', { event: event.event, subjectId: event.subject_id });
 
       // Execute all operations concurrently
@@ -298,10 +300,11 @@ export function createPermissionChangeNotifier(
       if (!cache) return;
 
       try {
+        const normalizedTenantId = requireTenantId(targetTenantId, 'Subject cache invalidation');
         // Delete known cache patterns for subject
         const keys = [
-          `${CHECK_CACHE_PREFIX}${targetTenantId}:subject:${subjectId}`,
-          `${REBAC_CACHE_PREFIX}${targetTenantId}:roles:${subjectId}`,
+          `${CHECK_CACHE_PREFIX}${normalizedTenantId}:subject:${subjectId}`,
+          `${REBAC_CACHE_PREFIX}${normalizedTenantId}:roles:${subjectId}`,
         ];
 
         await Promise.all(keys.map((key) => cache.delete(key).catch(() => {})));
@@ -315,10 +318,11 @@ export function createPermissionChangeNotifier(
       if (!cache) return;
 
       try {
+        const normalizedTenantId = requireTenantId(targetTenantId, 'Resource cache invalidation');
         // Delete known cache patterns for resource
         const keys = [
-          `${CHECK_CACHE_PREFIX}${targetTenantId}:resource:${resource}`,
-          `${REBAC_CACHE_PREFIX}${targetTenantId}:relations:${resource}`,
+          `${CHECK_CACHE_PREFIX}${normalizedTenantId}:resource:${resource}`,
+          `${REBAC_CACHE_PREFIX}${normalizedTenantId}:relations:${resource}`,
         ];
 
         await Promise.all(keys.map((key) => cache.delete(key).catch(() => {})));
@@ -343,9 +347,10 @@ export function createPermissionChangeEvent(
     permission?: string;
   } = {}
 ): PermissionChangeEvent {
+  const normalizedTenantId = requireTenantId(tenantId, 'Permission change event');
   return {
     event,
-    tenant_id: tenantId,
+    tenant_id: normalizedTenantId,
     subject_id: subjectId,
     resource: options.resource,
     relation: options.relation,

@@ -28,8 +28,14 @@ async function hashBody(body: string): Promise<string> {
     .join('');
 }
 
-function createApp(middleware = idempotencyMiddleware()) {
+function createApp(middleware = idempotencyMiddleware(), tenantId: string | null = 'tenant-a') {
   const app = new Hono();
+  if (tenantId) {
+    app.use('*', async (c, next) => {
+      c.set('tenantId', tenantId);
+      await next();
+    });
+  }
   app.use('/protected', middleware);
   app.post('/protected', async (c) =>
     c.json(
@@ -79,6 +85,27 @@ describe('idempotency middleware', () => {
     expect(payload.error).toBe('invalid_request');
     expect(payload.error_description).toContain('Idempotency-Key');
     expect(mockAdapter.queryOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects idempotent requests without tenant context', async () => {
+    const res = await createApp(requiredIdempotencyMiddleware(), null).request(
+      '/protected',
+      {
+        method: 'POST',
+        headers: {
+          'Idempotency-Key': 'idem-key-001',
+        },
+        body: JSON.stringify({ action: 'write' }),
+      },
+      mockEnv
+    );
+    const payload = (await res.json()) as { error: string; error_description: string };
+
+    expect(res.status).toBe(400);
+    expect(payload.error).toBe('invalid_request');
+    expect(payload.error_description).toContain('Tenant context');
+    expect(mockAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
   });
 
   it('returns the cached response for the same key and body', async () => {

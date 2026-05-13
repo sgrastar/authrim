@@ -8,6 +8,7 @@
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 import type { UserIdFormat } from '../../utils/id';
+import type { SAMLAttributeReleaseFailureUserMessageMode } from '../saml';
 
 /**
  * Tenant Settings Interface
@@ -31,6 +32,9 @@ export interface TenantSettings {
 
   // Browser Public Client Defaults
   'tenant.browser_public_client_mode': 'strict' | 'cookie_fallback' | 'legacy';
+
+  // SAML Defaults
+  'tenant.saml_attribute_release_failure_message_mode': SAMLAttributeReleaseFailureUserMessageMode;
 
   // Branding
   'tenant.name': string;
@@ -157,6 +161,16 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     enum: ['strict', 'cookie_fallback', 'legacy'],
     visibility: 'admin',
   },
+  'tenant.saml_attribute_release_failure_message_mode': {
+    key: 'tenant.saml_attribute_release_failure_message_mode',
+    type: 'enum',
+    default: 'generic',
+    label: 'SAML Attribute Failure Message Mode',
+    description:
+      'Default user-facing StatusMessage detail for SAML required attribute release failures. SP configuration can override this.',
+    enum: ['generic', 'detailed'],
+    visibility: 'admin',
+  },
 
   // Branding
   'tenant.name': {
@@ -270,6 +284,7 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.audit_profile_id': '',
   'tenant.residency_profile_id': '',
   'tenant.browser_public_client_mode': 'cookie_fallback',
+  'tenant.saml_attribute_release_failure_message_mode': 'generic',
   // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',

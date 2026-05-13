@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildIssuerUrl,
+  getDefaultTenantId,
   isMultiTenantEnabled,
   validateHostHeader,
   extractSubdomain,
@@ -25,7 +26,7 @@ describe('Issuer URL Builder', () => {
           ISSUER_URL: 'https://auth.example.com',
         } as Env;
 
-        const issuer = buildIssuerUrl(env);
+        const issuer = buildIssuerUrl(env, getDefaultTenantId(env));
         expect(issuer).toBe('https://auth.example.com');
       });
 
@@ -50,19 +51,24 @@ describe('Issuer URL Builder', () => {
         expect(issuer).toBe('https://acme.authrim.com');
       });
 
-      it('should use default tenant ID when subdomain not provided', () => {
-        const issuer = buildIssuerUrl(mtEnv);
+      it('should use explicit default tenant ID', () => {
+        const issuer = buildIssuerUrl(mtEnv, getDefaultTenantId(mtEnv));
         expect(issuer).toBe('https://default.authrim.com');
       });
 
       it('should use naked base domain for the primary/default tenant when enabled', () => {
-        const issuer = buildIssuerUrl({
+        const env = {
           ...mtEnv,
           DEFAULT_TENANT_ID: 'default',
           NAKED_DOMAIN_AS_ISSUER: 'true',
-        } as Env);
+        } as Env;
+        const issuer = buildIssuerUrl(env, getDefaultTenantId(env));
 
         expect(issuer).toBe('https://authrim.com');
+      });
+
+      it('should reject an empty tenant ID in multi-tenant mode', () => {
+        expect(() => buildIssuerUrl(mtEnv, '')).toThrow('buildIssuerUrl requires tenantId');
       });
 
       it('should keep subdomain URLs for non-primary tenants when naked domain is enabled', () => {

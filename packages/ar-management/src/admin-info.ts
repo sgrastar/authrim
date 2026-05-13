@@ -81,7 +81,7 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     const issuer = buildTenantBaseUrl(c.env, tenantId);
 
     const components = getComponentAvailability(c.env);
-    const { loginUiUrl, adminUiUrl } = await getConfiguredUiUrls(c.env);
+    const { loginUiUrl, adminUiUrl } = await getConfiguredUiUrls(c.env, issuer);
     const singleTenantMode = !c.env.BASE_DOMAIN;
     const tenantLoginUrl = buildTenantLoginUrl({
       issuer,
@@ -173,6 +173,50 @@ async function resolveRuntimeProfileInfo(
 
 function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
+}
+
+function extractWorkersDevAccountSubdomain(url: string): string | null {
+  try {
+    const { hostname } = new URL(url);
+    const parts = hostname.split('.');
+    if (
+      parts.length >= 4 &&
+      parts[parts.length - 2] === 'workers' &&
+      parts[parts.length - 1] === 'dev'
+    ) {
+      return parts.slice(1, -2).join('.');
+    }
+  } catch {
+    // Ignore invalid URLs and keep the configured value.
+  }
+  return null;
+}
+
+function normalizeWorkersDevUrlWithAccountSubdomain(
+  value: string | null,
+  issuer: string | null
+): string | null {
+  if (!value || !issuer) {
+    return value;
+  }
+
+  const accountSubdomain = extractWorkersDevAccountSubdomain(issuer);
+  if (!accountSubdomain) {
+    return value;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const parts = parsed.hostname.split('.');
+    if (parts.length === 3 && parts[1] === 'workers' && parts[2] === 'dev') {
+      parsed.hostname = `${parts[0]}.${accountSubdomain}.workers.dev`;
+      return stripTrailingSlash(parsed.toString());
+    }
+  } catch {
+    // Ignore invalid URLs and keep the configured value.
+  }
+
+  return value;
 }
 
 function buildTenantLoginUrl(options: {
@@ -284,15 +328,20 @@ export function usesNakedDomainIssuer(env: Env, tenantId: string): boolean {
   return usesNakedDomainIssuerCore(env, tenantId);
 }
 
-export async function getConfiguredUiUrls(env: AdminInfoEnv): Promise<{
+export async function getConfiguredUiUrls(
+  env: AdminInfoEnv,
+  issuer: string | null = null
+): Promise<{
   loginUiUrl: string | null;
   adminUiUrl: string | null;
 }> {
   const components = getComponentAvailability(env);
   const uiConfig = await getUIConfig(env);
+  const loginUiUrl = uiConfig?.baseUrl ?? null;
+  const adminUiUrl = components.admin_ui ? env.ADMIN_UI_URL || null : null;
   return {
-    loginUiUrl: uiConfig?.baseUrl ?? null,
-    adminUiUrl: components.admin_ui ? env.ADMIN_UI_URL || null : null,
+    loginUiUrl: normalizeWorkersDevUrlWithAccountSubdomain(loginUiUrl, issuer),
+    adminUiUrl: normalizeWorkersDevUrlWithAccountSubdomain(adminUiUrl, issuer),
   };
 }
 

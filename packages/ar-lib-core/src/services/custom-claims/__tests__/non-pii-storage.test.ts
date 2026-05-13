@@ -30,7 +30,7 @@ describe('non-pii-storage', () => {
     });
 
     expect(adapter.execute).toHaveBeenCalledWith(
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ?, tenant_id = ? WHERE user_id = ? AND field_name = ?',
+      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
       ['Sales', 'string', 'tenant-1', 'user-1', 'department']
     );
   });
@@ -51,8 +51,8 @@ describe('non-pii-storage', () => {
     });
 
     expect(adapter.execute).toHaveBeenCalledWith(
-      'INSERT INTO user_custom_fields (user_id, field_name, field_value, field_type, tenant_id) VALUES (?, ?, ?, ?, ?)',
-      ['user-1', 'department', 'Sales', 'string', 'tenant-1']
+      'INSERT INTO user_custom_fields (tenant_id, user_id, field_name, field_value, field_type) VALUES (?, ?, ?, ?, ?)',
+      ['tenant-1', 'user-1', 'department', 'Sales', 'string']
     );
   });
 
@@ -73,13 +73,13 @@ describe('non-pii-storage', () => {
 
     expect(adapter.execute).toHaveBeenNthCalledWith(
       1,
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ?, tenant_id = ? WHERE user_id = ? AND field_name = ?',
+      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
       ['Sales', 'string', 'tenant-1', 'user-1', 'department']
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,
-      'INSERT INTO user_custom_fields (user_id, field_name, field_value, field_type, tenant_id) VALUES (?, ?, ?, ?, ?)',
-      ['user-1', 'department', 'Sales', 'string', 'tenant-1']
+      'INSERT INTO user_custom_fields (tenant_id, user_id, field_name, field_value, field_type) VALUES (?, ?, ?, ?, ?)',
+      ['tenant-1', 'user-1', 'department', 'Sales', 'string']
     );
   });
 
@@ -102,17 +102,17 @@ describe('non-pii-storage', () => {
 
     expect(adapter.execute).toHaveBeenNthCalledWith(
       1,
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ?, tenant_id = ? WHERE user_id = ? AND field_name = ?',
+      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
       ['Sales', 'string', 'tenant-1', 'user-1', 'department']
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,
-      'INSERT INTO user_custom_fields (user_id, field_name, field_value, field_type, tenant_id) VALUES (?, ?, ?, ?, ?)',
-      ['user-1', 'department', 'Sales', 'string', 'tenant-1']
+      'INSERT INTO user_custom_fields (tenant_id, user_id, field_name, field_value, field_type) VALUES (?, ?, ?, ?, ?)',
+      ['tenant-1', 'user-1', 'department', 'Sales', 'string']
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       3,
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ?, tenant_id = ? WHERE user_id = ? AND field_name = ?',
+      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
       ['Sales', 'string', 'tenant-1', 'user-1', 'department']
     );
   });

@@ -27,7 +27,8 @@ vi.mock('../logger', () => ({
 }));
 
 vi.mock('../../services/audit', async () => {
-  const actual = await vi.importActual<typeof import('../../services/audit')>('../../services/audit');
+  const actual =
+    await vi.importActual<typeof import('../../services/audit')>('../../services/audit');
   return {
     ...actual,
     createAuditService: mockCreateAuditService,
@@ -94,6 +95,8 @@ function createMockEnv(dbOptions: { shouldFail?: boolean } = {}): Env {
  */
 function createMockContext(options: {
   adminAuth?: { userId: string };
+  tenantId?: string;
+  requestId?: string;
   headers?: Record<string, string>;
   env?: Env;
 }): Context<{ Bindings: Env }> {
@@ -111,6 +114,12 @@ function createMockContext(options: {
     get: vi.fn((key: string) => {
       if (key === 'adminAuth') {
         return options.adminAuth || { userId: 'test-user' };
+      }
+      if (key === 'tenantId') {
+        return options.tenantId || 'default';
+      }
+      if (key === 'requestId') {
+        return options.requestId;
       }
       return undefined;
     }),
@@ -131,6 +140,7 @@ describe('createAuditLog', () => {
 
   it('should create an audit log entry successfully', async () => {
     await createAuditLog(mockEnv, {
+      tenantId: 'default',
       userId: 'user-123',
       action: 'signing_keys.rotate.normal',
       resource: 'signing_keys',
@@ -168,6 +178,7 @@ describe('createAuditLog', () => {
     const env = { ...mockEnv, DB: mockDB as unknown as D1Database };
 
     await createAuditLog(env, {
+      tenantId: 'default',
       userId: 'user-1',
       action: 'test.action',
       resource: 'test',
@@ -179,6 +190,7 @@ describe('createAuditLog', () => {
     });
 
     await createAuditLog(env, {
+      tenantId: 'default',
       userId: 'user-2',
       action: 'test.action',
       resource: 'test',
@@ -200,6 +212,7 @@ describe('createAuditLog', () => {
 
     await expect(
       createAuditLog(mockEnv, {
+        tenantId: 'default',
         userId: 'user-123',
         action: 'test.action',
         resource: 'test',
@@ -222,6 +235,7 @@ describe('createAuditLog', () => {
 
   it('should log critical operations to console (PII-safe)', async () => {
     await createAuditLog(mockEnv, {
+      tenantId: 'default',
       userId: 'admin-user',
       action: 'signing_keys.rotate.emergency',
       resource: 'signing_keys',
@@ -249,6 +263,7 @@ describe('createAuditLog', () => {
 
   it('should not log to console for non-critical operations', async () => {
     await createAuditLog(mockEnv, {
+      tenantId: 'default',
       userId: 'user-123',
       action: 'signing_keys.status.read',
       resource: 'signing_keys',
@@ -269,6 +284,7 @@ describe('createAuditLog', () => {
       // Should not throw
       await expect(
         createAuditLog(failingEnv, {
+          tenantId: 'default',
           userId: 'user-123',
           action: 'test.action',
           resource: 'test',
@@ -292,6 +308,7 @@ describe('createAuditLog', () => {
       const failingEnv = createMockEnv({ shouldFail: true });
 
       const auditData = {
+        tenantId: 'default',
         userId: 'user-123',
         action: 'important.action',
         resource: 'critical-resource',
@@ -403,6 +420,7 @@ describe('createAuditLogFromContext', () => {
       },
       get: vi.fn((key: string) => {
         if (key === 'adminAuth') return { userId: 'user-1' };
+        if (key === 'tenantId') return 'default';
         return undefined;
       }),
     } as unknown as Context<{ Bindings: Env }>;
@@ -435,6 +453,7 @@ describe('createAuditLogFromContext', () => {
       },
       get: vi.fn((key: string) => {
         if (key === 'adminAuth') return { userId: 'user-1' };
+        if (key === 'tenantId') return 'default';
         return undefined;
       }),
     } as unknown as Context<{ Bindings: Env }>;
@@ -494,6 +513,43 @@ describe('createAuditLogFromContext', () => {
       expect.any(String), // severity
       expect.any(Number) // createdAt
     );
+  });
+
+  it('should include request and Admin UI BFF metadata in legacy audit metadata', async () => {
+    const mockEnv = createMockEnv();
+    const context = createMockContext({
+      adminAuth: { userId: 'user-1' },
+      requestId: 'ctx-req-1',
+      headers: {
+        'X-Request-Id': 'bff-req-1',
+        'X-Correlation-Id': 'corr-1',
+        'X-Authrim-Admin-UI-Api-Mode': 'cross-site-proxy-bff',
+        'X-Authrim-Forwarded-Host': 'api.authrim.example',
+        'X-Forwarded-Proto': 'https',
+      },
+      env: mockEnv,
+    });
+
+    await createAuditLogFromContext(
+      context,
+      'test.action',
+      'resource',
+      'id-1',
+      { admin_ui_api_mode: 'spoofed', reason: 'test' },
+      'info'
+    );
+
+    const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
+    const metadataJson = bindCall.mock.calls[0][8] as string;
+    expect(JSON.parse(metadataJson)).toEqual({
+      reason: 'test',
+      request_id: 'ctx-req-1',
+      admin_ui_api_mode: 'cross-site-proxy-bff',
+      admin_ui_bff_forwarded_host: 'api.authrim.example',
+      admin_ui_bff_forwarded_proto: 'https',
+      admin_ui_bff_request_id: 'bff-req-1',
+      admin_ui_bff_correlation_id: 'corr-1',
+    });
   });
 
   it('should not create log when adminAuth context is missing', async () => {

@@ -737,11 +737,7 @@ export class CIBARequestStore {
     const persistence = await this.ensureRequestPersistence();
     if (persistence) {
       await retryD1Operation(
-        () =>
-          persistence.markTokenIssued(
-            authReqId,
-            metadata.token_issued_at ?? Date.now()
-          ),
+        () => persistence.markTokenIssued(authReqId, metadata.token_issued_at ?? Date.now()),
         'CIBARequestStore.markTokenIssued',
         { maxRetries: 3 }
       );
@@ -798,7 +794,12 @@ export class CIBARequestStore {
    * Log critical events synchronously - V2
    */
   private async logCritical(entry: AuditLogEntry): Promise<void> {
+    const tenantId = this.getTenantIdForAudit(`ciba.${entry.action}`);
+    if (!tenantId) {
+      return;
+    }
     await createAuditLog(this.env, {
+      tenantId,
       userId: entry.userId ?? 'system',
       action: `ciba.${entry.action}`,
       resource: 'ciba_request',
@@ -839,18 +840,24 @@ export class CIBARequestStore {
 
     try {
       await Promise.all(
-        logsToFlush.map((entry) =>
-          createAuditLog(this.env, {
+        logsToFlush.map((entry) => {
+          const action = `ciba.${entry.action}`;
+          const tenantId = this.getTenantIdForAudit(action);
+          if (!tenantId) {
+            return Promise.resolve();
+          }
+          return createAuditLog(this.env, {
+            tenantId,
             userId: entry.userId ?? 'system',
-            action: `ciba.${entry.action}`,
+            action,
             resource: 'ciba_request',
             resourceId: entry.authReqId,
             ipAddress: 'system',
             userAgent: 'CIBARequestStore',
             metadata: JSON.stringify(entry.metadata ?? {}),
             severity: 'info',
-          })
-        )
+          });
+        })
       );
     } catch (error) {
       this.log.error('Failed to flush audit logs', {}, error as Error);
@@ -956,11 +963,10 @@ export class CIBARequestStore {
   private async initializeRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    return createCIBARequestPersistenceAdapter(
-      source,
-      'ciba-request-store',
-      this.tenantId ?? undefined
-    );
+    if (!this.tenantId) {
+      throw new Error('CIBA request persistence requires tenant context');
+    }
+    return createCIBARequestPersistenceAdapter(source, 'ciba-request-store', this.tenantId);
   }
 
   private async ensureRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
@@ -982,6 +988,14 @@ export class CIBARequestStore {
     if (tenantId) {
       this.setTenantId(tenantId);
     }
+  }
+
+  private getTenantIdForAudit(action: string): string | null {
+    if (!this.tenantId) {
+      this.log.error('Cannot create CIBA audit log: tenant context is missing', { action });
+      return null;
+    }
+    return this.tenantId;
   }
 
   private setTenantId(tenantId: string): void {

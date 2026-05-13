@@ -583,9 +583,9 @@ describe('Upgrade Handlers', () => {
         const history = await mockDatabaseAdapter.query(
           `SELECT id, upgrade_method, upgraded_at, preserve_sub
            FROM user_upgrades
-           WHERE anonymous_user_id = ? OR upgraded_user_id = ?
+           WHERE tenant_id = ? AND (anonymous_user_id = ? OR upgraded_user_id = ?)
            ORDER BY upgraded_at DESC`,
-          ['anon-user-123', 'anon-user-123']
+          ['default', 'anon-user-123', 'anon-user-123']
         );
 
         expect(Array.isArray(history)).toBe(true);

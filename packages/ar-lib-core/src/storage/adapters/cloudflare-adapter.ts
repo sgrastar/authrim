@@ -37,7 +37,6 @@ import {
 import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
 import { buildDOInstanceName } from '../../utils/tenant-context';
-import { getDefaultTenantId } from '../../utils/issuer';
 import { createLogger } from '../../utils/logger';
 import {
   getSessionStoreBySessionId,
@@ -58,8 +57,8 @@ type SessionStoreRpcStub = {
     sessionId: string,
     userId: string,
     ttl: number,
-    data?: Record<string, unknown>,
-    tenantId?: string
+    data: Record<string, unknown> | undefined,
+    tenantId: string
   ): Promise<Session>;
   invalidateSessionRpc(sessionId: string): Promise<boolean>;
   extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null>;
@@ -76,9 +75,13 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
   constructor(
     private env: Env,
-    tenantId?: string
+    tenantId: string
   ) {
-    this.configuredTenantId = tenantId ?? getDefaultTenantId(this.env);
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('CloudflareStorageAdapter requires tenantId');
+    }
+    this.configuredTenantId = normalizedTenantId;
   }
 
   getConfiguredTenantId(): string {
@@ -86,17 +89,16 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   }
 
   private getLegacySessionStoreStub(): SessionStoreRpcStub {
-    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
+    const doId = this.env.SESSION_STORE.idFromName(
+      buildDOInstanceName('session', this.getConfiguredTenantId())
+    );
     return this.env.SESSION_STORE.get(doId) as unknown as SessionStoreRpcStub;
   }
 
   getExistingSessionStoreStub(sessionId: string): SessionStoreRpcStub {
     if (isRegionShardedSessionId(sessionId)) {
-      return getSessionStoreBySessionId(
-        this.env,
-        sessionId,
-        this.getConfiguredTenantId()
-      ).stub as unknown as SessionStoreRpcStub;
+      return getSessionStoreBySessionId(this.env, sessionId, this.getConfiguredTenantId())
+        .stub as unknown as SessionStoreRpcStub;
     }
 
     return this.getLegacySessionStoreStub();
@@ -378,12 +380,19 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async setToAuthCodeStore(key: string, value: string, _ttl?: number): Promise<void> {
     const codeData = JSON.parse(value);
-    const doId = this.env.AUTH_CODE_STORE.idFromName(
-      buildDOInstanceName('auth-code', this.getConfiguredTenantId())
-    );
+    const tenantId = this.getConfiguredTenantId();
+    if (
+      typeof codeData === 'object' &&
+      codeData !== null &&
+      'tenantId' in codeData &&
+      codeData.tenantId !== tenantId
+    ) {
+      throw new Error('Auth code tenant mismatch');
+    }
+    const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code', tenantId));
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
-    await doStub.storeCodeRpc(codeData);
+    await doStub.storeCodeRpc({ ...codeData, tenantId });
   }
 
   /**
@@ -442,19 +451,27 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     }
 
     if (ttl !== undefined) {
-      log.debug('setToRefreshTokenRotator ignores explicit TTL and uses configured refresh token expiry', {
-        key,
-      });
+      log.debug(
+        'setToRefreshTokenRotator ignores explicit TTL and uses configured refresh token expiry',
+        {
+          key,
+        }
+      );
     }
 
-    await storeRefreshToken(this.env, refreshTokenData.jti, {
-      jti: refreshTokenData.jti,
-      client_id: refreshTokenData.client_id,
-      sub: refreshTokenData.sub,
-      scope: refreshTokenData.scope || '',
-      iat: refreshTokenData.iat,
-      exp: refreshTokenData.exp,
-    });
+    await storeRefreshToken(
+      this.env,
+      refreshTokenData.jti,
+      {
+        jti: refreshTokenData.jti,
+        client_id: refreshTokenData.client_id,
+        sub: refreshTokenData.sub,
+        scope: refreshTokenData.scope || '',
+        iat: refreshTokenData.iat,
+        exp: refreshTokenData.exp,
+      },
+      this.configuredTenantId
+    );
   }
 
   /**
@@ -937,7 +954,9 @@ export class ClientStore implements IClientStore {
   async create(client: Partial<ClientData>): Promise<ClientData> {
     const now = Date.now(); // Store in milliseconds
     const tenantId =
-      typeof client.tenant_id === 'string' ? client.tenant_id : this.adapter.getConfiguredTenantId();
+      typeof client.tenant_id === 'string'
+        ? client.tenant_id
+        : this.adapter.getConfiguredTenantId();
 
     const newClient: ClientData = {
       tenant_id: tenantId,
@@ -1238,7 +1257,7 @@ export class PasskeyStore implements IPasskeyStore {
  */
 export function createStorageAdapter(
   env: Env,
-  tenantId?: string
+  tenantId: string
 ): {
   adapter: CloudflareStorageAdapter;
   userStore: IUserStore;

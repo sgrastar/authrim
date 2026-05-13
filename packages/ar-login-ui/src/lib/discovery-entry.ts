@@ -81,6 +81,19 @@ export async function fetchDiscoveryConfig(
 	return (await response.json()) as DiscoveryConfigResponse;
 }
 
+export async function verifyLoginChallengeForCurrentTenant(
+	fetchFn: typeof fetch,
+	challengeId: string,
+	headers?: HeadersInit
+): Promise<boolean> {
+	const params = new URLSearchParams({ challenge_id: challengeId });
+	const response = await fetchFn(
+		`/auth/login-challenge?${params.toString()}`,
+		headers ? { headers } : undefined
+	);
+	return response.ok;
+}
+
 export async function issueDiscoveryGrant(
 	fetchFn: typeof fetch,
 	request: DiscoveryGrantIssueRequest,

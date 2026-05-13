@@ -70,8 +70,18 @@ function normalizeDisplayName(value: string | undefined): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 export class DeviceInstallationRepository extends BaseRepository<DeviceInstallation> {
-  constructor(adapter: DatabaseAdapter) {
+  private readonly tenantId: string;
+
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     super(adapter, {
       tableName: 'device_installations',
       softDelete: true,
@@ -93,13 +103,18 @@ export class DeviceInstallationRepository extends BaseRepository<DeviceInstallat
         'is_active',
       ],
     });
+    this.tenantId = requireTenantId(tenantId, 'DeviceInstallationRepository');
   }
 
   async createInstallation(input: CreateDeviceInstallationInput): Promise<DeviceInstallation | null> {
     const now = getCurrentTimestamp();
+    const tenantId = requireTenantId(
+      input.tenant_id ?? this.tenantId,
+      'DeviceInstallationRepository.createInstallation'
+    );
     const entity: DeviceInstallation = {
       id: input.id ?? `inst_${generateId()}`,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: tenantId,
       user_id: input.user_id,
       client_id: input.client_id,
       trust_group_id: input.trust_group_id,
@@ -162,7 +177,11 @@ export class DeviceInstallationRepository extends BaseRepository<DeviceInstallat
     }
   }
 
-  async findById(id: string, tenantId: string = 'default'): Promise<DeviceInstallation | null> {
+  override async findById(
+    id: string,
+    tenantId: string = this.tenantId
+  ): Promise<DeviceInstallation | null> {
+    const normalizedTenantId = requireTenantId(tenantId, 'DeviceInstallationRepository.findById');
     try {
       const row = await this.adapter.queryOne<DeviceInstallationRow>(
         `
@@ -170,7 +189,7 @@ export class DeviceInstallationRepository extends BaseRepository<DeviceInstallat
           WHERE id = ? AND tenant_id = ?
           LIMIT 1
         `,
-        [id, tenantId]
+        [id, normalizedTenantId]
       );
       return row ? this.rowToEntity(row) : null;
     } catch (error) {
@@ -183,14 +202,18 @@ export class DeviceInstallationRepository extends BaseRepository<DeviceInstallat
 
   async findByUserId(
     userId: string,
-    tenantId: string = 'default',
+    tenantId: string = this.tenantId,
     options: FindDeviceInstallationsOptions = {}
   ): Promise<DeviceInstallation[]> {
+    const normalizedTenantId = requireTenantId(
+      tenantId,
+      'DeviceInstallationRepository.findByUserId'
+    );
     let sql = `
       SELECT * FROM device_installations
       WHERE tenant_id = ? AND user_id = ? AND is_active = 1
     `;
-    const params: unknown[] = [tenantId, userId];
+    const params: unknown[] = [normalizedTenantId, userId];
 
     if (options.validOnly) {
       sql += ' AND revoked_at IS NULL';
@@ -222,7 +245,10 @@ export class DeviceInstallationRepository extends BaseRepository<DeviceInstallat
     clientId: string;
     sourceInstallationId: string;
   }): Promise<DeviceInstallation | null> {
-    const tenantId = input.tenantId ?? 'default';
+    const tenantId = requireTenantId(
+      input.tenantId ?? this.tenantId,
+      'DeviceInstallationRepository.findActiveDerivedInstallation'
+    );
     try {
       const row = await this.adapter.queryOne<DeviceInstallationRow>(
         `

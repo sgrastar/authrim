@@ -1,14 +1,26 @@
 import { redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discovery-entry';
+import {
+	fetchDiscoveryConfig,
+	getDiscoveryRequestHeaders,
+	verifyLoginChallengeForCurrentTenant
+} from '../lib/discovery-entry';
 
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');
+	const discoveryHeaders = getDiscoveryRequestHeaders(event);
+
 	if (challengeId) {
-		return {};
+		const challengeBelongsToCurrentTenant = await verifyLoginChallengeForCurrentTenant(
+			event.fetch,
+			challengeId,
+			discoveryHeaders
+		).catch(() => false);
+		if (challengeBelongsToCurrentTenant) {
+			return {};
+		}
 	}
 
-	const discoveryHeaders = getDiscoveryRequestHeaders(event);
 	const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(() => null);
 	if (!config) {
 		return {};

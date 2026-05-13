@@ -437,6 +437,25 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /api/admin/saml-providers to OP_SAML instead of OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/admin/saml-providers', {
+          headers: { 'X-Tenant-Id': 'default' },
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
+      it('should route /api/admin/saml-attribute-presets to OP_SAML', async () => {
+        const req = new Request('https://example.com/api/admin/saml-attribute-presets', {
+          headers: { 'X-Tenant-Id': 'default' },
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should return 404 when OP_SAML is not bound', async () => {
         const req = new Request('https://example.com/saml/sp/metadata');
         const env = { ...mockEnv, OP_SAML: undefined };
@@ -568,6 +587,7 @@ describe('Router Worker', () => {
       const allowHeaders = res.headers.get('Access-Control-Allow-Headers');
       expect(allowHeaders).toContain('Idempotency-Key');
       expect(allowHeaders).toContain('Authrim-Step-Up-Receipt');
+      expect(allowHeaders).not.toContain('X-Session-Id');
     });
 
     it('should expose rate limit and ETag headers', async () => {
@@ -580,6 +600,51 @@ describe('Router Worker', () => {
       expect(exposeHeaders).toContain('X-RateLimit-Limit');
       expect(exposeHeaders).toContain('ETag');
       expect(exposeHeaders).toContain('Location');
+    });
+
+    it('should allow exact Admin UI origin with credentials for Admin API preflight', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://admin.example.com',
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'Content-Type, X-Tenant-Id',
+        },
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://admin.example.com');
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+      const allowHeaders = res.headers.get('Access-Control-Allow-Headers');
+      expect(allowHeaders).toContain('X-Tenant-Id');
+      expect(allowHeaders).not.toContain('X-Session-Id');
+    });
+
+    it('should not allow unrelated origins for Admin API credentialed CORS', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://evil.example.com',
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'Content-Type, X-Tenant-Id',
+        },
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
     });
   });
 
@@ -732,6 +797,52 @@ describe('Router Worker', () => {
 
       expect(res.status).toBe(403);
       expect(body.error).toBe('csrf_validation_failed');
+    });
+
+    it('should allow state-changing Admin API requests from exact Admin UI origin', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://admin.example.com',
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': 'first',
+        },
+        body: JSON.stringify({ client_name: 'Test Client' }),
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      const forwardedRequest = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0];
+      expect(new URL(forwardedRequest.url).pathname).toBe('/api/admin/clients');
+      expect(forwardedRequest.headers.get('X-Tenant-Id')).toBe('first');
+    });
+
+    it('should block state-changing Admin API requests from unrelated origins', async () => {
+      const envWithAdminOrigin = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://admin.example.com',
+      };
+      const req = new Request('https://api.example.com/api/admin/clients', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://evil.example.com',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ client_name: 'Test Client' }),
+      });
+
+      const res = await app.fetch(req, envWithAdminOrigin);
+      const body = (await res.json()) as { error: string };
+
+      expect(res.status).toBe(403);
+      expect(body.error).toBe('csrf_validation_failed');
+      expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
     });
 
     it('should bypass router CSRF for initial admin setup API and forward the request', async () => {

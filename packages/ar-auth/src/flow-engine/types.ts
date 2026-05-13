@@ -702,6 +702,9 @@ export interface RuntimeState {
   /** フローID */
   flowId: string;
 
+  /** フロータイプ */
+  flowType: string;
+
   /** テナントID */
   tenantId: string;
 
@@ -745,6 +748,9 @@ export interface RuntimeState {
 
   /** 最終アクティビティ時刻（UNIX ms） */
   lastActivityAt: number;
+
+  /** Recent request timestamps for per-session rate limiting */
+  requestTimestamps: number[];
 
   // === 冪等性管理 ===
 
@@ -941,6 +947,7 @@ export interface FlowCompiler {
 export interface CreateRuntimeStateParams {
   sessionId: string;
   flowId: string;
+  flowType: 'login' | 'authorization' | 'consent' | 'logout';
   tenantId: string;
   clientId: string;
   entryNodeId: string;

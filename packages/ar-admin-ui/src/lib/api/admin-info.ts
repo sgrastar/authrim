@@ -1,4 +1,5 @@
 import { adminFetch } from '$lib/api/admin-request';
+import { settingsContext } from '$lib/stores/settings-context.svelte';
 /**
  * Admin Info / Metadata API Client
  *
@@ -8,7 +9,14 @@ import { adminFetch } from '$lib/api/admin-request';
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 function resolveTenantId(tenantId?: string): string {
-	return tenantId?.trim() || 'default';
+	const resolved =
+		tenantId?.trim() ||
+		settingsContext.current.tenantId?.trim() ||
+		settingsContext.availableTenants[0]?.id?.trim();
+	if (!resolved) {
+		throw new Error('Tenant context is required to load admin info');
+	}
+	return resolved;
 }
 
 export interface TenantEndpoints {

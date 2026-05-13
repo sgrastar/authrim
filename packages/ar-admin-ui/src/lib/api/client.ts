@@ -96,19 +96,8 @@ interface APIError {
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 /**
- * Get session ID from localStorage for authentication
- * Used for Safari ITP compatibility (cross-site cookies blocked)
- */
-function getSessionId(): string | null {
-	if (typeof localStorage !== 'undefined') {
-		return localStorage.getItem('sessionId');
-	}
-	return null;
-}
-
-/**
  * Generic fetch wrapper with error handling
- * Includes X-Session-Id header for Safari ITP compatibility
+ * Uses HttpOnly cookie-backed Admin sessions.
  */
 async function apiFetch<T>(
 	endpoint: string,
@@ -117,20 +106,14 @@ async function apiFetch<T>(
 	try {
 		const url = `${API_BASE_URL}${endpoint}`;
 
-		// Build headers with session ID for Safari ITP compatibility
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',
 			...(options.headers as Record<string, string>)
 		};
 
-		// Add session ID header if available (for cross-site requests)
-		const sessionId = getSessionId();
-		if (sessionId && sessionId !== 'session-from-cookie') {
-			headers['X-Session-Id'] = sessionId;
-		}
-
 		const response = await fetch(url, {
 			...options,
+			credentials: options.credentials ?? 'include',
 			headers
 		});
 

@@ -16,7 +16,6 @@ import {
 // Define Env type locally to avoid importing from @authrim/ar-lib-core
 // which has cloudflare:workers dependencies
 interface Env {
-  ADMIN_API_SECRET?: string;
   RP_TOKEN_ENCRYPTION_KEY?: string;
   DB?: D1Database;
   SETTINGS?: KVNamespace;
@@ -29,6 +28,7 @@ vi.mock('@authrim/ar-lib-core', () => {
   const errorMappings: Record<string, { status: number; rfcError: string }> = {
     AR900001: { status: 500, rfcError: 'server_error' }, // INTERNAL_ERROR
     AR060001: { status: 401, rfcError: 'invalid_request' }, // ADMIN_AUTH_REQUIRED
+    AR060002: { status: 403, rfcError: 'insufficient_scope' }, // ADMIN_INSUFFICIENT_PERMISSIONS
     AR020002: { status: 404, rfcError: 'invalid_request' }, // CLIENT_NOT_FOUND
     AR060004: { status: 404, rfcError: 'invalid_request' }, // ADMIN_RESOURCE_NOT_FOUND
     AR010001: { status: 400, rfcError: 'invalid_request' }, // VALIDATION_REQUIRED_FIELD
@@ -44,17 +44,15 @@ vi.mock('@authrim/ar-lib-core', () => {
   };
 
   return {
-    timingSafeEqual: (a: string, b: string) => {
-      if (a.length !== b.length) return false;
-      let result = 0;
-      for (let i = 0; i < a.length; i++) {
-        result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-      }
-      return result === 0;
+    ADMIN_PERMISSIONS: {
+      EXTERNAL_PROVIDERS_READ: 'admin:external_providers:read',
+      EXTERNAL_PROVIDERS_WRITE: 'admin:external_providers:write',
+      EXTERNAL_PROVIDERS_DELETE: 'admin:external_providers:delete',
     },
     AR_ERROR_CODES: {
       INTERNAL_ERROR: 'AR900001',
       ADMIN_AUTH_REQUIRED: 'AR060001',
+      ADMIN_INSUFFICIENT_PERMISSIONS: 'AR060002',
       CLIENT_NOT_FOUND: 'AR020002',
       ADMIN_RESOURCE_NOT_FOUND: 'AR060004',
       VALIDATION_REQUIRED_FIELD: 'AR010001',
@@ -97,6 +95,17 @@ vi.mock('@authrim/ar-lib-core', () => {
     getTenantIdFromContext: vi.fn((c: { get?: (key: string) => string | undefined }) => {
       return c.get?.('tenantId') || 'default';
     }),
+    hasAdminPermission: (permissions: string[], required: string) => {
+      if (permissions.includes('*')) return true;
+      if (permissions.includes(required)) return true;
+      const parts = required.split(':');
+      for (let i = parts.length - 1; i >= 0; i--) {
+        if (permissions.includes([...parts.slice(0, i), '*'].join(':'))) {
+          return true;
+        }
+      }
+      return false;
+    },
     validateWebhookUrl: vi.fn((value: string) => {
       try {
         const url = new URL(value);
@@ -134,7 +143,6 @@ import * as cryptoUtils from '../utils/crypto';
 
 describe('Admin Provider API', () => {
   const mockEnv: Partial<Env> = {
-    ADMIN_API_SECRET: 'test-admin-secret',
     RP_TOKEN_ENCRYPTION_KEY: 'test-encryption-key',
   };
 
@@ -147,6 +155,8 @@ describe('Admin Provider API', () => {
       params?: Record<string, string>;
       query?: Record<string, string>;
       tenantId?: string;
+      authenticated?: boolean;
+      permissions?: string[];
     } = {}
   ) => {
     const url = new URL(`http://localhost${path}`);
@@ -165,7 +175,21 @@ describe('Admin Provider API', () => {
         json: async () => options.body,
       },
       env: mockEnv as Env,
-      get: (name: string) => (name === 'tenantId' ? options.tenantId || 'default' : undefined),
+      get: (name: string) => {
+        if (name === 'tenantId') {
+          return options.tenantId || 'default';
+        }
+        if (name === 'adminAuth' && options.authenticated !== false) {
+          return {
+            userId: 'admin-1',
+            actorId: 'admin-1',
+            actorType: 'admin_user',
+            authMethod: 'session',
+            permissions: options.permissions ?? ['*'],
+          };
+        }
+        return undefined;
+      },
       json: vi.fn().mockImplementation((data, status = 200) => {
         return new Response(JSON.stringify(data), {
           status,
@@ -182,7 +206,9 @@ describe('Admin Provider API', () => {
 
   describe('Authentication', () => {
     it('should reject requests without Authorization header', async () => {
-      const ctx = createMockContext('GET', '/external-idp/admin/providers');
+      const ctx = createMockContext('GET', '/external-idp/admin/providers', {
+        authenticated: false,
+      });
       const response = await handleAdminListProviders(ctx as never);
 
       // ErrorFactory returns Response directly
@@ -194,6 +220,7 @@ describe('Admin Provider API', () => {
     it('should reject requests with invalid token', async () => {
       const ctx = createMockContext('GET', '/external-idp/admin/providers', {
         headers: { Authorization: 'Bearer wrong-token' },
+        authenticated: false,
       });
       const response = await handleAdminListProviders(ctx as never);
 
@@ -206,6 +233,7 @@ describe('Admin Provider API', () => {
     it('should reject requests with non-Bearer auth', async () => {
       const ctx = createMockContext('GET', '/external-idp/admin/providers', {
         headers: { Authorization: 'Basic test-admin-secret' },
+        authenticated: false,
       });
       const response = await handleAdminListProviders(ctx as never);
 

@@ -495,20 +495,14 @@ describe('UnifiedCheckService', () => {
   });
 
   describe('Default Values', () => {
-    it('should use default tenant_id when not provided', async () => {
+    it('should reject missing tenant_id', async () => {
       const request: CheckApiRequest = {
         subject_id: 'user_123',
         permission: 'documents:read',
       };
 
-      await service.check(request);
-
-      // Verify tenant_id 'default' was used in the query
-      expect(mockD1.bind).toHaveBeenCalledWith(
-        'user_123',
-        'default',
-        'default',
-        expect.any(Number)
+      await expect(service.check(request)).rejects.toThrow(
+        'UnifiedCheckService requires tenant_id'
       );
     });
 
@@ -516,6 +510,7 @@ describe('UnifiedCheckService', () => {
       const request: CheckApiRequest = {
         subject_id: 'user_123',
         permission: 'documents:read',
+        tenant_id: 'default',
       };
 
       const result = await service.check(request);

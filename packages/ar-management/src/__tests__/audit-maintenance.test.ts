@@ -31,8 +31,9 @@ function createMockAdapter(deleteCount: number): IAuditStorageAdapter {
     writePIILogBatch: vi.fn(),
     query: vi.fn(),
     count: vi.fn(),
-    listRetentionCandidates: vi.fn(async () => []),
-    deleteByRetention: vi.fn(
+    listTenantRetentionCandidates: vi.fn(async () => []),
+    listGlobalRetentionCandidates: vi.fn(async () => []),
+    deleteTenantByRetention: vi.fn(
       async (
         _logType: AuditLogType,
         _beforeTime: number,
@@ -40,6 +41,7 @@ function createMockAdapter(deleteCount: number): IAuditStorageAdapter {
         _batchSize?: number
       ) => deleteCount
     ),
+    deleteGlobalByRetention: vi.fn(async () => deleteCount),
     isHealthy: vi.fn(),
     close: vi.fn(async () => {}),
   } as unknown as IAuditStorageAdapter;
@@ -119,25 +121,25 @@ describe('cleanupResolvedAuditPrimaries', () => {
       piiDeleted: 10,
     });
 
-    expect(d1EventAdapter.deleteByRetention).toHaveBeenCalledWith(
+    expect(d1EventAdapter.deleteTenantByRetention).toHaveBeenCalledWith(
       'event',
       expect.any(Number),
       'd1-tenant',
       1000
     );
-    expect(d1PiiAdapter.deleteByRetention).toHaveBeenCalledWith(
+    expect(d1PiiAdapter.deleteTenantByRetention).toHaveBeenCalledWith(
       'pii',
       expect.any(Number),
       'd1-tenant',
       1000
     );
-    expect(postgresEventAdapter.deleteByRetention).toHaveBeenCalledWith(
+    expect(postgresEventAdapter.deleteTenantByRetention).toHaveBeenCalledWith(
       'event',
       expect.any(Number),
       'pg-tenant',
       1000
     );
-    expect(postgresPiiAdapter.deleteByRetention).toHaveBeenCalledWith(
+    expect(postgresPiiAdapter.deleteTenantByRetention).toHaveBeenCalledWith(
       'pii',
       expect.any(Number),
       'pg-tenant',
@@ -173,8 +175,8 @@ describe('cleanupResolvedAuditPrimaries', () => {
       eventDeleted: 0,
       piiDeleted: 0,
     });
-    expect(d1EventAdapter.deleteByRetention).not.toHaveBeenCalled();
-    expect(d1PiiAdapter.deleteByRetention).not.toHaveBeenCalled();
+    expect(d1EventAdapter.deleteTenantByRetention).not.toHaveBeenCalled();
+    expect(d1PiiAdapter.deleteTenantByRetention).not.toHaveBeenCalled();
   });
 
   it('cleans mysql primaries through the resolved external adapter hook', async () => {
@@ -209,10 +211,10 @@ describe('cleanupResolvedAuditPrimaries', () => {
   it('copies expiring records to archive before deleting when archiveBeforeDelete is enabled', async () => {
     const d1EventAdapter = createMockAdapter(1);
     const d1PiiAdapter = createMockAdapter(1);
-    (d1EventAdapter.listRetentionCandidates as any).mockResolvedValue([
+    (d1EventAdapter.listTenantRetentionCandidates as any).mockResolvedValue([
       createEventEntry({ tenantId: 'tenant-1', retentionUntil: 1_690_000_000_000 }),
     ]);
-    (d1PiiAdapter.listRetentionCandidates as any).mockResolvedValue([
+    (d1PiiAdapter.listTenantRetentionCandidates as any).mockResolvedValue([
       createPiiEntry({ tenantId: 'tenant-1' }),
     ]);
 
@@ -265,15 +267,15 @@ describe('cleanupResolvedAuditPrimaries', () => {
     expect(archivePiiAdapter.writePIILogBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ id: 'pii-1' })])
     );
-    expect(d1EventAdapter.deleteByRetention).toHaveBeenCalledOnce();
-    expect(d1PiiAdapter.deleteByRetention).toHaveBeenCalledOnce();
+    expect(d1EventAdapter.deleteTenantByRetention).toHaveBeenCalledOnce();
+    expect(d1PiiAdapter.deleteTenantByRetention).toHaveBeenCalledOnce();
   });
 
   it('skips delete for a log type when archive copy fails', async () => {
     const d1EventAdapter = createMockAdapter(1);
     const d1PiiAdapter = createMockAdapter(1);
-    (d1EventAdapter.listRetentionCandidates as any).mockResolvedValue([createEventEntry()]);
-    (d1PiiAdapter.listRetentionCandidates as any).mockResolvedValue([createPiiEntry()]);
+    (d1EventAdapter.listTenantRetentionCandidates as any).mockResolvedValue([createEventEntry()]);
+    (d1PiiAdapter.listTenantRetentionCandidates as any).mockResolvedValue([createPiiEntry()]);
 
     const archiveEventAdapter = createMockAdapter(0);
     const archivePiiAdapter = createMockAdapter(0);
@@ -319,7 +321,7 @@ describe('cleanupResolvedAuditPrimaries', () => {
       eventDeleted: 0,
       piiDeleted: 1,
     });
-    expect(d1EventAdapter.deleteByRetention).not.toHaveBeenCalled();
-    expect(d1PiiAdapter.deleteByRetention).toHaveBeenCalledOnce();
+    expect(d1EventAdapter.deleteTenantByRetention).not.toHaveBeenCalled();
+    expect(d1PiiAdapter.deleteTenantByRetention).toHaveBeenCalledOnce();
   });
 });

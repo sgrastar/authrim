@@ -179,20 +179,23 @@ export class AttributeVerificationRepository extends BaseRepository<AttributeVer
   /**
    * Find verification by VP request ID
    */
-  async findByVPRequestId(vpRequestId: string): Promise<AttributeVerification | null> {
+  async findByVPRequestId(
+    tenantId: string,
+    vpRequestId: string
+  ): Promise<AttributeVerification | null> {
     return this.adapter.queryOne<AttributeVerification>(
-      'SELECT * FROM attribute_verifications WHERE vp_request_id = ?',
-      [vpRequestId]
+      'SELECT * FROM attribute_verifications WHERE tenant_id = ? AND vp_request_id = ?',
+      [tenantId, vpRequestId]
     );
   }
 
   /**
    * Link verification to a user (called after user login association)
    */
-  async linkToUser(verificationId: string, userId: string): Promise<boolean> {
+  async linkToUser(tenantId: string, verificationId: string, userId: string): Promise<boolean> {
     const result = await this.adapter.execute(
-      'UPDATE attribute_verifications SET user_id = ?, updated_at = ? WHERE id = ?',
-      [userId, getCurrentTimestamp(), verificationId]
+      'UPDATE attribute_verifications SET user_id = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+      [userId, getCurrentTimestamp(), tenantId, verificationId]
     );
     return result.rowsAffected > 0;
   }
@@ -200,10 +203,14 @@ export class AttributeVerificationRepository extends BaseRepository<AttributeVer
   /**
    * Update mapped attribute IDs
    */
-  async updateMappedAttributeIds(verificationId: string, attributeIds: string[]): Promise<boolean> {
+  async updateMappedAttributeIds(
+    tenantId: string,
+    verificationId: string,
+    attributeIds: string[]
+  ): Promise<boolean> {
     const result = await this.adapter.execute(
-      'UPDATE attribute_verifications SET mapped_attribute_ids = ?, updated_at = ? WHERE id = ?',
-      [JSON.stringify(attributeIds), getCurrentTimestamp(), verificationId]
+      'UPDATE attribute_verifications SET mapped_attribute_ids = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+      [JSON.stringify(attributeIds), getCurrentTimestamp(), tenantId, verificationId]
     );
     return result.rowsAffected > 0;
   }

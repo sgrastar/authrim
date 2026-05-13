@@ -35,8 +35,8 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
 
   async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
     if (sql.includes('SELECT jti, client_id, generation FROM user_token_families')) {
-      const userId = params?.[0] as string;
-      const tenantId = params?.[1] as string;
+      const tenantId = params?.[0] as string;
+      const userId = params?.[1] as string;
       const maybeClientId =
         typeof params?.[2] === 'string' ? (params?.[2] as string) : undefined;
       const maybeNow =
@@ -132,7 +132,7 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
     }
 
     if (sql.includes('SET expires_at = 0')) {
-      const [userId, tenantId, clientId] = params as [string, string, string | undefined];
+      const [tenantId, userId, clientId] = params as [string, string, string | undefined];
       let updated = 0;
       for (const row of this.rows.values()) {
         if (row.user_id !== userId || row.tenant_id !== tenantId) continue;
@@ -144,7 +144,7 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
     }
 
     if (sql.includes('SET is_revoked = 1')) {
-      const [userId, tenantId, clientId] = params as [string, string, string | undefined];
+      const [tenantId, userId, clientId] = params as [string, string, string | undefined];
       let updated = 0;
       for (const row of this.rows.values()) {
         if (row.user_id !== userId || row.tenant_id !== tenantId) continue;

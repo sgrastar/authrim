@@ -32,10 +32,12 @@ const {
   },
 }));
 
-const { mockGetApprovalCompletionArtifact, mockConsumeApprovalCompletionArtifact } = vi.hoisted(() => ({
-  mockGetApprovalCompletionArtifact: vi.fn(),
-  mockConsumeApprovalCompletionArtifact: vi.fn(),
-}));
+const { mockGetApprovalCompletionArtifact, mockConsumeApprovalCompletionArtifact } = vi.hoisted(
+  () => ({
+    mockGetApprovalCompletionArtifact: vi.fn(),
+    mockConsumeApprovalCompletionArtifact: vi.fn(),
+  })
+);
 
 const { mockIssueApprovalDecisionReceipt } = vi.hoisted(() => ({
   mockIssueApprovalDecisionReceipt: vi.fn(),
@@ -101,22 +103,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    adminAuthMiddleware:
-      vi.fn(() =>
-        async (c: any, next: () => Promise<void>) => {
-          c.set('adminAuth', {
-            userId: c.req.header('X-Admin-User-Id') ?? 'admin-2',
-            authMethod: c.req.header('X-Admin-Auth-Method') ?? 'session',
-            tenantId: 'tenant-a',
-            permissions: ['admin:approvals:write'],
-            roles: ['tenant_admin'],
-            hierarchyLevel: 50,
-            mfaVerified: c.req.header('X-Admin-Mfa-Verified') !== 'false',
-            sessionId: c.req.header('X-Admin-Session-Id') ?? 'admin-session-1',
-          });
-          await next();
-        }
-      ),
+    adminAuthMiddleware: vi.fn(() => async (c: any, next: () => Promise<void>) => {
+      c.set('adminAuth', {
+        userId: c.req.header('X-Admin-User-Id') ?? 'admin-2',
+        authMethod: c.req.header('X-Admin-Auth-Method') ?? 'session',
+        tenantId: 'tenant-a',
+        permissions: ['admin:approvals:write'],
+        roles: ['tenant_admin'],
+        hierarchyLevel: 50,
+        mfaVerified: c.req.header('X-Admin-Mfa-Verified') !== 'false',
+        sessionId: c.req.header('X-Admin-Session-Id') ?? 'admin-session-1',
+      });
+      await next();
+    }),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     ApprovalRequestRepository: vi.fn(function MockApprovalRequestRepository() {
       return mockRequestRepo;
@@ -163,7 +162,12 @@ vi.mock('../approval-artifact-method-switch', () => ({
     code: string;
     retryAfterMs: number | null;
 
-    constructor(input: { status: number; code: string; message: string; retryAfterMs?: number | null }) {
+    constructor(input: {
+      status: number;
+      code: string;
+      message: string;
+      retryAfterMs?: number | null;
+    }) {
       super(input.message);
       this.status = input.status;
       this.code = input.code;
@@ -355,7 +359,9 @@ describe('approval artifacts router', () => {
       approvals: [],
       grants: [{ public_grant_id: 'egr_public_1' }],
     });
-    mockAppendApprovalTransportEvent.mockImplementation(async (_c, _adapter, _requestRepo, request) => request);
+    mockAppendApprovalTransportEvent.mockImplementation(
+      async (_c, _adapter, _requestRepo, request) => request
+    );
     mockVerifyApprovalOtpChallenge.mockResolvedValue({
       verifiedAt: Date.now(),
     });
@@ -527,7 +533,9 @@ describe('approval artifacts router', () => {
     expect(payload.completion_requirements.transport_channel).toBe('pe***@example.com');
     expect(payload.completion_requirements.guidance_title).toBe('Approve With Email Code');
     expect(payload.completion_requirements.fallback_note).toContain('ciba');
-    expect(payload.completion_requirements.portal_path).toBe('/api/approval-artifacts/apc_1/portal');
+    expect(payload.completion_requirements.portal_path).toBe(
+      '/api/approval-artifacts/apc_1/portal'
+    );
     expect(payload.completion_requirements.switch_method_path).toBe(
       '/api/approval-artifacts/apc_1/switch-method'
     );
@@ -552,13 +560,18 @@ describe('approval artifacts router', () => {
     );
 
     const app = createApp();
-    const res = await app.request('/api/approval-artifacts/apc_1/ciba/start', { method: 'POST' }, mockEnv);
+    const res = await app.request(
+      '/api/approval-artifacts/apc_1/ciba/start',
+      { method: 'POST' },
+      mockEnv
+    );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       auth_req_id: 'g1:apac:1:cba_internal',
       status_path: '/api/approval-artifacts/apc_1/ciba/status',
-      device_path: '/api/approval-artifacts/apc_1/ciba/device?auth_req_id=g1%3Aapac%3A1%3Acba_internal',
+      device_path:
+        '/api/approval-artifacts/apc_1/ciba/device?auth_req_id=g1%3Aapac%3A1%3Acba_internal',
     });
     expect(mockDispatchApprovalCibaUserCode).toHaveBeenCalledWith(
       expect.anything(),
@@ -610,7 +623,11 @@ describe('approval artifacts router', () => {
     );
 
     const app = createApp();
-    const res = await app.request('/api/approval-artifacts/apc_1/ciba/start', { method: 'POST' }, mockEnv);
+    const res = await app.request(
+      '/api/approval-artifacts/apc_1/ciba/start',
+      { method: 'POST' },
+      mockEnv
+    );
 
     expect(res.status).toBe(429);
     await expect(res.json()).resolves.toMatchObject({
@@ -813,7 +830,9 @@ describe('approval artifacts router', () => {
       expires_at: expect.any(Number),
     });
     expect(payload.completion_requirements.method).toBe('passkey');
-    expect(payload.completion_requirements.portal_path).toBe('/api/approval-artifacts/apc_2/portal');
+    expect(payload.completion_requirements.portal_path).toBe(
+      '/api/approval-artifacts/apc_2/portal'
+    );
     expect(payload.notification_result.delivery_status).toBe('recorded');
   });
 
@@ -1099,7 +1118,7 @@ describe('approval artifacts router', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith(mockEnv, 'apc_1');
+    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith(mockEnv, 'apc_1', 'default');
     expect(mockApplyApprovalDecisionForRequest).toHaveBeenCalled();
     const payload = (await res.json()) as any;
     expect(payload.request_status).toBe('approved');
@@ -1312,7 +1331,7 @@ describe('approval artifacts router', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith(mockEnv, 'apc_1');
+    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith(mockEnv, 'apc_1', 'default');
     expect(mockApplyApprovalDecisionForRequest).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -1362,7 +1381,7 @@ describe('approval artifacts router', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith(mockEnv, 'apc_1');
+    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith(mockEnv, 'apc_1', 'default');
     expect(mockApplyApprovalDecisionForRequest).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),

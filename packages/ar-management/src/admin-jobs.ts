@@ -43,6 +43,12 @@ import {
   type AdminElevationAccessResolution,
 } from './admin-elevation-access';
 import {
+  listAdminJobTypeDefinitions,
+  getAdminJobResultObjectClass,
+  isAdminJobTypeCreatableFromAdminApi,
+} from './admin-job-types';
+import { countBulkUserUpdateTargets, validateBulkUserUpdateConfig } from './admin-job-executor';
+import {
   USER_IMPORT_MAX_UPLOAD_BYTES,
   buildUserImportResultKey,
   buildUserImportUploadKey,
@@ -77,6 +83,7 @@ export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
     '/api/admin/jobs/organizations/:id/bulk-members',
     requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
   );
+  app.use('/api/admin/jobs/types', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
   app.use(
     '/api/admin/jobs/artifacts/:artifactId',
     requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ])
@@ -149,6 +156,10 @@ interface JobRow {
   started_at: number | null;
   completed_at: number | null;
   estimated_completion: number | null;
+  attempt_count?: number | null;
+  max_attempts?: number | null;
+  next_run_at?: number | null;
+  dead_lettered_at?: number | null;
 }
 
 type JobArtifactFormat = 'json' | 'csv';
@@ -265,13 +276,10 @@ async function sha256HexFromBytes(bytes: Uint8Array): Promise<string> {
     .join('');
 }
 
-function expectedObjectClassForJobType(jobType: string): 'user_import_result' | null {
-  switch (jobType) {
-    case 'users/import':
-      return 'user_import_result';
-    default:
-      return null;
-  }
+function expectedObjectClassForJobType(
+  jobType: string
+): 'user_import_result' | 'admin_job_result' | null {
+  return getAdminJobResultObjectClass(jobType);
 }
 
 // =============================================================================
@@ -646,6 +654,10 @@ function formatJob(row: JobRow) {
     started_at: toISOString(row.started_at),
     completed_at: toISOString(row.completed_at),
     estimated_completion: toISOString(row.estimated_completion),
+    next_run_at: toISOString(row.next_run_at ?? null),
+    attempts: row.attempt_count ?? 0,
+    max_attempts: row.max_attempts ?? 3,
+    dead_lettered_at: toISOString(row.dead_lettered_at ?? null),
     ...(row.error_code && { error_code: row.error_code }),
     ...(row.error_message && { error_message: row.error_message }),
   };
@@ -730,6 +742,19 @@ function parseJobConfig(
 // =============================================================================
 // Handlers
 // =============================================================================
+
+function createUnsupportedJobTypeResponse(
+  c: Context<{ Bindings: Env }>,
+  jobType: string
+): Promise<Response> {
+  return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED, {
+    variables: {
+      field: 'job_type',
+      value: jobType,
+      reason: 'This job type is not enabled because its processor is not implemented.',
+    },
+  });
+}
 
 /**
  * GET /api/admin/jobs
@@ -837,7 +862,8 @@ export async function adminJobsListHandler(c: Context<{ Bindings: Env }>) {
     const limitPlusOne = query.limit + 1;
     const sql = `
       SELECT id, tenant_id, job_type, status, progress, error_code, error_message,
-             created_by, created_at, updated_at, started_at, completed_at, estimated_completion
+             created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
+             attempt_count, max_attempts, next_run_at, dead_lettered_at
       FROM admin_jobs
       WHERE ${whereClauses.join(' AND ')}
       ORDER BY ${orderBy}
@@ -891,7 +917,8 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
 
     const row = await adapter.queryOne<JobRow>(
       `SELECT id, tenant_id, job_type, status, progress, config, error_code, error_message,
-              created_by, created_at, updated_at, started_at, completed_at, estimated_completion
+              created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
+              attempt_count, max_attempts, next_run_at, dead_lettered_at
        FROM admin_jobs
        WHERE id = ? AND tenant_id = ?`,
       [jobId, tenantId]
@@ -912,6 +939,36 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
     log.error('Failed to get job', { jobId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+export async function adminJobTypesHandler(c: Context<{ Bindings: Env }>) {
+  return c.json({
+    result_delivery_options: [
+      {
+        value: 'auto',
+        description:
+          'Inline small results and materialize large results when artifact storage is configured.',
+      },
+      {
+        value: 'inline',
+        description: 'Keep the result summary in admin_jobs.result.',
+      },
+      {
+        value: 'artifact',
+        description:
+          'Require encrypted EXPORT_ARTIFACTS materialization and expose artifact download metadata.',
+      },
+    ],
+    job_types: listAdminJobTypeDefinitions().map((definition) => ({
+      job_type: definition.jobType,
+      processor_status: definition.processorStatus,
+      creatable_from_admin_api: definition.creatableFromAdminApi,
+      result_object_class: definition.resultObjectClass ?? null,
+      supported_result_delivery: definition.supportedResultDelivery ?? [],
+      create_endpoint: definition.createEndpoint ?? null,
+      notes: definition.notes ?? null,
+    })),
+  });
 }
 
 /**
@@ -957,7 +1014,7 @@ export async function adminJobResultDownloadHandler(c: Context<{ Bindings: Env }
         );
       }
 
-      const catalog = await listObjectCatalogObjects(adapter, row.object_catalog_id);
+      const catalog = await listObjectCatalogObjects(adapter, tenantId, row.object_catalog_id);
       if (!catalog) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
           variables: { resource: 'job_result_manifest', id: jobId },
@@ -1100,7 +1157,7 @@ export async function adminJobResultArtifactManifestHandler(c: Context<{ Binding
       return access;
     }
 
-    const catalog = await listObjectCatalogObjects(adapter, row.object_catalog_id);
+    const catalog = await listObjectCatalogObjects(adapter, tenantId, row.object_catalog_id);
     if (!catalog) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'job_result_manifest', id: artifactId },
@@ -1281,6 +1338,8 @@ const ImportOptionsSchema = z.object({
   validate_only: z.boolean().default(false),
 });
 
+const JobResultDeliverySchema = z.enum(['auto', 'inline', 'artifact']).default('auto');
+
 /**
  * Bulk update options
  */
@@ -1289,6 +1348,8 @@ const BulkUpdateOptionsSchema = z.object({
   filter: z.record(z.string(), z.unknown()).optional(),
   values: z.record(z.string(), z.unknown()),
   dry_run: z.boolean().default(false),
+  batch_size: z.number().int().min(1).max(1000).optional(),
+  result_delivery: JobResultDeliverySchema,
 });
 
 /**
@@ -1298,8 +1359,9 @@ const ReportOptionsSchema = z.object({
   type: z.enum(['user_activity', 'access_summary', 'compliance_audit', 'security_events']),
   from_date: z.string().datetime(),
   to_date: z.string().datetime(),
-  format: z.enum(['json', 'csv', 'pdf']).default('json'),
+  format: z.enum(['json', 'csv']).default('json'),
   filters: z.record(z.string(), z.unknown()).optional(),
+  result_delivery: JobResultDeliverySchema,
 });
 
 /**
@@ -1452,6 +1514,10 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
   const tenantId = getTenantIdFromContext(c);
 
   try {
+    if (!isAdminJobTypeCreatableFromAdminApi('users/import')) {
+      return createUnsupportedJobTypeResponse(c, 'users/import');
+    }
+
     const body = await c.req.json<{
       file_key?: string;
       r2_key?: string;
@@ -1630,6 +1696,10 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
 export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
 
+  if (!isAdminJobTypeCreatableFromAdminApi('users/bulk-update')) {
+    return createUnsupportedJobTypeResponse(c, 'users/bulk-update');
+  }
+
   try {
     const body = await c.req.json<z.infer<typeof BulkUpdateOptionsSchema>>();
 
@@ -1644,33 +1714,26 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
     }
 
     const options = parseResult.data;
+    try {
+      validateBulkUserUpdateConfig(options);
+    } catch (validationError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'body',
+          reason:
+            validationError instanceof Error
+              ? validationError.message
+              : 'Invalid bulk update config',
+        },
+      });
+    }
+
     const adapter = createAdapter(c);
     const adminAuth = getAdminAuth(c);
     const createdBy = adminAuth?.adminId ?? 'unknown';
     const jobId = crypto.randomUUID();
     const nowTs = Math.floor(Date.now() / 1000);
-
-    // Count affected users (for estimation)
-    let affectedCount = 0;
-    if (options.filter) {
-      // Build filter query
-      const filterConditions = Object.entries(options.filter)
-        .map(([key]) => `${key} = ?`)
-        .join(' AND ');
-      const filterValues = Object.values(options.filter);
-
-      const countResult = await adapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND ${filterConditions}`,
-        [tenantId, ...filterValues]
-      );
-      affectedCount = countResult?.count ?? 0;
-    } else {
-      const countResult = await adapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ?',
-        [tenantId]
-      );
-      affectedCount = countResult?.count ?? 0;
-    }
+    const affectedCount = await countBulkUserUpdateTargets(adapter, tenantId, options);
 
     // Estimate completion (1 minute per 100 users)
     const estimatedDuration = Math.max(60, Math.ceil(affectedCount / 100) * 60);
@@ -1729,6 +1792,10 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
  */
 export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
+
+  if (!isAdminJobTypeCreatableFromAdminApi('reports/generate')) {
+    return createUnsupportedJobTypeResponse(c, 'reports/generate');
+  }
 
   try {
     const body = await c.req.json<z.infer<typeof ReportOptionsSchema>>();
@@ -1827,8 +1894,9 @@ export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env
  */
 const BulkMembersOptionsSchema = z.object({
   user_ids: z.array(z.string().uuid()).min(1).max(1000),
-  role: z.string().optional(),
+  role: z.enum(['member', 'admin', 'owner']).optional(),
   action: z.enum(['add', 'remove']).default('add'),
+  result_delivery: JobResultDeliverySchema,
 });
 
 /**
@@ -1838,6 +1906,10 @@ const BulkMembersOptionsSchema = z.object({
 export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getTenantIdFromContext(c);
   const organizationId = c.req.param('id')!;
+
+  if (!isAdminJobTypeCreatableFromAdminApi('organizations/bulk-members')) {
+    return createUnsupportedJobTypeResponse(c, 'organizations/bulk-members');
+  }
 
   if (!organizationId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -1924,6 +1996,7 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
           action: options.action,
           role: options.role,
           user_ids: options.user_ids,
+          result_delivery: options.result_delivery,
         }),
         createdBy,
         nowTs,

@@ -256,6 +256,30 @@ export function buildUserImportResultKey(tenantId: string, jobId: string): strin
   return `exports/${tenantId}/users-import/${jobId}/result.json`;
 }
 
+export function assertUserImportJobStorageKeys(job: {
+  id: string;
+  tenant_id: string;
+  input_r2_key: string | null;
+  result_r2_key?: string | null;
+}): asserts job is {
+  id: string;
+  tenant_id: string;
+  input_r2_key: string;
+  result_r2_key?: string | null;
+} {
+  if (!job.input_r2_key) {
+    throw new Error('input_r2_key is missing');
+  }
+
+  if (!job.input_r2_key.startsWith(`imports/${job.tenant_id}/`)) {
+    throw new Error('input_r2_key does not belong to the job tenant');
+  }
+
+  if (job.result_r2_key && !job.result_r2_key.startsWith(`exports/${job.tenant_id}/`)) {
+    throw new Error('result_r2_key does not belong to the job tenant');
+  }
+}
+
 export function parseUserImportCsv(
   csvText: string,
   options: Pick<UserImportJobOptions, 'skip_header'>
@@ -603,9 +627,9 @@ async function createImportedUser(
       await ensureDatabaseAdapter(
         runtime.customClaimSources.nonPiiDb,
         'user-import-create-rollback-fields'
-      ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
-        userId,
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
         runtime.tenantId,
+        userId,
       ]);
       await runtime.piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
         userId,
@@ -1006,9 +1030,7 @@ async function processUserImportJob(
     error: (message: string, meta?: Record<string, unknown>, err?: Error) => void;
   }
 ) {
-  if (!job.input_r2_key) {
-    throw new Error('input_r2_key is missing');
-  }
+  assertUserImportJobStorageKeys(job);
 
   const inputObject = await inputBucket.get(job.input_r2_key);
   if (!inputObject) {

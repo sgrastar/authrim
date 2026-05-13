@@ -245,6 +245,11 @@ program
 
           if (clientResult.success && clientResult.clientId) {
             loginUiClientId = clientResult.clientId;
+          } else {
+            buildSpinner.fail(
+              `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+            );
+            process.exit(1);
           }
         }
 
@@ -258,17 +263,20 @@ program
           loginUiClientId,
         });
 
-        const result = await deployUiWorkerComponent(componentName as 'ar-admin-ui' | 'ar-login-ui', {
-          env,
-          rootDir: resolve(baseDir),
-          dryRun: dryRun || false,
-          apiBaseUrl: uiSettings.apiBaseUrl,
-          runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
-          uiEnvConfig: uiSettings.uiEnv,
-          onProgress: (msg) => {
-            deploySpinner.text = msg;
-          },
-        });
+        const result = await deployUiWorkerComponent(
+          componentName as 'ar-admin-ui' | 'ar-login-ui',
+          {
+            env,
+            rootDir: resolve(baseDir),
+            dryRun: dryRun || false,
+            apiBaseUrl: uiSettings.apiBaseUrl,
+            runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
+            uiEnvConfig: uiSettings.uiEnv,
+            onProgress: (msg) => {
+              deploySpinner.text = msg;
+            },
+          }
+        );
 
         if (result.success) {
           deploySpinner.succeed(`${componentName} deployed successfully`);

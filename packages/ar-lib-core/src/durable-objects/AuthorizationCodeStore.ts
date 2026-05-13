@@ -26,12 +26,14 @@ import { createOAuthConfigManager, type OAuthConfigManager } from '../utils/oaut
 import type { ActorContext } from '../actor';
 import { CloudflareActorContext } from '../actor';
 import { createLogger, type Logger } from '../utils/logger';
+import { isValidTenantIdentifier } from '../utils/tenant-request-policy';
 
 /**
  * Authorization code metadata
  */
 export interface AuthorizationCode {
   code: string;
+  tenantId: string;
   clientId: string;
   redirectUri: string;
   userId: string;
@@ -62,6 +64,7 @@ export interface AuthorizationCode {
  */
 export interface StoreCodeRequest {
   code: string;
+  tenantId: string;
   clientId: string;
   redirectUri: string;
   userId: string;
@@ -81,11 +84,18 @@ export interface StoreCodeRequest {
   authorizationDetails?: string; // RFC 9396 authorization_details (JSON string)
 }
 
+function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
+  if (typeof tenantId !== 'string' || !isValidTenantIdentifier(tenantId)) {
+    throw new Error('invalid_request: Invalid tenant ID');
+  }
+}
+
 /**
  * Consume code request
  */
 export interface ConsumeCodeRequest {
   code: string;
+  tenantId: string;
   clientId: string;
   codeVerifier?: string;
   // Optional: Register issued token JTIs in the same atomic operation (DO hop optimization)
@@ -493,6 +503,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
    */
   async storeCode(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
     await this.initializeState();
+    assertValidTenantId(request.tenantId);
 
     // DDoS protection: Limit codes per user
     const userCodeCount = this.countUserCodes(request.userId);
@@ -503,6 +514,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     const now = Date.now();
     const authCode: AuthorizationCode = {
       code: request.code,
+      tenantId: request.tenantId,
       clientId: request.clientId,
       redirectUri: request.redirectUri,
       userId: request.userId,
@@ -552,6 +564,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
    */
   async consumeCode(request: ConsumeCodeRequest): Promise<ConsumeCodeResponse> {
     await this.initializeState();
+    assertValidTenantId(request.tenantId);
 
     // Lazy-load + fallback get: Check memory first, then storage
     let stored = this.codes.get(request.code);
@@ -628,6 +641,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Validate client ID
     if (stored.clientId !== request.clientId) {
       throw new Error('invalid_grant: Client ID mismatch');
+    }
+
+    if (stored.tenantId !== request.tenantId) {
+      throw new Error('invalid_grant: Tenant mismatch');
     }
 
     // Validate PKCE (if code_challenge was provided)

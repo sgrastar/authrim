@@ -998,7 +998,9 @@ describe('Audit Storage Configuration API', () => {
       const body = (await res.json()) as any;
       expect(body.profile_id).toBe('pg-primary');
       expect(body.hot_query.status).toBe('supported');
-      expect(body.functions.event_log).toBe('cleanupExpiredEventLogs(db, tenantId?, batchSize?)');
+      expect(body.functions.event_log).toBe(
+        'cleanupExpiredTenantEventLogs(db, tenantId, batchSize) / cleanupExpiredGlobalEventLogs(db, batchSize)'
+      );
       expect(body.operational_policy.cleanup.mode).toBe('primary_delete_by_retention');
     });
 

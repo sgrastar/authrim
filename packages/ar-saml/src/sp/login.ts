@@ -12,12 +12,12 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
-  getTenantIdFromContext,
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   getLogger,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
+import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import { SAML_NAMESPACES, BINDING_URIS, NAMEID_FORMATS } from '../common/constants';
 import {
   createDocument,
@@ -32,7 +32,7 @@ import {
   base64Encode,
 } from '../common/xml-utils';
 import { signRedirectBinding } from '../common/signature';
-import { getSigningKey } from '../common/key-utils';
+import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
 
 /**
@@ -45,7 +45,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
   try {
     // Get IdP ID from query parameter
     const idpId = c.req.query('idp');
-    const tenantId = getTenantIdFromContext(c);
+    const tenantId = resolveSAMLTenantIdFromContext(c);
     const issuerUrl = buildIssuerUrl(env, tenantId);
 
     // Determine return URL with UI config fallback
@@ -76,7 +76,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     // Redirect to IdP based on preferred binding
     if (idpConfig.allowedBindings.includes('redirect')) {
-      return redirectToIdP(c, env, idpConfig, authnRequestXml, returnUrl);
+      return await redirectToIdP(c, env, idpConfig, authnRequestXml, returnUrl);
     } else {
       return postToIdP(c, idpConfig, authnRequestXml, returnUrl);
     }
@@ -173,25 +173,20 @@ async function redirectToIdP(
   const deflated = pako.deflateRaw(authnRequestXml);
   const base64Encoded = base64Encode(String.fromCharCode(...deflated));
 
-  // Build redirect URL
-  const url = new URL(idpConfig.ssoUrl);
-  url.searchParams.set('SAMLRequest', base64Encoded);
-  url.searchParams.set('RelayState', returnUrl);
-
-  // Sign if we have signing capability
-  try {
-    const { privateKeyPem } = await getSigningKey(env, getTenantIdFromContext(c));
-    const { signedUrl } = await signRedirectBinding(
-      'SAMLRequest',
-      base64Encoded,
-      returnUrl,
-      privateKeyPem
-    );
-    return c.redirect(`${idpConfig.ssoUrl}?${signedUrl}`);
-  } catch {
-    // If signing fails, redirect without signature
-    return c.redirect(url.toString());
-  }
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const { privateKeyPem } = await getSAMLSigningMaterial(env, {
+    tenantId,
+    role: 'sp',
+    counterpartyEntityId: idpConfig.entityId,
+    policy: getSAMLSigningPolicy(idpConfig),
+  });
+  const { signedUrl } = await signRedirectBinding(
+    'SAMLRequest',
+    base64Encoded,
+    returnUrl,
+    privateKeyPem
+  );
+  return c.redirect(`${idpConfig.ssoUrl}?${signedUrl}`);
 }
 
 /**

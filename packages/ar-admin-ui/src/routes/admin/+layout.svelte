@@ -73,6 +73,8 @@
 	const navTenant = {
 		authentication: [
 			{ path: '/admin/external-idp', label: 'External IdP', icon: 'i-ph-globe' },
+			{ path: '/admin/external-token-refresh', label: 'Token Refresh', icon: 'i-ph-arrows-clockwise' },
+			{ path: '/admin/saml', label: 'SAML', icon: 'i-ph-arrows-left-right' },
 			{ path: '/admin/consents', label: 'Consents', icon: 'i-ph-handshake' },
 			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' },
 			{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' }
@@ -82,6 +84,7 @@
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
 		branding: [
+			{ path: '/admin/login-methods', label: 'Login Methods', icon: 'i-ph-sign-in' },
 			{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' },
 			{ path: '/admin/tenant-discovery', label: 'Tenant Discovery', icon: 'i-ph-signpost' }
 		],
@@ -105,6 +108,9 @@
 		],
 		operations: [
 			{ path: '/admin/scale', label: 'Scale', icon: 'i-ph-chart-bar' },
+			{ path: '/admin/storage-destinations', label: 'Storage Destinations', icon: 'i-ph-archive' },
+			{ path: '/admin/database-connections', label: 'Database Connections', icon: 'i-ph-database' },
+			{ path: '/admin/dr-backup', label: 'DR Backup', icon: 'i-ph-cloud-arrow-up' },
 			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' },
 			{ path: '/admin/approvals', label: 'Approvals', icon: 'i-ph-checks' }
 		],
@@ -123,6 +129,7 @@
 			]
 		},
 		adminOthers: [
+			{ path: '/admin/machine-access', label: 'Machine Access', icon: 'i-ph-robot' },
 			{ path: '/admin/ip-allowlist', label: 'IP Allowlist', icon: 'i-ph-shield-check' },
 			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' },
 			{ path: '/admin/operational-logs', label: 'Operational Logs', icon: 'i-ph-scroll' }
@@ -280,6 +287,7 @@
 		'/admin/admin-abac',
 		'/admin/admin-rebac',
 		'/admin/admin-policies',
+		'/admin/machine-access',
 		'/admin/ip-allowlist',
 		'/admin/admin-audit'
 	];

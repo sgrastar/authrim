@@ -49,7 +49,7 @@ function createMockCoreDb(state: {
           }
 
           if (sql.includes('FROM user_custom_fields')) {
-            const [userId, _tenantId, ...fieldNames] = args;
+            const [_tenantId, userId, ...fieldNames] = args;
             const values = state.userCustomFields.get(userId) || {};
             const results = Object.entries(values)
               .filter(([fieldName]) => fieldNames.length === 0 || fieldNames.includes(fieldName))

@@ -332,11 +332,11 @@ describe('SettingsHistoryManager', () => {
 });
 
 describe('createSettingsHistoryManager', () => {
-  it('should create a manager with default tenant', () => {
+  it('should require a tenant', () => {
     const mockDb = createMockD1();
-    const manager = createSettingsHistoryManager(mockDb as unknown as D1Database);
-
-    expect(manager).toBeInstanceOf(SettingsHistoryManager);
+    expect(() =>
+      createSettingsHistoryManager(mockDb as unknown as D1Database, '')
+    ).toThrow('SettingsHistoryManager requires tenantId');
   });
 
   it('should create a manager with custom config', () => {

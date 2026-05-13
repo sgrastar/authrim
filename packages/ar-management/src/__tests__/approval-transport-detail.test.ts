@@ -160,8 +160,8 @@ describe('approval-transport-detail helpers', () => {
           const row = state.physical.find(
             (item) =>
               item.catalog_id === params[5] &&
-              item.representation === params[6] &&
-              item.object_index === params[7]
+              item.representation === params[8] &&
+              item.object_index === params[9]
           );
           if (row) {
             row.bucket_binding = params[0] ?? row.bucket_binding;
@@ -173,7 +173,9 @@ describe('approval-transport-detail helpers', () => {
           return { rowsAffected: row ? 1 : 0 };
         }
         if (sql.includes('UPDATE object_catalog')) {
-          const row = state.logical.find((item) => item.id === params[1]);
+          const row = state.logical.find(
+            (item) => item.id === params[1] && item.tenant_id === params[2]
+          );
           if (row) {
             row.updated_at = params[0];
           }
@@ -185,14 +187,20 @@ describe('approval-transport-detail helpers', () => {
         if (!sql.includes('FROM object_catalog oc')) {
           return null;
         }
+        const tenantId = params[0];
+        const identifier = params[1];
+        const representation = params[2];
+        const objectIndex = params[3];
         const catalog =
-          state.logical.find((row) => row.id === params[0]) ??
-          state.logical.find((row) => row.public_artifact_id === params[0]);
+          state.logical.find((row) => row.tenant_id === tenantId && row.id === identifier) ??
+          state.logical.find(
+            (row) => row.tenant_id === tenantId && row.public_artifact_id === identifier
+          );
         const object = state.physical.find(
           (row) =>
             row.catalog_id === catalog?.id &&
-            row.representation === params[1] &&
-            row.object_index === params[2]
+            row.representation === representation &&
+            row.object_index === objectIndex
         );
         if (!catalog || !object) {
           return null;

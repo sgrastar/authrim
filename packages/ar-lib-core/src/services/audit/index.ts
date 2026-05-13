@@ -90,8 +90,10 @@ export {
 export {
   processAuditQueue,
   processDLQQueue,
-  cleanupExpiredEventLogs,
-  cleanupExpiredPIILogs,
+  cleanupExpiredTenantEventLogs,
+  cleanupExpiredGlobalEventLogs,
+  cleanupExpiredTenantPIILogs,
+  cleanupExpiredGlobalPIILogs,
 } from './queue-consumer';
 
 export type { AuditQueueConsumerEnv } from './queue-consumer';

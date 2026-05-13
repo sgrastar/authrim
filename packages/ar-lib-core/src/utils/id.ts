@@ -96,23 +96,32 @@ interface KVNamespace {
   get(key: string): Promise<string | null>;
 }
 
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Get user ID format from tenant settings in KV storage
  *
  * @param kv - The KV namespace (AUTHRIM_CONFIG)
- * @param tenantId - The tenant ID (defaults to 'default')
+ * @param tenantId - The tenant ID
  * @returns The configured user ID format, or default if not set
  */
 export async function getUserIdFormatFromSettings(
   kv: KVNamespace | undefined,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<UserIdFormat> {
+  const normalizedTenantId = requireTenantId(tenantId, 'getUserIdFormatFromSettings');
   if (!kv) {
     return DEFAULT_USER_ID_FORMAT;
   }
 
   try {
-    const kvData = await kv.get(`settings:tenant:${tenantId}:tenant`);
+    const kvData = await kv.get(`settings:tenant:${normalizedTenantId}:tenant`);
     if (kvData) {
       const settings = JSON.parse(kvData) as Record<string, unknown>;
       const format = settings['tenant.user_id_format'];
@@ -132,12 +141,12 @@ export async function getUserIdFormatFromSettings(
  * Convenience function that reads the format from KV and generates the ID
  *
  * @param kv - The KV namespace (AUTHRIM_CONFIG)
- * @param tenantId - The tenant ID (defaults to 'default')
+ * @param tenantId - The tenant ID
  * @returns Generated user ID string
  */
 export async function generateUserIdFromSettings(
   kv: KVNamespace | undefined,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<string> {
   const format = await getUserIdFormatFromSettings(kv, tenantId);
   return generateUserId(format);

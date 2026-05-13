@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { DatabaseAdapter, ExecuteResult, HealthStatus, TransactionContext } from '../../db/adapter';
+import type {
+  DatabaseAdapter,
+  ExecuteResult,
+  HealthStatus,
+  TransactionContext,
+} from '../../db/adapter';
 import {
   createDeviceCodePersistenceAdapter,
+  createGlobalDeviceCodePersistenceAdapter,
   type DeviceCodePersistenceAdapter,
 } from '../device-code-persistence';
 import type { DeviceCodeMetadata } from '../../types/oidc';
@@ -258,7 +264,9 @@ describe('device-code-persistence', () => {
       },
     ]);
 
-    const persistence = createDeviceCodePersistenceAdapter(adapter) as DeviceCodePersistenceAdapter;
+    const persistence = createGlobalDeviceCodePersistenceAdapter(
+      adapter
+    ) as DeviceCodePersistenceAdapter;
     const metadata = await persistence.getByDeviceCode('dev_123');
 
     expect(metadata).toEqual({
@@ -280,7 +288,9 @@ describe('device-code-persistence', () => {
 
   it('stores new device codes through the adapter', async () => {
     const adapter = new InMemoryDeviceCodeAdapter();
-    const persistence = createDeviceCodePersistenceAdapter(adapter) as DeviceCodePersistenceAdapter;
+    const persistence = createGlobalDeviceCodePersistenceAdapter(
+      adapter
+    ) as DeviceCodePersistenceAdapter;
 
     await persistence.storeDeviceCode(createMetadata());
 
@@ -303,6 +313,20 @@ describe('device-code-persistence', () => {
     ]);
   });
 
+  it('rejects a mismatched record tenant on tenant-bound stores', async () => {
+    const adapter = new InMemoryDeviceCodeAdapter();
+    const persistence = createDeviceCodePersistenceAdapter(
+      adapter,
+      'device-code-store',
+      'tenant-a'
+    );
+
+    await expect(
+      persistence!.storeDeviceCode(createMetadata({ tenant_id: 'tenant-b' }))
+    ).rejects.toThrow('Device code persistence tenant mismatch');
+    expect(adapter.getAll()).toEqual([]);
+  });
+
   it('marks token issuance without changing the device status', async () => {
     const adapter = new InMemoryDeviceCodeAdapter();
     adapter.seed([
@@ -322,7 +346,9 @@ describe('device-code-persistence', () => {
         token_issued_at: null,
       },
     ]);
-    const persistence = createDeviceCodePersistenceAdapter(adapter) as DeviceCodePersistenceAdapter;
+    const persistence = createGlobalDeviceCodePersistenceAdapter(
+      adapter
+    ) as DeviceCodePersistenceAdapter;
 
     await persistence.markTokenIssued('dev_123', 1_700_000_200_000);
 
@@ -367,7 +393,9 @@ describe('device-code-persistence', () => {
         token_issued_at: null,
       },
     ]);
-    const persistence = createDeviceCodePersistenceAdapter(adapter) as DeviceCodePersistenceAdapter;
+    const persistence = createGlobalDeviceCodePersistenceAdapter(
+      adapter
+    ) as DeviceCodePersistenceAdapter;
 
     const deleted = await persistence.deleteExpired(1_000);
 

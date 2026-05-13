@@ -58,8 +58,8 @@ export class UserCustomDataFetcher {
           field_value: string | null;
         }>(
           `SELECT field_name, field_value FROM user_custom_fields
-           WHERE user_id = ? AND tenant_id = ? AND field_name IN (${placeholders})`,
-          [userId, tenantId, ...keysToFetch]
+           WHERE tenant_id = ? AND user_id = ? AND field_name IN (${placeholders})`,
+          [tenantId, userId, ...keysToFetch]
         );
         for (const row of rows) {
           if (row.field_value !== null) {

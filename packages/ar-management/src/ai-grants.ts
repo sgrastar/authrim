@@ -349,6 +349,7 @@ export async function adminAIGrantCreateHandler(c: AdminContext) {
 
     // Audit log
     await createAuditLog(c.env, {
+      tenantId,
       userId: adminAuth?.userId || 'unknown',
       action: 'ai_grant.create',
       resource: 'ai_grant',
@@ -452,6 +453,7 @@ export async function adminAIGrantUpdateHandler(c: AdminContext) {
 
     // Audit log
     await createAuditLog(c.env, {
+      tenantId,
       userId: adminAuth?.userId || 'unknown',
       action: 'ai_grant.update',
       resource: 'ai_grant',
@@ -510,6 +512,7 @@ export async function adminAIGrantRevokeHandler(c: AdminContext) {
 
     // Audit log
     await createAuditLog(c.env, {
+      tenantId,
       userId: adminAuth?.userId || 'unknown',
       action: 'ai_grant.revoke',
       resource: 'ai_grant',

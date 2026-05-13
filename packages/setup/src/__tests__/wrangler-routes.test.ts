@@ -78,7 +78,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: false },
@@ -166,6 +165,93 @@ describe('generateRoutes', () => {
     expect(toml).not.toContain('env.undefined.send_email');
   });
 
+  it('adds the Bridge scheduled trigger and serializes it for env-scoped wrangler output', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'bridgecron' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://bridgecron-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://bridgecron-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://bridgecron-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: true,
+        policy: true,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: {
+          provider: 'none',
+          configured: false,
+        },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const bridgeConfig = generateWranglerConfig('ar-bridge', config, { d1: {}, kv: {} });
+    const authConfig = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} });
+    const toml = toToml(bridgeConfig, 'prod');
+
+    expect(bridgeConfig.triggers).toEqual({ crons: ['*/15 * * * *'] });
+    expect(authConfig.triggers).toBeUndefined();
+    expect(toml).toContain('[env.prod.triggers]');
+    expect(toml).toContain('crons = ["*/15 * * * *"]');
+  });
+
   it('builds resource ids from the lock file for full wrangler regeneration', () => {
     const lock = {
       version: '1.0.0',
@@ -244,7 +330,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: false },
@@ -357,7 +442,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: true },
@@ -490,7 +574,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: false },
@@ -584,7 +667,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: false },
@@ -673,7 +755,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: false },
@@ -757,7 +838,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: false },
@@ -829,7 +909,6 @@ describe('generateRoutes', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       features: {
         queue: { enabled: false },

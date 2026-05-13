@@ -2585,7 +2585,11 @@ describe('admin approvals router', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockListApprovalDecisionReceiptsForEvidence).toHaveBeenCalledWith(mockEnv, detail);
+    expect(mockListApprovalDecisionReceiptsForEvidence).toHaveBeenCalledWith(
+      mockEnv,
+      detail,
+      'tenant-a'
+    );
     expect(mockAuditAdminSensitiveRead).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ grantedBy: 'permission' }),

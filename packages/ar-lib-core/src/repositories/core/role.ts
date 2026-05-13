@@ -28,7 +28,7 @@
  *   - role_id: TEXT NOT NULL (FK to roles)
  *   - tenant_id: TEXT NOT NULL
  *   - created_at: INTEGER NOT NULL (timestamp)
- *   - PRIMARY KEY (user_id, role_id)
+ *   - PRIMARY KEY (tenant_id, user_id, role_id)
  */
 
 import { generateId, getCurrentTimestamp } from '../base';
@@ -114,6 +114,14 @@ interface UserRoleRow {
   created_at: number;
 }
 
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Role Repository
  *
@@ -128,7 +136,7 @@ export class RoleRepository {
 
   constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'RoleRepository');
   }
 
   // =========================================================================
@@ -317,8 +325,8 @@ export class RoleRepository {
    * @returns True if revoked, false if assignment didn't exist
    */
   async revokeRoleFromUser(userId: string, roleId: string): Promise<boolean> {
-    const sql = 'DELETE FROM user_roles WHERE user_id = ? AND role_id = ? AND tenant_id = ?';
-    const result = await this.adapter.execute(sql, [userId, roleId, this.tenantId]);
+    const sql = 'DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, userId, roleId]);
     return result.rowsAffected > 0;
   }
 
@@ -332,11 +340,11 @@ export class RoleRepository {
     const sql = `
       SELECT r.* FROM roles r
       INNER JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.user_id = ? AND ur.tenant_id = ? AND r.tenant_id = ?
+      WHERE ur.tenant_id = ? AND ur.user_id = ? AND r.tenant_id = ?
       ORDER BY r.name ASC
     `;
 
-    const rows = await this.adapter.query<RoleRow>(sql, [userId, this.tenantId, this.tenantId]);
+    const rows = await this.adapter.query<RoleRow>(sql, [this.tenantId, userId, this.tenantId]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -348,8 +356,8 @@ export class RoleRepository {
    */
   async findUsersWithRole(roleId: string): Promise<string[]> {
     const sql =
-      'SELECT user_id FROM user_roles WHERE role_id = ? AND tenant_id = ? ORDER BY created_at ASC';
-    const rows = await this.adapter.query<{ user_id: string }>(sql, [roleId, this.tenantId]);
+      'SELECT user_id FROM user_roles WHERE tenant_id = ? AND role_id = ? ORDER BY created_at ASC';
+    const rows = await this.adapter.query<{ user_id: string }>(sql, [this.tenantId, roleId]);
     return rows.map((row) => row.user_id);
   }
 
@@ -361,11 +369,11 @@ export class RoleRepository {
    * @returns True if user has the role
    */
   async userHasRole(userId: string, roleId: string): Promise<boolean> {
-    const sql = 'SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND tenant_id = ?';
+    const sql = 'SELECT 1 FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?';
     const result = await this.adapter.queryOne<{ 1: number }>(sql, [
+      this.tenantId,
       userId,
       roleId,
-      this.tenantId,
     ]);
     return result !== null;
   }
@@ -381,11 +389,11 @@ export class RoleRepository {
     const sql = `
       SELECT 1 FROM user_roles ur
       INNER JOIN roles r ON ur.role_id = r.id
-      WHERE ur.user_id = ? AND ur.tenant_id = ? AND r.tenant_id = ? AND r.name = ?
+      WHERE ur.tenant_id = ? AND ur.user_id = ? AND r.tenant_id = ? AND r.name = ?
     `;
     const result = await this.adapter.queryOne<{ 1: number }>(sql, [
-      userId,
       this.tenantId,
+      userId,
       this.tenantId,
       roleName,
     ]);
@@ -454,8 +462,8 @@ export class RoleRepository {
    * @returns Number of role assignments removed
    */
   async removeAllRolesFromUser(userId: string): Promise<number> {
-    const sql = 'DELETE FROM user_roles WHERE user_id = ? AND tenant_id = ?';
-    const result = await this.adapter.execute(sql, [userId, this.tenantId]);
+    const sql = 'DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, userId]);
     return result.rowsAffected;
   }
 
@@ -494,8 +502,8 @@ export class RoleRepository {
    * @returns Number of users with this role
    */
   async countUsersWithRole(roleId: string): Promise<number> {
-    const sql = 'SELECT COUNT(*) as count FROM user_roles WHERE role_id = ? AND tenant_id = ?';
-    const result = await this.adapter.queryOne<{ count: number }>(sql, [roleId, this.tenantId]);
+    const sql = 'SELECT COUNT(*) as count FROM user_roles WHERE tenant_id = ? AND role_id = ?';
+    const result = await this.adapter.queryOne<{ count: number }>(sql, [this.tenantId, roleId]);
     return result?.count ?? 0;
   }
 
@@ -507,8 +515,8 @@ export class RoleRepository {
    * @returns User-role assignment or null if not found
    */
   async getUserRoleAssignment(userId: string, roleId: string): Promise<UserRole | null> {
-    const sql = 'SELECT * FROM user_roles WHERE user_id = ? AND role_id = ? AND tenant_id = ?';
-    const row = await this.adapter.queryOne<UserRoleRow>(sql, [userId, roleId, this.tenantId]);
+    const sql = 'SELECT * FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?';
+    const row = await this.adapter.queryOne<UserRoleRow>(sql, [this.tenantId, userId, roleId]);
     return row ?? null;
   }
 

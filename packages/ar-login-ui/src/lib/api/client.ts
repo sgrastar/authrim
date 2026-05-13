@@ -1508,7 +1508,7 @@ export const adminScimTokensAPI = {
 };
 
 // =============================================================================
-// External IdP API (Social Login)
+// External IdP API (external login)
 // =============================================================================
 
 /**
@@ -1527,7 +1527,7 @@ interface ExternalIdPProvider {
 
 /**
  * External IdP API
- * Handles social login and external identity provider integration
+ * Handles external identity provider login integration
  */
 export const externalIdpAPI = {
 	/**
@@ -1543,10 +1543,29 @@ export const externalIdpAPI = {
 	 */
 	async startLogin(
 		providerId: string,
-		redirectUri?: string
+		redirectUri?: string,
+		startUrl?: string,
+		startMode: 'oauth_redirect' | 'saml_sp' | 'direct' = 'oauth_redirect'
 	): Promise<{
 		url: string;
 	}> {
+		const encodedProviderId = encodeURIComponent(providerId);
+		const targetUrl = new URL(
+			startUrl || `/api/external/${encodedProviderId}/start`,
+			API_BASE_URL
+		);
+
+		if (startMode === 'direct') {
+			return { url: targetUrl.toString() };
+		}
+
+		if (startMode === 'saml_sp') {
+			if (redirectUri) {
+				targetUrl.searchParams.set('return_url', redirectUri);
+			}
+			return { url: targetUrl.toString() };
+		}
+
 		// Generate PKCE parameters (using static import)
 		let pkceParams;
 		try {
@@ -1572,14 +1591,13 @@ export const externalIdpAPI = {
 			params.set('redirect_uri', redirectUri);
 		}
 
-		const query = params.toString();
-		const encodedProviderId = encodeURIComponent(providerId);
+		for (const [key, value] of params.entries()) {
+			targetUrl.searchParams.set(key, value);
+		}
 
-		// This returns a redirect, so we need to handle it differently
-		const url = `${API_BASE_URL}/api/external/${encodedProviderId}/start${query ? '?' + query : ''}`;
-
+		// This returns a redirect, so callers navigate the browser instead of fetching it.
 		return {
-			url
+			url: targetUrl.toString()
 		};
 	}
 };

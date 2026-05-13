@@ -64,7 +64,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
   const log = getLogger(c).module('BACKCHANNEL-LOGOUT');
   const providerIdOrSlug = c.req.param('provider');
   if (!providerIdOrSlug) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-  const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
+  const tenantId = getTenantIdFromContext(c);
 
   try {
     // 1. Get provider configuration

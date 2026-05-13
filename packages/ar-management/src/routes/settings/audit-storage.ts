@@ -1035,10 +1035,10 @@ export async function triggerRetentionCleanup(c: Context<{ Bindings: Env }>) {
     },
     functions: {
       event_log: operationalPolicy.cleanup.primaryRetentionDeleteSupported
-        ? 'cleanupExpiredEventLogs(db, tenantId?, batchSize?)'
+        ? 'cleanupExpiredTenantEventLogs(db, tenantId, batchSize) / cleanupExpiredGlobalEventLogs(db, batchSize)'
         : null,
       pii_log: operationalPolicy.cleanup.primaryRetentionDeleteSupported
-        ? 'cleanupExpiredPIILogs(db, tenantId?, batchSize?)'
+        ? 'cleanupExpiredTenantPIILogs(db, tenantId, batchSize) / cleanupExpiredGlobalPIILogs(db, batchSize)'
         : null,
     },
   });

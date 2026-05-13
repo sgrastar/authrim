@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import {
   BaseRepository,
   type BaseEntity,
@@ -154,7 +155,7 @@ export class ApprovalRequestRepository extends BaseRepository<ApprovalRequestEnt
     const entity: ApprovalRequestEntity = {
       id,
       public_request_id: input.public_request_id ?? generatePublicApprovalRequestId(),
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       investigation_id: input.investigation_id,
       requester_subject_type: input.requester_subject_type,
       requester_subject_id: input.requester_subject_id,

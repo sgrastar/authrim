@@ -85,8 +85,8 @@ describe('invitation-auth-core', () => {
       .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
       .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
 
-    await expect(consumeInvitationUse(adapter, 'invite-1', 100)).resolves.toBe(true);
-    await expect(consumeInvitationUse(adapter, 'invite-1', 100)).resolves.toBe(false);
+    await expect(consumeInvitationUse(adapter, 'invite-1', 'tenant-1', 100)).resolves.toBe(true);
+    await expect(consumeInvitationUse(adapter, 'invite-1', 'tenant-1', 100)).resolves.toBe(false);
   });
 
   it('reuses an existing tenant-scoped role assignment', async () => {

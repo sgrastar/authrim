@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockResolveAuthCorePersistenceAdapterFromEnv,
-  mockTombstoneObjectCatalogEntry,
-  mockListDeletedObjectCatalogObjects,
-  mockPurgeDeletedObjectCatalogObjects,
+  mockTombstoneObjectCatalogEntryForTenant,
+  mockListDeletedObjectCatalogObjectsForSystemCleanup,
+  mockPurgeDeletedObjectCatalogObjectsForSystemCleanup,
   mockAdapter,
 } = vi.hoisted(() => {
   const adapter = {
@@ -14,9 +14,9 @@ const {
 
   return {
     mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue(adapter),
-    mockTombstoneObjectCatalogEntry: vi.fn(),
-    mockListDeletedObjectCatalogObjects: vi.fn(),
-    mockPurgeDeletedObjectCatalogObjects: vi.fn(),
+    mockTombstoneObjectCatalogEntryForTenant: vi.fn(),
+    mockListDeletedObjectCatalogObjectsForSystemCleanup: vi.fn(),
+    mockPurgeDeletedObjectCatalogObjectsForSystemCleanup: vi.fn(),
     mockAdapter: adapter,
   };
 });
@@ -26,9 +26,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
-    tombstoneObjectCatalogEntry: mockTombstoneObjectCatalogEntry,
-    listDeletedObjectCatalogObjects: mockListDeletedObjectCatalogObjects,
-    purgeDeletedObjectCatalogObjects: mockPurgeDeletedObjectCatalogObjects,
+    tombstoneObjectCatalogEntryForTenant: mockTombstoneObjectCatalogEntryForTenant,
+    listDeletedObjectCatalogObjectsForSystemCleanup:
+      mockListDeletedObjectCatalogObjectsForSystemCleanup,
+    purgeDeletedObjectCatalogObjectsForSystemCleanup:
+      mockPurgeDeletedObjectCatalogObjectsForSystemCleanup,
   };
 });
 
@@ -49,9 +51,9 @@ describe('artifact cleanup', () => {
     mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(mockAdapter);
     mockAdapter.query.mockReset();
     mockAdapter.execute.mockReset();
-    mockTombstoneObjectCatalogEntry.mockReset();
-    mockListDeletedObjectCatalogObjects.mockReset();
-    mockPurgeDeletedObjectCatalogObjects.mockReset();
+    mockTombstoneObjectCatalogEntryForTenant.mockReset();
+    mockListDeletedObjectCatalogObjectsForSystemCleanup.mockReset();
+    mockPurgeDeletedObjectCatalogObjectsForSystemCleanup.mockReset();
   });
 
   it('tombstones expired data export object catalogs', async () => {
@@ -74,8 +76,9 @@ describe('artifact cleanup', () => {
     );
 
     expect(cleaned).toBe(1);
-    expect(mockTombstoneObjectCatalogEntry).toHaveBeenCalledWith(
+    expect(mockTombstoneObjectCatalogEntryForTenant).toHaveBeenCalledWith(
       mockAdapter,
+      'default',
       'catalog-1',
       expect.any(Number)
     );
@@ -131,8 +134,9 @@ describe('artifact cleanup', () => {
     );
 
     expect(cleaned).toBe(1);
-    expect(mockTombstoneObjectCatalogEntry).toHaveBeenCalledWith(
+    expect(mockTombstoneObjectCatalogEntryForTenant).toHaveBeenCalledWith(
       mockAdapter,
+      'default',
       'catalog-job-1',
       expect.any(Number)
     );
@@ -145,7 +149,7 @@ describe('artifact cleanup', () => {
   it('purges deleted object artifacts from configured buckets', async () => {
     const exportDelete = vi.fn();
     const sensitiveDelete = vi.fn();
-    mockListDeletedObjectCatalogObjects.mockResolvedValue([
+    mockListDeletedObjectCatalogObjectsForSystemCleanup.mockResolvedValue([
       {
         physicalId: 'physical-1',
         catalogId: 'catalog-1',
@@ -173,7 +177,7 @@ describe('artifact cleanup', () => {
         deletedAt: Date.now(),
       },
     ]);
-    mockPurgeDeletedObjectCatalogObjects.mockResolvedValue(2);
+    mockPurgeDeletedObjectCatalogObjectsForSystemCleanup.mockResolvedValue(2);
 
     const purged = await purgeDeletedObjectArtifacts(
       {
@@ -189,9 +193,9 @@ describe('artifact cleanup', () => {
     expect(sensitiveDelete).toHaveBeenCalledWith(
       'sensitive/default/approval/request-1/detail.json'
     );
-    expect(mockPurgeDeletedObjectCatalogObjects).toHaveBeenCalledWith(mockAdapter, [
-      'physical-1',
-      'physical-2',
-    ]);
+    expect(mockPurgeDeletedObjectCatalogObjectsForSystemCleanup).toHaveBeenCalledWith(
+      mockAdapter,
+      ['physical-1', 'physical-2']
+    );
   });
 });

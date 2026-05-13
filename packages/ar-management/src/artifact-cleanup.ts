@@ -1,8 +1,8 @@
 import {
-  listDeletedObjectCatalogObjects,
-  purgeDeletedObjectCatalogObjects,
+  listDeletedObjectCatalogObjectsForSystemCleanup,
+  purgeDeletedObjectCatalogObjectsForSystemCleanup,
   resolveAuthCorePersistenceAdapterFromEnv,
-  tombstoneObjectCatalogEntry,
+  tombstoneObjectCatalogEntryForTenant,
   type Env,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
@@ -55,7 +55,7 @@ export async function cleanupExpiredDataExportArtifacts(
   for (const row of expiredRows) {
     try {
       if (row.object_catalog_id) {
-        await tombstoneObjectCatalogEntry(adapter, row.object_catalog_id, now);
+        await tombstoneObjectCatalogEntryForTenant(adapter, row.tenant_id, row.object_catalog_id, now);
       } else if (row.file_path) {
         await deleteBucketObject(env.EXPORT_ARTIFACTS, row.file_path);
       }
@@ -123,7 +123,12 @@ export async function cleanupExpiredAdminJobArtifacts(
   for (const row of oldRows) {
     try {
       if (row.object_catalog_id) {
-        await tombstoneObjectCatalogEntry(adapter, row.object_catalog_id, deletedAt);
+        await tombstoneObjectCatalogEntryForTenant(
+          adapter,
+          row.tenant_id,
+          row.object_catalog_id,
+          deletedAt
+        );
       } else if (row.result_r2_key) {
         await deleteBucketObject(env.EXPORT_ARTIFACTS, row.result_r2_key);
       }
@@ -167,7 +172,7 @@ export async function purgeDeletedObjectArtifacts(
   const importBucket = env.IMPORT_ARTIFACTS;
   const sensitiveBucket = env.SENSITIVE_DETAILS;
 
-  const pending = await listDeletedObjectCatalogObjects(adapter, {
+  const pending = await listDeletedObjectCatalogObjectsForSystemCleanup(adapter, {
     deletedBefore: Date.now() - OBJECT_CATALOG_TOMBSTONE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     limit: DELETED_OBJECT_PURGE_BATCH_LIMIT,
   });
@@ -202,7 +207,7 @@ export async function purgeDeletedObjectArtifacts(
     }
   }
 
-  const purged = await purgeDeletedObjectCatalogObjects(adapter, purgedIds);
+  const purged = await purgeDeletedObjectCatalogObjectsForSystemCleanup(adapter, purgedIds);
   if (purged > 0) {
     logger.info('Purged deleted object artifacts', { count: purged });
   }

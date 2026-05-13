@@ -17,18 +17,32 @@ import {
   buildUIUrl,
   shouldUseBuiltinForms,
   createConfigurationError,
-  getTenantIdFromContext,
   buildIssuerUrl,
   usesNakedDomainIssuer,
   getLogger,
 } from '@authrim/ar-lib-core';
-import { generateSAMLId, nowAsDateTime, offsetDateTime } from '../common/xml-utils';
+import { generateSAMLId } from '../common/xml-utils';
 import { NAMEID_FORMATS, AUTHN_CONTEXT, DEFAULTS, STATUS_CODES } from '../common/constants';
-import { getSigningKey, getSigningCertificate } from '../common/key-utils';
-import { signXml } from '../common/signature';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
 import { getSamlUserInfoById } from '../common/user-store';
+import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
+import { resolveSAMLTenantIdFromContext } from '../common/tenant';
+import { buildSAMLAttributesForSP } from './attributes';
+import { applySAMLResponseSigningPolicy } from './signing';
+import {
+  createSAMLSessionIndex,
+  resolveSAMLNameIDValue,
+  resolveSAMLPairwiseSecret,
+  resolveSAMLPersistentNameIDRegistryStore,
+  resolveSAMLTransientNameIDStore,
+} from './subject';
+import { buildSAMLAssertionTiming } from './assertion-timing';
+
+interface AuthenticatedSAMLSession {
+  userId: string;
+  sessionId: string;
+}
 
 /**
  * Handle IdP-initiated SSO
@@ -40,7 +54,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
   try {
     // Get SP entity ID from query parameter
     const spEntityId = c.req.query('sp');
-    const tenantId = getTenantIdFromContext(c);
+    const tenantId = resolveSAMLTenantIdFromContext(c);
     const issuerUrl = buildIssuerUrl(env, tenantId);
 
     if (!spEntityId) {
@@ -56,9 +70,9 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     }
 
     // Check user authentication
-    const userId = await checkUserAuthentication(c, env);
+    const authenticatedSession = await checkUserAuthentication(c, env);
 
-    if (!userId) {
+    if (!authenticatedSession) {
       // Redirect to login with return URL
       const returnTo = `${issuerUrl}/saml/idp/init?sp=${encodeURIComponent(spEntityId)}`;
 
@@ -85,7 +99,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     }
 
     // Get user information
-    const userInfo = await getUserInfo(env, tenantId, userId);
+    const userInfo = await getUserInfo(env, tenantId, authenticatedSession.userId);
     if (!userInfo) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -96,7 +110,8 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
       env,
       spConfig,
       userInfo,
-      tenantId
+      tenantId,
+      authenticatedSession.sessionId
     );
 
     // Return auto-submit form
@@ -113,7 +128,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
 async function checkUserAuthentication(
   c: Context<{ Bindings: Env }>,
   env: Env
-): Promise<string | null> {
+): Promise<AuthenticatedSAMLSession | null> {
   const sessionId = c.req.header('Cookie')?.match(/authrim_session=([^;]+)/)?.[1];
 
   if (!sessionId) {
@@ -129,7 +144,7 @@ async function checkUserAuthentication(
     const { stub: sessionStore } = getSessionStoreBySessionId(
       env,
       sessionId,
-      getTenantIdFromContext(c)
+      resolveSAMLTenantIdFromContext(c)
     );
     const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
       method: 'GET',
@@ -140,7 +155,7 @@ async function checkUserAuthentication(
     }
 
     const session = (await response.json()) as { userId?: string };
-    return session.userId || null;
+    return session.userId ? { userId: session.userId, sessionId } : null;
   } catch {
     return null;
   }
@@ -165,36 +180,41 @@ async function generateIdPInitiatedResponse(
   env: Env,
   spConfig: SAMLSPConfig,
   userInfo: { id: string; email: string; name?: string },
-  tenantId: string
+  tenantId: string,
+  sessionId: string
 ): Promise<string> {
-  const { privateKeyPem } = await getSigningKey(env, tenantId);
-  const certificate = await getSigningCertificate(env, tenantId);
+  const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+    tenantId,
+    role: 'idp',
+    counterpartyEntityId: spConfig.entityId,
+    policy: getSAMLSigningPolicy(spConfig),
+  });
 
-  // Determine NameID value
-  let nameIdValue: string;
   const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
-
-  switch (nameIdFormat) {
-    case NAMEID_FORMATS.EMAIL:
-      nameIdValue = userInfo.email;
-      break;
-    case NAMEID_FORMATS.PERSISTENT:
-    case NAMEID_FORMATS.TRANSIENT:
-      nameIdValue = userInfo.id;
-      break;
-    default:
-      nameIdValue = userInfo.email;
-  }
+  const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
+    tenantId,
+    spEntityId: spConfig.entityId,
+    pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
+    persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
+    allowCreate: true,
+    transientStore: resolveSAMLTransientNameIDStore(env),
+    transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    sessionId,
+  });
 
   // Build attributes from mapping
-  const attributes = buildAttributes(userInfo, spConfig.attributeMapping);
+  const attributes = buildSAMLAttributesForSP(userInfo, spConfig);
+  const timing = buildSAMLAssertionTiming({
+    assertionValiditySeconds:
+      spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+  });
 
   // Build SAML Response (no InResponseTo for IdP-initiated)
   const responseId = generateSAMLId();
   const responseXml = buildSAMLResponse({
     responseId,
     assertionId: generateSAMLId(),
-    issueInstant: nowAsDateTime(),
+    issueInstant: timing.issueInstant,
     issuer: `${issuerUrl}/saml/idp`,
     destination: spConfig.acsUrl,
     // No inResponseTo for IdP-initiated
@@ -202,62 +222,25 @@ async function generateIdPInitiatedResponse(
     audienceRestriction: spConfig.entityId,
     nameId: nameIdValue,
     nameIdFormat,
-    authnInstant: nowAsDateTime(),
-    sessionIndex: generateSAMLId(),
-    notBefore: nowAsDateTime(),
-    notOnOrAfter: offsetDateTime(
-      spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS
-    ),
+    authnInstant: timing.authnInstant,
+    sessionIndex: await createSAMLSessionIndex(env.STATE_STORE, {
+      tenantId,
+      spEntityId: spConfig.entityId,
+      sessionId,
+      ttlSeconds: DEFAULTS.SESSION_VALIDITY_SECONDS,
+    }),
+    notBefore: timing.notBefore,
+    notOnOrAfter: timing.notOnOrAfter,
     authnContextClassRef: AUTHN_CONTEXT.PASSWORD_PROTECTED_TRANSPORT,
     attributes,
   });
 
   // Sign if required
   if (spConfig.signResponses || spConfig.signAssertions) {
-    return signXml(responseXml, {
-      privateKey: privateKeyPem,
-      certificate,
-      referenceUri: `#${responseId}`,
-      signatureLocation: 'prepend',
-      includeKeyInfo: true,
-    });
+    return applySAMLResponseSigningPolicy(responseXml, spConfig, { privateKeyPem, certificate });
   }
 
   return responseXml;
-}
-
-/**
- * Build SAML attributes from user info and mapping
- */
-function buildAttributes(
-  userInfo: { id: string; email: string; name?: string },
-  attributeMapping: Record<string, string>
-): Array<{ name: string; values: string[] }> {
-  const attributes: Array<{ name: string; values: string[] }> = [];
-
-  for (const [claim, samlAttr] of Object.entries(attributeMapping)) {
-    let value: string | undefined;
-
-    switch (claim) {
-      case 'email':
-        value = userInfo.email;
-        break;
-      case 'name':
-        value = userInfo.name;
-        break;
-      case 'sub':
-        value = userInfo.id;
-        break;
-      default:
-        continue;
-    }
-
-    if (value) {
-      attributes.push({ name: samlAttr, values: [value] });
-    }
-  }
-
-  return attributes;
 }
 
 /**

@@ -10,6 +10,8 @@ export const SAML_NAMESPACES = {
   SAML2: 'urn:oasis:names:tc:SAML:2.0:assertion',
   MD: 'urn:oasis:names:tc:SAML:2.0:metadata',
   DS: 'http://www.w3.org/2000/09/xmldsig#',
+  XENC: 'http://www.w3.org/2001/04/xmlenc#',
+  XENC11: 'http://www.w3.org/2009/xmlenc11#',
   XML: 'http://www.w3.org/XML/1998/namespace',
   XS: 'http://www.w3.org/2001/XMLSchema',
   XSI: 'http://www.w3.org/2001/XMLSchema-instance',
@@ -45,8 +47,12 @@ export const STATUS_CODES = {
   RESPONDER: 'urn:oasis:names:tc:SAML:2.0:status:Responder',
   VERSION_MISMATCH: 'urn:oasis:names:tc:SAML:2.0:status:VersionMismatch',
   AUTHN_FAILED: 'urn:oasis:names:tc:SAML:2.0:status:AuthnFailed',
+  INVALID_ATTR_NAME_OR_VALUE: 'urn:oasis:names:tc:SAML:2.0:status:InvalidAttrNameOrValue',
+  INVALID_NAMEID_POLICY: 'urn:oasis:names:tc:SAML:2.0:status:InvalidNameIDPolicy',
+  NO_AUTHN_CONTEXT: 'urn:oasis:names:tc:SAML:2.0:status:NoAuthnContext',
   NO_PASSIVE: 'urn:oasis:names:tc:SAML:2.0:status:NoPassive',
   REQUEST_DENIED: 'urn:oasis:names:tc:SAML:2.0:status:RequestDenied',
+  UNSUPPORTED_BINDING: 'urn:oasis:names:tc:SAML:2.0:status:UnsupportedBinding',
   UNKNOWN_PRINCIPAL: 'urn:oasis:names:tc:SAML:2.0:status:UnknownPrincipal',
 } as const;
 
@@ -80,6 +86,17 @@ export const SIGNATURE_ALGORITHMS = {
 export const DIGEST_ALGORITHMS = {
   SHA256: 'http://www.w3.org/2001/04/xmlenc#sha256',
   SHA1: 'http://www.w3.org/2000/09/xmldsig#sha1', // Deprecated
+} as const;
+
+/**
+ * XML Encryption Algorithms
+ */
+export const XML_ENCRYPTION_ALGORITHMS = {
+  AES256_GCM: 'http://www.w3.org/2009/xmlenc11#aes256-gcm',
+  AES256_CBC: 'http://www.w3.org/2001/04/xmlenc#aes256-cbc',
+  RSA_OAEP: 'http://www.w3.org/2009/xmlenc11#rsa-oaep',
+  RSA_OAEP_MGF1P: 'http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p',
+  MGF1_SHA256: 'http://www.w3.org/2009/xmlenc11#mgf1sha256',
 } as const;
 
 /**

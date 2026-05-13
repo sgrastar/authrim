@@ -112,8 +112,8 @@ ENABLE_CLIENT_CREDENTIALS
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `KEY_MANAGER_SECRET` | string | - | Secret for KeyManager DO encryption |
-| `ADMIN_API_SECRET` | string | - | Secret for Admin API authentication |
+| `KEY_MANAGER_SECRET` | string | - | Internal secret for KeyManager DO access |
+| `ADMIN_API_SECRET` | string | - | Deprecated legacy secret; not accepted by `/api/admin/*`. Use Admin Machine Access tokens. |
 | `POLICY_API_SECRET` | string | - | Secret for Policy service communication |
 | `KEY_ID` | string | - | Current signing key ID |
 | `PRIVATE_KEY_PEM` | string | - | RSA private key (PEM format) |

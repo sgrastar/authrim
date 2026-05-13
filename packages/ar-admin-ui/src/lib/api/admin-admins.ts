@@ -42,10 +42,15 @@ export interface AdminUserDetail extends AdminUser {
  */
 export interface AdminRoleAssignment {
 	id: string;
+	assignment_id: string;
+	role_id: string;
 	name: string;
 	display_name: string | null;
+	scope_type: 'global' | 'tenant' | 'org';
+	scope_id: string | null;
 	assigned_at: number;
 	expires_at: number | null;
+	assigned_by: string | null;
 }
 
 /**
@@ -105,6 +110,8 @@ export interface UpdateAdminUserInput {
  */
 export interface AssignRoleInput {
 	role_id: string;
+	scope_type?: 'global' | 'tenant';
+	scope_id?: string;
 	expires_at?: number;
 }
 
@@ -330,6 +337,32 @@ export const adminAdminsAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error_description || 'Failed to remove role');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Remove a specific role assignment from an admin user
+	 * DELETE /api/admin/admins/:id/role-assignments/:assignmentId
+	 */
+	async removeRoleAssignment(
+		id: string,
+		assignmentId: string
+	): Promise<{ success: boolean; message: string }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/role-assignments/${encodeURIComponent(
+				assignmentId
+			)}`,
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to remove role assignment');
 		}
 
 		return response.json();

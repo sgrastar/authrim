@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import {
 	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
+	verifyLoginChallengeForCurrentTenant,
 	verifyDiscoveryGrant
 } from '../../lib/discovery-entry';
 
@@ -50,11 +51,19 @@ function consumeVerifiedGrantCookie(event: Parameters<PageServerLoad>[0], curren
 
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');
+	const discoveryHeaders = getDiscoveryRequestHeaders(event);
+
 	if (challengeId) {
-		return {};
+		const challengeBelongsToCurrentTenant = await verifyLoginChallengeForCurrentTenant(
+			event.fetch,
+			challengeId,
+			discoveryHeaders
+		).catch(() => false);
+		if (challengeBelongsToCurrentTenant) {
+			return {};
+		}
 	}
 
-	const discoveryHeaders = getDiscoveryRequestHeaders(event);
 	const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(() => null);
 	if (!config) {
 		return {};

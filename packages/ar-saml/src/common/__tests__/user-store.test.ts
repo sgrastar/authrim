@@ -3,6 +3,7 @@ import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
 const mocked = vi.hoisted(() => ({
   resolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+  resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -11,6 +12,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesFromEnv,
+    resolveCustomClaimRuntimeSourcesFromEnv: mocked.resolveCustomClaimRuntimeSourcesFromEnv,
   };
 });
 
@@ -20,15 +22,22 @@ import {
   getSamlUserNameIdById,
 } from '../user-store';
 
-function createMockAdapter(options: {
-  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-} = {}): DatabaseAdapter {
+function createMockAdapter(
+  options: {
+    query?: (sql: string, params: unknown[]) => unknown[] | Promise<unknown[]>;
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+): DatabaseAdapter {
+  const queryImpl: DatabaseAdapter['query'] = async <T>(
+    sql: string,
+    params: unknown[] = []
+  ): Promise<T[]> => ((await options.query?.(sql, params)) ?? []) as T[];
   const queryOneImpl: DatabaseAdapter['queryOne'] = async <T>(
     sql: string,
     params: unknown[] = []
-  ): Promise<T | null> => (((await options.queryOne?.(sql, params)) ?? null) as T | null);
+  ): Promise<T | null> => ((await options.queryOne?.(sql, params)) ?? null) as T | null;
   return {
-    query: vi.fn(async <T>() => [] as T[]) as unknown as DatabaseAdapter['query'],
+    query: vi.fn(queryImpl) as unknown as DatabaseAdapter['query'],
     queryOne: vi.fn(queryOneImpl) as unknown as DatabaseAdapter['queryOne'],
     execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
     transaction: vi.fn(async (fn: any) => fn()),
@@ -42,6 +51,17 @@ function createMockAdapter(options: {
 describe('SAML user-store helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.resolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
+      storageProfile: {
+        id: 'builtin:storage:single-db',
+        kind: 'storage',
+        label: 'Single DB',
+        slices: {},
+      },
+      schemaDb: createMockAdapter(),
+      nonPiiDb: createMockAdapter(),
+      piiDb: null,
+    });
   });
 
   it('finds active users by email from the runtime-resolved pii store', async () => {
@@ -119,11 +139,35 @@ describe('SAML user-store helpers', () => {
     });
     const piiAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT email, name FROM users_pii WHERE id = ? AND tenant_id = ?')) {
+        if (
+          sql.includes(
+            'SELECT email, name, custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?'
+          )
+        ) {
           expect(params).toEqual(['user-3', 'tenant-c']);
-          return { email: 'full@example.com', name: 'Full User' };
+          return {
+            email: 'full@example.com',
+            name: 'Full User',
+            custom_attributes_json: JSON.stringify({
+              libraryMemberId: 'member-a',
+              piiEntitlement: ['premium'],
+            }),
+          };
         }
         return null;
+      },
+    });
+    const customAdapter = createMockAdapter({
+      query: (sql, params) => {
+        if (sql.includes('FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['user-3', 'tenant-c']);
+          return [
+            { field_name: 'affiliation', field_value: JSON.stringify(['member@example.edu']) },
+            { field_name: 'entitlement', field_value: 'urn:mace:dir:entitlement:common-lib-terms' },
+            { field_name: 'empty', field_value: null },
+          ];
+        }
+        return [];
       },
     });
 
@@ -137,11 +181,30 @@ describe('SAML user-store helpers', () => {
       coreDb: coreAdapter,
       piiDb: piiAdapter,
     });
+    mocked.resolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
+      storageProfile: {
+        id: 'builtin:storage:single-db',
+        kind: 'storage',
+        label: 'Single DB',
+        slices: {},
+      },
+      schemaDb: customAdapter,
+      nonPiiDb: customAdapter,
+      piiDb: null,
+    });
 
     await expect(getSamlUserInfoById({ DB: {} } as Env, 'tenant-c', 'user-3')).resolves.toEqual({
       id: 'user-3',
       email: 'full@example.com',
       name: 'Full User',
+      customClaims: {
+        affiliation: ['member@example.edu'],
+        entitlement: 'urn:mace:dir:entitlement:common-lib-terms',
+      },
+      customFields: {
+        libraryMemberId: 'member-a',
+        piiEntitlement: ['premium'],
+      },
     });
   });
 });

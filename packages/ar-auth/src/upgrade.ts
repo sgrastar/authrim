@@ -320,8 +320,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
           email_verified = CASE WHEN ? = 'email' THEN 1 ELSE email_verified END,
           pii_status = CASE WHEN ? IS NOT NULL THEN 'pending' ELSE pii_status END,
           updated_at = ?
-        WHERE id = ?`,
-        [method, email, now, anonymousUserId]
+        WHERE id = ? AND tenant_id = ?`,
+        [method, email, now, anonymousUserId, tenantId]
       );
 
       // Create PII record if email provided
@@ -405,8 +405,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     // Deactivate anonymous device (no longer needed)
     await authCtx.coreAdapter.execute(
-      'UPDATE anonymous_devices SET is_active = 0 WHERE user_id = ? AND tenant_id = ?',
-      [anonymousUserId, tenantId]
+      'UPDATE anonymous_devices SET is_active = 0 WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, anonymousUserId]
     );
 
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
@@ -575,9 +575,9 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     }>(
       `SELECT id, upgrade_method, upgraded_at, preserve_sub
        FROM user_upgrades
-       WHERE anonymous_user_id = ? OR upgraded_user_id = ?
+       WHERE tenant_id = ? AND (anonymous_user_id = ? OR upgraded_user_id = ?)
        ORDER BY upgraded_at DESC`,
-      [session.userId, session.userId]
+      [tenantId, session.userId, session.userId]
     );
 
     return c.json({

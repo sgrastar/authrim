@@ -11,17 +11,13 @@ import {
   normalizeUserCode,
   validateUserCodeFormat,
   isMockAuthEnabled,
+  createErrorResponse,
+  AR_ERROR_CODES,
   getLogger,
-  getDefaultTenantId,
-  getTenantIdFromContext,
+  buildDOKey,
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
-
-function resolveTenantId(c: Context<{ Bindings: Env }>): string {
-  return typeof (c as { get?: unknown }).get === 'function'
-    ? getTenantIdFromContext(c)
-    : getDefaultTenantId(c.env);
-}
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * POST /api/device/verify
@@ -54,7 +50,12 @@ function resolveTenantId(c: Context<{ Bindings: Env }>): string {
  */
 export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
-  const tenantId = resolveTenantId(c);
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
   const internalHeaders = {
     'Content-Type': 'application/json',
     'X-Authrim-Tenant-Id': tenantId,
@@ -66,7 +67,9 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
 
     // Check rate limiting (if USER_CODE_RATE_LIMITER is available)
     if (c.env.USER_CODE_RATE_LIMITER) {
-      const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+      const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
+        buildDOKey('rate-limit', 'user-code', tenantId)
+      );
       const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
 
       const checkResponse = await rateLimiter.fetch(
@@ -142,7 +145,9 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     if (!getResponse.ok) {
       // Record failed attempt for rate limiting
       if (c.env.USER_CODE_RATE_LIMITER) {
-        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
+          buildDOKey('rate-limit', 'user-code', tenantId)
+        );
         const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
         await rateLimiter
           .fetch(
@@ -172,7 +177,9 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     if (!metadata) {
       // Record failed attempt for rate limiting
       if (c.env.USER_CODE_RATE_LIMITER) {
-        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
+          buildDOKey('rate-limit', 'user-code', tenantId)
+        );
         const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
         await rateLimiter
           .fetch(
@@ -264,7 +271,9 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
 
       // Reset rate limiting on successful verification
       if (c.env.USER_CODE_RATE_LIMITER) {
-        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName(
+          buildDOKey('rate-limit', 'user-code', tenantId)
+        );
         const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
         await rateLimiter
           .fetch(

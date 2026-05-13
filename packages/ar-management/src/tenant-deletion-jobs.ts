@@ -55,13 +55,16 @@ export async function processPendingTenantDeletionJobs(
     "SELECT id, tenant_id, config FROM admin_jobs WHERE job_type = 'tenants/delete' AND status = 'pending' LIMIT 5"
   );
 
+  let claimedCount = 0;
   for (const job of pendingJobs) {
     const jobTenantId = job.tenant_id;
     const nowTs = Math.floor(Date.now() / 1000);
-    await coreAdapter.execute(
-      "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+    const claim = await coreAdapter.execute(
+      "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
       [nowTs, nowTs, job.id, jobTenantId]
     );
+    if (claim.rowsAffected === 0) continue;
+    claimedCount += 1;
 
     try {
       const { tenant_id: targetTenantId } = parseTenantDeletionJobConfig(job.config);
@@ -89,6 +92,9 @@ export async function processPendingTenantDeletionJobs(
   }
 
   if (pendingJobs.length > 0) {
-    log.info('Tenant deletion jobs processed', { count: pendingJobs.length });
+    log.info('Tenant deletion jobs processed', {
+      selected_count: pendingJobs.length,
+      claimed_count: claimedCount,
+    });
   }
 }

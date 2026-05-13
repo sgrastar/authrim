@@ -82,6 +82,7 @@ function createInitRequest(params: Partial<CreateRuntimeStateParams> = {}): Requ
   const body: CreateRuntimeStateParams = {
     sessionId: params.sessionId ?? 'session_test_123',
     flowId: params.flowId ?? 'human-basic-login',
+    flowType: params.flowType ?? 'login',
     tenantId: params.tenantId ?? 'tenant_default',
     clientId: params.clientId ?? 'client_test',
     entryNodeId: params.entryNodeId ?? 'start',
@@ -91,7 +92,11 @@ function createInitRequest(params: Partial<CreateRuntimeStateParams> = {}): Requ
 
   return new Request('http://localhost/init', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Tenant-Id': body.tenantId,
+      'X-Flow-Session-Id': body.sessionId,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -102,11 +107,37 @@ function createSubmitRequest(params: {
   response: unknown;
   result: FlowSubmitResult;
   nextNodeId: string;
+  tenantId?: string;
+  sessionId?: string;
 }): Request {
   return new Request('http://localhost/submit', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Tenant-Id': params.tenantId ?? 'tenant_default',
+      'X-Flow-Session-Id': params.sessionId ?? 'session_test_123',
+    },
     body: JSON.stringify(params),
+  });
+}
+
+function createStateRequest(params: { tenantId?: string; sessionId?: string } = {}): Request {
+  return new Request('http://localhost/state', {
+    method: 'GET',
+    headers: {
+      'X-Tenant-Id': params.tenantId ?? 'tenant_default',
+      'X-Flow-Session-Id': params.sessionId ?? 'session_test_123',
+    },
+  });
+}
+
+function createCancelRequest(params: { tenantId?: string; sessionId?: string } = {}): Request {
+  return new Request('http://localhost/cancel', {
+    method: 'DELETE',
+    headers: {
+      'X-Tenant-Id': params.tenantId ?? 'tenant_default',
+      'X-Flow-Session-Id': params.sessionId ?? 'session_test_123',
+    },
   });
 }
 
@@ -166,6 +197,31 @@ describe('FlowStateStore', () => {
       const alarmTime = mockState._getAlarm();
       expect(alarmTime).toBeDefined();
       expect(alarmTime).toBeGreaterThan(Date.now());
+    });
+
+    it('should reject init when tenant header does not match body tenant', async () => {
+      const request = new Request('http://localhost/init', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': 'tenant_other',
+          'X-Flow-Session-Id': 'session_test_123',
+        },
+        body: JSON.stringify({
+          sessionId: 'session_test_123',
+          flowId: 'human-basic-login',
+          flowType: 'login',
+          tenantId: 'tenant_default',
+          clientId: 'client_test',
+          entryNodeId: 'start',
+        }),
+      });
+
+      const response = await flowStateStore.fetch(request);
+
+      expect(response.status).toBe(403);
+      const body = (await response.json()) as { code: string };
+      expect(body.code).toBe('tenant_mismatch');
     });
   });
 
@@ -322,14 +378,39 @@ describe('FlowStateStore', () => {
     });
 
     it('should return 404 for get state without init', async () => {
-      const request = new Request('http://localhost/state', {
-        method: 'GET',
-      });
+      const request = createStateRequest();
       const response = await flowStateStore.fetch(request);
 
       expect(response.status).toBe(404);
       const body = (await response.json()) as { code: string };
       expect(body.code).toBe('session_not_found');
+    });
+
+    it('should reject runtime access without tenant header', async () => {
+      const initRequest = createInitRequest();
+      await flowStateStore.fetch(initRequest);
+
+      const request = new Request('http://localhost/state', {
+        method: 'GET',
+        headers: { 'X-Flow-Session-Id': 'session_test_123' },
+      });
+      const response = await flowStateStore.fetch(request);
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { code: string };
+      expect(body.code).toBe('tenant_required');
+    });
+
+    it('should reject runtime access for a different tenant', async () => {
+      const initRequest = createInitRequest();
+      await flowStateStore.fetch(initRequest);
+
+      const request = createStateRequest({ tenantId: 'tenant_other' });
+      const response = await flowStateStore.fetch(request);
+
+      expect(response.status).toBe(403);
+      const body = (await response.json()) as { code: string };
+      expect(body.code).toBe('tenant_mismatch');
     });
   });
 
@@ -344,9 +425,7 @@ describe('FlowStateStore', () => {
       await flowStateStore.fetch(initRequest);
 
       // Cancel
-      const cancelRequest = new Request('http://localhost/cancel', {
-        method: 'DELETE',
-      });
+      const cancelRequest = createCancelRequest();
       const response = await flowStateStore.fetch(cancelRequest);
 
       expect(response.status).toBe(200);
@@ -354,17 +433,13 @@ describe('FlowStateStore', () => {
       expect(body.success).toBe(true);
 
       // Verify session is gone
-      const stateRequest = new Request('http://localhost/state', {
-        method: 'GET',
-      });
+      const stateRequest = createStateRequest();
       const stateResponse = await flowStateStore.fetch(stateRequest);
       expect(stateResponse.status).toBe(404);
     });
 
     it('should succeed even without existing session', async () => {
-      const cancelRequest = new Request('http://localhost/cancel', {
-        method: 'DELETE',
-      });
+      const cancelRequest = createCancelRequest();
       const response = await flowStateStore.fetch(cancelRequest);
 
       expect(response.status).toBe(200);

@@ -49,6 +49,8 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
   };
 
   try {
+    const tenantId = getTenantIdFromContext(c);
+
     // Get shard counts
     const sessionShardCount = await getSessionShardCount(c.env);
     const authCodeShardCount = await getShardCount(c.env);
@@ -60,7 +62,7 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
 
     // Warmup SessionStore shards
     for (let i = 0; i < sessionShardCount; i++) {
-      const instanceName = buildSessionShardInstanceName(i);
+      const instanceName = buildSessionShardInstanceName(i, tenantId);
       warmupPromises.push(
         (async () => {
           try {
@@ -77,7 +79,7 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
 
     // Warmup AuthCodeStore shards
     for (let i = 0; i < authCodeShardCount; i++) {
-      const instanceName = buildAuthCodeShardInstanceName(i);
+      const instanceName = buildAuthCodeShardInstanceName(i, tenantId);
       warmupPromises.push(
         (async () => {
           try {
@@ -97,7 +99,7 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
       (async () => {
         try {
           const stub = c.env.KEY_MANAGER.get(
-            c.env.KEY_MANAGER.idFromName(`${getTenantIdFromContext(c)}-v3`)
+            c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`)
           );
           // Use RPC status call - lightweight health check that warms the DO
           await stub.getStatusRpc();

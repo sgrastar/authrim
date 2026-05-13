@@ -26,13 +26,20 @@ import {
   type ParsedRegionId,
   type ShardResolution,
 } from './region-sharding';
-import { DEFAULT_TENANT_ID } from './tenant-context';
 import { generateSecureSessionId } from './crypto';
 
 /**
  * Type alias for SessionStore stub returned from region-aware functions
  */
 type SessionStoreStub = DurableObjectStub<SessionStore>;
+
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
 
 /**
  * Generate a new region-sharded session ID.
@@ -45,7 +52,7 @@ type SessionStoreStub = DurableObjectStub<SessionStore>;
  * for session identifier entropy.
  *
  * @param env - Environment with KV binding for region shard config
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing sessionId, shardIndex, regionKey, generation, and randomPart
  *
  * @example
@@ -57,7 +64,7 @@ type SessionStoreStub = DurableObjectStub<SessionStore>;
  */
 export async function generateRegionShardedSessionId(
   env: Env,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<{
   sessionId: string;
   shardIndex: number;
@@ -68,7 +75,8 @@ export async function generateRegionShardedSessionId(
   // Use 128-bit secure random ID instead of UUID (122 bits)
   // This meets OWASP recommendations for session ID entropy
   const randomPart = generateSecureSessionId();
-  const config = await getRegionShardConfig(env, tenantId);
+  const normalizedTenantId = requireTenantId(tenantId, 'Region-sharded session ID');
+  const config = await getRegionShardConfig(env, normalizedTenantId);
 
   // Use random part as the shard key for session distribution
   const resolution = resolveShardForNewResource(config, randomPart);
@@ -124,7 +132,7 @@ export function parseRegionShardedSessionId(sessionId: string): ParsedRegionId |
  *
  * @param env - Environment object with DO bindings
  * @param sessionId - Region-sharded session ID
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing DO stub and resolution info
  * @throws Error if sessionId format is invalid
  *
@@ -135,12 +143,13 @@ export function parseRegionShardedSessionId(sessionId: string): ParsedRegionId |
 export function getSessionStoreBySessionId(
   env: Env,
   sessionId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): {
   stub: SessionStoreStub;
   resolution: ShardResolution;
   instanceName: string;
 } {
+  const normalizedTenantId = requireTenantId(tenantId, 'Session store routing');
   const parsed = parseRegionShardedSessionId(sessionId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded session ID format: ${sessionId}`);
@@ -153,7 +162,7 @@ export function getSessionStoreBySessionId(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'session',
     resolution.shardIndex
@@ -177,7 +186,7 @@ export function getSessionStoreBySessionId(
  * 3. Returns the DO stub with locationHint for the target region
  *
  * @param env - Environment object with DO bindings
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing DO stub, new sessionId, and resolution info
  *
  * @example
@@ -188,16 +197,17 @@ export function getSessionStoreBySessionId(
  */
 export async function getSessionStoreForNewSession(
   env: Env,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<{
   stub: SessionStoreStub;
   sessionId: string;
   resolution: ShardResolution;
   instanceName: string;
 }> {
+  const normalizedTenantId = requireTenantId(tenantId, 'New session store routing');
   const { sessionId, shardIndex, regionKey, generation } = await generateRegionShardedSessionId(
     env,
-    tenantId
+    normalizedTenantId
   );
 
   const resolution: ShardResolution = {
@@ -206,7 +216,7 @@ export async function getSessionStoreForNewSession(
     shardIndex,
   };
 
-  const instanceName = buildRegionInstanceName(tenantId, regionKey, 'session', shardIndex);
+  const instanceName = buildRegionInstanceName(normalizedTenantId, regionKey, 'session', shardIndex);
   const stub = getRegionAwareDOStub(
     env.SESSION_STORE as unknown as DurableObjectNamespace,
     instanceName,

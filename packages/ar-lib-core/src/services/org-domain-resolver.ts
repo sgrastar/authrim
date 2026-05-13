@@ -246,8 +246,8 @@ export async function joinOrganization(
 
     // Check if already a member
     const existingMember = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND tenant_id = ?',
-      [userId, orgId, tenantId]
+      'SELECT id FROM org_memberships WHERE tenant_id = ? AND user_id = ? AND org_id = ?',
+      [tenantId, userId, orgId]
     );
 
     if (existingMember) {
@@ -346,8 +346,8 @@ export async function assignRoleToUser(
     // Check if already assigned
     const existing = await adapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE user_id = ? AND role_id = ? AND scope_type = 'org' AND scope_target = ? AND tenant_id = ?`,
-      [userId, roleId, `org:${orgId}`, tenantId]
+       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = 'org' AND scope_target = ?`,
+      [tenantId, userId, roleId, `org:${orgId}`]
     );
 
     if (existing) {

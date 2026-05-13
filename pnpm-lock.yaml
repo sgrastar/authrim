@@ -752,6 +752,9 @@ importers:
       tar:
         specifier: ^7.5.14
         version: 7.5.14
+      tldts:
+        specifier: ^7.0.18
+        version: 7.0.18
       zod:
         specifier: ^3.24.1
         version: 3.25.76

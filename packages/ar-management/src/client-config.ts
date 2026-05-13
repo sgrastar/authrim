@@ -716,6 +716,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
 
     // Audit log (non-blocking) - client self-modification is security-relevant
     createAuditLog(c.env, {
+      tenantId,
       userId: clientId, // Client acting on its own behalf
       action: 'client.config.updated',
       resource: 'oauth_clients',
@@ -777,9 +778,9 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
 
     // Delete client from D1
     const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    await coreAdapter.execute('DELETE FROM oauth_clients WHERE client_id = ? AND tenant_id = ?', [
-      clientId,
+    await coreAdapter.execute('DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [
       tenantId,
+      clientId,
     ]);
 
     const log = getLogger(c).module('RFC7592');
@@ -791,6 +792,7 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
 
     // Audit log (non-blocking) - client deletion is security-critical
     createAuditLog(c.env, {
+      tenantId,
       userId: clientId, // Client acting on its own behalf
       action: 'client.config.deleted',
       resource: 'oauth_clients',

@@ -7,7 +7,7 @@ const SETTINGS_PLATFORM_PATH =
   /^\/api\/admin\/settings\/(?:ui-config|ui-routing|cache-mode(?:\/info)?)\/?$/;
 const RUNTIME_PROFILE_PLATFORM_PATH = /^\/api\/admin\/runtime-profiles(?:\/.*)?\/?$/;
 const ADMIN_PLATFORM_AUTH_PATH =
-  /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|logout)\/?$/;
+  /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|me\/session|logout)\/?$/;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 export type TenantRequestClass =

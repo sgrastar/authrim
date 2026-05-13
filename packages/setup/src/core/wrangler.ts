@@ -16,6 +16,8 @@ import {
   type WorkerComponent,
   type KVNamespace,
 } from './naming.js';
+import { getSecretNamesForWorker } from './secrets.js';
+import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
 
 // =============================================================================
 // Types
@@ -34,14 +36,14 @@ export function buildResourceIdsFromLock(lock: AuthrimLock): ResourceIds {
       Object.entries(lock.d1 || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
     ),
     kv: Object.fromEntries(
-      Object.entries(lock.kv || {}).map(([key, value]) => [
-        key,
-        { id: value.id, name: value.name },
-      ])
+      Object.entries(lock.kv || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
     ),
     queues: lock.queues
       ? Object.fromEntries(
-          Object.entries(lock.queues).map(([key, value]) => [key, { id: value.id, name: value.name }])
+          Object.entries(lock.queues).map(([key, value]) => [
+            key,
+            { id: value.id, name: value.name },
+          ])
         )
       : undefined,
     r2: lock.r2 ? Object.fromEntries(Object.entries(lock.r2)) : undefined,
@@ -65,6 +67,9 @@ export interface WranglerConfig {
   migrations?: Array<{ tag: string; new_sqlite_classes?: string[] }>;
   vars: Record<string, string>;
   routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
+  triggers?: {
+    crons: string[];
+  };
   queues?: {
     producers?: Array<{ queue: string; binding: string }>;
     consumers?: Array<{
@@ -250,6 +255,17 @@ function addOriginWithSubdomain(
   origins.add(normalizedUrl);
 }
 
+function getAdminUiApiMode(
+  apiUrl: string,
+  adminUiUrl: string,
+  baseDomain?: string
+): 'same-origin' | 'same-site-cross-origin' | 'cross-site-proxy' {
+  const classification: UiApiSiteClassification = classifyUiApiSite(apiUrl, adminUiUrl, {
+    baseDomain,
+  });
+  return classification === 'cross-site' ? 'cross-site-proxy' : classification;
+}
+
 /**
  * Derive CORS allowed origins from config URLs.
  *
@@ -259,7 +275,7 @@ function addOriginWithSubdomain(
  * Includes:
  * - API origin (router) - needed for admin-init-setup WebAuthn operations
  * - LoginUI origin - for cross-origin requests from login UI
- * - AdminUI origin - for cross-origin requests from admin UI
+ * - AdminUI origin only when Admin UI is same-site with the API
  *
  * Workers.dev URLs are normalized to the correct format:
  *   {name}.{subdomain}.workers.dev
@@ -284,12 +300,22 @@ export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: s
   }
 
   // AdminUI origin
-  // When sameAsApi=true, the actual origin is the API domain (UI is proxied)
+  // Direct cross-site browser mode is not supported. Cross-site Admin UI uses
+  // the Admin UI Worker/BFF, so the public Admin API CORS allowlist must not
+  // include that cross-site browser origin.
   const adminUiUrl = config.urls?.adminUi?.sameAsApi
     ? apiUrl
     : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto;
-  if (adminUiUrl) {
-    addOriginWithSubdomain(origins, adminUiUrl, workersSubdomain);
+  if (adminUiUrl && apiUrl) {
+    const normalizedApiUrl = normalizeWorkersDevUrl(apiUrl || '', workersSubdomain);
+    const normalizedAdminUiUrl = normalizeWorkersDevUrl(adminUiUrl, workersSubdomain);
+    const adminUiSiteClassification = classifyUiApiSite(normalizedApiUrl, normalizedAdminUiUrl, {
+      baseDomain: config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined,
+    });
+
+    if (adminUiSiteClassification !== 'cross-site') {
+      origins.add(normalizedAdminUiUrl);
+    }
   }
 
   return Array.from(origins);
@@ -333,6 +359,12 @@ export function generateWranglerConfig(
 
   // Placement (off for better performance with sharded DOs)
   wranglerConfig.placement = { mode: 'off' };
+
+  if (component === 'ar-bridge') {
+    wranglerConfig.triggers = {
+      crons: ['*/15 * * * *'],
+    };
+  }
 
   // KV Namespaces
   const kvBindings = COMPONENT_KV_BINDINGS[component];
@@ -557,16 +589,32 @@ export function generateEnvVars(
   let issuerUrl: string;
   if (multiTenantEnabled) {
     // Multi-tenant mode: use BASE_DOMAIN (ISSUER_URL is not used, kept for fallback)
-    issuerUrl = config.urls?.api?.auto || '';
+    issuerUrl = normalizeWorkersDevUrl(config.urls?.api?.auto || '', workersSubdomain);
   } else {
     // Single-tenant or workers.dev mode: use explicit issuer URL
-    issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+    issuerUrl = normalizeWorkersDevUrl(
+      config.urls?.api?.custom || config.urls?.api?.auto || '',
+      workersSubdomain
+    );
   }
   // UI_URL: when sameAsApi=true, UI is proxied through the API domain
-  const apiUrlForUi = config.urls?.api?.custom || config.urls?.api?.auto || '';
+  const apiUrlForUi = normalizeWorkersDevUrl(
+    config.urls?.api?.custom || config.urls?.api?.auto || '',
+    workersSubdomain
+  );
   const uiUrl = loginUiUsesApiDomain
     ? apiUrlForUi
-    : config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl;
+    : normalizeWorkersDevUrl(
+        config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl,
+        workersSubdomain
+      );
+  const adminUiUrl = config.urls?.adminUi?.sameAsApi
+    ? apiUrlForUi
+    : normalizeWorkersDevUrl(
+        config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl,
+        workersSubdomain
+      );
+  const adminUiApiMode = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
   const profileDefaults = config.profiles?.defaults ?? {
     storage: 'builtin:storage:standard',
     audit: 'builtin:audit:standard',
@@ -647,24 +695,16 @@ export function generateEnvVars(
     const loginUiSameOrigin = loginUiUsesApiDomain;
     vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
 
-    // Admin UI URL and cookie configuration
-    const adminUiUrl = config.urls?.adminUi?.sameAsApi
-      ? apiUrlForUi
-      : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
-    const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
-    vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
+    vars['ADMIN_UI_API_MODE'] = adminUiApiMode;
+    vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
   }
 
   // ar-management also needs cookie configuration for admin sessions
   if (component === 'ar-management') {
-    // Admin UI URL and cookie configuration (same logic as ar-auth)
-    const adminUiUrl = config.urls?.adminUi?.sameAsApi
-      ? apiUrlForUi
-      : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
-    const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
-    vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
+    vars['ADMIN_UI_API_MODE'] = adminUiApiMode;
+    vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
     vars['SAML_ENABLED'] = config.components.saml ? 'true' : 'false';
     vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
     vars['VC_ENABLED'] = config.components.vc ? 'true' : 'false';
@@ -705,29 +745,15 @@ export function generateEnvVars(
     vars['AUTHRIM_SESSION_SHARDS'] = (config.sharding.sessionShards ?? 4).toString();
     vars['AUTHRIM_CHALLENGE_SHARDS'] = (config.sharding.challengeShards ?? 4).toString();
   }
-  // Flow Engine sharding (for ar-auth only)
-  if (component === 'ar-auth') {
-    vars['AUTHRIM_FLOW_STATE_SHARDS'] = (config.sharding.flowStateShards ?? 32).toString();
-  }
 
-  // Secrets placeholders (will be set via wrangler secret put)
-  // KEY_MANAGER_SECRET is needed by workers that access KeyManager DO
-  const needsKeyManagerSecret = [
-    'ar-lib-core',
-    'ar-auth',
-    'ar-token',
-    'ar-userinfo',
-    'ar-discovery',
-    'ar-management',
-    'ar-saml',
-  ];
-  // ADMIN_API_SECRET is needed by workers that expose Admin API endpoints
-  const needsAdminApiSecret = ['ar-lib-core', 'ar-auth', 'ar-token', 'ar-management'];
-
-  if (needsKeyManagerSecret.includes(component)) {
+  const componentSecrets = getSecretNamesForWorker(component);
+  if (componentSecrets.includes('KEY_MANAGER_SECRET')) {
     vars['KEY_MANAGER_SECRET'] = ''; // Set via secret
   }
-  if (needsAdminApiSecret.includes(component)) {
+  if (componentSecrets.includes('VERSION_MANAGER_SECRET')) {
+    vars['VERSION_MANAGER_SECRET'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('ADMIN_API_SECRET')) {
     vars['ADMIN_API_SECRET'] = ''; // Set via secret
   }
 
@@ -738,7 +764,10 @@ export function generateEnvVars(
     const adminSameAsApi = config.urls?.adminUi?.sameAsApi === true;
     vars['ENABLE_ADMIN_UI_PROXY'] = adminSameAsApi ? 'true' : 'false';
     if (adminSameAsApi) {
-      const adminUiWorkerUrl = config.urls?.adminUi?.auto || config.urls?.adminUi?.custom || '';
+      const adminUiWorkerUrl = normalizeWorkersDevUrl(
+        config.urls?.adminUi?.auto || config.urls?.adminUi?.custom || '',
+        workersSubdomain
+      );
       if (adminUiWorkerUrl) {
         vars['AR_ADMIN_UI_URL'] = adminUiWorkerUrl;
       }
@@ -747,7 +776,10 @@ export function generateEnvVars(
     const loginProxyEnabled = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
     vars['ENABLE_LOGIN_UI_PROXY'] = loginProxyEnabled ? 'true' : 'false';
     if (loginProxyEnabled) {
-      const loginUiWorkerUrl = config.urls?.loginUi?.auto || config.urls?.loginUi?.custom || '';
+      const loginUiWorkerUrl = normalizeWorkersDevUrl(
+        config.urls?.loginUi?.auto || config.urls?.loginUi?.custom || '',
+        workersSubdomain
+      );
       if (loginUiWorkerUrl) {
         vars['AR_LOGIN_UI_URL'] = loginUiWorkerUrl;
       }
@@ -907,6 +939,14 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       lines.push('');
     }
 
+    if (config.triggers?.crons && config.triggers.crons.length > 0) {
+      lines.push(`[env.${envName}.triggers]`);
+      lines.push(
+        `crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`
+      );
+      lines.push('');
+    }
+
     // KV Namespaces
     if (config.kv_namespaces && config.kv_namespaces.length > 0) {
       lines.push('# KV Namespaces');
@@ -1063,6 +1103,14 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     if (config.placement) {
       lines.push('[placement]');
       lines.push(`mode = "${config.placement.mode}"`);
+      lines.push('');
+    }
+
+    if (config.triggers?.crons && config.triggers.crons.length > 0) {
+      lines.push('[triggers]');
+      lines.push(
+        `crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`
+      );
       lines.push('');
     }
 

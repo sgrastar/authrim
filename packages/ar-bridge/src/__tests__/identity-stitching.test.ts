@@ -282,6 +282,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
           linkingUserId: 'existing-user-456',
         });
 
@@ -320,6 +321,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.userId).toBe('existing-user-789');
@@ -367,6 +369,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.userId).toBe('existing-user-by-email');
@@ -388,6 +391,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         // Should JIT provision instead of stitching
@@ -408,6 +412,7 @@ describe('Identity Stitching Service', () => {
           provider: providerNoAutoLink,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         // Should JIT provision instead of stitching
@@ -429,6 +434,7 @@ describe('Identity Stitching Service', () => {
             provider: mockProvider,
             userInfo: unverifiedUserInfo,
             tokens: mockTokens,
+            tenantId: 'default',
           })
         ).rejects.toThrow('email from your external account is not verified');
       });
@@ -455,6 +461,7 @@ describe('Identity Stitching Service', () => {
             provider: mockProvider,
             userInfo: mockUserInfo,
             tokens: mockTokens,
+            tenantId: 'default',
           })
         ).rejects.toThrow('existing account email is not verified');
       });
@@ -473,6 +480,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.isNewUser).toBe(true);
@@ -494,6 +502,7 @@ describe('Identity Stitching Service', () => {
             provider: providerNoJIT,
             userInfo: mockUserInfo,
             tokens: mockTokens,
+            tenantId: 'default',
           })
         ).rejects.toThrow('New account registration via external providers is not available');
       });
@@ -511,6 +520,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: userInfoNoEmail,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.isNewUser).toBe(true);
@@ -538,6 +548,7 @@ describe('Identity Stitching Service', () => {
             provider: mockProvider,
             userInfo: mockUserInfo,
             tokens: mockTokens,
+            tenantId: 'default',
           })
         ).rejects.toMatchObject({
           code: 'required_custom_claims_missing',
@@ -581,6 +592,7 @@ describe('Identity Stitching Service', () => {
           provider: providerWithCustomMapping,
           userInfo: mappedUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(mockValidateCustomClaimWrite).toHaveBeenCalledWith(
@@ -606,6 +618,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
           linkingUserId: 'existing-user-456',
         });
 

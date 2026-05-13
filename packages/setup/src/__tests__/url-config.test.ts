@@ -82,6 +82,32 @@ describe('url-config helpers', () => {
     expect(urls.adminUi.sameAsApi).toBe(true);
   });
 
+  it('normalizes stale workers.dev short-form UI auto URLs when the account subdomain is known', () => {
+    const urls = buildUrlsConfig({
+      env: 'single',
+      workersSubdomain: 'sgrastar',
+      existingUrls: {
+        api: {
+          custom: null,
+          auto: 'https://single-ar-router.sgrastar.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://single-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://single-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+    });
+
+    expect(urls.loginUi.auto).toBe('https://single-ar-login-ui.sgrastar.workers.dev');
+    expect(urls.adminUi.auto).toBe('https://single-ar-admin-ui.sgrastar.workers.dev');
+  });
+
   it('resolves issuer and setup URLs to the initial tenant subdomain in multi-tenant mode', () => {
     const config = {
       tenant: {

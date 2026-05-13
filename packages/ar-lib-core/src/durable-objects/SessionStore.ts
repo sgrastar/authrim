@@ -79,7 +79,7 @@ export interface SessionData {
  */
 export interface CreateSessionRequest {
   sessionId: string; // Required: Sharded session ID from session-helper
-  tenantId?: string;
+  tenantId: string;
   userId: string;
   ttl: number; // Time to live in seconds
   data?: SessionData;
@@ -169,8 +169,8 @@ export class SessionStore extends DurableObject<Env> {
     sessionId: string,
     userId: string,
     ttl: number,
-    data?: SessionData,
-    tenantId?: string
+    data: SessionData | undefined,
+    tenantId: string
   ): Promise<Session> {
     return this.createSession(sessionId, userId, ttl, data, tenantId);
   }
@@ -403,21 +403,26 @@ export class SessionStore extends DurableObject<Env> {
     return session.expiresAt <= Date.now();
   }
 
-  private extractTenantId(data?: SessionData, tenantId?: string): string | undefined {
-    if (tenantId) {
-      return tenantId;
+  private requireTenantId(tenantId: string | undefined, context: string): string {
+    const normalized = tenantId?.trim();
+    if (!normalized) {
+      throw new Error(`${context} requires tenantId`);
     }
-    const metadataTenantId = data?.tenant_id ?? data?.tenantId;
-    return typeof metadataTenantId === 'string' ? metadataTenantId : undefined;
+    return normalized;
   }
 
   private async setTenantContext(tenantId: string): Promise<void> {
-    if (this.tenantId === tenantId) {
+    const normalizedTenantId = this.requireTenantId(tenantId, 'SessionStore tenant context');
+    const currentTenantId = await this.ensureTenantContext();
+    if (currentTenantId && currentTenantId !== normalizedTenantId) {
+      throw new Error('SessionStore tenant context mismatch');
+    }
+    if (this.tenantId === normalizedTenantId) {
       return;
     }
-    this.tenantId = tenantId;
+    this.tenantId = normalizedTenantId;
     this.sessionPersistence = null;
-    await this.actorCtx.storage.put(SESSION_STORE_TENANT_CONTEXT_KEY, tenantId);
+    await this.actorCtx.storage.put(SESSION_STORE_TENANT_CONTEXT_KEY, normalizedTenantId);
   }
 
   private async ensureTenantContext(): Promise<string | undefined> {
@@ -475,6 +480,7 @@ export class SessionStore extends DurableObject<Env> {
       () =>
         persistence.saveSession({
           id: session.id,
+          tenantId: session.tenantId,
           userId: session.userId,
           expiresAt: session.expiresAt,
           createdAt: session.createdAt,
@@ -558,13 +564,11 @@ export class SessionStore extends DurableObject<Env> {
     sessionId: string,
     userId: string,
     ttl: number,
-    data?: SessionData,
-    tenantId?: string
+    data: SessionData | undefined,
+    tenantId: string
   ): Promise<Session> {
-    const resolvedTenantId = this.extractTenantId(data, tenantId);
-    if (resolvedTenantId) {
-      await this.setTenantContext(resolvedTenantId);
-    }
+    const resolvedTenantId = this.requireTenantId(tenantId, 'Session creation');
+    await this.setTenantContext(resolvedTenantId);
 
     const session: Session = {
       id: sessionId,
@@ -924,6 +928,9 @@ export class SessionStore extends DurableObject<Env> {
     const context = await this.ensurePersistenceContext();
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
     const tenantId = await this.ensureTenantContext();
+    if (!tenantId) {
+      throw new Error('Session persistence requires tenant context');
+    }
     return createSessionPersistenceAdapter(source, 'session-store', tenantId);
   }
 
@@ -970,9 +977,9 @@ export class SessionStore extends DurableObject<Env> {
       if (path === '/session' && request.method === 'POST') {
         const body = (await request.json()) as Partial<CreateSessionRequest>;
 
-        if (!body.sessionId || !body.userId || !body.ttl) {
+        if (!body.sessionId || !body.userId || !body.ttl || !body.tenantId) {
           return new Response(
-            JSON.stringify({ error: 'Missing required fields: sessionId, userId, ttl' }),
+            JSON.stringify({ error: 'Missing required fields: sessionId, userId, ttl, tenantId' }),
             {
               status: 400,
               headers: { 'Content-Type': 'application/json' },

@@ -20,6 +20,12 @@ import {
 } from './naming.js';
 import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
 import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-portability.js';
+import {
+  buildAdminUiBffMachineAccessBootstrapSql,
+  buildSetupMachineAccessBootstrapSql,
+  loadAdminUiBffPublicJwk,
+  loadSetupMachinePublicJwk,
+} from './admin-machine-access.js';
 
 // Package directory (for bundled migrations)
 const __filename = fileURLToPath(import.meta.url);
@@ -1597,7 +1603,11 @@ export async function executeD1Migration(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Ignore "already exists" errors - migration may have been partially applied
-    if (message.includes('already exists') || message.includes('UNIQUE constraint')) {
+    if (
+      message.includes('already exists') ||
+      message.includes('duplicate column name') ||
+      message.includes('UNIQUE constraint')
+    ) {
       onProgress?.('  ⚠️ Migration already applied (skipped)');
       return { success: true };
     }
@@ -1873,6 +1883,11 @@ export interface InitialAdminRolesBootstrapResult {
   error?: string;
 }
 
+export interface SetupMachineAccessBootstrapResult {
+  success: boolean;
+  error?: string;
+}
+
 export interface RuntimeProfileSeedResult {
   success: boolean;
   seededCount: number;
@@ -1956,6 +1971,88 @@ export async function ensureInitialAdminRolesInD1(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     onProgress?.(`  ❌ Admin role bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Ensure the setup tool machine principal and public JWK credential exist in DB_ADMIN.
+ */
+export async function ensureSetupMachineAccessInD1(
+  env: string,
+  config: AuthrimConfig,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    const publicJwk = await loadSetupMachinePublicJwk(keysDir);
+    const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
+
+    onProgress?.(`🔧 Ensuring setup machine access exists in ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Setup machine access bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    onProgress?.('  ✅ Setup machine access ready');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Setup machine access bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Ensure the Admin UI BFF machine principal and public JWK credential exist in DB_ADMIN.
+ */
+export async function ensureAdminUiBffMachineAccessInD1(
+  env: string,
+  config: AuthrimConfig,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    const publicJwk = await loadAdminUiBffPublicJwk(keysDir);
+    const sql = buildAdminUiBffMachineAccessBootstrapSql(config, publicJwk);
+
+    onProgress?.(`🔧 Ensuring Admin UI BFF machine access exists in ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Admin UI BFF machine access bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    onProgress?.('  ✅ Admin UI BFF machine access ready');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Admin UI BFF machine access bootstrap failed: ${message}`);
     return { success: false, error: message };
   }
 }

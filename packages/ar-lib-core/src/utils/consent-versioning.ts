@@ -113,8 +113,8 @@ export async function checkRequiresReconsent(
   }>(
     `SELECT privacy_policy_version, tos_version, consent_version
      FROM oauth_client_consents
-     WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
-    [userId, clientId, tenantId]
+     WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+    [tenantId, userId, clientId]
   );
 
   if (existingConsent.length === 0) {
@@ -251,22 +251,22 @@ export async function upgradeConsentVersion(
          privacy_policy_version = COALESCE(?, privacy_policy_version),
          tos_version = COALESCE(?, tos_version),
          granted_at = ?
-     WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
+     WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
     [
       newVersions.privacyPolicyVersion ?? null,
       newVersions.tosVersion ?? null,
       now,
+      tenantId,
       userId,
       clientId,
-      tenantId,
     ]
   );
 
   // Return the new version
   const result = await adapter.query<{ consent_version: number }>(
     `SELECT consent_version FROM oauth_client_consents
-     WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
-    [userId, clientId, tenantId]
+     WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+    [tenantId, userId, clientId]
   );
 
   return result.length > 0 ? result[0].consent_version : 1;

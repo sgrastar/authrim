@@ -23,7 +23,7 @@ function createConsentAdapter(seed?: {
     rows,
     async query(sql, params = []) {
       if (sql.includes('FROM oauth_client_consents')) {
-        const [userId, clientId, tenantId] = params;
+        const [tenantId, userId, clientId] = params;
         return rows.filter(
           (row) =>
             row.user_id === userId && row.client_id === clientId && row.tenant_id === tenantId
@@ -62,9 +62,9 @@ function createConsentAdapter(seed?: {
           tosVersion,
           version,
           updatedAt,
+          tenantId,
           userId,
           clientId,
-          tenantId,
         ] = params;
         const row = rows.find(
           (candidate) =>

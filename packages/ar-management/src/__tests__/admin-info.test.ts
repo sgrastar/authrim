@@ -82,6 +82,34 @@ describe('admin-info tenant base URL resolution', () => {
     });
   });
 
+  it('normalizes short workers.dev UI URLs to the issuer account subdomain', async () => {
+    const env = {
+      UI_URL: 'https://single-ar-login-ui.workers.dev',
+      ADMIN_UI_URL: 'https://single-ar-admin-ui.workers.dev',
+    } as Env;
+
+    await expect(
+      getConfiguredUiUrls(env, 'https://single-ar-router.sgrastar.workers.dev')
+    ).resolves.toEqual({
+      loginUiUrl: 'https://single-ar-login-ui.sgrastar.workers.dev',
+      adminUiUrl: 'https://single-ar-admin-ui.sgrastar.workers.dev',
+    });
+  });
+
+  it('keeps custom UI domains unchanged when issuer uses workers.dev', async () => {
+    const env = {
+      UI_URL: 'https://login.example.com',
+      ADMIN_UI_URL: 'https://admin.example.com',
+    } as Env;
+
+    await expect(
+      getConfiguredUiUrls(env, 'https://single-ar-router.sgrastar.workers.dev')
+    ).resolves.toEqual({
+      loginUiUrl: 'https://login.example.com',
+      adminUiUrl: 'https://admin.example.com',
+    });
+  });
+
   it('prefers UI config from SETTINGS over env UI_URL', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',

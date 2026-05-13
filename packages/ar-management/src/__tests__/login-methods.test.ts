@@ -6,7 +6,7 @@
  *
  * Verifies:
  * - All methods enabled/disabled combinations
- * - Social provider fetching from EXTERNAL_IDP service binding
+ * - External login provider fetching from EXTERNAL_IDP service binding
  * - UI config from settings-v2 (AUTHRIM_CONFIG KV) and legacy fallback
  * - 503 when no methods available
  * - Cache-Control header
@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Hoist mock logger
-const { mockLogger } = vi.hoisted(() => {
+const { mockLogger, mockResolveAuthCorePersistenceAdapterFromEnv } = vi.hoisted(() => {
   const logger = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -24,7 +24,10 @@ const { mockLogger } = vi.hoisted(() => {
     error: vi.fn(),
     module: vi.fn().mockReturnThis(),
   };
-  return { mockLogger: logger };
+  return {
+    mockLogger: logger,
+    mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn(),
+  };
 });
 
 // Mock getLogger from ar-lib-core
@@ -33,6 +36,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getLogger: () => mockLogger,
+    resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
   };
 });
 
@@ -68,6 +72,7 @@ interface MockExternalIdpOptions {
     id: string;
     name: string;
     slug?: string;
+    providerType?: string;
     enabled?: boolean;
     iconUrl?: string;
     buttonColor?: string;
@@ -95,14 +100,12 @@ interface CreateTestAppOptions {
   settingsKV?: KVNamespace;
   configKV?: KVNamespace;
   externalIdp?: ReturnType<typeof createMockExternalIdp> | null;
-  adminApiSecret?: string;
 }
 
 function createTestApp(options: CreateTestAppOptions = {}) {
   const settingsKV = options.settingsKV ?? createMockKV();
   const configKV = options.configKV ?? createMockKV();
   const externalIdp = options.externalIdp !== undefined ? options.externalIdp : null;
-  const adminApiSecret = options.adminApiSecret ?? 'test-secret';
 
   const app = new Hono<{ Bindings: Env }>();
   app.get('/api/auth/login-methods', getLoginMethodsHandler);
@@ -111,7 +114,6 @@ function createTestApp(options: CreateTestAppOptions = {}) {
     SETTINGS: settingsKV,
     AUTHRIM_CONFIG: configKV,
     EXTERNAL_IDP: externalIdp,
-    ADMIN_API_SECRET: adminApiSecret,
   } as unknown as Env;
 
   return { app, mockEnv, settingsKV, configKV };
@@ -124,6 +126,9 @@ function createTestApp(options: CreateTestAppOptions = {}) {
 describe('Login Methods API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
+      query: vi.fn(async () => []),
+    });
   });
 
   // ===========================================================================
@@ -144,9 +149,9 @@ describe('Login Methods API', () => {
       expect(body.methods.passkey.capabilities).toEqual(['conditional', 'discoverable']);
       expect(body.methods.emailCode.enabled).toBe(true);
       expect(body.methods.emailCode.steps).toEqual(['email', 'code']);
-      // No EXTERNAL_IDP → social disabled
-      expect(body.methods.social.enabled).toBe(false);
-      expect(body.methods.social.providers).toEqual([]);
+      // No EXTERNAL_IDP → external login disabled
+      expect(body.methods.external.enabled).toBe(false);
+      expect(body.methods.external.providers).toEqual([]);
     });
 
     it('should return default UI config', async () => {
@@ -237,15 +242,15 @@ describe('Login Methods API', () => {
   });
 
   // ===========================================================================
-  // Social providers
+  // External login providers
   // ===========================================================================
 
-  describe('social providers via EXTERNAL_IDP', () => {
-    it('should return social providers when EXTERNAL_IDP is available', async () => {
+  describe('external login providers via EXTERNAL_IDP', () => {
+    it('should return external login providers when EXTERNAL_IDP is available', async () => {
       const externalIdp = createMockExternalIdp({
         providers: [
-          { id: 'ggl-123', name: 'Google', slug: 'google', enabled: true },
-          { id: 'ghb-456', name: 'GitHub', slug: 'github', enabled: true },
+          { id: 'ggl-123', name: 'Google', slug: 'google', providerType: 'oidc', enabled: true },
+          { id: 'ghb-456', name: 'GitHub', slug: 'github', providerType: 'oauth2', enabled: true },
         ],
       });
       const { app, mockEnv } = createTestApp({ externalIdp });
@@ -253,11 +258,73 @@ describe('Login Methods API', () => {
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.methods.social.enabled).toBe(true);
-      expect(body.methods.social.providers).toHaveLength(2);
-      expect(body.methods.social.providers[0].id).toBe('google');
-      expect(body.methods.social.providers[0].name).toBe('Google');
-      expect(body.methods.social.providers[1].id).toBe('github');
+      expect(body.methods.external.enabled).toBe(true);
+      expect(body.methods.external.providers).toHaveLength(2);
+      expect(body.methods.external.providers[0]).toMatchObject({
+        id: 'google',
+        name: 'Google',
+        type: 'oidc',
+        startMode: 'oauth_redirect',
+        startUrl: '/api/external/google/start',
+      });
+      expect(body.methods.external.providers[1]).toMatchObject({
+        id: 'github',
+        type: 'oauth2',
+        startMode: 'oauth_redirect',
+      });
+    });
+
+    it('should include enabled SAML IdP providers as external login providers', async () => {
+      mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
+        query: vi.fn(async () => [{ id: 'saml-idp-1', name: 'Campus SAML' }]),
+      });
+      const { app, mockEnv } = createTestApp();
+
+      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(body.methods.external.enabled).toBe(true);
+      expect(body.methods.external.providers).toContainEqual(
+        expect.objectContaining({
+          id: 'saml:saml-idp-1',
+          name: 'Campus SAML',
+          type: 'saml',
+          startMode: 'saml_sp',
+          startUrl: '/saml/sp/login?idp=saml-idp-1',
+        })
+      );
+    });
+
+    it('should include configured VC/custom providers from login-methods settings', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.external_providers': [
+            {
+              id: 'wallet-vp',
+              name: 'Wallet Presentation',
+              type: 'vc',
+              startMode: 'direct',
+              startUrl: '/vp/login',
+              enabled: true,
+            },
+          ],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(body.methods.external.enabled).toBe(true);
+      expect(body.methods.external.providers).toContainEqual(
+        expect.objectContaining({
+          id: 'wallet-vp',
+          name: 'Wallet Presentation',
+          type: 'vc',
+          startMode: 'direct',
+          startUrl: '/vp/login',
+        })
+      );
     });
 
     it('should filter out disabled providers', async () => {
@@ -272,19 +339,19 @@ describe('Login Methods API', () => {
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.methods.social.providers).toHaveLength(1);
-      expect(body.methods.social.providers[0].name).toBe('Google');
+      expect(body.methods.external.providers).toHaveLength(1);
+      expect(body.methods.external.providers[0].name).toBe('Google');
     });
 
-    it('should return social disabled when EXTERNAL_IDP fetch fails', async () => {
+    it('should return external login disabled when EXTERNAL_IDP fetch fails', async () => {
       const externalIdp = createMockExternalIdp({ shouldFail: true });
       const { app, mockEnv } = createTestApp({ externalIdp });
 
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.methods.social.enabled).toBe(false);
-      expect(body.methods.social.providers).toEqual([]);
+      expect(body.methods.external.enabled).toBe(false);
+      expect(body.methods.external.providers).toEqual([]);
     });
 
     it('should call EXTERNAL_IDP with correct URL path', async () => {
@@ -301,21 +368,17 @@ describe('Login Methods API', () => {
       );
     });
 
-    it('should return social disabled when ADMIN_API_SECRET is missing', async () => {
+    it('should not require ADMIN_API_SECRET for external login providers', async () => {
       const externalIdp = createMockExternalIdp({
         providers: [{ id: 'ggl-123', name: 'Google', slug: 'google', enabled: true }],
       });
-      const { app, mockEnv } = createTestApp({
-        externalIdp,
-        adminApiSecret: '',
-      });
-      // Override ADMIN_API_SECRET to falsy
-      (mockEnv as any).ADMIN_API_SECRET = undefined;
+      const { app, mockEnv } = createTestApp({ externalIdp });
 
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.methods.social.enabled).toBe(false);
+      expect(body.methods.external.enabled).toBe(true);
+      expect(body.methods.external.providers).toHaveLength(1);
     });
   });
 
@@ -330,7 +393,7 @@ describe('Login Methods API', () => {
           advanced: { passkeyEnabled: false, magicLinkEnabled: false },
         }),
       });
-      // No EXTERNAL_IDP → no social
+      // No EXTERNAL_IDP → no external login
       const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
 
       const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);

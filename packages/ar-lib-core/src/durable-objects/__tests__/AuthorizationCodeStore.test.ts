@@ -102,6 +102,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_123',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid profile',
@@ -143,6 +144,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_pkce',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -165,6 +167,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_valid',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid profile',
@@ -182,6 +185,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_valid',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const response = await codeStore.fetch(consumeRequest);
@@ -204,6 +208,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_replay',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -218,6 +223,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_replay',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const response1 = await codeStore.fetch(consume1);
@@ -230,6 +236,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_replay',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const response2 = await codeStore.fetch(consume2);
@@ -249,6 +256,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_replay_with_jti',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -263,6 +271,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_replay_with_jti',
           clientId: 'client_1',
+          tenantId: 'default',
           accessTokenJti: 'at_jti_12345',
           refreshTokenJti: 'rt_jti_67890',
         }),
@@ -277,6 +286,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_replay_with_jti',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const response2 = await codeStore.fetch(consume2);
@@ -299,6 +309,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_nonexistent',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
 
@@ -317,6 +328,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_client',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -330,7 +342,8 @@ describe('AuthorizationCodeStore', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: 'auth_code_client',
-          clientId: 'client_2', // Wrong client!
+          clientId: 'client_2',
+          tenantId: 'default', // Wrong client!
         }),
       });
       const response = await codeStore.fetch(consumeRequest);
@@ -355,6 +368,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_pkce_s256',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -371,6 +385,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_pkce_s256',
           clientId: 'client_1',
+          tenantId: 'default',
           codeVerifier: validVerifier,
         }),
       });
@@ -386,6 +401,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_pkce_invalid',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -402,6 +418,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_pkce_invalid',
           clientId: 'client_1',
+          tenantId: 'default',
           codeVerifier: 'wrong_verifier',
         }),
       });
@@ -420,6 +437,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_pkce_required',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -436,6 +454,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_pkce_required',
           clientId: 'client_1',
+          tenantId: 'default',
           // Missing codeVerifier
         }),
       });
@@ -469,6 +488,7 @@ describe('AuthorizationCodeStore', () => {
           body: JSON.stringify({
             code: `auth_code_ddos_${i}`,
             clientId: 'client_1',
+            tenantId: 'default',
             redirectUri: 'https://app.example.com/callback',
             userId,
             scope: 'openid',
@@ -528,6 +548,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_exists',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',
@@ -568,6 +589,7 @@ describe('AuthorizationCodeStore', () => {
         body: JSON.stringify({
           code: 'auth_code_delete',
           clientId: 'client_1',
+          tenantId: 'default',
           redirectUri: 'https://app.example.com/callback',
           userId: 'user_123',
           scope: 'openid',

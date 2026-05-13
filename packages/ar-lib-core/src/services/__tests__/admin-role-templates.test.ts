@@ -3,12 +3,19 @@ import { ADMIN_PERMISSIONS } from '../../types/admin-user';
 import { getBuiltinAdminRoleTemplates } from '../admin-role-templates';
 
 describe('admin-role-templates', () => {
-  it('returns the expected built-in support and investigation templates', () => {
+  it('returns the expected built-in admin role templates', () => {
     const templates = getBuiltinAdminRoleTemplates();
     expect(templates.map((template) => template.key)).toEqual([
       'support_readonly',
+      'support_analyst',
+      'support_operator',
+      'customer_support_approver',
       'technical_investigator',
       'compliance_reviewer',
+      'storage_destination_viewer',
+      'storage_destination_admin',
+      'platform_database_viewer',
+      'platform_database_admin',
     ]);
   });
 
@@ -31,5 +38,39 @@ describe('admin-role-templates', () => {
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.OPERATIONAL_LOGS_DETAIL_READ);
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.APPROVALS_DETAIL_READ);
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.APPROVALS_GRANT_ISSUE);
+  });
+
+  it('separates storage destination viewing from credential updates', () => {
+    const viewer = getBuiltinAdminRoleTemplates().find(
+      (template) => template.key === 'storage_destination_viewer'
+    );
+    const admin = getBuiltinAdminRoleTemplates().find(
+      (template) => template.key === 'storage_destination_admin'
+    );
+
+    expect(viewer?.permissions).toContain(ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_READ);
+    expect(viewer?.permissions).not.toContain(
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE
+    );
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.DIAGNOSTIC_LOGGING_DESTINATION_SELECT);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.JOBS_DESTINATION_SELECT);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.DR_BACKUP_DESTINATION_SELECT);
+  });
+
+  it('separates database visibility from routing changes', () => {
+    const viewer = getBuiltinAdminRoleTemplates().find(
+      (template) => template.key === 'platform_database_viewer'
+    );
+    const admin = getBuiltinAdminRoleTemplates().find(
+      (template) => template.key === 'platform_database_admin'
+    );
+
+    expect(viewer?.permissions).toContain(ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ);
+    expect(viewer?.permissions).toContain(ADMIN_PERMISSIONS.DATABASE_ROUTING_READ);
+    expect(viewer?.permissions).not.toContain(ADMIN_PERMISSIONS.DATABASE_ROUTING_SWITCH);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_CREDENTIALS_WRITE);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.DATABASE_ROUTING_SWITCH);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.DATABASE_ROUTING_ROLLBACK);
   });
 });

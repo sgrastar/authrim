@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { createDefaultConfig } from '../core/config.js';
 import { runGeneratedAdminApiSmoke } from '../core/generated-admin-api-smoke.js';
+import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
 describe('generated admin api smoke', () => {
   beforeEach(() => {
@@ -11,7 +11,7 @@ describe('generated admin api smoke', () => {
   });
 
   it('runs admin smoke against a generated environment', async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-admin-smoke-'));
+    const baseDir = await mkdtemp(join('/private/tmp', 'authrim-admin-smoke-'));
     const env = 'single';
     const envDir = join(baseDir, '.authrim', env);
     const keysDir = join(baseDir, '.authrim-keys', env);
@@ -26,13 +26,27 @@ describe('generated admin api smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(keysDir, 'admin_api_secret.txt'), 'admin-secret');
+    await saveKeysToDirectory(generateAllSecrets('admin-smoke-setup-key'), { targetDir: keysDir });
 
     const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
     vi.stubGlobal('fetch', fetchMock as typeof fetch);
     let createdRuleName = '';
     let createdWebhookName = '';
 
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          access_token: 'machine-admin-token',
+          token_type: 'Bearer',
+          expires_in: 600,
+          scope: 'admin:clients:* admin:settings:*',
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      )
+    );
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ stats: { users: 1 } }), {
         status: 200,
@@ -216,7 +230,20 @@ describe('generated admin api smoke', () => {
     const result = await runGeneratedAdminApiSmoke({ baseDir, env });
 
     expect(result.ok).toBe(true);
-    expect(result.adminSecretPath).toContain('admin_api_secret.txt');
+    expect(result.adminSecretPath).toContain('setup_machine_private.pem');
     expect(result.checks.map((check) => check.id)).toContain('check-api-keys-rotate');
+
+    const tokenCall = fetchMock.mock.calls[0];
+    expect(String(tokenCall?.[0])).toBe('https://single-ar-router.example.workers.dev/token');
+    const tokenForm = new URLSearchParams(String(tokenCall?.[1]?.body ?? ''));
+    expect(tokenForm.get('grant_type')).toBe('client_credentials');
+    expect(tokenForm.get('client_id')).toBe('authrim-setup');
+    expect(tokenForm.get('audience')).toBe('authrim:admin-api');
+    expect(tokenForm.get('client_assertion_type')).toBe(
+      'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+    );
+
+    const firstAdminHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(firstAdminHeaders.authorization).toBe('Bearer machine-admin-token');
   });
 });

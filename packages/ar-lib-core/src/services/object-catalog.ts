@@ -7,7 +7,9 @@ export const OBJECT_CLASSES = [
   'user_export',
   'user_import_input',
   'user_import_result',
+  'admin_job_result',
   'approval_transport_detail',
+  'dr_bundle',
 ] as const;
 
 export type ObjectClass = (typeof OBJECT_CLASSES)[number];
@@ -75,6 +77,7 @@ export interface CreateObjectCatalogInput {
 }
 
 export interface UpdateObjectCatalogObjectInput {
+  tenantId: string;
   catalogId: string;
   representation?: ObjectRepresentation;
   objectIndex?: number;
@@ -189,6 +192,13 @@ export async function updateObjectCatalogObject(
          checksum_sha256 = ?,
          total_bytes = ?
      WHERE catalog_id = ?
+       AND EXISTS (
+         SELECT 1
+         FROM object_catalog oc
+         WHERE oc.id = ?
+           AND oc.tenant_id = ?
+           AND oc.deleted_at IS NULL
+       )
        AND representation = ?
        AND object_index = ?
        AND deleted_at IS NULL`,
@@ -199,6 +209,8 @@ export async function updateObjectCatalogObject(
       input.checksumSha256 ?? null,
       input.totalBytes ?? null,
       input.catalogId,
+      input.catalogId,
+      input.tenantId,
       input.representation ?? 'canonical_json',
       input.objectIndex ?? 0,
     ]
@@ -208,13 +220,15 @@ export async function updateObjectCatalogObject(
     `UPDATE object_catalog
      SET updated_at = ?
      WHERE id = ?
+       AND tenant_id = ?
        AND deleted_at IS NULL`,
-    [now, input.catalogId]
+    [now, input.catalogId, input.tenantId]
   );
 }
 
 export async function getObjectCatalogObjectRecord(
   adapter: DatabaseAdapter,
+  tenantId: string,
   catalogId: string,
   representation: ObjectRepresentation = 'canonical_json',
   objectIndex: number = 0
@@ -260,13 +274,14 @@ export async function getObjectCatalogObjectRecord(
       oco.deleted_at AS physical_deleted_at
     FROM object_catalog oc
     INNER JOIN object_catalog_objects oco ON oco.catalog_id = oc.id
-    WHERE oc.id = ?
+    WHERE oc.tenant_id = ?
+      AND oc.id = ?
       AND oc.deleted_at IS NULL
       AND oco.deleted_at IS NULL
       AND oco.representation = ?
       AND oco.object_index = ?
     LIMIT 1`,
-    [catalogId, representation, objectIndex]
+    [tenantId, catalogId, representation, objectIndex]
   );
 
   if (
@@ -307,6 +322,7 @@ export async function getObjectCatalogObjectRecord(
 
 export async function listObjectCatalogObjects(
   adapter: DatabaseAdapter,
+  tenantId: string,
   catalogId: string,
   representation?: ObjectRepresentation
 ): Promise<ObjectCatalogListResult | null> {
@@ -351,12 +367,13 @@ export async function listObjectCatalogObjects(
       oco.deleted_at AS physical_deleted_at
     FROM object_catalog oc
     INNER JOIN object_catalog_objects oco ON oco.catalog_id = oc.id
-    WHERE oc.id = ?
+    WHERE oc.tenant_id = ?
+      AND oc.id = ?
       AND oc.deleted_at IS NULL
       AND oco.deleted_at IS NULL
       ${representation ? 'AND oco.representation = ?' : ''}
     ORDER BY oco.representation ASC, oco.object_index ASC`,
-    representation ? [catalogId, representation] : [catalogId]
+    representation ? [tenantId, catalogId, representation] : [tenantId, catalogId]
   );
 
   if (rows.length === 0) {
@@ -405,16 +422,11 @@ export async function listObjectCatalogObjects(
 
 export async function getObjectCatalogObjectRecordByPublicArtifactId(
   adapter: DatabaseAdapter,
+  tenantId: string,
   publicArtifactId: string,
   representation: ObjectRepresentation = 'canonical_json',
-  objectIndex: number = 0,
-  tenantId?: string
+  objectIndex: number = 0
 ): Promise<ObjectCatalogLookupResult | null> {
-  const params: unknown[] = [publicArtifactId, representation, objectIndex];
-  if (tenantId !== undefined) {
-    params.push(tenantId);
-  }
-
   const row = await adapter.queryOne<{
     catalog_id: string;
     public_artifact_id: string;
@@ -456,14 +468,14 @@ export async function getObjectCatalogObjectRecordByPublicArtifactId(
       oco.deleted_at AS physical_deleted_at
     FROM object_catalog oc
     INNER JOIN object_catalog_objects oco ON oco.catalog_id = oc.id
-    WHERE oc.public_artifact_id = ?
+    WHERE oc.tenant_id = ?
+      AND oc.public_artifact_id = ?
       AND oc.deleted_at IS NULL
       AND oco.deleted_at IS NULL
       AND oco.representation = ?
       AND oco.object_index = ?
-      ${tenantId !== undefined ? 'AND oc.tenant_id = ?' : ''}
     LIMIT 1`,
-    params
+    [tenantId, publicArtifactId, representation, objectIndex]
   );
 
   if (
@@ -502,28 +514,6 @@ export async function getObjectCatalogObjectRecordByPublicArtifactId(
   };
 }
 
-export async function tombstoneObjectCatalogEntry(
-  adapter: DatabaseAdapter,
-  catalogId: string,
-  deletedAt: number = Date.now()
-): Promise<void> {
-  // System cleanup path. Tenant-facing callers must use tombstoneObjectCatalogEntryForTenant().
-  await adapter.execute(
-    `UPDATE object_catalog
-     SET deleted_at = COALESCE(deleted_at, ?),
-         updated_at = ?
-     WHERE id = ?`,
-    [deletedAt, deletedAt, catalogId]
-  );
-
-  await adapter.execute(
-    `UPDATE object_catalog_objects
-     SET deleted_at = COALESCE(deleted_at, ?)
-     WHERE catalog_id = ?`,
-    [deletedAt, catalogId]
-  );
-}
-
 export async function tombstoneObjectCatalogEntryForTenant(
   adapter: DatabaseAdapter,
   tenantId: string,
@@ -553,7 +543,13 @@ export async function tombstoneObjectCatalogEntryForTenant(
   );
 }
 
-export async function listDeletedObjectCatalogObjects(
+/**
+ * System cleanup-plane API.
+ *
+ * This intentionally scans across tenants after rows have already been tombstoned by a
+ * tenant-owned workflow. Do not use it for tenant-facing artifact reads or updates.
+ */
+export async function listDeletedObjectCatalogObjectsForSystemCleanup(
   adapter: DatabaseAdapter,
   options?: {
     bucketBinding?: ObjectCatalogBucketBinding;
@@ -636,7 +632,13 @@ export async function listDeletedObjectCatalogObjects(
     }));
 }
 
-export async function purgeDeletedObjectCatalogObjects(
+/**
+ * System cleanup-plane API.
+ *
+ * Deletes physical catalog rows selected by listDeletedObjectCatalogObjectsForSystemCleanup().
+ * Tenant-facing callers must not pass arbitrary IDs into this function.
+ */
+export async function purgeDeletedObjectCatalogObjectsForSystemCleanup(
   adapter: DatabaseAdapter,
   physicalIds: string[]
 ): Promise<number> {

@@ -13,20 +13,21 @@ const log = createLogger().module('REFRESH_TOKEN_STORE');
 export async function storeRefreshToken(
   env: Env,
   jti: string,
-  data: RefreshTokenData
+  data: RefreshTokenData,
+  tenantId: string
 ): Promise<void> {
   if (!env.REFRESH_TOKEN_ROTATOR) {
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
-    './refresh-token-sharding'
-  );
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
+    await import('./refresh-token-sharding');
   const parsedJti = parseRefreshTokenJti(jti);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     data.client_id,
     parsedJti.generation,
-    parsedJti.shardIndex
+    parsedJti.shardIndex,
+    tenantId
   );
 
   const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
@@ -41,6 +42,7 @@ export async function storeRefreshToken(
     clientId: data.client_id,
     scope: data.scope || '',
     ttl: refreshTokenTTL,
+    tenantId,
     ...(data.resource_aud && { resourceAudience: data.resource_aud }),
     ...(parsedJti.generation > 0 &&
       parsedJti.shardIndex !== null && {
@@ -60,20 +62,21 @@ export async function getRefreshToken(
   userId: string,
   version: number,
   clientId: string,
-  jti: string
+  jti: string,
+  tenantId: string
 ): Promise<RefreshTokenData | null> {
   if (!env.REFRESH_TOKEN_ROTATOR) {
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
-    './refresh-token-sharding'
-  );
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
+    await import('./refresh-token-sharding');
   const parsedJti = parseRefreshTokenJti(jti);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     clientId,
     parsedJti.generation,
-    parsedJti.shardIndex
+    parsedJti.shardIndex,
+    tenantId
   );
 
   const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
@@ -108,20 +111,21 @@ export async function getRefreshToken(
 export async function deleteRefreshToken(
   env: Env,
   jti: string,
-  client_id: string
+  client_id: string,
+  tenantId: string
 ): Promise<void> {
   if (!env.REFRESH_TOKEN_ROTATOR) {
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
-    './refresh-token-sharding'
-  );
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
+    await import('./refresh-token-sharding');
   const parsedJti = parseRefreshTokenJti(jti);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     client_id,
     parsedJti.generation,
-    parsedJti.shardIndex
+    parsedJti.shardIndex,
+    tenantId
   );
 
   const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);

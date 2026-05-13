@@ -33,7 +33,8 @@
     "execa": "^9.5.2",
     "@hono/node-server": "^1.19.13",
     "hono": "4.12.18",
-    "tar": "^7.5.14"
+    "tar": "^7.5.14",
+    "tldts": "^7.0.18"
   },
   "devDependencies": {
     "@types/node": "^22.10.4",

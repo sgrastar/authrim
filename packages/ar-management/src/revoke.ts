@@ -335,7 +335,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     try {
       // Also add the refresh token to the access token revocation list
       // This handles cases where access tokens might share JTI prefix with refresh tokens
-      await revokeToken(c.env, refreshTokenJti, expiresIn);
+      await revokeToken(c.env, refreshTokenJti, expiresIn, undefined, tenantId);
 
       // Log cascade revocation for audit
       log.info('Cascade revocation triggered', {
@@ -356,30 +356,30 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   if (token_type_hint === 'refresh_token') {
     // Revoke refresh token
-    await deleteRefreshToken(c.env, jti, tokenClientId);
+    await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
     // P1: Cascade - also revoke related access tokens
     await performCascadeRevocation(jti);
     revokedTokenType = 'refresh_token';
   } else if (token_type_hint === 'access_token') {
     // Revoke access token
-    await revokeToken(c.env, jti, expiresIn);
+    await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
     revokedTokenType = 'access_token';
   } else {
     // No hint provided, try both types
     // First, check if it's a refresh token (V2 API)
     const refreshTokenData = userId
-      ? await getRefreshToken(c.env, userId, version, tokenClientId, jti)
+      ? await getRefreshToken(c.env, userId, version, tokenClientId, jti, tenantId)
       : null;
     if (refreshTokenData) {
       // It's a refresh token
-      await deleteRefreshToken(c.env, jti, tokenClientId);
+      await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
       // P1: Cascade - also revoke related access tokens
       const familyId = refreshTokenData.familyId;
       await performCascadeRevocation(jti, familyId);
       revokedTokenType = 'refresh_token';
     } else {
       // Assume it's an access token
-      await revokeToken(c.env, jti, expiresIn);
+      await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
       revokedTokenType = 'access_token';
     }
   }
@@ -650,20 +650,20 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
 
         // Revoke the token
         if (item.token_type_hint === 'refresh_token') {
-          await deleteRefreshToken(c.env, jti, tokenClientId);
-          await revokeToken(c.env, jti, expiresIn); // Cascade
+          await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
+          await revokeToken(c.env, jti, expiresIn, undefined, tenantId); // Cascade
         } else if (item.token_type_hint === 'access_token') {
-          await revokeToken(c.env, jti, expiresIn);
+          await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
         } else {
           // No hint - check if refresh token first
           const refreshTokenData = userId
-            ? await getRefreshToken(c.env, userId, version, tokenClientId, jti)
+            ? await getRefreshToken(c.env, userId, version, tokenClientId, jti, tenantId)
             : null;
           if (refreshTokenData) {
-            await deleteRefreshToken(c.env, jti, tokenClientId);
-            await revokeToken(c.env, jti, expiresIn); // Cascade
+            await deleteRefreshToken(c.env, jti, tokenClientId, tenantId);
+            await revokeToken(c.env, jti, expiresIn, undefined, tenantId); // Cascade
           } else {
-            await revokeToken(c.env, jti, expiresIn);
+            await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
           }
         }
 

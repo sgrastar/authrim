@@ -23,8 +23,6 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   hasPIIDatabase,
-  getDefaultTenantId,
-  getTenantIdFromContext,
   createErrorResponse,
   createCompatibilityErrorResponse,
   AR_ERROR_CODES,
@@ -46,6 +44,16 @@ import {
   putClient,
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || null;
+  } catch {
+    return null;
+  }
+}
 
 function formatOutboundCallbackUriError(fieldName: string, error?: string): string {
   if (error === 'Webhook URL must use HTTPS') {
@@ -826,6 +834,10 @@ async function storeClient(
 ): Promise<void> {
   // Store in auth core relational source of truth.
   const now = Date.now(); // Store in milliseconds
+  const metadataTenantId = metadata.tenant_id?.trim();
+  if (!metadataTenantId) {
+    throw new Error('storeClient requires metadata.tenant_id');
+  }
   await coreAdapter.execute(
     `
     INSERT INTO oauth_clients (
@@ -918,7 +930,7 @@ async function storeClient(
       metadata.software_version || null,
       metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
       // Tenant ID
-      metadata.tenant_id || getDefaultTenantId(env),
+      metadataTenantId,
       metadata.created_at || now,
       metadata.updated_at || now,
     ]
@@ -929,6 +941,7 @@ async function storeClient(
   await putClient(env, {
     ...metadata,
     client_id: clientId,
+    tenant_id: metadataTenantId,
     created_at: metadata.created_at || now,
     updated_at: metadata.updated_at || now,
   });
@@ -945,7 +958,17 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // DCR Master Switch Check
     // If dcr.enabled is false, reject all registration requests
     // ==========================================================================
-    const tenantId = getTenantIdFromContext(c);
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Tenant context is required for dynamic client registration',
+        },
+        400
+      );
+    }
+
     const dcrEnabled = await getDCRSetting('dcr.enabled', c.env, tenantId);
     if (!dcrEnabled) {
       return c.json(

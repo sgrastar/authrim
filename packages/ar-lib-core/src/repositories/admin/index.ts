@@ -7,7 +7,11 @@
 
 // Core Admin Management
 export { AdminUserRepository, type AdminUserFilterOptions } from './admin-user';
-export { AdminRoleRepository, AdminRoleAssignmentRepository } from './admin-role';
+export {
+  AdminRoleRepository,
+  AdminRoleAssignmentRepository,
+  type AdminRoleAssignmentWithUser,
+} from './admin-role';
 export { AdminSessionRepository } from './admin-session';
 export { AdminPasskeyRepository } from './admin-passkey';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
@@ -57,3 +61,41 @@ export {
   ApprovalRequestApprovalRepository,
   ElevationGrantRepository,
 } from './admin-approval-request';
+
+// Admin infrastructure resources
+export {
+  AdminStorageDestinationRepository,
+  type AdminResourceScopeType,
+  type AdminResourceStatus,
+  type AdminStorageDestination,
+  type AdminStorageDestinationCreateInput,
+  type AdminStorageDestinationUpdateInput,
+  type AdminStorageDestinationUsage,
+  type AdminStorageDestinationUsageInput,
+  type AdminStorageDestinationWithCredential,
+  type StorageDestinationProvider,
+} from './admin-storage-destination';
+export {
+  AdminDatabaseConnectionRepository,
+  type AdminDatabaseConnection,
+  type AdminDatabaseConnectionCreateInput,
+  type AdminDatabaseConnectionUpdateInput,
+  type AdminDatabaseConnectionUsage,
+  type AdminDatabaseConnectionWithCredential,
+  type DatabaseConnectionProvider,
+} from './admin-database-connection';
+export {
+  AdminMachineAccessRepository,
+  type AdminMachineActorRef,
+  type AdminMachineClientCredential,
+  type AdminMachineCredential,
+  type AdminMachineCredentialAlgorithm,
+  type AdminMachineCredentialCreateInput,
+  type AdminMachineCredentialStatus,
+  type AdminMachinePrincipal,
+  type AdminMachinePrincipalCreateInput,
+  type AdminMachinePrincipalStatus,
+  type AdminMachinePrincipalType,
+  type AdminMachineTenantScope,
+  type AdminMachineTenantScopeMode,
+} from './admin-machine-access';

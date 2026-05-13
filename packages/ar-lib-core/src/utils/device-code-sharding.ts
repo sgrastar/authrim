@@ -35,7 +35,6 @@ import {
   type ShardResolution,
   ID_PREFIX,
 } from './region-sharding';
-import { getDefaultTenantId } from './issuer';
 
 /**
  * Type alias for DeviceCodeStore stub
@@ -145,19 +144,24 @@ export function parseDeviceCodeId(
  * @throws Error if deviceCodeId format is invalid
  *
  * @example
- * const { stub, resolution } = getDeviceCodeStoreById(env, "g1:apac:3:dev_abc...");
+ * const { stub, resolution } = getDeviceCodeStoreById(env, "g1:apac:3:dev_abc...", tenantId);
  * const response = await stub.fetch(new Request('https://internal/poll'));
  */
 export function getDeviceCodeStoreById(
   env: Env,
   deviceCodeId: string,
-  tenantId: string = getDefaultTenantId(env)
+  tenantId: string
 ): {
   stub: DeviceCodeStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   deviceCode: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('getDeviceCodeStoreById requires tenantId');
+  }
+
   const parsed = parseDeviceCodeId(deviceCodeId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded device code ID format: ${deviceCodeId}`);
@@ -170,7 +174,7 @@ export function getDeviceCodeStoreById(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'device',
     resolution.shardIndex

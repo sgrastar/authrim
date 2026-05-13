@@ -24,9 +24,7 @@ vi.mock('../approval-completion-artifact', () => ({
   consumeApprovalCompletionArtifact: mockConsumeApprovalCompletionArtifact,
 }));
 
-import {
-  switchApprovalArtifactMethod,
-} from '../approval-artifact-method-switch';
+import { switchApprovalArtifactMethod } from '../approval-artifact-method-switch';
 
 function makeRequest(overrides: Record<string, unknown> = {}) {
   return {
@@ -119,7 +117,9 @@ describe('switchApprovalArtifactMethod', () => {
         metadata: {},
       },
     });
-    mockAppendApprovalTransportEvent.mockImplementation(async (_c, _adapter, _repo, request) => request);
+    mockAppendApprovalTransportEvent.mockImplementation(
+      async (_c, _adapter, _repo, request) => request
+    );
     mockConsumeApprovalCompletionArtifact.mockResolvedValue(undefined);
   });
 
@@ -135,19 +135,16 @@ describe('switchApprovalArtifactMethod', () => {
         notification_count: 2,
       }),
     };
-    const result = await switchApprovalArtifactMethod(
-      { env: {} } as any,
-      {
-        adapter: {} as any,
-        requestRepo: {} as any,
-        approvalRepo: approvalRepo as any,
-        request,
-        approval,
-        currentArtifactId: 'apc_1',
-        currentMethod: 'portal_confirm',
-        requestedMethod: 'passkey',
-      }
-    );
+    const result = await switchApprovalArtifactMethod({ env: {} } as any, {
+      adapter: {} as any,
+      requestRepo: {} as any,
+      approvalRepo: approvalRepo as any,
+      request,
+      approval,
+      currentArtifactId: 'apc_1',
+      currentMethod: 'portal_confirm',
+      requestedMethod: 'passkey',
+    });
 
     expect(mockDispatchApprovalNotification).toHaveBeenCalledWith(
       expect.anything(),
@@ -165,26 +162,23 @@ describe('switchApprovalArtifactMethod', () => {
         last_notification_action: 'resend',
       })
     );
-    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith({}, 'apc_1');
+    expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith({}, 'apc_1', 'tenant-a');
     expect(result.replacedArtifactId).toBe('apc_1');
     expect(result.allowedMethods).toEqual(['portal_confirm', 'passkey', 'reauth']);
   });
 
   it('rejects fallback methods outside the allowed policy', async () => {
     await expect(
-      switchApprovalArtifactMethod(
-        { env: {} } as any,
-        {
-          adapter: {} as any,
-          requestRepo: {} as any,
-          approvalRepo: { updateApproval: vi.fn() } as any,
-          request: makeRequest(),
-          approval: makeApproval(),
-          currentArtifactId: 'apc_1',
-          currentMethod: 'portal_confirm',
-          requestedMethod: 'sms_otp',
-        }
-      )
+      switchApprovalArtifactMethod({ env: {} } as any, {
+        adapter: {} as any,
+        requestRepo: {} as any,
+        approvalRepo: { updateApproval: vi.fn() } as any,
+        request: makeRequest(),
+        approval: makeApproval(),
+        currentArtifactId: 'apc_1',
+        currentMethod: 'portal_confirm',
+        requestedMethod: 'sms_otp',
+      })
     ).rejects.toMatchObject({
       status: 409,
       code: 'approval_completion_method_not_allowed',
@@ -193,21 +187,18 @@ describe('switchApprovalArtifactMethod', () => {
 
   it('enforces resend cooldowns before switching methods', async () => {
     await expect(
-      switchApprovalArtifactMethod(
-        { env: {} } as any,
-        {
-          adapter: {} as any,
-          requestRepo: {} as any,
-          approvalRepo: { updateApproval: vi.fn() } as any,
-          request: makeRequest(),
-          approval: makeApproval({
-            last_notified_at: Date.now() - 2_000,
-          }),
-          currentArtifactId: 'apc_1',
-          currentMethod: 'portal_confirm',
-          requestedMethod: 'passkey',
-        }
-      )
+      switchApprovalArtifactMethod({ env: {} } as any, {
+        adapter: {} as any,
+        requestRepo: {} as any,
+        approvalRepo: { updateApproval: vi.fn() } as any,
+        request: makeRequest(),
+        approval: makeApproval({
+          last_notified_at: Date.now() - 2_000,
+        }),
+        currentArtifactId: 'apc_1',
+        currentMethod: 'portal_confirm',
+        requestedMethod: 'passkey',
+      })
     ).rejects.toMatchObject({
       status: 429,
       code: 'approval_notification_cooldown',

@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 
 /**
@@ -80,7 +81,7 @@ export class AdminAttributeValueRepository extends BaseRepository<AdminAttribute
    */
   async setAttributeValue(input: AdminAttributeValueCreateInput): Promise<AdminAttributeValue> {
     const now = getCurrentTimestamp();
-    const tenantId = input.tenant_id ?? 'default';
+    const tenantId = requireTenantId(input.tenant_id, 'Repository create');
     const valueIndex = input.value_index ?? 0;
     const source = input.source ?? 'manual';
     const expiresAt = input.expires_at ?? null;

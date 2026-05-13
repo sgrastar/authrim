@@ -203,6 +203,12 @@ export async function checkSelfIssuance(
   issuerDid: string,
   tenantId: string
 ): Promise<boolean> {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    log.warn('Rejected issuer trust check without tenant context', {});
+    return false;
+  }
+
   const configuredIdentifier = env.VERIFIER_IDENTIFIER;
   let authrimDid = configuredIdentifier || 'did:web:authrim.com';
 
@@ -215,7 +221,7 @@ export async function checkSelfIssuance(
     try {
       const issuerUrl = buildIssuerUrl(
         env as unknown as Parameters<typeof buildIssuerUrl>[0],
-        tenantId || getDefaultTenantId(env as { DEFAULT_TENANT_ID?: string })
+        normalizedTenantId
       );
       authrimDid = `did:web:${new URL(issuerUrl).hostname}`;
     } catch {

@@ -3,6 +3,10 @@
 	import Alert from '$lib/components/Alert.svelte';
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	import {
+		adminStorageDestinationsAPI,
+		type StorageDestination
+	} from '$lib/api/admin-storage-destinations';
 	import { adminFetch } from '$lib/api/admin-request';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
@@ -67,6 +71,9 @@
 	let testError = $state('');
 	let testSuccess = $state('');
 	let testLatency = $state<number | null>(null);
+	let storageDestinations = $state<StorageDestination[]>([]);
+	let selectedStorageDestinationId = $state('');
+	let storageDestinationError = $state('');
 
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
 
@@ -156,6 +163,7 @@
 
 		await loadLoggingSettings();
 		await loadClientOptions();
+		await loadStorageDestinations();
 	});
 
 	// Reload when tenant changes via the header selector
@@ -173,6 +181,7 @@
 		selectedClientIds = [];
 		loadLoggingSettings();
 		loadClientOptions();
+		loadStorageDestinations();
 	});
 
 	async function loadLoggingSettings() {
@@ -186,6 +195,9 @@
 			r2OutputEnabled = Boolean(result.values['diagnostic-logging.r2_output_enabled']);
 			sdkIngestEnabled = Boolean(result.values['diagnostic-logging.sdk_ingest_enabled']);
 			mergedOutputEnabled = Boolean(result.values['diagnostic-logging.merged_output_enabled']);
+			selectedStorageDestinationId = String(
+				result.values['diagnostic-logging.storage_destination_id'] ?? ''
+			);
 			storageModeDefault = normalizeStorageMode(
 				result.values['diagnostic-logging.storage_mode.default'],
 				'masked'
@@ -201,6 +213,64 @@
 			settingsError = err instanceof Error ? err.message : 'Failed to load diagnostic settings';
 		} finally {
 			settingsLoading = false;
+		}
+	}
+
+	async function loadStorageDestinations() {
+		storageDestinationError = '';
+		try {
+			const response = await adminStorageDestinationsAPI.listUsable();
+			storageDestinations = response.items;
+		} catch (err) {
+			storageDestinationError =
+				err instanceof Error ? err.message : 'Failed to load storage destinations';
+			storageDestinations = [];
+		}
+	}
+
+	async function handleStorageDestinationChange(destinationId: string) {
+		if (!loggingSettings || settingsSaving || !canEdit) return;
+
+		settingsSaving = true;
+		settingsError = '';
+		storageDestinationError = '';
+
+		try {
+			const result = await adminSettingsAPI.updateSettings(
+				'diagnostic-logging',
+				{
+					ifMatch: loggingSettings.version,
+					set: {
+						'diagnostic-logging.storage_destination_id': destinationId
+					}
+				},
+				tenantId
+			);
+
+			if (destinationId) {
+				await adminStorageDestinationsAPI.recordUsage(destinationId, {
+					feature: 'diagnostic_logging',
+					resource_type: 'tenant',
+					resource_id: tenantId,
+					metadata: { setting: 'diagnostic-logging.storage_destination_id' }
+				});
+			}
+
+			loggingSettings = {
+				...loggingSettings,
+				version: result.version,
+				values: {
+					...loggingSettings.values,
+					'diagnostic-logging.storage_destination_id': destinationId
+				}
+			};
+			selectedStorageDestinationId = destinationId;
+			success = 'Storage destination updated.';
+		} catch (err) {
+			storageDestinationError =
+				err instanceof Error ? err.message : 'Failed to update storage destination';
+		} finally {
+			settingsSaving = false;
 		}
 	}
 
@@ -547,9 +617,12 @@
 			params.append('exportMode', exportMode);
 			if (includeStats) params.append('includeStats', 'true');
 
-			const response = await adminFetch(`/api/admin/diagnostic-logging/export?${params.toString()}`, {
-				tenantId
-			});
+			const response = await adminFetch(
+				`/api/admin/diagnostic-logging/export?${params.toString()}`,
+				{
+					tenantId
+				}
+			);
 
 			if (!response.ok) {
 				const errorData = await response.json().catch(() => ({}));
@@ -1118,6 +1191,26 @@
 
 				<div class="card-section">
 					<div class="form-grid">
+						<div class="form-group">
+							<label for="storageDestination">Storage destination</label>
+							<select
+								id="storageDestination"
+								class="settings-select"
+								bind:value={selectedStorageDestinationId}
+								onchange={(event) => handleStorageDestinationChange(event.currentTarget.value)}
+								disabled={!canEdit || settingsSaving}
+							>
+								<option value="">Use runtime binding fields below</option>
+								{#each storageDestinations as destination (destination.id)}
+									<option value={destination.id}>
+										{destination.display_name} ({destination.provider})
+									</option>
+								{/each}
+							</select>
+							{#if storageDestinationError}
+								<p class="field-error">{storageDestinationError}</p>
+							{/if}
+						</div>
 						<div class="form-group">
 							<label for="testTenantId">Tenant ID</label>
 							<input

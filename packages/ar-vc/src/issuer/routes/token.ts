@@ -10,7 +10,13 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import type { VCITokenResponse } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger, type Logger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+  type Logger,
+} from '@authrim/ar-lib-core';
 import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
 import { generateSecureNonce } from '../../utils/crypto';
 import { SignJWT, importJWK } from 'jose';
@@ -88,7 +94,12 @@ async function handlePreAuthorizedCodeGrant(
 
   // Look up the credential offer by pre-authorized code
   // The pre-authorized code contains the offer ID for routing
-  const offerInfo = await lookupOfferByCode(c.env, log, preAuthorizedCode);
+  const offerInfo = await lookupOfferByCode(
+    c.env,
+    log,
+    preAuthorizedCode,
+    getTenantIdFromContext(c)
+  );
   if (!offerInfo) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
@@ -121,7 +132,7 @@ async function handlePreAuthorizedCodeGrant(
   });
 
   // Mark offer as accepted
-  await updateOfferStatus(c.env, log, offerInfo.offerId, 'accepted');
+  await updateOfferStatus(c.env, log, offerInfo.offerId, 'accepted', offerInfo.tenantId);
 
   // Build response per OpenID4VCI spec
   const response: VCITokenResponse = {
@@ -150,7 +161,8 @@ async function handlePreAuthorizedCodeGrant(
 async function lookupOfferByCode(
   env: Env,
   log: Logger,
-  preAuthorizedCode: string
+  preAuthorizedCode: string,
+  tenantId: string
 ): Promise<{
   offerId: string;
   userId: string;
@@ -174,7 +186,7 @@ async function lookupOfferByCode(
     const offerId = parts.slice(0, -1).join(':');
 
     // Get the offer from Durable Object
-    const { stub } = getCredentialOfferStoreById(env, offerId);
+    const { stub } = getCredentialOfferStoreById(env, offerId, tenantId);
     const response = await stub.fetch(new Request('https://internal/get'));
 
     if (!response.ok) {
@@ -222,10 +234,11 @@ async function updateOfferStatus(
   env: Env,
   log: Logger,
   offerId: string,
-  status: string
+  status: string,
+  tenantId: string
 ): Promise<void> {
   try {
-    const { stub } = getCredentialOfferStoreById(env, offerId);
+    const { stub } = getCredentialOfferStoreById(env, offerId, tenantId);
     await stub.fetch(
       new Request('https://internal/update', {
         method: 'POST',
@@ -254,7 +267,7 @@ async function generateVCIAccessToken(
   issuer: string
 ): Promise<string> {
   // Get signing key from KeyManager
-  const doId = env.KEY_MANAGER.idFromName('issuer-keys');
+  const doId = env.KEY_MANAGER.idFromName(`${offerInfo.tenantId}-v3`);
   const stub = env.KEY_MANAGER.get(doId);
 
   const keyResponse = await stub.fetch(new Request('https://internal/ec/active/ES256'));

@@ -60,8 +60,8 @@ export async function listRefreshTokenFamiliesByUser(
   }
 ): Promise<Array<Pick<RefreshTokenFamilyIndexRow, 'jti' | 'client_id' | 'generation'>>> {
   const adapter = getAdapter(db);
-  const params: unknown[] = [input.userId, input.tenantId];
-  const conditions = ['user_id = ?', 'tenant_id = ?'];
+  const params: unknown[] = [input.tenantId, input.userId];
+  const conditions = ['tenant_id = ?', 'user_id = ?'];
 
   if (input.clientId) {
     conditions.push('client_id = ?');
@@ -90,10 +90,10 @@ export async function expireRefreshTokenFamiliesByUser(
   }
 ): Promise<number> {
   const adapter = getAdapter(db);
-  const params: unknown[] = [input.userId, input.tenantId];
+  const params: unknown[] = [input.tenantId, input.userId];
   let sql = `UPDATE user_token_families
              SET expires_at = 0
-             WHERE user_id = ? AND tenant_id = ?`;
+             WHERE tenant_id = ? AND user_id = ?`;
 
   if (input.clientId) {
     sql += ' AND client_id = ?';
@@ -113,10 +113,10 @@ export async function revokeRefreshTokenFamiliesByUser(
   }
 ): Promise<number> {
   const adapter = getAdapter(db);
-  const params: unknown[] = [input.userId, input.tenantId];
+  const params: unknown[] = [input.tenantId, input.userId];
   let sql = `UPDATE user_token_families
              SET is_revoked = 1
-             WHERE user_id = ? AND tenant_id = ?`;
+             WHERE tenant_id = ? AND user_id = ?`;
 
   if (input.clientId) {
     sql += ' AND client_id = ?';

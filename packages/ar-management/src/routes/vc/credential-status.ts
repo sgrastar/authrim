@@ -50,15 +50,10 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
 
-    // Get credential by ID
-    const credential = await issuedCredentialRepo.findById(credentialId);
+    // Get credential by tenant and ID
+    const credential = await issuedCredentialRepo.findByIdForTenant(tenantId, credentialId);
 
     if (!credential) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    // SECURITY: Verify credential belongs to the authenticated tenant
-    if (credential.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
@@ -71,10 +66,10 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Update status in the status list
-    await statusListManager.revoke(credential.status_list_id, credential.status_list_index);
+    await statusListManager.revoke(tenantId, credential.status_list_id, credential.status_list_index);
 
     // Update credential status in database
-    await issuedCredentialRepo.updateStatus(credentialId, 'revoked');
+    await issuedCredentialRepo.updateStatus(tenantId, credentialId, 'revoked');
 
     return c.json({
       id: credentialId,
@@ -114,15 +109,10 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
 
-    // Get credential by ID
-    const credential = await issuedCredentialRepo.findById(credentialId);
+    // Get credential by tenant and ID
+    const credential = await issuedCredentialRepo.findByIdForTenant(tenantId, credentialId);
 
     if (!credential) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    // SECURITY: Verify credential belongs to the authenticated tenant
-    if (credential.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
@@ -139,10 +129,14 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
     }
 
     // Update status in the status list
-    await statusListManager.suspend(credential.status_list_id, credential.status_list_index);
+    await statusListManager.suspend(
+      tenantId,
+      credential.status_list_id,
+      credential.status_list_index
+    );
 
     // Update credential status in database
-    await issuedCredentialRepo.updateStatus(credentialId, 'suspended');
+    await issuedCredentialRepo.updateStatus(tenantId, credentialId, 'suspended');
 
     return c.json({
       id: credentialId,
@@ -182,15 +176,10 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
 
-    // Get credential by ID
-    const credential = await issuedCredentialRepo.findById(credentialId);
+    // Get credential by tenant and ID
+    const credential = await issuedCredentialRepo.findByIdForTenant(tenantId, credentialId);
 
     if (!credential) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    // SECURITY: Verify credential belongs to the authenticated tenant
-    if (credential.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
@@ -207,10 +196,14 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
     }
 
     // Update status in the status list
-    await statusListManager.activate(credential.status_list_id, credential.status_list_index);
+    await statusListManager.activate(
+      tenantId,
+      credential.status_list_id,
+      credential.status_list_index
+    );
 
     // Update credential status in database
-    await issuedCredentialRepo.updateStatus(credentialId, 'active');
+    await issuedCredentialRepo.updateStatus(tenantId, credentialId, 'active');
 
     return c.json({
       id: credentialId,
@@ -292,19 +285,14 @@ export async function getStatusListHandler(c: Context<{ Bindings: Env }>): Promi
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
 
-    const list = await statusListManager.getStatusList(listId);
+    const list = await statusListManager.getStatusList(tenantId, listId);
 
     if (!list) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // SECURITY: Verify status list belongs to the authenticated tenant
-    if (list.tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
     // Calculate ETag for the list
-    const etag = await statusListManager.calculateETag(listId);
+    const etag = await statusListManager.calculateETag(tenantId, listId);
 
     return c.json({
       id: list.id,

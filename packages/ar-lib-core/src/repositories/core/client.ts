@@ -64,6 +64,7 @@ export interface OAuthClient {
   /** SHA-256 hash of the client secret (null for public clients) */
   client_secret_hash: string | null;
   client_name: string;
+  description: string | null;
   tenant_id: string;
   application_type: ClientApplicationType | null;
   // Internal storage name for the public/Admin "application_group" concept.
@@ -184,6 +185,7 @@ export interface CreateClientInput {
   /** SHA-256 hash of the client secret (null for public clients) */
   client_secret_hash?: string | null;
   client_name: string;
+  description?: string | null;
   tenant_id?: string;
   application_type?: ClientApplicationType | null;
   // Public/Admin APIs should translate application_group to these internal trust_group fields.
@@ -263,6 +265,7 @@ export interface CreateClientInput {
  */
 export interface UpdateClientInput {
   client_name?: string;
+  description?: string | null;
   /** SHA-256 hash of the client secret (null for public clients) */
   client_secret_hash?: string | null;
   redirect_uris?: string[];
@@ -353,7 +356,30 @@ export interface ClientFilterOptions {
  * Client search options (for LIKE queries)
  */
 export interface ClientSearchOptions extends PaginationOptions {
-  search?: string; // Search in client_name and client_id
+  search?: string; // Search in client_name, client_id, and description
+}
+
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
+function resolveInputTenantId(
+  repositoryTenantId: string,
+  inputTenantId: string | undefined,
+  context: string
+): string {
+  if (inputTenantId === undefined) {
+    return repositoryTenantId;
+  }
+  const normalized = requireTenantId(inputTenantId, context);
+  if (normalized !== repositoryTenantId) {
+    throw new Error(`${context} tenantId does not match repository tenant`);
+  }
+  return normalized;
 }
 
 /**
@@ -363,9 +389,9 @@ export class ClientRepository {
   protected readonly adapter: DatabaseAdapter;
   private readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'ClientRepository');
   }
 
   /**
@@ -374,12 +400,14 @@ export class ClientRepository {
   async create(input: CreateClientInput): Promise<OAuthClient> {
     const now = getCurrentTimestamp();
     const clientId = input.client_id || generateId();
+    const tenantId = resolveInputTenantId(this.tenantId, input.tenant_id, 'ClientRepository.create');
 
     const client: OAuthClient = {
       client_id: clientId,
       client_secret_hash: input.client_secret_hash ?? null,
       client_name: input.client_name,
-      tenant_id: input.tenant_id || 'default',
+      description: input.description ?? null,
+      tenant_id: tenantId,
       application_type: input.application_type ?? 'web',
       trust_group: input.trust_group ?? null,
       trust_group_id: input.trust_group_id ?? input.trust_group ?? null,
@@ -472,7 +500,7 @@ export class ClientRepository {
 
     await this.adapter.execute(
       `INSERT INTO oauth_clients (
-        client_id, client_secret_hash, client_name, tenant_id,
+        client_id, client_secret_hash, client_name, description, tenant_id,
         application_type, trust_group, trust_group_id,
         browser_public_client_mode, browser_refresh_token_policy,
         native_sso_enabled, native_channel_allowed, allowed_channels,
@@ -499,11 +527,12 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
         client.client_name,
+        client.description,
         client.tenant_id,
         client.application_type,
         client.trust_group,
@@ -587,8 +616,8 @@ export class ClientRepository {
    */
   async findByClientId(clientId: string): Promise<OAuthClient | null> {
     const result = await this.adapter.queryOne<OAuthClient>(
-      'SELECT * FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
-      [clientId, this.tenantId]
+      'SELECT * FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      [this.tenantId, clientId]
     );
     return result ? this.mapFromDb(result) : null;
   }
@@ -610,6 +639,10 @@ export class ClientRepository {
     if (input.client_name !== undefined) {
       updates.push('client_name = ?');
       params.push(input.client_name);
+    }
+    if (input.description !== undefined) {
+      updates.push('description = ?');
+      params.push(input.description);
     }
     if (input.client_secret_hash !== undefined) {
       updates.push('client_secret_hash = ?');
@@ -907,10 +940,10 @@ export class ClientRepository {
       params.push(input.login_ui_url);
     }
 
-    params.push(clientId, this.tenantId);
+    params.push(this.tenantId, clientId);
 
     await this.adapter.execute(
-      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE client_id = ? AND tenant_id = ?`,
+      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?`,
       params
     );
 
@@ -922,8 +955,8 @@ export class ClientRepository {
    */
   async delete(clientId: string): Promise<boolean> {
     const result = await this.adapter.execute(
-      'DELETE FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
-      [clientId, this.tenantId]
+      'DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      [this.tenantId, clientId]
     );
     return result.rowsAffected > 0;
   }
@@ -1013,9 +1046,11 @@ export class ClientRepository {
     if (search) {
       // Escape LIKE wildcards to prevent unintended pattern matching
       const escapedSearch = this.escapeLikePattern(search);
-      conditions.push("(client_name LIKE ? ESCAPE '\\' OR client_id LIKE ? ESCAPE '\\')");
+      conditions.push(
+        "(client_name LIKE ? ESCAPE '\\' OR client_id LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')"
+      );
       const searchPattern = `%${escapedSearch}%`;
-      params.push(searchPattern, searchPattern);
+      params.push(searchPattern, searchPattern, searchPattern);
     }
 
     const whereClause = conditions.join(' AND ');
@@ -1063,8 +1098,8 @@ export class ClientRepository {
    */
   async exists(clientId: string): Promise<boolean> {
     const result = await this.adapter.queryOne<{ client_id: string }>(
-      'SELECT client_id FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
-      [clientId, this.tenantId]
+      'SELECT client_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      [this.tenantId, clientId]
     );
     return result !== null;
   }

@@ -948,8 +948,8 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
 
     // Get count of users with this role
     const assignmentCount = await coreAdapter.queryOne<{ count: number }>(
-      'SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments WHERE role_id = ? AND tenant_id = ?',
-      [roleId, tenantId]
+      'SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments WHERE tenant_id = ? AND role_id = ?',
+      [tenantId, roleId]
     );
 
     return c.json({
@@ -1162,8 +1162,8 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     // Check for duplicate assignment
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE subject_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ? AND tenant_id = ?`,
-      [userId, role.id, assignmentScope, assignmentScopeTarget, tenantId]
+       WHERE tenant_id = ? AND subject_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
+      [tenantId, userId, role.id, assignmentScope, assignmentScopeTarget]
     );
 
     if (existing) {
@@ -1240,8 +1240,8 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
 
     // Check if assignment exists and belongs to this user
     const assignment = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM role_assignments WHERE id = ? AND subject_id = ? AND tenant_id = ?',
-      [assignmentId, userId, tenantId]
+      'SELECT id FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+      [tenantId, assignmentId, userId]
     );
 
     if (!assignment) {
@@ -1254,9 +1254,9 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    await coreAdapter.execute('DELETE FROM role_assignments WHERE id = ? AND tenant_id = ?', [
-      assignmentId,
+    await coreAdapter.execute('DELETE FROM role_assignments WHERE tenant_id = ? AND id = ?', [
       tenantId,
+      assignmentId,
     ]);
 
     return c.json({
@@ -1869,11 +1869,11 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
       `SELECT ur.role_id, r.name as role_name, ur.created_at as granted_at, ur.expires_at
        FROM user_roles ur
        INNER JOIN roles r ON ur.role_id = r.id
-       WHERE ur.user_id = ?
-         AND ur.tenant_id = ?
+       WHERE ur.tenant_id = ?
+         AND ur.user_id = ?
          AND r.tenant_id = ?
          AND (ur.expires_at IS NULL OR ur.expires_at > ?)`,
-      [userId, tenantId, tenantId, Math.floor(Date.now() / 1000)]
+      [tenantId, userId, tenantId, Math.floor(Date.now() / 1000)]
     );
 
     // Get permissions for each role
@@ -2029,8 +2029,8 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
     // Get total count
     const totalResult = await coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments
-       WHERE role_id = ? AND tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
-      [roleId, tenantId, now]
+       WHERE tenant_id = ? AND role_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
+      [tenantId, roleId, now]
     );
 
     const total = totalResult?.count || 0;

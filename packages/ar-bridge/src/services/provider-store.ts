@@ -6,7 +6,6 @@
 import type { Env } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
-  getDefaultTenantId,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import type { UpstreamProvider, TokenEndpointAuthMethod } from '../types';
@@ -40,7 +39,7 @@ export async function getProvider(
 export async function getProviderByIdOrSlug(
   env: Env,
   idOrSlug: string,
-  tenantId = getDefaultTenantId(env)
+  tenantId: string
 ): Promise<UpstreamProvider | null> {
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-id-or-slug');
 
@@ -68,7 +67,7 @@ export async function getProviderByIdOrSlug(
 export async function getProviderByName(
   env: Env,
   name: string,
-  tenantId = getDefaultTenantId(env)
+  tenantId: string
 ): Promise<UpstreamProvider | null> {
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-name');
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
@@ -85,7 +84,7 @@ export async function getProviderByName(
  */
 export async function listEnabledProviders(
   env: Env,
-  tenantId = getDefaultTenantId(env)
+  tenantId: string
 ): Promise<UpstreamProvider[]> {
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-enabled');
   const result = await coreAdapter.query<DbUpstreamProvider>(
@@ -101,7 +100,7 @@ export async function listEnabledProviders(
  */
 export async function listAllProviders(
   env: Env,
-  tenantId = getDefaultTenantId(env)
+  tenantId: string
 ): Promise<UpstreamProvider[]> {
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-all');
   const result = await coreAdapter.query<DbUpstreamProvider>(
@@ -135,7 +134,7 @@ export async function createProvider(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      provider.tenantId || getDefaultTenantId(env),
+      provider.tenantId,
       provider.slug || null,
       provider.name,
       provider.providerType,
@@ -173,7 +172,6 @@ export async function createProvider(
   return {
     ...provider,
     id,
-    tenantId: provider.tenantId || getDefaultTenantId(env),
     createdAt: now,
     updatedAt: now,
   };

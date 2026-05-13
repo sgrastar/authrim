@@ -10,7 +10,7 @@
 		isValidLinkUrl,
 		sanitizeColor
 	} from '$lib/utils/url-validation';
-	import { fetchLoginMethods, type SocialProvider } from '$lib/api/login-methods';
+	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
 	import { brandingStore } from '$lib/stores/branding.svelte';
@@ -36,8 +36,8 @@
 	let methodsError = $state('');
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);
-	let socialEnabled = $state(false);
-	let socialProviders = $state<SocialProvider[]>([]);
+	let externalEnabled = $state(false);
+	let externalProviders = $state<ExternalProvider[]>([]);
 
 	// OAuth login challenge client info
 	interface ClientInfo {
@@ -91,7 +91,7 @@
 	}
 	let externalIdpError = $state<{ title: string; message: string; action?: string } | null>(null);
 
-	// Dark mode detection for social button colors
+	// Dark mode detection for external provider button colors
 	let isDarkMode = $state(false);
 
 	// Derived: WebAuthn support check
@@ -180,8 +180,8 @@
 			if (data) {
 				passkeyEnabled = data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.enabled;
-				socialEnabled = data.methods.social.enabled;
-				socialProviders = data.methods.social.providers;
+				externalEnabled = data.methods.external.enabled;
+				externalProviders = data.methods.external.providers;
 			}
 		} catch {
 			methodsError = 'Failed to load login methods';
@@ -299,12 +299,19 @@
 		}
 	}
 
-	async function handleExternalLogin(providerId: string) {
+	async function handleExternalLogin(provider: ExternalProvider) {
+		const providerId = provider.id;
 		if (authActionLoading) return;
 		externalIdpLoading = providerId;
 		try {
-			const redirectUri = `${window.location.origin}/callback`;
-			const { url } = await externalIdpAPI.startLogin(providerId, redirectUri);
+			const redirectUri =
+				provider.startMode === 'saml_sp' ? `${window.location.origin}/` : `${window.location.origin}/callback`;
+			const { url } = await externalIdpAPI.startLogin(
+				providerId,
+				redirectUri,
+				provider.startUrl,
+				provider.startMode
+			);
 
 			if (!isValidRedirectUrl(url)) {
 				throw new Error('Invalid redirect URL from identity provider');
@@ -325,8 +332,10 @@
 		}
 	}
 
-	function getProviderIcon(provider: SocialProvider): string {
+	function getProviderIcon(provider: ExternalProvider): string {
 		if (provider.iconUrl) return provider.iconUrl;
+		if (provider.type === 'saml') return 'i-ph-buildings';
+		if (provider.type === 'vc') return 'i-ph-identification-badge';
 		const name = (provider.name || '').toLowerCase();
 		if (name.includes('google')) return 'i-ph-google-logo';
 		if (name.includes('github')) return 'i-ph-github-logo';
@@ -338,7 +347,7 @@
 		return 'i-ph-sign-in';
 	}
 
-	function getProviderButtonText(provider: SocialProvider): string {
+	function getProviderButtonText(provider: ExternalProvider): string {
 		if (provider.buttonText) return provider.buttonText;
 		return $LL.login_continueWith({ provider: provider.name });
 	}
@@ -558,8 +567,8 @@
 					</Button>
 				{/if}
 
-				<!-- Social Login Section -->
-				{#if socialEnabled && socialProviders.length > 0}
+				<!-- External Login Section -->
+				{#if externalEnabled && externalProviders.length > 0}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -567,7 +576,7 @@
 					</div>
 
 					<div class="space-y-3">
-						{#each socialProviders as provider (provider.id)}
+						{#each externalProviders as provider (provider.id)}
 							{@const safeColor =
 								isDarkMode && provider.buttonColorDark
 									? sanitizeColor(provider.buttonColorDark)
@@ -579,7 +588,7 @@
 								disabled={passkeyLoading ||
 									emailCodeLoading ||
 									(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
-								onclick={() => handleExternalLogin(provider.id)}
+								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 							>
 								<div class="{getProviderIcon(provider)} h-5 w-5"></div>

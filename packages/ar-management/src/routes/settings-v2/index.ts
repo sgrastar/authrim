@@ -133,8 +133,8 @@ async function getClientTenantId(
       'settings-v2-client-tenant'
     );
     const result = await adapter.queryOne<{ tenant_id: string }>(
-      'SELECT tenant_id FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
-      [clientId, tenantId]
+      'SELECT tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      [tenantId, clientId]
     );
     return result?.tenant_id ?? null;
   } catch {

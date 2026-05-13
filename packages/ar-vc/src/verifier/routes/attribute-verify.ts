@@ -21,9 +21,14 @@ import {
   UserVerifiedAttributeRepository,
   getLogger,
   createLogger,
+  getTenantIdFromContext,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl, getRequestVerifierIdentifier } from '../../request-identifiers';
+import {
+  getVPRequestStoreById,
+  getVPRequestStoreForNewRequest,
+} from '../../utils/vp-request-sharding';
 
 const standaloneLog = createLogger().module('VC-ATTR-VERIFY');
 import { verifyVPToken } from '../services/vp-verifier';
@@ -87,9 +92,16 @@ export async function initiateAttributeVerification(
     }
 
     // Create VP request
-    const requestId = crypto.randomUUID();
+    const requestUuid = crypto.randomUUID();
     const nonce = crypto.randomUUID();
     const expirySeconds = parseInt(c.env.VP_REQUEST_EXPIRY_SECONDS || '300', 10);
+    const clientId = getRequestVerifierIdentifier(c);
+    const { stub, requestId } = await getVPRequestStoreForNewRequest(
+      c.env,
+      userInfo.tenantId,
+      clientId,
+      requestUuid
+    );
 
     const presentationDefinition = buildPresentationDefinition(
       body.attribute_type,
@@ -98,7 +110,7 @@ export async function initiateAttributeVerification(
 
     const vpRequest: VPRequestState = {
       id: requestId,
-      clientId: getRequestVerifierIdentifier(c),
+      clientId,
       tenantId: userInfo.tenantId,
       nonce,
       status: 'pending',
@@ -109,10 +121,6 @@ export async function initiateAttributeVerification(
       userId: userInfo.userId, // Link to authenticated user
       presentationDefinition,
     };
-
-    // Store in Durable Object
-    const doId = c.env.VP_REQUEST_STORE.idFromName(requestId);
-    const stub = c.env.VP_REQUEST_STORE.get(doId);
 
     const storeResponse = await stub.fetch(
       new Request('https://internal/create', {
@@ -186,8 +194,7 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Get VP request from Durable Object
-    const doId = c.env.VP_REQUEST_STORE.idFromName(body.state);
-    const stub = c.env.VP_REQUEST_STORE.get(doId);
+    const { stub } = getVPRequestStoreById(c.env, body.state, getTenantIdFromContext(c));
 
     const requestResponse = await stub.fetch(new Request('https://internal/get'));
     if (!requestResponse.ok) {

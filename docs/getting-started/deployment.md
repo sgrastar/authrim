@@ -263,7 +263,7 @@ wrangler tail
 
 # View version status
 curl "$ISSUER_URL/api/internal/version-manager/status" \
-  -H "Authorization: Bearer $ADMIN_API_SECRET"
+  -H "Authorization: Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}"
 ```
 
 ---

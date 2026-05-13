@@ -42,11 +42,15 @@ describe('request client cache', () => {
       .mockResolvedValueOnce({ client_id: 'shared-mobile', client_name: 'Tenant A Mobile' })
       .mockResolvedValueOnce({ client_id: 'shared-mobile', client_name: 'Tenant B Mobile' });
 
+    c.set('tenantId', 'tenant-a');
     const tenantAClient = await getClientCached(c, env, 'shared-mobile');
+    c.set('tenantId', 'tenant-b');
     const tenantBClient = await getClientCached(c, env, 'shared-mobile');
 
     expect(tenantAClient?.client_name).toBe('Tenant A Mobile');
     expect(tenantBClient?.client_name).toBe('Tenant B Mobile');
+    expect(mockCreateAuthContextFromHono).toHaveBeenNthCalledWith(1, c, 'tenant-a');
+    expect(mockCreateAuthContextFromHono).toHaveBeenNthCalledWith(2, c, 'tenant-b');
     expect(mockGetClient).toHaveBeenNthCalledWith(
       1,
       env,
@@ -73,11 +77,23 @@ describe('request client cache', () => {
     mockCreateAuthContextFromHono.mockReturnValue({ tenantId: 'tenant-a', coreAdapter });
     mockGetClient.mockResolvedValue({ client_id: 'shared-mobile', client_name: 'Tenant A Mobile' });
 
+    c.set('tenantId', 'tenant-a');
     await getClientCached(c, env, 'shared-mobile');
     await getClientCached(c, env, 'shared-mobile');
 
     expect(mockGetClient).toHaveBeenCalledTimes(1);
     expect(getRequestCacheStats(c).clientMiss).toBe(1);
     expect(getRequestCacheStats(c).clientHit).toBe(1);
+  });
+
+  it('rejects client cache lookup when tenant context is missing', async () => {
+    const c = createContext();
+    const env = {} as Env;
+
+    await expect(getClientCached(c, env, 'shared-mobile')).rejects.toThrow(
+      'Request cache requires tenant context'
+    );
+    expect(mockCreateAuthContextFromHono).not.toHaveBeenCalled();
+    expect(mockGetClient).not.toHaveBeenCalled();
   });
 });

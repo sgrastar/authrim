@@ -6,9 +6,9 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { getDefaultTenantId } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import { importSPKI, exportSPKI } from 'jose';
+import { requireSAMLTenantId } from './tenant';
 
 /**
  * Cached signing key data
@@ -25,15 +25,42 @@ interface SigningKeyCache {
 const signingKeyCache = new Map<string, SigningKeyCache>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+export interface SigningKeyLookupOptions {
+  keyRef?: string;
+}
+
+export interface SecretLookupOptions {
+  secretRef: string;
+}
+
+export interface KeyManagerSecret {
+  secretRef: string;
+  active: {
+    kid: string;
+    value: string;
+    createdAt: number;
+  };
+  previous?: {
+    kid: string;
+    value: string;
+    createdAt: number;
+  };
+  updatedAt: number;
+}
+
 /**
  * Get signing key from KeyManager
  */
 export async function getSigningKey(
   env: Env,
-  tenantId = getDefaultTenantId(env)
+  tenantId: string,
+  options: SigningKeyLookupOptions = {}
 ): Promise<{ privateKeyPem: string; publicKeyPem: string; kid: string }> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
+  const cacheKey = buildSigningKeyCacheKey(resolvedTenantId, options.keyRef);
+
   // Check cache
-  const cached = signingKeyCache.get(tenantId);
+  const cached = signingKeyCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
     return {
       privateKeyPem: cached.privateKeyPem,
@@ -43,7 +70,9 @@ export async function getSigningKey(
   }
 
   // Get from KeyManager
-  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
+  const keyManagerId = env.KEY_MANAGER.idFromName(
+    buildKeyManagerInstanceName(resolvedTenantId, options.keyRef)
+  );
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   const response = await keyManager.fetch(
@@ -77,7 +106,7 @@ export async function getSigningKey(
       const publicKeyPem = await jwkToPublicKeyPem(rotateData.key.publicJWK);
 
       // Update cache
-      signingKeyCache.set(tenantId, {
+      signingKeyCache.set(cacheKey, {
         privateKeyPem: rotateData.key.privatePEM,
         publicKeyPem,
         certificate: await generateSelfSignedCertificate(rotateData.key.publicJWK),
@@ -86,9 +115,9 @@ export async function getSigningKey(
       });
 
       return {
-        privateKeyPem: signingKeyCache.get(tenantId)!.privateKeyPem,
-        publicKeyPem: signingKeyCache.get(tenantId)!.publicKeyPem,
-        kid: signingKeyCache.get(tenantId)!.kid,
+        privateKeyPem: signingKeyCache.get(cacheKey)!.privateKeyPem,
+        publicKeyPem: signingKeyCache.get(cacheKey)!.publicKeyPem,
+        kid: signingKeyCache.get(cacheKey)!.kid,
       };
     }
 
@@ -99,7 +128,7 @@ export async function getSigningKey(
   const publicKeyPem = await jwkToPublicKeyPem(keyData.publicJWK);
 
   // Update cache
-  signingKeyCache.set(tenantId, {
+  signingKeyCache.set(cacheKey, {
     privateKeyPem: keyData.privatePEM,
     publicKeyPem,
     certificate: await generateSelfSignedCertificate(keyData.publicJWK),
@@ -108,9 +137,9 @@ export async function getSigningKey(
   });
 
   return {
-    privateKeyPem: signingKeyCache.get(tenantId)!.privateKeyPem,
-    publicKeyPem: signingKeyCache.get(tenantId)!.publicKeyPem,
-    kid: signingKeyCache.get(tenantId)!.kid,
+    privateKeyPem: signingKeyCache.get(cacheKey)!.privateKeyPem,
+    publicKeyPem: signingKeyCache.get(cacheKey)!.publicKeyPem,
+    kid: signingKeyCache.get(cacheKey)!.kid,
   };
 }
 
@@ -120,23 +149,60 @@ export async function getSigningKey(
  */
 export async function getSigningCertificate(
   env: Env,
-  tenantId = getDefaultTenantId(env)
+  tenantId: string,
+  options: SigningKeyLookupOptions = {}
 ): Promise<string> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing certificate tenant');
+  const cacheKey = buildSigningKeyCacheKey(resolvedTenantId, options.keyRef);
+
   // Check cache
-  const cached = signingKeyCache.get(tenantId);
+  const cached = signingKeyCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
     return cached.certificate;
   }
 
   // Get signing key (this will update cache)
-  await getSigningKey(env, tenantId);
+  await getSigningKey(env, resolvedTenantId, options);
 
-  const nextCached = signingKeyCache.get(tenantId);
+  const nextCached = signingKeyCache.get(cacheKey);
   if (!nextCached) {
     throw new Error('Failed to get signing certificate');
   }
 
   return nextCached.certificate;
+}
+
+export async function getKeyManagerSecret(
+  env: Env,
+  tenantId: string,
+  options: SecretLookupOptions
+): Promise<KeyManagerSecret> {
+  requireSAMLTenantId(tenantId, 'SAML KeyManager secret tenant');
+  const keyManagerId = env.KEY_MANAGER.idFromName(options.secretRef);
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+
+  const response = await keyManager.fetch(
+    new Request(`https://key-manager/internal/secrets/${encodeURIComponent(options.secretRef)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+      },
+    })
+  );
+
+  if (!response.ok) {
+    throw new Error(`KeyManager secret error: ${response.status}`);
+  }
+
+  return (await response.json()) as KeyManagerSecret;
+}
+
+function buildSigningKeyCacheKey(tenantId: string, keyRef?: string): string {
+  return keyRef ? `${tenantId}:${keyRef}` : tenantId;
+}
+
+function buildKeyManagerInstanceName(tenantId: string, keyRef?: string): string {
+  return keyRef || `${tenantId}-v3`;
 }
 
 /**

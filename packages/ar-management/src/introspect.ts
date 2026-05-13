@@ -331,14 +331,21 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
         // Check revocation (always fresh check for security)
         if (token_type_hint === 'refresh_token') {
           if (sub) {
-            const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId, jti);
+            const refreshTokenData = await getRefreshToken(
+              c.env,
+              sub,
+              rtv,
+              tokenClientId,
+              jti,
+              tenantId
+            );
             if (!refreshTokenData) {
               c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
               return c.json<IntrospectionResponse>({ active: false });
             }
           }
         } else {
-          const revoked = await isTokenRevoked(c.env, jti);
+          const revoked = await isTokenRevoked(c.env, jti, tenantId);
           if (revoked) {
             c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
             return c.json<IntrospectionResponse>({ active: false });
@@ -467,7 +474,14 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     if (token_type_hint === 'refresh_token') {
       // Explicitly refresh token - check existence in DO
       if (sub) {
-        const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId, jti);
+        const refreshTokenData = await getRefreshToken(
+          c.env,
+          sub,
+          rtv,
+          tokenClientId,
+          jti,
+          tenantId
+        );
         if (!refreshTokenData) {
           return c.json<IntrospectionResponse>({
             active: false,
@@ -476,7 +490,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
       }
     } else {
       // Access token (explicit or default) - check revocation store
-      const revoked = await isTokenRevoked(c.env, jti);
+      const revoked = await isTokenRevoked(c.env, jti, tenantId);
       if (revoked) {
         return c.json<IntrospectionResponse>({
           active: false,

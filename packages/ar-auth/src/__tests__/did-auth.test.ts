@@ -672,7 +672,8 @@ describe('DID Authentication', () => {
             acr: 'urn:authrim:acr:did',
             did: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
             verification_method: validKid,
-          })
+          }),
+          'default'
         );
       });
     });

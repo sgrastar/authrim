@@ -21,7 +21,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
-  createAuthContextFromHono,
+  resolveOptionalCoreAdapterFromHono,
   getLogger,
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
@@ -119,6 +119,14 @@ function getActiveDomainHash(domainHash: string, isActive: boolean): string | nu
   return isActive ? domainHash : null;
 }
 
+function getCoreAdapter(c: Context<{ Bindings: Env }>) {
+  const adapter = resolveOptionalCoreAdapterFromHono(c, 'tenant-domain-mappings');
+  if (!adapter) {
+    throw new Error('Core database is not configured');
+  }
+  return adapter;
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -134,7 +142,7 @@ export async function listTenantDomainMappingsHandler(c: Context<{ Bindings: Env
   const offset = parseInt(c.req.query('offset') || '0', 10);
 
   try {
-    const adapter = createAuthContextFromHono(c).coreAdapter;
+    const adapter = getCoreAdapter(c);
 
     let query = `SELECT * FROM tenant_domain_mappings WHERE 1=1`;
     const params: unknown[] = [];
@@ -199,7 +207,7 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
       });
     }
 
-    const adapter = createAuthContextFromHono(c).coreAdapter;
+    const adapter = getCoreAdapter(c);
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [
@@ -285,7 +293,7 @@ export async function getTenantDomainMappingHandler(c: Context<{ Bindings: Env }
   const id = c.req.param('id')!;
 
   try {
-    const adapter = createAuthContextFromHono(c).coreAdapter;
+    const adapter = getCoreAdapter(c);
     const row = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [id]
@@ -326,7 +334,7 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
     }
 
     const updates = parseResult.data;
-    const adapter = createAuthContextFromHono(c).coreAdapter;
+    const adapter = getCoreAdapter(c);
 
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
@@ -377,7 +385,10 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
     values.push(nowTs);
     values.push(id);
 
-    await adapter.execute(`UPDATE tenant_domain_mappings SET ${fields.join(', ')} WHERE id = ?`, values);
+    await adapter.execute(
+      `UPDATE tenant_domain_mappings SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    );
 
     const updated = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
@@ -410,7 +421,7 @@ export async function deleteTenantDomainMappingHandler(c: Context<{ Bindings: En
   const id = c.req.param('id')!;
 
   try {
-    const adapter = createAuthContextFromHono(c).coreAdapter;
+    const adapter = getCoreAdapter(c);
 
     const existing = await adapter.queryOne<{ id: string }>(
       'SELECT id FROM tenant_domain_mappings WHERE id = ?',
@@ -457,7 +468,7 @@ export async function initiateTenantDomainVerificationHandler(c: Context<{ Bindi
       });
     }
 
-    const adapter = createAuthContextFromHono(c).coreAdapter;
+    const adapter = getCoreAdapter(c);
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [body.id]
@@ -509,7 +520,7 @@ export async function confirmTenantDomainVerificationHandler(c: Context<{ Bindin
       });
     }
 
-    const adapter = createAuthContextFromHono(c).coreAdapter;
+    const adapter = getCoreAdapter(c);
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [body.id]

@@ -344,8 +344,8 @@ export async function persistCustomClaimWrite(params: PersistCustomClaimWritePar
 
   for (const fieldKey of validation.nonPiiKeysToDelete) {
     await coreAdapter.execute(
-      'DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ? AND field_name = ?',
-      [userId, tenantId, fieldKey]
+      'DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
+      [tenantId, userId, fieldKey]
     );
   }
 

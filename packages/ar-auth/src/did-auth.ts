@@ -112,9 +112,10 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
     const nonce = crypto.randomUUID();
 
     // Store challenge in ChallengeStore
-    const challengeStore = getChallengeStoreByDID(c.env, did);
+    const challengeStore = getChallengeStoreByDID(c.env, did, getTenantIdFromContext(c));
     await challengeStore.storeChallengeRpc({
       id: `did_auth:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'did_authentication',
       userId: '', // Will be resolved after verification
       challenge,
@@ -198,11 +199,12 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     const did = didMatch[1];
 
     // Get challenge store and consume challenge
-    const challengeStore = getChallengeStoreByDID(c.env, did);
+    const challengeStore = getChallengeStoreByDID(c.env, did, getTenantIdFromContext(c));
     let challengeData: ConsumeChallengeResponse;
     try {
       challengeData = await challengeStore.consumeChallengeRpc({
         id: `did_auth:${challenge_id}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'did_authentication',
       });
     } catch {

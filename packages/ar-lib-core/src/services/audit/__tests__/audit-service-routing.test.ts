@@ -49,8 +49,10 @@ function createMockStorageAdapter(): IAuditStorageAdapter {
     writePIILogBatch: vi.fn(),
     query: vi.fn(),
     count: vi.fn(),
-    listRetentionCandidates: vi.fn().mockResolvedValue([]),
-    deleteByRetention: vi.fn(),
+    listTenantRetentionCandidates: vi.fn().mockResolvedValue([]),
+    listGlobalRetentionCandidates: vi.fn().mockResolvedValue([]),
+    deleteTenantByRetention: vi.fn(),
+    deleteGlobalByRetention: vi.fn(),
     isHealthy: vi.fn(),
     close: vi.fn(),
   };

@@ -1,19 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 
-const {
-  mockCreateAuthContextFromHono,
-  mockGetDefaultTenantId,
-  mockGetTenantIdFromContext,
-} = vi.hoisted(() => ({
+const { mockCreateAuthContextFromHono, mockGetTenantIdFromContext } = vi.hoisted(() => ({
   mockCreateAuthContextFromHono: vi.fn(),
-  mockGetDefaultTenantId: vi.fn(),
   mockGetTenantIdFromContext: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
   createAuthContextFromHono: mockCreateAuthContextFromHono,
-  getDefaultTenantId: mockGetDefaultTenantId,
   getTenantIdFromContext: mockGetTenantIdFromContext,
 }));
 
@@ -37,30 +31,29 @@ describe('tenant-resolver', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetTenantIdFromContext.mockReturnValue('tenant-from-context');
-    mockGetDefaultTenantId.mockReturnValue('tenant-default');
     mockCreateAuthContextFromHono.mockReturnValue({ coreAdapter: mockCoreAdapter });
   });
 
-  it('prefers explicit tenant id', () => {
-    const tenantId = resolveSettingsTenantId({ env: {} } as never, 'tenant-explicit');
-
-    expect(tenantId).toBe('tenant-explicit');
-    expect(mockGetTenantIdFromContext).not.toHaveBeenCalled();
-  });
-
-  it('falls back to context tenant id before environment default', () => {
+  it('resolves the context tenant id', () => {
     const tenantId = resolveSettingsTenantId({ env: {} } as never);
 
     expect(tenantId).toBe('tenant-from-context');
-    expect(mockGetDefaultTenantId).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing tenant context', () => {
+    mockGetTenantIdFromContext.mockReturnValue(null);
+
+    expect(() => resolveSettingsTenantId({ env: {} } as never)).toThrow(
+      'Settings routes require tenant context'
+    );
   });
 
   it('resolves core adapter through createAuthContextFromHono', () => {
     const context = { env: {} };
 
-    const adapter = resolveSettingsCoreAdapter(context as never, 'tenant-explicit');
+    const adapter = resolveSettingsCoreAdapter(context as never);
 
     expect(adapter).toBe(mockCoreAdapter);
-    expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(context, 'tenant-explicit');
+    expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(context, 'tenant-from-context');
   });
 });

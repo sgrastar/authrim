@@ -1,9 +1,9 @@
 /**
  * Admin Authentication Middleware
  *
- * This middleware provides dual authentication for admin endpoints:
- * 1. Bearer Token authentication (for headless/API usage)
- * 2. Session-based authentication (for UI usage)
+ * This middleware provides Admin UI session authentication for admin endpoints.
+ * Machine/Admin API bearer access is intentionally not backed by static root
+ * secrets; it is added through scoped Admin Machine Access tokens.
  *
  * Admin/EndUser Separation:
  * - Admin users are stored in DB_ADMIN (separate from EndUsers in DB_CORE)
@@ -11,7 +11,6 @@
  * - Admin roles/permissions are from admin_role_assignments + admin_roles
  *
  * Security features:
- * - Constant-time comparison to prevent timing attacks
  * - Admin role verification for session auth
  * - Sets adminAuth context for downstream handlers
  * - Configurable role requirements via requireRoles option
@@ -25,10 +24,28 @@ import type { DatabaseAdapter } from '../db/adapter';
 import { requireAdminDatabaseAdapter } from '../services/admin-database-adapter';
 import { createLogger } from '../utils/logger';
 import { hasAdminPermission } from '../types/admin-user';
-import { getDefaultTenantId } from '../utils/issuer';
+import { buildRequestIssuerUrl, getDefaultTenantId } from '../utils/issuer';
 import { resolveTenantFromRequest } from '../utils/tenant-context';
+import { parseTokenHeader, verifyToken } from '../utils/jwt';
+import {
+  AdminMachineAccessRepository,
+  type AdminMachineTenantScope,
+} from '../repositories/admin/admin-machine-access';
+import { importJWK, type CryptoKey, type JWK, type JWTPayload } from 'jose';
 
 const log = createLogger().module('ADMIN-AUTH');
+const ADMIN_API_AUDIENCE = 'authrim:admin-api';
+const ADMIN_UI_BFF_MODE_HEADER = 'X-Authrim-Admin-UI-Api-Mode';
+const ADMIN_UI_BFF_MODE_VALUE = 'cross-site-proxy-bff';
+
+interface AdminAuthRoleRow {
+  id: string;
+  name: string;
+  permissions_json: string;
+  hierarchy_level: number;
+  inherits_from: string | null;
+  has_global_scope?: number;
+}
 
 /**
  * Options for admin authentication middleware
@@ -69,75 +86,266 @@ export interface AdminAuthOptions {
   requireMfa?: boolean;
 }
 
-/**
- * Constant-time string comparison to prevent timing attacks
- *
- * This function compares two strings in constant time, regardless of
- * where they differ. This prevents attackers from using timing information
- * to guess valid tokens character by character.
- *
- * @param a - First string
- * @param b - Second string
- * @returns true if strings are equal, false otherwise
- */
-function constantTimeCompare(a: string, b: string): boolean {
-  // If lengths differ, still iterate through both to maintain constant time
-  if (a.length !== b.length) {
-    return false;
+function parsePermissionsJson(value: string): string[] {
+  try {
+    const permissions = JSON.parse(value) as unknown;
+    return Array.isArray(permissions)
+      ? permissions.filter((permission): permission is string => typeof permission === 'string')
+      : [];
+  } catch {
+    return [];
   }
-
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-
-  return result === 0;
 }
 
-/**
- * Authenticate using Bearer token
- *
- * Checks token against ADMIN_API_SECRET or KEY_MANAGER_SECRET
- *
- * @param c - Hono context
- * @param token - Bearer token from Authorization header
- * @returns AdminAuthContext if valid, null otherwise
- */
-async function authenticateBearer(
+function collectInheritedRolePermissions(
+  role: AdminAuthRoleRow,
+  rolesById: Map<string, AdminAuthRoleRow>,
+  permissions: Set<string>,
+  visitedIds: Set<string> = new Set()
+): void {
+  if (visitedIds.has(role.id)) {
+    return;
+  }
+  visitedIds.add(role.id);
+
+  for (const permission of parsePermissionsJson(role.permissions_json)) {
+    permissions.add(permission);
+  }
+
+  if (!role.inherits_from) {
+    return;
+  }
+  const parent = rolesById.get(role.inherits_from);
+  if (parent) {
+    collectInheritedRolePermissions(parent, rolesById, permissions, visitedIds);
+  }
+}
+
+async function getAdminAccessTokenVerificationKey(
+  env: Env,
+  tenantId: string,
+  kid?: string
+): Promise<CryptoKey> {
+  const publicJwkJson = env.PUBLIC_JWK_JSON;
+  if (publicJwkJson) {
+    const publicJwk = JSON.parse(publicJwkJson) as JWK;
+    if (!kid || !publicJwk.kid || publicJwk.kid === kid) {
+      return importJWK(publicJwk, 'RS256') as Promise<CryptoKey>;
+    }
+  }
+
+  if (!env.KEY_MANAGER) {
+    throw new Error('KEY_MANAGER binding not available');
+  }
+
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+  const publicKeys = (await keyManager.getAllPublicKeysRpc()) as JWK[];
+  const publicJwk = kid
+    ? publicKeys.find((key) => key.kid === kid)
+    : publicKeys.find((key) => key.kty);
+  if (!publicJwk) {
+    throw new Error('No matching Admin API token verification key found');
+  }
+  return importJWK(publicJwk, 'RS256') as Promise<CryptoKey>;
+}
+
+function hasTenantScope(authContext: AdminAuthContext, tenantId: string): boolean {
+  if (!authContext.tenantScope && authContext.authMethod !== 'machine_access_token') {
+    return true;
+  }
+  const tenantScope = authContext.tenantScope ?? [];
+  return tenantScope.includes('*') || tenantScope.includes(tenantId);
+}
+
+function stringArrayClaim(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function intersectMachinePermissionSets(
+  principalPermissions: string[],
+  credentialPermissions: string[]
+): string[] {
+  const result = new Set<string>();
+  for (const principalPermission of principalPermissions) {
+    for (const credentialPermission of credentialPermissions) {
+      if (hasAdminPermission([principalPermission], credentialPermission)) {
+        result.add(credentialPermission);
+      } else if (hasAdminPermission([credentialPermission], principalPermission)) {
+        result.add(principalPermission);
+      }
+    }
+  }
+  return Array.from(result);
+}
+
+function resolveMachineTenantScope(
+  principalScopes: AdminMachineTenantScope[],
+  credentialScopes: AdminMachineTenantScope[]
+): string[] {
+  const effectiveCredentialScopes =
+    credentialScopes.length > 0 ? credentialScopes : principalScopes;
+  const principalAll = principalScopes.some((scope) => scope.scopeMode === 'all');
+  const credentialAll = effectiveCredentialScopes.some((scope) => scope.scopeMode === 'all');
+
+  if (principalAll && credentialAll) {
+    return ['*'];
+  }
+
+  const principalTenants = principalAll
+    ? null
+    : new Set(
+        principalScopes
+          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
+          .map((scope) => scope.tenantId as string)
+      );
+  const credentialTenants = credentialAll
+    ? null
+    : new Set(
+        effectiveCredentialScopes
+          .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
+          .map((scope) => scope.tenantId as string)
+      );
+
+  if (principalTenants === null) {
+    return Array.from(credentialTenants ?? []);
+  }
+  if (credentialTenants === null) {
+    return Array.from(principalTenants);
+  }
+
+  return Array.from(principalTenants).filter((tenantId) => credentialTenants.has(tenantId));
+}
+
+function isSubsetOfTenantScope(claimTenantScope: string[], currentTenantScope: string[]): boolean {
+  if (claimTenantScope.includes('*')) {
+    return currentTenantScope.includes('*');
+  }
+  if (currentTenantScope.includes('*')) {
+    return true;
+  }
+  const current = new Set(currentTenantScope);
+  return claimTenantScope.every((tenantId) => current.has(tenantId));
+}
+
+function isAdminUiBffTransportRequest(c: Context<{ Bindings: Env }>): boolean {
+  return c.req.header(ADMIN_UI_BFF_MODE_HEADER) === ADMIN_UI_BFF_MODE_VALUE;
+}
+
+function toTransportAuthContext(
+  authContext: AdminAuthContext
+): NonNullable<AdminAuthContext['transportAuth']> {
+  return {
+    authMethod: 'machine_access_token',
+    actorType: 'machine',
+    actorId: authContext.actorId ?? authContext.userId,
+    principalType: authContext.principalType,
+    credentialId: authContext.credentialId ?? '',
+    clientId: authContext.clientId,
+    clientAuthMethod: authContext.clientAuthMethod,
+    credentialStrength: authContext.credentialStrength,
+    senderConstrained: authContext.senderConstrained,
+    tenantScope: authContext.tenantScope,
+    permissions: authContext.permissions,
+  };
+}
+
+async function authenticateMachineAccessToken(
   c: Context<{ Bindings: Env }>,
-  token: string
+  token: string,
+  tenantId: string
 ): Promise<AdminAuthContext | null> {
-  const env = c.env;
+  try {
+    const header = parseTokenHeader(token);
+    const publicKey = await getAdminAccessTokenVerificationKey(c.env, tenantId, header.kid);
+    const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
+    const payload = (await verifyToken(token, publicKey, issuer, {
+      audience: ADMIN_API_AUDIENCE,
+    })) as JWTPayload & Record<string, unknown>;
 
-  // Check against ADMIN_API_SECRET first
-  // ADMIN_API_SECRET grants system_admin role (highest privilege)
-  if (env.ADMIN_API_SECRET && constantTimeCompare(token, env.ADMIN_API_SECRET)) {
+    if (payload.actor_type !== 'machine') {
+      return null;
+    }
+    if (typeof payload.actor_id !== 'string' || !payload.actor_id) {
+      return null;
+    }
+    if (typeof payload.credential_id !== 'string' || !payload.credential_id) {
+      return null;
+    }
+    if (typeof payload.scope !== 'string') {
+      return null;
+    }
+
+    const adminAdapter: DatabaseAdapter = requireAdminDatabaseAdapter(
+      c.env,
+      'admin-machine-access'
+    );
+    const machineRepo = new AdminMachineAccessRepository(adminAdapter);
+    const principal = await machineRepo.findPrincipalById(payload.actor_id);
+    const credential = await machineRepo.findCredentialById(payload.credential_id);
+    if (!principal || !credential) {
+      return null;
+    }
+    if (principal.status !== 'active') {
+      return null;
+    }
+    if (credential.status !== 'active' && credential.status !== 'rotating') {
+      return null;
+    }
+    if (credential.principalId !== principal.id) {
+      return null;
+    }
+
+    const tokenPermissions = payload.scope.split(/\s+/).filter((scope) => scope.length > 0);
+    const [principalPermissions, credentialPermissions, principalTenantScopes, credentialTenantScopes] =
+      await Promise.all([
+        machineRepo.getPrincipalPermissions(principal.id),
+        machineRepo.getCredentialPermissions(credential.id),
+        machineRepo.getPrincipalTenantScopes(principal.id),
+        machineRepo.getCredentialTenantScopes(credential.id),
+      ]);
+    const currentPermissions =
+      credentialPermissions.length > 0
+        ? intersectMachinePermissionSets(principalPermissions, credentialPermissions)
+        : principalPermissions;
+    if (tokenPermissions.some((scope) => !hasAdminPermission(currentPermissions, scope))) {
+      return null;
+    }
+
+    const tenantScope = stringArrayClaim(payload.tenant_scope);
+    const currentTenantScope = resolveMachineTenantScope(principalTenantScopes, credentialTenantScopes);
+    if (!isSubsetOfTenantScope(tenantScope, currentTenantScope)) {
+      return null;
+    }
+
     return {
-      userId: 'system',
-      authMethod: 'bearer',
-      roles: ['super_admin', 'system_admin', 'admin', 'system'],
-      tenantId: getDefaultTenantId(env),
-      permissions: ['*'], // Full access
-      hierarchyLevel: 100, // Highest level
-      mfaVerified: true, // Bearer token bypasses MFA
+      userId: principal.id,
+      actorType: 'machine',
+      actorId: principal.id,
+      principalType: principal.principalType,
+      clientId: principal.clientId,
+      credentialId: credential.id,
+      authMethod: 'machine_access_token',
+      roles: [],
+      tenantId,
+      permissions: tokenPermissions,
+      hierarchyLevel: 0,
+      mfaVerified: false,
+      clientAuthMethod:
+        payload.client_auth_method === 'private_key_jwt' ? 'private_key_jwt' : undefined,
+      credentialStrength:
+        payload.credential_strength === 'asymmetric_key' ? 'asymmetric_key' : undefined,
+      senderConstrained: payload.sender_constrained === true,
+      tenantScope,
     };
+  } catch (error) {
+    log.debug('Admin machine access token authentication failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   }
-
-  // Fallback to KEY_MANAGER_SECRET for backward compatibility
-  // KEY_MANAGER_SECRET also grants system_admin role
-  if (env.KEY_MANAGER_SECRET && constantTimeCompare(token, env.KEY_MANAGER_SECRET)) {
-    return {
-      userId: 'system',
-      authMethod: 'bearer',
-      roles: ['super_admin', 'system_admin', 'admin', 'system'],
-      tenantId: getDefaultTenantId(env),
-      permissions: ['*'],
-      hierarchyLevel: 100,
-      mfaVerified: true,
-    };
-  }
-
-  return null;
 }
 
 /**
@@ -154,7 +362,8 @@ async function authenticateBearer(
 async function authenticateSession(
   c: Context<{ Bindings: Env }>,
   sessionId: string,
-  requiredRoles: string[] = ['super_admin', 'security_admin', 'admin', 'support', 'viewer']
+  requiredRoles: string[] = ['super_admin', 'security_admin', 'admin', 'support', 'viewer'],
+  targetTenantId?: string
 ): Promise<AdminAuthContext | null> {
   try {
     const adminAdapter: DatabaseAdapter = requireAdminDatabaseAdapter(c.env, 'admin-auth');
@@ -197,42 +406,67 @@ async function authenticateSession(
       return null;
     }
 
-    // Fetch all effective roles for this admin user from admin_role_assignments
-    const rolesResult = await adminAdapter.query<{
-      name: string;
-      permissions_json: string;
-      hierarchy_level: number;
-    }>(
-      `SELECT DISTINCT r.name, r.permissions_json, r.hierarchy_level
+    const effectiveTargetTenantId = targetTenantId || session.tenant_id;
+
+    // Fetch effective roles for this Admin user. Global assignments are platform-wide.
+    // Tenant assignments only apply to the requested tenant; legacy NULL scope_id only
+    // applies to the assignment tenant for backward compatibility.
+    const rolesResult = await adminAdapter.query<AdminAuthRoleRow>(
+      `SELECT
+         r.id,
+         r.name,
+         r.permissions_json,
+         r.hierarchy_level,
+         r.inherits_from,
+         MAX(CASE WHEN ra.scope_type = 'global' THEN 1 ELSE 0 END) as has_global_scope
        FROM admin_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.admin_user_id = ?
          AND ra.tenant_id = ?
          AND r.tenant_id = ?
+         AND (
+           ra.scope_type = 'global'
+           OR (
+             ra.scope_type = 'tenant'
+             AND (
+               ra.scope_id = ?
+               OR (ra.scope_id IS NULL AND ? = ra.tenant_id)
+             )
+           )
+         )
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+       GROUP BY r.id, r.name, r.permissions_json, r.hierarchy_level, r.inherits_from
        ORDER BY r.hierarchy_level DESC`,
-      [session.admin_user_id, session.tenant_id, session.tenant_id, Math.floor(now / 1000)]
+      [
+        session.admin_user_id,
+        session.tenant_id,
+        session.tenant_id,
+        effectiveTargetTenantId,
+        effectiveTargetTenantId,
+        now,
+      ]
     );
+    const allTenantRoles = await adminAdapter.query<AdminAuthRoleRow>(
+      `SELECT id, name, permissions_json, hierarchy_level, inherits_from
+         FROM admin_roles
+        WHERE tenant_id = ?`,
+      [session.tenant_id]
+    );
+    const rolesById = new Map<string, AdminAuthRoleRow>();
+    for (const role of allTenantRoles) {
+      rolesById.set(role.id, role);
+    }
 
     const roles: string[] = [];
     const allPermissions = new Set<string>();
     let maxHierarchyLevel = 0;
+    let hasGlobalScope = false;
 
     for (const role of rolesResult) {
       roles.push(role.name);
       maxHierarchyLevel = Math.max(maxHierarchyLevel, role.hierarchy_level);
-
-      // Parse permissions JSON
-      try {
-        const perms = JSON.parse(role.permissions_json);
-        if (Array.isArray(perms)) {
-          for (const perm of perms) {
-            allPermissions.add(perm);
-          }
-        }
-      } catch {
-        // Ignore parse errors
-      }
+      hasGlobalScope = hasGlobalScope || Number(role.has_global_scope ?? 0) > 0;
+      collectInheritedRolePermissions(role, rolesById, allPermissions);
     }
 
     // Check if user has any of the required roles
@@ -268,6 +502,7 @@ async function authenticateSession(
       hierarchyLevel: maxHierarchyLevel,
       mfaVerified: Boolean(session.mfa_verified),
       sessionId: session.id,
+      tenantScope: hasGlobalScope ? ['*'] : [session.tenant_id],
     };
   } catch (error) {
     log.error('Admin session authentication failed', {}, error as Error);
@@ -403,7 +638,7 @@ function ipv4ToNumber(ip: string): number | null {
   return result >>> 0;
 }
 
-function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string {
+function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const contextTenantId = (c as any).get('tenantId') as string | undefined;
   if (contextTenantId) {
@@ -411,15 +646,25 @@ function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string {
   }
 
   const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
-  return tenantResult.success ? tenantResult.tenantId : getDefaultTenantId(c.env);
+  if (tenantResult.success) {
+    return tenantResult.tenantId;
+  }
+
+  return c.env.BASE_DOMAIN ? null : getDefaultTenantId(c.env);
+}
+
+function isPlatformAdminSessionStatusPath(path: string): boolean {
+  return path === '/api/admin/me/session' || path === '/api/admin/me/session/';
 }
 
 /**
  * Admin authentication middleware
  *
- * Supports dual authentication:
- * - Bearer Token: Authorization: Bearer <token>
+ * Supports Admin UI session authentication:
  * - Session Cookie: authrim_admin_session=<id>
+ *
+ * Static Admin API root bearer secrets are not accepted. Machine access must use
+ * scoped Admin Machine Access tokens once that path is enabled.
  *
  * Sets adminAuth context on successful authentication:
  * - c.get('adminAuth') => { userId, authMethod, roles, permissions, ... }
@@ -441,49 +686,145 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     let authContext: AdminAuthContext | null = null;
-
-    // Try Bearer token authentication first
+    const effectivePlane = isPlatformAdminSessionStatusPath(c.req.path) ? 'platform' : plane;
     const authHeader = c.req.header('Authorization');
-    if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.slice(7);
-      authContext = await authenticateBearer(c, token);
-    }
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
+    const requiresBffTransportAuth = isAdminUiBffTransportRequest(c);
+    const requestTenantIdForSession =
+      effectivePlane === 'tenant' ? resolveAdminRequestTenantId(c) : undefined;
 
-    // Try session-based authentication as fallback
-    // Supports both Cookie and X-Session-Id header (for Safari ITP compatibility)
+    // Try session-based authentication.
     if (!authContext) {
       let sessionId: string | undefined;
 
-      // First, try X-Session-Id header (for Safari/cross-site requests)
-      const sessionIdHeader = c.req.header('X-Session-Id');
-      if (sessionIdHeader) {
-        sessionId = sessionIdHeader;
-      }
-
-      // Then, try Cookie (for same-site requests)
-      if (!sessionId) {
-        const cookieHeader = c.req.header('Cookie');
-        if (cookieHeader) {
-          const sessionMatch = cookieHeader.match(/authrim_admin_session=([^;]+)/);
-          if (sessionMatch) {
-            try {
-              sessionId = decodeURIComponent(sessionMatch[1]);
-            } catch {
-              return c.json(
-                {
-                  error: 'invalid_token',
-                  error_description:
-                    'Admin authentication required. Use Bearer token or valid session.',
-                },
-                401
-              );
-            }
+      const cookieHeader = c.req.header('Cookie');
+      if (cookieHeader) {
+        const sessionMatch = cookieHeader.match(/authrim_admin_session=([^;]+)/);
+        if (sessionMatch) {
+          try {
+            sessionId = decodeURIComponent(sessionMatch[1]);
+          } catch {
+            return c.json(
+              {
+                error: 'invalid_token',
+                error_description: 'Admin authentication required. Use a valid session.',
+              },
+              401
+            );
           }
         }
       }
 
       if (sessionId) {
-        authContext = await authenticateSession(c, sessionId, requiredRoles);
+        authContext = await authenticateSession(
+          c,
+          sessionId,
+          requiredRoles,
+          requestTenantIdForSession ?? undefined
+        );
+      }
+    }
+
+    if (requiresBffTransportAuth) {
+      const tokenTenantId =
+        effectivePlane === 'tenant'
+          ? resolveAdminRequestTenantId(c)
+          : ((c as unknown as { get?: (key: string) => unknown }).get?.('tenantId') as
+              | string
+              | undefined) || getDefaultTenantId(c.env);
+      if (!tokenTenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Tenant context is required for tenant admin routes.',
+          },
+          400
+        );
+      }
+
+      if (!bearerToken) {
+        return c.json(
+          {
+            error: 'invalid_token',
+            error_description: 'Admin UI BFF transport credential is required.',
+          },
+          401
+        );
+      }
+
+      const transportAuthContext = await authenticateMachineAccessToken(
+        c,
+        bearerToken,
+        tokenTenantId
+      );
+      if (!transportAuthContext) {
+        return c.json(
+          {
+            error: 'invalid_token',
+            error_description: 'Admin UI BFF transport credential is invalid.',
+          },
+          401
+        );
+      }
+      if (transportAuthContext.principalType !== 'admin_ui_bff') {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Machine credential is not authorized for Admin UI BFF transport.',
+          },
+          403
+        );
+      }
+      if (!hasTenantScope(transportAuthContext, tokenTenantId)) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Admin UI BFF credential is not valid for this tenant.',
+          },
+          403
+        );
+      }
+      if (!authContext) {
+        return c.json(
+          {
+            error: 'invalid_token',
+            error_description: 'Admin UI BFF requests require a valid admin session.',
+          },
+          401
+        );
+      }
+
+      authContext = {
+        ...authContext,
+        transportAuth: toTransportAuthContext(transportAuthContext),
+      };
+    }
+
+    if (!authContext && bearerToken) {
+      const tokenTenantId =
+        effectivePlane === 'tenant'
+          ? resolveAdminRequestTenantId(c)
+          : ((c as unknown as { get?: (key: string) => unknown }).get?.('tenantId') as
+              | string
+              | undefined) || getDefaultTenantId(c.env);
+      if (!tokenTenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Tenant context is required for tenant admin routes.',
+          },
+          400
+        );
+      }
+      authContext = await authenticateMachineAccessToken(c, bearerToken, tokenTenantId);
+      if (authContext?.principalType === 'admin_ui_bff') {
+        return c.json(
+          {
+            error: 'invalid_token',
+            error_description: 'Admin UI BFF credential cannot be used as primary Admin API auth.',
+          },
+          401
+        );
       }
     }
 
@@ -492,16 +833,29 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
       return c.json(
         {
           error: 'invalid_token',
-          error_description: 'Admin authentication required. Use Bearer token or valid session.',
+          error_description: 'Admin authentication required. Use a valid session.',
         },
         401
       );
     }
 
-    if (plane === 'tenant') {
-      const requestTenantId = resolveAdminRequestTenantId(c);
+    if (effectivePlane === 'tenant') {
+      const requestTenantId = requestTenantIdForSession ?? resolveAdminRequestTenantId(c);
+      if (!requestTenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Tenant context is required for tenant admin routes.',
+          },
+          400
+        );
+      }
 
-      if (authContext.authMethod === 'session' && authContext.tenantId !== requestTenantId) {
+      if (
+        authContext.authMethod === 'session' &&
+        authContext.tenantId !== requestTenantId &&
+        !hasTenantScope(authContext, requestTenantId)
+      ) {
         log.warn('Admin session tenant does not match request tenant', {
           userId: authContext.userId,
           sessionTenantId: authContext.tenantId,
@@ -516,17 +870,41 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
         );
       }
 
-      if (authContext.authMethod === 'bearer') {
+      if (authContext.authMethod === 'session' && authContext.tenantId !== requestTenantId) {
         authContext = {
           ...authContext,
           tenantId: requestTenantId,
         };
       }
+
+      if (!hasTenantScope(authContext, requestTenantId)) {
+        log.warn('Admin machine token tenant scope does not allow request tenant', {
+          userId: authContext.userId,
+          requestTenantId,
+          tenantScope: authContext.tenantScope,
+        });
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Admin machine credential is not valid for this tenant.',
+          },
+          403
+        );
+      }
     }
 
     // Check IP allowlist (unless skipped)
     if (!options.skipIpCheck && authContext.authMethod === 'session') {
-      const tenantId = authContext.tenantId || getDefaultTenantId(c.env);
+      const tenantId = authContext.tenantId?.trim();
+      if (!tenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Admin session tenant context is required.',
+          },
+          400
+        );
+      }
       const ipAllowed = await isIpAllowed(c, tenantId);
       if (!ipAllowed) {
         return c.json(
@@ -576,7 +954,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
     // Set authenticated context
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (c as any).set('adminAuth', authContext);
-    // Set tenantId for downstream handlers (required for X-Session-Id header auth in Safari ITP)
+    // Set tenantId for downstream handlers
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (c as any).set('tenantId', authContext.tenantId);
     return next();

@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import {
-  createAuthContextFromHono,
+  resolveOptionalCoreAdapterFromHono,
   createReBACService,
   type Env as SharedEnv,
   type DatabaseAdapter,
@@ -12,7 +12,14 @@ import {
 export function getPolicyCoreAdapter<TBindings extends SharedEnv>(
   c: Context<{ Bindings: TBindings }>
 ): DatabaseAdapter {
-  return createAuthContextFromHono(c as unknown as Context<{ Bindings: SharedEnv }>).coreAdapter;
+  const adapter = resolveOptionalCoreAdapterFromHono(
+    c as unknown as Context<{ Bindings: SharedEnv }>,
+    'policy'
+  );
+  if (!adapter) {
+    throw new Error('Core database is required for policy storage');
+  }
+  return adapter;
 }
 
 export function createReBACStorageAdapter(adapter: DatabaseAdapter): IStorageAdapter {
@@ -38,10 +45,7 @@ export function createReBACStorageAdapter(adapter: DatabaseAdapter): IStorageAda
   };
 }
 
-export function createPolicyReBACService(
-  adapter: DatabaseAdapter,
-  cache?: unknown
-): ReBACService {
+export function createPolicyReBACService(adapter: DatabaseAdapter, cache?: unknown): ReBACService {
   const config: ReBACConfig = {
     cache_namespace: cache as unknown as ReBACConfig['cache_namespace'],
     cache_ttl: 60,

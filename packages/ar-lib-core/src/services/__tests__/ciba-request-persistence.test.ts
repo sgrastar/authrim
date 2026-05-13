@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { DatabaseAdapter, ExecuteResult, HealthStatus, TransactionContext } from '../../db/adapter';
+import type {
+  DatabaseAdapter,
+  ExecuteResult,
+  HealthStatus,
+  TransactionContext,
+} from '../../db/adapter';
 import {
   createCIBARequestPersistenceAdapter,
+  createGlobalCIBARequestPersistenceAdapter,
   type CIBARequestPersistenceAdapter,
 } from '../ciba-request-persistence';
 import type { CIBARequestMetadata } from '../../types/oidc';
@@ -359,7 +365,9 @@ describe('ciba-request-persistence', () => {
         token_issued_at: 1_700_000_100_000,
       },
     ]);
-    const persistence = createCIBARequestPersistenceAdapter(adapter) as CIBARequestPersistenceAdapter;
+    const persistence = createGlobalCIBARequestPersistenceAdapter(
+      adapter
+    ) as CIBARequestPersistenceAdapter;
 
     const metadata = await persistence.getByAuthReqId('auth_req_123');
 
@@ -393,7 +401,9 @@ describe('ciba-request-persistence', () => {
 
   it('stores and resolves login-hint based requests', async () => {
     const adapter = new InMemoryCIBAAdapter();
-    const persistence = createCIBARequestPersistenceAdapter(adapter) as CIBARequestPersistenceAdapter;
+    const persistence = createGlobalCIBARequestPersistenceAdapter(
+      adapter
+    ) as CIBARequestPersistenceAdapter;
 
     await persistence.storeRequest(
       createMetadata({
@@ -407,6 +417,20 @@ describe('ciba-request-persistence', () => {
 
     expect(metadata?.user_code).toBe('1234');
     expect(metadata?.binding_message).toBe('Approve sign-in');
+  });
+
+  it('rejects a mismatched record tenant on tenant-bound stores', async () => {
+    const adapter = new InMemoryCIBAAdapter();
+    const persistence = createCIBARequestPersistenceAdapter(
+      adapter,
+      'ciba-request-store',
+      'tenant-a'
+    );
+
+    await expect(
+      persistence!.storeRequest(createMetadata({ tenant_id: 'tenant-b' }))
+    ).rejects.toThrow('CIBA request persistence tenant mismatch');
+    expect(adapter.getAll()).toEqual([]);
   });
 
   it('marks token issuance with a timestamp', async () => {
@@ -439,7 +463,9 @@ describe('ciba-request-persistence', () => {
         token_issued_at: null,
       },
     ]);
-    const persistence = createCIBARequestPersistenceAdapter(adapter) as CIBARequestPersistenceAdapter;
+    const persistence = createGlobalCIBARequestPersistenceAdapter(
+      adapter
+    ) as CIBARequestPersistenceAdapter;
 
     await persistence.markTokenIssued('auth_req_123', 1_700_000_200_000);
 
@@ -506,7 +532,9 @@ describe('ciba-request-persistence', () => {
         token_issued_at: null,
       },
     ]);
-    const persistence = createCIBARequestPersistenceAdapter(adapter) as CIBARequestPersistenceAdapter;
+    const persistence = createGlobalCIBARequestPersistenceAdapter(
+      adapter
+    ) as CIBARequestPersistenceAdapter;
 
     const deleted = await persistence.deleteExpired(1_000);
 

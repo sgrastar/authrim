@@ -637,13 +637,13 @@ describe('Settings API v2', () => {
       it('should return client settings', async () => {
         // Create KV with client metadata (required for tenant lookup)
         const mockKV = createMockKV({
-          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'test_tenant' }),
+          'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
         });
         const { app, mockEnv } = createTestApp({ kv: mockKV });
 
         const res = await app.request(
           '/api/admin/clients/client_abc/settings',
-          { method: 'GET' },
+          { method: 'GET', headers: { 'X-Tenant-Id': 'test-tenant' } },
           mockEnv
         );
 
@@ -651,13 +651,13 @@ describe('Settings API v2', () => {
         const body = (await res.json()) as SettingsGetResult;
 
         expect(body.category).toBe('client');
-        expect(body.scope).toEqual({ type: 'client', id: 'client_abc' });
+        expect(body.scope).toEqual({ type: 'client', id: 'client_abc', tenantId: 'test-tenant' });
         expect(body.values).toBeDefined();
       });
 
       it('should reject access to clients in another tenant', async () => {
         const mockKV = createMockKV({
-          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'tenant_other' }),
+          'client:tenant-other:client_abc:metadata': JSON.stringify({ tenant_id: 'tenant-other' }),
         });
         const { app, mockEnv } = createTestApp({
           kv: mockKV,
@@ -671,7 +671,7 @@ describe('Settings API v2', () => {
 
         const res = await app.request(
           '/api/admin/clients/client_abc/settings',
-          { method: 'GET' },
+          { method: 'GET', headers: { 'X-Tenant-Id': 'tenant-other' } },
           mockEnv
         );
 
@@ -685,14 +685,14 @@ describe('Settings API v2', () => {
       it('should update client settings', async () => {
         // Create KV with client metadata (required for tenant lookup)
         const mockKV = createMockKV({
-          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'test_tenant' }),
+          'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
         });
         const { app, mockEnv } = createTestApp({ kv: mockKV });
 
         // Get current version
         const getRes = await app.request(
           '/api/admin/clients/client_abc/settings',
-          { method: 'GET' },
+          { method: 'GET', headers: { 'X-Tenant-Id': 'test-tenant' } },
           mockEnv
         );
         const getData = (await getRes.json()) as SettingsGetResult;
@@ -702,7 +702,7 @@ describe('Settings API v2', () => {
           '/api/admin/clients/client_abc/settings',
           {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' },
             body: JSON.stringify({
               ifMatch: getData.version,
               set: {

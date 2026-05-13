@@ -145,8 +145,8 @@ CREATE TABLE ciba_requests (
 );
 
 CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id);
-CREATE INDEX idx_ciba_status ON ciba_requests(status);
-CREATE INDEX idx_ciba_user ON ciba_requests(user_id);
+CREATE INDEX idx_ciba_status ON ciba_requests(tenant_id, status);
+CREATE INDEX idx_ciba_user ON ciba_requests(tenant_id, user_id);
 
 CREATE TABLE client_consent_overrides (
   id TEXT PRIMARY KEY,
@@ -187,8 +187,8 @@ CREATE TABLE oauth_client_consents (
 );
 
 CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id);
-CREATE INDEX idx_consents_expires_at_active ON oauth_client_consents(expires_at);
-CREATE INDEX idx_consents_user ON oauth_client_consents(user_id);
+CREATE INDEX idx_consents_expires_at_active ON oauth_client_consents(tenant_id, expires_at);
+CREATE INDEX idx_consents_user ON oauth_client_consents(tenant_id, user_id);
 
 CREATE TABLE web_origin_registry (
   id TEXT PRIMARY KEY,
@@ -225,7 +225,7 @@ CREATE TABLE session_clients (
 );
 
 CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id);
-CREATE INDEX idx_session_clients_last_seen_at ON session_clients(last_seen_at);
-CREATE INDEX idx_session_clients_session_id ON session_clients(session_id);
+CREATE INDEX idx_session_clients_last_seen_at ON session_clients(tenant_id, last_seen_at);
+CREATE INDEX idx_session_clients_session_id ON session_clients(tenant_id, session_id);
 
 PRAGMA foreign_keys = ON;

@@ -381,10 +381,15 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     // Use userId-based sharding (UUID, no PII in DO instance name)
-    const challengeStore = await getChallengeStoreByUserId(c.env, user.id as string);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      user.id as string,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `passkey_reg:${user.id}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'passkey_registration',
       userId: user.id as string,
       challenge: options.challenge,
@@ -434,7 +439,11 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // This prevents parallel replay attacks
     // Use userId-based sharding (UUID, no PII) - must match the shard used during options generation
-    const challengeStore = await getChallengeStoreByUserId(c.env, userId);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      userId,
+      getTenantIdFromContext(c)
+    );
 
     let challengeData: {
       challenge: string;
@@ -445,6 +454,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: `passkey_reg:${userId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'passkey_registration',
         // No challenge value needed - DO will return it
       })) as typeof challengeData;
@@ -705,10 +715,15 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     // Use challengeId-based sharding for discoverable credentials (email may not be provided)
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `passkey_auth:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'passkey_authentication',
       userId: 'unknown', // Will be determined during verification
       challenge: options.challenge,
@@ -752,12 +767,17 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // Use challengeId-based sharding - must match the shard used during options generation
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     let challenge: string;
     try {
       const challengeData = (await challengeStore.consumeChallengeRpc({
         id: `passkey_auth:${challengeId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'passkey_authentication',
       })) as { challenge: string };
       challenge = challengeData.challenge;

@@ -147,13 +147,13 @@ describe('D1AuditAdapter', () => {
       isPiiDb: false,
     });
 
-    const candidates = await adapter.listRetentionCandidates(
+    const candidates = await adapter.listTenantRetentionCandidates(
       'event',
       1_700_000_000_000,
       'tenant-1',
       50
     );
-    const deleted = await adapter.deleteByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
+    const deleted = await adapter.deleteTenantByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
 
     expect(candidates).toEqual([
       expect.objectContaining({

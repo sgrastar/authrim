@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import {
   BaseRepository,
   type BaseEntity,
@@ -113,7 +114,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
 
     const entry: AdminAuditLogEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       admin_user_id: input.admin_user_id ?? null,
       admin_email: input.admin_email ?? null,
       action: input.action,

@@ -11,14 +11,6 @@
 		editValue: number | null;
 	}
 
-	let flowState = $state<ShardState>({
-		config: null,
-		loading: true,
-		saving: false,
-		error: '',
-		editValue: null
-	});
-
 	let codeShards = $state<ShardState>({
 		config: null,
 		loading: true,
@@ -39,21 +31,8 @@
 
 	// Load all shard configurations
 	onMount(async () => {
-		await Promise.all([loadFlowStateShards(), loadCodeShards(), loadRevocationShards()]);
+		await Promise.all([loadCodeShards(), loadRevocationShards()]);
 	});
-
-	async function loadFlowStateShards() {
-		flowState.loading = true;
-		flowState.error = '';
-		try {
-			flowState.config = await adminInfrastructureAPI.getFlowStateShards();
-			flowState.editValue = flowState.config.current;
-		} catch (err) {
-			flowState.error = err instanceof Error ? err.message : 'Failed to load';
-		} finally {
-			flowState.loading = false;
-		}
-	}
 
 	async function loadCodeShards() {
 		codeShards.loading = true;
@@ -78,25 +57,6 @@
 			revocationShards.error = err instanceof Error ? err.message : 'Failed to load';
 		} finally {
 			revocationShards.loading = false;
-		}
-	}
-
-	async function saveFlowStateShards() {
-		if (flowState.editValue === null || flowState.editValue === flowState.config?.current) return;
-
-		flowState.saving = true;
-		flowState.error = '';
-		try {
-			await adminInfrastructureAPI.updateFlowStateShards(flowState.editValue);
-			successMessage = 'Flow State Shards updated successfully';
-			await loadFlowStateShards();
-			setTimeout(() => {
-				successMessage = '';
-			}, 3000);
-		} catch (err) {
-			flowState.error = err instanceof Error ? err.message : 'Failed to save';
-		} finally {
-			flowState.saving = false;
 		}
 	}
 
@@ -185,57 +145,6 @@
 
 	<!-- Shard Configuration Cards -->
 	<div class="shard-cards">
-		<!-- Flow State Shards -->
-		<div class="shard-config-card">
-			<div class="shard-config-content">
-				<div class="shard-config-info">
-					<div class="shard-config-header">
-						<h3>Flow State Shards</h3>
-						{#if flowState.config}
-							<span class={getSourceBadgeClass(flowState.config.source)}>
-								{getSourceBadgeText(flowState.config.source)}
-							</span>
-						{/if}
-					</div>
-					<p class="shard-config-description">
-						Controls Flow Engine session distribution. Used for login/consent flows.
-						<span class="shard-config-range">(Default: 32, Range: 1-256)</span>
-					</p>
-					{#if flowState.error}
-						<p class="shard-config-error">{flowState.error}</p>
-					{/if}
-				</div>
-				<div class="shard-config-controls">
-					{#if flowState.loading}
-						<span class="text-secondary">Loading...</span>
-					{:else}
-						<input
-							type="number"
-							min="1"
-							max="256"
-							bind:value={flowState.editValue}
-							disabled={flowState.saving || flowState.config?.source === 'env'}
-							class="shard-input"
-						/>
-						<button
-							onclick={saveFlowStateShards}
-							disabled={flowState.saving ||
-								flowState.editValue === flowState.config?.current ||
-								flowState.config?.source === 'env'}
-							class="btn btn-primary"
-						>
-							{flowState.saving ? 'Saving...' : 'Save'}
-						</button>
-					{/if}
-				</div>
-			</div>
-			{#if flowState.config?.source === 'env'}
-				<p class="env-lock-notice">
-					Locked by environment variable. To change, update AUTHRIM_FLOW_STATE_SHARDS and redeploy.
-				</p>
-			{/if}
-		</div>
-
 		<!-- Code Shards -->
 		<div class="shard-config-card">
 			<div class="shard-config-content">

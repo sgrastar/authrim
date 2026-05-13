@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { Button, Input, Alert } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { SocialProvider } from '$lib/api/login-methods';
+	import type { ExternalProvider } from '$lib/api/login-methods';
 	import { sanitizeColor } from '$lib/utils/url-validation';
 
 	interface Props {
 		passkeyEnabled: boolean;
 		emailCodeEnabled: boolean;
-		socialEnabled: boolean;
-		socialProviders: SocialProvider[];
+		externalEnabled: boolean;
+		externalProviders: ExternalProvider[];
 		passkeyLoading?: boolean;
 		emailCodeLoading?: boolean;
 		externalIdpLoading?: string | null;
@@ -16,15 +16,15 @@
 		email?: string;
 		onPasskeyLogin?: () => void;
 		onEmailCodeSend?: (email: string) => void;
-		onExternalLogin?: (providerId: string) => void;
+		onExternalLogin?: (provider: ExternalProvider) => void;
 		onErrorDismiss?: () => void;
 	}
 
 	let {
 		passkeyEnabled,
 		emailCodeEnabled,
-		socialEnabled,
-		socialProviders,
+		externalEnabled,
+		externalProviders,
 		passkeyLoading = false,
 		emailCodeLoading = false,
 		externalIdpLoading = null,
@@ -45,8 +45,10 @@
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
 
-	function getProviderIcon(provider: SocialProvider): string {
+	function getProviderIcon(provider: ExternalProvider): string {
 		if (provider.iconUrl) return provider.iconUrl;
+		if (provider.type === 'saml') return 'i-heroicons-building-office-2';
+		if (provider.type === 'vc') return 'i-heroicons-identification';
 		const name = (provider.name || '').toLowerCase();
 		if (name.includes('google')) return 'i-logos-google-icon';
 		if (name.includes('github')) return 'i-logos-github-icon';
@@ -56,7 +58,7 @@
 		return 'i-heroicons-arrow-right-end-on-rectangle';
 	}
 
-	function getProviderButtonText(provider: SocialProvider): string {
+	function getProviderButtonText(provider: ExternalProvider): string {
 		if (provider.buttonText) return provider.buttonText;
 		return $LL.login_continueWith({ provider: provider.name });
 	}
@@ -134,8 +136,8 @@
 	</Button>
 {/if}
 
-<!-- Social Login Section -->
-{#if socialEnabled && socialProviders.length > 0}
+<!-- External Login Section -->
+{#if externalEnabled && externalProviders.length > 0}
 	<div class="auth-divider" style="margin: 24px 0;">
 		<div class="auth-divider__line"></div>
 		<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -143,7 +145,7 @@
 	</div>
 
 	<div class="space-y-3">
-		{#each socialProviders as provider (provider.id)}
+		{#each externalProviders as provider (provider.id)}
 			{@const safeColor = sanitizeColor(provider.buttonColor)}
 			<Button
 				variant="secondary"
@@ -152,7 +154,7 @@
 				disabled={passkeyLoading ||
 					emailCodeLoading ||
 					(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
-				onclick={() => onExternalLogin?.(provider.id)}
+				onclick={() => onExternalLogin?.(provider)}
 				style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 			>
 				<div class="{getProviderIcon(provider)} h-5 w-5"></div>

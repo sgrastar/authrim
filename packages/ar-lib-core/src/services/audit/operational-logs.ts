@@ -253,6 +253,7 @@ export async function getOperationalLog(
   if (entry.detail_object_catalog_id && options.objectStorage) {
     const record = await getObjectCatalogObjectRecord(
       adapter,
+      tenantId,
       entry.detail_object_catalog_id,
       'canonical_json',
       0

@@ -26,6 +26,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 function createContext() {
   return {
+    req: {
+      path: '/session/status',
+      raw: new Request('https://issuer.example.com/session/status'),
+      header: vi.fn(() => undefined),
+    },
+    get: vi.fn((key: string) => (key === 'tenantId' ? 'default' : undefined)),
     env: {},
     json: (payload: unknown, status = 200) =>
       new Response(JSON.stringify(payload), {

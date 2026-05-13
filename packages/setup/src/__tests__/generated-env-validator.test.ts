@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
-import { getEnabledComponents, type WorkerComponent } from '../core/naming.js';
+import { WORKER_COMPONENTS } from '../core/naming.js';
 import {
   buildResourceIdsFromLock,
   generateWranglerConfig,
@@ -27,6 +27,11 @@ async function writeGeneratedEnvironment(
 ) {
   const env = 'portable';
   const config = createDefaultConfig(env);
+  config.urls = {
+    api: { custom: null, auto: 'https://portable-ar-router.workers.dev' },
+    loginUi: { custom: null, auto: 'https://portable-ar-login-ui.workers.dev', sameAsApi: false },
+    adminUi: { custom: null, auto: 'https://portable-ar-admin-ui.workers.dev', sameAsApi: false },
+  };
   if (options?.externalStorageDefault) {
     config.profiles.defaults.storage = 'builtin:storage:external-postgres';
   }
@@ -77,34 +82,14 @@ async function writeGeneratedEnvironment(
   await writeFile(envPaths.lock, JSON.stringify(lock, null, 2), 'utf-8');
 
   const resourceIds = buildResourceIdsFromLock(lock);
-  const enabledComponents = Array.from(
-    getEnabledComponents({
-      saml: config.components.saml,
-      async: config.components.async,
-      vc: config.components.vc,
-      bridge: config.components.bridge,
-      policy: config.components.policy,
-    })
-  );
-
-  for (const component of enabledComponents) {
+  for (const component of WORKER_COMPONENTS) {
     const packageDir = join(root, 'packages', component);
     await mkdir(packageDir, { recursive: true });
     const toml = toToml(generateWranglerConfig(component, config, resourceIds), env);
     await writeFile(join(packageDir, 'wrangler.toml'), toml, 'utf-8');
   }
 
-  const coreComponents: WorkerComponent[] = [
-    'ar-lib-core',
-    'ar-discovery',
-    'ar-auth',
-    'ar-token',
-    'ar-userinfo',
-    'ar-management',
-    'ar-router',
-  ];
-
-  for (const component of coreComponents) {
+  for (const component of WORKER_COMPONENTS) {
     const toml = toToml(generateWranglerConfig(component, config, resourceIds), env);
     await writeFile(join(envPaths.wrangler, `${component}.toml`), toml, 'utf-8');
   }

@@ -133,6 +133,21 @@ describe('migration seed SQL portability', () => {
     }
   });
 
+  it('keeps oauth_clients device secret policy columns in fresh schemas', () => {
+    const migrationFiles = [
+      new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
+      new URL('../../migrations/000_fresh_schema.sql', import.meta.url),
+    ];
+
+    for (const fileUrl of migrationFiles) {
+      const sql = readFileSync(fileUrl, 'utf-8');
+      expect(sql).toContain('device_secret_revoke_enabled INTEGER');
+      expect(sql).toContain('device_secret_revoke_trust_groups TEXT');
+      expect(sql).toContain('device_secret_introspection_enabled INTEGER');
+      expect(sql).toContain('device_secret_introspection_trust_groups TEXT');
+    }
+  });
+
   it('replaces backend-specific epoch helpers in current and setup migration assets', () => {
     const migrationFiles = [
       new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
@@ -314,6 +329,89 @@ INSERT INTO session_clients (
 `
         )
       ).toThrow();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('restores oauth_clients device secret policy columns after tenant-scoped rebuild', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) {
+      return;
+    }
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-oauth-client-device-policy-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `
+PRAGMA foreign_keys = ON;
+CREATE TABLE users_core (id TEXT PRIMARY KEY);
+CREATE TABLE consent_statements (id TEXT PRIMARY KEY);
+CREATE TABLE sessions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default');
+`
+      );
+
+      const tenantScopedMigrationSql = readFileSync(
+        new URL('../../../../migrations/077_oauth_client_tenant_scoped_identity.sql', import.meta.url),
+        'utf-8'
+      );
+      const restoreDevicePolicySql = readFileSync(
+        new URL(
+          '../../../../migrations/085_restore_oauth_client_device_secret_policy_columns.sql',
+          import.meta.url
+        ),
+        'utf-8'
+      );
+
+      runSqlite(sqlite3Path, dbPath, tenantScopedMigrationSql);
+      runSqlite(sqlite3Path, dbPath, restoreDevicePolicySql);
+
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `
+PRAGMA foreign_keys = ON;
+INSERT INTO oauth_clients (
+  tenant_id,
+  client_id,
+  client_name,
+  redirect_uris,
+  grant_types,
+  response_types,
+  device_secret_revoke_enabled,
+  device_secret_revoke_trust_groups,
+  device_secret_introspection_enabled,
+  device_secret_introspection_trust_groups,
+  created_at,
+  updated_at
+) VALUES (
+  'tenant-a',
+  'device-policy-client',
+  'Device Policy Client',
+  '[]',
+  '[]',
+  '[]',
+  1,
+  '["trusted"]',
+  1,
+  '["trusted"]',
+  1,
+  1
+);
+`
+      );
+
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT device_secret_revoke_enabled || ':' || device_secret_introspection_enabled FROM oauth_clients WHERE tenant_id = 'tenant-a' AND client_id = 'device-policy-client';"
+        )
+      ).toBe('1:1');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

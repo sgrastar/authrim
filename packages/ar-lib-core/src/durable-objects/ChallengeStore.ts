@@ -33,6 +33,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { createLogger, type Logger } from '../utils/logger';
+import { isValidTenantIdentifier } from '../utils/tenant-request-policy';
 
 /**
  * Challenge types
@@ -67,6 +68,7 @@ export type ChallengeType =
  */
 export interface Challenge {
   id: string;
+  tenantId: string;
   type: ChallengeType;
   userId: string;
   challenge: string; // The actual challenge/token value
@@ -83,6 +85,7 @@ export interface Challenge {
  */
 export interface StoreChallengeRequest {
   id: string; // Unique challenge ID (e.g., userId for passkey, token for magic link)
+  tenantId: string;
   type: ChallengeType;
   userId: string;
   challenge: string;
@@ -92,11 +95,18 @@ export interface StoreChallengeRequest {
   metadata?: Record<string, unknown>;
 }
 
+function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
+  if (typeof tenantId !== 'string' || !isValidTenantIdentifier(tenantId)) {
+    throw new Error('Invalid tenant ID');
+  }
+}
+
 /**
  * Consume challenge request
  */
 export interface ConsumeChallengeRequest {
   id: string;
+  tenantId: string;
   type: ChallengeType;
   challenge?: string; // Optional: If provided, must match stored challenge
 }
@@ -278,9 +288,12 @@ export class ChallengeStore extends DurableObject<Env> {
    * Store a new challenge
    */
   async storeChallenge(request: StoreChallengeRequest): Promise<void> {
+    assertValidTenantId(request.tenantId);
+
     const now = Date.now();
     const challenge: Challenge = {
       id: request.id,
+      tenantId: request.tenantId,
       type: request.type,
       userId: request.userId,
       challenge: request.challenge,
@@ -312,6 +325,8 @@ export class ChallengeStore extends DurableObject<Env> {
    * If challenge parameter is provided, it must match the stored value.
    */
   async consumeChallenge(request: ConsumeChallengeRequest): Promise<ConsumeChallengeResponse> {
+    assertValidTenantId(request.tenantId);
+
     // 1. Check in-memory cache (hot)
     let challenge = this.challengeCache.get(request.id);
 
@@ -335,6 +350,10 @@ export class ChallengeStore extends DurableObject<Env> {
     // Type mismatch
     if (challenge.type !== request.type) {
       throw new Error('Challenge type mismatch');
+    }
+
+    if (challenge.tenantId !== request.tenantId) {
+      throw new Error('Challenge tenant mismatch');
     }
 
     // Already consumed

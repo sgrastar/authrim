@@ -9,12 +9,14 @@
  * import { createAuthContextFromHono, createPIIContextFromHono } from '@authrim/ar-lib-core';
  *
  * app.get('/authorize', async (c) => {
+ *   // Requires requestContextMiddleware, or pass an explicit tenant ID.
  *   const ctx = createAuthContextFromHono(c);
  *   const session = await ctx.repositories.session.findById(sessionId);
  *   // ...
  * });
  *
  * app.get('/userinfo', async (c) => {
+ *   // Requires requestContextMiddleware, or pass an explicit tenant ID.
  *   const ctx = createPIIContextFromHono(c);
  *   const userPII = await ctx.piiRepositories.userPII.findByUserId(userId);
  *   // ...
@@ -49,7 +51,19 @@ import type { ResolvedUserStoreRuntimeSources } from '../services/user-store-run
 function getTenantIdFromHonoContext(c: HonoContext<{ Bindings: Env }>): string | undefined {
   // Hono's generic context type does not know about middleware-injected values.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((c as any).get?.('tenantId') as string | undefined) || undefined;
+  return ((c as any).get?.('tenantId') as string | undefined)?.trim() || undefined;
+}
+
+function resolveRequiredTenantId(
+  c: HonoContext<{ Bindings: Env }>,
+  tenantId: string | undefined,
+  operation: string
+): string {
+  const resolvedTenantId = tenantId?.trim() || getTenantIdFromHonoContext(c);
+  if (!resolvedTenantId) {
+    throw new Error(`${operation} requires tenant context`);
+  }
+  return resolvedTenantId;
 }
 
 function getRuntimeUserStoreSourcesFromHonoContext(
@@ -86,14 +100,14 @@ export function resolveOptionalCoreAdapterFromHono(
  * - /revoke
  *
  * @param c - Hono context
- * @param tenantId - Optional tenant ID (default: 'default')
+ * @param tenantId - Optional explicit tenant ID. If omitted, request context tenant is required.
  * @returns AuthContext with core repositories
  */
 export function createAuthContextFromHono(
   c: HonoContext<{ Bindings: Env }>,
   tenantId?: string
 ): AuthContext {
-  const resolvedTenantId = tenantId || getTenantIdFromHonoContext(c) || 'default';
+  const resolvedTenantId = resolveRequiredTenantId(c, tenantId, 'createAuthContextFromHono');
   const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
   const coreAdapter = ensureDatabaseAdapter(runtimeSources?.coreDb ?? c.env.DB, 'core');
 
@@ -123,7 +137,7 @@ export function createAuthContextFromHono(
  * - GDPR data export/deletion
  *
  * @param c - Hono context
- * @param tenantId - Optional tenant ID (default: 'default')
+ * @param tenantId - Optional explicit tenant ID. If omitted, request context tenant is required.
  * @returns PIIContext with both core and PII repositories
  * @throws Error if DB_PII is not configured
  */
@@ -131,7 +145,7 @@ export function createPIIContextFromHono(
   c: HonoContext<{ Bindings: Env }>,
   tenantId?: string
 ): PIIContext {
-  const resolvedTenantId = tenantId || getTenantIdFromHonoContext(c) || 'default';
+  const resolvedTenantId = resolveRequiredTenantId(c, tenantId, 'createPIIContextFromHono');
   const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
   const piiSource = runtimeSources?.piiDb ?? c.env.DB_PII ?? c.env.DB;
 

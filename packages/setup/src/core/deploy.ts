@@ -27,6 +27,16 @@ import {
 import { DISABLED_API_BACKEND_URL } from './ui-deployment.js';
 import { generateUiWorkersWranglerConfig } from './wrangler.js';
 import { getPackageVersion } from './version.js';
+import { getSecretNamesForWorker, getSecretTargetWorkers } from './secrets.js';
+import type { AdminUiBffWorkerSecrets } from './admin-machine-access.js';
+
+export {
+  DEFAULT_SECRET_TARGET_WORKERS,
+  getSecretNamesForWorker,
+  getSecretTargetWorkers,
+  SECRET_UPLOAD_PLAN,
+  type SecretName,
+} from './secrets.js';
 
 // =============================================================================
 // Validation Helpers
@@ -102,21 +112,6 @@ const UI_BUILD_ENV_KEYS = [
   'PUBLIC_LOGIN_UI_CLIENT_ID',
   'API_BACKEND_URL',
 ] as const;
-
-export const DEFAULT_SECRET_TARGET_WORKERS: WorkerComponent[] = [
-  'ar-discovery',
-  'ar-auth',
-  'ar-token',
-  'ar-userinfo',
-  'ar-management',
-  'ar-lib-core',
-  'ar-saml',
-];
-
-export function getSecretTargetWorkers(workers?: WorkerComponent[]): WorkerComponent[] {
-  const requestedWorkers = workers && workers.length > 0 ? workers : DEFAULT_SECRET_TARGET_WORKERS;
-  return requestedWorkers.filter((component) => DEFAULT_SECRET_TARGET_WORKERS.includes(component));
-}
 
 /**
  * Prepare build-time env for UI Workers.
@@ -509,7 +504,14 @@ export async function uploadSecrets(
       continue;
     }
 
-    for (const [secretName, secretValue] of Object.entries(secrets)) {
+    const componentSecretNames = getSecretNamesForWorker(component);
+
+    for (const secretName of componentSecretNames) {
+      const secretValue = secrets[secretName];
+      if (secretValue === undefined) {
+        continue;
+      }
+
       try {
         onProgress?.(`Uploading ${secretName} to ${workerName}...`);
 
@@ -574,6 +576,8 @@ export interface UiWorkerDeployOptions extends DeployOptions {
   runtimeApiBackendUrl?: string;
   /** Service Binding name for UI Worker -> router communication (e.g., 'AR_ROUTER') */
   serviceBindingName?: string;
+  /** Optional Admin UI BFF machine credentials uploaded as UI Worker secrets */
+  adminUiBffSecrets?: AdminUiBffWorkerSecrets;
 }
 
 /**
@@ -596,6 +600,7 @@ export async function deployUiWorkerComponent(
     uiEnvConfig,
     runtimeApiBackendUrl,
     serviceBindingName,
+    adminUiBffSecrets,
   } = options;
 
   // Security: Validate environment name
@@ -727,14 +732,10 @@ export async function deployUiWorkerComponent(
 
     const uiWorkerName = projectName || `${env}-${component}`;
 
-    const result = await execa(
-      'npx',
-      ['wrangler', 'deploy', '--config', 'wrangler.toml'],
-      {
-        cwd: uiDir,
-        reject: false, // Don't throw on non-zero exit
-      }
-    );
+    const result = await execa('npx', ['wrangler', 'deploy', '--config', 'wrangler.toml'], {
+      cwd: uiDir,
+      reject: false, // Don't throw on non-zero exit
+    });
 
     if (result.exitCode !== 0) {
       // Get meaningful error from stderr or stdout
@@ -750,6 +751,17 @@ export async function deployUiWorkerComponent(
     }
 
     onProgress?.(`✓ ${component} deployed as UI Worker: ${uiWorkerName}`);
+
+    if (component === 'ar-admin-ui' && adminUiBffSecrets) {
+      for (const [secretName, secretValue] of Object.entries(adminUiBffSecrets)) {
+        onProgress?.(`Uploading ${secretName} to ${uiWorkerName}...`);
+        await execa('npx', ['wrangler', 'secret', 'put', secretName, '--env', env], {
+          cwd: uiDir,
+          input: secretValue,
+        });
+        onProgress?.(`  ✓ ${secretName} uploaded`);
+      }
+    }
 
     return {
       component,
@@ -797,6 +809,7 @@ export async function deployAllUiWorkers(
           | 'uiEnvConfig'
           | 'uiEnvPath'
           | 'serviceBindingName'
+          | 'adminUiBffSecrets'
         >
       >
     >;

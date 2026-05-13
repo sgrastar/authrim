@@ -109,6 +109,8 @@ export async function runGeneratedAuthFlowSmoke(
     env: target.env,
     adminSecret: options.adminSecret,
     adminSecretPath: options.adminSecretPath,
+    baseUrl: target.baseUrl,
+    tenantId: target.tenantId,
   });
 
   let temporaryClient: RegisteredSmokeClient | null = null;

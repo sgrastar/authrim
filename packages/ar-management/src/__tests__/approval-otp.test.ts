@@ -22,6 +22,7 @@ function createMockEnv() {
   const challengeStore = {
     storeChallengeRpc: vi.fn(async (request: {
       id: string;
+      tenantId: string;
       type: Challenge['type'];
       userId: string;
       challenge: string;
@@ -31,6 +32,7 @@ function createMockEnv() {
     }) => {
       challenge = {
         id: request.id,
+        tenantId: request.tenantId,
         type: request.type,
         userId: request.userId,
         challenge: request.challenge,
@@ -43,9 +45,12 @@ function createMockEnv() {
       return { success: true };
     }),
     getChallengeRpc: vi.fn(async () => challenge),
-    consumeChallengeRpc: vi.fn(async (request: { id: string; type: Challenge['type']; challenge?: string }) => {
+    consumeChallengeRpc: vi.fn(async (request: { id: string; tenantId: string; type: Challenge['type']; challenge?: string }) => {
       if (!challenge || challenge.id !== request.id || challenge.type !== request.type || challenge.consumed) {
         throw new Error('Challenge not found or already consumed');
+      }
+      if (challenge.tenantId !== request.tenantId) {
+        throw new Error('Challenge tenant mismatch');
       }
       if (request.challenge && request.challenge !== challenge.challenge) {
         throw new Error('Challenge value mismatch');
@@ -95,6 +100,7 @@ describe('approval otp challenge', () => {
   it('does not consume the OTP after a single invalid attempt', async () => {
     const { env, challengeStore, getChallenge } = createMockEnv();
     const issued = await issueApprovalOtpChallenge(env, {
+      tenantId: 'tenant-a',
       artifactId: 'apc_1',
       method: 'email_otp',
       target: 'person@example.com',
@@ -103,6 +109,7 @@ describe('approval otp challenge', () => {
 
     await expect(
       verifyApprovalOtpChallenge(env, {
+        tenantId: 'tenant-a',
         artifactId: 'apc_1',
         code: '000000',
         target: 'person@example.com',
@@ -114,6 +121,7 @@ describe('approval otp challenge', () => {
     expect(getChallenge()?.consumed).toBe(false);
 
     const verification = await verifyApprovalOtpChallenge(env, {
+      tenantId: 'tenant-a',
       artifactId: 'apc_1',
       code: issued.code,
       target: 'person@example.com',
@@ -127,6 +135,7 @@ describe('approval otp challenge', () => {
   it('consumes the OTP after too many invalid attempts', async () => {
     const { env, challengeStore, getChallenge } = createMockEnv();
     await issueApprovalOtpChallenge(env, {
+      tenantId: 'tenant-a',
       artifactId: 'apc_2',
       method: 'sms_otp',
       target: '+819012345678',
@@ -136,6 +145,7 @@ describe('approval otp challenge', () => {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       await expect(
         verifyApprovalOtpChallenge(env, {
+          tenantId: 'tenant-a',
           artifactId: 'apc_2',
           code: '111111',
           target: '+819012345678',

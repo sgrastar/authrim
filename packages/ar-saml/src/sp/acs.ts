@@ -15,7 +15,6 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
-  getTenantIdFromContext,
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   getLogger,
@@ -34,6 +33,7 @@ import {
   // Audit Log
   createAuditLog,
 } from '@authrim/ar-lib-core';
+import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   parseXml,
   findElement,
@@ -55,7 +55,7 @@ import { getIdPConfigByEntityId } from '../admin/providers';
 export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
-  const tenantId = getTenantIdFromContext(c);
+  const tenantId = resolveSAMLTenantIdFromContext(c);
   const issuerUrl = buildIssuerUrl(env, tenantId);
 
   try {
@@ -139,6 +139,8 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     if (assertion.conditions?.oneTimeUse) {
       const isFirstUse = await checkAndRecordOneTimeUse(
         env,
+        tenantId,
+        issuer,
         assertion.id,
         assertion.conditions.notOnOrAfter
       );
@@ -244,7 +246,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     }
 
     // Publish SAML authentication failure event (non-blocking)
-    const failureTenantId = getTenantIdFromContext(c);
+    const failureTenantId = resolveSAMLTenantIdFromContext(c);
     publishEvent(c, {
       type: AUTH_EVENTS.SAML_FAILED,
       tenantId: failureTenantId,
@@ -635,12 +637,14 @@ function validateSubjectConfirmation(
  */
 async function checkAndRecordOneTimeUse(
   env: Env,
+  tenantId: string,
+  idpEntityId: string,
   assertionId: string,
   notOnOrAfter?: string
 ): Promise<boolean> {
   // Use NONCE_STORE KV for tracking used assertions
   const kvStore = env.NONCE_STORE;
-  const key = `saml:assertion:${assertionId}`;
+  const key = buildOneTimeUseAssertionReplayKey(tenantId, idpEntityId, assertionId);
 
   // Check if assertion ID has been used
   const existingEntry = await kvStore.get(key);
@@ -667,6 +671,23 @@ async function checkAndRecordOneTimeUse(
   await kvStore.put(key, Date.now().toString(), { expirationTtl });
 
   return true;
+}
+
+function buildOneTimeUseAssertionReplayKey(
+  tenantId: string,
+  idpEntityId: string,
+  assertionId: string
+): string {
+  // Assertion IDs are issuer-controlled, so replay markers must be scoped by tenant and IdP.
+  return [
+    'saml:assertion',
+    'tenant',
+    encodeURIComponent(tenantId),
+    'idp',
+    encodeURIComponent(idpEntityId),
+    'id',
+    encodeURIComponent(assertionId),
+  ].join(':');
 }
 
 /**

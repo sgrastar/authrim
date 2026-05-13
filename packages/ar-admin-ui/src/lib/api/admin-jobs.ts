@@ -33,6 +33,8 @@ export type JobType =
 	| 'report_generation'
 	| 'org_bulk_members';
 
+export type ResultDelivery = 'auto' | 'inline' | 'artifact';
+
 /**
  * Job status
  */
@@ -56,6 +58,8 @@ export interface JobProgress {
 	succeeded?: number;
 	failed?: number;
 	skipped?: number;
+	cursor?: string;
+	batch_size?: number;
 }
 
 /**
@@ -114,6 +118,10 @@ export interface Job {
 	created_at: string;
 	started_at?: string;
 	completed_at?: string;
+	next_run_at?: string;
+	attempts: number;
+	max_attempts: number;
+	dead_lettered_at?: string;
 	parameters?: Record<string, unknown>;
 }
 
@@ -133,6 +141,27 @@ export interface UserImportOptions {
 	skip_header?: boolean;
 	on_duplicate?: 'skip' | 'update' | 'error';
 	validate_only?: boolean;
+}
+
+export interface JobTypeDefinition {
+	job_type: string;
+	type: JobType;
+	processor_status: 'scheduled' | 'inline' | 'disabled';
+	creatable_from_admin_api: boolean;
+	result_object_class: string | null;
+	supported_result_delivery: ResultDelivery[];
+	create_endpoint: string | null;
+	notes: string | null;
+}
+
+export interface ResultDeliveryOption {
+	value: ResultDelivery;
+	description: string;
+}
+
+export interface JobTypesResponse {
+	result_delivery_options: ResultDeliveryOption[];
+	job_types: JobTypeDefinition[];
 }
 
 /**
@@ -203,7 +232,10 @@ function normalizeJobType(type: ApiJobType | JobType | string | undefined): JobT
 	return JOB_TYPE_FROM_API[type as ApiJobType] || (type as JobType);
 }
 
-function normalizeProgress(raw: Record<string, unknown> | undefined, status: JobStatus): JobProgress | undefined {
+function normalizeProgress(
+	raw: Record<string, unknown> | undefined,
+	status: JobStatus
+): JobProgress | undefined {
 	if (!raw) {
 		return undefined;
 	}
@@ -227,7 +259,9 @@ function normalizeProgress(raw: Record<string, unknown> | undefined, status: Job
 		stage: typeof raw.stage === 'string' ? raw.stage : undefined,
 		succeeded: typeof raw.succeeded === 'number' ? raw.succeeded : undefined,
 		failed: typeof raw.failed === 'number' ? raw.failed : undefined,
-		skipped: typeof raw.skipped === 'number' ? raw.skipped : undefined
+		skipped: typeof raw.skipped === 'number' ? raw.skipped : undefined,
+		cursor: typeof raw.cursor === 'string' ? raw.cursor : undefined,
+		batch_size: typeof raw.batch_size === 'number' ? raw.batch_size : undefined
 	};
 }
 
@@ -252,13 +286,28 @@ function normalizeResult(raw: Record<string, unknown> | undefined): JobResult | 
 		failures: rawFailures.map((failure) => {
 			const value = failure as Record<string, unknown>;
 			return {
-				line: typeof value.row === 'number' ? value.row : typeof value.line === 'number' ? value.line : undefined,
-				item: typeof value.email === 'string' ? value.email : typeof value.item === 'string' ? value.item : undefined,
+				line:
+					typeof value.row === 'number'
+						? value.row
+						: typeof value.line === 'number'
+							? value.line
+							: undefined,
+				item:
+					typeof value.email === 'string'
+						? value.email
+						: typeof value.item === 'string'
+							? value.item
+							: undefined,
 				error:
 					(typeof value.message === 'string' && value.message) ||
 					(typeof value.error === 'string' && value.error) ||
 					'Unknown error',
-				code: typeof value.error_code === 'string' ? value.error_code : typeof value.code === 'string' ? value.code : undefined
+				code:
+					typeof value.error_code === 'string'
+						? value.error_code
+						: typeof value.code === 'string'
+							? value.code
+							: undefined
 			};
 		}),
 		logs: rawLogs.map((entry) => {
@@ -291,7 +340,9 @@ function normalizeJob(raw: Record<string, unknown>): Job {
 	return {
 		id: String(raw.id ?? raw.job_id ?? ''),
 		tenant_id: String(raw.tenant_id ?? ''),
-		type: normalizeJobType((raw.type as string | undefined) ?? (raw.job_type as string | undefined)),
+		type: normalizeJobType(
+			(raw.type as string | undefined) ?? (raw.job_type as string | undefined)
+		),
 		status,
 		progress: normalizeProgress(raw.progress as Record<string, unknown> | undefined, status),
 		result: normalizeResult(raw.result as Record<string, unknown> | undefined),
@@ -299,7 +350,34 @@ function normalizeJob(raw: Record<string, unknown>): Job {
 		created_at: String(raw.created_at ?? ''),
 		started_at: typeof raw.started_at === 'string' ? raw.started_at : undefined,
 		completed_at: typeof raw.completed_at === 'string' ? raw.completed_at : undefined,
+		next_run_at: typeof raw.next_run_at === 'string' ? raw.next_run_at : undefined,
+		attempts: Number(raw.attempts ?? 0),
+		max_attempts: Number(raw.max_attempts ?? 3),
+		dead_lettered_at: typeof raw.dead_lettered_at === 'string' ? raw.dead_lettered_at : undefined,
 		parameters: (raw.parameters as Record<string, unknown> | undefined) ?? undefined
+	};
+}
+
+function normalizeJobTypeDefinition(raw: Record<string, unknown>): JobTypeDefinition {
+	const apiType = String(raw.job_type ?? '');
+	return {
+		job_type: apiType,
+		type: normalizeJobType(apiType),
+		processor_status:
+			raw.processor_status === 'inline' || raw.processor_status === 'disabled'
+				? raw.processor_status
+				: 'scheduled',
+		creatable_from_admin_api: raw.creatable_from_admin_api === true,
+		result_object_class:
+			typeof raw.result_object_class === 'string' ? raw.result_object_class : null,
+		supported_result_delivery: Array.isArray(raw.supported_result_delivery)
+			? raw.supported_result_delivery.filter(
+					(value): value is ResultDelivery =>
+						value === 'auto' || value === 'inline' || value === 'artifact'
+				)
+			: [],
+		create_endpoint: typeof raw.create_endpoint === 'string' ? raw.create_endpoint : null,
+		notes: typeof raw.notes === 'string' ? raw.notes : null
 	};
 }
 
@@ -317,6 +395,45 @@ export interface ListResponse<T> {
  */
 export const adminJobsAPI = {
 	/**
+	 * List supported job types and result delivery modes
+	 */
+	async listTypes(): Promise<JobTypesResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/types`, {
+			method: 'GET',
+			credentials: 'include',
+			headers: {
+				'Content-Type': 'application/json'
+			}
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list job types');
+		}
+
+		const payload = (await response.json()) as {
+			result_delivery_options?: Array<Record<string, unknown>>;
+			job_types?: Array<Record<string, unknown>>;
+		};
+
+		return {
+			result_delivery_options: Array.isArray(payload.result_delivery_options)
+				? payload.result_delivery_options
+						.map((option) => ({
+							value: option.value,
+							description: typeof option.description === 'string' ? option.description : ''
+						}))
+						.filter(
+							(option): option is ResultDeliveryOption =>
+								option.value === 'auto' || option.value === 'inline' || option.value === 'artifact'
+						)
+				: [],
+			job_types: Array.isArray(payload.job_types)
+				? payload.job_types.map(normalizeJobTypeDefinition)
+				: []
+		};
+	},
+
+	/**
 	 * List all jobs
 	 */
 	async list(params?: {
@@ -330,7 +447,8 @@ export const adminJobsAPI = {
 		if (params?.cursor) searchParams.set('cursor', params.cursor);
 
 		const filters: string[] = [];
-		if (params?.status) filters.push(`status=${params.status === 'running' ? 'processing' : params.status}`);
+		if (params?.status)
+			filters.push(`status=${params.status === 'running' ? 'processing' : params.status}`);
 		if (params?.type) filters.push(`job_type=${JOB_TYPE_TO_API[params.type]}`);
 		if (filters.length > 0) searchParams.set('filter', filters.join(','));
 
@@ -466,8 +584,12 @@ export const adminJobsAPI = {
 	 * Create bulk user update job
 	 */
 	async createBulkUpdate(params: {
-		operations: BulkUpdateOperation[];
+		fields: string[];
+		values: Record<string, unknown>;
+		filter?: Record<string, unknown>;
 		dry_run?: boolean;
+		batch_size?: number;
+		result_delivery?: ResultDelivery;
 	}): Promise<Job> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/bulk-update`, {
 			method: 'POST',
@@ -490,12 +612,12 @@ export const adminJobsAPI = {
 	 */
 	async createReport(params: {
 		type: ReportType;
-		parameters?: {
-			from?: string;
-			to?: string;
-			user_ids?: string[];
-			client_ids?: string[];
-		};
+		from_date: string;
+		to_date: string;
+		format?: 'json' | 'csv';
+		filters?: Record<string, unknown>;
+		result_delivery?: ResultDelivery;
+		result_storage_destination_id?: string;
 	}): Promise<Job> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/reports/generate`, {
 			method: 'POST',
@@ -521,6 +643,8 @@ export const adminJobsAPI = {
 		params: {
 			action: 'add' | 'remove';
 			user_ids: string[];
+			role?: 'member' | 'admin' | 'owner';
+			result_delivery?: ResultDelivery;
 		}
 	): Promise<Job> {
 		const response = await adminFetch(

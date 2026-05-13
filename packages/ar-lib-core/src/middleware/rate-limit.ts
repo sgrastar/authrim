@@ -325,17 +325,20 @@ export function getClientIP(c: Context, provider: CloudProvider): string {
 export async function checkRateLimit(
   env: Env,
   clientIP: string,
-  config: RateLimitConfig
+  config: RateLimitConfig,
+  tenantId?: string
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
+  const rateLimitKey = tenantId?.trim() ? `tenant:${tenantId.trim()}:rate-limit:${clientIP}` : clientIP;
+
   // Try DO-based rate limiting first
   try {
     if (env.RATE_LIMITER) {
       // Use DO ID based on IP to shard load
-      const id = env.RATE_LIMITER.idFromName(clientIP);
+      const id = env.RATE_LIMITER.idFromName(rateLimitKey);
       const stub = env.RATE_LIMITER.get(id);
 
       // RPC call to increment counter atomically
-      const result = await stub.incrementRpc(clientIP, {
+      const result = await stub.incrementRpc(rateLimitKey, {
         windowSeconds: config.windowSeconds,
         maxRequests: config.maxRequests,
       });
@@ -351,7 +354,7 @@ export async function checkRateLimit(
   }
 
   // Fallback to KV-based rate limiting
-  return await checkRateLimitKV(env, clientIP, config);
+  return await checkRateLimitKV(env, rateLimitKey, config);
 }
 
 /**
@@ -431,7 +434,13 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
     }
 
     try {
-      const { allowed, remaining, resetAt } = await checkRateLimit(c.env, clientIP, config);
+      const tenantId = getTenantIdFromContext(c);
+      const { allowed, remaining, resetAt } = await checkRateLimit(
+        c.env,
+        clientIP,
+        config,
+        tenantId
+      );
 
       // Add rate limit headers to response
       c.header('X-RateLimit-Limit', config.maxRequests.toString());

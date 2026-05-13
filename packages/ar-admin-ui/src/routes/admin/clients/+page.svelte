@@ -136,6 +136,10 @@
 		return badges
 	}
 
+	function isSystemClient(client: Client): boolean {
+		return client.client_name === 'Login UI' || client.client_name === 'Downstream Grant Introspection';
+	}
+
 	// Selection handlers
 	function toggleSelectAll() {
 		if (isAllSelected) {
@@ -316,7 +320,17 @@
 									? client.client_id.substring(0, 20) + '...'
 									: client.client_id}
 							</td>
-							<td>{client.client_name || '-'}</td>
+							<td>
+								<div class="client-name-cell">
+									<span>{client.client_name || '-'}</span>
+									{#if isSystemClient(client)}
+										<span class="system-client-badge">System</span>
+									{/if}
+								</div>
+								{#if client.description}
+									<div class="client-description">{client.description}</div>
+								{/if}
+							</td>
 							<td>
 								<span class={getClientTypeBadgeClass(client.grant_types)}>
 									{formatGrantTypes(client.grant_types)}
@@ -455,5 +469,30 @@
 		background: color-mix(in srgb, var(--primary, #0f766e) 12%, white);
 		color: color-mix(in srgb, var(--primary, #0f766e) 85%, black);
 		border: 1px solid color-mix(in srgb, var(--primary, #0f766e) 20%, transparent);
+	}
+
+	.client-name-cell {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.client-description {
+		margin-top: 0.25rem;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.35;
+	}
+
+	.system-client-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.15rem 0.45rem;
+		border-radius: 999px;
+		border: 1px solid var(--border-color);
+		color: var(--text-secondary);
+		font-size: 0.68rem;
+		font-weight: 700;
+		text-transform: uppercase;
 	}
 </style>

@@ -40,6 +40,11 @@ function createLegacyStructure(baseDir: string, env: string = 'dev'): void {
     version: '1.0.0',
     environment: { prefix: env },
     profile: 'basic-op',
+    urls: {
+      api: { custom: null, auto: 'https://dev-ar-router.workers.dev' },
+      loginUi: { custom: null, auto: 'https://dev-ar-login-ui.workers.dev', sameAsApi: false },
+      adminUi: { custom: null, auto: 'https://dev-ar-admin-ui.workers.dev', sameAsApi: false },
+    },
     tenant: { name: 'test', displayName: 'Test' },
     components: { api: true, loginUi: true, adminUi: true },
     oidc: {
@@ -61,8 +66,21 @@ function createLegacyStructure(baseDir: string, env: string = 'dev'): void {
     version: '1.0.0',
     env,
     createdAt: new Date().toISOString(),
-    d1: { CORE_DB: { id: 'db-123', name: `${env}-authrim-core-db` } },
-    kv: { SETTINGS: { id: 'kv-123', name: `${env}-SETTINGS` } },
+    d1: {
+      DB: { id: 'db-core-123', name: `${env}-authrim-core-db` },
+      DB_PII: { id: 'db-pii-123', name: `${env}-authrim-pii-db` },
+      DB_ADMIN: { id: 'db-admin-123', name: `${env}-authrim-admin-db` },
+    },
+    kv: {
+      CLIENTS_CACHE: { id: 'kv-clients', name: `${env}-CLIENTS_CACHE` },
+      INITIAL_ACCESS_TOKENS: { id: 'kv-iat', name: `${env}-INITIAL_ACCESS_TOKENS` },
+      SETTINGS: { id: 'kv-settings', name: `${env}-SETTINGS` },
+      REBAC_CACHE: { id: 'kv-rebac', name: `${env}-REBAC_CACHE` },
+      USER_CACHE: { id: 'kv-user', name: `${env}-USER_CACHE` },
+      AUTHRIM_CONFIG: { id: 'kv-config', name: `${env}-AUTHRIM_CONFIG` },
+      STATE_STORE: { id: 'kv-state', name: `${env}-STATE_STORE` },
+      CONSENT_CACHE: { id: 'kv-consent', name: `${env}-CONSENT_CACHE` },
+    },
   };
   writeFileSync(join(baseDir, LEGACY_LOCK_FILE), JSON.stringify(lock, null, 2));
 

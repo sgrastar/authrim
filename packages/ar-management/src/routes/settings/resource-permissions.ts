@@ -108,7 +108,7 @@ export async function createResourcePermission(c: Context) {
   const id = `rp_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if permission already exists for this subject/resource
@@ -222,7 +222,7 @@ export async function listResourcePermissions(c: Context) {
   const isActive = c.req.query('is_active');
   const subjectType = c.req.query('subject_type') as ResourcePermissionSubjectType | undefined;
   const resourceType = c.req.query('resource_type');
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     let whereClause = 'WHERE tenant_id = ?';
@@ -284,7 +284,7 @@ export async function deleteResourcePermission(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get permission first to know subject_id for cache invalidation
@@ -358,7 +358,7 @@ export async function getPermissionsBySubject(c: Context) {
   const subjectId = c.req.param('id')!;
   const subjectType = (c.req.query('type') as ResourcePermissionSubjectType) || 'user';
   const tenantId = resolveSettingsTenantId(c);
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const permissions = await coreAdapter.query<ResourcePermissionRow>(
@@ -394,7 +394,7 @@ export async function getPermissionsByResource(c: Context) {
   const resourceType = c.req.param('type')!;
   const resourceId = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const permissions = await coreAdapter.query<ResourcePermissionRow>(
@@ -434,7 +434,7 @@ export async function checkResourcePermission(c: Context) {
     action: string;
   }>();
   const tenantId = resolveSettingsTenantId(c);
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const allowed = await hasIdLevelPermission(

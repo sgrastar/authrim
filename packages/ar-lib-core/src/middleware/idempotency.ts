@@ -27,7 +27,6 @@ import { createAuthContextFromHono } from '../context/hono-context';
 import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from '../utils/logger';
-import { getDefaultTenantId } from '../utils/issuer';
 import { createPhase1ErrorDetails } from '../errors/details';
 
 const log = createLogger().module('IDEMPOTENCY');
@@ -143,14 +142,16 @@ function getActorId(c: Context<{ Bindings: Env }>): string {
  * Get tenant ID from context
  */
 function getTenantId(c: Context<{ Bindings: Env }>): string {
-  // Try to get from tenantId context (set by tenant middleware)
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const tenantId = (c as any).get('tenantId') as string | null;
-    return tenantId ?? getDefaultTenantId(c.env);
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    if (tenantId) {
+      return tenantId;
+    }
   } catch {
-    return getDefaultTenantId(c.env);
+    // Fall through to the fail-closed error below.
   }
+  throw new Error('Idempotency middleware requires tenant context');
 }
 
 /**
@@ -223,7 +224,19 @@ export function idempotencyMiddleware(
       );
     }
 
-    const tenantId = getTenantId(c);
+    let tenantId: string;
+    try {
+      tenantId = getTenantId(c);
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Tenant context is required for idempotent requests',
+        },
+        400
+      );
+    }
+
     const actorId = getActorId(c);
     const method = c.req.method;
     const path = c.req.path;
@@ -404,6 +417,8 @@ export function requiredIdempotencyMiddleware(
  */
 export async function cleanupExpiredIdempotencyKeys(adapter: DatabaseAdapter): Promise<number> {
   const nowTs = Math.floor(Date.now() / 1000);
-  const result = await adapter.execute('DELETE FROM idempotency_keys WHERE expires_at < ?', [nowTs]);
+  const result = await adapter.execute('DELETE FROM idempotency_keys WHERE expires_at < ?', [
+    nowTs,
+  ]);
   return result.rowsAffected;
 }

@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-05-11
+date: 2026-05-12
 description: "Open Source Identity & Access Platform for the modern web"
 type: reference
 tags:
@@ -41,7 +41,7 @@ An open-source, serverless **Identity Hub** that combines authentication, author
 
 Authrim is functional but pre-1.0. APIs may change, and no formal security audit has been completed yet.
 Evaluate thoroughly before production use.
-Production readiness is tracked against documented deployment, operations, recovery, auditability, and protocol/security validation criteria in the roadmap.
+Production hardening is tracked against documented deployment, operations, recovery, auditability, and protocol/security validation criteria in the roadmap.
 
 ## Vision
 
@@ -179,25 +179,26 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 
 ## Current Status
 
-Authrim is currently pre-1.0. Core protocol and platform capabilities are implemented, but production readiness work is still in progress.
+Authrim is currently pre-1.0. Core protocol and platform capabilities are implemented, but production hardening is still in progress.
 
 **Target release window:** Summer/Fall 2026
 
 | Area | Status |
 | ----- | ------ |
 | Core OIDC/OAuth implementation | Implemented |
-| SAML 2.0 core IdP/SP | Implemented; production readiness in progress |
+| FAPI profiles | Implemented; certification target |
+| CIBA | Implemented; certification target |
+| SAML 2.0 IdP/SP | Active; implementation substantially complete |
 | SCIM 2.0 | Implemented |
 | RBAC / ABAC / ReBAC policy engine | Implemented |
 | Identity Hub and external IdP integration | Implemented |
-| Passkey / email auth / local auth | Implemented; production flow consolidation in progress |
+| Passkey / email auth / local auth | Implemented; production flow hardening in progress |
 | JavaScript SDKs | Implemented |
 | Setup tooling | Implemented; production deployment docs in progress |
 | UI consolidation | Active |
-| Security, QA, and release validation | Active |
-| Storage portability | Active; focused on PII, custom/extension, and audit storage |
-| SAML Production Readiness | Planned/Active |
-| SAML DR-readiness | Planned for Summer 2026 |
+| Security, QA, and validation | Active |
+| Storage portability | Implementation baseline complete; validation active |
+| Multi-tenant isolation | Implementation baseline complete; validation active |
 
 [View detailed roadmap](./docs/ROADMAP.md)
 
@@ -236,20 +237,23 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 
 ## Features
 
-| Area | Implementation | Production readiness | Notes |
+| Area | Implementation | Operational maturity | Notes |
 | --- | --- | --- | --- |
 | OpenID Provider | Complete | Ready | Certified OpenID Provider and Logout profiles |
 | OAuth/OIDC advanced profiles | Complete | In progress | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange |
-| SAML 2.0 IdP/SP | Basic complete | In progress | Production readiness and DR-readiness work are active |
+| FAPI profiles | Complete | In progress | FAPI 2.0 policy controls and certification profiles; formal certification is planned |
+| SAML 2.0 IdP/SP | Hardening active | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, signing rollover, encryption options, SSO/SLO correlation, and DR planning |
 | SCIM 2.0 | Complete | In progress | User provisioning |
 | Authentication | Complete | In progress | Passkey, email code, social login, Direct Auth, device flow, CIBA |
+| CIBA | Complete | In progress | Backchannel authentication, approval, polling, and request storage paths |
 | Native SSO | Complete | In progress | `device_secret`, `ds_hash`, and DPoP-bound token exchange support |
 | Authorization | Complete | In progress | RBAC, ABAC, ReBAC, token embedding, real-time check API |
 | Identity Hub | Complete | In progress | External IdP integration, account linking, identity stitching |
 | VC/DID | Complete | Experimental | OpenID4VP, OpenID4VCI, did:web, did:key |
 | SDKs | Complete | In progress | Core, web, server, and SvelteKit packages |
-| Admin/Login UI | Basic complete | In progress | Consolidation and production flow readiness are release workstreams |
-| Runtime storage profiles | Partial | In progress | Hyperdrive-backed PII/custom/audit paths exist; auth core remains D1/KV-biased |
+| Admin/Login UI | Basic complete | In progress | Consolidation and production flow hardening remain active |
+| Runtime storage profiles | Basic complete | In progress | Runtime profiles and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased |
+| Multi-tenancy isolation | Baseline complete | In progress | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression coverage are in place |
 
 See [Feature Matrix](./docs/FEATURES.md) for a more detailed capability and SDK overview.
 
@@ -287,7 +291,7 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** — _Identity & Access at the edge of everywhere_
 >
-> **Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Production readiness in progress
+> **Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Production hardening in progress
 >
 > _A self-hosted Identity & Access Platform for modern applications._
 >

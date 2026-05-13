@@ -23,28 +23,29 @@ export interface SessionPersistenceAdapter {
 class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
   constructor(
     private readonly db: DatabaseAdapter,
-    private readonly tenantId?: string
+    private readonly tenantId: string
   ) {}
 
-  async loadSession(sessionId: string, nowMs: number): Promise<SessionPersistenceRecord | null> {
-    const params: unknown[] = [sessionId];
-    const tenantClause = this.tenantId ? ' AND tenant_id = ?' : '';
-    if (this.tenantId) {
-      params.push(this.tenantId);
+  private resolveWriteTenantId(recordTenantId: string | undefined): string {
+    const normalizedRecordTenantId = recordTenantId?.trim() || undefined;
+    if (normalizedRecordTenantId && normalizedRecordTenantId !== this.tenantId) {
+      throw new Error('Session persistence tenant mismatch');
     }
-    params.push(Math.floor(nowMs / 1000));
+    return this.tenantId;
+  }
 
+  async loadSession(sessionId: string, nowMs: number): Promise<SessionPersistenceRecord | null> {
     const row = await this.db.queryOne<{
       id: string;
-      tenant_id?: string;
+      tenant_id: string;
       user_id: string;
       expires_at: number;
       created_at: number;
     }>(
       `SELECT id, tenant_id, user_id, expires_at, created_at
        FROM sessions
-       WHERE id = ?${tenantClause} AND expires_at > ?`,
-      params
+       WHERE id = ? AND tenant_id = ? AND expires_at > ?`,
+      [sessionId, this.tenantId, Math.floor(nowMs / 1000)]
     );
 
     if (!row) {
@@ -61,48 +62,32 @@ class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
   }
 
   async saveSession(session: SessionPersistenceRecord): Promise<void> {
-    const tenantId = session.tenantId ?? this.tenantId;
+    const tenantId = this.resolveWriteTenantId(session.tenantId);
     const expiresAt = Math.floor(session.expiresAt / 1000);
     const createdAt = Math.floor(session.createdAt / 1000);
-    const updated = tenantId
-      ? await this.db.execute(
-          `UPDATE sessions
-           SET tenant_id = ?, user_id = ?, expires_at = ?, created_at = ?
-           WHERE id = ? AND tenant_id = ?`,
-          [tenantId, session.userId, expiresAt, createdAt, session.id, tenantId]
-        )
-      : await this.db.execute(
-          'UPDATE sessions SET user_id = ?, expires_at = ?, created_at = ? WHERE id = ?',
-          [session.userId, expiresAt, createdAt, session.id]
-        );
+    const updated = await this.db.execute(
+      `UPDATE sessions
+       SET tenant_id = ?, user_id = ?, expires_at = ?, created_at = ?
+       WHERE id = ? AND tenant_id = ?`,
+      [tenantId, session.userId, expiresAt, createdAt, session.id, tenantId]
+    );
 
     if (updated.rowsAffected > 0) {
       return;
     }
 
-    if (tenantId) {
-      await this.db.execute(
-        `INSERT INTO sessions (id, tenant_id, user_id, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [session.id, tenantId, session.userId, expiresAt, createdAt]
-      );
-    } else {
-      await this.db.execute(
-        'INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)',
-        [session.id, session.userId, expiresAt, createdAt]
-      );
-    }
+    await this.db.execute(
+      `INSERT INTO sessions (id, tenant_id, user_id, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [session.id, tenantId, session.userId, expiresAt, createdAt]
+    );
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    if (this.tenantId) {
-      await this.db.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
-        sessionId,
-        this.tenantId,
-      ]);
-      return;
-    }
-    await this.db.execute('DELETE FROM sessions WHERE id = ?', [sessionId]);
+    await this.db.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
+      sessionId,
+      this.tenantId,
+    ]);
   }
 
   async batchDeleteSessions(sessionIds: string[]): Promise<void> {
@@ -111,36 +96,25 @@ class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
     }
 
     const placeholders = sessionIds.map(() => '?').join(',');
-    if (this.tenantId) {
-      await this.db.execute(
-        `DELETE FROM sessions WHERE tenant_id = ? AND id IN (${placeholders})`,
-        [this.tenantId, ...sessionIds]
-      );
-      return;
-    }
-    await this.db.execute(`DELETE FROM sessions WHERE id IN (${placeholders})`, sessionIds);
+    await this.db.execute(`DELETE FROM sessions WHERE tenant_id = ? AND id IN (${placeholders})`, [
+      this.tenantId,
+      ...sessionIds,
+    ]);
   }
 
   async listUserSessions(userId: string, nowMs: number): Promise<SessionPersistenceRecord[]> {
-    const params: unknown[] = [userId];
-    const tenantClause = this.tenantId ? ' AND tenant_id = ?' : '';
-    if (this.tenantId) {
-      params.push(this.tenantId);
-    }
-    params.push(Math.floor(nowMs / 1000));
-
     const rows = await this.db.query<{
       id: string;
-      tenant_id?: string;
+      tenant_id: string;
       user_id: string;
       expires_at: number;
       created_at: number;
     }>(
       `SELECT id, tenant_id, user_id, expires_at, created_at
        FROM sessions
-       WHERE user_id = ?${tenantClause} AND expires_at > ?
+       WHERE tenant_id = ? AND user_id = ? AND expires_at > ?
        ORDER BY created_at DESC`,
-      params
+      [this.tenantId, userId, Math.floor(nowMs / 1000)]
     );
 
     return rows.map((row) => ({
@@ -153,15 +127,11 @@ class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
   }
 
   async updateSessionUserId(sessionId: string, newUserId: string): Promise<void> {
-    if (this.tenantId) {
-      await this.db.execute('UPDATE sessions SET user_id = ? WHERE id = ? AND tenant_id = ?', [
-        newUserId,
-        sessionId,
-        this.tenantId,
-      ]);
-      return;
-    }
-    await this.db.execute('UPDATE sessions SET user_id = ? WHERE id = ?', [newUserId, sessionId]);
+    await this.db.execute('UPDATE sessions SET user_id = ? WHERE id = ? AND tenant_id = ?', [
+      newUserId,
+      sessionId,
+      this.tenantId,
+    ]);
   }
 
   getType(): string {
@@ -171,12 +141,17 @@ class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
 
 export function createSessionPersistenceAdapter(
   source: DatabaseSource | null | undefined,
-  partition: string = 'session-store',
-  tenantId?: string
+  partition: string,
+  tenantId: string
 ): SessionPersistenceAdapter | null {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Session persistence requires a tenantId');
+  }
+
   const adapter = ensureOptionalDatabaseAdapter(source, partition);
   if (!adapter) {
     return null;
   }
-  return new DatabaseSessionPersistenceAdapter(adapter, tenantId);
+  return new DatabaseSessionPersistenceAdapter(adapter, normalizedTenantId);
 }

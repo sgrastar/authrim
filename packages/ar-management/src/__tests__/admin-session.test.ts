@@ -122,11 +122,14 @@ describe('Admin Session Handlers', () => {
     mockGetCookie.mockReturnValue('admin-session-123');
     mockAdminSessionRepo.getSession.mockResolvedValue({
       id: 'admin-session-123',
+      tenant_id: 'tenant-a',
       admin_user_id: 'admin-user-1',
       created_at: 100,
       expires_at: 200,
     });
-    mockAdminAdapter.query.mockResolvedValue([{ name: 'viewer' }]);
+    mockAdminAdapter.query.mockResolvedValue([
+      { name: 'viewer', scope_type: 'tenant', scope_id: null },
+    ]);
     mockAdminAdapter.queryOne.mockResolvedValue({
       email: 'admin@example.com',
       name: 'Admin User',
@@ -140,10 +143,74 @@ describe('Admin Session Handlers', () => {
       active: true,
       session_id: 'admin-session-123',
       user_id: 'admin-user-1',
+      tenant_id: 'tenant-a',
       email: 'admin@example.com',
       name: 'Admin User',
       roles: ['viewer'],
+      admin_scope: 'tenant',
+      is_platform_admin: false,
       last_login_at: 1700000000,
+    });
+    expect(mockAdminAdapter.query).toHaveBeenCalledWith(expect.any(String), [
+      'admin-user-1',
+      'tenant-a',
+      expect.any(Number),
+    ]);
+  });
+
+  it('marks super_admin sessions as platform scoped', async () => {
+    mockGetCookie.mockReturnValue('admin-session-123');
+    mockAdminSessionRepo.getSession.mockResolvedValue({
+      id: 'admin-session-123',
+      tenant_id: 'default',
+      admin_user_id: 'admin-user-1',
+      created_at: 100,
+      expires_at: 200,
+    });
+    mockAdminAdapter.query.mockResolvedValue([
+      { name: 'super_admin', scope_type: 'global', scope_id: null },
+    ]);
+    mockAdminAdapter.queryOne.mockResolvedValue({
+      email: 'admin@example.com',
+      name: 'Admin User',
+      last_login_at: 1700000000,
+    });
+
+    const response = await adminSessionStatusHandler(createMockContext({}));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      roles: ['super_admin'],
+      admin_scope: 'platform',
+      is_platform_admin: true,
+    });
+  });
+
+  it('does not mark tenant-scoped super_admin sessions as platform scoped', async () => {
+    mockGetCookie.mockReturnValue('admin-session-123');
+    mockAdminSessionRepo.getSession.mockResolvedValue({
+      id: 'admin-session-123',
+      tenant_id: 'tenant-a',
+      admin_user_id: 'admin-user-1',
+      created_at: 100,
+      expires_at: 200,
+    });
+    mockAdminAdapter.query.mockResolvedValue([
+      { name: 'super_admin', scope_type: 'tenant', scope_id: 'tenant-a' },
+    ]);
+    mockAdminAdapter.queryOne.mockResolvedValue({
+      email: 'admin@example.com',
+      name: 'Admin User',
+      last_login_at: 1700000000,
+    });
+
+    const response = await adminSessionStatusHandler(createMockContext({}));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      roles: ['super_admin'],
+      admin_scope: 'tenant',
+      is_platform_admin: false,
     });
   });
 
@@ -151,11 +218,14 @@ describe('Admin Session Handlers', () => {
     mockGetCookie.mockReturnValue('admin-session-123');
     mockAdminSessionRepo.getSession.mockResolvedValue({
       id: 'admin-session-123',
+      tenant_id: 'tenant-a',
       admin_user_id: 'admin-user-1',
       created_at: 100,
       expires_at: 200,
     });
-    mockAdminAdapter.query.mockResolvedValue([{ name: 'auditor' }]);
+    mockAdminAdapter.query.mockResolvedValue([
+      { name: 'auditor', scope_type: 'tenant', scope_id: null },
+    ]);
 
     const response = await adminSessionStatusHandler(createMockContext({}));
 

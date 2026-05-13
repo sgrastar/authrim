@@ -14,7 +14,6 @@ import type { Context } from 'hono';
 import type { Env } from '../types/env';
 import type { AuditLogEntry } from '../types/admin';
 import { generateSecureRandomString } from './crypto';
-import { DEFAULT_TENANT_ID } from './tenant-context';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from './logger';
 import {
@@ -38,6 +37,15 @@ import type { AuditProfile, AuditTarget } from '../types/runtime-profile';
 const log = createLogger().module('AUDIT_LOG');
 const unifiedAuditServiceCache = new WeakMap<object, IAuditService>();
 const KV_KEY_ROUTING_RULES = 'audit_routing_rules';
+
+function requireAuditTenantId(tenantId: string | undefined, action: string): string | null {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    log.error('Cannot create audit log: tenantId is required', { action });
+    return null;
+  }
+  return normalized;
+}
 
 export interface LegacyAuditLogWriteInput {
   id: string;
@@ -187,6 +195,48 @@ function parseLegacyMetadata(metadata: string): Record<string, unknown> {
   return { raw_metadata: metadata };
 }
 
+function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contextRequestId = (c as any).get?.('requestId');
+  if (typeof contextRequestId === 'string' && contextRequestId.length > 0) {
+    return contextRequestId;
+  }
+
+  return c.req.header('X-Request-Id') || c.req.header('X-Correlation-Id') || undefined;
+}
+
+function getAdminProxyMetadataFromContext(
+  c: Context<{ Bindings: Env }>
+): Record<string, unknown> {
+  const requestId = getRequestIdFromContext(c);
+  const apiMode = c.req.header('X-Authrim-Admin-UI-Api-Mode');
+  const forwardedHost =
+    c.req.header('X-Authrim-Forwarded-Host') || c.req.header('X-Forwarded-Host');
+  const forwardedProto = c.req.header('X-Forwarded-Proto');
+  const proxyRequestId = c.req.header('X-Request-Id');
+  const correlationId = c.req.header('X-Correlation-Id');
+
+  if (
+    !requestId &&
+    !apiMode &&
+    !forwardedHost &&
+    !forwardedProto &&
+    !proxyRequestId &&
+    !correlationId
+  ) {
+    return {};
+  }
+
+  return {
+    request_id: requestId ?? undefined,
+    admin_ui_api_mode: apiMode ?? undefined,
+    admin_ui_bff_forwarded_host: forwardedHost ?? undefined,
+    admin_ui_bff_forwarded_proto: forwardedProto ?? undefined,
+    admin_ui_bff_request_id: proxyRequestId ?? undefined,
+    admin_ui_bff_correlation_id: correlationId ?? undefined,
+  };
+}
+
 function parseStoredAuditRoutingRules(value: string | null): AuditStorageRoutingRule[] {
   if (!value) {
     return [];
@@ -251,7 +301,7 @@ async function resolveAuditDeliveryPlanFromEnv(
   const primaryBackend = backendById.get(resolved.primaryStore);
   const primary = primaryBackend
     ? auditTargetFromBackendConfig(primaryBackend)
-    : input.auditProfile.primary ?? null;
+    : (input.auditProfile.primary ?? null);
   const archives: AuditProfile['sinks'] = [];
   const sinks: AuditProfile['sinks'] = [];
 
@@ -298,9 +348,12 @@ async function resolveAuditDeliveryPlanFromEnv(
 
 async function mirrorLegacyAuditLogToUnifiedService(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId?: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string }
 ): Promise<void> {
-  const tenantId = entry.tenantId || DEFAULT_TENANT_ID;
+  const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
+  if (!tenantId) {
+    return;
+  }
   const metadata = parseLegacyMetadata(entry.metadata);
   const auditService = getUnifiedAuditService(env);
 
@@ -350,14 +403,18 @@ export async function writeLegacyAuditLog(
  * it will log the error but not throw, allowing the main operation to continue.
  *
  * @param env - Cloudflare Workers environment bindings
- * @param entry - Audit log entry data (id, tenantId, and createdAt will be generated/defaulted)
+ * @param entry - Audit log entry data (id and createdAt will be generated)
  */
 export async function createAuditLog(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'tenantId' | 'createdAt'> & { tenantId?: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string }
 ): Promise<void> {
+  const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
+  if (!tenantId) {
+    return;
+  }
+
   const id = generateSecureRandomString(16);
-  const tenantId = entry.tenantId || DEFAULT_TENANT_ID;
   // Use seconds (not milliseconds) for consistency with other audit log writers
   const createdAt = Math.floor(Date.now() / 1000);
 
@@ -450,7 +507,10 @@ export async function createAuditLogFromContext(
 
   // Get tenantId from request context (set by requestContextMiddleware)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tenantId = ((c as any).get('tenantId') as string | undefined) || DEFAULT_TENANT_ID;
+  const tenantId = requireAuditTenantId((c as any).get('tenantId') as string | undefined, action);
+  if (!tenantId) {
+    return;
+  }
 
   // Extract IP address (check CF headers first, then fallback)
   const ipAddress =
@@ -461,6 +521,10 @@ export async function createAuditLogFromContext(
 
   // Extract user agent
   const userAgent = c.req.header('User-Agent') || 'unknown';
+  const auditMetadata = {
+    ...metadata,
+    ...getAdminProxyMetadataFromContext(c),
+  };
 
   await createAuditLog(c.env, {
     tenantId,
@@ -470,7 +534,7 @@ export async function createAuditLogFromContext(
     resourceId,
     ipAddress,
     userAgent,
-    metadata: JSON.stringify(metadata),
+    metadata: JSON.stringify(auditMetadata),
     severity,
   });
 }

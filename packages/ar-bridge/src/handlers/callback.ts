@@ -106,15 +106,17 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
  */
 async function generateAuthCode(
   env: Env,
+  tenantId: string,
   userId: string,
   codeChallenge: string,
   metadata?: Record<string, unknown>
 ): Promise<string> {
   const authCode = crypto.randomUUID();
-  const challengeStore = await getChallengeStoreByChallengeId(env, authCode);
+  const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
 
   await challengeStore.storeChallengeRpc({
     id: `direct_auth:${authCode}`,
+    tenantId,
     type: 'direct_auth_code',
     userId,
     challenge: codeChallenge, // Store code_challenge for verification
@@ -523,14 +525,20 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
       const sessionTTL = 24 * 60 * 60; // 24 hours
 
-      await sessionStore.createSessionRpc(sessionId, result.userId, sessionTTL, {
-        email: userInfo.email || null,
-        name: userInfo.name || null,
-        amr: ['external_idp'],
-        acr: 'urn:mace:incommon:iap:bronze',
-        client_id: clientId,
-        external_idp: provider.id,
-      }, tenantId);
+      await sessionStore.createSessionRpc(
+        sessionId,
+        result.userId,
+        sessionTTL,
+        {
+          email: userInfo.email || null,
+          name: userInfo.name || null,
+          amr: ['external_idp'],
+          acr: 'urn:mace:incommon:iap:bronze',
+          client_id: clientId,
+          external_idp: provider.id,
+        },
+        tenantId
+      );
 
       // セッションCookie設定
       const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
@@ -546,10 +554,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
       // 11c. ハンドオフトークン生成
       const handoffToken = crypto.randomUUID();
-      const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken);
+      const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken, tenantId);
 
       await handoffStore.storeChallengeRpc({
         id: `handoff:${handoffToken}`,
+        tenantId,
         type: 'handoff',
         userId: result.userId,
         challenge: sessionId, // sessionIdを格納
@@ -577,7 +586,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       });
     } else {
       // SSO無効: 従来のDirect Auth フロー（authCodeを返す）
-      const authCode = await generateAuthCode(c.env, result.userId, codeChallenge, {
+      const authCode = await generateAuthCode(c.env, tenantId, result.userId, codeChallenge, {
         method: 'external_idp',
         provider: provider.id,
         provider_id: provider.id,

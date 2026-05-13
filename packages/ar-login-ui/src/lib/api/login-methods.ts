@@ -22,25 +22,31 @@ export interface EmailCodeMethod {
 	steps: string[];
 }
 
-export interface SocialProvider {
+export type ExternalProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
+export type ExternalProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
+
+export interface ExternalProvider {
 	id: string;
 	name: string;
+	type: ExternalProviderType;
+	startMode: ExternalProviderStartMode;
 	slug?: string;
 	iconUrl?: string;
 	buttonColor?: string;
 	buttonColorDark?: string;
 	buttonText?: string;
+	startUrl?: string;
 }
 
-export interface SocialMethod {
+export interface ExternalMethod {
 	enabled: boolean;
-	providers: SocialProvider[];
+	providers: ExternalProvider[];
 }
 
 export interface LoginMethods {
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
-	social: SocialMethod;
+	external: ExternalMethod;
 }
 
 export interface LoginUIConfig {

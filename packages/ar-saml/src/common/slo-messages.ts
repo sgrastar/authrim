@@ -81,6 +81,8 @@ export interface ParsedLogoutRequest {
   destination?: string;
   nameId: string;
   nameIdFormat?: string;
+  nameIdNameQualifier?: string;
+  nameIdSPNameQualifier?: string;
   /** First SessionIndex (for backward compatibility) */
   sessionIndex?: string;
   /** All SessionIndex elements (SAML 2.0 allows multiple) */
@@ -283,6 +285,8 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
 
   const nameId = getTextContent(nameIdElement) || '';
   const nameIdFormat = getAttribute(nameIdElement, 'Format') || undefined;
+  const nameIdNameQualifier = getAttribute(nameIdElement, 'NameQualifier') || undefined;
+  const nameIdSPNameQualifier = getAttribute(nameIdElement, 'SPNameQualifier') || undefined;
 
   // Parse SessionIndex (optional, can have multiple per SAML 2.0 spec)
   const sessionIndexElements = findElements(
@@ -310,6 +314,8 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
     destination: destination || undefined,
     nameId,
     nameIdFormat,
+    nameIdNameQualifier,
+    nameIdSPNameQualifier,
     sessionIndex,
     sessionIndices: sessionIndices.length > 0 ? sessionIndices : undefined,
     notOnOrAfter: notOnOrAfter || undefined,
@@ -396,9 +402,18 @@ export function encodeForPostBinding(xml: string): string {
  * Encode LogoutRequest/Response for HTTP-Redirect binding
  */
 export function encodeForRedirectBinding(xml: string): string {
-  const deflated = pako.deflateRaw(xml);
-  return btoa(bytesToBinaryString(deflated))
+  return encodeForRedirectBindingQueryValue(xml)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/[=]+$/, '');
+}
+
+/**
+ * Encode LogoutRequest/Response for HTTP-Redirect binding query values.
+ *
+ * SAML HTTP-Redirect binding signs the URL-encoded standard Base64 value.
+ */
+export function encodeForRedirectBindingQueryValue(xml: string): string {
+  const deflated = pako.deflateRaw(xml);
+  return btoa(bytesToBinaryString(deflated));
 }

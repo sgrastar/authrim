@@ -59,7 +59,7 @@ class MockDurableObjectState {
  */
 function createMockEnv(secret?: string): Env {
   return {
-    ADMIN_API_SECRET: secret || 'test-secret-token',
+    VERSION_MANAGER_SECRET: secret || 'test-secret-token',
     ISSUER_URL: 'https://test.example.com',
     ACCESS_TOKEN_EXPIRY: '3600',
     AUTH_CODE_EXPIRY: '600',
@@ -184,9 +184,9 @@ describe('VersionManager Durable Object', () => {
       expect(response.status).toBe(200);
     });
 
-    it('should reject requests when ADMIN_API_SECRET is not configured', async () => {
+    it('should reject requests when VERSION_MANAGER_SECRET is not configured', async () => {
       const envNoSecret = createMockEnv(undefined);
-      envNoSecret.ADMIN_API_SECRET = undefined;
+      envNoSecret.VERSION_MANAGER_SECRET = undefined;
       const vmNoSecret = new VersionManager(state as unknown as DurableObjectState, envNoSecret);
 
       const request = createRequest('/version/op-auth', 'POST', 'any-token', {

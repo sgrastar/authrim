@@ -102,6 +102,7 @@ export interface Env {
   // Environment Variables - Token/Auth Expiry (unit: seconds)
   // ============================================================
   ISSUER_URL: string;
+  SAML_METADATA_SIGNING?: string; // "enabled"/"true"/"1" to sign generated IdP/SP metadata XML
   ALLOWED_ORIGINS?: string; // Comma-separated list of allowed origins (CORS + WebAuthn RP ID)
   ACCESS_TOKEN_EXPIRY: string; // Access token lifetime in seconds (default: 3600)
   AUTH_CODE_EXPIRY: string; // Authorization code lifetime in seconds (default: 60, OAuth 2.0 BCP)
@@ -178,6 +179,7 @@ export interface Env {
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching
   ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
+  ADMIN_CREDENTIAL_ENCRYPTION_KEY?: string; // Encryption key for Admin-managed external credentials
 
   // PII Encryption
   ENABLE_PII_ENCRYPTION?: string; // "true" to enable PII field encryption
@@ -243,7 +245,6 @@ export interface Env {
   AUTHRIM_SESSION_SHARDS?: string; // Number of session DO shards (default: 4)
   AUTHRIM_CHALLENGE_SHARDS?: string; // Number of challenge DO shards (default: 4)
   AUTHRIM_REVOCATION_SHARDS?: string; // Number of token revocation DO shards (default: 4)
-  AUTHRIM_FLOW_STATE_SHARDS?: string; // Number of flow state DO shards (default: 32)
 
   // Region-aware sharding settings (Priority: KV -> env -> defaults)
   REGION_SHARD_TOTAL_SHARDS?: string; // Total number of shards (default: 4)
@@ -289,8 +290,9 @@ export interface Env {
   PAIRWISE_SALT?: string; // Pairwise subject identifier salt (OIDC Core 8.1)
   OTP_HMAC_SECRET?: string; // Email OTP HMAC secret for code hashing
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
-  KEY_MANAGER_SECRET?: string; // Admin secret for Durable Objects management
-  ADMIN_API_SECRET?: string; // Admin API authentication secret (Bearer token)
+  KEY_MANAGER_SECRET?: string; // Scoped secret for KeyManager Durable Object access
+  VERSION_MANAGER_SECRET?: string; // Scoped secret for VersionManager Durable Object access
+  ADMIN_API_SECRET?: string; // Deprecated bootstrap/break-glass secret, not accepted by Admin API
   EMAIL_DOMAIN_HASH_SECRET?: string; // HMAC secret for email domain blind index
   CLOUDFLARE_API_TOKEN?: string; // Cloudflare Custom Hostnames automation token
 

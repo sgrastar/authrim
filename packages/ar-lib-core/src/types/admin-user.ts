@@ -181,7 +181,7 @@ export interface AdminRoleUpdateInput {
  * Scope type for role assignment
  * - global: Role applies to all tenants (super_admin only)
  * - tenant: Role applies to specific tenant
- * - org: Role applies to specific organization within tenant
+ * - org: Reserved for future Admin scope binding; current Admin APIs do not create it
  */
 export type AdminRoleAssignmentScopeType = 'global' | 'tenant' | 'org';
 
@@ -199,7 +199,7 @@ export interface AdminRoleAssignment {
   admin_role_id: string;
   /** Scope type */
   scope_type: AdminRoleAssignmentScopeType;
-  /** Scope ID (org_id if scope_type = 'org') */
+  /** Scope ID (tenant_id for tenant scope; reserved for future scoped modes) */
   scope_id: string | null;
   /** Expiration timestamp (Unix milliseconds), null for permanent */
   expires_at: number | null;
@@ -554,11 +554,70 @@ export const ADMIN_PERMISSIONS = {
   WEBHOOKS_PAYLOAD_READ: 'admin:webhooks:payload:read',
   WEBHOOKS_ALL: 'admin:webhooks:*',
 
+  // External IdP provider management
+  EXTERNAL_PROVIDERS_READ: 'admin:external_providers:read',
+  EXTERNAL_PROVIDERS_WRITE: 'admin:external_providers:write',
+  EXTERNAL_PROVIDERS_DELETE: 'admin:external_providers:delete',
+  EXTERNAL_PROVIDERS_ALL: 'admin:external_providers:*',
+
+  // External IdP token refresh operations
+  EXTERNAL_TOKEN_REFRESH_READ: 'admin:external_token_refresh:read',
+  EXTERNAL_TOKEN_REFRESH_WRITE: 'admin:external_token_refresh:write',
+  EXTERNAL_TOKEN_REFRESH_RUN: 'admin:external_token_refresh:run',
+  EXTERNAL_TOKEN_REFRESH_ALL: 'admin:external_token_refresh:*',
+
+  // SAML provider management
+  SAML_PROVIDERS_LIST: 'admin:saml_providers:list',
+  SAML_PROVIDERS_READ: 'admin:saml_providers:read',
+  SAML_PROVIDERS_CREATE: 'admin:saml_providers:create',
+  SAML_PROVIDERS_UPDATE: 'admin:saml_providers:update',
+  SAML_PROVIDERS_DELETE: 'admin:saml_providers:delete',
+  SAML_PROVIDERS_METADATA_IMPORT: 'admin:saml_providers:metadata:import',
+  SAML_PROVIDERS_METADATA_REFRESH: 'admin:saml_providers:metadata:refresh',
+  SAML_PROVIDERS_SIGNING_PUBLISH_NEXT: 'admin:saml_providers:signing:publish_next',
+  SAML_PROVIDERS_SIGNING_PROMOTE: 'admin:saml_providers:signing:promote',
+  SAML_PROVIDERS_SIGNING_RETIRE_BACKUP: 'admin:saml_providers:signing:retire_backup',
+  SAML_PROVIDERS_ALL: 'admin:saml_providers:*',
+  SAML_ATTRIBUTE_PRESETS_READ: 'admin:saml_attribute_presets:read',
+
   // Admin jobs / artifacts
   JOBS_READ: 'admin:jobs:read',
   JOBS_WRITE: 'admin:jobs:write',
   JOBS_ARTIFACT_READ: 'admin:jobs:artifact:read',
+  JOBS_DESTINATION_SELECT: 'admin:jobs:destination:select',
   JOBS_ALL: 'admin:jobs:*',
+
+  // Storage destination management
+  STORAGE_DESTINATIONS_LIST: 'admin:storage_destinations:list',
+  STORAGE_DESTINATIONS_READ: 'admin:storage_destinations:read',
+  STORAGE_DESTINATIONS_CREATE: 'admin:storage_destinations:create',
+  STORAGE_DESTINATIONS_UPDATE: 'admin:storage_destinations:update',
+  STORAGE_DESTINATIONS_DELETE: 'admin:storage_destinations:delete',
+  STORAGE_DESTINATIONS_CREDENTIALS_WRITE: 'admin:storage_destinations:credentials:write',
+  STORAGE_DESTINATIONS_TEST: 'admin:storage_destinations:test',
+  STORAGE_DESTINATIONS_USAGE_READ: 'admin:storage_destinations:usage:read',
+  STORAGE_DESTINATIONS_ALL: 'admin:storage_destinations:*',
+
+  // Feature storage destination selection
+  DIAGNOSTIC_LOGGING_DESTINATION_SELECT: 'admin:diagnostic_logging:destination:select',
+  DR_BACKUP_DESTINATION_SELECT: 'admin:dr_backup:destination:select',
+
+  // Platform database connection management
+  DATABASE_CONNECTIONS_LIST: 'admin:database_connections:list',
+  DATABASE_CONNECTIONS_READ: 'admin:database_connections:read',
+  DATABASE_CONNECTIONS_CREATE: 'admin:database_connections:create',
+  DATABASE_CONNECTIONS_UPDATE: 'admin:database_connections:update',
+  DATABASE_CONNECTIONS_DELETE: 'admin:database_connections:delete',
+  DATABASE_CONNECTIONS_CREDENTIALS_WRITE: 'admin:database_connections:credentials:write',
+  DATABASE_CONNECTIONS_TEST: 'admin:database_connections:test',
+  DATABASE_CONNECTIONS_ALL: 'admin:database_connections:*',
+
+  // Platform database routing and cutover
+  DATABASE_ROUTING_READ: 'admin:database_routing:read',
+  DATABASE_ROUTING_WRITE: 'admin:database_routing:write',
+  DATABASE_ROUTING_SWITCH: 'admin:database_routing:switch',
+  DATABASE_ROUTING_ROLLBACK: 'admin:database_routing:rollback',
+  DATABASE_ROUTING_ALL: 'admin:database_routing:*',
 
   // Approval / elevation workflows
   APPROVALS_READ: 'admin:approvals:read',
@@ -567,6 +626,19 @@ export const ADMIN_PERMISSIONS = {
   APPROVALS_APPROVE: 'admin:approvals:approve',
   APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
   APPROVALS_ALL: 'admin:approvals:*',
+
+  // AI Grants
+  AI_GRANTS_READ: 'admin:ai_grants:read',
+  AI_GRANTS_CREATE: 'admin:ai_grants:create',
+  AI_GRANTS_UPDATE: 'admin:ai_grants:update',
+  AI_GRANTS_REVOKE: 'admin:ai_grants:revoke',
+  AI_GRANTS_ALL: 'admin:ai_grants:*',
+
+  // Admin Machine Access
+  ADMIN_MACHINE_ACCESS_READ: 'admin:machine_access:read',
+  ADMIN_MACHINE_ACCESS_WRITE: 'admin:machine_access:write',
+  ADMIN_MACHINE_ACCESS_DELETE: 'admin:machine_access:delete',
+  ADMIN_MACHINE_ACCESS_ALL: 'admin:machine_access:*',
 
   // Operational logs
   OPERATIONAL_LOGS_READ: 'admin:operational_logs:read',

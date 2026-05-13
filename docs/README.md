@@ -2,13 +2,14 @@
 project: Authrim
 lang: en
 date: 2026-01-07
-description: "Documentation for the Authrim OpenID Connect Provider project."
+description: 'Documentation for the Authrim OpenID Connect Provider project.'
 type: reference
 tags:
   - authrim
   - oidc
   - documentation
 ---
+
 # Authrim Documentation
 
 Documentation for the Authrim OpenID Connect Provider project.
@@ -17,13 +18,15 @@ Documentation for the Authrim OpenID Connect Provider project.
 
 ## 📋 Overview
 
-| Document | Description |
-| :------- | :---------- |
+| Document                                                         | Description                                                                                                                                                 |
+| :--------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Public Specification](./specification/authrim-specification.md) | Public runtime contract covering API endpoints, defaults, session profiles, storage portability, audit, security behavior, and Workers-native UI deployment |
-| [Feature Matrix](./FEATURES.md) | Feature and SDK capability matrix |
-| [Vision](./VISION.md) | Long-term vision and strategic goals |
-| [Roadmap](./ROADMAP.md) | Product roadmap and feature status |
-| [Access Control](./access-control.md) | RBAC, ABAC, and ReBAC architecture and usage |
+| [Feature Matrix](./FEATURES.md)                                  | Feature and SDK capability matrix                                                                                                                           |
+| [Vision](./VISION.md)                                            | Long-term vision and strategic goals                                                                                                                        |
+| [Roadmap](./ROADMAP.md)                                          | Product roadmap and feature status                                                                                                                          |
+| [Access Control](./access-control.md)                            | RBAC, ABAC, and ReBAC architecture and usage                                                                                                                |
+| [Admin Jobs](./admin-jobs.md)                                    | Tenant-scoped asynchronous Admin Jobs, result artifacts, retry state, and UI behavior                                                                       |
+| [SAML Production Readiness](./saml-production-readiness.md)       | SAML metadata, signing rollover, attribute presets, SLO fanout observation, and operational limits                                                          |
 
 ---
 
@@ -31,11 +34,11 @@ Documentation for the Authrim OpenID Connect Provider project.
 
 Guides for development and deployment.
 
-| Document | Description |
-| :------- | :---------- |
+| Document                                              | Description                                |
+| :---------------------------------------------------- | :----------------------------------------- |
 | [Development Guide](./getting-started/development.md) | Development environment setup and workflow |
-| [Deployment Guide](./getting-started/deployment.md) | Deploying to Cloudflare Workers |
-| [Testing Guide](./getting-started/testing.md) | Testing strategy and test execution |
+| [Deployment Guide](./getting-started/deployment.md)   | Deploying to Cloudflare Workers            |
+| [Testing Guide](./getting-started/testing.md)         | Testing strategy and test execution        |
 
 ---
 

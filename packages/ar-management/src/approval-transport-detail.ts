@@ -220,12 +220,14 @@ async function persistApprovalTransportDetail(
   if (request.detail_object_catalog_id) {
     const existing = await getObjectCatalogObjectRecord(
       adapter,
+      request.tenant_id,
       request.detail_object_catalog_id,
       'canonical_json',
       0
     );
     if (existing && existing.logical.tenantId === request.tenant_id) {
       await updateObjectCatalogObject(adapter, {
+        tenantId: request.tenant_id,
         catalogId: request.detail_object_catalog_id,
         representation: 'canonical_json',
         objectIndex: 0,

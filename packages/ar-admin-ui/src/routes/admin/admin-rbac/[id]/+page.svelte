@@ -6,11 +6,14 @@
 	import {
 		adminAdminRolesAPI,
 		type AdminRoleDetail,
+		type AssignableAdminRoleScopeType,
+		type AdminRoleAssignmentWithUser,
 		ADMIN_PERMISSION_DEFINITIONS,
 		canEditAdminRole,
 		canDeleteAdminRole,
 		getRoleTypeBadgeClass
 	} from '$lib/api/admin-admin-roles';
+	import { adminAdminsAPI, type AdminUser } from '$lib/api/admin-admins';
 	import { Modal } from '$lib/components';
 
 	const roleId = $derived($page.params.id);
@@ -18,6 +21,9 @@
 	let role: AdminRoleDetail | null = $state(null);
 	let loading = $state(true);
 	let error = $state('');
+	let assignments: AdminRoleAssignmentWithUser[] = $state([]);
+	let adminUsers: AdminUser[] = $state([]);
+	let assignmentError = $state('');
 
 	// Edit dialog state
 	let showEditDialog = $state(false);
@@ -26,40 +32,90 @@
 	const editPermissions = new SvelteSet<string>();
 	let saving = $state(false);
 
+	// Assignment dialog state
+	let showAssignDialog = $state(false);
+	let assigning = $state(false);
+	let assignError = $state('');
+	let selectedAdminUserId = $state('');
+	let assignScopeType: AssignableAdminRoleScopeType = $state('tenant');
+	let assignScopeId = $state('');
+	let assignExpiresAt = $state('');
+
+	// Assignment edit dialog state
+	let showAssignmentEditDialog = $state(false);
+	let editingAssignment: AdminRoleAssignmentWithUser | null = $state(null);
+	let editAssignmentScopeType: AssignableAdminRoleScopeType = $state('tenant');
+	let editAssignmentScopeId = $state('');
+	let editAssignmentExpiresAt = $state('');
+	let updatingAssignment = $state(false);
+	let assignmentEditError = $state('');
+
 	// Group permissions by category for display
 	let permissionsByCategory = $derived.by(() => {
 		if (!role) return [];
 
 		const rolePermissions = new Set(role.permissions);
+		const hasFullAccess = rolePermissions.has('*');
 
 		return ADMIN_PERMISSION_DEFINITIONS.map((category) => {
 			const categoryPermissions = category.permissions.map((perm) => ({
 				...perm,
-				hasPermission: rolePermissions.has(perm.key)
+				hasPermission: hasFullAccess || rolePermissions.has(perm.key)
 			}));
 
 			const hasAnyPermission = categoryPermissions.some((p) => p.hasPermission);
+			const hasAllPermissions = categoryPermissions.every((p) => p.hasPermission);
 
 			return {
 				...category,
 				permissions: categoryPermissions,
-				hasAnyPermission
+				hasAnyPermission,
+				hasAllPermissions
 			};
-		}).filter((cat) => cat.hasAnyPermission);
+		});
 	});
 
 	async function loadRole() {
 		loading = true;
 		error = '';
+		assignmentError = '';
 
 		try {
-			role = await adminAdminRolesAPI.get(roleId!);
+			const [roleResponse, assignmentsResponse, adminsResponse] = await Promise.all([
+				adminAdminRolesAPI.get(roleId!),
+				adminAdminRolesAPI.listAssignments(roleId!),
+				adminAdminsAPI.list({ page: 1, limit: 100, status: 'active' })
+			]);
+			role = roleResponse;
+			assignments = assignmentsResponse.items;
+			adminUsers = adminsResponse.items;
 		} catch (err) {
 			console.error('Failed to load role:', err);
 			error = err instanceof Error ? err.message : 'Failed to load role';
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function loadAssignments() {
+		if (!roleId) return;
+		assignmentError = '';
+		try {
+			const response = await adminAdminRolesAPI.listAssignments(roleId);
+			assignments = response.items;
+		} catch (err) {
+			assignmentError = err instanceof Error ? err.message : 'Failed to load role assignments';
+		}
+	}
+
+	async function refreshRoleSummary() {
+		if (!roleId) return;
+		const [roleResponse, assignmentsResponse] = await Promise.all([
+			adminAdminRolesAPI.get(roleId),
+			adminAdminRolesAPI.listAssignments(roleId)
+		]);
+		role = roleResponse;
+		assignments = assignmentsResponse.items;
 	}
 
 	onMount(() => {
@@ -79,6 +135,55 @@
 		showEditDialog = false;
 	}
 
+	function openAssignDialog() {
+		if (!role) return;
+		const assignedUserIds = new Set(assignments.map((assignment) => assignment.admin_user_id));
+		selectedAdminUserId = adminUsers.find((user) => !assignedUserIds.has(user.id))?.id || '';
+		assignScopeType = 'tenant';
+		assignScopeId = role.tenant_id;
+		assignExpiresAt = '';
+		assignError = '';
+		showAssignDialog = true;
+	}
+
+	function closeAssignDialog() {
+		showAssignDialog = false;
+	}
+
+	function handleScopeTypeChange() {
+		if (!role) return;
+		if (assignScopeType === 'tenant') {
+			assignScopeId = role.tenant_id;
+		} else if (assignScopeType === 'global') {
+			assignScopeId = '';
+		} else {
+			assignScopeId = '';
+		}
+	}
+
+	function openAssignmentEditDialog(assignment: AdminRoleAssignmentWithUser) {
+		editingAssignment = assignment;
+		editAssignmentScopeType = assignment.scope_type === 'global' ? 'global' : 'tenant';
+		editAssignmentScopeId =
+			editAssignmentScopeType === 'tenant' ? assignment.scope_id || role?.tenant_id || '' : '';
+		editAssignmentExpiresAt = timestampToDateTimeLocal(assignment.expires_at);
+		assignmentEditError = '';
+		showAssignmentEditDialog = true;
+	}
+
+	function closeAssignmentEditDialog() {
+		showAssignmentEditDialog = false;
+		editingAssignment = null;
+	}
+
+	function handleEditAssignmentScopeTypeChange() {
+		if (editAssignmentScopeType === 'tenant') {
+			editAssignmentScopeId = editingAssignment?.scope_id || role?.tenant_id || '';
+		} else {
+			editAssignmentScopeId = '';
+		}
+	}
+
 	async function handleSave() {
 		if (!role) return;
 
@@ -96,6 +201,70 @@
 			alert(err instanceof Error ? err.message : 'Failed to update role');
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function handleAssign() {
+		if (!role) return;
+		if (!selectedAdminUserId) {
+			assignError = 'Admin user is required';
+			return;
+		}
+
+		assigning = true;
+		assignError = '';
+
+		try {
+			const expiresAt = assignExpiresAt ? new Date(assignExpiresAt).getTime() : undefined;
+			await adminAdminRolesAPI.assignRole(role.id, {
+				admin_user_id: selectedAdminUserId,
+				scope_type: assignScopeType,
+				scope_id: assignScopeType === 'global' ? undefined : assignScopeId.trim() || undefined,
+				expires_at: expiresAt
+			});
+			closeAssignDialog();
+			await refreshRoleSummary();
+		} catch (err) {
+			assignError = err instanceof Error ? err.message : 'Failed to assign role';
+		} finally {
+			assigning = false;
+		}
+	}
+
+	async function handleUpdateAssignment() {
+		if (!role || !editingAssignment) return;
+
+		updatingAssignment = true;
+		assignmentEditError = '';
+
+		try {
+			await adminAdminRolesAPI.updateAssignment(role.id, editingAssignment.id, {
+				scope_type: editAssignmentScopeType,
+				scope_id:
+					editAssignmentScopeType === 'tenant'
+						? editAssignmentScopeId.trim() || undefined
+						: undefined,
+				expires_at: editAssignmentExpiresAt ? new Date(editAssignmentExpiresAt).getTime() : null
+			});
+			closeAssignmentEditDialog();
+			await refreshRoleSummary();
+		} catch (err) {
+			assignmentEditError = err instanceof Error ? err.message : 'Failed to update role assignment';
+		} finally {
+			updatingAssignment = false;
+		}
+	}
+
+	async function handleRemoveAssignment(assignment: AdminRoleAssignmentWithUser) {
+		if (!role) return;
+		const userLabel = assignment.user?.email || assignment.admin_user_id;
+		if (!confirm(`Remove this role assignment from ${userLabel}?`)) return;
+
+		try {
+			await adminAdminRolesAPI.removeAssignment(role.id, assignment.id);
+			await refreshRoleSummary();
+		} catch (err) {
+			alert(err instanceof Error ? err.message : 'Failed to remove role assignment');
 		}
 	}
 
@@ -144,6 +313,40 @@
 
 	function handleBack() {
 		goto('/admin/admin-rbac');
+	}
+
+	function formatDate(timestamp: number | null): string {
+		if (!timestamp) return '-';
+		return new Date(timestamp).toLocaleString();
+	}
+
+	function timestampToDateTimeLocal(timestamp: number | null): string {
+		if (!timestamp) return '';
+		const date = new Date(timestamp);
+		const offsetMs = date.getTimezoneOffset() * 60_000;
+		return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+	}
+
+	function formatScope(assignment: AdminRoleAssignmentWithUser): string {
+		if (assignment.scope_type === 'global') {
+			return 'Global';
+		}
+		if (assignment.scope_type === 'tenant') {
+			return `Tenant: ${assignment.scope_id || assignment.tenant_id}`;
+		}
+		// Existing records may contain reserved scope values, but the AdminUI no longer creates them.
+		return `Unsupported scope: ${assignment.scope_type}${assignment.scope_id ? `:${assignment.scope_id}` : ''}`;
+	}
+
+	function formatAdminUser(assignment: AdminRoleAssignmentWithUser): string {
+		if (!assignment.user) return assignment.admin_user_id;
+		return assignment.user.name
+			? `${assignment.user.name} <${assignment.user.email}>`
+			: assignment.user.email;
+	}
+
+	function assignmentStatus(assignment: AdminRoleAssignmentWithUser): 'active' | 'expired' {
+		return assignment.expires_at && assignment.expires_at <= Date.now() ? 'expired' : 'active';
 	}
 </script>
 
@@ -219,7 +422,95 @@
 							<span class="info-value">{role.display_name}</span>
 						</div>
 					{/if}
+					<div class="info-item">
+						<span class="info-label">Assigned Users</span>
+						<span class="info-value">{role.assigned_user_count}</span>
+					</div>
+					<div class="info-item">
+						<span class="info-label">Assignment Scopes</span>
+						<span class="info-value">{new Set(assignments.map((a) => a.scope_type)).size}</span>
+					</div>
 				</div>
+			</div>
+
+			<!-- Role Assignments Card -->
+			<div class="detail-card">
+				<div class="card-title-row">
+					<h2 class="card-title">
+						Role Assignments
+						<span class="badge">{assignments.length}</span>
+					</h2>
+					<button class="btn btn-sm btn-primary" onclick={openAssignDialog}>
+						<i class="i-ph-plus"></i>
+						Assign
+					</button>
+				</div>
+
+				{#if assignmentError}
+					<div class="inline-error">
+						<span>{assignmentError}</span>
+						<button class="btn btn-sm btn-secondary" onclick={loadAssignments}>Retry</button>
+					</div>
+				{:else if assignments.length === 0}
+					<p class="empty-message">No active assignments</p>
+				{:else}
+					<div class="table-container">
+						<table class="table">
+							<thead>
+								<tr>
+									<th>Admin User</th>
+									<th>Scope Binding</th>
+									<th>Status</th>
+									<th>Expires</th>
+									<th>Assigned By</th>
+									<th>Created</th>
+									<th class="actions-cell">Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each assignments as assignment (assignment.id)}
+									<tr>
+										<td>
+											<div class="user-cell">
+												<span>{formatAdminUser(assignment)}</span>
+												{#if assignment.user && !assignment.user.is_active}
+													<span class="badge badge-warning">Inactive</span>
+												{/if}
+											</div>
+										</td>
+										<td><span class="scope-chip">{formatScope(assignment)}</span></td>
+										<td>
+											<span
+												class={assignmentStatus(assignment) === 'active'
+													? 'badge badge-success'
+													: 'badge badge-neutral'}
+											>
+												{assignmentStatus(assignment)}
+											</span>
+										</td>
+										<td>{formatDate(assignment.expires_at)}</td>
+										<td>{assignment.assigned_by || '-'}</td>
+										<td>{formatDate(assignment.created_at)}</td>
+										<td class="actions-cell">
+											<button
+												class="btn btn-sm btn-secondary"
+												onclick={() => openAssignmentEditDialog(assignment)}
+											>
+												Edit
+											</button>
+											<button
+												class="btn btn-sm btn-danger"
+												onclick={() => handleRemoveAssignment(assignment)}
+											>
+												Remove
+											</button>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
 			</div>
 
 			<!-- Permissions Card -->
@@ -231,27 +522,33 @@
 
 				{#if role.permissions.length === 0}
 					<p class="empty-message">No permissions assigned</p>
-				{:else if role.permissions.includes('*')}
-					<div class="permissions-grid">
-						<div class="permission-badge permission-all">
-							<i class="i-ph-crown"></i>
-							Full Access
-						</div>
-					</div>
 				{:else}
-					<div class="permission-categories">
+					<div class="permission-editor-grid permission-view-grid">
 						{#each permissionsByCategory as category (category.category)}
-							<div class="permission-category">
-								<h3 class="permission-category-title">{category.category}</h3>
-								<div class="permission-category-items">
+							<div class="permission-category-editor">
+								<div class="permission-category-header">
+									<label class="form-checkbox-label permission-view-label">
+										<input
+											type="checkbox"
+											checked={category.hasAllPermissions}
+											indeterminate={category.hasAnyPermission && !category.hasAllPermissions}
+											disabled
+										/>
+										<span class="permission-category-name">{category.category}</span>
+									</label>
+								</div>
+								<div class="permission-category-body">
 									{#each category.permissions as perm (perm.key)}
-										{#if perm.hasPermission}
-											<div class="permission-badge">
-												<i class="i-ph-check-circle"></i>
-												<span class="permission-badge-label">{perm.key}</span>
-												<span class="permission-badge-desc">{perm.description}</span>
-											</div>
-										{/if}
+										<label
+											class="permission-checkbox-item permission-view-item"
+											class:permission-unchecked={!perm.hasPermission}
+										>
+											<input type="checkbox" checked={perm.hasPermission} disabled />
+											<span class="permission-checkbox-info">
+												<span class="permission-checkbox-label">{perm.key}</span>
+												<span class="permission-checkbox-desc">{perm.description}</span>
+											</span>
+										</label>
 									{/each}
 								</div>
 							</div>
@@ -335,6 +632,138 @@
 	{/snippet}
 </Modal>
 
+<!-- Edit Assignment Dialog -->
+<Modal
+	open={showAssignmentEditDialog && !!editingAssignment}
+	onClose={closeAssignmentEditDialog}
+	title="Edit Role Assignment"
+	size="md"
+>
+	{#if assignmentEditError}
+		<div class="form-error">{assignmentEditError}</div>
+	{/if}
+	{#if editingAssignment}
+		<div class="form-group">
+			<!-- svelte-ignore a11y_label_has_associated_control -->
+			<label>Admin User</label>
+			<div class="readonly-value">{formatAdminUser(editingAssignment)}</div>
+		</div>
+		<div class="form-row">
+			<div class="form-group">
+				<label for="editAssignmentScopeType">Scope Type</label>
+				<select
+					id="editAssignmentScopeType"
+					class="input"
+					bind:value={editAssignmentScopeType}
+					onchange={handleEditAssignmentScopeTypeChange}
+				>
+					<option value="tenant">Tenant</option>
+					<option value="global">Global</option>
+				</select>
+			</div>
+			<div class="form-group">
+				<label for="editAssignmentScopeId">Scope ID</label>
+				<input
+					id="editAssignmentScopeId"
+					class="input"
+					type="text"
+					bind:value={editAssignmentScopeId}
+					placeholder={role?.tenant_id || 'tenant_id'}
+					disabled={editAssignmentScopeType === 'global'}
+				/>
+			</div>
+		</div>
+		<div class="form-group">
+			<label for="editAssignmentExpiresAt">Expires At</label>
+			<input
+				id="editAssignmentExpiresAt"
+				class="input"
+				type="datetime-local"
+				bind:value={editAssignmentExpiresAt}
+			/>
+		</div>
+	{/if}
+
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={closeAssignmentEditDialog}
+			disabled={updatingAssignment}
+		>
+			Cancel
+		</button>
+		<button
+			class="btn btn-primary"
+			onclick={handleUpdateAssignment}
+			disabled={updatingAssignment || !editingAssignment}
+		>
+			{updatingAssignment ? 'Saving...' : 'Save'}
+		</button>
+	{/snippet}
+</Modal>
+
+<!-- Assign Role Dialog -->
+<Modal
+	open={showAssignDialog && !!role}
+	onClose={closeAssignDialog}
+	title="Assign Role: {role?.name || ''}"
+	size="md"
+>
+	{#if assignError}
+		<div class="form-error">{assignError}</div>
+	{/if}
+
+	<div class="form-group">
+		<label for="assignAdminUser">Admin User</label>
+		<select id="assignAdminUser" class="input" bind:value={selectedAdminUserId}>
+			<option value="">Select admin user</option>
+			{#each adminUsers as user (user.id)}
+				<option value={user.id}>{user.name ? `${user.name} <${user.email}>` : user.email}</option>
+			{/each}
+		</select>
+	</div>
+
+	<div class="form-row">
+		<div class="form-group">
+			<label for="assignScopeType">Scope Type</label>
+			<select
+				id="assignScopeType"
+				class="input"
+				bind:value={assignScopeType}
+				onchange={handleScopeTypeChange}
+			>
+				<option value="tenant">Tenant</option>
+				<option value="global">Global</option>
+			</select>
+		</div>
+		<div class="form-group">
+			<label for="assignScopeId">Scope ID</label>
+			<input
+				id="assignScopeId"
+				class="input"
+				type="text"
+				bind:value={assignScopeId}
+				placeholder={role?.tenant_id || 'tenant_id'}
+				disabled={assignScopeType === 'global'}
+			/>
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label for="assignExpiresAt">Expires At</label>
+		<input id="assignExpiresAt" class="input" type="datetime-local" bind:value={assignExpiresAt} />
+	</div>
+
+	{#snippet footer()}
+		<button class="btn btn-secondary" onclick={closeAssignDialog} disabled={assigning}>
+			Cancel
+		</button>
+		<button class="btn btn-primary" onclick={handleAssign} disabled={assigning}>
+			{assigning ? 'Assigning...' : 'Assign Role'}
+		</button>
+	{/snippet}
+</Modal>
+
 <style>
 	.breadcrumb {
 		display: flex;
@@ -385,6 +814,18 @@
 		gap: 0.5rem;
 	}
 
+	.card-title-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1rem;
+	}
+
+	.card-title-row .card-title {
+		margin: 0;
+	}
+
 	.badge {
 		display: inline-flex;
 		align-items: center;
@@ -420,83 +861,100 @@
 		color: var(--text-primary);
 	}
 
-	.permissions-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-		gap: 0.5rem;
-	}
-
-	.permission-categories {
-		display: flex;
-		flex-direction: column;
-		gap: 1.5rem;
-	}
-
-	.permission-category {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		overflow: hidden;
-	}
-
-	.permission-category-title {
-		background: var(--bg-subtle);
-		padding: 0.75rem 1rem;
-		margin: 0;
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		border-bottom: 1px solid var(--border);
-	}
-
-	.permission-category-items {
-		padding: 0.75rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.permission-badge {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		padding: 0.5rem 0.75rem;
-		background: var(--bg-subtle);
-		border-radius: var(--radius-md);
-	}
-
-	.permission-badge :global(i) {
-		width: 16px;
-		height: 16px;
-		color: var(--success);
-		align-self: flex-start;
-	}
-
-	.permission-badge-label {
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--text-primary);
-	}
-
-	.permission-badge-desc {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-	}
-
-	.permission-all {
-		background: var(--primary-subtle);
-		color: var(--primary);
-		font-weight: 500;
-		flex-direction: row;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.permission-all :global(i) {
-		color: var(--primary);
-	}
-
 	.empty-message {
 		color: var(--text-secondary);
+		font-size: 0.875rem;
+	}
+
+	.inline-error,
+	.form-error {
+		padding: 0.75rem;
+		border: 1px solid var(--danger);
+		border-radius: var(--radius-md);
+		color: var(--danger);
+		background: var(--danger-light);
+		font-size: 0.875rem;
+	}
+
+	.inline-error {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.table-container {
+		overflow-x: auto;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+	}
+
+	.table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.875rem;
+	}
+
+	.table th,
+	.table td {
+		padding: 0.75rem;
+		border-bottom: 1px solid var(--border);
+		text-align: left;
+		vertical-align: middle;
+	}
+
+	.table th {
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+	}
+
+	.table tr:last-child td {
+		border-bottom: none;
+	}
+
+	.actions-cell {
+		text-align: right;
+		white-space: nowrap;
+	}
+
+	.actions-cell .btn + .btn {
+		margin-left: 0.5rem;
+	}
+
+	.user-cell {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 220px;
+	}
+
+	.scope-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.125rem 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		background: var(--bg-subtle);
+		font-size: 0.75rem;
+		color: var(--text-primary);
+		white-space: nowrap;
+	}
+
+	.form-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+	}
+
+	.readonly-value {
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+		color: var(--text-primary);
 		font-size: 0.875rem;
 	}
 
@@ -517,7 +975,8 @@
 
 	/* Form input styling */
 	.input,
-	textarea.input {
+	textarea.input,
+	select.input {
 		width: 100%;
 		padding: 0.5rem 0.75rem;
 		border: 1px solid var(--border);
@@ -529,7 +988,8 @@
 	}
 
 	.input:focus,
-	textarea.input:focus {
+	textarea.input:focus,
+	select.input:focus {
 		outline: none;
 		border-color: var(--primary);
 		box-shadow: 0 0 0 3px var(--primary-subtle);
@@ -545,6 +1005,13 @@
 		padding: 0.5rem;
 		background: var(--bg-subtle);
 		border-radius: var(--radius-md);
+	}
+
+	.permission-view-grid {
+		max-height: none;
+		overflow: visible;
+		padding: 0;
+		background: transparent;
 	}
 
 	.permission-category-editor {
@@ -570,6 +1037,13 @@
 
 	.form-checkbox-label input[type='checkbox'] {
 		cursor: pointer;
+	}
+
+	.permission-view-label,
+	.permission-view-label input[type='checkbox'],
+	.permission-view-item,
+	.permission-view-item input[type='checkbox'] {
+		cursor: default;
 	}
 
 	.permission-category-name {
@@ -599,6 +1073,14 @@
 		background: var(--bg-subtle);
 	}
 
+	.permission-view-item:hover {
+		background: transparent;
+	}
+
+	.permission-unchecked {
+		opacity: 0.48;
+	}
+
 	.permission-checkbox-item input[type='checkbox'] {
 		margin-top: 0.25rem;
 		cursor: pointer;
@@ -620,5 +1102,16 @@
 	.permission-checkbox-desc {
 		font-size: 0.75rem;
 		color: var(--text-secondary);
+	}
+
+	@media (max-width: 720px) {
+		.form-row {
+			grid-template-columns: 1fr;
+		}
+
+		.card-title-row {
+			align-items: stretch;
+			flex-direction: column;
+		}
 	}
 </style>

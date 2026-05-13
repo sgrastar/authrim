@@ -874,7 +874,8 @@ describe('Token Introspection Endpoint', () => {
         'user-123',
         1,
         'client-123',
-        'token-jti-123'
+        'token-jti-123',
+        'tenant1'
       );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -936,7 +937,7 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
-      expect(isTokenRevoked).toHaveBeenCalledWith(c.env, 'token-jti-123');
+      expect(isTokenRevoked).toHaveBeenCalledWith(c.env, 'token-jti-123', 'tenant1');
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,
@@ -1799,7 +1800,8 @@ describe('Token Introspection Endpoint', () => {
         'user-123',
         1,
         'client-123',
-        'token-jti-123'
+        'token-jti-123',
+        'tenant1'
       );
       expect(isTokenRevoked).not.toHaveBeenCalled();
       // Should return cached response

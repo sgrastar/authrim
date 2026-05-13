@@ -78,14 +78,20 @@ const {
       }
 
       if (sql.includes('FROM object_catalog oc')) {
+        const tenantId = params[0];
+        const identifier = params[1];
+        const representation = params[2];
+        const objectIndex = params[3];
         const catalog = state.objectCatalog.find(
-          (row) => row.id === params[0] || row.public_artifact_id === params[0]
+          (row) =>
+            row.tenant_id === tenantId &&
+            (row.id === identifier || row.public_artifact_id === identifier)
         );
         const object = state.objectCatalogObjects.find(
           (row) =>
             row.catalog_id === catalog?.id &&
-            row.representation === params[1] &&
-            row.object_index === params[2]
+            row.representation === representation &&
+            row.object_index === objectIndex
         );
         if (!catalog || !object) {
           return null;
@@ -201,9 +207,18 @@ function createMockBucket(initial: Record<string, StoredObject> = {}) {
   };
 }
 
-function createMockContext(envOverrides: Partial<Env> = {}) {
+function createMockContext(
+  envOverrides: Partial<Env> = {},
+  options: {
+    headers?: Record<string, string>;
+    requestId?: string;
+  } = {}
+) {
   const objectStore = createMockBucket();
   const contextStore = new Map<string, unknown>();
+  const headers = new Map(
+    Object.entries(options.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value])
+  );
   const env = {
     SENSITIVE_DETAILS: objectStore.bucket,
     OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
@@ -215,6 +230,8 @@ function createMockContext(envOverrides: Partial<Env> = {}) {
     env,
     req: {
       header(name: string) {
+        const headerValue = headers.get(name.toLowerCase());
+        if (headerValue) return headerValue;
         if (name === 'CF-Connecting-IP') return '203.0.113.9';
         if (name === 'User-Agent') return 'VitestAgent/1.0';
         return undefined;
@@ -228,8 +245,13 @@ function createMockContext(envOverrides: Partial<Env> = {}) {
     },
   } as unknown as Parameters<typeof writeAdminAuditLog>[0];
 
+  if (options.requestId) {
+    (c as any).set('requestId', options.requestId);
+  }
+
   (c as any).set('adminAuth', {
     userId: 'admin-1',
+    authMethod: 'session',
     email: 'admin@example.com',
     sessionId: 'sess-1',
   });
@@ -269,7 +291,11 @@ describe('admin-shared audit detail externalization', () => {
     const logRow = dbState.adminAuditLogs[0];
     expect(logRow.before_json).toBeNull();
     expect(logRow.after_json).toBeNull();
-    expect(logRow.metadata_json).toBeNull();
+    expect(JSON.parse(logRow.metadata_json as string)).toEqual({
+      admin_actor_type: 'admin_user',
+      admin_actor_id: 'admin-1',
+      admin_auth_method: 'session',
+    });
     expect(typeof logRow.detail_object_catalog_id).toBe('string');
     const detailCatalog = dbState.objectCatalog[0];
     expect(detailCatalog.public_artifact_id).toMatch(/^oa_/);
@@ -284,7 +310,13 @@ describe('admin-shared audit detail externalization', () => {
     expect(detail).toEqual({
       before: { display_name: 'Old Name' },
       after: { display_name: 'New Name' },
-      metadata: { ticket: 'CASE-123', diff: ['name'] },
+      metadata: {
+        ticket: 'CASE-123',
+        diff: ['name'],
+        admin_actor_type: 'admin_user',
+        admin_actor_id: 'admin-1',
+        admin_auth_method: 'session',
+      },
     });
   });
 
@@ -311,6 +343,99 @@ describe('admin-shared audit detail externalization', () => {
     expect(logRow.detail_object_catalog_id).toBeNull();
     expect(logRow.before_json).toBeNull();
     expect(logRow.after_json).toBe(JSON.stringify({ email: 'new-admin@example.com' }));
-    expect(logRow.metadata_json).toBe(JSON.stringify({ invite: true }));
+    expect(JSON.parse(logRow.metadata_json as string)).toEqual({
+      invite: true,
+      admin_actor_type: 'admin_user',
+      admin_actor_id: 'admin-1',
+      admin_auth_method: 'session',
+    });
+  });
+
+  it('records request id and Admin UI BFF metadata on admin audit rows', async () => {
+    const { c } = createMockContext(
+      {
+        SENSITIVE_DETAILS: undefined,
+        OBJECT_ENCRYPTION_ROOT_KEY: undefined,
+      },
+      {
+        requestId: 'mgmt-req-1',
+        headers: {
+          'X-Request-Id': 'bff-req-1',
+          'X-Correlation-Id': 'corr-1',
+          'X-Authrim-Admin-UI-Api-Mode': 'cross-site-proxy-bff',
+          'X-Authrim-Forwarded-Host': 'api.authrim.example',
+          'X-Forwarded-Proto': 'https',
+        },
+      }
+    );
+
+    await writeAdminAuditLog(c, {
+      action: 'admin.user.updated',
+      resourceType: 'admin_user',
+      resourceId: 'admin-1',
+      result: 'success',
+      metadata: { admin_ui_api_mode: 'spoofed', ticket: 'CASE-456' },
+    });
+
+    expect(dbState.adminAuditLogs).toHaveLength(1);
+
+    const logRow = dbState.adminAuditLogs[0];
+    expect(logRow.request_id).toBe('mgmt-req-1');
+    expect(JSON.parse(logRow.metadata_json as string)).toEqual({
+      admin_ui_api_mode: 'cross-site-proxy-bff',
+      admin_ui_bff_forwarded_host: 'api.authrim.example',
+      admin_ui_bff_forwarded_proto: 'https',
+      admin_ui_bff_request_id: 'bff-req-1',
+      admin_ui_bff_correlation_id: 'corr-1',
+      admin_actor_type: 'admin_user',
+      admin_actor_id: 'admin-1',
+      admin_auth_method: 'session',
+      ticket: 'CASE-456',
+    });
+  });
+
+  it('records machine actor and credential metadata on admin audit rows', async () => {
+    const { c } = createMockContext({
+      SENSITIVE_DETAILS: undefined,
+      OBJECT_ENCRYPTION_ROOT_KEY: undefined,
+    });
+    (c as any).set('adminAuth', {
+      userId: 'amp_mcp_admin',
+      authMethod: 'machine_access_token',
+      actorType: 'machine',
+      actorId: 'amp_mcp_admin',
+      principalType: 'mcp_server',
+      credentialId: 'amk_mcp_admin',
+      clientId: 'mcp-admin-server',
+      clientAuthMethod: 'private_key_jwt',
+      credentialStrength: 'asymmetric_key',
+      senderConstrained: false,
+    });
+
+    await writeAdminAuditLog(c, {
+      action: 'ai_grant.created',
+      resourceType: 'ai_grant',
+      resourceId: 'grant-1',
+      result: 'success',
+      metadata: { ticket: 'CASE-789' },
+    });
+
+    expect(dbState.adminAuditLogs).toHaveLength(1);
+    const logRow = dbState.adminAuditLogs[0];
+    expect(logRow.admin_user_id).toBeNull();
+    expect(logRow.admin_email).toBeNull();
+    expect(JSON.parse(logRow.metadata_json as string)).toEqual({
+      ticket: 'CASE-789',
+      admin_actor_type: 'machine',
+      admin_actor_id: 'amp_mcp_admin',
+      admin_auth_method: 'machine_access_token',
+      admin_machine_principal_id: 'amp_mcp_admin',
+      admin_machine_principal_type: 'mcp_server',
+      admin_machine_credential_id: 'amk_mcp_admin',
+      admin_machine_client_id: 'mcp-admin-server',
+      admin_machine_client_auth_method: 'private_key_jwt',
+      admin_machine_credential_strength: 'asymmetric_key',
+      admin_machine_sender_constrained: false,
+    });
   });
 });

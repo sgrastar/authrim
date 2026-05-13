@@ -51,14 +51,15 @@ export async function findActiveInvitationByToken(
 export async function consumeInvitationUse(
   db: DatabaseSource,
   invitationId: string,
+  tenantId: string,
   now: number = Math.floor(Date.now() / 1000)
 ): Promise<boolean> {
   const adapter = getAdapter(db);
   const result = await adapter.execute(
     `UPDATE tenant_invitations
      SET use_count = use_count + 1, updated_at = ?
-     WHERE id = ? AND expires_at > ? AND (max_uses = -1 OR use_count < max_uses)`,
-    [now, invitationId, now]
+     WHERE id = ? AND tenant_id = ? AND expires_at > ? AND (max_uses = -1 OR use_count < max_uses)`,
+    [now, invitationId, tenantId, now]
   );
 
   return result.rowsAffected > 0;
@@ -87,8 +88,8 @@ export async function assignTenantRoleToUser(
 
   const existing = await adapter.queryOne<{ id: string }>(
     `SELECT id FROM role_assignments
-     WHERE user_id = ? AND role_id = ? AND scope_type = 'tenant' AND scope_target = ? AND tenant_id = ?`,
-    [userId, roleId, tenantId, tenantId]
+     WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = 'tenant' AND scope_target = ?`,
+    [tenantId, userId, roleId, tenantId]
   );
   if (existing) {
     return {

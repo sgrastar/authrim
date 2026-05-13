@@ -11,28 +11,10 @@ import { adminFetch } from '$lib/api/admin-request';
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
-/**
- * Get session ID from localStorage for Safari ITP compatibility
- */
-function getSessionId(): string | null {
-	if (typeof localStorage !== 'undefined') {
-		return localStorage.getItem('sessionId');
-	}
-	return null;
-}
-
-/**
- * Build headers with session ID for Safari ITP compatibility
- */
 function buildHeaders(): Record<string, string> {
-	const headers: Record<string, string> = {
+	return {
 		'Content-Type': 'application/json'
 	};
-	const sessionId = getSessionId();
-	if (sessionId && sessionId !== 'session-from-cookie') {
-		headers['X-Session-Id'] = sessionId;
-	}
-	return headers;
 }
 
 /**

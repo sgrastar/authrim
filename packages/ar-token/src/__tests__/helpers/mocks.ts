@@ -321,6 +321,7 @@ export interface MockContextOptions {
   body?: Record<string, string>;
   env?: Partial<MockEnv>;
   params?: Record<string, string>;
+  tenantId?: string;
 }
 
 /**
@@ -337,6 +338,7 @@ export function createMockContext(options: MockContextOptions = {}): Context<{ B
     body = {},
     env = {},
     params = {},
+    tenantId = 'default',
   } = options;
 
   // Create URLSearchParams for form body
@@ -360,7 +362,7 @@ export function createMockContext(options: MockContextOptions = {}): Context<{ B
 
   // Create mock context
   const mockEnv = createMockEnv(env);
-  const contextData = new Map<string, unknown>();
+  const contextData = new Map<string, unknown>([['tenantId', tenantId]]);
 
   // Create a minimal mock context
   const mockContext = {

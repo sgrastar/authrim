@@ -19,9 +19,8 @@ import { importJWK } from 'jose';
 import { verifyToken } from './jwt';
 import { isTokenRevoked } from './kv';
 import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken } from './dpop';
-import { buildIssuerUrl, getDefaultTenantId } from './issuer';
+import { buildIssuerUrl } from './issuer';
 import { createLogger } from './logger';
-import { getTenantIdFromHost } from './tenant-context';
 import { getTenantIdFromContext } from '../middleware/request-context';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
@@ -63,7 +62,7 @@ export interface TokenValidationRequest {
   /** Request body (for form-encoded POST requests) */
   body?: URLSearchParams;
   /** Tenant ID for multi-tenant key isolation */
-  tenantId?: string;
+  tenantId: string;
 }
 
 // ===== Key Caching for Performance Optimization =====
@@ -212,13 +211,7 @@ function extractAccessToken(authHeader: string): {
 }
 
 function getValidationIssuerUrl(request: TokenValidationRequest): string {
-  const requestHost = request.headers.get('Host') || new URL(request.url).host;
-  const tenantResolution = getTenantIdFromHost(requestHost || undefined, request.env);
-  const tenantId = tenantResolution.success
-    ? tenantResolution.tenantId
-    : getDefaultTenantId(request.env);
-
-  return buildIssuerUrl(request.env, tenantId);
+  return buildIssuerUrl(request.env, request.tenantId);
 }
 
 /**
@@ -340,8 +333,19 @@ export async function introspectToken(
     };
   }
 
-  // Resolve tenantId for per-tenant key isolation
-  const tenantId = request.tenantId ?? getDefaultTenantId(request.env);
+  // Resolve tenantId for per-tenant key isolation.
+  const tenantId = request.tenantId.trim();
+  if (!tenantId) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_request',
+        error_description: 'Missing tenant context',
+        wwwAuthenticate: 'Bearer',
+        statusCode: 401,
+      },
+    };
+  }
 
   // Load public key for verification
   // First, try to extract kid from JWT header
@@ -498,7 +502,8 @@ export async function introspectToken(
       request.url,
       accessToken, // Include access token for ath validation
       request.env, // Pass full Env for region-aware DPoP JTI sharding
-      client_id // Bind JTI to client_id for additional security
+      client_id, // Bind JTI to client_id for additional security
+      tenantId
     );
 
     if (!dpopValidation.valid) {
@@ -558,7 +563,7 @@ export async function introspectToken(
   // Check if token has been revoked
   const jti = tokenClaims.jti;
   if (jti && typeof jti === 'string') {
-    const revoked = await isTokenRevoked(request.env, jti);
+    const revoked = await isTokenRevoked(request.env, jti, tenantId);
     if (revoked) {
       const wwwAuth = isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"';
       return {

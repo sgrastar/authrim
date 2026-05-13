@@ -112,7 +112,7 @@ export async function createRoleAssignmentRule(c: Context) {
   const id = `rar_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if name already exists
@@ -212,7 +212,7 @@ export async function listRoleAssignmentRules(c: Context) {
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const isActive = c.req.query('is_active');
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     let whereClause = 'WHERE tenant_id = ?';
@@ -264,7 +264,7 @@ export async function getRoleAssignmentRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const row = await coreAdapter.queryOne<RoleAssignmentRuleRow>(
@@ -305,7 +305,7 @@ export async function updateRoleAssignmentRule(c: Context) {
   const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<Partial<RoleAssignmentRuleInput>>();
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if rule exists
@@ -427,7 +427,7 @@ export async function deleteRoleAssignmentRule(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const result = await coreAdapter.execute(
@@ -485,7 +485,7 @@ export async function testRoleAssignmentRule(c: Context) {
     };
   }>();
 
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get rule
@@ -583,7 +583,7 @@ export async function evaluateRoleAssignmentRules(c: Context) {
     };
 
     // Create evaluator and run
-    const evaluator = createRuleEvaluator(resolveSettingsCoreAdapter(c, tenantId), c.env.SETTINGS);
+    const evaluator = createRuleEvaluator(resolveSettingsCoreAdapter(c), c.env.SETTINGS);
     const result = await evaluator.evaluate(evalContext);
 
     return c.json({

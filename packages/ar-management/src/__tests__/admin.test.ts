@@ -927,7 +927,7 @@ describe('Admin API Handlers', () => {
 
       expect(
         (mockDB as any).prepare.mock.calls.some(([sql]: [string]) =>
-          sql.includes('FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?')
+          sql.includes('FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?')
         )
       ).toBe(true);
     });
@@ -1558,7 +1558,7 @@ describe('Admin API Handlers', () => {
           coreUpdateParams = [...params];
         }
 
-        if (op === 'all' && sql.includes('SELECT * FROM sessions WHERE user_id = ?')) {
+        if (op === 'all' && sql.includes('SELECT * FROM sessions WHERE tenant_id = ?')) {
           return [
             {
               id: 'sess-1',
@@ -1621,16 +1621,16 @@ describe('Admin API Handlers', () => {
         expect.stringContaining('DELETE FROM subject_org_membership')
       );
       expect(coreSqls).toContainEqual(
-        expect.stringContaining('DELETE FROM passkeys WHERE user_id = ?')
+        expect.stringContaining('DELETE FROM passkeys WHERE tenant_id = ? AND user_id = ?')
       );
       expect(coreSqls).toContainEqual(
-        expect.stringContaining('DELETE FROM sessions WHERE user_id = ?')
+        expect.stringContaining('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?')
       );
       expect(coreSqls).toContainEqual(
-        expect.stringContaining('DELETE FROM session_clients WHERE session_id = ?')
+        expect.stringContaining('DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?')
       );
       expect(coreSqls).toContainEqual(
-        expect.stringContaining('DELETE FROM user_roles WHERE user_id = ?')
+        expect.stringContaining('DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?')
       );
       expect(coreUpdateSql).toContain('status = ?');
       expect(coreUpdateSql).toContain('lifecycle_state = ?');

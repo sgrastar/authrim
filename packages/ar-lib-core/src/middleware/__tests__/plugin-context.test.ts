@@ -332,4 +332,17 @@ describe('createPluginLoader', () => {
     await request('tenant-b');
     expect(loadPlugins).toHaveBeenCalledTimes(4);
   });
+
+  it('rejects plugin context initialization without tenant context', async () => {
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', pluginContextMiddleware());
+    app.get('/', (c) => c.json({ ok: true }));
+
+    const response = await app.request('/', {}, {} as Env);
+    const body = (await response.json()) as { error: string; error_description: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_request');
+    expect(body.error_description).toContain('Tenant context');
+  });
 });

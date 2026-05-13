@@ -145,7 +145,7 @@ export async function createOrgDomainMapping(c: Context) {
     );
 
     // Verify org exists
-    const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+    const coreAdapter = resolveSettingsCoreAdapter(c);
     const org = await coreAdapter.queryOne<{ id: string }>(
       'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
       [body.org_id, tenantId]
@@ -226,7 +226,7 @@ export async function listOrgDomainMappings(c: Context) {
   const orgId = c.req.query('org_id');
   const verified = c.req.query('verified');
   const isActive = c.req.query('is_active');
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const result = await listDomainMappings(coreAdapter, tenantId, {
@@ -263,7 +263,7 @@ export async function getOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const mapping = await getDomainMappingById(coreAdapter, id, tenantId);
@@ -300,7 +300,7 @@ export async function updateOrgDomainMapping(c: Context) {
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
   const body = await c.req.json<Partial<OrgDomainMappingInput>>();
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Note: domain cannot be updated. Create a new mapping instead.
@@ -344,7 +344,7 @@ export async function deleteOrgDomainMapping(c: Context) {
   const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id')!;
   const tenantId = resolveSettingsTenantId(c);
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const success = await deleteDomainMapping(coreAdapter, id, tenantId);
@@ -382,7 +382,7 @@ export async function listOrgDomainMappingsByOrg(c: Context) {
   const tenantId = resolveSettingsTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_MAPPINGS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Verify org exists
@@ -489,7 +489,7 @@ export async function verifyDomainOwnership(c: Context) {
   }
 
   const domain = body.domain.toLowerCase().trim();
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get existing mapping
@@ -616,7 +616,7 @@ export async function confirmDomainVerification(c: Context) {
   }
 
   const domain = body.domain.toLowerCase().trim();
-  const coreAdapter = resolveSettingsCoreAdapter(c, tenantId);
+    const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get mapping with verification details

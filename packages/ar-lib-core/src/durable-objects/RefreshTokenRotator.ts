@@ -38,6 +38,7 @@ const MAX_ROTATOR_JSON_BODY_BYTES = 512 * 1024;
  * Token Family V2 - Minimal state for high-performance rotation
  */
 export interface TokenFamilyV2 {
+  tenant_id: string; // Tenant boundary for runtime validation
   version: number; // Rotation version (monotonically increasing)
   last_jti: string; // Last issued JWT ID
   last_used_at: number; // Timestamp of last use (ms)
@@ -57,6 +58,7 @@ export interface CreateFamilyRequestV2 {
   clientId: string;
   scope: string;
   ttl: number; // Time to live in seconds
+  tenantId: string;
   resourceAudience?: string | string[];
 }
 
@@ -77,6 +79,7 @@ export interface RotateTokenRequestV2 {
   incomingJti: string; // JTI from incoming JWT
   userId: string; // From JWT sub claim
   clientId: string; // From JWT aud/client_id claim
+  tenantId: string;
   requestedScope?: string; // Requested scope (must be subset of allowed_scope)
 }
 
@@ -149,6 +152,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   // Sharding metadata (set on first createFamily call with V3 request)
   private generation: number | null = null;
   private shardIndex: number | null = null;
+  private tenantId: string | null = null;
 
   // Async audit log buffering (non-critical events)
   private pendingAuditLogs: AuditLogEntry[] = [];
@@ -198,11 +202,16 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       if (storedShardIndex !== undefined) {
         this.shardIndex = storedShardIndex;
       }
+      const storedTenantId = await this.ctx.storage.get<string>(`${STORAGE_PREFIX.META}tenantId`);
+      if (storedTenantId) {
+        this.tenantId = storedTenantId;
+      }
 
       this.log.info('Loaded families from Durable Storage', {
         count: this.families.size,
         generation: this.generation,
         shardIndex: this.shardIndex,
+        tenantId: this.tenantId ?? undefined,
       });
     } catch (error) {
       this.log.error('Failed to initialize', {}, error as Error);
@@ -372,6 +381,32 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     return randomPart;
   }
 
+  private async setTenantId(tenantId: string): Promise<void> {
+    const normalized = tenantId.trim();
+    if (!normalized) {
+      throw new Error('invalid_request: tenantId is required');
+    }
+
+    if (this.tenantId && this.tenantId !== normalized) {
+      throw new Error('invalid_request: Tenant mismatch');
+    }
+
+    if (!this.tenantId) {
+      this.tenantId = normalized;
+      await this.ctx.storage.put(`${STORAGE_PREFIX.META}tenantId`, normalized);
+    }
+  }
+
+  private getTenantIdForAudit(action: string): string | null {
+    if (!this.tenantId) {
+      this.log.error('Cannot create refresh token audit log: tenant context is missing', {
+        action,
+      });
+      return null;
+    }
+    return this.tenantId;
+  }
+
   /**
    * Create new token family (V2/V3)
    *
@@ -388,6 +423,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     allowedScope: string;
   }> {
     await this.initializeState();
+    await this.setTenantId(request.tenantId);
 
     // V3: Store sharding metadata if provided (first call sets it)
     const v3Request = request as CreateFamilyRequestV3;
@@ -405,6 +441,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     const expiresAt = now + request.ttl * 1000;
     const resourceAudience = normalizeResourceAudience(request.resourceAudience);
     const family: TokenFamilyV2 = {
+      tenant_id: request.tenantId,
       version: 1,
       last_jti: request.jti,
       last_used_at: now,
@@ -452,12 +489,17 @@ export class RefreshTokenRotator extends DurableObject<Env> {
    */
   async rotate(request: RotateTokenRequestV2): Promise<RotateTokenResponseV2> {
     await this.initializeState();
+    await this.setTenantId(request.tenantId);
 
     const family = this.families.get(request.userId);
 
     // Family not found
     if (!family) {
       throw new Error('invalid_grant: Token family not found');
+    }
+
+    if (family.tenant_id !== request.tenantId) {
+      throw new Error('invalid_request: Tenant mismatch');
     }
 
     // Validate client_id matches
@@ -750,7 +792,12 @@ export class RefreshTokenRotator extends DurableObject<Env> {
    * Log critical events synchronously (theft_detected, family_revoked)
    */
   private async logCritical(entry: AuditLogEntry): Promise<void> {
+    const tenantId = this.getTenantIdForAudit(`refresh_token.${entry.action}`);
+    if (!tenantId) {
+      return;
+    }
     await createAuditLog(this.env, {
+      tenantId,
       userId: entry.userId ?? 'system',
       action: `refresh_token.${entry.action}`,
       resource: 'refresh_token_family',
@@ -791,18 +838,24 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
     try {
       await Promise.all(
-        logsToFlush.map((entry) =>
-          createAuditLog(this.env, {
+        logsToFlush.map((entry) => {
+          const action = `refresh_token.${entry.action}`;
+          const tenantId = this.getTenantIdForAudit(action);
+          if (!tenantId) {
+            return Promise.resolve();
+          }
+          return createAuditLog(this.env, {
+            tenantId,
             userId: entry.userId ?? 'system',
-            action: `refresh_token.${entry.action}`,
+            action,
             resource: 'refresh_token_family',
             resourceId: entry.familyKey,
             ipAddress: 'system',
             userAgent: 'RefreshTokenRotator',
             metadata: JSON.stringify(entry.metadata ?? {}),
             severity: 'info',
-          })
-        )
+          });
+        })
       );
     } catch (error) {
       this.log.error('Failed to flush audit logs', {}, error as Error);
@@ -842,11 +895,11 @@ export class RefreshTokenRotator extends DurableObject<Env> {
           );
         }
 
-        if (!body.jti || !body.userId || !body.clientId || !body.scope) {
+        if (!body.jti || !body.userId || !body.clientId || !body.scope || !body.tenantId) {
           return new Response(
             JSON.stringify({
               error: 'invalid_request',
-              error_description: 'Missing required fields: jti, userId, clientId, scope',
+              error_description: 'Missing required fields: jti, userId, clientId, scope, tenantId',
             }),
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
@@ -859,6 +912,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
           clientId: body.clientId,
           scope: body.scope,
           ttl: body.ttl || this.DEFAULT_TTL,
+          tenantId: body.tenantId,
           ...(body.resourceAudience !== undefined && {
             resourceAudience: body.resourceAudience,
           }),
@@ -888,13 +942,14 @@ export class RefreshTokenRotator extends DurableObject<Env> {
           body.incomingVersion === undefined ||
           !body.incomingJti ||
           !body.userId ||
-          !body.clientId
+          !body.clientId ||
+          !body.tenantId
         ) {
           return new Response(
             JSON.stringify({
               error: 'invalid_request',
               error_description:
-                'Missing required fields: incomingVersion, incomingJti, userId, clientId',
+                'Missing required fields: incomingVersion, incomingJti, userId, clientId, tenantId',
             }),
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
@@ -906,6 +961,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
             incomingJti: body.incomingJti,
             userId: body.userId,
             clientId: body.clientId,
+            tenantId: body.tenantId,
             requestedScope: body.requestedScope,
           });
 

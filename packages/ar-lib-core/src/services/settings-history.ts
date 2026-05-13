@@ -15,6 +15,7 @@
  */
 
 import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
+import { requireTenantId } from '../repositories/tenant';
 
 // =============================================================================
 // Types
@@ -103,7 +104,6 @@ export interface SettingsHistoryConfig {
 
 const DEFAULT_MAX_VERSIONS = 100;
 const DEFAULT_RETENTION_DAYS = 90;
-const DEFAULT_TENANT_ID = 'default';
 
 // =============================================================================
 // Helper Functions
@@ -165,11 +165,11 @@ export class SettingsHistoryManager {
 
   constructor(
     db: DatabaseSource,
-    tenantId: string = DEFAULT_TENANT_ID,
+    tenantId: string,
     config: SettingsHistoryConfig = {}
   ) {
     this.adapter = ensureDatabaseAdapter(db, 'settings-history');
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'SettingsHistoryManager');
     this.config = {
       maxVersions: config.maxVersions ?? DEFAULT_MAX_VERSIONS,
       retentionDays: config.retentionDays ?? DEFAULT_RETENTION_DAYS,
@@ -468,7 +468,7 @@ export class SettingsHistoryManager {
  */
 export function createSettingsHistoryManager(
   db: DatabaseSource,
-  tenantId?: string,
+  tenantId: string,
   config?: SettingsHistoryConfig
 ): SettingsHistoryManager {
   return new SettingsHistoryManager(db, tenantId, config);

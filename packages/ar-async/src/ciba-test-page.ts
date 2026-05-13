@@ -5,14 +5,22 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * GET /ciba/test
  * Simple test page for CIBA flow
  */
 export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
-  const issuerUrl = getRequestIssuer(c);
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const issuerUrl = getRequestIssuer(c, tenantId);
 
   const html = `
 <!DOCTYPE html>

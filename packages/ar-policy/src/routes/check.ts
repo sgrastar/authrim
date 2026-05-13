@@ -21,7 +21,6 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   createLogger,
-  getDefaultTenantId,
   type CheckApiRequest,
 } from '@authrim/ar-lib-core';
 import {
@@ -391,7 +390,6 @@ async function getCheckService(
     cacheTTL: 60,
     debugMode,
     auditService,
-    defaultTenantId: getDefaultTenantId(env),
   });
 
   return { checkService, auditService };
@@ -434,7 +432,7 @@ checkRoutes.get('/health', async (c) => {
  * {
  *   "subject_id": "user_123",
  *   "permission": "documents:doc_456:read"  // or { resource, id?, action }
- *   "tenant_id": "default",                 // optional
+ *   "tenant_id": "tenant-a",                // required for system secret; optional for tenant-bound credentials
  *   "resource_context": { ... },            // optional, for ABAC
  *   "rebac": { relation, object }           // optional, for ReBAC
  * }
@@ -460,7 +458,6 @@ checkRoutes.post('/', async (c) => {
     db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -583,11 +580,7 @@ checkRoutes.post('/', async (c) => {
       }
     }
 
-    const tenantId = resolveAuthorizedCheckTenantId(
-      auth,
-      body.tenant_id,
-      getDefaultTenantId(c.env)
-    );
+    const tenantId = resolveAuthorizedCheckTenantId(auth, body.tenant_id);
     if (!tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
@@ -640,7 +633,6 @@ checkRoutes.post('/batch', async (c) => {
     db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
-    defaultTenantId: getDefaultTenantId(c.env),
   });
 
   if (!auth.authenticated) {
@@ -759,10 +751,9 @@ checkRoutes.post('/batch', async (c) => {
     }
 
     // Apply default tenant_id and reject cross-tenant overrides for tenant-bound auth.
-    const defaultTenantId = auth.tenantId ?? getDefaultTenantId(c.env);
     const normalizedChecks: CheckApiRequest[] = [];
     for (const check of body.checks) {
-      const tenantId = resolveAuthorizedCheckTenantId(auth, check.tenant_id, defaultTenantId);
+      const tenantId = resolveAuthorizedCheckTenantId(auth, check.tenant_id);
       if (!tenantId) {
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
       }

@@ -15,7 +15,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
-  createAuthContextFromHono,
+  resolveOptionalCoreAdapterFromHono,
   getLogger,
   hasPIIDatabase,
   createPIIContextFromHono,
@@ -48,6 +48,14 @@ interface TenantRow {
   name: string;
 }
 
+function getInvitationCoreAdapter(c: Context<{ Bindings: Env }>) {
+  const adapter = resolveOptionalCoreAdapterFromHono(c, 'invitation');
+  if (!adapter) {
+    throw new Error('Core database is not configured');
+  }
+  return adapter;
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -69,7 +77,7 @@ export async function validateInvitationHandler(c: Context<{ Bindings: Env }>) {
 
   try {
     const now = Math.floor(Date.now() / 1000);
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const coreAdapter = getInvitationCoreAdapter(c);
 
     const invitation = await findActiveInvitationByToken(coreAdapter, token, now);
 
@@ -82,9 +90,10 @@ export async function validateInvitationHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const tenant = await coreAdapter.queryOne<TenantRow>('SELECT id, name FROM tenants WHERE id = ?', [
-      invitation.tenant_id,
-    ]);
+    const tenant = await coreAdapter.queryOne<TenantRow>(
+      'SELECT id, name FROM tenants WHERE id = ?',
+      [invitation.tenant_id]
+    );
 
     if (!tenant) {
       log.warn('Invitation references non-existent tenant', {
@@ -129,7 +138,7 @@ export async function useInvitationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const coreAdapter = createAuthContextFromHono(c).coreAdapter;
+    const coreAdapter = getInvitationCoreAdapter(c);
 
     const invitation = await findActiveInvitationByToken(coreAdapter, token, now);
 
@@ -175,7 +184,12 @@ export async function useInvitationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Atomically increment use_count only if still within limit
-    const consumed = await consumeInvitationUse(coreAdapter, invitation.id, now);
+    const consumed = await consumeInvitationUse(
+      coreAdapter,
+      invitation.id,
+      invitation.tenant_id,
+      now
+    );
     if (!consumed) {
       // Another concurrent request consumed the last use
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);

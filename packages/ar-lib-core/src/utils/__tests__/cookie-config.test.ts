@@ -40,15 +40,21 @@ describe('cookie config', () => {
     );
   });
 
-  it('resolves admin cookie SameSite from ADMIN_UI_URL before UI_URL', () => {
+  it('defaults admin cookies to Lax even when global cookie SameSite is None', () => {
     expect(
       getAdminCookieSameSite(
         env({
-          ADMIN_UI_URL: 'https://auth.example.com/admin',
-          UI_URL: 'https://login.example.com',
+          COOKIE_SAME_SITE: 'None' as CookieSameSite,
+          ADMIN_UI_URL: 'https://admin.example.com',
         })
       )
     ).toBe('Lax');
+  });
+
+  it('allows admin cookies to inherit stricter global SameSite values', () => {
+    expect(getAdminCookieSameSite(env({ COOKIE_SAME_SITE: 'Strict' as CookieSameSite }))).toBe(
+      'Strict'
+    );
   });
 
   it('always emits Secure cookie options for SameSite=None compatibility', () => {

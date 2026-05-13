@@ -213,8 +213,8 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
       granted_at: number;
     }>(
       `SELECT id, scope, granted_at FROM oauth_client_consents
-       WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
-      [userId, clientId, tenantId]
+       WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+      [tenantId, userId, clientId]
     );
 
     if (existingConsent.length === 0) {
@@ -233,8 +233,8 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     // Delete consent
     await authCtx.coreAdapter.execute(
-      'DELETE FROM oauth_client_consents WHERE user_id = ? AND client_id = ? AND tenant_id = ?',
-      [userId, clientId, tenantId]
+      'DELETE FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ? AND client_id = ?',
+      [tenantId, userId, clientId]
     );
 
     // Record in consent history
@@ -260,7 +260,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
         // Add to revocation list (tokens will be rejected on next use)
         const revocationKey = `consent_revoked:${userId}:${clientId}`;
         const revocationTTL = 86400 * 90; // 90 days (typical refresh token lifetime)
-        await revokeToken(c.env, revocationKey, revocationTTL);
+        await revokeToken(c.env, revocationKey, revocationTTL, undefined, tenantId);
         // Estimate - actual count would require querying token stores
         refreshTokensRevoked = 1;
       } catch (error) {

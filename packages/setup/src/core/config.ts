@@ -193,8 +193,6 @@ export const ShardingConfigSchema = z.object({
   sessionShards: z.number().int().positive().default(4),
   /** Number of challenge store shards */
   challengeShards: z.number().int().positive().default(4),
-  /** Number of flow state store shards (Flow Engine) */
-  flowStateShards: z.number().int().positive().default(32),
 });
 
 // =============================================================================

@@ -26,6 +26,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
+  getDefaultTenantId,
   getPARRequestStoreByUri,
   parsePARRequestUri,
   // UI Configuration
@@ -1430,7 +1431,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     typeof clientMetadata.tenant_id === 'string' && clientMetadata.tenant_id.length > 0
       ? clientMetadata.tenant_id
       : null;
-  if (clientTenantId && requestTenantId !== 'default' && clientTenantId !== requestTenantId) {
+  if (
+    clientTenantId &&
+    requestTenantId !== getDefaultTenantId(c.env) &&
+    clientTenantId !== requestTenantId
+  ) {
     return c.json(
       {
         error: 'invalid_client',
@@ -2197,6 +2202,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           .get('client.sso_enabled', {
             type: 'client',
             id: validClientId,
+            tenantId,
           })
           .catch(() => null),
         settingsManager
@@ -2482,7 +2488,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         // Generate handoff token
         const handoffToken = crypto.randomUUID();
-        const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken);
+        const handoffStore = await getChallengeStoreByChallengeId(
+          c.env,
+          handoffToken,
+          getTenantIdFromContext(c)
+        );
 
         const handoffArtifactTtlSeconds = resolveHandoffArtifactTtlSeconds(
           c,
@@ -2491,6 +2501,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         await handoffStore.storeChallengeRpc({
           id: `handoff:${handoffToken}`,
+          tenantId: getTenantIdFromContext(c),
           type: 'handoff',
           userId: sessionUserId!,
           challenge: sessionId!,
@@ -2527,10 +2538,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Store authorization request parameters in ChallengeStore (RPC)
     // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: challengeId,
+      tenantId: getTenantIdFromContext(c),
       type: 'reauth',
       userId: sessionUserId || 'anonymous',
       challenge: challengeId,
@@ -2607,10 +2623,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Store authorization request parameters in ChallengeStore (RPC)
     // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: challengeId,
+      tenantId: getTenantIdFromContext(c),
       type: 'login',
       userId: 'anonymous',
       challenge: challengeId,
@@ -2713,6 +2734,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const consentRequiredSetting = await settingsManager.get('client.consent_required', {
         type: 'client',
         id: validClientId,
+        tenantId,
       });
       consentRequired = (consentRequiredSetting as boolean | undefined) ?? true;
 
@@ -2720,6 +2742,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const firstPartySetting = await settingsManager.get('client.first_party', {
         type: 'client',
         id: validClientId,
+        tenantId,
       });
       firstParty = (firstPartySetting as boolean | undefined) ?? false;
     } catch (error) {
@@ -2874,10 +2897,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Store authorization request parameters in ChallengeStore for consent flow (RPC)
         // Use challengeId-based sharding for better scalability
         const challengeId = crypto.randomUUID();
-        const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+        const challengeStore = await getChallengeStoreByChallengeId(
+          c.env,
+          challengeId,
+          getTenantIdFromContext(c)
+        );
 
         await challengeStore.storeChallengeRpc({
           id: challengeId,
+          tenantId: getTenantIdFromContext(c),
           type: 'consent',
           userId: sub,
           challenge: challengeId,
@@ -3004,10 +3032,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
             // Store challenge with consent item metadata
             const challengeId = crypto.randomUUID();
-            const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+            const challengeStore = await getChallengeStoreByChallengeId(
+              c.env,
+              challengeId,
+              getTenantIdFromContext(c)
+            );
 
             await challengeStore.storeChallengeRpc({
               id: challengeId,
+              tenantId: getTenantIdFromContext(c),
               type: 'consent',
               userId: sub,
               challenge: challengeId,
@@ -3172,8 +3205,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       c.req.method,
       c.req.url,
       undefined, // No access token yet
-      c.env.DPOP_JTI_STORE,
-      validClientId
+      c.env,
+      validClientId,
+      getTenantIdFromContext(c)
     );
 
     if (dpopValidation.valid && dpopValidation.jkt) {
@@ -3251,7 +3285,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         ? parsedSession.shardIndex % shardCount // Session Sticky: same shard as session
         : getAuthCodeShardIndex(sub, validClientId, shardCount); // Fallback: hash-based
       code = createShardedAuthCode(shardIndex, randomCode);
-      const instanceName = buildAuthCodeShardInstanceName(shardIndex);
+      const instanceName = buildAuthCodeShardInstanceName(shardIndex, getTenantIdFromContext(c));
       authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
     } else {
       // Sharding disabled - use tenant-scoped legacy instance
@@ -3267,6 +3301,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       await authCodeStore.storeCodeRpc({
         code,
+        tenantId: getTenantIdFromContext(c),
         clientId: validClientId,
         redirectUri: validRedirectUri,
         userId: sub,
@@ -3304,7 +3339,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
 
       // Generate region-aware JTI for token revocation sharding
-      const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+      const { jti: regionAwareJti } = await generateRegionAwareJti(
+        c.env,
+        getTenantIdFromContext(c)
+      );
 
       const tokenResult = await createAccessToken(
         {
@@ -4110,7 +4148,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     let tosUri: string | undefined;
 
     try {
-      const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        challenge_id,
+        getTenantIdFromContext(c)
+      );
       const challengeData = (await challengeStore.getChallengeRpc(challenge_id)) as {
         id: string;
         type: string;
@@ -4257,7 +4299,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   // POST request: Process login (stub - accepts any credentials) (RPC)
   // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+  const challengeStore = await getChallengeStoreByChallengeId(
+    c.env,
+    challenge_id,
+    getTenantIdFromContext(c)
+  );
 
   let challengeData: {
     userId: string;
@@ -4279,6 +4325,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   try {
     challengeData = await challengeStore.consumeChallengeRpc({
       id: challenge_id,
+      tenantId: getTenantIdFromContext(c),
       type: 'login',
       challenge: challenge_id,
     });
@@ -4687,7 +4734,11 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
 
   // POST request: Process confirmation and redirect to /authorize (RPC)
   // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+  const challengeStore = await getChallengeStoreByChallengeId(
+    c.env,
+    challenge_id,
+    getTenantIdFromContext(c)
+  );
 
   let challengeData: {
     userId: string;
@@ -4710,6 +4761,7 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
   try {
     challengeData = await challengeStore.consumeChallengeRpc({
       id: challenge_id,
+      tenantId: getTenantIdFromContext(c),
       type: 'reauth',
       challenge: challenge_id,
     });

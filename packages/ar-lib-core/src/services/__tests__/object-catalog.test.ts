@@ -4,16 +4,15 @@ import {
   getObjectCatalogObjectRecordByPublicArtifactId,
   getObjectCatalogObjectRecord,
   listObjectCatalogObjects,
-  listDeletedObjectCatalogObjects,
+  listDeletedObjectCatalogObjectsForSystemCleanup,
   OBJECT_CLASSES,
   OBJECT_KINDS,
   OBJECT_REPRESENTATIONS,
-  purgeDeletedObjectCatalogObjects,
+  purgeDeletedObjectCatalogObjectsForSystemCleanup,
   generatePublicArtifactId,
   isObjectClass,
   isObjectKind,
   isObjectRepresentation,
-  tombstoneObjectCatalogEntry,
   tombstoneObjectCatalogEntryForTenant,
 } from '../object-catalog.ts';
 
@@ -99,22 +98,26 @@ describe('object-catalog helpers', () => {
         return { rowsAffected: 1 };
       },
       queryOne: async (_sql: string, params: unknown[]) => {
-        const tenantId = params[3];
+        const tenantId = params[0];
+        const identifier = params[1];
+        const representation = params[2];
+        const objectIndex = params[3];
         const logical =
           state.logical.find(
-            (row) => row.id === params[0] && (tenantId === undefined || row.tenant_id === tenantId)
+            (row) =>
+              row.id === identifier && (tenantId === undefined || row.tenant_id === tenantId)
           ) ??
           state.logical.find(
             (row) =>
-              row.public_artifact_id === params[0] &&
+              row.public_artifact_id === identifier &&
               (tenantId === undefined || row.tenant_id === tenantId)
           );
         const physical = logical
           ? state.physical.find(
               (row) =>
                 row.catalog_id === logical.id &&
-                row.representation === params[1] &&
-                row.object_index === params[2]
+                row.representation === representation &&
+                row.object_index === objectIndex
             )
           : null;
         if (!logical || !physical) {
@@ -172,9 +175,12 @@ describe('object-catalog helpers', () => {
             });
         }
 
-        const catalogId = params?.[0];
-        const representation = params?.[1];
-        const logical = state.logical.find((row) => row.id === catalogId);
+        const tenantId = params?.[0];
+        const catalogId = params?.[1];
+        const representation = params?.[2];
+        const logical = state.logical.find(
+          (row) => row.id === catalogId && row.tenant_id === tenantId
+        );
         if (!logical) {
           return [];
         }
@@ -224,7 +230,7 @@ describe('object-catalog helpers', () => {
       ],
     });
 
-    const record = await getObjectCatalogObjectRecord(adapter, catalogId);
+    const record = await getObjectCatalogObjectRecord(adapter, 'tenant-1', catalogId);
     expect(record).not.toBeNull();
     expect(record?.logical.publicArtifactId).toBe(publicArtifactId);
     expect(record?.logical.objectClass).toBe('user_export');
@@ -233,56 +239,44 @@ describe('object-catalog helpers', () => {
 
     const byPublicId = await getObjectCatalogObjectRecordByPublicArtifactId(
       adapter,
+      'tenant-1',
       publicArtifactId
     );
     expect(byPublicId?.logical.id).toBe(catalogId);
 
     const byTenantPublicId = await getObjectCatalogObjectRecordByPublicArtifactId(
       adapter,
+      'tenant-1',
       publicArtifactId,
       'canonical_json',
-      0,
-      'tenant-1'
+      0
     );
     expect(byTenantPublicId?.logical.id).toBe(catalogId);
 
     const wrongTenantPublicId = await getObjectCatalogObjectRecordByPublicArtifactId(
       adapter,
+      'tenant-2',
       publicArtifactId,
       'canonical_json',
-      0,
-      'tenant-2'
+      0
     );
     expect(wrongTenantPublicId).toBeNull();
 
-    const listed = await listObjectCatalogObjects(adapter, catalogId);
+    const listed = await listObjectCatalogObjects(adapter, 'tenant-1', catalogId);
     expect(listed?.logical.publicArtifactId).toBe(publicArtifactId);
     expect(listed?.physical).toHaveLength(1);
 
     await tombstoneObjectCatalogEntryForTenant(adapter, 'tenant-1', catalogId, 1_700_000_123_000);
-    const deleted = await listDeletedObjectCatalogObjects(adapter);
+    const deleted = await listDeletedObjectCatalogObjectsForSystemCleanup(adapter);
     expect(deleted).toHaveLength(1);
     expect(deleted[0]?.catalogId).toBe(catalogId);
     expect(deleted[0]?.objectKey).toBe('exports/tenant-1/report.json');
 
-    const purged = await purgeDeletedObjectCatalogObjects(adapter, [deleted[0]!.physicalId]);
+    const purged = await purgeDeletedObjectCatalogObjectsForSystemCleanup(adapter, [
+      deleted[0]!.physicalId,
+    ]);
     expect(purged).toBe(1);
-    expect(await listDeletedObjectCatalogObjects(adapter)).toHaveLength(0);
+    expect(await listDeletedObjectCatalogObjectsForSystemCleanup(adapter)).toHaveLength(0);
     expect(state.logical).toHaveLength(0);
-  });
-
-  it('keeps a platform cleanup tombstone helper for already selected catalog rows', async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
-    const adapter = {
-      execute: async (sql: string, params: unknown[]) => {
-        calls.push({ sql, params });
-        return { rowsAffected: 1 };
-      },
-    } as Parameters<typeof tombstoneObjectCatalogEntry>[0];
-
-    await tombstoneObjectCatalogEntry(adapter, 'catalog-cleanup', 1_700_000_123_000);
-
-    expect(calls[0]?.sql).toContain('WHERE id = ?');
-    expect(calls[0]?.params).toEqual([1_700_000_123_000, 1_700_000_123_000, 'catalog-cleanup']);
   });
 });

@@ -17,7 +17,13 @@ describe('buildAdminHeaders', () => {
 		const headers = buildAdminHeaders();
 
 		expect(headers.get('X-Tenant-Id')).toBe('first');
-		expect(headers.get('X-Session-Id')).toBe('session-123');
+		expect(headers.get('X-Session-Id')).toBeNull();
+	});
+
+	it('falls back to the settings context tenant getter before the store has loaded tenants', () => {
+		const headers = buildAdminHeaders();
+
+		expect(headers.get('X-Tenant-Id')).toBe('default');
 	});
 
 	it('omits X-Tenant-Id when skipTenantHeader is enabled', () => {

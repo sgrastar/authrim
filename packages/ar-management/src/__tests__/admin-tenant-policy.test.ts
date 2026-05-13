@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { getTenantIdFromContext, requestContextMiddleware } from '@authrim/ar-lib-core';
+import {
+  getTenantIdFromContext,
+  requestContextMiddleware,
+  requireSystemAdmin,
+} from '@authrim/ar-lib-core';
 import { adminTenantPolicyMiddleware } from '../admin-tenant-policy';
 
 function createMockDB(options: { tenantRow?: { id: string } | null } = {}) {
@@ -43,6 +47,7 @@ function buildApp(env: Partial<Env>) {
     c.json({ tenantId: getTenantIdFromContext(c) })
   );
   app.get('/api/admin/sessions/me', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.get('/api/admin/me/session', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.post('/api/admin/logout', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/tenants', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/runtime-profiles', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
@@ -65,6 +70,24 @@ function makeRequest(path: string, headers: Record<string, string> = {}) {
   });
 }
 
+function buildPlatformGuardApp(roles: string[]) {
+  const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: unknown } }>();
+  app.use('*', async (c, next) => {
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles,
+      tenantId: 'tenant-a',
+      permissions: [],
+    });
+    await next();
+  });
+  app.get('/api/admin/platform/tenant-domain-mappings', requireSystemAdmin(), (c) =>
+    c.json({ ok: true })
+  );
+  return app;
+}
+
 describe('adminTenantPolicyMiddleware', () => {
   it('allows platform admin endpoints without X-Tenant-Id', async () => {
     const { app, env } = buildApp({
@@ -78,6 +101,29 @@ describe('adminTenantPolicyMiddleware', () => {
       makeRequest('/api/admin/platform/tenant-domain-mappings'),
       undefined,
       env
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects tenant admins at the tenant-domain mapping platform guard', async () => {
+    const app = buildPlatformGuardApp(['admin']);
+    const res = await app.request(
+      makeRequest('/api/admin/platform/tenant-domain-mappings'),
+      undefined,
+      {} as Env
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: 'access_denied' });
+  });
+
+  it('allows platform admins at the tenant-domain mapping platform guard', async () => {
+    const app = buildPlatformGuardApp(['super_admin']);
+    const res = await app.request(
+      makeRequest('/api/admin/platform/tenant-domain-mappings'),
+      undefined,
+      {} as Env
     );
 
     expect(res.status).toBe(200);
@@ -177,6 +223,7 @@ describe('adminTenantPolicyMiddleware', () => {
     });
 
     const sessionRes = await app.request(makeRequest('/api/admin/sessions/me'), undefined, env);
+    const newSessionRes = await app.request(makeRequest('/api/admin/me/session'), undefined, env);
     const logoutRes = await app.request(
       new Request('https://admin.pages.dev/api/admin/logout', {
         method: 'POST',
@@ -187,6 +234,7 @@ describe('adminTenantPolicyMiddleware', () => {
     );
 
     expect(sessionRes.status).toBe(200);
+    expect(newSessionRes.status).toBe(200);
     expect(logoutRes.status).toBe(200);
   });
 

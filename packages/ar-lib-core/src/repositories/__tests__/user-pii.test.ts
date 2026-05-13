@@ -12,6 +12,7 @@ import {
   type CreateUserPIIInput,
   type OIDCUserInfo,
 } from '../pii/user-pii';
+import { DEFAULT_TENANT_ID } from '../../utils/tenant-context';
 
 describe('UserPIIRepository', () => {
   let adapter: MockDatabaseAdapter;
@@ -20,19 +21,20 @@ describe('UserPIIRepository', () => {
   beforeEach(() => {
     adapter = new MockDatabaseAdapter();
     adapter.initTable('users_pii', 'id');
-    repository = new UserPIIRepository(adapter);
+    repository = new UserPIIRepository(adapter, DEFAULT_TENANT_ID);
   });
 
   describe('createPII', () => {
     it('should create PII record with required fields', async () => {
       const pii = await repository.createPII({
         id: 'user-123',
+        tenant_id: DEFAULT_TENANT_ID,
         email: 'test@example.com',
       });
 
       expect(pii.id).toBe('user-123');
       expect(pii.email).toBe('test@example.com');
-      expect(pii.tenant_id).toBe('default');
+      expect(pii.tenant_id).toBe(DEFAULT_TENANT_ID);
       expect(pii.pii_class).toBe('PROFILE');
       expect(pii.created_at).toBeDefined();
       expect(pii.updated_at).toBeDefined();
@@ -66,7 +68,7 @@ describe('UserPIIRepository', () => {
         declared_residence: 'US',
       };
 
-      const pii = await repository.createPII(input);
+      const pii = await new UserPIIRepository(adapter, input.tenant_id).createPII(input);
 
       expect(pii.id).toBe('user-full');
       expect(pii.tenant_id).toBe('tenant-acme');
@@ -97,6 +99,7 @@ describe('UserPIIRepository', () => {
     it('should persist PII to database', async () => {
       await repository.createPII({
         id: 'persist-test',
+        tenant_id: DEFAULT_TENANT_ID,
         email: 'persist@example.com',
       });
 
@@ -112,6 +115,7 @@ describe('UserPIIRepository', () => {
       await repository.createPII(
         {
           id: 'partition-test',
+          tenant_id: DEFAULT_TENANT_ID,
           email: 'partition@example.com',
         },
         otherAdapter

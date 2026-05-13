@@ -122,20 +122,25 @@ async function clearApprovalOtpAttemptState(
 export async function issueApprovalOtpChallenge(
   env: Env,
   input: {
+    tenantId: string;
     artifactId: string;
     method: Extract<ApprovalTransportMethod, 'email_otp' | 'sms_otp'>;
     target: string;
     approverSubjectId: string | null;
   }
 ): Promise<{
-    code: string;
-    expiresAt: number;
-  }> {
+  code: string;
+  expiresAt: number;
+}> {
   const code = generateApprovalOtpCode();
   const issuedAt = Date.now();
   const secret = env.OTP_HMAC_SECRET || env.ISSUER_URL;
   const normalizedTarget = normalizeTarget(input.target);
-  const challengeStore = await getChallengeStoreByChallengeId(env, input.artifactId);
+  const challengeStore = await getChallengeStoreByChallengeId(
+    env,
+    input.artifactId,
+    input.tenantId
+  );
   const [codeHash, targetHash] = await Promise.all([
     hashApprovalOtp(code, normalizedTarget, input.artifactId, issuedAt, secret),
     hashTarget(normalizedTarget),
@@ -143,6 +148,7 @@ export async function issueApprovalOtpChallenge(
 
   await challengeStore.storeChallengeRpc({
     id: `approval_otp:${input.artifactId}`,
+    tenantId: input.tenantId,
     type: 'email_code',
     userId: input.approverSubjectId ?? input.artifactId,
     challenge: codeHash,
@@ -168,14 +174,19 @@ export async function issueApprovalOtpChallenge(
 export async function verifyApprovalOtpChallenge(
   env: Env,
   input: {
+    tenantId: string;
     artifactId: string;
     code: string;
     target: string;
   }
 ): Promise<{
-    verifiedAt: number;
-  }> {
-  const challengeStore = await getChallengeStoreByChallengeId(env, input.artifactId);
+  verifiedAt: number;
+}> {
+  const challengeStore = await getChallengeStoreByChallengeId(
+    env,
+    input.artifactId,
+    input.tenantId
+  );
   const challenge = await challengeStore.getChallengeRpc(`approval_otp:${input.artifactId}`);
   if (!challenge || challenge.type !== 'email_code' || challenge.consumed) {
     throw new Error('Invalid approval OTP challenge');
@@ -206,6 +217,7 @@ export async function verifyApprovalOtpChallenge(
     if (nextState.count >= APPROVAL_OTP_MAX_INVALID_ATTEMPTS) {
       await challengeStore.consumeChallengeRpc({
         id: `approval_otp:${input.artifactId}`,
+        tenantId: input.tenantId,
         type: 'email_code',
         challenge: challenge.challenge,
       });
@@ -218,6 +230,7 @@ export async function verifyApprovalOtpChallenge(
 
   await challengeStore.consumeChallengeRpc({
     id: `approval_otp:${input.artifactId}`,
+    tenantId: input.tenantId,
     type: 'email_code',
     challenge: challenge.challenge,
   });

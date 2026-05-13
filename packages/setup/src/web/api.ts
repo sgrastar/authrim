@@ -30,6 +30,8 @@ import {
   generateAndStoreSetupToken,
   runMigrationsForEnvironment,
   ensureInitialAdminRolesInD1,
+  ensureAdminUiBffMachineAccessInD1,
+  ensureSetupMachineAccessInD1,
   ensureInitialTenantInD1,
   seedRuntimeProfiles,
   getWorkerDeployments,
@@ -43,7 +45,12 @@ import {
   D1JurisdictionSchema,
   type AuthrimConfig,
 } from '../core/config.js';
-import { generateAllSecrets, saveKeysToDirectory, keysExistForEnvironment } from '../core/keys.js';
+import {
+  ensureSupplementalKeyFiles,
+  generateAllSecrets,
+  saveKeysToDirectory,
+  keysExistForEnvironment,
+} from '../core/keys.js';
 import { createLockFile, saveLockFile } from '../core/lock.js';
 import {
   getEnvironmentPaths,
@@ -86,7 +93,11 @@ import {
   getComponentsToUpdate,
 } from '../core/version.js';
 import { completeInitialSetup } from '../core/admin.js';
-import { resolveUiDeploymentSettings } from '../core/ui-deployment.js';
+import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
+import {
+  describeAdminUiApiMode,
+  resolveUiDeploymentSettings,
+} from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
 import {
   configureDownstreamIntrospectionDeployment,
@@ -272,7 +283,10 @@ function addProgress(message: string): void {
   appendProgressLogLine(`[${timestamp}] ${message}\n`);
 }
 
-async function loadEnvironmentConfigForUpdate(baseDir: string, env: string): Promise<{
+async function loadEnvironmentConfigForUpdate(
+  baseDir: string,
+  env: string
+): Promise<{
   envPaths: EnvironmentPaths;
   config: AuthrimConfig;
 }> {
@@ -289,7 +303,10 @@ async function loadEnvironmentConfigForUpdate(baseDir: string, env: string): Pro
   };
 }
 
-async function saveEnvironmentConfig(envPaths: EnvironmentPaths, config: AuthrimConfig): Promise<void> {
+async function saveEnvironmentConfig(
+  envPaths: EnvironmentPaths,
+  config: AuthrimConfig
+): Promise<void> {
   await mkdir(envPaths.root, { recursive: true });
   await writeFile(envPaths.config, JSON.stringify(config, null, 2));
 }
@@ -330,6 +347,22 @@ function resolveWebDeploymentKeysDir(rootDir: string, env: string): string {
     rootDir,
     keysBaseDir: process.cwd(),
   });
+}
+
+async function ensureSupplementalKeysForWebDeploy(keysDir: string): Promise<void> {
+  if (!existsSync(keysDir)) {
+    return;
+  }
+
+  const result = await ensureSupplementalKeyFiles(keysDir);
+  if (result.createdFiles.length === 0) {
+    return;
+  }
+
+  addProgress(`Created ${result.createdFiles.length} supplemental key file(s) in ${keysDir}`);
+  for (const filePath of result.createdFiles) {
+    addProgress(`  - ${filePath.replace(`${keysDir}/`, '')}`);
+  }
 }
 
 async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
@@ -377,7 +410,9 @@ async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
     return;
   }
 
-  const updatedLock = updateLockWithDeployments(currentLock, [downstreamSetupResult.redeployResult]);
+  const updatedLock = updateLockWithDeployments(currentLock, [
+    downstreamSetupResult.redeployResult,
+  ]);
   await saveLockFile(updatedLock, lockPath);
   addProgress(`✓ ${downstreamSetupResult.redeployResult.workerName} redeployed successfully`);
   addProgress(`Lock file updated: ${lockPath}`);
@@ -878,7 +913,8 @@ export function createApiRoutes(): Hono {
             {
               success: false,
               error:
-                'Invalid request: ' + parseResult.error.issues.map((issue) => issue.message).join(', '),
+                'Invalid request: ' +
+                parseResult.error.issues.map((issue) => issue.message).join(', '),
             },
             400
           );
@@ -1009,11 +1045,14 @@ export function createApiRoutes(): Hono {
             state.status = 'error';
             state.error = `${component} deployment failed: ${result.error || 'Unknown error'}`;
             await flushProgressLog();
-            return c.json({
-              success: false,
-              error: state.error,
-              progress: state.progress,
-            }, 500);
+            return c.json(
+              {
+                success: false,
+                error: state.error,
+                progress: state.progress,
+              },
+              500
+            );
           }
         }
 
@@ -1416,6 +1455,7 @@ export function createApiRoutes(): Hono {
         }
 
         if (!dryRun && existsSync(keysDir)) {
+          await ensureSupplementalKeysForWebDeploy(keysDir);
           addProgress(`Uploading secrets from ${keysDir}...`);
 
           const secrets: Record<string, string> = {};
@@ -1423,7 +1463,11 @@ export function createApiRoutes(): Hono {
             { file: join(keysDir, 'private.pem'), name: 'PRIVATE_KEY_PEM' },
             { file: join(keysDir, 'public.jwk.json'), name: 'PUBLIC_JWK_JSON' },
             { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
-            { file: join(keysDir, 'object_encryption_root_key.txt'), name: 'OBJECT_ENCRYPTION_ROOT_KEY' },
+            {
+              file: join(keysDir, 'object_encryption_root_key.txt'),
+              name: 'OBJECT_ENCRYPTION_ROOT_KEY',
+            },
+            { file: join(keysDir, 'version_manager_secret.txt'), name: 'VERSION_MANAGER_SECRET' },
             { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
             { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
             { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
@@ -1547,125 +1591,9 @@ export function createApiRoutes(): Hono {
 
         state.deployResults = summary.results;
 
-        if (summary.failedCount === 0) {
-          await maybeConfigureDownstreamIntrospectionForWebDeploy({
-            env,
-            rootDir: resolve(rootDir),
-            config: cfg,
-            components: enabledComponents ?? [],
-            dryRun,
-          });
-        }
-
-        // Deploy UI Workers (ar-login-ui, ar-admin-ui) if loginUi or adminUi is enabled.
         let uiWorkersSummary = null;
-        // Note: cfg is already loaded above (from state.config or config.json file)
-        if (cfg?.components?.loginUi || cfg?.components?.adminUi) {
-          addProgress('Deploying Login/Admin UI to Cloudflare Workers...');
-
-          // Determine the API base URL for the UI to connect to
-          // Priority: custom API domain > workers.dev domain
-          const apiBaseUrl =
-            cfg?.urls?.api?.custom ||
-            cfg?.urls?.api?.auto ||
-            `https://${env}-ar-router.workers.dev`;
-
-          let loginUiClientId: string | undefined;
-          if (cfg?.components?.loginUi && !dryRun) {
-            const loginUiUrl =
-              cfg?.urls?.loginUi?.custom ||
-              cfg?.urls?.loginUi?.auto ||
-              `https://${env}-ar-login-ui.workers.dev`;
-            const foundKeys = findKeysDirectory({
-              env,
-              sourceDir: rootDir,
-              keysBaseDir: process.cwd(),
-            });
-            const adminApiSecretPath = foundKeys
-              ? join(foundKeys.path, 'admin_api_secret.txt')
-              : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
-
-            const { ensureLoginUiClient, shouldReportLoginUiClientWarning } =
-              await import('../core/login-ui-client.js');
-            const clientResult = await ensureLoginUiClient({
-              apiBaseUrl,
-              loginUiUrl,
-              adminApiSecretPath,
-              tenantId: cfg?.tenant?.name,
-              onProgress: addProgress,
-            });
-
-            if (clientResult.success && clientResult.clientId) {
-              loginUiClientId = clientResult.clientId;
-              if (clientResult.alreadyExists) {
-                addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
-              } else {
-                addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
-              }
-            } else if (shouldReportLoginUiClientWarning(clientResult.error)) {
-              addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
-            }
-          }
-
-          const loginUiSettings = resolveUiDeploymentSettings({
-            component: 'ar-login-ui',
-            config: cfg as AuthrimConfig,
-            apiBaseUrl,
-            loginUiClientId,
-          });
-          const adminUiSettings = resolveUiDeploymentSettings({
-            component: 'ar-admin-ui',
-            config: cfg as AuthrimConfig,
-            apiBaseUrl,
-          });
-
-          uiWorkersSummary = await deployAllUiWorkers(
-            {
-              env,
-              rootDir: resolve(rootDir),
-              dryRun,
-              onProgress: addProgress,
-              apiBaseUrl,
-              perComponent: {
-                'ar-login-ui': {
-                  apiBaseUrl: loginUiSettings.apiBaseUrl,
-                  runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
-                  uiEnvConfig: loginUiSettings.uiEnv,
-                  serviceBindingName: loginUiSettings.serviceBindingName,
-                },
-                'ar-admin-ui': {
-                  apiBaseUrl: adminUiSettings.apiBaseUrl,
-                  runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
-                  uiEnvConfig: adminUiSettings.uiEnv,
-                  serviceBindingName: adminUiSettings.serviceBindingName,
-                },
-              },
-            },
-            {
-              loginUi: cfg?.components?.loginUi ?? true,
-              adminUi: cfg?.components?.adminUi ?? true,
-            }
-          );
-
-          if (uiWorkersSummary.failedCount === 0) {
-            addProgress('✓ All UI packages deployed to Workers');
-            for (const result of uiWorkersSummary.results) {
-              addProgress(`  • ${result.component}: ${result.projectName}`);
-            }
-          } else {
-            addProgress(
-              `✗ UI Worker deployment: ${uiWorkersSummary.successCount}/${uiWorkersSummary.results.length} succeeded`
-            );
-            for (const result of uiWorkersSummary.results) {
-              if (!result.success) {
-                addProgress(`  ✗ ${result.component}: ${result.error}`);
-              }
-            }
-          }
-        }
 
         const workersSuccess = summary.failedCount === 0;
-        const uiWorkersSuccess = uiWorkersSummary ? uiWorkersSummary.failedCount === 0 : true;
 
         // Update lock file with deployed workers information
         if (workersSuccess && !dryRun && summary.successCount > 0) {
@@ -1716,6 +1644,8 @@ export function createApiRoutes(): Hono {
         let migrationsResult = null;
         let initialTenantResult = null;
         let initialAdminRolesResult = null;
+        let setupMachineAccessResult = null;
+        let adminUiBffMachineAccessResult = null;
         let runtimeProfileSeedResult = null;
         if (runMigrations && !dryRun && workersSuccess) {
           const bootstrapConfig = cfg ? AuthrimConfigSchema.parse(cfg) : createDefaultConfig(env);
@@ -1755,6 +1685,38 @@ export function createApiRoutes(): Hono {
               );
             }
 
+            addProgress('🔧 Ensuring setup machine access exists...');
+            setupMachineAccessResult = await ensureSetupMachineAccessInD1(
+              env,
+              bootstrapConfig,
+              keysDir,
+              addProgress
+            );
+            if (setupMachineAccessResult.success) {
+              addProgress('✅ Setup machine access ready');
+            } else {
+              addProgress(
+                `⚠️ Setup machine access bootstrap failed: ${setupMachineAccessResult.error || 'unknown error'}`
+              );
+            }
+
+            if (bootstrapConfig.components.adminUi ?? true) {
+              addProgress('🔧 Ensuring Admin UI BFF machine access exists...');
+              adminUiBffMachineAccessResult = await ensureAdminUiBffMachineAccessInD1(
+                env,
+                bootstrapConfig,
+                keysDir,
+                addProgress
+              );
+              if (adminUiBffMachineAccessResult.success) {
+                addProgress('✅ Admin UI BFF machine access ready');
+              } else {
+                addProgress(
+                  `⚠️ Admin UI BFF machine access bootstrap failed: ${adminUiBffMachineAccessResult.error || 'unknown error'}`
+                );
+              }
+            }
+
             addProgress('🔧 Seeding runtime profiles...');
             runtimeProfileSeedResult = await seedRuntimeProfiles(env, bootstrapConfig, addProgress);
             if (runtimeProfileSeedResult.success) {
@@ -1778,9 +1740,149 @@ export function createApiRoutes(): Hono {
         const initialAdminRolesSuccess = initialAdminRolesResult
           ? initialAdminRolesResult.success
           : true;
+        const setupMachineAccessSuccess = setupMachineAccessResult
+          ? setupMachineAccessResult.success
+          : true;
+        const adminUiBffMachineAccessSuccess = adminUiBffMachineAccessResult
+          ? adminUiBffMachineAccessResult.success
+          : true;
         const runtimeProfileSeedSuccess = runtimeProfileSeedResult
           ? runtimeProfileSeedResult.success
           : true;
+
+        const bootstrapSuccess =
+          migrationsSuccess &&
+          initialTenantSuccess &&
+          initialAdminRolesSuccess &&
+          setupMachineAccessSuccess &&
+          adminUiBffMachineAccessSuccess &&
+          runtimeProfileSeedSuccess;
+
+        if (workersSuccess && bootstrapSuccess) {
+          await maybeConfigureDownstreamIntrospectionForWebDeploy({
+            env,
+            rootDir: resolve(rootDir),
+            config: cfg,
+            components: enabledComponents ?? [],
+            dryRun,
+          });
+        }
+
+        // Deploy UI Workers only after database and tenant bootstrap work has completed.
+        if (
+          workersSuccess &&
+          bootstrapSuccess &&
+          (cfg?.components?.loginUi || cfg?.components?.adminUi)
+        ) {
+          addProgress('Deploying Login/Admin UI to Cloudflare Workers...');
+
+          const apiBaseUrl =
+            cfg?.urls?.api?.custom ||
+            cfg?.urls?.api?.auto ||
+            `https://${env}-ar-router.workers.dev`;
+
+          let loginUiClientId: string | undefined;
+          if (cfg?.components?.loginUi && !dryRun) {
+            const loginUiUrl =
+              cfg?.urls?.loginUi?.custom ||
+              cfg?.urls?.loginUi?.auto ||
+              `https://${env}-ar-login-ui.workers.dev`;
+            const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+
+            const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
+            const clientResult = await ensureLoginUiClient({
+              apiBaseUrl,
+              loginUiUrl,
+              adminApiSecretPath,
+              keysDir,
+              tenantId: cfg?.tenant?.name,
+              onProgress: addProgress,
+            });
+
+            if (clientResult.success && clientResult.clientId) {
+              loginUiClientId = clientResult.clientId;
+              if (clientResult.alreadyExists) {
+                addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
+              } else {
+                addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
+              }
+            } else {
+              throw new Error(
+                `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+              );
+            }
+          }
+
+          const loginUiSettings = resolveUiDeploymentSettings({
+            component: 'ar-login-ui',
+            config: cfg as AuthrimConfig,
+            apiBaseUrl,
+            loginUiClientId,
+          });
+          const adminUiSettings = resolveUiDeploymentSettings({
+            component: 'ar-admin-ui',
+            config: cfg as AuthrimConfig,
+            apiBaseUrl,
+          });
+          const adminUiBffSecrets =
+            (cfg?.components?.adminUi ?? true) && !dryRun
+              ? await loadAdminUiBffWorkerSecrets(keysDir)
+              : undefined;
+          if ((cfg?.components?.adminUi ?? true) && adminUiSettings.adminUiApiMode) {
+            addProgress(
+              `Admin UI API mode: ${adminUiSettings.adminUiApiMode} - ${describeAdminUiApiMode(
+                adminUiSettings.adminUiApiMode
+              )}`
+            );
+          }
+
+          uiWorkersSummary = await deployAllUiWorkers(
+            {
+              env,
+              rootDir: resolve(rootDir),
+              dryRun,
+              onProgress: addProgress,
+              apiBaseUrl,
+              perComponent: {
+                'ar-login-ui': {
+                  apiBaseUrl: loginUiSettings.apiBaseUrl,
+                  runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
+                  uiEnvConfig: loginUiSettings.uiEnv,
+                  serviceBindingName: loginUiSettings.serviceBindingName,
+                },
+                'ar-admin-ui': {
+                  apiBaseUrl: adminUiSettings.apiBaseUrl,
+                  runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
+                  uiEnvConfig: adminUiSettings.uiEnv,
+                  serviceBindingName: adminUiSettings.serviceBindingName,
+                  adminUiBffSecrets,
+                },
+              },
+            },
+            {
+              loginUi: cfg?.components?.loginUi ?? true,
+              adminUi: cfg?.components?.adminUi ?? true,
+            }
+          );
+
+          if (uiWorkersSummary.failedCount === 0) {
+            addProgress('✓ All UI packages deployed to Workers');
+            for (const result of uiWorkersSummary.results) {
+              addProgress(`  • ${result.component}: ${result.projectName}`);
+            }
+          } else {
+            addProgress(
+              `✗ UI Worker deployment: ${uiWorkersSummary.successCount}/${uiWorkersSummary.results.length} succeeded`
+            );
+            for (const result of uiWorkersSummary.results) {
+              if (!result.success) {
+                addProgress(`  ✗ ${result.component}: ${result.error}`);
+              }
+            }
+          }
+        }
+
+        const uiWorkersSuccess = uiWorkersSummary ? uiWorkersSummary.failedCount === 0 : true;
 
         if (
           workersSuccess &&
@@ -2496,7 +2598,9 @@ export function createApiRoutes(): Hono {
         addProgress(`Deploying component: ${componentName}`);
 
         // Check if it's a UI Worker component or API Worker component.
-        const isUiWorkerComponent = UI_WORKER_COMPONENTS.includes(componentName as UiWorkerComponent);
+        const isUiWorkerComponent = UI_WORKER_COMPONENTS.includes(
+          componentName as UiWorkerComponent
+        );
         const isWorkerComponent = WORKER_COMPONENTS.includes(componentName as WorkerComponent);
 
         if (!isUiWorkerComponent && !isWorkerComponent) {
@@ -2533,6 +2637,10 @@ export function createApiRoutes(): Hono {
         if (isUiWorkerComponent) {
           // Deploy UI Worker component (ar-admin-ui or ar-login-ui).
           // deployUiWorkerComponent is kept as an internal compatibility alias.
+          const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+          if (!dryRun) {
+            await ensureSupplementalKeysForWebDeploy(keysDir);
+          }
 
           // Build first (unless skipped)
           if (!skipBuild && !dryRun) {
@@ -2556,21 +2664,14 @@ export function createApiRoutes(): Hono {
                 cfg?.urls?.loginUi?.custom ||
                 cfg?.urls?.loginUi?.auto ||
                 `https://${env}-ar-login-ui.workers.dev`;
-              const foundKeys = findKeysDirectory({
-                env,
-                sourceDir: rootDir,
-                keysBaseDir: process.cwd(),
-              });
-              const adminApiSecretPath = foundKeys
-                ? join(foundKeys.path, 'admin_api_secret.txt')
-                : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
+              const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
-              const { ensureLoginUiClient, shouldReportLoginUiClientWarning } =
-                await import('../core/login-ui-client.js');
+              const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
               const clientResult = await ensureLoginUiClient({
                 apiBaseUrl,
                 loginUiUrl,
                 adminApiSecretPath,
+                keysDir,
                 tenantId: cfg?.tenant?.name,
                 onProgress: addProgress,
               });
@@ -2582,8 +2683,10 @@ export function createApiRoutes(): Hono {
                 } else {
                   addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
                 }
-              } else if (shouldReportLoginUiClientWarning(clientResult.error)) {
-                addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
+              } else {
+                throw new Error(
+                  `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+                );
               }
             }
 
@@ -2593,6 +2696,17 @@ export function createApiRoutes(): Hono {
               apiBaseUrl,
               loginUiClientId,
             });
+            if (componentName === 'ar-admin-ui' && uiSettings.adminUiApiMode) {
+              addProgress(
+                `Admin UI API mode: ${uiSettings.adminUiApiMode} - ${describeAdminUiApiMode(
+                  uiSettings.adminUiApiMode
+                )}`
+              );
+            }
+            const adminUiBffSecrets =
+              componentName === 'ar-admin-ui' && !dryRun
+                ? await loadAdminUiBffWorkerSecrets(keysDir)
+                : undefined;
 
             const result = await deployUiWorkerComponent(componentName as UiWorkerComponent, {
               env,
@@ -2602,6 +2716,7 @@ export function createApiRoutes(): Hono {
               runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
               uiEnvConfig: uiSettings.uiEnv,
               serviceBindingName: uiSettings.serviceBindingName,
+              adminUiBffSecrets,
               onProgress: addProgress,
             });
 

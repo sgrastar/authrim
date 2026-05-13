@@ -1224,7 +1224,7 @@ adminApprovalsRouter.get('/:requestId/receipts', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const receipts = await listApprovalDecisionReceiptsForEvidence(c.env, detail);
+    const receipts = await listApprovalDecisionReceiptsForEvidence(c.env, detail, request.tenant_id);
 
     await auditAdminSensitiveRead(c as AdminContext, access, {
       action: 'approval.decision_receipts_read',

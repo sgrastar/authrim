@@ -87,6 +87,20 @@ flowApi.use('*', async (c, next) => {
 flowApi.post('/init', async (c) => {
   try {
     const body = await c.req.json<FlowInitRequest>();
+    const tenantId = getTenantIdFromContext(c);
+
+    if (body.tenantId && body.tenantId !== tenantId) {
+      return c.json(
+        {
+          type: 'error',
+          error: {
+            code: 'invalid_tenant',
+            message: 'Request tenant does not match the resolved tenant context',
+          },
+        } as FlowSubmitResponse,
+        403
+      );
+    }
 
     // FlowExecutorを作成
     const executor = createFlowExecutor(c.env);
@@ -95,7 +109,7 @@ flowApi.post('/init', async (c) => {
     const response = await executor.initFlow({
       flowType: (body.flowType || 'login') as FlowType,
       clientId: body.clientId,
-      tenantId: body.tenantId ?? getTenantIdFromContext(c),
+      tenantId,
       oauthParams: body.oauthParams,
     });
 
@@ -124,12 +138,26 @@ flowApi.post('/init', async (c) => {
 flowApi.post('/submit', async (c) => {
   try {
     const body = await c.req.json<FlowSubmitRequest>();
+    const tenantId = getTenantIdFromContext(c);
+
+    if (body.tenantId && body.tenantId !== tenantId) {
+      return c.json(
+        {
+          type: 'error',
+          error: {
+            code: 'invalid_tenant',
+            message: 'Request tenant does not match the resolved tenant context',
+          },
+        } as FlowSubmitResponse,
+        403
+      );
+    }
 
     // FlowExecutorを作成
     const executor = createFlowExecutor(c.env);
 
     // Capability応答を処理
-    const response = await executor.submitCapability(body);
+    const response = await executor.submitCapability({ ...body, tenantId });
 
     return c.json(response);
   } catch (error) {
@@ -154,12 +182,13 @@ flowApi.post('/submit', async (c) => {
 flowApi.get('/state/:sessionId', async (c) => {
   try {
     const sessionId = c.req.param('sessionId');
+    const tenantId = getTenantIdFromContext(c);
 
     // FlowExecutorを作成
     const executor = createFlowExecutor(c.env);
 
     // 状態を取得
-    const response = await executor.getFlowState(sessionId);
+    const response = await executor.getFlowState(sessionId, tenantId);
 
     return c.json(response);
   } catch (error) {
@@ -183,12 +212,13 @@ flowApi.get('/state/:sessionId', async (c) => {
 flowApi.post('/cancel', async (c) => {
   try {
     const { sessionId } = await c.req.json<{ sessionId: string }>();
+    const tenantId = getTenantIdFromContext(c);
 
     // FlowExecutorを作成
     const executor = createFlowExecutor(c.env);
 
     // Flowキャンセル
-    await executor.cancelFlow(sessionId);
+    await executor.cancelFlow(sessionId, tenantId);
 
     return c.json({ success: true, sessionId });
   } catch (error) {

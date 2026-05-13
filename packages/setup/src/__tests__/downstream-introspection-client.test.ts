@@ -112,7 +112,14 @@ describe('ensureDownstreamIntrospectionClient', () => {
     expect(result.success).toBe(true);
     const firstCallHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
     const secondCallHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    const createBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
     expect(firstCallHeaders['X-Tenant-Id']).toBe('default');
     expect(secondCallHeaders['X-Tenant-Id']).toBe('default');
+    expect(createBody.description).toBe(
+      'System-managed confidential client used by Authrim for downstream grant introspection.'
+    );
   });
 });

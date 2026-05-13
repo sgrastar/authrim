@@ -164,6 +164,21 @@
 		return id.substring(0, length) + '...';
 	}
 
+	function getActorType(entry: AdminAuditLogEntry): 'admin_user' | 'machine' | 'system' {
+		if (entry.actor_type === 'machine' || entry.machine_principal_id) return 'machine';
+		if (entry.actor_type === 'system' || entry.admin_user_id === 'system') return 'system';
+		return 'admin_user';
+	}
+
+	function getActorLabel(entry: AdminAuditLogEntry): string {
+		const actorType = getActorType(entry);
+		if (actorType === 'machine') {
+			return entry.machine_client_id || entry.actor_display_name || entry.machine_principal_id || 'Machine';
+		}
+		if (actorType === 'system') return 'System';
+		return entry.admin_email || entry.admin_user_name || entry.actor_display_name || entry.admin_user_id || '-';
+	}
+
 	async function openDetail(entry: AdminAuditLogEntry) {
 		selectedEntry = entry;
 		showDetailModal = true;
@@ -268,7 +283,7 @@
 		<div class="panel">
 			<div class="filter-row">
 				<div class="form-group">
-					<label for="admin_user_id" class="form-label">Admin User ID</label>
+					<label for="admin_user_id" class="form-label">Actor / Admin User ID</label>
 					<input
 						id="admin_user_id"
 						type="text"
@@ -403,7 +418,7 @@
 					<tr>
 						<th>Date/Time</th>
 						<th>Action</th>
-						<th>Admin</th>
+						<th>Actor</th>
 						<th>Resource</th>
 						<th>Result</th>
 						<th>Severity</th>
@@ -423,10 +438,11 @@
 								<span class="badge badge-info">{formatAction(entry.action)}</span>
 							</td>
 							<td>
-								{#if entry.admin_email}
-									<span class="cell-primary">{entry.admin_email}</span>
-								{:else if entry.admin_user_id}
-									<span class="mono">{truncateId(entry.admin_user_id)}</span>
+								{#if getActorType(entry) === 'machine'}
+									<span class="cell-primary">{getActorLabel(entry)}</span>
+									<span class="cell-secondary mono">{truncateId(entry.machine_principal_id || entry.actor_id || null)}</span>
+								{:else if getActorType(entry) === 'admin_user'}
+									<span class="cell-primary">{getActorLabel(entry)}</span>
 								{:else}
 									<span class="muted">System</span>
 								{/if}
@@ -526,12 +542,13 @@
 				</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Admin User</span>
+				<span class="detail-label">Actor</span>
 				<span class="detail-value">
-					{#if selectedEntry.admin_email}
-						{selectedEntry.admin_email}
-					{:else if selectedEntry.admin_user_id}
-						<span class="mono">{selectedEntry.admin_user_id}</span>
+					{#if getActorType(selectedEntry) === 'machine'}
+						{getActorLabel(selectedEntry)}
+						<span class="muted">({selectedEntry.machine_principal_type || 'machine'})</span>
+					{:else if getActorType(selectedEntry) === 'admin_user'}
+						{getActorLabel(selectedEntry)}
 					{:else}
 						<span class="muted">System</span>
 					{/if}
@@ -541,6 +558,24 @@
 				<span class="detail-label">Admin User ID</span>
 				<span class="detail-value mono">{selectedEntry.admin_user_id || '-'}</span>
 			</div>
+			{#if getActorType(selectedEntry) === 'machine'}
+				<div class="detail-item">
+					<span class="detail-label">Machine Principal ID</span>
+					<span class="detail-value mono">{selectedEntry.machine_principal_id || selectedEntry.actor_id || '-'}</span>
+				</div>
+				<div class="detail-item">
+					<span class="detail-label">Machine Credential ID</span>
+					<span class="detail-value mono">{selectedEntry.machine_credential_id || '-'}</span>
+				</div>
+				<div class="detail-item">
+					<span class="detail-label">Machine Client ID</span>
+					<span class="detail-value mono">{selectedEntry.machine_client_id || '-'}</span>
+				</div>
+				<div class="detail-item">
+					<span class="detail-label">Machine Client Auth</span>
+					<span class="detail-value">{selectedEntry.machine_client_auth_method || '-'}</span>
+				</div>
+			{/if}
 			<div class="detail-item">
 				<span class="detail-label">Resource Type</span>
 				<span class="detail-value">{selectedEntry.resource_type || '-'}</span>

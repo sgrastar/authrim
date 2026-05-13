@@ -23,7 +23,6 @@ import type { Env } from '../types';
 import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
 import {
   getRegionShardConfig,
-  getDefaultTenantId,
   resolveShardForNewResource,
   parseRegionId,
   createRegionId,
@@ -141,13 +140,18 @@ export function parseCredentialOfferId(
 export function getCredentialOfferStoreById(
   env: Env,
   offerId: string,
-  tenantId: string = getDefaultTenantId(env as unknown as Parameters<typeof getDefaultTenantId>[0])
+  tenantId: string
 ): {
   stub: CredentialOfferStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   uuid: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Credential offer store lookup requires tenantId');
+  }
+
   const parsed = parseCredentialOfferId(offerId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded credential offer ID format: ${offerId}`);
@@ -160,7 +164,7 @@ export function getCredentialOfferStoreById(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'credoffer',
     resolution.shardIndex

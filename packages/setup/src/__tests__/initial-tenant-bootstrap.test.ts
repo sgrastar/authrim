@@ -18,7 +18,19 @@ describe('buildInitialTenantBootstrapSql', () => {
     expect(sql).toContain("SET id = 'first'");
     expect(sql).toContain("tenant_code = 'first'");
     expect(sql).toContain("name = 'First Tenant'");
+    expect(sql).toContain('(SELECT COUNT(*) FROM tenants) = 1');
     expect(sql).toContain('INSERT INTO tenants');
+  });
+
+  it('guards default tenant rename so existing multi-tenant databases keep their default tenant', () => {
+    const config = createDefaultConfig('mt');
+    config.tenant.name = 'first';
+
+    const sql = buildInitialTenantBootstrapSql(config);
+
+    expect(sql).toContain("WHERE id = 'default'");
+    expect(sql).toContain("AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'first')");
+    expect(sql).toContain('AND (SELECT COUNT(*) FROM tenants) = 1');
   });
 
   it('updates the display name in place when the initial tenant remains default', () => {

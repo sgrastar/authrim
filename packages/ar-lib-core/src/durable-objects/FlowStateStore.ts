@@ -69,6 +69,8 @@ export interface RuntimeState {
   expiresAt: number;
   /** 最終アクティビティ時刻（Unix ms） */
   lastActivityAt: number;
+  /** Recent request timestamps for per-session rate limiting */
+  requestTimestamps: number[];
   /** 処理済みrequestId → スナップショット（冪等性用） */
   processedRequestIds: Record<string, RuntimeStateSnapshot>;
 }
@@ -169,9 +171,9 @@ export class FlowStateStore {
         case 'POST /check-request':
           return await this.handleCheckRequest(request);
         case 'GET /state':
-          return await this.handleGetState();
+          return await this.handleGetState(request);
         case 'DELETE /cancel':
-          return await this.handleCancel();
+          return await this.handleCancel(request);
         default:
           return new Response(JSON.stringify({ error: 'Not Found' }), {
             status: 404,
@@ -196,6 +198,10 @@ export class FlowStateStore {
    */
   private async handleInit(request: Request): Promise<Response> {
     const params = (await request.json()) as CreateRuntimeStateParams;
+    const validationError = this.validateInitRequest(request, params);
+    if (validationError) {
+      return validationError;
+    }
 
     // 既存の状態があればエラー
     if (this.runtimeState) {
@@ -224,6 +230,7 @@ export class FlowStateStore {
       startedAt: now,
       expiresAt: now + (params.ttlMs || DEFAULT_FLOW_TTL_MS),
       lastActivityAt: now,
+      requestTimestamps: [],
       processedRequestIds: {},
     };
 
@@ -250,6 +257,7 @@ export class FlowStateStore {
       // Worker側で計算された結果
       result: FlowSubmitResult;
       nextNodeId: string;
+      requestTimestamps?: number[];
     };
 
     // 状態チェック
@@ -261,6 +269,11 @@ export class FlowStateStore {
         }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
       );
+    }
+
+    const validationError = this.validateRuntimeRequest(request);
+    if (validationError) {
+      return validationError;
     }
 
     // 有効期限チェック
@@ -293,6 +306,11 @@ export class FlowStateStore {
     this.runtimeState.collectedData[body.capabilityId] = body.response;
     this.runtimeState.completedCapabilities.push(body.capabilityId);
     this.runtimeState.lastActivityAt = now;
+    if (Array.isArray(body.requestTimestamps)) {
+      this.runtimeState.requestTimestamps = body.requestTimestamps.filter(
+        (timestamp): timestamp is number => typeof timestamp === 'number' && Number.isFinite(timestamp)
+      );
+    }
 
     // 冪等性スナップショット保存
     const snapshot: RuntimeStateSnapshot = {
@@ -317,7 +335,7 @@ export class FlowStateStore {
   /**
    * GET /state - 現在の状態取得
    */
-  private async handleGetState(): Promise<Response> {
+  private async handleGetState(request: Request): Promise<Response> {
     if (!this.runtimeState) {
       return new Response(
         JSON.stringify({
@@ -326,6 +344,11 @@ export class FlowStateStore {
         }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
       );
+    }
+
+    const validationError = this.validateRuntimeRequest(request);
+    if (validationError) {
+      return validationError;
     }
 
     // 有効期限チェック
@@ -347,7 +370,12 @@ export class FlowStateStore {
   /**
    * DELETE /cancel - セッションキャンセル
    */
-  private async handleCancel(): Promise<Response> {
+  private async handleCancel(request: Request): Promise<Response> {
+    const validationError = this.validateRuntimeRequest(request, { allowMissingState: true });
+    if (validationError) {
+      return validationError;
+    }
+
     if (this.runtimeState) {
       // アラームをキャンセル
       await this.state.storage.deleteAlarm();
@@ -383,6 +411,11 @@ export class FlowStateStore {
         }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
       );
+    }
+
+    const validationError = this.validateRuntimeRequest(request);
+    if (validationError) {
+      return validationError;
     }
 
     // 有効期限チェック
@@ -452,6 +485,7 @@ export class FlowStateStore {
       // processedRequestIdsをオブジェクトとして復元
       this.runtimeState = {
         ...stored,
+        requestTimestamps: stored.requestTimestamps || [],
         processedRequestIds: stored.processedRequestIds || {},
       };
     }
@@ -479,7 +513,9 @@ export class FlowStateStore {
     currentNodeId: string;
     visitedNodeIds: string[];
     completedCapabilities: string[];
+    startedAt: number;
     expiresAt: number;
+    requestTimestamps: number[];
     collectedData?: Record<string, unknown>;
     oauthParams?: OAuthFlowParams;
   } | null {
@@ -494,10 +530,85 @@ export class FlowStateStore {
       currentNodeId: this.runtimeState.currentNodeId,
       visitedNodeIds: this.runtimeState.visitedNodeIds,
       completedCapabilities: this.runtimeState.completedCapabilities,
+      startedAt: this.runtimeState.startedAt,
       expiresAt: this.runtimeState.expiresAt,
+      requestTimestamps: this.runtimeState.requestTimestamps,
       collectedData: this.runtimeState.collectedData,
       oauthParams: this.runtimeState.oauthParams,
     };
+  }
+
+  private validateInitRequest(
+    request: Request,
+    params: CreateRuntimeStateParams
+  ): Response | null {
+    const tenantId = this.getRequiredHeader(request, 'X-Tenant-Id', 'tenant_required');
+    if (tenantId instanceof Response) {
+      return tenantId;
+    }
+
+    const sessionId = this.getRequiredHeader(request, 'X-Flow-Session-Id', 'session_required');
+    if (sessionId instanceof Response) {
+      return sessionId;
+    }
+
+    if (!params.tenantId || params.tenantId.trim() !== tenantId) {
+      return this.jsonError('Tenant mismatch', 'tenant_mismatch', 403);
+    }
+
+    if (!params.sessionId || params.sessionId.trim() !== sessionId) {
+      return this.jsonError('Session mismatch', 'session_mismatch', 403);
+    }
+
+    return null;
+  }
+
+  private validateRuntimeRequest(
+    request: Request,
+    options: { allowMissingState?: boolean } = {}
+  ): Response | null {
+    const tenantId = this.getRequiredHeader(request, 'X-Tenant-Id', 'tenant_required');
+    if (tenantId instanceof Response) {
+      return tenantId;
+    }
+
+    const sessionId = this.getRequiredHeader(request, 'X-Flow-Session-Id', 'session_required');
+    if (sessionId instanceof Response) {
+      return sessionId;
+    }
+
+    if (!this.runtimeState) {
+      return options.allowMissingState ? null : this.jsonError('Session not found', 'session_not_found', 404);
+    }
+
+    if (this.runtimeState.tenantId !== tenantId) {
+      return this.jsonError('Tenant mismatch', 'tenant_mismatch', 403);
+    }
+
+    if (this.runtimeState.sessionId !== sessionId) {
+      return this.jsonError('Session mismatch', 'session_mismatch', 403);
+    }
+
+    return null;
+  }
+
+  private getRequiredHeader(
+    request: Request,
+    headerName: string,
+    code: string
+  ): string | Response {
+    const value = request.headers.get(headerName)?.trim();
+    if (!value) {
+      return this.jsonError(`${headerName} header is required`, code, 400);
+    }
+    return value;
+  }
+
+  private jsonError(error: string, code: string, status: number): Response {
+    return new Response(JSON.stringify({ error, code }), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   /**

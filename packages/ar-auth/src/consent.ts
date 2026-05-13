@@ -129,7 +129,11 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
 
     // Retrieve consent challenge from ChallengeStore (RPC)
     // Use challengeId-based sharding
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challenge_id,
+      getTenantIdFromContext(c)
+    );
 
     const challengeData = await challengeStore.getChallengeRpc(challenge_id);
 
@@ -264,7 +268,12 @@ async function handleJsonConsentGet(
 
   // Get user info (PII/Non-PII DB separation)
   const piiCtx = createPIIContextFromHono(c, tenantId);
-  const userInfo = await getConsentUserInfo(authCtx.coreAdapter, userId, tenantId, piiCtx.defaultPiiAdapter);
+  const userInfo = await getConsentUserInfo(
+    authCtx.coreAdapter,
+    userId,
+    tenantId,
+    piiCtx.defaultPiiAdapter
+  );
   if (!userInfo) {
     return c.json(
       {
@@ -288,7 +297,12 @@ async function handleJsonConsentGet(
   // Get acting-as info if present in metadata
   let actingAsInfo = null;
   if (metadata.acting_as && features.acting_as_enabled) {
-    actingAsInfo = await getActingAsUserInfo(authCtx.coreAdapter, userId, metadata.acting_as, tenantId);
+    actingAsInfo = await getActingAsUserInfo(
+      authCtx.coreAdapter,
+      userId,
+      metadata.acting_as,
+      tenantId
+    );
   }
 
   // Determine target org and get roles for that org
@@ -696,7 +710,11 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
     // Consume consent challenge from ChallengeStore (RPC)
     // Use challengeId-based sharding - must match the shard used during challenge creation
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challenge_id,
+      getTenantIdFromContext(c)
+    );
 
     let consumedChallengeData: {
       userId: string;
@@ -706,6 +724,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     try {
       consumedChallengeData = (await challengeStore.consumeChallengeRpc({
         id: challenge_id,
+        tenantId: getTenantIdFromContext(c),
         type: 'consent',
         challenge: challenge_id,
       })) as { userId: string; metadata?: ConsentChallengeMetadata };

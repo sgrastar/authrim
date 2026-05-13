@@ -23,7 +23,6 @@ import {
   importPublicKeyFromJWK,
   parseTokenHeader,
   createLogger,
-  DEFAULT_TENANT_ID,
   type DatabaseSource,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
@@ -81,7 +80,6 @@ export interface CheckAuthContext {
   db: DatabaseSource;
   cache?: KVNamespace;
   policyApiSecret?: string;
-  defaultTenantId?: string;
   /** Issuer URL for JWT verification (e.g., https://auth.example.com) */
   issuerUrl?: string;
   /** Expected audience for JWT verification */
@@ -298,8 +296,6 @@ async function validateAccessToken(
   token: string
 ): Promise<AccessTokenValidationResult> {
   try {
-    const fallbackTenantId = ctx.defaultTenantId ?? DEFAULT_TENANT_ID;
-
     // Parse JWT parts for validation
     const parts = token.split('.');
     if (parts.length !== 3) {
@@ -324,7 +320,10 @@ async function validateAccessToken(
         valid: true,
         clientId: payload.client_id || payload.azp,
         subjectId: payload.sub,
-        tenantId: payload.tenant_id || fallbackTenantId,
+        tenantId:
+          typeof payload.tenant_id === 'string' && payload.tenant_id.trim()
+            ? payload.tenant_id.trim()
+            : undefined,
       };
     }
 
@@ -363,7 +362,10 @@ async function validateAccessToken(
       valid: true,
       clientId: tokenPayload.client_id || tokenPayload.azp,
       subjectId: payload.sub,
-      tenantId: tokenPayload.tenant_id || fallbackTenantId,
+      tenantId:
+        typeof tokenPayload.tenant_id === 'string' && tokenPayload.tenant_id.trim()
+          ? tokenPayload.tenant_id.trim()
+          : undefined,
     };
   } catch (error) {
     if (error instanceof Error) {
@@ -488,6 +490,15 @@ export async function authenticateCheckApiRequest(
   if (isJwtFormat(token)) {
     const result = await validateAccessToken(ctx, token);
 
+    if (result.valid && !result.tenantId) {
+      return {
+        authenticated: false,
+        error: 'invalid_token',
+        errorDescription: 'Access token is missing tenant_id',
+        statusCode: 401,
+      };
+    }
+
     if (!result.valid) {
       const errorMap: Record<string, { error: string; description: string; status: number }> = {
         invalid_jwt_format: {
@@ -542,7 +553,7 @@ export async function authenticateCheckApiRequest(
       method: 'access_token',
       clientId: result.clientId,
       subjectId: result.subjectId,
-      tenantId: result.tenantId || ctx.defaultTenantId || DEFAULT_TENANT_ID,
+      tenantId: result.tenantId,
       // Access tokens get moderate rate limiting by default
       rateLimitTier: 'moderate',
       // Access tokens can do check and batch by default
@@ -555,7 +566,6 @@ export async function authenticateCheckApiRequest(
     return {
       authenticated: true,
       method: 'policy_secret',
-      tenantId: ctx.defaultTenantId || DEFAULT_TENANT_ID,
       // Policy secret gets lenient rate limiting (internal use)
       rateLimitTier: 'lenient',
       allowedOperations: ['check', 'batch', 'subscribe'],
@@ -591,13 +601,18 @@ export function isOperationAllowed(auth: CheckAuthResult, operation: CheckApiOpe
  */
 export function resolveAuthorizedCheckTenantId(
   auth: CheckAuthResult,
-  requestedTenantId: string | undefined,
-  fallbackTenantId: string
+  requestedTenantId: string | undefined
 ): string | null {
-  const authTenantId = auth.tenantId ?? fallbackTenantId;
-  const tenantId = requestedTenantId ?? authTenantId;
+  const requested = requestedTenantId?.trim() || undefined;
 
-  if (auth.method !== 'policy_secret' && tenantId !== authTenantId) {
+  if (auth.method === 'policy_secret') {
+    return requested ?? null;
+  }
+
+  const authTenantId = auth.tenantId?.trim();
+  const tenantId = requested ?? authTenantId;
+
+  if (!authTenantId || tenantId !== authTenantId) {
     return null;
   }
 

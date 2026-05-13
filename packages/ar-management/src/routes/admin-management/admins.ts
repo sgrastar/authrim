@@ -67,6 +67,114 @@ function hasDeletePermission(authContext: AdminAuthContext): boolean {
   return hasAdminPermission(permissions, ADMIN_PERMISSIONS.ADMIN_USERS_DELETE);
 }
 
+function isPlatformAdminRole(roleName: string | undefined): boolean {
+  return roleName === 'super_admin';
+}
+
+function normalizeAdminAssignmentScope(
+  scopeType: 'global' | 'tenant' | 'org' | undefined,
+  scopeId: string | undefined,
+  tenantId: string
+): { scopeType: 'global' | 'tenant'; scopeId: string | null } | null {
+  const normalizedScopeType = scopeType ?? 'tenant';
+
+  // Admin org-scoped assignments are reserved until Admin resources have target-org enforcement.
+  if (normalizedScopeType !== 'global' && normalizedScopeType !== 'tenant') {
+    return null;
+  }
+
+  if (normalizedScopeType === 'global') {
+    return { scopeType: 'global', scopeId: null };
+  }
+
+  const normalizedScopeId = scopeId?.trim() || tenantId;
+  if (normalizedScopeId !== tenantId) {
+    return null;
+  }
+
+  return { scopeType: 'tenant', scopeId: normalizedScopeId };
+}
+
+async function countActivePlatformAdmins(
+  adapter: ReturnType<typeof getAdminAdapter>,
+  tenantId: string,
+  roleId: string
+): Promise<number> {
+  const now = Date.now();
+  const row = await adapter.queryOne<{ count: number }>(
+    `SELECT COUNT(DISTINCT au.id) as count
+     FROM admin_role_assignments ra
+     JOIN admin_users au
+       ON au.id = ra.admin_user_id
+      AND au.tenant_id = ra.tenant_id
+     WHERE ra.tenant_id = ?
+       AND ra.admin_role_id = ?
+       AND ra.scope_type = 'global'
+       AND au.is_active = 1
+       AND au.status = 'active'
+       AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
+    [tenantId, roleId, now]
+  );
+  return Number(row?.count ?? 0);
+}
+
+async function userHasActivePlatformAdminRole(
+  adapter: ReturnType<typeof getAdminAdapter>,
+  tenantId: string,
+  adminUserId: string
+): Promise<boolean> {
+  const now = Date.now();
+  const row = await adapter.queryOne<{ id: string }>(
+    `SELECT ra.id
+     FROM admin_role_assignments ra
+     JOIN admin_roles r
+       ON r.id = ra.admin_role_id
+      AND r.tenant_id = ra.tenant_id
+     WHERE ra.tenant_id = ?
+       AND ra.admin_user_id = ?
+       AND r.name = 'super_admin'
+       AND ra.scope_type = 'global'
+       AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+     LIMIT 1`,
+    [tenantId, adminUserId, now]
+  );
+  return !!row;
+}
+
+async function ensureNotRemovingLastPlatformAdmin(
+  c: AdminContext,
+  adapter: ReturnType<typeof getAdminAdapter>,
+  tenantId: string,
+  adminUserId: string
+): Promise<Response | null> {
+  const hasPlatformAdminRole = await userHasActivePlatformAdminRole(adapter, tenantId, adminUserId);
+  if (!hasPlatformAdminRole) {
+    return null;
+  }
+
+  const platformRole = await adapter.queryOne<{ id: string }>(
+    "SELECT id FROM admin_roles WHERE tenant_id = ? AND name = 'super_admin' LIMIT 1",
+    [tenantId]
+  );
+  if (!platformRole) {
+    return null;
+  }
+
+  const activePlatformAdmins = await countActivePlatformAdmins(adapter, tenantId, platformRole.id);
+  if (activePlatformAdmins > 1) {
+    return null;
+  }
+
+  return c.json(
+    {
+      error: 'last_platform_admin',
+      error_description:
+        'At least one active platform administrator must remain. Assign another platform administrator before changing this account.',
+    },
+    409
+  );
+}
+
 /**
  * Sanitize admin user for response (remove sensitive fields)
  */
@@ -190,11 +298,11 @@ adminUsersRouter.get('/:id', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
-    const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter);
     const passkeyRepo = new AdminPasskeyRepository(adapter);
 
     const id = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
+    const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
 
     const user = await userRepo.findByTenantAndId(tenantId, id);
     if (!user) {
@@ -205,10 +313,15 @@ adminUsersRouter.get('/:id', async (c) => {
     const roleAssignments = await roleAssignmentRepo.getAssignmentsByUser(id);
     const roles = roleAssignments.map((ra) => ({
       id: ra.admin_role_id,
+      assignment_id: ra.id,
+      role_id: ra.admin_role_id,
       name: ra.role.name,
       display_name: ra.role.display_name,
+      scope_type: ra.scope_type,
+      scope_id: ra.scope_id,
       assigned_at: ra.created_at,
       expires_at: ra.expires_at,
+      assigned_by: ra.assigned_by,
     }));
 
     // Get passkey count
@@ -378,6 +491,16 @@ adminUsersRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
+    const lastPlatformAdminResponse = await ensureNotRemovingLastPlatformAdmin(
+      c,
+      adapter,
+      tenantId,
+      id
+    );
+    if (lastPlatformAdminResponse) {
+      return lastPlatformAdminResponse;
+    }
+
     // Soft delete (deactivate)
     await userRepo.updateAdminUser(id, { is_active: false });
 
@@ -419,6 +542,16 @@ adminUsersRouter.post('/:id/suspend', async (c) => {
     // Prevent self-suspension
     if (id === authContext.userId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    const lastPlatformAdminResponse = await ensureNotRemovingLastPlatformAdmin(
+      c,
+      adapter,
+      tenantId,
+      id
+    );
+    if (lastPlatformAdminResponse) {
+      return lastPlatformAdminResponse;
     }
 
     await userRepo.suspendAccount(id);
@@ -518,10 +651,10 @@ adminUsersRouter.post('/:id/roles', async (c) => {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
     const roleRepo = new AdminRoleRepository(adapter);
-    const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter);
 
     const id = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
+    const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
 
     // Check if user exists
     const user = await userRepo.findByTenantAndId(tenantId, id);
@@ -531,6 +664,8 @@ adminUsersRouter.post('/:id/roles', async (c) => {
 
     const body = await c.req.json<{
       role_id: string;
+      scope_type?: 'global' | 'tenant' | 'org';
+      scope_id?: string;
       expires_at?: number;
     }>();
 
@@ -557,11 +692,39 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
+    const normalizedScope = normalizeAdminAssignmentScope(body.scope_type, body.scope_id, tenantId);
+    if (!normalizedScope) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    if (normalizedScope.scopeType === 'global' && !hasAdminPermission(permissions, '*')) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    if (
+      body.expires_at !== undefined &&
+      (!Number.isFinite(body.expires_at) || body.expires_at <= 0)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    const duplicate = await roleAssignmentRepo.assignmentExists({
+      adminUserId: id,
+      adminRoleId: body.role_id,
+      scopeType: normalizedScope.scopeType,
+      scopeId: normalizedScope.scopeId,
+    });
+    if (duplicate) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
     // Create assignment
     const assignment = await roleAssignmentRepo.assignRole({
       tenant_id: tenantId,
       admin_user_id: id,
       admin_role_id: body.role_id,
+      scope_type: normalizedScope.scopeType,
+      scope_id: normalizedScope.scopeId ?? undefined,
       expires_at: body.expires_at,
       assigned_by: authContext.userId,
     });
@@ -570,9 +733,84 @@ adminUsersRouter.post('/:id/roles', async (c) => {
     await createAuditLog(c, 'admin_user.role_assign', id, 'success', {
       role_id: body.role_id,
       role_name: role.name,
+      scope_type: normalizedScope.scopeType,
+      scope_id: normalizedScope.scopeId,
     });
 
     return c.json(assignment, 201);
+  } catch (error) {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+});
+
+/**
+ * DELETE /api/admin/admins/:id/role-assignments/:assignmentId
+ * Remove a specific role assignment from an Admin user.
+ */
+adminUsersRouter.delete('/:id/role-assignments/:assignmentId', async (c) => {
+  const authContext = c.get('adminAuth') as AdminAuthContext;
+  const permissions = authContext.permissions || [];
+
+  if (!hasAdminPermission(permissions, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+
+  try {
+    const adapter = getAdminAdapter(c);
+    const userRepo = new AdminUserRepository(adapter);
+    const roleRepo = new AdminRoleRepository(adapter);
+
+    const id = c.req.param('id')!;
+    const assignmentId = c.req.param('assignmentId')!;
+    const tenantId = getTenantIdFromContext(c);
+    const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
+
+    const user = await userRepo.findByTenantAndId(tenantId, id);
+    if (!user) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const assignment = await roleAssignmentRepo.getAssignment(assignmentId);
+    if (!assignment || assignment.admin_user_id !== id) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const role = await roleRepo.getRole(assignment.admin_role_id);
+    if (!role) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    if (isPlatformAdminRole(role.name)) {
+      const activePlatformAdmins = await countActivePlatformAdmins(adapter, tenantId, role.id);
+      if (activePlatformAdmins <= 1) {
+        return c.json(
+          {
+            error: 'last_platform_admin',
+            error_description:
+              'At least one active platform administrator must remain. Assign another platform administrator before removing this role.',
+          },
+          409
+        );
+      }
+      if (id === authContext.userId) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+      }
+    }
+
+    const removed = await roleAssignmentRepo.removeAssignmentById(assignmentId);
+    if (!removed) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    await createAuditLog(c, 'admin_user.role_assignment_remove', id, 'success', {
+      assignment_id: assignmentId,
+      role_id: role.id,
+      role_name: role.name,
+      scope_type: assignment.scope_type,
+      scope_id: assignment.scope_id,
+    });
+
+    return c.json({ success: true, message: 'Role assignment removed' });
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -593,11 +831,12 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
-    const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter);
+    const roleRepo = new AdminRoleRepository(adapter);
 
     const id = c.req.param('id')!;
     const roleId = c.req.param('roleId')!;
     const tenantId = getTenantIdFromContext(c);
+    const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
 
     // Check if user exists
     const user = await userRepo.findByTenantAndId(tenantId, id);
@@ -605,11 +844,28 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const role = await roleRepo.getRole(roleId);
+    if (!role) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    if (isPlatformAdminRole(role.name)) {
+      const activePlatformAdmins = await countActivePlatformAdmins(adapter, tenantId, roleId);
+      if (activePlatformAdmins <= 1) {
+        return c.json(
+          {
+            error: 'last_platform_admin',
+            error_description:
+              'At least one active platform administrator must remain. Assign another platform administrator before removing this role.',
+          },
+          409
+        );
+      }
+    }
+
     // Prevent removing own super_admin role
     if (id === authContext.userId) {
-      const roleRepo = new AdminRoleRepository(adapter);
-      const role = await roleRepo.getRole(roleId);
-      if (role?.name === 'super_admin') {
+      if (isPlatformAdminRole(role.name)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
       }
     }

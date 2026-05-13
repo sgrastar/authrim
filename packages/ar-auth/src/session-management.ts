@@ -84,10 +84,15 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
     // Store token in ChallengeStore DO with 5 minute TTL (RPC)
     // This provides atomic single-use guarantee (prevents race conditions)
     // Use token-based sharding for consistent shard routing between issue and verify
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, token);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      token,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `session_token:${token}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'session_token',
       userId: session.userId,
       challenge: token,
@@ -144,13 +149,18 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
     // Consume token from ChallengeStore DO (atomic operation, RPC)
     // This prevents race conditions and ensures single-use
     // Use token-based sharding - must match the shard used during token issuance
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, token);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      token,
+      getTenantIdFromContext(c)
+    );
 
     let sessionId: string;
     let userId: string;
     try {
       const challengeData = (await challengeStore.consumeChallengeRpc({
         id: `session_token:${token}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'session_token',
         challenge: token,
       })) as {

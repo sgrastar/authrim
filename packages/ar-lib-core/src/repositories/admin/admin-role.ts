@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import {
   BaseRepository,
   type BaseEntity,
@@ -53,6 +54,16 @@ interface AdminRoleAssignmentEntity extends BaseEntity {
   assigned_by: string | null;
 }
 
+export interface AdminRoleAssignmentWithUser extends AdminRoleAssignment {
+  user: {
+    id: string;
+    email: string;
+    name: string | null;
+    status: string;
+    is_active: boolean;
+  } | null;
+}
+
 /**
  * Admin Role Repository
  */
@@ -88,7 +99,7 @@ export class AdminRoleRepository extends BaseRepository<AdminRoleEntity> {
 
     const role: AdminRoleEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       name: input.name,
       display_name: input.display_name ?? null,
       description: input.description ?? null,
@@ -353,7 +364,10 @@ export class AdminRoleRepository extends BaseRepository<AdminRoleEntity> {
  * Admin Role Assignment Repository
  */
 export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssignmentEntity> {
-  constructor(adapter: DatabaseAdapter) {
+  constructor(
+    adapter: DatabaseAdapter,
+    private readonly tenantId: string
+  ) {
     super(adapter, {
       tableName: 'admin_role_assignments',
       primaryKey: 'id',
@@ -382,7 +396,7 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
 
     const assignment: AdminRoleAssignmentEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       admin_user_id: input.admin_user_id,
       admin_role_id: input.admin_role_id,
       scope_type: input.scope_type ?? 'tenant',
@@ -430,8 +444,9 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
     scopeType?: AdminRoleAssignmentScopeType,
     scopeId?: string
   ): Promise<boolean> {
-    let sql = 'DELETE FROM admin_role_assignments WHERE admin_user_id = ? AND admin_role_id = ?';
-    const params: unknown[] = [adminUserId, adminRoleId];
+    let sql =
+      'DELETE FROM admin_role_assignments WHERE tenant_id = ? AND admin_user_id = ? AND admin_role_id = ?';
+    const params: unknown[] = [this.tenantId, adminUserId, adminRoleId];
 
     if (scopeType) {
       sql += ' AND scope_type = ?';
@@ -444,6 +459,126 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
 
     const result = await this.adapter.execute(sql, params);
     return result.rowsAffected > 0;
+  }
+
+  /**
+   * Get a role assignment by ID inside the repository tenant boundary.
+   *
+   * @param assignmentId - Assignment ID
+   * @returns Role assignment or null
+   */
+  async getAssignment(assignmentId: string): Promise<AdminRoleAssignment | null> {
+    const row = await this.adapter.queryOne<Record<string, unknown>>(
+      'SELECT * FROM admin_role_assignments WHERE tenant_id = ? AND id = ?',
+      [this.tenantId, assignmentId]
+    );
+    return row ? this.rowToAssignment(row) : null;
+  }
+
+  /**
+   * Remove a role assignment by ID inside the repository tenant boundary.
+   *
+   * @param assignmentId - Assignment ID
+   * @returns True if removed
+   */
+  async removeAssignmentById(assignmentId: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'DELETE FROM admin_role_assignments WHERE tenant_id = ? AND id = ?',
+      [this.tenantId, assignmentId]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
+   * Check whether an equivalent role assignment already exists.
+   */
+  async assignmentExists(input: {
+    adminUserId: string;
+    adminRoleId: string;
+    scopeType: AdminRoleAssignmentScopeType;
+    scopeId: string | null;
+    excludeAssignmentId?: string;
+  }): Promise<boolean> {
+    let sql = `
+      SELECT id FROM admin_role_assignments
+      WHERE tenant_id = ?
+        AND admin_user_id = ?
+        AND admin_role_id = ?
+        AND scope_type = ?
+    `;
+    const params: unknown[] = [
+      this.tenantId,
+      input.adminUserId,
+      input.adminRoleId,
+      input.scopeType,
+    ];
+
+    if (input.scopeType === 'tenant' && input.scopeId !== null) {
+      sql += ' AND (scope_id = ? OR scope_id IS NULL)';
+      params.push(input.scopeId);
+    } else if (input.scopeId === null) {
+      sql += ' AND scope_id IS NULL';
+    } else {
+      sql += ' AND scope_id = ?';
+      params.push(input.scopeId);
+    }
+
+    if (input.excludeAssignmentId) {
+      sql += ' AND id != ?';
+      params.push(input.excludeAssignmentId);
+    }
+
+    sql += ' LIMIT 1';
+
+    const row = await this.adapter.queryOne<{ id: string }>(sql, params);
+    return !!row;
+  }
+
+  /**
+   * Update an assignment's scope binding or expiration.
+   *
+   * @param assignmentId - Assignment ID
+   * @param input - Assignment updates
+   * @returns Updated assignment or null
+   */
+  async updateAssignment(
+    assignmentId: string,
+    input: {
+      scope_type?: AdminRoleAssignmentScopeType;
+      scope_id?: string | null;
+      expires_at?: number | null;
+    }
+  ): Promise<AdminRoleAssignment | null> {
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.scope_type !== undefined) {
+      updates.push('scope_type = ?');
+      values.push(input.scope_type);
+    }
+    if (input.scope_id !== undefined) {
+      updates.push('scope_id = ?');
+      values.push(input.scope_id);
+    }
+    if (input.expires_at !== undefined) {
+      updates.push('expires_at = ?');
+      values.push(input.expires_at);
+    }
+
+    if (updates.length === 0) {
+      return this.getAssignment(assignmentId);
+    }
+
+    updates.push('updated_at = ?');
+    values.push(getCurrentTimestamp());
+    values.push(this.tenantId, assignmentId);
+
+    await this.adapter.execute(
+      `UPDATE admin_role_assignments SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?`,
+      values
+    );
+
+    return this.getAssignment(assignmentId);
   }
 
   /**
@@ -474,9 +609,9 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
         r.updated_at as role_updated_at
       FROM admin_role_assignments ra
       JOIN admin_roles r ON ra.admin_role_id = r.id
-      WHERE ra.admin_user_id = ?
+      WHERE ra.tenant_id = ? AND ra.admin_user_id = ?
     `;
-    const params: unknown[] = [adminUserId];
+    const params: unknown[] = [this.tenantId, adminUserId];
 
     if (!includeExpired) {
       sql += ' AND (ra.expires_at IS NULL OR ra.expires_at > ?)';
@@ -524,6 +659,58 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
   }
 
   /**
+   * Get all Admin users assigned to a role with scope binding details.
+   *
+   * @param roleId - Role ID
+   * @param includeExpired - Include expired assignments
+   * @returns List of assignments with admin user summary
+   */
+  async getAssignmentsByRole(
+    roleId: string,
+    includeExpired: boolean = false
+  ): Promise<AdminRoleAssignmentWithUser[]> {
+    const now = getCurrentTimestamp();
+
+    let sql = `
+      SELECT
+        ra.*,
+        au.id as user_id,
+        au.email as user_email,
+        au.name as user_name,
+        au.status as user_status,
+        au.is_active as user_is_active
+      FROM admin_role_assignments ra
+      LEFT JOIN admin_users au
+        ON au.tenant_id = ra.tenant_id
+       AND au.id = ra.admin_user_id
+      WHERE ra.tenant_id = ?
+        AND ra.admin_role_id = ?
+    `;
+    const params: unknown[] = [this.tenantId, roleId];
+
+    if (!includeExpired) {
+      sql += ' AND (ra.expires_at IS NULL OR ra.expires_at > ?)';
+      params.push(now);
+    }
+
+    sql += ' ORDER BY ra.created_at DESC';
+
+    const rows = await this.adapter.query<Record<string, unknown>>(sql, params);
+    return rows.map((row) => ({
+      ...this.rowToAssignment(row),
+      user: row.user_id
+        ? {
+            id: row.user_id as string,
+            email: row.user_email as string,
+            name: row.user_name as string | null,
+            status: row.user_status as string,
+            is_active: Boolean(row.user_is_active),
+          }
+        : null,
+    }));
+  }
+
+  /**
    * Get all permissions for an Admin user (aggregated from all assigned roles)
    *
    * @param adminUserId - Admin user ID
@@ -552,8 +739,8 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
     const now = getCurrentTimestamp();
     const rows = await this.adapter.query<{ admin_user_id: string }>(
       `SELECT DISTINCT admin_user_id FROM admin_role_assignments
-       WHERE admin_role_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
-      [roleId, now]
+       WHERE tenant_id = ? AND admin_role_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
+      [this.tenantId, roleId, now]
     );
     return rows.map((row) => row.admin_user_id);
   }
@@ -570,10 +757,10 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
     const row = await this.adapter.queryOne<{ id: string }>(
       `SELECT ra.id FROM admin_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
-       WHERE ra.admin_user_id = ? AND r.name = ?
+       WHERE ra.tenant_id = ? AND ra.admin_user_id = ? AND r.name = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        LIMIT 1`,
-      [adminUserId, roleName, now]
+      [this.tenantId, adminUserId, roleName, now]
     );
     return row !== null;
   }
@@ -586,8 +773,8 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
    */
   async deleteAllByUser(adminUserId: string): Promise<number> {
     const result = await this.adapter.execute(
-      'DELETE FROM admin_role_assignments WHERE admin_user_id = ?',
-      [adminUserId]
+      'DELETE FROM admin_role_assignments WHERE tenant_id = ? AND admin_user_id = ?',
+      [this.tenantId, adminUserId]
     );
     return result.rowsAffected;
   }
@@ -600,8 +787,8 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
    */
   async deleteAllByRole(roleId: string): Promise<number> {
     const result = await this.adapter.execute(
-      'DELETE FROM admin_role_assignments WHERE admin_role_id = ?',
-      [roleId]
+      'DELETE FROM admin_role_assignments WHERE tenant_id = ? AND admin_role_id = ?',
+      [this.tenantId, roleId]
     );
     return result.rowsAffected;
   }
@@ -620,6 +807,20 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
       expires_at: entity.expires_at,
       assigned_by: entity.assigned_by,
       created_at: entity.created_at,
+    };
+  }
+
+  private rowToAssignment(row: Record<string, unknown>): AdminRoleAssignment {
+    return {
+      id: row.id as string,
+      tenant_id: row.tenant_id as string,
+      admin_user_id: row.admin_user_id as string,
+      admin_role_id: row.admin_role_id as string,
+      scope_type: row.scope_type as AdminRoleAssignmentScopeType,
+      scope_id: row.scope_id as string | null,
+      expires_at: row.expires_at as number | null,
+      assigned_by: row.assigned_by as string | null,
+      created_at: row.created_at as number,
     };
   }
 }

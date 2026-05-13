@@ -12,7 +12,12 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getVPRequestStoreById } from '../../utils/vp-request-sharding';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+} from '@authrim/ar-lib-core';
 
 /**
  * GET /vp/request/:id
@@ -33,7 +38,7 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
 
     // Get DO stub using region-aware sharding (self-routing from ID)
     // Request ID format: g{gen}:{region}:{shard}:vp_{uuid}
-    const { stub } = getVPRequestStoreById(c.env, requestId);
+    const { stub } = getVPRequestStoreById(c.env, requestId, getTenantIdFromContext(c));
 
     const response = await stub.fetch(new Request('https://internal/get'));
 

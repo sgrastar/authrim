@@ -653,11 +653,7 @@ export class DeviceCodeStore {
     const persistence = await this.ensureDeviceCodePersistence();
     if (persistence) {
       await retryD1Operation(
-        () =>
-          persistence.markTokenIssued(
-            deviceCode,
-            metadata.token_issued_at ?? Date.now()
-          ),
+        () => persistence.markTokenIssued(deviceCode, metadata.token_issued_at ?? Date.now()),
         'DeviceCodeStore.markTokenIssued',
         { maxRetries: 3 }
       );
@@ -713,7 +709,12 @@ export class DeviceCodeStore {
    * Log critical events synchronously - V2
    */
   private async logCritical(entry: AuditLogEntry): Promise<void> {
+    const tenantId = this.getTenantIdForAudit(`device_flow.${entry.action}`);
+    if (!tenantId) {
+      return;
+    }
     await createAuditLog(this.env, {
+      tenantId,
       userId: entry.userId ?? 'system',
       action: `device_flow.${entry.action}`,
       resource: 'device_code',
@@ -754,18 +755,24 @@ export class DeviceCodeStore {
 
     try {
       await Promise.all(
-        logsToFlush.map((entry) =>
-          createAuditLog(this.env, {
+        logsToFlush.map((entry) => {
+          const action = `device_flow.${entry.action}`;
+          const tenantId = this.getTenantIdForAudit(action);
+          if (!tenantId) {
+            return Promise.resolve();
+          }
+          return createAuditLog(this.env, {
+            tenantId,
             userId: entry.userId ?? 'system',
-            action: `device_flow.${entry.action}`,
+            action,
             resource: 'device_code',
             resourceId: entry.deviceCode,
             ipAddress: 'system',
             userAgent: 'DeviceCodeStore',
             metadata: JSON.stringify(entry.metadata ?? {}),
             severity: 'info',
-          })
-        )
+          });
+        })
       );
     } catch (error) {
       this.log.error('Failed to flush audit logs', {}, error as Error);
@@ -865,11 +872,10 @@ export class DeviceCodeStore {
   private async initializeDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    return createDeviceCodePersistenceAdapter(
-      source,
-      'device-code-store',
-      this.tenantId ?? undefined
-    );
+    if (!this.tenantId) {
+      throw new Error('Device code persistence requires tenant context');
+    }
+    return createDeviceCodePersistenceAdapter(source, 'device-code-store', this.tenantId);
   }
 
   private async ensureDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
@@ -891,6 +897,14 @@ export class DeviceCodeStore {
     if (tenantId) {
       this.setTenantId(tenantId);
     }
+  }
+
+  private getTenantIdForAudit(action: string): string | null {
+    if (!this.tenantId) {
+      this.log.error('Cannot create device flow audit log: tenant context is missing', { action });
+      return null;
+    }
+    return this.tenantId;
   }
 
   private setTenantId(tenantId: string): void {

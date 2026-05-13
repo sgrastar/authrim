@@ -18,6 +18,7 @@ import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   getChallengeStoreByChallengeId,
+  getTenantIdFromContext,
   getLogger,
   getWebOriginRegistry,
   isIframeOidcAuthEnabled,
@@ -199,9 +200,9 @@ function applyIframePolicy(
 
 async function resolveWebOriginRegistry(
   env: Env,
-  metadata: LoginChallengeMetadata
+  metadata: LoginChallengeMetadata,
+  tenantId: string
 ): Promise<WebOriginRegistryDocument> {
-  const tenantId = metadata.tenant_id || env.DEFAULT_TENANT_ID || 'default';
   const iframeFeatureEnabled = await isIframeOidcAuthEnabled(env, tenantId);
 
   if (env.DB && metadata.client_id) {
@@ -271,7 +272,8 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
 
     // Retrieve login challenge from ChallengeStore (RPC)
     // Use challengeId-based sharding
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+    const requestTenantId = getTenantIdFromContext(c);
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, requestTenantId);
 
     const challengeData = await challengeStore.getChallengeRpc(challenge_id);
 
@@ -305,6 +307,16 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
 
     const metadata: LoginChallengeMetadata = typedChallengeData.metadata || {};
 
+    if (metadata.tenant_id && metadata.tenant_id !== requestTenantId) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Challenge tenant does not match request tenant',
+        },
+        400
+      );
+    }
+
     // Type guard: ensure client_id exists
     if (!metadata.client_id) {
       return c.json(
@@ -334,7 +346,7 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
       oidc: buildOidcMetadata(metadata),
       session_mode: sessionMode,
       handoff_methods: normalizeHandoffMethods(metadata.handoff_methods, sessionMode),
-      web_origin_registry: await resolveWebOriginRegistry(c.env, metadata),
+      web_origin_registry: await resolveWebOriginRegistry(c.env, metadata, requestTenantId),
     };
 
     return c.json(responseData);

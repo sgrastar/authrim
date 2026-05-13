@@ -13,6 +13,7 @@ import type { Env } from '../types/env';
 import { ensureDatabaseAdapter } from '../db';
 import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
 import { createLogger } from './logger';
+import { DEFAULT_TENANT_ID } from './tenant-context';
 
 const log = createLogger().module('SYSTEM_INIT');
 
@@ -88,7 +89,7 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
   // Fallback to legacy DB (for backward compatibility)
   try {
     const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'system-init');
-    const tenantId = 'default';
+    const tenantId = DEFAULT_TENANT_ID;
     const now = Math.floor(Date.now() / 1000); // UNIX seconds for legacy role_assignments
 
     // Count users with active, non-expired system_admin role (legacy)
@@ -132,13 +133,13 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
  *
  * @param env - Cloudflare Workers environment
  * @param adminUserId - The Admin user ID to assign the role to
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @throws Error if role assignment fails
  */
 export async function assignSystemAdminRole(
   env: Env,
   adminUserId: string,
-  tenantId: string = 'default'
+  tenantId: string = DEFAULT_TENANT_ID
 ): Promise<void> {
   // Use DB_ADMIN (new architecture) when available
   if (env.DB_ADMIN) {
@@ -158,8 +159,8 @@ export async function assignSystemAdminRole(
 
     // Check if assignment already exists
     const existing = await adminAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM admin_role_assignments WHERE admin_user_id = ? AND admin_role_id = ? LIMIT 1',
-      [adminUserId, role.id]
+      'SELECT id FROM admin_role_assignments WHERE tenant_id = ? AND admin_user_id = ? AND admin_role_id = ? LIMIT 1',
+      [tenantId, adminUserId, role.id]
     );
 
     if (existing) {
@@ -202,8 +203,8 @@ export async function assignSystemAdminRole(
 
   // Check if assignment already exists
   const existing = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM role_assignments WHERE subject_id = ? AND role_id = ? AND tenant_id = ? LIMIT 1',
-    [adminUserId, role.id, tenantId]
+    'SELECT id FROM role_assignments WHERE tenant_id = ? AND subject_id = ? AND role_id = ? LIMIT 1',
+    [tenantId, adminUserId, role.id]
   );
 
   if (existing) {

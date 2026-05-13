@@ -4,13 +4,14 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
-  timingSafeEqual,
+  ADMIN_PERMISSIONS,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
+  hasAdminPermission,
   validateWebhookUrl,
 } from '@authrim/ar-lib-core';
 import {
@@ -60,18 +61,24 @@ const OUTBOUND_PROVIDER_URL_FIELDS = [
   ['jwks_uri', 'jwksUri'],
 ] as const;
 
-/**
- * Verify admin authentication
- */
-function verifyAdmin(c: Context<{ Bindings: Env }>): boolean {
-  const authHeader = c.req.header('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return false;
-  }
+type AdminProviderContext = Context<{ Bindings: Env }>;
+type AdminProviderAuthContext = Context<{
+  Bindings: Env;
+  Variables: { adminAuth?: AdminAuthContext };
+}>;
 
-  const token = authHeader.slice(7);
-  // Use timing-safe comparison to prevent timing attacks
-  return !!c.env.ADMIN_API_SECRET && timingSafeEqual(token, c.env.ADMIN_API_SECRET);
+async function requireAdminProviderPermission(
+  c: AdminProviderContext,
+  permission: string
+): Promise<Response | null> {
+  const auth = (c as unknown as AdminProviderAuthContext).get('adminAuth');
+  if (!auth) {
+    return await createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  }
+  if (!hasAdminPermission(auth.permissions || [], permission)) {
+    return await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  return null;
 }
 
 function validateProviderOutboundUrl(
@@ -102,10 +109,11 @@ function validateProviderOutboundUrl(
  * List all providers (admin)
  * GET /external-idp/admin/providers
  */
-export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminListProviders(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(c, ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ);
+  if (forbidden) {
+    return forbidden;
   }
 
   try {
@@ -130,10 +138,14 @@ export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): P
  * Create new provider
  * POST /external-idp/admin/providers
  */
-export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminCreateProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   try {
@@ -399,10 +411,11 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
  * Get provider details
  * GET /external-idp/admin/providers/:id
  */
-export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminGetProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(c, ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ);
+  if (forbidden) {
+    return forbidden;
   }
 
   const id = c.req.param('id');
@@ -433,10 +446,14 @@ export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Pro
  * Update provider
  * PUT /external-idp/admin/providers/:id
  */
-export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminUpdateProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   const id = c.req.param('id');
@@ -579,10 +596,14 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
  * Delete provider
  * DELETE /external-idp/admin/providers/:id
  */
-export async function handleAdminDeleteProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminDeleteProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_DELETE
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   const id = c.req.param('id');

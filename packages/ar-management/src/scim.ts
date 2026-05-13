@@ -403,8 +403,8 @@ async function fetchGroupMembersWithPII(
 ): Promise<{ user_id: string; email: string }[]> {
   // Get user_ids from user_roles (Core DB) via Adapter
   const roleMembers = await coreAdapter.query<{ user_id: string }>(
-    'SELECT user_id FROM user_roles WHERE role_id = ? AND tenant_id = ?',
-    [roleId, tenantId]
+    'SELECT user_id FROM user_roles WHERE tenant_id = ? AND role_id = ?',
+    [tenantId, roleId]
   );
 
   if (roleMembers.length === 0) {
@@ -2221,9 +2221,9 @@ app.put('/Groups/:id', async (c) => {
     );
 
     // Update members (replace all)
-    await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ? AND tenant_id = ?', [
-      groupId,
+    await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
       tenantId,
+      groupId,
     ]);
 
     const memberIds = resolveScimGroupMemberIds(scimGroup.members);
@@ -2338,9 +2338,9 @@ app.patch('/Groups/:id', async (c) => {
         return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
       }
 
-      await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ? AND tenant_id = ?', [
-        groupId,
+      await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
         tenantId,
+        groupId,
       ]);
 
       if (memberIds.length > 0) {
@@ -2419,9 +2419,9 @@ app.delete('/Groups/:id', async (c) => {
     }
 
     // Delete group (cascade will handle user_roles)
-    await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ? AND tenant_id = ?', [
-      groupId,
+    await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
       tenantId,
+      groupId,
     ]);
     await coreAdapter.execute('DELETE FROM roles WHERE id = ? AND tenant_id = ?', [
       groupId,
@@ -3478,9 +3478,9 @@ async function processGroupOperation(
       );
 
       // Update members
-      await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ? AND tenant_id = ?', [
-        resourceId,
+      await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
         tenantId,
+        resourceId,
       ]);
       const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
       const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
@@ -3596,9 +3596,9 @@ async function processGroupOperation(
           return invalidGroupMemberBulkResponse('PATCH');
         }
 
-        await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ? AND tenant_id = ?', [
-          resourceId,
+        await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
           tenantId,
+          resourceId,
         ]);
         if (memberIds.length > 0) {
           const now = new Date().toISOString();
@@ -3663,9 +3663,9 @@ async function processGroupOperation(
         }
       }
 
-      await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ? AND tenant_id = ?', [
-        resourceId,
+      await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
         tenantId,
+        resourceId,
       ]);
       await coreAdapter.execute('DELETE FROM roles WHERE id = ? AND tenant_id = ?', [
         resourceId,

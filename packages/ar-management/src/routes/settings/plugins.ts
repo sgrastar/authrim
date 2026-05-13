@@ -30,7 +30,6 @@ import {
   AR_ERROR_CODES,
   getLogger,
   createLogger,
-  getTenantIdFromContext,
   invalidatePluginRuntimeCaches,
 } from '@authrim/ar-lib-core';
 import {
@@ -215,12 +214,26 @@ function getPluginTenantScope(c: Context<{ Bindings: Env }>): PluginTenantScope 
   return ((c as any).get(PLUGIN_TENANT_SCOPE_KEY) as PluginTenantScope | undefined) ?? 'tenant';
 }
 
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getRequestTenantId(
   c: Context<{ Bindings: Env }>,
   explicitTenantId?: string
 ): string | undefined {
   if (getPluginTenantScope(c) === 'tenant') {
-    return getTenantIdFromContext(c);
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      throw new Error('Plugin tenant-scope routes require tenant context');
+    }
+    return tenantId;
   }
 
   const candidates = [explicitTenantId, c.req.query('tenant_id'), c.req.header('X-Tenant-Id')];
@@ -1094,7 +1107,7 @@ export async function sendPluginTestEmailHandler(c: Context<{ Bindings: Env }>) 
               // Admin-triggered test emails do not write plugin audit events.
             },
           },
-          tenantId: tenantId ?? 'default',
+          tenantId: tenantId ?? 'platform',
           env: c.env as never,
         },
         parsedConfig

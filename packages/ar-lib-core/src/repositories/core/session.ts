@@ -112,6 +112,14 @@ const MIN_SESSION_TTL_MS = 60 * 1000;
 /** Maximum allowed TTL: 30 days in milliseconds */
 const MAX_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Session Repository
  *
@@ -124,9 +132,9 @@ export class SessionRepository {
   protected readonly adapter: DatabaseAdapter;
   protected readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'SessionRepository');
   }
 
   /**
@@ -221,8 +229,8 @@ export class SessionRepository {
    * @returns Array of sessions
    */
   async findByUserId(userId: string, validOnly = false): Promise<Session[]> {
-    let sql = 'SELECT * FROM sessions WHERE user_id = ? AND tenant_id = ?';
-    const params: unknown[] = [userId, this.tenantId];
+    let sql = 'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?';
+    const params: unknown[] = [this.tenantId, userId];
 
     if (validOnly) {
       const now = getCurrentTimestamp();
@@ -402,8 +410,8 @@ export class SessionRepository {
    * @returns Number of deleted sessions
    */
   async deleteByUserId(userId: string): Promise<number> {
-    const sql = 'DELETE FROM sessions WHERE user_id = ? AND tenant_id = ?';
-    const result = await this.adapter.execute(sql, [userId, this.tenantId]);
+    const sql = 'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, userId]);
     return result.rowsAffected;
   }
 
@@ -444,8 +452,8 @@ export class SessionRepository {
    * @returns Number of sessions
    */
   async countByUserId(userId: string, validOnly = false): Promise<number> {
-    let sql = 'SELECT COUNT(*) as count FROM sessions WHERE user_id = ? AND tenant_id = ?';
-    const params: unknown[] = [userId, this.tenantId];
+    let sql = 'SELECT COUNT(*) as count FROM sessions WHERE tenant_id = ? AND user_id = ?';
+    const params: unknown[] = [this.tenantId, userId];
 
     if (validOnly) {
       const now = getCurrentTimestamp();
@@ -499,14 +507,14 @@ export class SessionRepository {
         COUNT(*) as total,
         SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) as active,
         SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired
-      FROM sessions WHERE user_id = ? AND tenant_id = ?
+      FROM sessions WHERE tenant_id = ? AND user_id = ?
     `;
 
     const result = await this.adapter.queryOne<{
       total: number;
       active: number;
       expired: number;
-    }>(sql, [now, now, userId, this.tenantId]);
+    }>(sql, [now, now, this.tenantId, userId]);
 
     return {
       total: result?.total ?? 0,

@@ -30,6 +30,7 @@ export interface RefreshTokenRotatorResolution {
   instanceName: string;
   generation: number;
   shardIndex: number | null;
+  tenantId: string;
   jti?: string;
 }
 
@@ -38,6 +39,7 @@ export interface CreateRefreshTokenFamilyInput {
   clientId: string;
   scope: string;
   ttl: number;
+  tenantId: string;
   resourceAudience?: string | string[];
 }
 
@@ -63,17 +65,24 @@ function ensureRefreshTokenRotator(env: Env): Env['REFRESH_TOKEN_ROTATOR'] {
 export function getRefreshTokenRotatorStubByJti(
   env: Env,
   clientId: string,
-  jti: string
+  jti: string,
+  tenantId: string
 ): {
   stub: RefreshTokenRotatorRpcStub;
   resolution: RefreshTokenRotatorResolution;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Refresh token rotator lookup requires tenantId');
+  }
+
   const namespace = ensureRefreshTokenRotator(env);
   const parsedJti = parseRefreshTokenJti(jti);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     clientId,
     parsedJti.generation,
-    parsedJti.shardIndex
+    parsedJti.shardIndex,
+    normalizedTenantId
   );
   const id = namespace.idFromName(instanceName);
 
@@ -83,6 +92,7 @@ export function getRefreshTokenRotatorStubByJti(
       instanceName,
       generation: parsedJti.generation,
       shardIndex: parsedJti.shardIndex,
+      tenantId: normalizedTenantId,
       jti,
     },
   };
@@ -93,7 +103,7 @@ export async function createRefreshTokenFamily(
   input: CreateRefreshTokenFamilyInput
 ): Promise<CreateRefreshTokenFamilyResult> {
   const namespace = ensureRefreshTokenRotator(env);
-  const shardConfig = await getRefreshTokenShardConfig(env, input.clientId);
+  const shardConfig = await getRefreshTokenShardConfig(env, input.clientId, input.tenantId);
   const shardIndex = await getRefreshTokenShardIndex(
     input.userId,
     input.clientId,
@@ -107,7 +117,8 @@ export async function createRefreshTokenFamily(
   const instanceName = buildRefreshTokenRotatorInstanceName(
     input.clientId,
     shardConfig.currentGeneration,
-    shardIndex
+    shardIndex,
+    input.tenantId
   );
   const id = namespace.idFromName(instanceName);
   const stub = namespace.get(id) as unknown as RefreshTokenRotatorRpcStub;
@@ -117,6 +128,7 @@ export async function createRefreshTokenFamily(
     clientId: input.clientId,
     scope: input.scope,
     ttl: input.ttl,
+    tenantId: input.tenantId,
     ...(input.resourceAudience && { resourceAudience: input.resourceAudience }),
     generation: shardConfig.currentGeneration,
     shardIndex,
@@ -129,6 +141,7 @@ export async function createRefreshTokenFamily(
       instanceName,
       generation: shardConfig.currentGeneration,
       shardIndex,
+      tenantId: input.tenantId,
       jti,
     },
   };

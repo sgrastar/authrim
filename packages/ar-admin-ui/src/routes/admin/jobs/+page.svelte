@@ -10,8 +10,13 @@
 		type Job,
 		type JobStatus,
 		type JobType,
+		type JobTypeDefinition,
 		type ReportType
 	} from '$lib/api/admin-jobs';
+	import {
+		adminStorageDestinationsAPI,
+		type StorageDestination
+	} from '$lib/api/admin-storage-destinations';
 	import {
 		formatDate,
 		isValidDownloadUrl,
@@ -25,6 +30,8 @@
 	let loading = $state(true);
 	let error = $state('');
 	let jobs = $state<Job[]>([]);
+	let jobTypes = $state<JobTypeDefinition[]>([]);
+	let jobTypeError = $state('');
 
 	// Filters
 	let statusFilter = $state<JobStatus | ''>('');
@@ -37,6 +44,10 @@
 	let reportType = $state<ReportType>('user_activity');
 	let reportFromDate = $state('');
 	let reportToDate = $state('');
+	let reportFormat = $state<'json' | 'csv'>('json');
+	let reportResultDelivery = $state<'auto' | 'inline' | 'artifact'>('auto');
+	let reportStorageDestinationId = $state('');
+	let storageDestinations = $state<StorageDestination[]>([]);
 
 	// Create Import Dialog
 	let showCreateImportDialog = $state(false);
@@ -100,11 +111,31 @@
 		}
 	}
 
+	async function loadJobTypes() {
+		try {
+			const response = await adminJobsAPI.listTypes();
+			jobTypes = response.job_types.filter((jobType) => jobType.creatable_from_admin_api);
+			jobTypeError = '';
+		} catch (e) {
+			jobTypeError = e instanceof Error ? e.message : 'Failed to load job types';
+			jobTypes = [];
+		}
+	}
+
 	async function loadData() {
 		loading = true;
 		error = '';
-		await loadJobs();
+		await Promise.all([loadJobs(), loadJobTypes(), loadStorageDestinations()]);
 		loading = false;
+	}
+
+	async function loadStorageDestinations() {
+		try {
+			const response = await adminStorageDestinationsAPI.listUsable();
+			storageDestinations = response.items;
+		} catch {
+			storageDestinations = [];
+		}
 	}
 
 	onMount(() => {
@@ -145,9 +176,16 @@
 	});
 
 	function openCreateReportDialog() {
+		const now = new Date();
+		const to = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+		const from = new Date(to);
+		from.setDate(from.getDate() - 7);
 		reportType = 'user_activity';
-		reportFromDate = '';
-		reportToDate = '';
+		reportFromDate = from.toISOString().slice(0, 10);
+		reportToDate = to.toISOString().slice(0, 10);
+		reportFormat = 'json';
+		reportResultDelivery = 'auto';
+		reportStorageDestinationId = '';
 		createReportError = '';
 		showCreateReportDialog = true;
 	}
@@ -220,18 +258,27 @@
 		creatingReport = true;
 
 		try {
-			const params: {
-				type: ReportType;
-				parameters?: { from?: string; to?: string };
-			} = { type: reportType };
+			const fromDate = reportFromDate
+				? new Date(reportFromDate).toISOString()
+				: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+			const toDate = reportToDate ? new Date(reportToDate).toISOString() : new Date().toISOString();
 
-			if (reportFromDate || reportToDate) {
-				params.parameters = {};
-				if (reportFromDate) params.parameters.from = new Date(reportFromDate).toISOString();
-				if (reportToDate) params.parameters.to = new Date(reportToDate).toISOString();
+			const job = await adminJobsAPI.createReport({
+				type: reportType,
+				from_date: fromDate,
+				to_date: toDate,
+				format: reportFormat,
+				result_delivery: reportResultDelivery,
+				result_storage_destination_id: reportStorageDestinationId || undefined
+			});
+			if (reportStorageDestinationId) {
+				await adminStorageDestinationsAPI.recordUsage(reportStorageDestinationId, {
+					feature: 'jobs',
+					resource_type: 'admin_job',
+					resource_id: job.id,
+					metadata: { report_type: reportType, result_delivery: reportResultDelivery }
+				});
 			}
-
-			const job = await adminJobsAPI.createReport(params);
 			jobs = [sanitizeJob(job), ...jobs];
 			closeCreateReportDialog();
 		} catch (e) {
@@ -343,6 +390,15 @@
 		}
 	}
 
+	function getDeliveryLabel(value: 'auto' | 'inline' | 'artifact'): string {
+		const labels = {
+			auto: 'Auto',
+			inline: 'Inline',
+			artifact: 'Artifact'
+		};
+		return labels[value];
+	}
+
 	// Track if initial data load has completed
 	let initialLoadComplete = false;
 	// Track previous filter values to detect actual changes
@@ -421,6 +477,33 @@
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
+	{/if}
+	{#if jobTypeError}
+		<div class="alert alert-warning">{jobTypeError}</div>
+	{/if}
+
+	{#if jobTypes.length > 0}
+		<div class="panel">
+			<div class="panel-header">
+				<h2 class="panel-title">Enabled Job Types</h2>
+			</div>
+			<div class="job-type-grid">
+				{#each jobTypes as jobType (jobType.job_type)}
+					<div class="job-type-item">
+						<div>
+							<div class="cell-primary">{getJobTypeDisplayName(jobType.type)}</div>
+							<div class="cell-secondary mono">{jobType.job_type}</div>
+						</div>
+						<div class="job-type-badges">
+							<span class="badge badge-info">{jobType.processor_status}</span>
+							{#each jobType.supported_result_delivery as delivery (delivery)}
+								<span class="badge badge-neutral">{getDeliveryLabel(delivery)}</span>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+		</div>
 	{/if}
 
 	<!-- Filters -->
@@ -547,7 +630,12 @@
 </div>
 
 <!-- Create Import Dialog -->
-<Modal open={showCreateImportDialog} onClose={closeCreateImportDialog} title="Import Users" size="md">
+<Modal
+	open={showCreateImportDialog}
+	onClose={closeCreateImportDialog}
+	title="Import Users"
+	size="md"
+>
 	{#if createImportError}
 		<div class="alert alert-error">{createImportError}</div>
 	{/if}
@@ -635,6 +723,41 @@
 		</div>
 	</div>
 
+	<div class="filter-row">
+		<div class="form-group">
+			<label for="report-format" class="form-label">Format</label>
+			<select id="report-format" class="form-select" bind:value={reportFormat}>
+				<option value="json">JSON</option>
+				<option value="csv">CSV</option>
+			</select>
+		</div>
+		<div class="form-group">
+			<label for="report-delivery" class="form-label">Result Delivery</label>
+			<select id="report-delivery" class="form-select" bind:value={reportResultDelivery}>
+				<option value="auto">Auto</option>
+				<option value="inline">Inline</option>
+				<option value="artifact">Artifact</option>
+			</select>
+		</div>
+	</div>
+
+	<div class="filter-row">
+		<div class="form-group">
+			<label for="report-storage-destination" class="form-label">Storage Destination</label>
+			<select
+				id="report-storage-destination"
+				class="form-select"
+				bind:value={reportStorageDestinationId}
+			>
+				<option value="">Runtime default</option>
+				{#each storageDestinations as destination (destination.id)}
+					<option value={destination.id}>{destination.display_name} ({destination.provider})</option
+					>
+				{/each}
+			</select>
+		</div>
+	</div>
+
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateReportDialog} disabled={creatingReport}
 			>Cancel</button
@@ -691,6 +814,16 @@
 				<span class="info-label">Created By</span>
 				<span class="info-value">{selectedJob.created_by}</span>
 			</div>
+			<div class="info-card">
+				<span class="info-label">Attempts</span>
+				<span class="info-value">{selectedJob.attempts}/{selectedJob.max_attempts}</span>
+			</div>
+			{#if selectedJob.next_run_at}
+				<div class="info-card">
+					<span class="info-label">Next Run</span>
+					<span class="info-value">{formatDate(selectedJob.next_run_at)}</span>
+				</div>
+			{/if}
 		</div>
 
 		{#if selectedJob.progress}
@@ -711,6 +844,9 @@
 				</div>
 				{#if selectedJob.progress.current_item}
 					<p class="muted">Processing: {selectedJob.progress.current_item}</p>
+				{/if}
+				{#if selectedJob.progress.stage}
+					<p class="muted">Stage: {selectedJob.progress.stage}</p>
 				{/if}
 			</div>
 		{/if}
@@ -769,7 +905,8 @@
 							{#each selectedJob.result.logs as entry, i (i)}
 								<div class="failure-item">
 									<strong>{entry.level.toUpperCase()}</strong>
-									{#if entry.row} row {entry.row}:{/if}
+									{#if entry.row}
+										row {entry.row}:{/if}
 									{entry.message}
 								</div>
 							{/each}
@@ -803,3 +940,29 @@
 		<button class="btn btn-secondary" onclick={closeJobDetailDialog}>Close</button>
 	{/snippet}
 </Modal>
+
+<style>
+	.job-type-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+		gap: 12px;
+	}
+
+	.job-type-item {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 12px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+	}
+
+	.job-type-badges {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 6px;
+	}
+</style>

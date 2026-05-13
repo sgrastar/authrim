@@ -233,8 +233,8 @@ export interface ContextFactoryOptions {
   /** Partition router (required for PIIContext) */
   partitionRouter?: PIIPartitionRouter;
 
-  /** Tenant ID (defaults to 'default') */
-  tenantId?: string;
+  /** Tenant ID for repository scoping. */
+  tenantId: string;
 }
 
 /**

@@ -7,7 +7,6 @@ import {
   TENANT_DISCOVERY_UI_DEFAULTS,
   ensureDatabaseAdapter,
   getDefaultTenantId,
-  getTenantIdFromContext,
   getUIConfig,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
@@ -229,6 +228,16 @@ function getRequestHostHeader(c: Context<{ Bindings: Env }>): string {
     .split(':')[0]
     .trim()
     .toLowerCase();
+}
+
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || null;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeAbsoluteUrl(value: string): string | null {
@@ -869,7 +878,12 @@ function getDiscoverySettingsScope(
     return { type: 'platform' };
   }
 
-  return { type: 'tenant', id: getTenantIdFromContext(c) || getDefaultTenantId(c.env) };
+  const tenantId = getContextTenantId(c);
+  if (!tenantId) {
+    throw new Error('Discovery settings require tenant context');
+  }
+
+  return { type: 'tenant', id: tenantId };
 }
 
 function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
@@ -877,7 +891,7 @@ function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
     return false;
   }
 
-  const tenantId = getTenantIdFromContext(c) || getDefaultTenantId(c.env);
+  const tenantId = getContextTenantId(c) || getDefaultTenantId(c.env);
   const host = getRequestHostHeader(c);
   if (!host) {
     return false;
@@ -1051,8 +1065,8 @@ export async function postDiscoveryGrantVerifyHandler(c: Context<{ Bindings: Env
       return c.json({ error: 'invalid_grant', message: 'Invalid discovery grant' }, 400);
     }
 
-    const currentTenantId = getTenantIdFromContext(c) || getDefaultTenantId(c.env);
-    if (currentTenantId && currentTenantId !== tenantId) {
+    const currentTenantId = getContextTenantId(c);
+    if (!currentTenantId || currentTenantId !== tenantId) {
       return c.json({ error: 'invalid_grant', message: 'Invalid discovery grant' }, 400);
     }
 

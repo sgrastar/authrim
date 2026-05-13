@@ -21,7 +21,7 @@ import type { ProviderListResponse } from '../types';
 export async function handleListProviders(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('EXTERNAL-IDP');
   try {
-    const tenantId = c.req.query('tenant_id') || getTenantIdFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
     const providers = await listEnabledProviders(c.env, tenantId);
 
     const response: ProviderListResponse = {

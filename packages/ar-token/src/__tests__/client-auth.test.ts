@@ -105,6 +105,23 @@ const mocks = vi.hoisted(() => {
       queryOne: vi.fn().mockResolvedValue(null),
       execute: vi.fn().mockResolvedValue({ success: true }),
     }),
+    mockAdminAdapter: {
+      query: vi.fn().mockResolvedValue([]),
+      queryOne: vi.fn().mockResolvedValue(null),
+      execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
+      transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({
+          query: vi.fn().mockResolvedValue([]),
+          queryOne: vi.fn().mockResolvedValue(null),
+          execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
+        })
+      ),
+      batch: vi.fn().mockResolvedValue([]),
+      isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+      getType: vi.fn().mockReturnValue('mock'),
+      close: vi.fn().mockResolvedValue(undefined),
+    },
+    mockRequireDedicatedAdminDatabaseAdapter: vi.fn(),
 
     // User
     mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
@@ -190,6 +207,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     buildAuthCodeShardInstanceName: mocks.mockBuildAuthCodeShardInstanceName,
     generateRegionAwareJti: mocks.mockGenerateRegionAwareJti,
     D1Adapter: mocks.mockD1Adapter,
+    requireDedicatedAdminDatabaseAdapter: mocks.mockRequireDedicatedAdminDatabaseAdapter,
     getIDTokenRBACClaims: mocks.mockGetIDTokenRBACClaims,
     getAccessTokenRBACClaims: mocks.mockGetAccessTokenRBACClaims,
     isPolicyEmbeddingEnabled: mocks.mockIsPolicyEmbeddingEnabled,
@@ -348,6 +366,27 @@ function resetAllMocks() {
       ],
     ])
   );
+  mocks.mockAdminAdapter.query.mockReset().mockResolvedValue([]);
+  mocks.mockAdminAdapter.queryOne.mockReset().mockResolvedValue(null);
+  mocks.mockAdminAdapter.execute.mockReset().mockResolvedValue({ success: true, rowsAffected: 1 });
+  mocks.mockAdminAdapter.transaction
+    .mockReset()
+    .mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue(null),
+        execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
+      })
+    );
+  mocks.mockAdminAdapter.batch.mockReset().mockResolvedValue([]);
+  mocks.mockAdminAdapter.isHealthy
+    .mockReset()
+    .mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' });
+  mocks.mockAdminAdapter.getType.mockReset().mockReturnValue('mock');
+  mocks.mockAdminAdapter.close.mockReset().mockResolvedValue(undefined);
+  mocks.mockRequireDedicatedAdminDatabaseAdapter
+    .mockReset()
+    .mockReturnValue(mocks.mockAdminAdapter);
 
   // Reset DPoP mocks
   mocks.mockExtractDPoPProof.mockReset().mockReturnValue(null);
@@ -488,10 +527,12 @@ describe('Client Authentication Tests', () => {
       expect(body.session).toBeUndefined();
       expect(consumeArtifactRpcMock).toHaveBeenCalledWith({
         id: 'direct_auth:direct-artifact-001',
+        tenantId: 'default',
         type: 'direct_auth_code',
       });
       expect(consumeCodeRpcMock).toHaveBeenCalledWith({
         code: 'direct-artifact-001',
+        tenantId: 'default',
         clientId: client.client_id,
         codeVerifier,
       });
@@ -3117,6 +3158,434 @@ describe('Client Authentication Tests', () => {
   // ==========================================================================
 
   describe('Client Credentials Grant Authentication', () => {
+    function mockAdminMachineAccess(
+      overrides: {
+        principalStatus?: string;
+        credentialStatus?: string;
+        credentialAlg?: string;
+        principalType?:
+          | 'setup_tool'
+          | 'admin_ui_bff'
+          | 'automation'
+          | 'ci'
+          | 'mcp_server'
+          | 'ai_agent'
+          | 'internal_service'
+          | 'integration';
+        principalId?: string;
+        clientId?: string;
+        credentialId?: string;
+        credentialKid?: string;
+        displayName?: string;
+        principalPermissions?: string[];
+        credentialPermissions?: string[];
+        principalTenantScopes?: Array<{ scope_mode: string; tenant_id: string | null }>;
+        credentialTenantScopes?: Array<{ scope_mode: string; tenant_id: string | null }>;
+      } = {}
+    ) {
+      const principalType = overrides.principalType ?? 'setup_tool';
+      const principalId = overrides.principalId ?? 'amp_setup';
+      const clientId = overrides.clientId ?? 'setup-tool';
+      const credentialId = overrides.credentialId ?? 'amk_setup';
+      const credentialKid = overrides.credentialKid ?? 'setup-2026-05';
+      const displayName = overrides.displayName ?? 'Authrim Setup Tool';
+      const principalPermissions = overrides.principalPermissions ?? [
+        'admin:tenants.read',
+        'admin:clients.create',
+      ];
+      const credentialPermissions = overrides.credentialPermissions ?? [];
+      const principalTenantScopes = overrides.principalTenantScopes ?? [
+        { scope_mode: 'allow', tenant_id: 'default' },
+      ];
+      const credentialTenantScopes = overrides.credentialTenantScopes ?? [];
+
+      mocks.mockAdminAdapter.queryOne.mockImplementation(async (sql: string) => {
+        if (sql.includes('JOIN admin_machine_credentials')) {
+          return {
+            id: principalId,
+            client_id: clientId,
+            display_name: displayName,
+            description: null,
+            principal_type: principalType,
+            status: overrides.principalStatus ?? 'active',
+            default_audience: 'authrim:admin-api',
+            token_ttl_seconds: 600,
+            created_by_actor_type: 'bootstrap',
+            created_by_actor_id: 'setup',
+            created_at: 1,
+            updated_at: 1,
+            disabled_at: null,
+            disabled_by_actor_type: null,
+            disabled_by_actor_id: null,
+            credential_id: credentialId,
+            credential_principal_id: principalId,
+            credential_kid: credentialKid,
+            credential_public_jwk_json: '{"kty":"EC","crv":"P-256","x":"x","y":"y"}',
+            credential_alg: overrides.credentialAlg ?? 'ES256',
+            credential_display_name: 'Setup key',
+            credential_description: null,
+            credential_status: overrides.credentialStatus ?? 'active',
+            credential_not_before: null,
+            credential_expires_at: null,
+            credential_last_used_at: null,
+            credential_last_used_ip: null,
+            credential_last_used_user_agent: null,
+            credential_created_by_actor_type: 'bootstrap',
+            credential_created_by_actor_id: 'setup',
+            credential_created_at: 1,
+            credential_updated_at: 1,
+            credential_revoked_at: null,
+            credential_revoked_by_actor_type: null,
+            credential_revoked_by_actor_id: null,
+            credential_revoke_reason: null,
+          };
+        }
+        return null;
+      });
+      mocks.mockAdminAdapter.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('admin_machine_principal_permissions')) {
+          return principalPermissions.map((permission) => ({ permission }));
+        }
+        if (sql.includes('admin_machine_credential_permissions')) {
+          return credentialPermissions.map((permission) => ({ permission }));
+        }
+        if (sql.includes('admin_machine_principal_tenant_scopes')) {
+          return principalTenantScopes;
+        }
+        if (sql.includes('admin_machine_credential_tenant_scopes')) {
+          return credentialTenantScopes;
+        }
+        return [];
+      });
+    }
+
+    it('issues Admin API machine token from DB_ADMIN machine principal', async () => {
+      mockAdminMachineAccess();
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-1',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({ valid: true, client_id: 'setup-tool' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read admin:clients.create',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+      const body = await parseJsonResponse<{ access_token?: string; token_type?: string }>(
+        response
+      );
+
+      expect(response.status).toBe(200);
+      expect(body.access_token).toBe('mock-access-token');
+      expect(body.token_type).toBe('Bearer');
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+      expect(mocks.mockValidateClientAssertion).toHaveBeenCalledWith(
+        'header.payload.signature',
+        'https://auth.example.com/token',
+        expect.objectContaining({
+          client_id: 'setup-tool',
+          token_endpoint_auth_method: 'private_key_jwt',
+        }),
+        { acceptIssuerIdAsAudience: false }
+      );
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          aud: 'authrim:admin-api',
+          sub: 'machine:amp_setup',
+          actor_type: 'machine',
+          actor_id: 'amp_setup',
+          credential_id: 'amk_setup',
+          client_auth_method: 'private_key_jwt',
+          scope: 'admin:tenants.read admin:clients.create',
+          tenant_scope: ['default'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+    });
+
+    it('issues Admin API machine tokens for MCP principals', async () => {
+      mockAdminMachineAccess({
+        principalType: 'mcp_server',
+        principalId: 'amp_mcp_admin',
+        clientId: 'mcp-admin-server',
+        credentialId: 'amk_mcp_admin',
+        credentialKid: 'mcp-admin-2026-05',
+        displayName: 'MCP Admin Server',
+        principalPermissions: ['admin:ai_grants:*'],
+        principalTenantScopes: [{ scope_mode: 'allow', tenant_id: '*' }],
+      });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'mcp-admin-server',
+        sub: 'mcp-admin-server',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'mcp-admin-assertion-1',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'mcp-admin-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({
+        valid: true,
+        client_id: 'mcp-admin-server',
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'mcp-admin-server',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:ai_grants:create admin:ai_grants:read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          aud: 'authrim:admin-api',
+          sub: 'machine:amp_mcp_admin',
+          actor_type: 'machine',
+          actor_id: 'amp_mcp_admin',
+          credential_id: 'amk_mcp_admin',
+          client_id: 'mcp-admin-server',
+          client_auth_method: 'private_key_jwt',
+          scope: 'admin:ai_grants:create admin:ai_grants:read',
+          tenant_scope: ['*'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+    });
+
+    it('issues Admin API machine tokens for AI agent principals', async () => {
+      mockAdminMachineAccess({
+        principalType: 'ai_agent',
+        principalId: 'amp_ai_admin_agent',
+        clientId: 'ai-admin-agent',
+        credentialId: 'amk_ai_admin_agent',
+        credentialKid: 'ai-admin-agent-2026-05',
+        displayName: 'AI Admin Agent',
+        principalPermissions: ['admin:ai_grants:*'],
+      });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'ai-admin-agent',
+        sub: 'ai-admin-agent',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'ai-admin-agent-assertion-1',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'ai-admin-agent-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({
+        valid: true,
+        client_id: 'ai-admin-agent',
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'ai-admin-agent',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:ai_grants:update',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          aud: 'authrim:admin-api',
+          sub: 'machine:amp_ai_admin_agent',
+          actor_type: 'machine',
+          actor_id: 'amp_ai_admin_agent',
+          credential_id: 'amk_ai_admin_agent',
+          client_id: 'ai-admin-agent',
+          client_auth_method: 'private_key_jwt',
+          scope: 'admin:ai_grants:update',
+          tenant_scope: ['default'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+    });
+
+    it('rejects Admin API machine access without private_key_jwt', async () => {
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+      const body = await parseJsonResponse<{ error: string }>(response);
+
+      expect(response.status).toBe(401);
+      expect(body.error).toBe('invalid_client');
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects Admin API machine assertions without iat', async () => {
+      mockAdminMachineAccess();
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        jti: 'assertion-missing-iat',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(
+        response
+      );
+
+      expect(response.status).toBe(401);
+      expect(body.error).toBe('invalid_client');
+      expect(body.error_description).toBe('Admin machine client_assertion must include iat');
+      expect(mocks.mockValidateClientAssertion).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects Admin API machine assertions with credential alg mismatch', async () => {
+      mockAdminMachineAccess({ credentialAlg: 'RS256' });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-alg-mismatch',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+
+      expect(response.status).toBe(401);
+      expect(mocks.mockValidateClientAssertion).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects replayed Admin API machine client assertions', async () => {
+      mockAdminMachineAccess();
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-1',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockAdminAdapter.execute.mockRejectedValueOnce(new Error('unique constraint'));
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(
+        response
+      );
+
+      expect(response.status).toBe(401);
+      expect(body.error).toBe('invalid_client');
+      expect(body.error_description).toBe('Client assertion replay detected');
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
     it('should authenticate M2M client for client_credentials grant', async () => {
       const client = createM2MClient();
 

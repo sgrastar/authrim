@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
@@ -40,13 +40,15 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   createCompatibilityErrorResponse,
   ADMIN_PERMISSIONS,
+  hasAdminPermission,
+  type AdminAuthContext,
   getDefaultTenantId,
 } from '@authrim/ar-lib-core';
 import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
-import { processPendingTenantDeletionJobs } from './tenant-deletion-jobs';
+import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
 
 // Import handlers
 import { registerHandler } from './register';
@@ -257,9 +259,10 @@ import {
   adminJobsUsersBulkUpdateHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
+  adminJobTypesHandler,
   registerAdminJobPermissionMiddleware,
 } from './admin-jobs';
-import { processPendingUserImportJobs, USER_IMPORT_MAX_UPLOAD_BYTES } from './user-import-jobs';
+import { USER_IMPORT_MAX_UPLOAD_BYTES } from './user-import-jobs';
 import {
   adminStatsTokensHandler,
   adminStatsAuthHandler,
@@ -353,7 +356,6 @@ import {
   dataExportRequestHandler,
   dataExportStatusHandler,
   dataExportDownloadHandler,
-  processPendingDataExportRequests,
 } from './data-export';
 import { getCodeShards, updateCodeShards } from './routes/settings/code-shards';
 import {
@@ -368,7 +370,6 @@ import {
   migrateRegionShards,
   validateRegionShardsConfig,
 } from './routes/settings/region-shards';
-import { getFlowStateShards, updateFlowStateShards } from './routes/settings/flow-state-shards';
 import { getSessionShards, updateSessionShards } from './routes/settings/session-shards';
 import { getChallengeShards, updateChallengeShards } from './routes/settings/challenge-shards';
 import { approvalArtifactsRouter } from './routes/approval-artifacts';
@@ -502,7 +503,7 @@ import {
   testRoleAssignmentRule,
   evaluateRoleAssignmentRules,
 } from './routes/settings/role-assignment-rules';
-import { processPendingSupportOpsSnapshotJobs, supportOpsRouter } from './support-ops';
+import { supportOpsRouter } from './support-ops';
 import {
   createOrgDomainMapping,
   listOrgDomainMappings,
@@ -663,6 +664,43 @@ import {
   getTenantEmailSettingsHandler,
   updateTenantEmailSettingsHandler,
 } from './routes/email-settings';
+
+const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
+
+function requireAiGrantAdminAccess(requiredPermission: string) {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const authContext = (c as unknown as { get: (key: string) => unknown }).get(
+      'adminAuth'
+    ) as AdminAuthContext | undefined;
+
+    if (!authContext) {
+      return c.json(
+        {
+          error: 'invalid_token',
+          error_description: 'Authentication required. Please authenticate first.',
+        },
+        401
+      );
+    }
+
+    if (authContext.authMethod === 'machine_access_token') {
+      const permissions = authContext.permissions || [];
+      if (hasAdminPermission(permissions, requiredPermission)) {
+        return next();
+      }
+
+      return c.json(
+        {
+          error: 'insufficient_permissions',
+          error_description: 'You do not have the required permissions for this operation.',
+        },
+        403
+      );
+    }
+
+    return requireAnyRole(AI_GRANTS_ADMIN_ROLES)(c, next);
+  };
+}
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -889,7 +927,7 @@ app.get('/health/live', healthHandlers.liveness);
 app.get('/health/ready', healthHandlers.readiness);
 
 // Login Methods API - public endpoint for Login UI
-// Returns enabled login methods (passkey, emailCode, social) and UI config
+// Returns enabled login methods (passkey, emailCode, external providers) and UI config
 app.use('/api/auth/login-methods', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
@@ -1362,11 +1400,6 @@ app.delete('/api/admin/settings/region-shards', deleteRegionShards);
 app.post('/api/admin/settings/region-shards/migrate', migrateRegionShards);
 app.get('/api/admin/settings/region-shards/validate', validateRegionShardsConfig);
 
-// Admin Flow State Shards Configuration
-// Flow Engine session state DO sharding (default: 32 shards)
-app.get('/api/admin/settings/flow-state-shards', getFlowStateShards);
-app.put('/api/admin/settings/flow-state-shards', updateFlowStateShards);
-
 // Admin Session Shards Configuration
 // Session Store DO sharding (default: 4 shards)
 app.get('/api/admin/settings/session-shards', getSessionShards);
@@ -1816,7 +1849,8 @@ app.get('/api/admin/access-control/stats', adminAccessControlStatsHandler);
 // Manages grants that authorize AI principals (agents, tools, services) to act
 // on behalf of users or systems. Used for MCP integration and AI-to-AI delegation.
 // Rate limited with RateLimitProfiles.moderate.
-// RBAC: Requires system_admin or distributor_admin role.
+// AuthZ: Human admins require system_admin/distributor_admin; machine callers
+// require scoped Admin Machine Access permissions such as admin:ai_grants:*.
 
 // Rate limiting for AI Grants endpoints
 app.use('/api/admin/ai-grants', async (c, next) => {
@@ -1827,14 +1861,31 @@ app.use('/api/admin/ai-grants', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require system_admin or distributor_admin for AI Grant management
-app.use('/api/admin/ai-grants/*', requireAnyRole(['system_admin', 'distributor_admin']));
-
-app.get('/api/admin/ai-grants', adminAIGrantsListHandler);
-app.get('/api/admin/ai-grants/:id', adminAIGrantGetHandler);
-app.post('/api/admin/ai-grants', adminAIGrantCreateHandler);
-app.put('/api/admin/ai-grants/:id', adminAIGrantUpdateHandler);
-app.delete('/api/admin/ai-grants/:id', adminAIGrantRevokeHandler);
+app.get(
+  '/api/admin/ai-grants',
+  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_READ),
+  adminAIGrantsListHandler
+);
+app.get(
+  '/api/admin/ai-grants/:id',
+  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_READ),
+  adminAIGrantGetHandler
+);
+app.post(
+  '/api/admin/ai-grants',
+  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_CREATE),
+  adminAIGrantCreateHandler
+);
+app.put(
+  '/api/admin/ai-grants/:id',
+  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_UPDATE),
+  adminAIGrantUpdateHandler
+);
+app.delete(
+  '/api/admin/ai-grants/:id',
+  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_REVOKE),
+  adminAIGrantRevokeHandler
+);
 
 // =============================================================================
 // Policy ↔ Identity Integration (Phase 8.1)
@@ -2235,6 +2286,7 @@ app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
+app.get('/api/admin/jobs/types', adminJobTypesHandler);
 app.get('/api/admin/jobs/artifacts/:artifactId', adminJobResultArtifactManifestHandler);
 app.get('/api/admin/jobs/artifacts/:artifactId/download', adminJobResultArtifactDownloadHandler);
 app.get('/api/admin/jobs/artifacts/:artifactId/chunks/:index', adminJobResultArtifactChunkHandler);
@@ -2561,7 +2613,7 @@ app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-g
  *   "deployTime": "2025-11-28T03:20:15Z"
  * }
  *
- * Requires: Bearer token (ADMIN_API_SECRET)
+ * Requires: Admin authentication plus internal VersionManager DO secret.
  */
 app.post(
   '/api/internal/versions/:workerName',
@@ -2603,13 +2655,18 @@ app.post(
     try {
       const vmId = c.env.VERSION_MANAGER.idFromName('global');
       const vm = c.env.VERSION_MANAGER.get(vmId);
+      if (!c.env.VERSION_MANAGER_SECRET) {
+        const log = getLogger(c).module('VERSION-API');
+        log.error('VERSION_MANAGER_SECRET not configured');
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
 
       const response = await vm.fetch(
         new Request(`https://do/version/${workerName}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
+            Authorization: `Bearer ${c.env.VERSION_MANAGER_SECRET}`,
           },
           body: JSON.stringify({
             uuid: body.uuid,
@@ -2645,7 +2702,7 @@ app.post(
  * GET /api/internal/version-manager/status
  * Get all registered versions
  *
- * Requires: Bearer token (ADMIN_API_SECRET)
+ * Requires: Admin authentication plus internal VersionManager DO secret.
  */
 app.get(
   '/api/internal/version-manager/status',
@@ -2654,12 +2711,17 @@ app.get(
     try {
       const vmId = c.env.VERSION_MANAGER.idFromName('global');
       const vm = c.env.VERSION_MANAGER.get(vmId);
+      if (!c.env.VERSION_MANAGER_SECRET) {
+        const log = getLogger(c).module('VERSION-API');
+        log.error('VERSION_MANAGER_SECRET not configured');
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
 
       const response = await vm.fetch(
         new Request('https://do/version-manager/status', {
           method: 'GET',
           headers: {
-            Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
+            Authorization: `Bearer ${c.env.VERSION_MANAGER_SECRET}`,
           },
         })
       );
@@ -2889,31 +2951,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     // Errors are logged for monitoring
   }
 
-  // Process pending tenant deletion jobs (up to 5 per Cron run to stay within CPU limits)
-  try {
-    await processPendingTenantDeletionJobs(env, log);
-  } catch (jobsError) {
-    log.error('Tenant deletion job processing failed', {}, jobsError as Error);
-    // Don't throw - other cleanup tasks already completed
-  }
-
-  try {
-    await processPendingUserImportJobs(env, log);
-  } catch (jobsError) {
-    log.error('User import job processing failed', {}, jobsError as Error);
-  }
-
-  try {
-    await processPendingDataExportRequests(env, log);
-  } catch (jobsError) {
-    log.error('Data export job processing failed', {}, jobsError as Error);
-  }
-
-  try {
-    await processPendingSupportOpsSnapshotJobs(env, log);
-  } catch (jobsError) {
-    log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
-  }
+  await processScheduledAdminJobQueues(env, log);
 
   try {
     await runObjectArtifactCleanup(env, log);

@@ -17,12 +17,12 @@
  * } from '@authrim/ar-lib-core/repositories';
  *
  * // Core operations (Non-PII)
- * const userCoreRepo = new UserCoreRepository(coreAdapter);
+ * const userCoreRepo = new UserCoreRepository(coreAdapter, tenantId);
  * const userCore = await userCoreRepo.findById(userId);
  *
  * // PII operations (requires PIIContext)
  * const piiAdapter = partitionRouter.getAdapterForPartition(userCore.pii_partition);
- * const userPIIRepo = new UserPIIRepository(piiAdapter);
+ * const userPIIRepo = new UserPIIRepository(piiAdapter, tenantId);
  * const userPII = await userPIIRepo.findByUserId(userId);
  * ```
  */
@@ -189,6 +189,20 @@ export {
   type AdminPolicy,
   type AdminPolicyCreateInput,
   type AdminPolicyConditions,
+  // Admin Machine Access
+  AdminMachineAccessRepository,
+  type AdminMachineActorRef,
+  type AdminMachineClientCredential,
+  type AdminMachineCredential,
+  type AdminMachineCredentialAlgorithm,
+  type AdminMachineCredentialCreateInput,
+  type AdminMachineCredentialStatus,
+  type AdminMachinePrincipal,
+  type AdminMachinePrincipalCreateInput,
+  type AdminMachinePrincipalStatus,
+  type AdminMachinePrincipalType,
+  type AdminMachineTenantScope,
+  type AdminMachineTenantScopeMode,
 } from './admin';
 
 // Re-export database types for convenience

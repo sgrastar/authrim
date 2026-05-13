@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildIssuerUrl, validateHostHeader } from '../issuer';
+import { buildIssuerUrl, getDefaultTenantId, validateHostHeader } from '../issuer';
 import type { Env } from '../../types/env';
 import {
   SCENARIOS,
@@ -26,7 +26,7 @@ import {
 describe('buildIssuerUrl - default tenant', () => {
   it.each(SCENARIOS.map((s) => [scenarioLabel(s), s] as const))('%s', (_label, scenario) => {
     const env = buildEnvFromScenario(scenario) as Partial<Env>;
-    const result = buildIssuerUrl(env as Env);
+    const result = buildIssuerUrl(env as Env, getDefaultTenantId(env));
     expect(result).toBe(scenario.expected.issuerUrl);
   });
 });
@@ -140,7 +140,9 @@ describe('Special domain formats', () => {
     } as Partial<Env>;
 
     it('default tenant → https://default.example.co.jp', () => {
-      expect(buildIssuerUrl(env as Env)).toBe('https://default.example.co.jp');
+      expect(buildIssuerUrl(env as Env, getDefaultTenantId(env))).toBe(
+        'https://default.example.co.jp'
+      );
     });
 
     it('acme tenant → https://acme.example.co.jp', () => {
@@ -156,7 +158,9 @@ describe('Special domain formats', () => {
     } as Partial<Env>;
 
     it('default tenant → https://default.example.chiyoda.tokyo.jp', () => {
-      expect(buildIssuerUrl(env as Env)).toBe('https://default.example.chiyoda.tokyo.jp');
+      expect(buildIssuerUrl(env as Env, getDefaultTenantId(env))).toBe(
+        'https://default.example.chiyoda.tokyo.jp'
+      );
     });
 
     it('acme tenant → https://acme.example.chiyoda.tokyo.jp', () => {
@@ -172,7 +176,9 @@ describe('Special domain formats', () => {
     } as Partial<Env>;
 
     it('default tenant → https://default.xn--wgv71a119e.jp', () => {
-      expect(buildIssuerUrl(env as Env)).toBe('https://default.xn--wgv71a119e.jp');
+      expect(buildIssuerUrl(env as Env, getDefaultTenantId(env))).toBe(
+        'https://default.xn--wgv71a119e.jp'
+      );
     });
 
     it('acme tenant → https://acme.xn--wgv71a119e.jp', () => {

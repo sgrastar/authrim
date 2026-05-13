@@ -414,6 +414,8 @@ export interface ClientRegistrationResponse {
 export interface ClientMetadata extends ClientRegistrationResponse {
   created_at: number;
   updated_at: number;
+  /** Admin-only memo/description for operators. Not part of OIDC discovery metadata. */
+  description?: string | null;
   // SHA-256 hash of client_secret (used instead of plain text for secure storage)
   client_secret_hash?: string;
   // Multi-tenant support

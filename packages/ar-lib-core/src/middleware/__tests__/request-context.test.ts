@@ -75,6 +75,9 @@ function buildApp(env: TestEnv, requireTenant = true) {
   app.get('/api/admin/sessions/me', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
+  app.get('/api/admin/me/session', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
   app.post('/api/admin/logout', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
@@ -289,6 +292,11 @@ describe('requestContextMiddleware – tenant existence check', () => {
         undefined,
         env as Env
       );
+      const newSessionRes = await app.request(
+        makeRequest('admin.pages.dev', '/api/admin/me/session'),
+        undefined,
+        env as Env
+      );
       const logoutRes = await app.request(
         new Request('https://admin.pages.dev/api/admin/logout', {
           method: 'POST',
@@ -300,6 +308,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
 
       expect(loginRes.status).toBe(200);
       expect(sessionRes.status).toBe(200);
+      expect(newSessionRes.status).toBe(200);
       expect(logoutRes.status).toBe(200);
     });
 

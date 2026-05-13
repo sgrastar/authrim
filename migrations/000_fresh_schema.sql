@@ -177,7 +177,13 @@ CREATE TABLE admin_jobs (
   completed_at INTEGER,
 
   -- Estimated completion time
-  estimated_completion INTEGER
+  estimated_completion INTEGER,
+
+  -- Generic job runner retry/dead-letter state
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  next_run_at INTEGER,
+  dead_lettered_at INTEGER
 );
 
 CREATE TABLE ai_grants (
@@ -460,7 +466,9 @@ CREATE TABLE credential_offers (
     created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     expires_at TEXT NOT NULL,
     issued_at TEXT,
-    issued_credential_id TEXT REFERENCES issued_credentials(id)
+    issued_credential_id TEXT,
+    issued_credential_internal_id TEXT,
+    FOREIGN KEY (issued_credential_internal_id) REFERENCES issued_credentials(internal_id)
 );
 
 CREATE TABLE d1_migrations(
@@ -498,6 +506,8 @@ CREATE TABLE object_catalog (
       'user_export',
       'user_import_input',
       'user_import_result',
+      'admin_job_result',
+      'dr_bundle',
       'approval_transport_detail'
     )
   ),
@@ -638,7 +648,8 @@ CREATE TABLE identity_providers (
 , tenant_id TEXT NOT NULL DEFAULT 'default');
 
 CREATE TABLE issued_credentials (
-    id TEXT PRIMARY KEY,
+    internal_id TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL,
     tenant_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     -- Verifiable Credential Type
@@ -649,12 +660,18 @@ CREATE TABLE issued_credentials (
     claims TEXT NOT NULL,
     -- Status: 'active' | 'suspended' | 'revoked'
     status TEXT DEFAULT 'active',
-    -- Status list index for revocation
+    -- Status list for revocation/suspension
+    status_list_id TEXT,
+    status_list_internal_id TEXT,
     status_list_index INTEGER,
-    created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    holder_binding TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
     expires_at TEXT,
     revoked_at TEXT,
-    revoked_reason TEXT
+    revoked_reason TEXT,
+    UNIQUE (tenant_id, public_id),
+    FOREIGN KEY (status_list_internal_id) REFERENCES status_lists(internal_id)
 );
 
 CREATE TABLE "linked_identities" (
@@ -712,6 +729,7 @@ CREATE TABLE "oauth_client_consents" (
 CREATE TABLE oauth_clients (
   client_id TEXT NOT NULL,
   client_name TEXT NOT NULL,
+  description TEXT,
   redirect_uris TEXT NOT NULL,
   grant_types TEXT NOT NULL,
   response_types TEXT NOT NULL,
@@ -737,7 +755,7 @@ CREATE TABLE oauth_clients (
   default_resource TEXT,  -- Default resource target for access tokens
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, claims_parameter_policy TEXT, asc_enabled INTEGER DEFAULT 1, asc_protected_request_required INTEGER DEFAULT 1, asc_sao_enabled INTEGER DEFAULT 1, asc_transformed_claims_enabled INTEGER DEFAULT 1, asc_allowed_transformed_claims TEXT, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, login_ui_url TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0, application_type TEXT DEFAULT 'web', trust_group TEXT, trust_group_id TEXT, browser_public_client_mode TEXT, browser_refresh_token_policy TEXT NOT NULL DEFAULT 'disabled', native_sso_enabled INTEGER, native_channel_allowed INTEGER, allowed_channels TEXT, PRIMARY KEY (tenant_id, client_id));
+, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, claims_parameter_policy TEXT, asc_enabled INTEGER DEFAULT 1, asc_protected_request_required INTEGER DEFAULT 1, asc_sao_enabled INTEGER DEFAULT 1, asc_transformed_claims_enabled INTEGER DEFAULT 1, asc_allowed_transformed_claims TEXT, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, login_ui_url TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0, application_type TEXT DEFAULT 'web', trust_group TEXT, trust_group_id TEXT, browser_public_client_mode TEXT, browser_refresh_token_policy TEXT NOT NULL DEFAULT 'disabled', native_sso_enabled INTEGER, native_channel_allowed INTEGER, allowed_channels TEXT, device_secret_revoke_enabled INTEGER, device_secret_revoke_trust_groups TEXT, device_secret_introspection_enabled INTEGER, device_secret_introspection_trust_groups TEXT, PRIMARY KEY (tenant_id, client_id));
 
 CREATE INDEX idx_oauth_clients_trust_group ON oauth_clients(tenant_id, trust_group);
 CREATE INDEX idx_oauth_clients_application_type ON oauth_clients(tenant_id, application_type);
@@ -1183,8 +1201,8 @@ CREATE TABLE scope_mappings (
   source_column TEXT NOT NULL,
   transformation TEXT,
   condition TEXT,
-  created_at INTEGER NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default',
-  PRIMARY KEY (scope, claim_name)
+  created_at INTEGER NOT NULL, tenant_id TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, scope, claim_name)
 );
 
 CREATE TABLE security_alerts (
@@ -1311,7 +1329,8 @@ CREATE TABLE profile_registry (
 );
 
 CREATE TABLE status_lists (
-    id TEXT PRIMARY KEY,
+    internal_id TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL,
     tenant_id TEXT NOT NULL,
     -- Purpose: 'revocation' | 'suspension'
     purpose TEXT NOT NULL DEFAULT 'revocation',
@@ -1321,8 +1340,12 @@ CREATE TABLE status_lists (
     current_index INTEGER DEFAULT 0,
     -- Total capacity
     capacity INTEGER DEFAULT 131072,
+    used_count INTEGER DEFAULT 0,
+    state TEXT DEFAULT 'active',
+    sealed_at TEXT,
     created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
-    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP)
+    updated_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+    UNIQUE (tenant_id, public_id)
 );
 
 CREATE TABLE subject_identifiers (
@@ -1521,19 +1544,22 @@ CREATE TABLE "user_custom_fields" (
   field_type TEXT,
   searchable INTEGER DEFAULT 1,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  PRIMARY KEY (user_id, field_name),
+  PRIMARY KEY (tenant_id, user_id, field_name),
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
 );
+
+CREATE INDEX idx_user_custom_fields_search ON user_custom_fields(tenant_id, field_name, field_value);
 
 CREATE TABLE "user_roles" (
   user_id TEXT NOT NULL,
   role_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  PRIMARY KEY (user_id, role_id),
+  PRIMARY KEY (tenant_id, user_id, role_id),
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
   FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 );
+CREATE INDEX idx_user_roles_role ON user_roles(tenant_id, role_id, created_at);
 
 CREATE TABLE "user_token_families" (
   jti TEXT PRIMARY KEY,
@@ -1821,13 +1847,13 @@ CREATE INDEX idx_admin_jobs_type ON admin_jobs(
 CREATE INDEX idx_admin_jobs_object_catalog
   ON admin_jobs(object_catalog_id);
 
-CREATE INDEX idx_ai_grants_active ON ai_grants(is_active);
+CREATE INDEX idx_ai_grants_active ON ai_grants(tenant_id, is_active);
 
-CREATE INDEX idx_ai_grants_client ON ai_grants(client_id);
+CREATE INDEX idx_ai_grants_client ON ai_grants(tenant_id, client_id);
 
 CREATE INDEX idx_ai_grants_expires ON ai_grants(expires_at);
 
-CREATE INDEX idx_ai_grants_principal ON ai_grants(ai_principal);
+CREATE INDEX idx_ai_grants_principal ON ai_grants(tenant_id, ai_principal);
 
 CREATE INDEX idx_ai_grants_tenant ON ai_grants(tenant_id);
 
@@ -1859,9 +1885,9 @@ CREATE INDEX idx_check_api_keys_tenant_active
 
 CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id);
 
-CREATE INDEX idx_ciba_status ON ciba_requests(status);
+CREATE INDEX idx_ciba_status ON ciba_requests(tenant_id, status);
 
-CREATE INDEX idx_ciba_user ON ciba_requests(user_id);
+CREATE INDEX idx_ciba_user ON ciba_requests(tenant_id, user_id);
 
 CREATE INDEX idx_clients_claims_setting ON oauth_clients(allow_claims_without_scope);
 
@@ -1899,7 +1925,7 @@ CREATE INDEX idx_cih_statement ON consent_item_history(statement_id, created_at)
 
 CREATE INDEX idx_cih_tenant ON consent_item_history(tenant_id, created_at);
 
-CREATE INDEX idx_cih_user ON consent_item_history(user_id, created_at);
+CREATE INDEX idx_cih_user ON consent_item_history(tenant_id, user_id, created_at);
 
 CREATE INDEX idx_consent_history_action
   ON consent_history(action, created_at);
@@ -1935,7 +1961,7 @@ CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id);
 CREATE INDEX idx_consents_expires_at_active
   ON oauth_client_consents(expires_at);
 
-CREATE INDEX idx_consents_user ON oauth_client_consents(user_id);
+CREATE INDEX idx_consents_user ON oauth_client_consents(tenant_id, user_id);
 
 CREATE INDEX idx_credential_configurations_tenant ON credential_configurations(tenant_id);
 
@@ -1970,11 +1996,11 @@ CREATE INDEX idx_object_catalog_objects_bucket_key
 CREATE INDEX idx_object_catalog_objects_deleted_at
   ON object_catalog_objects(deleted_at);
 
-CREATE INDEX idx_device_codes_client_id ON device_codes(client_id);
+CREATE INDEX idx_device_codes_client_id ON device_codes(tenant_id, client_id);
 
 CREATE INDEX idx_device_codes_expires_at ON device_codes(expires_at);
 
-CREATE INDEX idx_device_codes_status ON device_codes(status);
+CREATE INDEX idx_device_codes_status ON device_codes(tenant_id, status);
 
 CREATE INDEX idx_device_codes_user_code ON device_codes(user_code);
 
@@ -2007,26 +2033,29 @@ CREATE INDEX idx_idempotency_keys_lookup
 
 CREATE INDEX idx_identity_providers_type ON identity_providers(provider_type);
 
-CREATE INDEX idx_issued_credentials_status ON issued_credentials(status);
+CREATE INDEX idx_issued_credentials_status ON issued_credentials(tenant_id, status);
 
-CREATE INDEX idx_issued_credentials_type ON issued_credentials(credential_type);
+CREATE INDEX idx_issued_credentials_type ON issued_credentials(tenant_id, credential_type);
 
 CREATE INDEX idx_issued_credentials_user ON issued_credentials(tenant_id, user_id);
 
-CREATE INDEX idx_linked_identities_provider ON linked_identities(provider_id);
+CREATE INDEX idx_issued_credentials_status_list
+    ON issued_credentials(tenant_id, status_list_internal_id, status_list_index);
 
-CREATE INDEX idx_linked_identities_provider_sub ON linked_identities(provider_id, provider_user_id);
+CREATE INDEX idx_linked_identities_provider ON linked_identities(tenant_id, provider_id);
+
+CREATE INDEX idx_linked_identities_provider_sub ON linked_identities(tenant_id, provider_id, provider_user_id);
 
 CREATE INDEX idx_linked_identities_tenant_provider_user
     ON linked_identities(tenant_id, provider_id, provider_user_id);
 
-CREATE INDEX idx_linked_identities_user ON linked_identities(user_id);
+CREATE INDEX idx_linked_identities_user ON linked_identities(tenant_id, user_id);
 
 CREATE INDEX idx_linked_identities_tenant_user ON linked_identities(tenant_id, user_id);
 
-CREATE INDEX idx_membership_org ON subject_org_membership(org_id);
+CREATE INDEX idx_membership_org ON subject_org_membership(tenant_id, org_id);
 
-CREATE INDEX idx_membership_subject ON subject_org_membership(subject_id);
+CREATE INDEX idx_membership_subject ON subject_org_membership(tenant_id, subject_id);
 
 CREATE INDEX idx_oauth_clients_tenant_id ON oauth_clients(tenant_id);
 
@@ -2074,9 +2103,9 @@ CREATE UNIQUE INDEX idx_organizations_tenant_name ON organizations(tenant_id, na
 
 CREATE INDEX idx_passkeys_tenant ON passkeys(tenant_id);
 
-CREATE INDEX idx_passkeys_user ON passkeys(user_id);
+CREATE INDEX idx_passkeys_user ON passkeys(tenant_id, user_id);
 
-CREATE INDEX idx_password_reset_user ON password_reset_tokens(user_id);
+CREATE INDEX idx_password_reset_user ON password_reset_tokens(tenant_id, user_id);
 
 CREATE INDEX idx_pca_api_key
     ON permission_check_audit(api_key_id);
@@ -2132,26 +2161,26 @@ CREATE INDEX idx_relationships_evidence_type
 
 CREATE INDEX idx_relationships_expires_at ON relationships(expires_at);
 
-CREATE INDEX idx_relationships_from ON relationships(from_type, from_id);
+CREATE INDEX idx_relationships_from ON relationships(tenant_id, from_type, from_id);
 
 CREATE INDEX idx_relationships_tenant_id ON relationships(tenant_id);
 
-CREATE INDEX idx_relationships_to ON relationships(to_type, to_id);
+CREATE INDEX idx_relationships_to ON relationships(tenant_id, to_type, to_id);
 
-CREATE INDEX idx_relationships_type ON relationships(relationship_type);
+CREATE INDEX idx_relationships_type ON relationships(tenant_id, relationship_type);
 
 CREATE UNIQUE INDEX idx_relationships_unique
   ON relationships(tenant_id, relationship_type, from_type, from_id, to_type, to_id);
 
-CREATE INDEX idx_role_assignments_role ON role_assignments(role_id);
+CREATE INDEX idx_role_assignments_role ON role_assignments(tenant_id, role_id);
 
-CREATE INDEX idx_role_assignments_subject ON role_assignments(subject_id);
+CREATE INDEX idx_role_assignments_subject ON role_assignments(tenant_id, subject_id);
 
 CREATE INDEX idx_roles_hierarchy_level ON roles(hierarchy_level);
 
-CREATE INDEX idx_roles_name ON roles(name);
+CREATE INDEX idx_roles_name ON roles(tenant_id, name);
 
-CREATE INDEX idx_roles_parent_role_id ON roles(parent_role_id);
+CREATE INDEX idx_roles_parent_role_id ON roles(tenant_id, parent_role_id);
 
 CREATE INDEX idx_roles_role_type ON roles(role_type);
 
@@ -2187,7 +2216,7 @@ CREATE INDEX idx_schema_migrations_applied_at ON schema_migrations(applied_at DE
 
 CREATE INDEX idx_schema_migrations_checksum ON schema_migrations(checksum);
 
-CREATE INDEX idx_scope_mappings_scope ON scope_mappings(scope);
+CREATE INDEX idx_scope_mappings_scope ON scope_mappings(tenant_id, scope);
 
 CREATE INDEX idx_security_alerts_tenant_created
     ON security_alerts(tenant_id, created_at DESC);
@@ -2218,13 +2247,13 @@ CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_
 
 CREATE INDEX idx_session_clients_last_seen_at ON session_clients(last_seen_at);
 
-CREATE INDEX idx_session_clients_session_id ON session_clients(session_id);
+CREATE INDEX idx_session_clients_session_id ON session_clients(tenant_id, session_id);
 
 CREATE INDEX idx_sessions_expires ON sessions(expires_at);
 
 CREATE INDEX idx_sessions_tenant ON sessions(tenant_id);
 
-CREATE INDEX idx_sessions_user ON sessions(user_id);
+CREATE INDEX idx_sessions_user ON sessions(tenant_id, user_id);
 
 CREATE INDEX idx_settings_history_actor ON settings_history(
   actor_id,
@@ -2244,6 +2273,7 @@ CREATE INDEX idx_settings_history_cleanup ON settings_history(
 );
 
 CREATE INDEX idx_status_lists_tenant ON status_lists(tenant_id);
+CREATE INDEX idx_status_lists_tenant_public ON status_lists(tenant_id, public_id);
 
 CREATE INDEX idx_subject_identifiers_lookup
   ON subject_identifiers(tenant_id, identifier_type, identifier_value);
@@ -2277,9 +2307,9 @@ CREATE INDEX idx_tcr_evaluation ON token_claim_rules(
   created_at ASC
 );
 
-CREATE INDEX idx_token_families_client ON user_token_families(client_id);
+CREATE INDEX idx_token_families_client ON user_token_families(tenant_id, client_id);
 
-CREATE INDEX idx_token_families_user ON user_token_families(user_id);
+CREATE INDEX idx_token_families_user ON user_token_families(tenant_id, user_id);
 
 CREATE INDEX idx_trusted_issuers_did ON trusted_issuers(issuer_did);
 

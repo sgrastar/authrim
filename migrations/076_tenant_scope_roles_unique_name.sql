@@ -61,8 +61,8 @@ DROP TABLE roles;
 ALTER TABLE roles_new RENAME TO roles;
 
 CREATE INDEX idx_roles_hierarchy_level ON roles(hierarchy_level);
-CREATE INDEX idx_roles_name ON roles(name);
-CREATE INDEX idx_roles_parent_role_id ON roles(parent_role_id);
+CREATE INDEX idx_roles_name ON roles(tenant_id, name);
+CREATE INDEX idx_roles_parent_role_id ON roles(tenant_id, parent_role_id);
 CREATE INDEX idx_roles_role_type ON roles(role_type);
 CREATE INDEX idx_roles_tenant_id ON roles(tenant_id);
 

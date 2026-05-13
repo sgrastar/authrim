@@ -51,7 +51,7 @@ function createMockCoreDb(state: {
       }
 
       if (sql.includes('FROM user_custom_fields')) {
-        const [userId, _tenantId, ...fieldNames] = params ?? [];
+        const [_tenantId, userId, ...fieldNames] = params ?? [];
         const values = state.userCustomFields.get(String(userId)) || {};
         return Object.entries(values)
           .filter(([fieldName]) => fieldNames.length === 0 || fieldNames.includes(fieldName))
@@ -73,7 +73,7 @@ function createMockCoreDb(state: {
     }),
     execute: vi.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('INSERT INTO user_custom_fields')) {
-        const [userId, fieldName, fieldValue] = params ?? [];
+        const [_tenantId, userId, fieldName, fieldValue] = params ?? [];
         const values = state.userCustomFields.get(String(userId)) || {};
         values[String(fieldName)] = String(fieldValue);
         state.userCustomFields.set(String(userId), values);
@@ -92,7 +92,7 @@ function createMockCoreDb(state: {
       }
 
       if (sql.includes('DELETE FROM user_custom_fields')) {
-        const [userId, _tenantId, fieldName] = params ?? [];
+        const [_tenantId, userId, fieldName] = params ?? [];
         const values = state.userCustomFields.get(String(userId)) || {};
         delete values[String(fieldName)];
         state.userCustomFields.set(String(userId), values);

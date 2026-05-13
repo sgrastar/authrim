@@ -60,7 +60,8 @@ function extractReceiptMetadata(
 
 export async function listApprovalDecisionReceiptsForEvidence(
   env: Env,
-  detail: ApprovalTransportEvidence
+  detail: ApprovalTransportEvidence,
+  tenantId: string
 ): Promise<ApprovalDecisionReceiptTrackingRecord[]> {
   const receiptRecords = detail.events
     .map((event) => extractReceiptMetadata(event))
@@ -69,7 +70,7 @@ export async function listApprovalDecisionReceiptsForEvidence(
   return Promise.all(
     receiptRecords.map(async (record) => ({
       ...record,
-      receipt: await getApprovalDecisionReceipt(env, record.receipt_id),
+      receipt: await getApprovalDecisionReceipt(env, record.receipt_id, tenantId),
     }))
   );
 }

@@ -455,6 +455,7 @@ describe('Check API Authentication Middleware', () => {
       const jwt = createJwt({
         sub: 'user_456',
         azp: 'client_from_azp',
+        tenant_id: 'tenant_abc',
       });
       const db = createMockDb();
       const ctx: CheckAuthContext = { db };
@@ -463,9 +464,10 @@ describe('Check API Authentication Middleware', () => {
 
       expect(result.authenticated).toBe(true);
       expect(result.clientId).toBe('client_from_azp');
+      expect(result.tenantId).toBe('tenant_abc');
     });
 
-    it('should default tenant_id to "default" when missing', async () => {
+    it('should reject access tokens that are missing tenant_id', async () => {
       const jwt = createJwt({
         sub: 'user_789',
         client_id: 'client_test',
@@ -476,8 +478,8 @@ describe('Check API Authentication Middleware', () => {
 
       const result = await authenticateCheckApiRequest(`Bearer ${jwt}`, ctx);
 
-      expect(result.authenticated).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.authenticated).toBe(false);
+      expect(result.error).toBe('invalid_token');
     });
 
     it('should reject expired JWT', async () => {
@@ -505,6 +507,7 @@ describe('Check API Authentication Middleware', () => {
         {
           sub: 'user_valid',
           client_id: 'client_test',
+          tenant_id: 'tenant_abc',
         },
         now + 7200 // Expires in 2 hours
       );
@@ -624,20 +627,29 @@ describe('Check API Authentication Middleware', () => {
         allowedOperations: ['check'],
       };
 
-      expect(resolveAuthorizedCheckTenantId(authResult, undefined, 'default')).toBe('tenant-a');
-      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-a', 'default')).toBe('tenant-a');
-      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-b', 'default')).toBeNull();
+      expect(resolveAuthorizedCheckTenantId(authResult, undefined)).toBe('tenant-a');
+      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-a')).toBe('tenant-a');
+      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-b')).toBeNull();
     });
 
     it('allows policy secret auth to target an explicit tenant', () => {
       const authResult: CheckAuthResult = {
         authenticated: true,
         method: 'policy_secret',
-        tenantId: 'default',
         allowedOperations: ['check', 'batch', 'subscribe'],
       };
 
-      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-b', 'default')).toBe('tenant-b');
+      expect(resolveAuthorizedCheckTenantId(authResult, 'tenant-b')).toBe('tenant-b');
+    });
+
+    it('requires an explicit tenant for policy secret auth', () => {
+      const authResult: CheckAuthResult = {
+        authenticated: true,
+        method: 'policy_secret',
+        allowedOperations: ['check', 'batch', 'subscribe'],
+      };
+
+      expect(resolveAuthorizedCheckTenantId(authResult, undefined)).toBeNull();
     });
   });
 

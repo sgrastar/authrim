@@ -113,6 +113,8 @@ export async function runGeneratedAdminApiSmoke(
     env: target.env,
     adminSecret: options.adminSecret,
     adminSecretPath: options.adminSecretPath,
+    baseUrl: target.baseUrl,
+    tenantId: target.tenantId,
   });
   const tenantId = target.tenantId;
   const clientRegistrationDefaults = resolveSmokeClientRegistrationDefaults(target.config);

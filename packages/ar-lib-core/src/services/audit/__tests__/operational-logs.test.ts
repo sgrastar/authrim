@@ -129,13 +129,14 @@ describe('operational-logs', () => {
       }
       if (sql.includes('FROM object_catalog oc')) {
         const logical = dbState.objectCatalog.find(
-          (row) => row.id === params[0] && row.deleted_at === null
+          (row) =>
+            row.tenant_id === params[0] && row.id === params[1] && row.deleted_at === null
         );
         const physical = dbState.objectCatalogObjects.find(
           (row) =>
-            row.catalog_id === params[0] &&
-            row.representation === params[1] &&
-            row.object_index === params[2] &&
+            row.catalog_id === params[1] &&
+            row.representation === params[2] &&
+            row.object_index === params[3] &&
             row.deleted_at === null
         );
         if (!logical || !physical) {

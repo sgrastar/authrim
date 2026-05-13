@@ -1,8 +1,13 @@
 import type { AuthrimConfig } from './config.js';
+import {
+  classifyUiApiSite,
+  type UiApiSiteClassification,
+} from './site-classifier.js';
 import { ensureHttps } from './url-config.js';
 import type { UiEnvConfig } from './ui-env.js';
 
 export type UiComponent = 'ar-login-ui' | 'ar-admin-ui';
+export type AdminUiApiMode = 'same-origin' | 'same-site-cross-origin' | 'cross-site-proxy';
 
 export const DISABLED_API_BACKEND_URL = '__DISABLED__';
 
@@ -18,9 +23,22 @@ export interface UiDeploymentSettings {
   uiUrl: string;
   useRelativeApi: boolean;
   needsProxy: boolean;
+  siteClassification: UiApiSiteClassification;
+  adminUiApiMode?: AdminUiApiMode;
   uiEnv: UiEnvConfig;
   runtimeApiBackendUrl: string;
   serviceBindingName: string | undefined;
+}
+
+export function describeAdminUiApiMode(mode: AdminUiApiMode): string {
+  switch (mode) {
+    case 'same-origin':
+      return 'Admin UI calls Admin API on the same origin with HttpOnly SameSite=Lax cookies.';
+    case 'same-site-cross-origin':
+      return 'Admin UI calls the same-site Admin API origin directly with credentialed CORS and CSRF checks.';
+    case 'cross-site-proxy':
+      return 'Admin UI uses the Worker BFF via Service Binding; browser direct cross-site Admin API calls are disabled.';
+  }
 }
 
 function normalizeUrl(url: string | null | undefined): string | undefined {
@@ -100,10 +118,23 @@ export function resolveUiDeploymentSettings(
   const sameConfiguredSite =
     isWithinBaseDomain(apiOrigin.hostname, configuredBaseDomain) &&
     isWithinBaseDomain(uiOrigin.hostname, configuredBaseDomain);
+  const siteClassification = classifyUiApiSite(apiBaseUrl, uiUrl, {
+    baseDomain: configuredBaseDomain,
+  });
 
-  // Use relative same-origin API calls whenever the UI is colocated with the API
-  // or when the UI Worker needs to proxy requests to avoid cross-site cookie/CSP issues.
-  const needsProxy = !sameOrigin && !sameConfiguredSite;
+  const adminUiApiMode: AdminUiApiMode | undefined =
+    component === 'ar-admin-ui'
+      ? siteClassification === 'cross-site'
+        ? 'cross-site-proxy'
+        : siteClassification
+      : undefined;
+
+  // Admin UI uses the new three-mode policy. Login UI keeps its existing policy
+  // for now while consuming the shared classifier for follow-up cookie cleanup.
+  const needsProxy =
+    component === 'ar-admin-ui'
+      ? adminUiApiMode === 'cross-site-proxy'
+      : !sameOrigin && !sameConfiguredSite;
   const useRelativeApi = sameOrigin || needsProxy;
 
   const uiEnv: UiEnvConfig = {
@@ -117,6 +148,8 @@ export function resolveUiDeploymentSettings(
   uiEnv.PUBLIC_AUTHRIM_ISSUER = apiBaseUrl;
   if (component === 'ar-login-ui') {
     uiEnv.PUBLIC_LOGIN_UI_CLIENT_ID = loginUiClientId;
+  } else {
+    uiEnv.ADMIN_UI_API_MODE = adminUiApiMode;
   }
 
   return {
@@ -124,6 +157,8 @@ export function resolveUiDeploymentSettings(
     uiUrl,
     useRelativeApi,
     needsProxy,
+    siteClassification,
+    adminUiApiMode,
     uiEnv,
     runtimeApiBackendUrl: needsProxy ? runtimeApiBackendUrl : DISABLED_API_BACKEND_URL,
     serviceBindingName: needsProxy ? 'AR_ROUTER' : undefined,

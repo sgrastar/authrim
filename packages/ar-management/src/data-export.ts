@@ -756,6 +756,7 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
 
       const catalog = await listObjectCatalogObjects(
         authCtx.coreAdapter,
+        tenantId,
         request.object_catalog_id
       );
       if (!catalog) {
@@ -855,7 +856,11 @@ export async function dataExportArtifactManifestHandler(c: Context<{ Bindings: E
       );
     }
 
-    const catalog = await listObjectCatalogObjects(authCtx.coreAdapter, request.object_catalog_id);
+    const catalog = await listObjectCatalogObjects(
+      authCtx.coreAdapter,
+      tenantId,
+      request.object_catalog_id
+    );
     if (!catalog) {
       return c.json(
         {
@@ -1285,8 +1290,8 @@ async function estimateExportSize(
   // Estimate ~500 bytes per consent record
   if (sections.includes('consents')) {
     const consents = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM oauth_client_consents WHERE user_id = ? AND tenant_id = ?',
-      [userId, tenantId]
+      'SELECT COUNT(*) as count FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
     totalSize += (consents[0]?.count || 0) * 500;
   }
@@ -1294,8 +1299,8 @@ async function estimateExportSize(
   // Estimate ~200 bytes per session
   if (sections.includes('sessions')) {
     const sessions = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM sessions WHERE user_id = ? AND tenant_id = ?',
-      [userId, tenantId]
+      'SELECT COUNT(*) as count FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
     totalSize += (sessions[0]?.count || 0) * 200;
   }
@@ -1303,8 +1308,8 @@ async function estimateExportSize(
   // Estimate ~300 bytes per audit log entry
   if (sections.includes('audit_log')) {
     const logs = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM consent_history WHERE user_id = ? AND tenant_id = ?',
-      [userId, tenantId]
+      'SELECT COUNT(*) as count FROM consent_history WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
     totalSize += (logs[0]?.count || 0) * 300;
   }
@@ -1312,8 +1317,8 @@ async function estimateExportSize(
   // Estimate ~400 bytes per passkey
   if (sections.includes('passkeys')) {
     const passkeys = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM user_passkeys WHERE user_id = ? AND tenant_id = ?',
-      [userId, tenantId]
+      'SELECT COUNT(*) as count FROM user_passkeys WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
     totalSize += (passkeys[0]?.count || 0) * 400;
   }
@@ -1448,8 +1453,8 @@ async function collectExportData(
       `SELECT client_id, scope, selected_scopes, granted_at, expires_at,
               privacy_policy_version, tos_version
        FROM oauth_client_consents
-       WHERE user_id = ? AND tenant_id = ?`,
-      [userId, tenantId]
+       WHERE tenant_id = ? AND user_id = ?`,
+      [tenantId, userId]
     );
 
     exportedData.consents = consents.map((c) => ({
@@ -1478,8 +1483,8 @@ async function collectExportData(
     }>(
       `SELECT id, created_at, expires_at, last_activity_at
        FROM sessions
-       WHERE user_id = ? AND tenant_id = ? AND expires_at > ?`,
-      [userId, tenantId, now]
+       WHERE tenant_id = ? AND user_id = ? AND expires_at > ?`,
+      [tenantId, userId, now]
     );
 
     exportedData.sessions = sessions.map((s) => ({
@@ -1501,10 +1506,10 @@ async function collectExportData(
     }>(
       `SELECT client_id, action, scopes_before, scopes_after, created_at
        FROM consent_history
-       WHERE user_id = ? AND tenant_id = ?
+       WHERE tenant_id = ? AND user_id = ?
        ORDER BY created_at DESC
        LIMIT 100`,
-      [userId, tenantId]
+      [tenantId, userId]
     );
 
     exportedData.consentHistory = history.map((h) => ({
@@ -1526,8 +1531,8 @@ async function collectExportData(
     }>(
       `SELECT id, created_at, last_used_at, name
        FROM user_passkeys
-       WHERE user_id = ? AND tenant_id = ?`,
-      [userId, tenantId]
+       WHERE tenant_id = ? AND user_id = ?`,
+      [tenantId, userId]
     );
 
     exportedData.passkeys = passkeys.map((p) => ({

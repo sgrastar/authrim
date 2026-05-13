@@ -6,7 +6,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
-import { getLogger } from '@authrim/ar-lib-core';
+import { getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
 
 interface DIDDocument {
@@ -46,7 +46,7 @@ export async function didDocumentRoute(c: Context<{ Bindings: Env }>): Promise<R
   let publicKeyJwk: Record<string, unknown> | undefined;
 
   try {
-    const doId = c.env.KEY_MANAGER.idFromName('issuer-keys');
+    const doId = c.env.KEY_MANAGER.idFromName(`${getTenantIdFromContext(c)}-v3`);
     const stub = c.env.KEY_MANAGER.get(doId);
 
     const response = await stub.fetch(new Request('https://internal/ec/jwks'));

@@ -38,7 +38,7 @@ const sourceDeviceSecret: DeviceSecret = {
 describe('DeviceInstallationRepository', () => {
   it('creates a canonical installation row with explicit metadata', async () => {
     const adapter = createAdapter();
-    const repo = new DeviceInstallationRepository(adapter);
+    const repo = new DeviceInstallationRepository(adapter, 'default');
 
     const installation = await repo.createInstallation({
       id: 'inst-explicit',
@@ -87,7 +87,7 @@ describe('DeviceInstallationRepository', () => {
 
   it('creates a target-side installation for cross-client Native SSO', async () => {
     const adapter = createAdapter();
-    const repo = new DeviceInstallationRepository(adapter);
+    const repo = new DeviceInstallationRepository(adapter, 'default');
 
     const installation = await repo.ensureForNativeSSOTokenExchange({
       sourceDeviceSecret,
@@ -133,7 +133,7 @@ describe('DeviceInstallationRepository', () => {
     const adapter = createAdapter({
       queryOne: vi.fn().mockRejectedValue(new Error('no such table: device_installations')),
     });
-    const repo = new DeviceInstallationRepository(adapter);
+    const repo = new DeviceInstallationRepository(adapter, 'default');
 
     await expect(repo.findById('inst-missing', 'default')).resolves.toBeNull();
   });

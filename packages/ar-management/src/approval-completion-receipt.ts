@@ -38,15 +38,16 @@ function toApprovalDecisionReceipt(challenge: Challenge): ApprovalDecisionReceip
     requested_action: String(metadata.requested_action ?? ''),
     target_subject_type: metadata.target_subject_type as ApprovalRequest['target_subject_type'],
     target_subject_id: String(metadata.target_subject_id ?? ''),
-    requester_subject_type: metadata.requester_subject_type as ApprovalRequest['requester_subject_type'],
+    requester_subject_type:
+      metadata.requester_subject_type as ApprovalRequest['requester_subject_type'],
     requester_subject_id: String(metadata.requester_subject_id ?? ''),
     approver_side: metadata.approver_side as ApprovalRequestApproval['side'],
-    approver_subject_type: metadata.approver_subject_type as ApprovalRequestApproval['subject_type'],
+    approver_subject_type:
+      metadata.approver_subject_type as ApprovalRequestApproval['subject_type'],
     approver_subject_id:
       typeof metadata.approver_subject_id === 'string' ? metadata.approver_subject_id : null,
     relation_type: typeof metadata.relation_type === 'string' ? metadata.relation_type : null,
-    relation_source:
-      typeof metadata.relation_source === 'string' ? metadata.relation_source : null,
+    relation_source: typeof metadata.relation_source === 'string' ? metadata.relation_source : null,
     method: metadata.method as ApprovalCompletionArtifact['method'],
     transport_channel:
       typeof metadata.transport_channel === 'string' ? metadata.transport_channel : null,
@@ -123,20 +124,19 @@ export async function issueApprovalDecisionReceipt(
   }
 ): Promise<ApprovalDecisionReceipt> {
   const receiptId = generatePublicApprovalDecisionReceiptId();
-  const challengeStore = await getChallengeStoreByChallengeId(env, receiptId);
+  const tenantId = input.request.tenant_id;
+  const challengeStore = await getChallengeStoreByChallengeId(env, receiptId, tenantId);
   const completedAt = input.completedAt ?? Date.now();
   const upperExpiresAt = input.expiresAt ?? completedAt + DEFAULT_RECEIPT_TTL_SECONDS * 1000;
   const ttlMs = Math.max(
     1_000,
-    Math.min(
-      Math.max(1_000, upperExpiresAt - completedAt),
-      DEFAULT_RECEIPT_TTL_SECONDS * 1000
-    )
+    Math.min(Math.max(1_000, upperExpiresAt - completedAt), DEFAULT_RECEIPT_TTL_SECONDS * 1000)
   );
   const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
 
   await challengeStore.storeChallengeRpc({
     id: receiptId,
+    tenantId,
     type: APPROVAL_DECISION_RECEIPT_CHALLENGE_TYPE,
     userId: input.approval.subject_id ?? input.request.target_subject_id,
     challenge: receiptId,
@@ -158,9 +158,10 @@ export async function issueApprovalDecisionReceipt(
 
 export async function getApprovalDecisionReceipt(
   env: Env,
-  receiptId: string
+  receiptId: string,
+  tenantId: string
 ): Promise<ApprovalDecisionReceipt | null> {
-  const challengeStore = await getChallengeStoreByChallengeId(env, receiptId);
+  const challengeStore = await getChallengeStoreByChallengeId(env, receiptId, tenantId);
   const challenge = await challengeStore.getChallengeRpc(receiptId);
   return challenge ? toApprovalDecisionReceipt(challenge) : null;
 }

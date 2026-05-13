@@ -70,7 +70,7 @@ describe('MysqlAuditAdapter', () => {
       }),
     });
 
-    const deleted = await adapter.deleteByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
+    const deleted = await adapter.deleteTenantByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
 
     expect(deleted).toBe(5);
     expect(execute).toHaveBeenCalledTimes(1);
@@ -124,7 +124,7 @@ describe('MysqlAuditAdapter', () => {
       }),
     });
 
-    const rows = await adapter.listRetentionCandidates('event', 1_700_000_000_000, 'tenant-1', 25);
+    const rows = await adapter.listTenantRetentionCandidates('event', 1_700_000_000_000, 'tenant-1', 25);
 
     expect(rows).toEqual([expect.objectContaining({ id: 'evt-1' })]);
     expect(query).toHaveBeenCalledTimes(1);

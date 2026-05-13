@@ -31,6 +31,7 @@ import {
   getChallengeStoreByUserId,
   getDefaultTenantId,
   getTenantIdFromContext,
+  buildDOKey,
   buildDOInstanceName,
   getTenantSettings,
   generateId,
@@ -359,18 +360,20 @@ function buildAuthorizeContinuationUrl(
 
 async function consumeAuthorizationChallengeContinuation(
   env: Env,
+  tenantId: string,
   challengeId: string,
   authenticatedUserId: string,
   authTime: number,
   fallbackIssuer: string
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
-  const challengeStore = await getChallengeStoreByChallengeId(env, challengeId);
+  const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
   let challengeData: AuthorizationChallengeData;
   let type: AuthorizationChallengeType;
 
   try {
     challengeData = (await challengeStore.consumeChallengeRpc({
       id: challengeId,
+      tenantId,
       type: 'login',
       challenge: challengeId,
     })) as AuthorizationChallengeData;
@@ -379,6 +382,7 @@ async function consumeAuthorizationChallengeContinuation(
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: challengeId,
+        tenantId,
         type: 'reauth',
         challenge: challengeId,
       })) as AuthorizationChallengeData;
@@ -593,6 +597,7 @@ async function generateAuthCode(
 
   await authCodeStore.storeCodeRpc({
     code: authCode,
+    tenantId,
     clientId,
     redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
     userId,
@@ -603,10 +608,11 @@ async function generateAuthCode(
     acr: 'urn:mace:incommon:iap:bronze',
   });
 
-  const challengeStore = await getChallengeStoreByChallengeId(env, authCode);
+  const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
 
   await challengeStore.storeChallengeRpc({
     id: `direct_auth:${authCode}`,
+    tenantId,
     type: 'direct_auth_code',
     userId,
     challenge: codeChallenge, // Store code_challenge for verification
@@ -711,10 +717,15 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
 
     // Store challenge with code_challenge in ChallengeStore
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `direct_passkey_login:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'direct_passkey_login',
       userId: 'unknown', // Will be determined during verification
       challenge: options.challenge,
@@ -778,7 +789,11 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     }
 
     // Consume challenge atomically
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challenge_id,
+      getTenantIdFromContext(c)
+    );
 
     let challengeData: {
       challenge: string;
@@ -797,6 +812,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: `direct_passkey_login:${challenge_id}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'direct_passkey_login',
       })) as typeof challengeData;
     } catch {
@@ -1111,10 +1127,15 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     // Store challenge using userId-based sharding
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByUserId(c.env, user.id);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      user.id,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `direct_passkey_signup:${user.id}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'direct_passkey_signup',
       userId: user.id,
       challenge: options.challenge,
@@ -1132,9 +1153,14 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     });
 
     // Also store challenge_id -> userId mapping for finish endpoint
-    const challengeMapStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeMapStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
     await challengeMapStore.storeChallengeRpc({
       id: `direct_passkey_signup_map:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'direct_passkey_signup_map',
       userId: user.id,
       challenge: challengeId, // Just for reference
@@ -1198,7 +1224,11 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
     // Look up userId from challenge_id mapping
     // We stored this mapping in signup/start using challenge_id-based sharding
-    const challengeMapStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+    const challengeMapStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challenge_id,
+      getTenantIdFromContext(c)
+    );
     let userId: string;
 
     try {
@@ -1218,7 +1248,11 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     }
 
     // Now consume the actual challenge using userId-based sharding
-    const challengeStore = await getChallengeStoreByUserId(c.env, userId);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      userId,
+      getTenantIdFromContext(c)
+    );
 
     let challengeData: {
       challenge: string;
@@ -1236,6 +1270,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: `direct_passkey_signup:${userId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'direct_passkey_signup',
       })) as typeof challengeData;
     } catch {
@@ -1409,24 +1444,6 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Rate limiting
-    const rateLimiterId = c.env.RATE_LIMITER.idFromName('email-code');
-    const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
-
-    const rateLimitResult = await rateLimiter.incrementRpc(
-      `direct_email_code:${email.toLowerCase()}`,
-      {
-        windowSeconds: 15 * 60,
-        maxRequests: 3,
-      }
-    );
-
-    if (!rateLimitResult.allowed) {
-      return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
-        variables: { retry_after: rateLimitResult.retryAfter },
-      });
-    }
-
     // Check/create user
     let tenantId = getTenantIdFromContext(c);
     const routingCoreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
@@ -1472,6 +1489,26 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       if (resolvedTenantId) {
         tenantId = resolvedTenantId;
       }
+    }
+
+    // Rate limiting
+    const rateLimiterId = c.env.RATE_LIMITER.idFromName(
+      buildDOKey('rate-limit', 'email-code', tenantId)
+    );
+    const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
+
+    const rateLimitResult = await rateLimiter.incrementRpc(
+      `direct_email_code:${email.toLowerCase()}`,
+      {
+        windowSeconds: 15 * 60,
+        maxRequests: 3,
+      }
+    );
+
+    if (!rateLimitResult.allowed) {
+      return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
+        variables: { retry_after: rateLimitResult.retryAfter },
+      });
     }
 
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
@@ -1557,11 +1594,12 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const [codeHash, emailHash, challengeStore] = await Promise.all([
       hashEmailCode(code, email.toLowerCase(), attemptId, issuedAt, hmacSecret),
       hashEmail(email.toLowerCase()),
-      getChallengeStoreByChallengeId(c.env, attemptId),
+      getChallengeStoreByChallengeId(c.env, attemptId, getTenantIdFromContext(c)),
     ]);
 
     await challengeStore.storeChallengeRpc({
       id: `direct_email_code:${attemptId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'direct_email_code',
       userId: user.id,
       challenge: codeHash,
@@ -1694,7 +1732,10 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Rate limit: Max 5 attempts per code
-    const rateLimiterId = c.env.RATE_LIMITER.idFromName('email-code-verify');
+    const tenantId = getTenantIdFromContext(c);
+    const rateLimiterId = c.env.RATE_LIMITER.idFromName(
+      buildDOKey('rate-limit', 'email-code-verify', tenantId)
+    );
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
     const attemptResult = await rateLimiter.incrementRpc(`verify:${attempt_id}`, {
@@ -1704,7 +1745,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
 
     if (!attemptResult.allowed) {
       // Invalidate the challenge when max attempts exceeded
-      const challengeStore = await getChallengeStoreByChallengeId(c.env, attempt_id);
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        attempt_id,
+        tenantId
+      );
       await challengeStore.deleteChallengeRpc(`direct_email_code:${attempt_id}`).catch(() => {});
 
       return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
@@ -1713,7 +1758,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Consume challenge
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, attempt_id);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      attempt_id,
+      tenantId
+    );
 
     let challengeData: {
       challenge: string;
@@ -1726,6 +1775,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: `direct_email_code:${attempt_id}`,
+        tenantId,
         type: 'direct_email_code',
       })) as typeof challengeData;
     } catch {
@@ -1760,7 +1810,6 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Get user
-    const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     const userCore = await authCtx.repositories.userCore.findById(challengeData.userId);
 
@@ -1794,7 +1843,14 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
             invite_id: inviteId,
             tenant_id: tenantId,
           });
-        } else if (!(await consumeInvitationUse(authCtx.coreAdapter, invitation.id, inviteNow))) {
+        } else if (
+          !(await consumeInvitationUse(
+            authCtx.coreAdapter,
+            invitation.id,
+            invitation.tenant_id,
+            inviteNow
+          ))
+        ) {
           log.warn('Invitation use_count increment was skipped during email verification', {
             invite_id: inviteId,
             tenant_id: tenantId,
@@ -1946,7 +2002,11 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, direct_auth_artifact);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      direct_auth_artifact,
+      getTenantIdFromContext(c)
+    );
     let artifactData: {
       challenge: string;
       userId: string;
@@ -1956,6 +2016,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     try {
       artifactData = (await challengeStore.consumeChallengeRpc({
         id: `direct_auth:${direct_auth_artifact}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'direct_auth_code',
       })) as typeof artifactData;
     } catch (error) {
@@ -2047,6 +2108,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     if (authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
         c.env,
+        tenantId,
         authorization_challenge_id,
         artifactData.userId,
         authTime,
@@ -2261,10 +2323,15 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
 
     // Store challenge
     const challengeId = crypto.randomUUID();
-    const challengeStore = await getChallengeStoreByUserId(c.env, session.userId);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      session.userId,
+      getTenantIdFromContext(c)
+    );
 
     await challengeStore.storeChallengeRpc({
       id: `direct_passkey_register:${session.userId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'direct_passkey_register',
       userId: session.userId,
       challenge: options.challenge,
@@ -2280,9 +2347,14 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     });
 
     // Store challenge_id -> userId mapping
-    const challengeMapStore = await getChallengeStoreByChallengeId(c.env, challengeId);
+    const challengeMapStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challengeId,
+      getTenantIdFromContext(c)
+    );
     await challengeMapStore.storeChallengeRpc({
       id: `direct_passkey_register_map:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'direct_passkey_register_map',
       userId: session.userId,
       challenge: challengeId,
@@ -2335,7 +2407,11 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
     }
 
     // Look up userId from challenge_id mapping
-    const challengeMapStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+    const challengeMapStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challenge_id,
+      getTenantIdFromContext(c)
+    );
     let userId: string;
 
     try {
@@ -2353,7 +2429,11 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
     }
 
     // Consume the actual challenge
-    const challengeStore = await getChallengeStoreByUserId(c.env, userId);
+    const challengeStore = await getChallengeStoreByUserId(
+      c.env,
+      userId,
+      getTenantIdFromContext(c)
+    );
 
     let challengeData: {
       challenge: string;
@@ -2369,6 +2449,7 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: `direct_passkey_register:${userId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'direct_passkey_register',
       })) as typeof challengeData;
     } catch {
@@ -2656,7 +2737,8 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
                 const { stub: rotator } = getRefreshTokenRotatorStubByJti(
                   c.env,
                   family.client_id,
-                  family.jti
+                  family.jti,
+                  getTenantIdFromContext(c)
                 );
                 await rotator.revokeByJtiRpc(family.jti, 'direct_auth_revoke_tokens');
               } catch (familyError) {

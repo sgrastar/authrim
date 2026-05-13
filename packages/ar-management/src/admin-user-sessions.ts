@@ -573,8 +573,8 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     );
 
     const deleteResult = await authCtx.coreAdapter.execute(
-      'DELETE FROM sessions WHERE user_id = ? AND tenant_id = ?',
-      [userId, tenantId]
+      'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
 
     const dbRevokedCount = deleteResult.rowsAffected || 0;

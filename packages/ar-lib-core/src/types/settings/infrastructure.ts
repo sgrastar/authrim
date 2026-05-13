@@ -17,7 +17,7 @@ import {
  * Infrastructure Settings Interface
  *
  * Note: Sharding settings (code_shards, session_shards, challenge_shards,
- * revocation_shards, flow_state_shards, region_*) are managed in the
+ * revocation_shards, region_*) are managed in the
  * dedicated Sharding Configuration page (/admin/settings/sharding).
  */
 export interface InfrastructureSettings {

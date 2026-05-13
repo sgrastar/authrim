@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateEnvVars, deriveAllowedOrigins } from '../core/wrangler.js';
 import type { AuthrimConfig } from '../core/config.js';
+import { classifyUiApiSite } from '../core/site-classifier.js';
 import {
   SCENARIOS,
   buildAuthrimConfig,
@@ -27,6 +28,20 @@ function expectedPrimaryTenantId(config: AuthrimConfig): string | undefined {
 
 function isMultiTenantConfigured(config: AuthrimConfig): boolean {
   return config.tenant?.multiTenant === true && !!config.tenant.baseDomain;
+}
+
+function expectedAdminUiApiMode(config: AuthrimConfig): string {
+  const multiTenant = isMultiTenantConfigured(config);
+  const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+  const issuerUrl = multiTenant ? config.urls?.api?.auto || '' : apiUrl;
+  const adminUiUrl = config.urls?.adminUi?.sameAsApi
+    ? apiUrl
+    : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+  const classification = classifyUiApiSite(apiUrl, adminUiUrl, {
+    baseDomain: multiTenant ? config.tenant?.baseDomain : undefined,
+  });
+
+  return classification === 'cross-site' ? 'cross-site-proxy' : classification;
 }
 
 // =============================================================================
@@ -61,7 +76,8 @@ describe('generateEnvVars - ar-auth', () => {
     expect(vars['UI_URL']).toBe(expectedUiUrl);
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
     expect(vars['COOKIE_SAME_SITE']).toBe(expectedCookieSameSite);
-    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe(expected.ADMIN_COOKIE_SAME_SITE);
+    expect(vars['ADMIN_UI_API_MODE']).toBe(expectedAdminUiApiMode(config));
+    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe('Lax');
     expect(vars['DEFAULT_TENANT_ID']).toBe(expected.DEFAULT_TENANT_ID);
 
     // BASE_DOMAIN
@@ -117,7 +133,8 @@ describe('generateEnvVars - ar-management', () => {
     expect(vars['VC_ENABLED']).toBe((config.components?.vc ?? false) ? 'true' : 'false');
     expect(vars['DEFAULT_TENANT_ID']).toBe(expected.DEFAULT_TENANT_ID);
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
-    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe(expected.ADMIN_COOKIE_SAME_SITE);
+    expect(vars['ADMIN_UI_API_MODE']).toBe(expectedAdminUiApiMode(config));
+    expect(vars['ADMIN_COOKIE_SAME_SITE']).toBe('Lax');
 
     expect(vars['ALLOWED_ORIGINS']).toBeDefined();
     expect(vars['ALLOWED_ORIGINS'].split(',').sort()).toEqual(
@@ -350,7 +367,6 @@ describe('multi-tenant login UI canonical routing', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       security: {
         piiEncryptionEnabled: true,
@@ -365,7 +381,7 @@ describe('multi-tenant login UI canonical routing', () => {
     expect(authVars['UI_URL']).toBe('https://test.authrim.com');
     expect(authVars['COOKIE_SAME_SITE']).toBe('Lax');
     expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('true');
-    expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.workers.dev');
+    expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.my-project.workers.dev');
   });
 });
 
@@ -460,7 +476,6 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       security: {
         piiEncryptionEnabled: true,
@@ -545,7 +560,6 @@ describe('generateEnvVars - explicit tenant mode toggles', () => {
         refreshTokenShards: 4,
         sessionShards: 4,
         challengeShards: 4,
-        flowStateShards: 32,
       },
       security: {
         piiEncryptionEnabled: true,

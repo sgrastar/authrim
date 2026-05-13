@@ -53,10 +53,6 @@ interface StatusListData {
   updated_at: string;
 }
 
-function matchesRequestTenant(c: Context<{ Bindings: Env }>, listData: StatusListData): boolean {
-  return listData.tenant_id === getTenantIdFromContext(c);
-}
-
 /**
  * Calculate ETag from list data
  */
@@ -76,11 +72,17 @@ async function calculateETag(
 /**
  * Get status list from database
  */
-async function getStatusList(env: Env, listId: string): Promise<StatusListData | null> {
+async function getStatusList(
+  env: Env,
+  tenantId: string,
+  listId: string
+): Promise<StatusListData | null> {
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'vc-status-list');
   return adapter.queryOne<StatusListData>(
-    'SELECT id, tenant_id, purpose, encoded_list, updated_at FROM status_lists WHERE id = ?',
-    [listId]
+    `SELECT public_id AS id, tenant_id, purpose, encoded_list, updated_at
+     FROM status_lists
+     WHERE tenant_id = ? AND public_id = ?`,
+    [tenantId, listId]
   );
 }
 
@@ -196,21 +198,12 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
     );
   }
 
+  const tenantId = getTenantIdFromContext(c);
   // Get status list from database
-  const listData = await getStatusList(c.env, listId);
+  const listData = await getStatusList(c.env, tenantId, listId);
 
   if (!listData) {
     // SECURITY: Do not expose status list ID in error message to prevent enumeration
-    return c.json(
-      {
-        error: 'not_found',
-        error_description: 'Status list not found',
-      },
-      404
-    );
-  }
-
-  if (!matchesRequestTenant(c, listData)) {
     return c.json(
       {
         error: 'not_found',
@@ -273,20 +266,11 @@ export async function statusListJsonRoute(c: Context<{ Bindings: Env }>): Promis
     );
   }
 
-  const listData = await getStatusList(c.env, listId);
+  const tenantId = getTenantIdFromContext(c);
+  const listData = await getStatusList(c.env, tenantId, listId);
 
   if (!listData) {
     // SECURITY: Do not expose status list ID in error message to prevent enumeration
-    return c.json(
-      {
-        error: 'not_found',
-        error_description: 'Status list not found',
-      },
-      404
-    );
-  }
-
-  if (!matchesRequestTenant(c, listData)) {
     return c.json(
       {
         error: 'not_found',

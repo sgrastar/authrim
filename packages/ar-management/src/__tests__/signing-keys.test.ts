@@ -180,6 +180,8 @@ function createTestApp() {
   app.use('/api/admin/*', async (c, next) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (c as any).set('adminAuth', { userId: 'test-admin', authMethod: 'bearer', roles: ['admin'] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (c as any).set('tenantId', 'default');
     await next();
   });
 

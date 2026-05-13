@@ -8,6 +8,8 @@ import { createAccessToken } from '../jwt';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import type { Env } from '../../types/env';
 
+const TEST_TENANT_ID = 'tenant_test';
+
 describe('Token Introspection Utility', () => {
   let mockEnv: Env;
   let privateKey: CryptoKey;
@@ -69,6 +71,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(true);
@@ -86,6 +89,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -104,6 +108,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -135,6 +140,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -170,6 +176,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -202,6 +209,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -221,6 +229,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -237,6 +246,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers: new Headers(),
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
       expect(result1.error?.statusCode).toBe(401);
 
@@ -248,6 +258,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers: headers2,
         env: mockEnv,
+        tenantId: TEST_TENANT_ID,
       });
       expect(result2.error?.statusCode).toBe(401);
     });
@@ -265,6 +276,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: invalidEnv as Env,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -283,6 +295,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://test.example.com/userinfo',
         headers,
         env: invalidEnv as Env,
+        tenantId: TEST_TENANT_ID,
       });
 
       expect(result.valid).toBe(false);
@@ -320,6 +333,7 @@ describe('Token Introspection Utility', () => {
         url: 'https://oidc.example.com/userinfo',
         headers,
         env: multiTenantEnv,
+        tenantId: 'default',
       });
 
       expect(result.valid).toBe(true);
@@ -356,6 +370,44 @@ describe('Token Introspection Utility', () => {
         url: 'https://acme.oidc.example.com/userinfo',
         headers,
         env: multiTenantEnv,
+        tenantId: 'acme',
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.claims?.iss).toBe('https://acme.oidc.example.com');
+    });
+
+    it('should validate issuer from request tenant instead of defaulting from an unresolved host', async () => {
+      const multiTenantEnv = {
+        ...mockEnv,
+        BASE_DOMAIN: 'oidc.example.com',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        PRIMARY_TENANT_ID: 'default',
+      } as Env;
+
+      const token = await new SignJWT({
+        iss: 'https://acme.oidc.example.com',
+        sub: 'user123',
+        aud: 'https://acme.oidc.example.com',
+        scope: 'openid',
+        client_id: 'test-client',
+        jti: 'test-jti',
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: multiTenantEnv.KEY_ID })
+        .sign(privateKey);
+
+      const headers = new Headers();
+      headers.set('Authorization', `Bearer ${token}`);
+      headers.set('Host', 'api.internal.example.com');
+
+      const result = await introspectToken({
+        method: 'GET',
+        url: 'https://api.internal.example.com/userinfo',
+        headers,
+        env: multiTenantEnv,
+        tenantId: 'acme',
       });
 
       expect(result.valid).toBe(true);

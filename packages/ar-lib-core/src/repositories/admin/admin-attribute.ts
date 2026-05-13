@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 
 /**
@@ -99,7 +100,7 @@ export class AdminAttributeRepository extends BaseRepository<AdminAttributeEntit
 
     const entity: AdminAttributeEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       name: input.name,
       display_name: input.display_name ?? null,
       description: input.description ?? null,

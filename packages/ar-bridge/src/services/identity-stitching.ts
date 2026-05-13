@@ -11,7 +11,6 @@ import {
   type DatabaseAdapter,
   type DatabaseSource,
   ensureDatabaseAdapter,
-  getDefaultTenantId,
   type JITProvisioningConfig,
   type RuleEvaluationContext,
   type RuleEvaluationResult,
@@ -105,7 +104,7 @@ export async function handleIdentity(
   env: Env,
   params: HandleIdentityParams
 ): Promise<HandleIdentityResult> {
-  const { provider, userInfo, tokens, linkingUserId, tenantId = getDefaultTenantId(env) } = params;
+  const { provider, userInfo, tokens, linkingUserId, tenantId } = params;
 
   // 1. Explicit linking to existing account
   if (linkingUserId) {
@@ -131,6 +130,7 @@ export async function handleIdentity(
 
     // Log audit event
     await logAuditEvent(env, {
+      tenantId,
       userId: linkingUserId,
       action: 'identity_linked',
       resourceType: 'linked_identity',
@@ -202,6 +202,7 @@ export async function handleIdentity(
 
       // Log audit event for automatic stitching
       await logAuditEvent(env, {
+        tenantId,
         userId: existingUser.id,
         action: 'identity_stitched',
         resourceType: 'linked_identity',
@@ -319,6 +320,7 @@ export async function handleIdentity(
 
     // Log audit event for JIT provisioning
     await logAuditEvent(env, {
+      tenantId,
       userId: jitResult.userId,
       action: 'user_jit_provisioned',
       resourceType: 'user',
@@ -589,6 +591,7 @@ async function createUserFromExternalIdentity(
 }
 
 interface AuditEventParams {
+  tenantId: string;
   userId: string;
   action: string;
   resourceType: string;
@@ -603,7 +606,7 @@ async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> 
   try {
     await createAuditLog(env, {
       userId: params.userId,
-      tenantId: getDefaultTenantId(env),
+      tenantId: params.tenantId,
       action: params.action,
       resource: params.resourceType,
       resourceId: params.resourceId,
@@ -634,8 +637,8 @@ export async function hasPasskeyCredential(
 ): Promise<boolean> {
   const { coreAdapter } = await resolveUserStoreAdapters(env, tenantId);
   const result = await coreAdapter.queryOne<{ count: number }>(
-    'SELECT COUNT(*) as count FROM passkeys WHERE user_id = ? AND tenant_id = ?',
-    [userId, tenantId]
+    'SELECT COUNT(*) as count FROM passkeys WHERE tenant_id = ? AND user_id = ?',
+    [tenantId, userId]
   );
 
   return (result?.count || 0) > 0;
@@ -799,9 +802,9 @@ async function createUserWithJITProvisioning(
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
         'identity-stitching-custom-claim-cleanup'
-      ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
-        id,
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
         params.tenantId,
+        id,
       ]);
       await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
         id,
@@ -855,9 +858,9 @@ async function createUserWithJITProvisioning(
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
         'identity-stitching-policy-cleanup'
-      ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
-        id,
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
         params.tenantId,
+        id,
       ]);
       await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
         id,
@@ -941,9 +944,9 @@ async function createUserWithJITProvisioning(
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
         'identity-stitching-org-cleanup'
-      ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
-        id,
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
         params.tenantId,
+        id,
       ]);
       await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
         id,
@@ -1078,8 +1081,8 @@ async function assignRoleToUserInternal(
     // Check if already assigned
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE user_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ? AND tenant_id = ?`,
-      [userId, roleId, scopeType, scopeTarget, tenantId]
+       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
+      [tenantId, userId, roleId, scopeType, scopeTarget]
     );
 
     if (existing) {

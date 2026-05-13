@@ -33,7 +33,9 @@ export * from './assurance-levels';
 export * from './check-api-audit';
 export * from './dcr';
 export * from './login-ui';
+export * from './login-methods';
 export * from './diagnostic-logging';
+export * from './dr-backup';
 export * from './login-entry';
 export * from './tenant-discovery-ui';
 export * from './support-ops';
@@ -91,7 +93,9 @@ import { ASSURANCE_LEVELS_CATEGORY_META } from './assurance-levels';
 import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
 import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
+import { LOGIN_METHODS_CATEGORY_META } from './login-methods';
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from './diagnostic-logging';
+import { DR_BACKUP_CATEGORY_META } from './dr-backup';
 import { LOGIN_ENTRY_CATEGORY_META } from './login-entry';
 import { TENANT_DISCOVERY_UI_CATEGORY_META } from './tenant-discovery-ui';
 import { SUPPORT_OPS_CATEGORY_META } from './support-ops';
@@ -142,8 +146,10 @@ export const ALL_CATEGORY_META = {
   dcr: DCR_CATEGORY_META,
   // Login UI Customization
   'login-ui': LOGIN_UI_CATEGORY_META,
+  'login-methods': LOGIN_METHODS_CATEGORY_META,
   // Diagnostic Logging
   'diagnostic-logging': DIAGNOSTIC_LOGGING_CATEGORY_META,
+  'dr-backup': DR_BACKUP_CATEGORY_META,
   // Login Entry / Discovery
   'login-entry': LOGIN_ENTRY_CATEGORY_META,
   'tenant-discovery-ui': TENANT_DISCOVERY_UI_CATEGORY_META,
@@ -269,6 +275,9 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   'login-ui': {
     allowedScopes: ['tenant'],
   },
+  'login-methods': {
+    allowedScopes: ['tenant'],
+  },
   'login-entry': {
     allowedScopes: ['platform', 'tenant'],
   },
@@ -282,6 +291,9 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   // Diagnostic Logging (tenant + client in future)
   'diagnostic-logging': {
     allowedScopes: ['tenant'], // Phase 1: tenant only, will add 'client' in future
+  },
+  'dr-backup': {
+    allowedScopes: ['tenant'],
   },
 };
 

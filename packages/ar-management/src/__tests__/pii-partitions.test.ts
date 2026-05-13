@@ -1,22 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
-const { mockAdapter, mockCreateAuthContextFromHono } = vi.hoisted(() => ({
-  mockAdapter: {
-    query: vi.fn(),
-  },
-  mockCreateAuthContextFromHono: vi.fn(),
-}));
+const { mockAdapter, mockCreateAuthContextFromHono, mockResolveOptionalCoreAdapterFromHono } =
+  vi.hoisted(() => ({
+    mockAdapter: {
+      query: vi.fn(),
+    },
+    mockCreateAuthContextFromHono: vi.fn(),
+    mockResolveOptionalCoreAdapterFromHono: vi.fn(),
+  }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    resolveOptionalCoreAdapterFromHono: mockResolveOptionalCoreAdapterFromHono,
   };
 });
 
-import { getPartitionStats, getPlatformPartitionStats } from '../routes/settings/pii-partitions';
+import {
+  getPartitionStats,
+  getPlatformPartitionStats,
+  testPartitionRouting,
+} from '../routes/settings/pii-partitions';
 
 function createMockContext(query: Record<string, string | undefined> = {}) {
   const contextStore = new Map<string, unknown>([['tenantId', 'acme']]);
@@ -38,6 +45,7 @@ describe('pii partition stats routes', () => {
     vi.clearAllMocks();
     mockAdapter.query.mockResolvedValue([{ pii_partition: 'default', count: 2 }]);
     mockCreateAuthContextFromHono.mockReturnValue({ coreAdapter: mockAdapter });
+    mockResolveOptionalCoreAdapterFromHono.mockReturnValue(mockAdapter);
   });
 
   it('uses the context tenant for tenant-admin stats even when tenant_id is queried', async () => {
@@ -59,10 +67,35 @@ describe('pii partition stats routes', () => {
     const body = (await response.json()) as { tenantId: string; total: number };
 
     expect(body).toMatchObject({ tenantId: 'all', total: 2 });
-    expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(c);
+    expect(mockResolveOptionalCoreAdapterFromHono).toHaveBeenCalledWith(c, 'pii-partition-stats');
     expect(mockAdapter.query).toHaveBeenCalledWith(
       expect.not.stringContaining('tenant_id = ?'),
       []
     );
+  });
+
+  it('uses the context tenant for partition routing tests', async () => {
+    const c = createMockContext() as any;
+    c.req.json = vi.fn().mockResolvedValue({
+      tenantId: 'acme',
+      attributes: { plan: 'enterprise' },
+    });
+
+    const response = await testPartitionRouting(c);
+    const body = (await response.json()) as { tenantId: string };
+
+    expect(response.status).toBe(200);
+    expect(body.tenantId).toBe('acme');
+  });
+
+  it('rejects cross-tenant partition routing test input', async () => {
+    const c = createMockContext() as any;
+    c.req.json = vi.fn().mockResolvedValue({
+      tenantId: 'other-tenant',
+    });
+
+    const response = await testPartitionRouting(c);
+
+    expect(response.status).toBe(400);
   });
 });

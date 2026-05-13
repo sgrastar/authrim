@@ -28,6 +28,14 @@ import {
 
 const log = createLogger().module('KV');
 
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 export interface UserCacheSources {
   coreDb: DatabaseSource;
   piiDb?: DatabaseSource | null;
@@ -441,8 +449,8 @@ async function getConsentFromDatabase(
   }>(
     `SELECT scope, granted_at, expires_at
        FROM oauth_client_consents
-      WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
-    [userId, clientId, tenantId]
+      WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+    [tenantId, userId, clientId]
   );
 
   if (!result) {
@@ -498,13 +506,19 @@ export async function invalidateConsentCache(
  * @param env - Cloudflare environment bindings
  * @param state - State parameter value
  * @param clientId - Client ID that initiated the request
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function storeState(env: Env, state: string, clientId: string): Promise<void> {
+export async function storeState(
+  env: Env,
+  state: string,
+  clientId: string,
+  tenantId: string
+): Promise<void> {
   // KV > env > default priority
   const configManager = createOAuthConfigManager(env);
   const ttl = await configManager.getStateExpiry();
-  const key = buildKVKey('state', state);
+  const key = buildKVKey('state', state, tenantId);
 
   await env.STATE_STORE.put(key, clientId, {
     expirationTtl: ttl,
@@ -516,10 +530,11 @@ export async function storeState(env: Env, state: string, clientId: string): Pro
  *
  * @param env - Cloudflare environment bindings
  * @param state - State parameter to validate
+ * @param tenantId - Tenant ID
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
-export async function getState(env: Env, state: string): Promise<string | null> {
-  const key = buildKVKey('state', state);
+export async function getState(env: Env, state: string, tenantId: string): Promise<string | null> {
+  const key = buildKVKey('state', state, tenantId);
   return await env.STATE_STORE.get(key);
 }
 
@@ -528,10 +543,11 @@ export async function getState(env: Env, state: string): Promise<string | null> 
  *
  * @param env - Cloudflare environment bindings
  * @param state - State parameter to delete
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function deleteState(env: Env, state: string): Promise<void> {
-  const key = buildKVKey('state', state);
+export async function deleteState(env: Env, state: string, tenantId: string): Promise<void> {
+  const key = buildKVKey('state', state, tenantId);
   await env.STATE_STORE.delete(key);
 }
 
@@ -541,13 +557,19 @@ export async function deleteState(env: Env, state: string): Promise<void> {
  * @param env - Cloudflare environment bindings
  * @param nonce - Nonce parameter value
  * @param clientId - Client ID that initiated the request
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function storeNonce(env: Env, nonce: string, clientId: string): Promise<void> {
+export async function storeNonce(
+  env: Env,
+  nonce: string,
+  clientId: string,
+  tenantId: string
+): Promise<void> {
   // KV > env > default priority
   const configManager = createOAuthConfigManager(env);
   const ttl = await configManager.getNonceExpiry();
-  const key = buildKVKey('nonce', nonce);
+  const key = buildKVKey('nonce', nonce, tenantId);
 
   await env.NONCE_STORE.put(key, clientId, {
     expirationTtl: ttl,
@@ -559,10 +581,11 @@ export async function storeNonce(env: Env, nonce: string, clientId: string): Pro
  *
  * @param env - Cloudflare environment bindings
  * @param nonce - Nonce parameter to validate
+ * @param tenantId - Tenant ID
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
-export async function getNonce(env: Env, nonce: string): Promise<string | null> {
-  const key = buildKVKey('nonce', nonce);
+export async function getNonce(env: Env, nonce: string, tenantId: string): Promise<string | null> {
+  const key = buildKVKey('nonce', nonce, tenantId);
   return await env.NONCE_STORE.get(key);
 }
 
@@ -571,10 +594,11 @@ export async function getNonce(env: Env, nonce: string): Promise<string | null> 
  *
  * @param env - Cloudflare environment bindings
  * @param nonce - Nonce parameter to delete
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function deleteNonce(env: Env, nonce: string): Promise<void> {
-  const key = buildKVKey('nonce', nonce);
+export async function deleteNonce(env: Env, nonce: string, tenantId: string): Promise<void> {
+  const key = buildKVKey('nonce', nonce, tenantId);
   await env.NONCE_STORE.delete(key);
 }
 
@@ -817,7 +841,7 @@ export async function getClient(
     device_secret_introspection_trust_groups: string | null;
     created_at: number;
     updated_at: number;
-  }>('SELECT * FROM oauth_clients WHERE client_id = ? AND tenant_id = ?', [clientId, tenantId]);
+  }>('SELECT * FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [tenantId, clientId]);
 
   if (!result) {
     return null;
@@ -950,7 +974,7 @@ export async function getClient(
     // PKCE settings
     require_pkce: result.require_pkce === 1,
     // Multi-tenant support
-    tenant_id: result.tenant_id || getDefaultTenantId(env),
+    tenant_id: result.tenant_id || tenantId,
     created_at: result.created_at,
     updated_at: result.updated_at,
   };
@@ -983,7 +1007,7 @@ export async function getClient(
  * @returns Promise<void>
  */
 export async function putClient(env: Env, clientData: ClientMetadata): Promise<void> {
-  const tenantId = clientData.tenant_id || getDefaultTenantId(env);
+  const tenantId = requireTenantId(clientData.tenant_id, 'Client cache write');
   const cacheKey = buildKVKey('client', clientData.client_id, tenantId);
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientData.client_id);
   const normalizedClientData = normalizeClientMetadata(clientData);
@@ -1041,14 +1065,15 @@ export async function revokeToken(
   env: Env,
   jti: string,
   expiresIn: number,
-  reason?: string
+  reason: string | undefined,
+  tenantId: string
 ): Promise<void> {
   if (!env.TOKEN_REVOCATION_STORE) {
     throw new Error('TOKEN_REVOCATION_STORE Durable Object not available');
   }
 
   // Use sharded Durable Object instance for token revocations
-  const { stub } = await getRevocationStoreByJti(env, jti);
+  const { stub } = await getRevocationStoreByJti(env, jti, tenantId);
 
   const response = await stub.fetch('http://internal/revoke', {
     method: 'POST',
@@ -1073,7 +1098,7 @@ export async function revokeToken(
  * @param jti - JWT ID of the token to check
  * @returns Promise<boolean> - True if token is revoked
  */
-export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
+export async function isTokenRevoked(env: Env, jti: string, tenantId: string): Promise<boolean> {
   if (!env.TOKEN_REVOCATION_STORE) {
     log.warn('TOKEN_REVOCATION_STORE binding is not configured; skipping revocation check');
     return false;
@@ -1081,7 +1106,7 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
 
   try {
     // Use sharded Durable Object instance for token revocation checks
-    const { stub } = await getRevocationStoreByJti(env, jti);
+    const { stub } = await getRevocationStoreByJti(env, jti, tenantId);
 
     const response = await stub.fetch(`http://internal/check?jti=${encodeURIComponent(jti)}`, {
       method: 'GET',
@@ -1108,8 +1133,13 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
  * Canonical public exports live in `utils/refresh-token-store.ts`.
  * Keep this wrapper only to avoid rewriting every internal reference in one step.
  */
-async function storeRefreshToken(env: Env, jti: string, data: RefreshTokenData): Promise<void> {
-  return storeRefreshTokenCanonical(env, jti, data);
+async function storeRefreshToken(
+  env: Env,
+  jti: string,
+  data: RefreshTokenData,
+  tenantId: string
+): Promise<void> {
+  return storeRefreshTokenCanonical(env, jti, data, tenantId);
 }
 
 /**
@@ -1120,14 +1150,20 @@ async function getRefreshToken(
   userId: string,
   version: number,
   clientId: string,
-  jti: string
+  jti: string,
+  tenantId: string
 ): Promise<RefreshTokenData | null> {
-  return getRefreshTokenCanonical(env, userId, version, clientId, jti);
+  return getRefreshTokenCanonical(env, userId, version, clientId, jti, tenantId);
 }
 
 /**
  * Legacy internal shim for refresh token deletion.
  */
-async function deleteRefreshToken(env: Env, jti: string, client_id: string): Promise<void> {
-  return deleteRefreshTokenCanonical(env, jti, client_id);
+async function deleteRefreshToken(
+  env: Env,
+  jti: string,
+  client_id: string,
+  tenantId: string
+): Promise<void> {
+  return deleteRefreshTokenCanonical(env, jti, client_id, tenantId);
 }

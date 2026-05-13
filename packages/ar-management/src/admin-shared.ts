@@ -134,6 +134,82 @@ interface AdminAuditDetailPayload {
   metadata: Record<string, unknown> | null;
 }
 
+function getRequestIdForAdminAudit(c: Context<any, any, any>): string | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contextRequestId = (c as any).get?.('requestId');
+  if (typeof contextRequestId === 'string' && contextRequestId.length > 0) {
+    return contextRequestId;
+  }
+
+  return c.req.header('X-Request-Id') || c.req.header('X-Correlation-Id') || undefined;
+}
+
+function getAdminProxyAuditMetadata(c: Context<any, any, any>): Record<string, unknown> {
+  const apiMode = c.req.header('X-Authrim-Admin-UI-Api-Mode');
+  const forwardedHost =
+    c.req.header('X-Authrim-Forwarded-Host') || c.req.header('X-Forwarded-Host');
+  const forwardedProto = c.req.header('X-Forwarded-Proto');
+  const proxyRequestId = c.req.header('X-Request-Id');
+  const correlationId = c.req.header('X-Correlation-Id');
+
+  if (!apiMode && !forwardedHost && !forwardedProto && !proxyRequestId && !correlationId) {
+    return {};
+  }
+
+  return {
+    admin_ui_api_mode: apiMode ?? undefined,
+    admin_ui_bff_forwarded_host: forwardedHost ?? undefined,
+    admin_ui_bff_forwarded_proto: forwardedProto ?? undefined,
+    admin_ui_bff_request_id: proxyRequestId ?? undefined,
+    admin_ui_bff_correlation_id: correlationId ?? undefined,
+  };
+}
+
+function getAdminActorAuditMetadata(
+  adminAuth: AdminAuthContext | undefined
+): Record<string, unknown> {
+  if (!adminAuth) {
+    return {
+      admin_actor_type: 'system',
+      admin_actor_id: 'system',
+      admin_auth_method: 'none',
+    };
+  }
+
+  if (adminAuth.authMethod === 'machine_access_token') {
+    return {
+      admin_actor_type: 'machine',
+      admin_actor_id: adminAuth.actorId ?? adminAuth.userId,
+      admin_auth_method: 'machine_access_token',
+      admin_machine_principal_id: adminAuth.actorId ?? adminAuth.userId,
+      admin_machine_principal_type: adminAuth.principalType,
+      admin_machine_credential_id: adminAuth.credentialId,
+      admin_machine_client_id: adminAuth.clientId,
+      admin_machine_client_auth_method: adminAuth.clientAuthMethod,
+      admin_machine_credential_strength: adminAuth.credentialStrength,
+      admin_machine_sender_constrained: adminAuth.senderConstrained,
+    };
+  }
+
+  const actorMetadata: Record<string, unknown> = {
+    admin_actor_type: 'admin_user',
+    admin_actor_id: adminAuth.actorId ?? adminAuth.userId,
+    admin_auth_method: adminAuth.authMethod,
+  };
+
+  if (adminAuth.transportAuth) {
+    actorMetadata.admin_transport_actor_type = adminAuth.transportAuth.actorType;
+    actorMetadata.admin_transport_actor_id = adminAuth.transportAuth.actorId;
+    actorMetadata.admin_transport_principal_type = adminAuth.transportAuth.principalType;
+    actorMetadata.admin_transport_credential_id = adminAuth.transportAuth.credentialId;
+    actorMetadata.admin_transport_client_id = adminAuth.transportAuth.clientId;
+    actorMetadata.admin_transport_auth_method = adminAuth.transportAuth.authMethod;
+    actorMetadata.admin_transport_client_auth_method = adminAuth.transportAuth.clientAuthMethod;
+  }
+
+  return actorMetadata;
+}
+
 function getObjectEncryptionKeyVersion(env: Env): number {
   const parsed = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION ?? '', 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_OBJECT_KEY_VERSION;
@@ -228,10 +304,10 @@ export async function loadAdminAuditDetail(
     ? ((
         await getObjectCatalogObjectRecordByPublicArtifactId(
           adminAdapter,
+          tenantId,
           detailArtifactId,
           'canonical_json',
-          0,
-          tenantId
+          0
         )
       )?.logical.id ?? null)
     : null;
@@ -295,10 +371,20 @@ export async function writeAdminAuditLog(
     const userAgent = c.req.header('User-Agent') || 'unknown';
     const createdAt = Date.now();
     const auditLogId = crypto.randomUUID();
+    const requestId = getRequestIdForAdminAudit(c);
+    const actorMetadata = getAdminActorAuditMetadata(adminAuth);
+    const inlineAuditMetadata = {
+      ...getAdminProxyAuditMetadata(c),
+      ...actorMetadata,
+    };
+    const metadata = {
+      ...(input.metadata ?? {}),
+      ...inlineAuditMetadata,
+    };
     const detailPayload: AdminAuditDetailPayload = {
       before: input.before ?? null,
       after: input.after ?? null,
-      metadata: input.metadata ?? null,
+      metadata: Object.keys(metadata).length > 0 ? metadata : null,
     };
     const hasExternalizableDetail = !!(
       detailPayload.before ||
@@ -306,14 +392,27 @@ export async function writeAdminAuditLog(
       detailPayload.metadata
     );
     const detailObjectCatalogId = hasExternalizableDetail
-      ? await storeAdminAuditDetail(c, adminAdapter, tenantId, auditLogId, detailPayload, createdAt)
+      ? await storeAdminAuditDetail(
+          c,
+          adminAdapter,
+          tenantId,
+          auditLogId,
+          detailPayload,
+          createdAt
+        )
       : null;
 
     await auditRepo.createAuditLog({
       id: auditLogId,
       tenant_id: tenantId,
-      admin_user_id: adminAuth?.userId || 'system',
-      admin_email: adminAuth?.email ?? undefined,
+      admin_user_id:
+        adminAuth?.authMethod === 'machine_access_token'
+          ? undefined
+          : adminAuth?.userId || 'system',
+      admin_email:
+        adminAuth?.authMethod === 'machine_access_token'
+          ? undefined
+          : (adminAuth?.email ?? undefined),
       action: input.action,
       resource_type: input.resourceType,
       resource_id: input.resourceId ?? undefined,
@@ -321,10 +420,13 @@ export async function writeAdminAuditLog(
       severity: input.severity ?? (input.result === 'failure' ? 'warn' : 'info'),
       ip_address: ipAddress,
       user_agent: userAgent,
+      request_id: requestId,
       session_id: adminAuth?.sessionId ?? undefined,
       before: detailObjectCatalogId ? undefined : (detailPayload.before ?? undefined),
       after: detailObjectCatalogId ? undefined : (detailPayload.after ?? undefined),
-      metadata: detailObjectCatalogId ? undefined : (detailPayload.metadata ?? undefined),
+      metadata: detailObjectCatalogId
+        ? inlineAuditMetadata
+        : (detailPayload.metadata ?? undefined),
       detail_object_catalog_id: detailObjectCatalogId ?? undefined,
     });
   } catch (error) {

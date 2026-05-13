@@ -155,9 +155,10 @@ export async function didRegisterChallengeHandler(
     const nonce = crypto.randomUUID();
 
     // Store challenge in ChallengeStore
-    const challengeStore = getChallengeStoreByDID(c.env, did);
+    const challengeStore = getChallengeStoreByDID(c.env, did, getTenantIdFromContext(c));
     await challengeStore.storeChallengeRpc({
       id: `did_reg:${challengeId}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'did_registration',
       userId, // Store user ID for linking after verification
       challenge,
@@ -248,11 +249,12 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     }
 
     // Get challenge store and consume challenge
-    const challengeStore = getChallengeStoreByDID(c.env, did);
+    const challengeStore = getChallengeStoreByDID(c.env, did, getTenantIdFromContext(c));
     let challengeData: ConsumeChallengeResponse;
     try {
       challengeData = await challengeStore.consumeChallengeRpc({
         id: `did_reg:${challenge_id}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'did_registration',
       });
     } catch {

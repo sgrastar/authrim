@@ -21,12 +21,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-function createContext(challengeId = 'challenge_123', env: Record<string, unknown> = {}) {
+function createContext(
+  challengeId = 'challenge_123',
+  env: Record<string, unknown> = {},
+  tenantId = 'default'
+) {
   return {
     req: {
+      path: '/auth/login-challenge',
       query: vi.fn((name: string) => (name === 'challenge_id' ? challengeId : undefined)),
+      header: vi.fn(() => undefined),
     },
     env,
+    get: vi.fn((key: string) => (key === 'tenantId' ? tenantId : undefined)),
     json: (payload: unknown, status = 200) =>
       new Response(JSON.stringify(payload), {
         status,
@@ -174,7 +181,7 @@ describe('login challenge metadata contract', () => {
     const { loginChallengeGetHandler } = await import('../login-challenge');
 
     const response = await loginChallengeGetHandler(
-      createContext('challenge_123', { DB: {}, DEFAULT_TENANT_ID: 'default' }) as never
+      createContext('challenge_123', { DB: {}, DEFAULT_TENANT_ID: 'default' }, 'tenant_a') as never
     );
     const body = (await response.json()) as Record<string, unknown>;
 
@@ -192,5 +199,32 @@ describe('login challenge metadata contract', () => {
         },
       ],
     });
+  });
+
+  it('rejects login challenge metadata from another tenant', async () => {
+    challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'challenge_123',
+      type: 'login',
+      userId: 'anonymous',
+      metadata: {
+        client_id: 'rp_web',
+        redirect_uri: 'https://app.example.com/callback',
+        tenant_id: 'tenant_b',
+      },
+    });
+    const { loginChallengeGetHandler } = await import('../login-challenge');
+
+    const response = await loginChallengeGetHandler(
+      createContext('challenge_123', { DB: {}, DEFAULT_TENANT_ID: 'default' }, 'tenant_a') as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error: 'invalid_request',
+      error_description: 'Challenge tenant does not match request tenant',
+    });
+    expect(getWebOriginRegistry).not.toHaveBeenCalled();
+    expect(isIframeOidcAuthEnabled).not.toHaveBeenCalled();
   });
 });

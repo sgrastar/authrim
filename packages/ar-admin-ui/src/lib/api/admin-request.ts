@@ -3,13 +3,6 @@ import { settingsContext } from '$lib/stores/settings-context.svelte';
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 const MAX_ADMIN_API_RESPONSE_BYTES = 2 * 1024 * 1024;
 
-function getSessionId(): string | null {
-	if (typeof localStorage !== 'undefined') {
-		return localStorage.getItem('sessionId');
-	}
-	return null;
-}
-
 function getPersistedTenantId(): string | null {
 	if (typeof sessionStorage !== 'undefined') {
 		const tenantId = sessionStorage.getItem('settings_tenant_id')?.trim();
@@ -22,7 +15,7 @@ function resolveTenantId(candidate?: string): string | null {
 	const resolved =
 		candidate?.trim() ||
 		getPersistedTenantId() ||
-		settingsContext.current.tenantId?.trim() ||
+		settingsContext.tenantId?.trim() ||
 		settingsContext.availableTenants[0]?.id ||
 		'';
 
@@ -41,11 +34,6 @@ export function buildAdminHeaders(
 
 	if (options.includeJsonContentType && !resolvedHeaders.has('Content-Type')) {
 		resolvedHeaders.set('Content-Type', 'application/json');
-	}
-
-	const sessionId = getSessionId();
-	if (sessionId && sessionId !== 'session-from-cookie') {
-		resolvedHeaders.set('X-Session-Id', sessionId);
 	}
 
 	const tenantId = resolveTenantId(options.tenantId);

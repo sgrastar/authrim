@@ -41,6 +41,7 @@ describe('tenant deletion jobs', () => {
     mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(mockAdapter);
     mockAdapter.query.mockReset();
     mockAdapter.execute.mockReset();
+    mockAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
     mockAdapter.transaction.mockClear();
     mockTx.execute.mockReset();
   });
@@ -56,8 +57,11 @@ describe('tenant deletion jobs', () => {
 
     await processPendingTenantDeletionJobs({} as never, logger);
 
+    expect(mockAdapter.query).toHaveBeenCalledWith(
+      "SELECT id, tenant_id, config FROM admin_jobs WHERE job_type = 'tenants/delete' AND status = 'pending' LIMIT 5"
+    );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
       [expect.any(Number), expect.any(Number), 'job-1', 'operator-tenant']
     );
     expect(mockTx.execute).toHaveBeenCalledWith(
@@ -101,5 +105,60 @@ describe('tenant deletion jobs', () => {
       ]
     );
     expect(mockAdapter.transaction).not.toHaveBeenCalled();
+  });
+
+  it('skips a job when another worker claimed it first', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-race',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant' }),
+      },
+    ]);
+    mockAdapter.execute.mockResolvedValueOnce({ rowsAffected: 0, success: true });
+
+    await processPendingTenantDeletionJobs({} as never, logger);
+
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      "UPDATE admin_jobs SET status = 'processing', started_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
+      [expect.any(Number), expect.any(Number), 'job-race', 'operator-tenant']
+    );
+    expect(mockAdapter.transaction).not.toHaveBeenCalled();
+    expect(mockTx.execute).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the scoped job failed when tenant row deletion fails', async () => {
+    const failure = new Error('delete failed');
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-3',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant' }),
+      },
+    ]);
+    mockAdapter.transaction.mockRejectedValueOnce(failure);
+
+    await processPendingTenantDeletionJobs({} as never, logger);
+
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      [
+        expect.stringContaining('delete failed'),
+        expect.any(Number),
+        expect.any(Number),
+        'job-3',
+        'operator-tenant',
+      ]
+    );
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ? AND tenant_id = ?",
+      expect.any(Array)
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'Tenant deletion job failed',
+      { job_id: 'job-3' },
+      failure
+    );
   });
 });

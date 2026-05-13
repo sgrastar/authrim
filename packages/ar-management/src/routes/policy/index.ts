@@ -141,8 +141,8 @@ async function validateClientOwnership(
   clientId: string
 ): Promise<ClientRecord | null> {
   const client = await coreAdapter.queryOne<ClientRecord>(
-    'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
-    [clientId, tenantId]
+    'SELECT client_id, tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+    [tenantId, clientId]
   );
   return client;
 }

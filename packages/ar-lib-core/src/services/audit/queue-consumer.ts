@@ -493,51 +493,83 @@ export async function processDLQQueue(
 // =============================================================================
 
 /**
- * Delete expired event log entries.
- *
- * @param db - Core database
- * @param tenantId - Tenant ID (optional, deletes all if not specified)
- * @param batchSize - Max entries to delete per call (default: 1000)
- * @returns Number of entries deleted
+ * Delete expired event log entries for one tenant.
  */
-export async function cleanupExpiredEventLogs(
+export async function cleanupExpiredTenantEventLogs(
   db: DatabaseSource,
-  tenantId?: string,
+  tenantId: string,
   batchSize: number = 1000
 ): Promise<number> {
   const now = Date.now();
   const adapter = ensureDatabaseAdapter(db, 'audit-cleanup-event');
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('cleanupExpiredTenantEventLogs requires tenantId');
+  }
 
-  const sql = tenantId
-    ? 'DELETE FROM event_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?'
-    : 'DELETE FROM event_log WHERE retention_until < ? LIMIT ?';
-
-  const params = tenantId ? [now, tenantId, batchSize] : [now, batchSize];
-  const result = await adapter.execute(sql, params);
+  const result = await adapter.execute(
+    'DELETE FROM event_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?',
+    [now, normalizedTenantId, batchSize]
+  );
   return result.rowsAffected;
 }
 
 /**
- * Delete expired PII log entries.
+ * Delete expired event log entries across all tenants.
  *
- * @param db - PII database
- * @param tenantId - Tenant ID (optional, deletes all if not specified)
- * @param batchSize - Max entries to delete per call (default: 1000)
- * @returns Number of entries deleted
+ * This is a system maintenance operation and must not be used from tenant request paths.
  */
-export async function cleanupExpiredPIILogs(
+export async function cleanupExpiredGlobalEventLogs(
   db: DatabaseSource,
-  tenantId?: string,
+  batchSize: number = 1000
+): Promise<number> {
+  const now = Date.now();
+  const adapter = ensureDatabaseAdapter(db, 'audit-cleanup-event-global');
+
+  const result = await adapter.execute('DELETE FROM event_log WHERE retention_until < ? LIMIT ?', [
+    now,
+    batchSize,
+  ]);
+  return result.rowsAffected;
+}
+
+/**
+ * Delete expired PII log entries for one tenant.
+ */
+export async function cleanupExpiredTenantPIILogs(
+  db: DatabaseSource,
+  tenantId: string,
   batchSize: number = 1000
 ): Promise<number> {
   const now = Date.now();
   const adapter = ensureDatabaseAdapter(db, 'audit-cleanup-pii');
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('cleanupExpiredTenantPIILogs requires tenantId');
+  }
 
-  const sql = tenantId
-    ? 'DELETE FROM pii_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?'
-    : 'DELETE FROM pii_log WHERE retention_until < ? LIMIT ?';
+  const result = await adapter.execute(
+    'DELETE FROM pii_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?',
+    [now, normalizedTenantId, batchSize]
+  );
+  return result.rowsAffected;
+}
 
-  const params = tenantId ? [now, tenantId, batchSize] : [now, batchSize];
-  const result = await adapter.execute(sql, params);
+/**
+ * Delete expired PII log entries across all tenants.
+ *
+ * This is a system maintenance operation and must not be used from tenant request paths.
+ */
+export async function cleanupExpiredGlobalPIILogs(
+  db: DatabaseSource,
+  batchSize: number = 1000
+): Promise<number> {
+  const now = Date.now();
+  const adapter = ensureDatabaseAdapter(db, 'audit-cleanup-pii-global');
+
+  const result = await adapter.execute('DELETE FROM pii_log WHERE retention_until < ? LIMIT ?', [
+    now,
+    batchSize,
+  ]);
   return result.rowsAffected;
 }

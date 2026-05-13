@@ -35,7 +35,6 @@ import {
   type ShardResolution,
   ID_PREFIX,
 } from './region-sharding';
-import { getDefaultTenantId } from './issuer';
 
 /**
  * Type alias for CIBARequestStore stub
@@ -145,19 +144,24 @@ export function parseCIBARequestId(
  * @throws Error if cibaId format is invalid
  *
  * @example
- * const { stub, resolution } = getCIBARequestStoreById(env, "g1:apac:3:cba_abc...");
+ * const { stub, resolution } = getCIBARequestStoreById(env, "g1:apac:3:cba_abc...", tenantId);
  * const response = await stub.fetch(new Request('https://internal/poll'));
  */
 export function getCIBARequestStoreById(
   env: Env,
   cibaId: string,
-  tenantId: string = getDefaultTenantId(env)
+  tenantId: string
 ): {
   stub: CIBARequestStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   authReqId: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('getCIBARequestStoreById requires tenantId');
+  }
+
   const parsed = parseCIBARequestId(cibaId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded CIBA request ID format: ${cibaId}`);
@@ -170,7 +174,7 @@ export function getCIBARequestStoreById(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'ciba',
     resolution.shardIndex

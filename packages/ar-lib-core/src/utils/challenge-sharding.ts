@@ -20,7 +20,7 @@
 import type { Env } from '../types/env';
 import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
-import { fnv1a32, DEFAULT_TENANT_ID } from './tenant-context';
+import { fnv1a32 } from './tenant-context';
 import {
   getRegionShardConfig,
   resolveShardForNewResource,
@@ -155,8 +155,11 @@ export function getChallengeShardIndexByUserId(userId: string, shardCount: numbe
  * buildChallengeShardInstanceName(7)
  * // => "tenant:default:challenge:shard-7"
  */
-export function buildChallengeShardInstanceName(shardIndex: number): string {
-  return `tenant:${DEFAULT_TENANT_ID}:challenge:shard-${shardIndex}`;
+export function buildChallengeShardInstanceName(
+  shardIndex: number,
+  tenantId: string
+): string {
+  return `tenant:${tenantId}:challenge:shard-${shardIndex}`;
 }
 
 /**
@@ -174,11 +177,12 @@ export function buildChallengeShardInstanceName(shardIndex: number): string {
  */
 export async function getChallengeStoreByEmail(
   env: Env,
-  email: string
+  email: string,
+  tenantId: string
 ): Promise<ChallengeStoreStub> {
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByEmail(email, shardCount);
-  const instanceName = buildChallengeShardInstanceName(shardIndex);
+  const instanceName = buildChallengeShardInstanceName(shardIndex, tenantId);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
   return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
@@ -195,16 +199,17 @@ export async function getChallengeStoreByEmail(
  * @returns Promise<DurableObjectStub<ChallengeStore>> for the challenge shard
  *
  * @example
- * const challengeStore = await getChallengeStoreByUserId(env, userId);
+ * const challengeStore = await getChallengeStoreByUserId(env, userId, tenantId);
  * await challengeStore.consumeChallengeRpc({ ... });
  */
 export async function getChallengeStoreByUserId(
   env: Env,
-  userId: string
+  userId: string,
+  tenantId: string
 ): Promise<ChallengeStoreStub> {
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByUserId(userId, shardCount);
-  const instanceName = buildChallengeShardInstanceName(shardIndex);
+  const instanceName = buildChallengeShardInstanceName(shardIndex, tenantId);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
   return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
@@ -252,16 +257,17 @@ export function getChallengeShardIndexByChallengeId(
  * @returns Promise<DurableObjectStub<ChallengeStore>> for the challenge shard
  *
  * @example
- * const challengeStore = await getChallengeStoreByChallengeId(env, challengeId);
+ * const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
  * await challengeStore.consumeChallengeRpc({ ... });
  */
 export async function getChallengeStoreByChallengeId(
   env: Env,
-  challengeId: string
+  challengeId: string,
+  tenantId: string
 ): Promise<ChallengeStoreStub> {
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByChallengeId(challengeId, shardCount);
-  const instanceName = buildChallengeShardInstanceName(shardIndex);
+  const instanceName = buildChallengeShardInstanceName(shardIndex, tenantId);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
   return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
@@ -298,14 +304,18 @@ export function getChallengeShardIndexByDID(did: string, shardCount: number): nu
  * @returns DurableObjectStub<ChallengeStore> for the challenge shard
  *
  * @example
- * const challengeStore = getChallengeStoreByDID(env, 'did:web:example.com');
+ * const challengeStore = getChallengeStoreByDID(env, 'did:web:example.com', tenantId);
  * await challengeStore.storeChallengeRpc({ ... });
  */
-export function getChallengeStoreByDID(env: Env, did: string): ChallengeStoreStub {
+export function getChallengeStoreByDID(
+  env: Env,
+  did: string,
+  tenantId: string
+): ChallengeStoreStub {
   // Use a synchronous version for DID - simpler since it's just for sharding
   const shardCount = cachedChallengeShardCount || DEFAULT_CHALLENGE_SHARD_COUNT;
   const shardIndex = getChallengeShardIndexByDID(did, shardCount);
-  const instanceName = buildChallengeShardInstanceName(shardIndex);
+  const instanceName = buildChallengeShardInstanceName(shardIndex, tenantId);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
   return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
@@ -323,17 +333,17 @@ export function getChallengeStoreByDID(env: Env, did: string): ChallengeStoreStu
  *
  * @param env - Environment with KV binding for region shard config
  * @param shardKey - Key for shard calculation (e.g., userId, email, or challengeId)
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing challengeId, shardIndex, regionKey, and generation
  *
  * @example
- * const { challengeId, uuid, resolution } = await generateRegionShardedChallengeId(env, userId);
+ * const { challengeId, uuid, resolution } = await generateRegionShardedChallengeId(env, userId, tenantId);
  * // challengeId: "g1:apac:3:ch_abc123-def456-..."
  */
 export async function generateRegionShardedChallengeId(
   env: Env,
   shardKey: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<{
   challengeId: string;
   uuid: string;
@@ -408,18 +418,18 @@ export function isRegionShardedChallengeId(challengeId: string): boolean {
  *
  * @param env - Environment object with DO bindings
  * @param challengeId - Region-sharded challenge ID
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing DO stub and resolution info
  * @throws Error if challengeId format is invalid
  *
  * @example
- * const { stub, resolution } = getRegionAwareChallengeStore(env, "g1:apac:3:ch_abc123");
+ * const { stub, resolution } = getRegionAwareChallengeStore(env, "g1:apac:3:ch_abc123", tenantId);
  * const response = await stub.consumeChallengeRpc({ ... });
  */
 export function getRegionAwareChallengeStore(
   env: Env,
   challengeId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): {
   stub: ChallengeStoreStub;
   resolution: ShardResolution;
@@ -462,17 +472,17 @@ export function getRegionAwareChallengeStore(
  *
  * @param env - Environment object with DO bindings
  * @param shardKey - Key for shard calculation (e.g., userId, email)
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing DO stub, new challengeId, and resolution info
  *
  * @example
- * const { stub, challengeId, resolution } = await getRegionAwareChallengeStoreForNew(env, userId);
+ * const { stub, challengeId, resolution } = await getRegionAwareChallengeStoreForNew(env, userId, tenantId);
  * await stub.storeChallengeRpc({ id: challengeId, ... });
  */
 export async function getRegionAwareChallengeStoreForNew(
   env: Env,
   shardKey: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<{
   stub: ChallengeStoreStub;
   challengeId: string;

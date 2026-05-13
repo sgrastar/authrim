@@ -88,6 +88,7 @@ class InMemoryChallengeStore {
     const now = Date.now();
     this.challenges.set(request.id, {
       id: request.id,
+      tenantId: request.tenantId,
       type: request.type,
       userId: request.userId,
       challenge: request.challenge,
@@ -116,6 +117,9 @@ class InMemoryChallengeStore {
     }
     if (challenge.type !== request.type) {
       throw new Error('Challenge type mismatch');
+    }
+    if (challenge.tenantId !== request.tenantId) {
+      throw new Error('Challenge tenant mismatch');
     }
     if (request.challenge && challenge.challenge !== request.challenge) {
       throw new Error('Challenge value mismatch');
@@ -381,9 +385,11 @@ async function issueDelegatedWriteReceipt(input: {
   });
   const action = await startStepUpAction(input.env, {
     stepUpToken: requirement.step_up_token,
+    tenantId: 'tenant-a',
   });
   const completed = await completeStepUpAction(input.env, {
     actionId: action.action_id,
+    tenantId: 'tenant-a',
     method: 'portal_confirm',
     input: { confirmed: true },
   });

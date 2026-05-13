@@ -67,6 +67,7 @@ function createContext(body: Record<string, unknown>) {
       json: vi.fn(async () => body),
     },
     env: {},
+    get: vi.fn((key: string) => (key === 'tenantId' ? 'tenant_test' : undefined)),
     header: (name: string, value: string) => {
       headers.append(name, value);
     },
@@ -123,7 +124,8 @@ describe('managed Direct Auth browser session finish', () => {
         authTime: expect.any(Number),
         client_id: 'login-ui',
         direct_auth_channel: 'browser',
-      })
+      }),
+      'tenant_test'
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_managed_browser');
   });

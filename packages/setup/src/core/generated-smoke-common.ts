@@ -4,6 +4,11 @@ import { parseConfig, type AuthrimConfig } from './config.js';
 import { resolveGeneratedEnvValidationTarget } from './generated-env-validator.js';
 import { findKeysDirectory } from './paths.js';
 import { resolveIssuerUrl } from './url-config.js';
+import {
+  getSetupMachinePrivateKeyPath,
+  requestAdminMachineAccessToken,
+  setupMachineKeyFilesExist,
+} from './admin-machine-access.js';
 
 export type SmokeCheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -225,6 +230,8 @@ export async function readGeneratedAdminApiSecret(options: {
   env: string;
   adminSecret?: string;
   adminSecretPath?: string;
+  baseUrl?: string;
+  tenantId?: string;
 }): Promise<{ secret: string; path: string }> {
   if (options.adminSecret && options.adminSecret.trim()) {
     return { secret: options.adminSecret.trim(), path: '(inline)' };
@@ -240,6 +247,18 @@ export async function readGeneratedAdminApiSecret(options: {
 
   if (!explicitPath) {
     throw new Error('admin_api_secret_not_found');
+  }
+
+  if (!options.adminSecretPath && options.baseUrl && setupMachineKeyFilesExist(explicitPath)) {
+    const token = await requestAdminMachineAccessToken({
+      apiBaseUrl: options.baseUrl,
+      keysDir: explicitPath,
+      tenantId: options.tenantId,
+    });
+    return {
+      secret: token.accessToken,
+      path: getSetupMachinePrivateKeyPath(explicitPath),
+    };
   }
 
   const secretPath = options.adminSecretPath || join(explicitPath, 'admin_api_secret.txt');

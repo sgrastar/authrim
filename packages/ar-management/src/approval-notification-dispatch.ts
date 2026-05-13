@@ -535,6 +535,7 @@ export async function dispatchApprovalNotification(
     }
 
     const otpChallenge = await issueApprovalOtpChallenge(c.env, {
+      tenantId: input.request.tenant_id,
       artifactId: completionArtifact.artifact_id,
       method,
       target,

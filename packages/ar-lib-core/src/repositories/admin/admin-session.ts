@@ -9,6 +9,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 import type { AdminSession, AdminSessionCreateInput } from '../../types/admin-user';
 
@@ -60,7 +61,7 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
 
     const session: AdminSessionEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       admin_user_id: input.admin_user_id,
       ip_address: input.ip_address ?? null,
       user_agent: input.user_agent ?? null,

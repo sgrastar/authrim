@@ -239,4 +239,73 @@ describe('adminAuditRouter detail permission', () => {
     expect(res.status).toBe(200);
     expect(mockLoadAdminAuditDetail).toHaveBeenCalled();
   });
+
+  it('exposes machine actor fields in list responses', async () => {
+    mockAuditRepo.searchAuditLogs.mockResolvedValue({
+      items: [
+        {
+          id: 'audit-machine-1',
+          tenant_id: 'tenant-a',
+          admin_user_id: null,
+          admin_email: null,
+          action: 'ai_grant.created',
+          resource_type: 'ai_grant',
+          resource_id: 'grant-1',
+          result: 'success',
+          severity: 'info',
+          error_code: null,
+          error_message: null,
+          ip_address: '203.0.113.9',
+          user_agent: 'MCP Admin/1.0',
+          request_id: 'req-1',
+          session_id: null,
+          before: null,
+          after: null,
+          metadata: {
+            admin_actor_type: 'machine',
+            admin_actor_id: 'amp_mcp_admin',
+            admin_auth_method: 'machine_access_token',
+            admin_machine_principal_id: 'amp_mcp_admin',
+            admin_machine_principal_type: 'mcp_server',
+            admin_machine_credential_id: 'amk_mcp_admin',
+            admin_machine_client_id: 'mcp-admin-server',
+            admin_machine_client_auth_method: 'private_key_jwt',
+          },
+          has_detail: false,
+          detail_artifact_id: null,
+          created_at: 1714550400000,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 50,
+      totalPages: 1,
+    });
+
+    const app = createApp();
+    const res = await app.request(
+      '/api/admin/admin-audit-log',
+      {
+        method: 'GET',
+        headers: {
+          'X-Admin-Permissions': 'admin:admin_audit:read',
+        },
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({
+      actor_type: 'machine',
+      actor_id: 'amp_mcp_admin',
+      actor_display_name: 'mcp-admin-server',
+      machine_principal_id: 'amp_mcp_admin',
+      machine_principal_type: 'mcp_server',
+      machine_credential_id: 'amk_mcp_admin',
+      machine_client_id: 'mcp-admin-server',
+      machine_client_auth_method: 'private_key_jwt',
+    });
+    expect(mockUserRepo.getAdminUser).not.toHaveBeenCalledWith('amp_mcp_admin');
+  });
 });

@@ -150,13 +150,36 @@ export interface UserCoreFilterOptions {
   pii_partition?: string;
 }
 
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
+function resolveInputTenantId(
+  repositoryTenantId: string,
+  inputTenantId: string | undefined,
+  context: string
+): string {
+  if (inputTenantId === undefined) {
+    return repositoryTenantId;
+  }
+  const normalized = requireTenantId(inputTenantId, context);
+  if (normalized !== repositoryTenantId) {
+    throw new Error(`${context} tenantId does not match repository tenant`);
+  }
+  return normalized;
+}
+
 /**
  * User Core Repository
  */
 export class UserCoreRepository extends BaseRepository<UserCore> {
   private readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     super(adapter, {
       tableName: 'users_core',
       primaryKey: 'id',
@@ -181,7 +204,7 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
         'locked_until',
       ],
     });
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'UserCoreRepository');
   }
 
   /**
@@ -193,10 +216,15 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
   async createUser(input: CreateUserCoreInput): Promise<UserCore> {
     const id = input.id ?? generateId();
     const now = getCurrentTimestamp();
+    const tenantId = resolveInputTenantId(
+      this.tenantId,
+      input.tenant_id,
+      'UserCoreRepository.createUser'
+    );
 
     const user: UserCore = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: tenantId,
       email_verified: input.email_verified ?? false,
       phone_number_verified: input.phone_number_verified ?? false,
       email_domain_hash: input.email_domain_hash ?? null,
@@ -316,28 +344,30 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
    * Used to find users with failed PII writes for retry.
    *
    * @param status - PII status to filter by
-   * @param tenantId - Optional tenant filter
+   * @param tenantId - Tenant filter
    * @param limit - Maximum number of results (1-1000, default 100)
    * @returns Users with matching PII status
    */
   async findByPIIStatus(
     status: PIIStatus,
-    tenantId?: string,
+    tenantId: string,
     limit: number = 100
   ): Promise<UserCore[]> {
     const validLimit = this.validateLimit(limit);
-    let rows: Record<string, unknown>[];
-    if (tenantId) {
-      rows = await this.adapter.query<Record<string, unknown>>(
-        'SELECT * FROM users_core WHERE pii_status = ? AND tenant_id = ? AND is_active = 1 LIMIT ?',
-        [status, tenantId, validLimit]
-      );
-    } else {
-      rows = await this.adapter.query<Record<string, unknown>>(
-        'SELECT * FROM users_core WHERE pii_status = ? AND is_active = 1 LIMIT ?',
-        [status, validLimit]
-      );
-    }
+    const normalizedTenantId = requireTenantId(tenantId, 'UserCoreRepository.findByPIIStatus');
+    const rows = await this.adapter.query<Record<string, unknown>>(
+      'SELECT * FROM users_core WHERE pii_status = ? AND tenant_id = ? AND is_active = 1 LIMIT ?',
+      [status, normalizedTenantId, validLimit]
+    );
+    return rows.map((row) => this.mapRowToEntity(row));
+  }
+
+  async findByPIIStatusGlobal(status: PIIStatus, limit: number = 100): Promise<UserCore[]> {
+    const validLimit = this.validateLimit(limit);
+    const rows = await this.adapter.query<Record<string, unknown>>(
+      'SELECT * FROM users_core WHERE pii_status = ? AND is_active = 1 LIMIT ?',
+      [status, validLimit]
+    );
     return rows.map((row) => this.mapRowToEntity(row));
   }
 
@@ -361,22 +391,26 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
    * Used for domain-based role assignment (Phase 8).
    *
    * @param domainHash - Email domain blind index
-   * @param tenantId - Optional tenant filter
+   * @param tenantId - Tenant filter
    * @returns Users with matching domain
    */
-  async findByEmailDomainHash(domainHash: string, tenantId?: string): Promise<UserCore[]> {
-    let rows: Record<string, unknown>[];
-    if (tenantId) {
-      rows = await this.adapter.query<Record<string, unknown>>(
-        'SELECT * FROM users_core WHERE email_domain_hash = ? AND tenant_id = ? AND is_active = 1',
-        [domainHash, tenantId]
-      );
-    } else {
-      rows = await this.adapter.query<Record<string, unknown>>(
-        'SELECT * FROM users_core WHERE email_domain_hash = ? AND is_active = 1',
-        [domainHash]
-      );
-    }
+  async findByEmailDomainHash(domainHash: string, tenantId: string): Promise<UserCore[]> {
+    const normalizedTenantId = requireTenantId(
+      tenantId,
+      'UserCoreRepository.findByEmailDomainHash'
+    );
+    const rows = await this.adapter.query<Record<string, unknown>>(
+      'SELECT * FROM users_core WHERE email_domain_hash = ? AND tenant_id = ? AND is_active = 1',
+      [domainHash, normalizedTenantId]
+    );
+    return rows.map((row) => this.mapRowToEntity(row));
+  }
+
+  async findByEmailDomainHashGlobal(domainHash: string): Promise<UserCore[]> {
+    const rows = await this.adapter.query<Record<string, unknown>>(
+      'SELECT * FROM users_core WHERE email_domain_hash = ? AND is_active = 1',
+      [domainHash]
+    );
     return rows.map((row) => this.mapRowToEntity(row));
   }
 
@@ -393,8 +427,14 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
   ): Promise<PaginationResult<UserCore>> {
     const conditions: FilterCondition[] = [];
 
-    if (filters.tenant_id) {
-      conditions.push({ field: 'tenant_id', operator: 'eq', value: filters.tenant_id });
+    if (filters.tenant_id !== undefined) {
+      const tenantId = requireTenantId(filters.tenant_id, 'UserCoreRepository.searchUsers');
+      if (tenantId !== this.tenantId) {
+        throw new Error('UserCoreRepository.searchUsers tenantId does not match repository tenant');
+      }
+      conditions.push({ field: 'tenant_id', operator: 'eq', value: tenantId });
+    } else {
+      conditions.push({ field: 'tenant_id', operator: 'eq', value: this.tenantId });
     }
     if (filters.user_type) {
       conditions.push({ field: 'user_type', operator: 'eq', value: filters.user_type });
@@ -424,16 +464,28 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
    *
    * Returns count of users per PII partition.
    *
-   * @param tenantId - Optional tenant filter
+   * @param tenantId - Tenant filter
    * @returns Map of partition name to user count
    */
-  async getPartitionStats(tenantId?: string): Promise<Map<string, number>> {
-    const sql = tenantId
-      ? 'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_partition'
-      : 'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE is_active = 1 GROUP BY pii_partition';
+  async getPartitionStats(tenantId: string): Promise<Map<string, number>> {
+    const normalizedTenantId = requireTenantId(tenantId, 'UserCoreRepository.getPartitionStats');
+    const sql =
+      'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_partition';
 
-    const params = tenantId ? [tenantId] : [];
+    const params = [normalizedTenantId];
     const results = await this.adapter.query<{ pii_partition: string; count: number }>(sql, params);
+
+    const stats = new Map<string, number>();
+    for (const row of results) {
+      stats.set(row.pii_partition, row.count);
+    }
+    return stats;
+  }
+
+  async getGlobalPartitionStats(): Promise<Map<string, number>> {
+    const results = await this.adapter.query<{ pii_partition: string; count: number }>(
+      'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE is_active = 1 GROUP BY pii_partition'
+    );
 
     const stats = new Map<string, number>();
     for (const row of results) {
@@ -447,16 +499,28 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
    *
    * Returns count of users per PII status.
    *
-   * @param tenantId - Optional tenant filter
+   * @param tenantId - Tenant filter
    * @returns Map of status to user count
    */
-  async getPIIStatusStats(tenantId?: string): Promise<Map<PIIStatus, number>> {
-    const sql = tenantId
-      ? 'SELECT pii_status, COUNT(*) as count FROM users_core WHERE tenant_id = ? GROUP BY pii_status'
-      : 'SELECT pii_status, COUNT(*) as count FROM users_core GROUP BY pii_status';
+  async getPIIStatusStats(tenantId: string): Promise<Map<PIIStatus, number>> {
+    const normalizedTenantId = requireTenantId(tenantId, 'UserCoreRepository.getPIIStatusStats');
+    const sql =
+      'SELECT pii_status, COUNT(*) as count FROM users_core WHERE tenant_id = ? GROUP BY pii_status';
 
-    const params = tenantId ? [tenantId] : [];
+    const params = [normalizedTenantId];
     const results = await this.adapter.query<{ pii_status: PIIStatus; count: number }>(sql, params);
+
+    const stats = new Map<PIIStatus, number>();
+    for (const row of results) {
+      stats.set(row.pii_status, row.count);
+    }
+    return stats;
+  }
+
+  async getGlobalPIIStatusStats(): Promise<Map<PIIStatus, number>> {
+    const results = await this.adapter.query<{ pii_status: PIIStatus; count: number }>(
+      'SELECT pii_status, COUNT(*) as count FROM users_core GROUP BY pii_status'
+    );
 
     const stats = new Map<PIIStatus, number>();
     for (const row of results) {

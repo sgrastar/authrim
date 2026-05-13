@@ -14,6 +14,9 @@
  * - /api/admin/admin-attributes - Admin ABAC attribute management
  * - /api/admin/admin-relationships - Admin ReBAC relationship management
  * - /api/admin/admin-policies - Admin policy management
+ * - /api/admin/storage-destinations - Storage destination management
+ * - /api/admin/database-connections - Platform database connection management
+ * - /api/admin/machine-access - Admin Machine Access management
  */
 
 import { Hono } from 'hono';
@@ -32,6 +35,9 @@ import { myPasskeysRouter } from './my-passkeys';
 import { adminAccessControlRouter } from './admin-access-control';
 import { adminApprovalsRouter } from './admin-approvals';
 import { operationalLogsRouter } from './operational-logs';
+import { storageDestinationsRouter } from './storage-destinations';
+import { databaseConnectionsRouter } from './database-connections';
+import { machineAccessRouter } from './machine-access';
 
 // Create main router for admin management
 export const adminManagementRouter = new Hono<{ Bindings: Env }>();
@@ -53,6 +59,9 @@ adminManagementRouter.route('/admin-audit-log', adminAuditRouter);
 adminManagementRouter.route('/me/passkeys', myPasskeysRouter);
 adminManagementRouter.route('/approvals', adminApprovalsRouter);
 adminManagementRouter.route('/operational-logs', operationalLogsRouter);
+adminManagementRouter.route('/storage-destinations', storageDestinationsRouter);
+adminManagementRouter.route('/database-connections', databaseConnectionsRouter);
+adminManagementRouter.route('/machine-access', machineAccessRouter);
 
 // Mount sub-routers - Admin ABAC/ReBAC/Policies (these also have /admins/:userId subroutes)
 adminManagementRouter.route('/', adminAbacRouter);
@@ -71,5 +80,8 @@ export { adminPoliciesRouter } from './admin-policies';
 export { myPasskeysRouter } from './my-passkeys';
 export { adminApprovalsRouter } from './admin-approvals';
 export { operationalLogsRouter } from './operational-logs';
+export { storageDestinationsRouter } from './storage-destinations';
+export { databaseConnectionsRouter } from './database-connections';
+export { machineAccessRouter } from './machine-access';
 
 export default adminManagementRouter;

@@ -40,8 +40,8 @@ export async function upsertOAuthClientConsent(
   }>(
     `SELECT id, created_at, consent_version
        FROM oauth_client_consents
-      WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
-    [input.userId, input.clientId, input.tenantId]
+      WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+    [input.tenantId, input.userId, input.clientId]
   );
 
   if (!existing) {
@@ -87,7 +87,7 @@ export async function upsertOAuthClientConsent(
             tos_version = ?,
             consent_version = ?,
             updated_at = ?
-      WHERE user_id = ? AND client_id = ? AND tenant_id = ?`,
+      WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
     [
       input.scope,
       input.selectedScopesJson ?? null,
@@ -97,9 +97,9 @@ export async function upsertOAuthClientConsent(
       input.tosVersion ?? null,
       nextConsentVersion,
       input.now,
+      input.tenantId,
       input.userId,
       input.clientId,
-      input.tenantId,
     ]
   );
 

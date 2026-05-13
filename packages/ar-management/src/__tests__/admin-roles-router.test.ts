@@ -12,13 +12,23 @@ const repoMocks = vi.hoisted(() => ({
   updateRole: vi.fn(),
   deleteRole: vi.fn(),
   getUsersByRole: vi.fn(),
+  getAssignmentsByRole: vi.fn(),
+  assignRole: vi.fn(),
+  assignmentExists: vi.fn(),
+  getAssignment: vi.fn(),
+  updateAssignment: vi.fn(),
+  removeAssignmentById: vi.fn(),
+  findAdminUserByTenantAndId: vi.fn(),
   getEffectivePermissions: vi.fn(),
   createAuditLog: vi.fn(),
+  adminAdapterQueryOne: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
-  const mockAdminAdapter = {};
+  const mockAdminAdapter = {
+    queryOne: repoMocks.adminAdapterQueryOne,
+  };
 
   class MockAdminRoleRepository {
     getRolesByTenant = repoMocks.getRolesByTenant;
@@ -33,6 +43,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
   class MockAdminRoleAssignmentRepository {
     getUsersByRole = repoMocks.getUsersByRole;
+    getAssignmentsByRole = repoMocks.getAssignmentsByRole;
+    assignRole = repoMocks.assignRole;
+    assignmentExists = repoMocks.assignmentExists;
+    getAssignment = repoMocks.getAssignment;
+    updateAssignment = repoMocks.updateAssignment;
+    removeAssignmentById = repoMocks.removeAssignmentById;
+  }
+
+  class MockAdminUserRepository {
+    findByTenantAndId = repoMocks.findAdminUserByTenantAndId;
   }
 
   class MockAdminAuditLogRepository {
@@ -50,6 +70,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     requireDedicatedAdminDatabaseAdapter: vi.fn().mockReturnValue(mockAdminAdapter),
+    AdminUserRepository: MockAdminUserRepository,
     AdminRoleRepository: MockAdminRoleRepository,
     AdminRoleAssignmentRepository: MockAdminRoleAssignmentRepository,
     AdminAuditLogRepository: MockAdminAuditLogRepository,
@@ -88,6 +109,9 @@ import { adminRolesRouter } from '../routes/admin-management/admin-roles';
 type ErrorResponseBody = {
   error_code?: string;
   assigned_user_count?: number;
+  scope_type?: string;
+  scope_id?: string;
+  total?: number;
 };
 
 function createTestApp() {
@@ -137,6 +161,382 @@ describe('adminRolesRouter', () => {
 
     expect(response.status).toBe(200);
     expect(body.assigned_user_count).toBe(1);
+  });
+
+  it('should list role assignments inside the caller tenant scope', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      name: 'support',
+    });
+    repoMocks.getAssignmentsByRole.mockResolvedValue([
+      {
+        id: 'assignment_1',
+        tenant_id: 'tenant_123',
+        admin_user_id: 'admin_1',
+        admin_role_id: 'role_support',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+        expires_at: null,
+        assigned_by: 'admin_root',
+        created_at: 1000,
+        user: {
+          id: 'admin_1',
+          email: 'admin@example.com',
+          name: null,
+          status: 'active',
+          is_active: true,
+        },
+      },
+    ]);
+
+    const { app, env } = createTestApp();
+    const response = await app.request('/api/admin/admin-roles/role_support/assignments', {}, env);
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(200);
+    expect(body.total).toBe(1);
+    expect(repoMocks.getAssignmentsByRole).toHaveBeenCalledWith('role_support', false);
+  });
+
+  it('should create a tenant-scoped role assignment', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      hierarchy_level: 10,
+      name: 'support',
+    });
+    repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+      id: 'admin_2',
+      tenant_id: 'tenant_123',
+      email: 'support@example.com',
+    });
+    repoMocks.assignmentExists.mockResolvedValue(false);
+    repoMocks.assignRole.mockResolvedValue({
+      id: 'assignment_1',
+      tenant_id: 'tenant_123',
+      admin_user_id: 'admin_2',
+      admin_role_id: 'role_support',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+      expires_at: null,
+      assigned_by: 'admin_1',
+      created_at: 1000,
+    });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({
+          admin_user_id: 'admin_2',
+          scope_type: 'tenant',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(201);
+    expect(body.scope_type).toBe('tenant');
+    expect(body.scope_id).toBe('tenant_123');
+    expect(repoMocks.assignRole).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: 'tenant_123',
+        admin_user_id: 'admin_2',
+        admin_role_id: 'role_support',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      })
+    );
+  });
+
+  it('should reject duplicate role assignments for the same scope binding', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      hierarchy_level: 10,
+      name: 'support',
+    });
+    repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+      id: 'admin_2',
+      tenant_id: 'tenant_123',
+      email: 'support@example.com',
+    });
+    repoMocks.assignmentExists.mockResolvedValue(true);
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({
+          admin_user_id: 'admin_2',
+          scope_type: 'tenant',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(409);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_CONFLICT);
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
+  it('should reject tenant-scoped role assignment for another tenant', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      hierarchy_level: 10,
+      name: 'support',
+    });
+    repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+      id: 'admin_2',
+      tenant_id: 'tenant_123',
+      email: 'support@example.com',
+    });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({
+          admin_user_id: 'admin_2',
+          scope_type: 'tenant',
+          scope_id: 'tenant_other',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
+  it('should reject global role assignment without platform authority', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      hierarchy_level: 10,
+      name: 'support',
+    });
+    repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+      id: 'admin_2',
+      tenant_id: 'tenant_123',
+      email: 'support@example.com',
+    });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({
+          admin_user_id: 'admin_2',
+          scope_type: 'global',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(403);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
+  it('should allow global role assignment with platform authority', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      hierarchy_level: 10,
+      name: 'support',
+    });
+    repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+      id: 'admin_2',
+      tenant_id: 'tenant_123',
+      email: 'support@example.com',
+    });
+    repoMocks.assignmentExists.mockResolvedValue(false);
+    repoMocks.assignRole.mockResolvedValue({
+      id: 'assignment_global',
+      tenant_id: 'tenant_123',
+      admin_user_id: 'admin_2',
+      admin_role_id: 'role_support',
+      scope_type: 'global',
+      scope_id: null,
+      expires_at: null,
+      assigned_by: 'admin_1',
+      created_at: 1000,
+    });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `*,${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({
+          admin_user_id: 'admin_2',
+          scope_type: 'global',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(201);
+    expect(body.scope_type).toBe('global');
+    expect(repoMocks.assignRole).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope_type: 'global',
+        scope_id: undefined,
+      })
+    );
+  });
+
+  it('should reject org-scoped admin role assignment creation for now', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      hierarchy_level: 10,
+      name: 'support',
+    });
+    repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+      id: 'admin_2',
+      tenant_id: 'tenant_123',
+      email: 'support@example.com',
+    });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({
+          admin_user_id: 'admin_2',
+          scope_type: 'org',
+          scope_id: 'org_1',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as ErrorResponseBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
+  it('should update role assignment scope binding', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      permissions: ['admin:users:read'],
+      hierarchy_level: 10,
+      name: 'support',
+    });
+    repoMocks.getAssignment.mockResolvedValue({
+      id: 'assignment_1',
+      tenant_id: 'tenant_123',
+      admin_user_id: 'admin_2',
+      admin_role_id: 'role_support',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+      expires_at: null,
+      assigned_by: 'admin_1',
+      created_at: 1000,
+    });
+    repoMocks.assignmentExists.mockResolvedValue(false);
+    repoMocks.updateAssignment.mockResolvedValue({
+      id: 'assignment_1',
+      tenant_id: 'tenant_123',
+      admin_user_id: 'admin_2',
+      admin_role_id: 'role_support',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+      expires_at: 2000,
+      assigned_by: 'admin_1',
+      created_at: 1000,
+    });
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({
+          scope_type: 'tenant',
+          scope_id: 'tenant_123',
+          expires_at: 2000,
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(repoMocks.updateAssignment).toHaveBeenCalledWith(
+      'assignment_1',
+      expect.objectContaining({
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+        expires_at: 2000,
+      })
+    );
   });
 
   it('should reject creating a role at or above the caller hierarchy level', async () => {

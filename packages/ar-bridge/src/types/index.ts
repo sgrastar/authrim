@@ -222,7 +222,7 @@ export interface HandleIdentityParams {
   userInfo: UserInfo;
   tokens: TokenResponse;
   linkingUserId?: string;
-  tenantId?: string;
+  tenantId: string;
 }
 
 export interface HandleIdentityResult {

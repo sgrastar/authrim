@@ -14,6 +14,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 
 /**
@@ -110,7 +111,7 @@ export class TombstoneRepository extends BaseRepository<Tombstone> {
 
     const tombstone: Tombstone = {
       id: input.id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       email_blind_index: input.email_blind_index ?? null,
       deleted_at: now,
       deleted_by: input.deleted_by ?? null,

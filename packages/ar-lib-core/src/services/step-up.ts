@@ -2,7 +2,6 @@ import type { Env } from '../types/env';
 import type { Challenge } from '../durable-objects/ChallengeStore';
 import { arrayBufferToBase64Url, generateSecureRandomString } from '../utils/crypto';
 import { getChallengeStoreByChallengeId } from '../utils/challenge-sharding';
-import { getDefaultTenantId } from '../utils/issuer';
 import type {
   StepUpInputState,
   StepUpPreferredMethod,
@@ -99,12 +98,14 @@ export interface IssueStepUpTokenInput extends StepUpOperationBinding {
 
 export interface StartStepUpActionInput {
   stepUpToken: string;
+  tenantId: string;
   preferredMethod?: StepUpPreferredMethod;
   now?: number;
 }
 
 export interface CompleteStepUpActionInput {
   actionId: string;
+  tenantId: string;
   method: string;
   input: unknown;
   now?: number;
@@ -112,6 +113,7 @@ export interface CompleteStepUpActionInput {
 
 export interface ResendStepUpActionInput {
   actionId: string;
+  tenantId: string;
   now?: number;
 }
 
@@ -265,7 +267,11 @@ function ensurePositiveInteger(
   return Math.min(numeric, maxValue);
 }
 
-function readPolicyValue(settings: Record<string, unknown>, snake: string, camel: keyof StepUpPolicy) {
+function readPolicyValue(
+  settings: Record<string, unknown>,
+  snake: string,
+  camel: keyof StepUpPolicy
+) {
   return settings[snake] ?? settings[camel];
 }
 
@@ -363,13 +369,11 @@ function normalizeAcceptableMethods(input?: StepUpAcceptableMethods): StepUpAcce
   };
 }
 
-function methodDefinition(method: string):
-  | {
-      category: string;
-      nextActionType: string;
-      resendSupported: boolean;
-    }
-  | null {
+function methodDefinition(method: string): {
+  category: string;
+  nextActionType: string;
+  resendSupported: boolean;
+} | null {
   return METHOD_CATALOG[method as StepUpKnownMethod] ?? null;
 }
 
@@ -466,8 +470,8 @@ function resolvePreferredMethod(
   return { method: allowed, category: category! };
 }
 
-async function getStore(env: Env, id: string) {
-  return getChallengeStoreByChallengeId(env, id);
+async function getStore(env: Env, id: string, tenantId: string) {
+  return getChallengeStoreByChallengeId(env, id, tenantId);
 }
 
 function tokenMetadataFromChallenge(challenge: Challenge | null): StepUpTokenMetadata | null {
@@ -654,7 +658,10 @@ function toNextAction(metadata: StepUpActionMetadata): StepUpNextAction {
   };
 }
 
-function toActionResponse(metadata: StepUpActionMetadata, now: number = Date.now()): StepUpActionResponse {
+function toActionResponse(
+  metadata: StepUpActionMetadata,
+  now: number = Date.now()
+): StepUpActionResponse {
   const status = toStatus(metadata, now);
   const terminal = status.status !== 'pending';
   return {
@@ -729,11 +736,16 @@ async function clearPendingActionId(
   await env.AUTHRIM_CONFIG?.delete(pendingActionKey(binding)).catch(() => {});
 }
 
-async function storeAction(env: Env, metadata: StepUpActionMetadata, challengeValue: string): Promise<void> {
+async function storeAction(
+  env: Env,
+  metadata: StepUpActionMetadata,
+  challengeValue: string
+): Promise<void> {
   const ttlSeconds = Math.max(1, Math.ceil((metadata.expires_at - Date.now()) / 1000));
-  const store = await getStore(env, metadata.action_id);
+  const store = await getStore(env, metadata.action_id, metadata.tenantId);
   await store.storeChallengeRpc({
     id: metadata.action_id,
+    tenantId: metadata.tenantId,
     type: STEP_UP_ACTION_TYPE,
     userId: metadata.actorId,
     challenge: challengeValue,
@@ -745,9 +757,10 @@ async function storeAction(env: Env, metadata: StepUpActionMetadata, challengeVa
 async function loadActionWithChallenge(
   env: Env,
   actionId: string,
-  now: number
+  now: number,
+  tenantId: string
 ): Promise<{ metadata: StepUpActionMetadata; challenge: string } | null> {
-  const store = await getStore(env, actionId);
+  const store = await getStore(env, actionId, tenantId);
   const challenge = (await store.getChallengeRpc(actionId)) as Challenge | null;
   const metadata = actionMetadataFromChallenge(challenge);
   if (!metadata) {
@@ -801,7 +814,7 @@ export async function issueStepUpToken(
   env: Env,
   input: IssueStepUpTokenInput
 ): Promise<StepUpRequirement> {
-  const tenantId = input.tenantId || getDefaultTenantId(env);
+  const tenantId = input.tenantId;
   const policy = await resolveStepUpPolicy(env, tenantId);
   const ttlSeconds = input.ttlSeconds ?? policy.stepUpTokenTtlSeconds;
   if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) {
@@ -821,9 +834,10 @@ export async function issueStepUpToken(
     expires_at: now + ttlSeconds * 1000,
   };
 
-  const store = await getStore(env, token);
+  const store = await getStore(env, token, tenantId);
   await store.storeChallengeRpc({
     id: token,
+    tenantId,
     type: STEP_UP_TOKEN_TYPE,
     userId: input.actorId,
     challenge: token,
@@ -840,7 +854,7 @@ export async function startStepUpAction(
 ): Promise<StepUpActionResponse> {
   assertStepUpTokenShape(input.stepUpToken);
   const now = input.now ?? Date.now();
-  const tokenStore = await getStore(env, input.stepUpToken);
+  const tokenStore = await getStore(env, input.stepUpToken, input.tenantId);
   const tokenChallenge = (await tokenStore.getChallengeRpc(input.stepUpToken)) as Challenge | null;
   const tokenMetadata = tokenMetadataFromChallenge(tokenChallenge);
   if (!tokenMetadata || tokenMetadata.expires_at <= now) {
@@ -855,13 +869,21 @@ export async function startStepUpAction(
   try {
     const pendingActionId = await getPendingActionId(env, tokenMetadata);
     if (pendingActionId) {
-      const pending = await loadActionWithChallenge(env, pendingActionId, now);
+      const pending = await loadActionWithChallenge(
+        env,
+        pendingActionId,
+        now,
+        tokenMetadata.tenantId
+      );
       if (pending?.metadata.status === 'pending') {
         return toActionResponse(pending.metadata, now);
       }
     }
 
-    const resolved = resolvePreferredMethod(input.preferredMethod, tokenMetadata.acceptable_methods);
+    const resolved = resolvePreferredMethod(
+      input.preferredMethod,
+      tokenMetadata.acceptable_methods
+    );
     const policy = await resolveStepUpPolicy(env, tokenMetadata.tenantId);
     const actionId = generateStepUpActionId();
     const expiresAt = Math.min(
@@ -905,10 +927,7 @@ export async function startStepUpAction(
 
     return toActionResponse(metadata, now);
   } catch (error) {
-    if (
-      error instanceof StepUpFlowError &&
-      error.detailCode === 'preferred_method_unavailable'
-    ) {
+    if (error instanceof StepUpFlowError && error.detailCode === 'preferred_method_unavailable') {
       throw new StepUpFlowError({
         error: error.error,
         message: error.message,
@@ -924,10 +943,11 @@ export async function startStepUpAction(
 export async function getStepUpActionStatus(
   env: Env,
   actionId: string,
+  tenantId: string,
   now: number = Date.now()
 ): Promise<StepUpActionResponse> {
   assertActionIdShape(actionId);
-  const action = await loadActionWithChallenge(env, actionId, now);
+  const action = await loadActionWithChallenge(env, actionId, now, tenantId);
   if (!action) {
     throw new StepUpFlowError({
       error: 'invalid_request',
@@ -958,7 +978,12 @@ export async function completeStepUpAction(
 ): Promise<StepUpActionResponse> {
   assertActionIdShape(input.actionId);
   const now = input.now ?? Date.now();
-  const action = await loadActionWithChallenge(env, input.actionId, now);
+  const action = await loadActionWithChallenge(
+    env,
+    input.actionId,
+    now,
+    input.tenantId
+  );
   if (!action) {
     throw new StepUpFlowError({
       error: 'invalid_request',
@@ -1003,9 +1028,7 @@ export async function completeStepUpAction(
     }
     throw new StepUpFlowError({
       error: failedTerminal ? 'step_up_attempts_exhausted' : 'invalid_step_up_input',
-      message: failedTerminal
-        ? 'Step-up attempts have been exhausted'
-        : 'Step-up input is invalid',
+      message: failedTerminal ? 'Step-up attempts have been exhausted' : 'Step-up input is invalid',
       httpStatus: failedTerminal ? 409 : 400,
       detailCode: failedTerminal ? 'step_up_attempts_exhausted' : 'invalid_step_up_input',
       statusObject: toStatus(updated, now),
@@ -1029,9 +1052,10 @@ export async function completeStepUpAction(
     issued_at: now,
     expires_at: receiptExpiresAt,
   };
-  const receiptStore = await getStore(env, receiptId);
+  const receiptStore = await getStore(env, receiptId, metadata.tenantId);
   await receiptStore.storeChallengeRpc({
     id: receiptId,
+    tenantId: metadata.tenantId,
     type: STEP_UP_RECEIPT_TYPE,
     userId: metadata.actorId,
     challenge: receiptId,
@@ -1064,7 +1088,12 @@ export async function resendStepUpAction(
 ): Promise<StepUpActionResponse> {
   assertActionIdShape(input.actionId);
   const now = input.now ?? Date.now();
-  const action = await loadActionWithChallenge(env, input.actionId, now);
+  const action = await loadActionWithChallenge(
+    env,
+    input.actionId,
+    now,
+    input.tenantId
+  );
   if (!action) {
     throw new StepUpFlowError({
       error: 'invalid_request',
@@ -1136,10 +1165,11 @@ export async function resendStepUpAction(
 export async function cancelStepUpAction(
   env: Env,
   actionId: string,
+  tenantId: string,
   now: number = Date.now()
 ): Promise<StepUpActionResponse> {
   assertActionIdShape(actionId);
-  const action = await loadActionWithChallenge(env, actionId, now);
+  const action = await loadActionWithChallenge(env, actionId, now, tenantId);
   if (!action) {
     throw new StepUpFlowError({
       error: 'invalid_request',
@@ -1163,7 +1193,7 @@ export async function consumeStepUpReceipt(
   input: ConsumeStepUpReceiptInput
 ): Promise<StepUpReceiptMetadata> {
   assertReceiptShape(input.receipt);
-  const store = await getStore(env, input.receipt);
+  const store = await getStore(env, input.receipt, input.tenantId);
   const challenge = (await store.getChallengeRpc(input.receipt)) as Challenge | null;
   const metadata = receiptMetadataFromChallenge(challenge);
   if (!metadata || metadata.expires_at <= Date.now()) {
@@ -1193,6 +1223,7 @@ export async function consumeStepUpReceipt(
   try {
     await store.consumeChallengeRpc({
       id: input.receipt,
+      tenantId: input.tenantId,
       type: STEP_UP_RECEIPT_TYPE,
       challenge: input.receipt,
     });

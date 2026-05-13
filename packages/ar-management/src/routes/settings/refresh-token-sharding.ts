@@ -21,9 +21,9 @@ import {
 } from '@authrim/ar-lib-core';
 
 function resolveOptionalCoreAdapter(c: Context<{ Bindings: Env }>) {
-  const runtimeSources = ((c as any).get?.('runtimeUserStoreSources') as
+  const runtimeSources = (c as any).get?.('runtimeUserStoreSources') as
     | { coreDb?: DatabaseSource | null }
-    | undefined);
+    | undefined;
   return ensureOptionalDatabaseAdapter(
     runtimeSources?.coreDb ?? c.env.DB ?? null,
     'refresh-token-sharding-config'
@@ -37,10 +37,11 @@ function resolveOptionalCoreAdapter(c: Context<{ Bindings: Env }>) {
 export async function getRefreshTokenShardingConfig(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('RefreshTokenShardingAPI');
   const clientId = c.req.query('clientId') || null;
+  const tenantId = getTenantIdFromContext(c);
 
   try {
     // Get from KV (with cache)
-    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__', tenantId);
 
     return c.json({
       clientId: clientId || '__global__',
@@ -114,7 +115,11 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
     }
 
     // Get current config
-    const currentConfig = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const currentConfig = await getRefreshTokenShardConfig(
+      c.env,
+      clientId || '__global__',
+      getTenantIdFromContext(c)
+    );
 
     // Check if shard count is actually changing
     if (currentConfig.currentShardCount === body.shardCount) {
@@ -132,7 +137,7 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
     const newConfig = createNewGeneration(currentConfig, body.shardCount, adminUser);
 
     // Save to KV
-    await saveRefreshTokenShardConfig(c.env, clientId, newConfig);
+    await saveRefreshTokenShardConfig(c.env, clientId, newConfig, getTenantIdFromContext(c));
 
     // Record in the resolved core adapter when relational bookkeeping is available.
     const coreAdapter = resolveOptionalCoreAdapter(c);
@@ -207,7 +212,7 @@ export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>
     });
 
     // Get shard config
-    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__', tenantId);
 
     return c.json({
       clientId: clientId || '__global__',
@@ -271,7 +276,7 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
     }
 
     // Get current config to prevent cleanup of current generation
-    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__', tenantId);
     if (generation === config.currentGeneration) {
       return c.json(
         {
@@ -295,7 +300,7 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
       previousGenerations: config.previousGenerations.filter((g) => g.generation !== generation),
       updatedAt: Date.now(),
     };
-    await saveRefreshTokenShardConfig(c.env, clientId, updatedConfig);
+    await saveRefreshTokenShardConfig(c.env, clientId, updatedConfig, tenantId);
 
     // Clear cache
     clearShardConfigCache();
@@ -366,7 +371,8 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       const instanceName = buildRefreshTokenRotatorInstanceName(
         family.client_id,
         parsed.generation,
-        parsed.shardIndex
+        parsed.shardIndex,
+        tenantId
       );
 
       if (!shardGroups.has(instanceName)) {

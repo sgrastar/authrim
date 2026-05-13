@@ -197,6 +197,7 @@ export async function getActiveConsentStatements(
  */
 async function getCurrentVersion(
   adapter: DatabaseAdapter,
+  tenantId: string,
   statementId: string
 ): Promise<ConsentStatementVersion | null> {
   const rows = await adapter.query<{
@@ -215,8 +216,8 @@ async function getCurrentVersion(
     `SELECT id, tenant_id, statement_id, version, content_type, effective_at,
             content_hash, is_current, status, created_at, updated_at
      FROM consent_statement_versions
-     WHERE statement_id = ? AND is_current = 1`,
-    [statementId]
+     WHERE tenant_id = ? AND statement_id = ? AND is_current = 1`,
+    [tenantId, statementId]
   );
 
   if (rows.length === 0) return null;
@@ -240,6 +241,7 @@ async function getCurrentVersion(
  */
 export async function getLocalization(
   adapter: DatabaseAdapter,
+  tenantId: string,
   versionId: string,
   userLanguage: string,
   tenantDefaultLanguage: string = 'en'
@@ -259,8 +261,8 @@ export async function getLocalization(
     `SELECT id, tenant_id, version_id, language, title, description,
             document_url, inline_content, created_at, updated_at
      FROM consent_statement_localizations
-     WHERE version_id = ?`,
-    [versionId]
+     WHERE tenant_id = ? AND version_id = ?`,
+    [tenantId, versionId]
   );
 
   if (rows.length === 0) return null;
@@ -398,7 +400,7 @@ export async function resolveConsentRequirements(
   const results: ResolvedConsentRequirement[] = [];
 
   for (const stmt of statements) {
-    const currentVersion = await getCurrentVersion(adapter, stmt.id);
+    const currentVersion = await getCurrentVersion(adapter, tenantId, stmt.id);
     if (!currentVersion) continue; // Skip statements without active version
 
     const tenantReq = tenantReqs.find((r) => r.statement_id === stmt.id);
@@ -574,6 +576,7 @@ export async function getConsentItemsForScreen(
     // Get localization
     const localization = await getLocalization(
       adapter,
+      tenantId,
       req.current_version.id,
       language,
       tenantDefaultLanguage
@@ -725,7 +728,7 @@ export async function processConsentItemDecisions(
     const existing = existingMap.get(statementId);
 
     // Get current version for this statement
-    const currentVersion = await getCurrentVersion(adapter, statementId);
+    const currentVersion = await getCurrentVersion(adapter, tenantId, statementId);
     if (!currentVersion) continue; // No active version — skip
 
     if (decision === 'granted') {
@@ -975,15 +978,17 @@ export async function activateVersion(
 
   // Validate: at least one localization exists (D8)
   const locCount = await adapter.query<{ cnt: number }>(
-    `SELECT COUNT(*) as cnt FROM consent_statement_localizations WHERE version_id = ?`,
-    [versionId]
+    `SELECT COUNT(*) as cnt
+       FROM consent_statement_localizations
+      WHERE tenant_id = ? AND version_id = ?`,
+    [tenantId, versionId]
   );
   if (locCount[0].cnt === 0) {
     throw new Error('Cannot activate version without at least one localization');
   }
 
   // Compute content hash (D11)
-  const contentHash = await computeContentHash(adapter, versionId);
+  const contentHash = await computeContentHash(adapter, versionId, tenantId);
 
   // Transaction: deactivate old current, activate new (D5)
   await adapter.execute(
@@ -997,8 +1002,8 @@ export async function activateVersion(
     `UPDATE consent_statement_versions
      SET is_current = 1, current_statement_guard = statement_id,
          status = 'active', content_hash = ?, updated_at = ?
-     WHERE id = ?`,
-    [contentHash, Date.now(), versionId]
+     WHERE id = ? AND statement_id = ? AND tenant_id = ?`,
+    [contentHash, Date.now(), versionId, statementId, tenantId]
   );
 }
 
@@ -1011,18 +1016,23 @@ export async function activateVersion(
  */
 export async function computeContentHash(
   adapter: DatabaseAdapter,
-  versionId: string
+  versionId: string,
+  tenantId?: string
 ): Promise<string> {
   // Get version to determine content_type
+  const versionWhere = tenantId ? 'id = ? AND tenant_id = ?' : 'id = ?';
+  const versionParams = tenantId ? [versionId, tenantId] : [versionId];
   const versionRows = await adapter.query<{ content_type: string }>(
-    `SELECT content_type FROM consent_statement_versions WHERE id = ?`,
-    [versionId]
+    `SELECT content_type FROM consent_statement_versions WHERE ${versionWhere}`,
+    versionParams
   );
   if (versionRows.length === 0) throw new Error('Version not found for content hash');
 
   const contentType = versionRows[0].content_type;
 
   // Get all localizations ordered by language for deterministic hash
+  const localizationWhere = tenantId ? 'tenant_id = ? AND version_id = ?' : 'version_id = ?';
+  const localizationParams = tenantId ? [tenantId, versionId] : [versionId];
   const locs = await adapter.query<{
     language: string;
     document_url: string | null;
@@ -1030,9 +1040,9 @@ export async function computeContentHash(
   }>(
     `SELECT language, document_url, inline_content
      FROM consent_statement_localizations
-     WHERE version_id = ?
+     WHERE ${localizationWhere}
      ORDER BY language ASC`,
-    [versionId]
+    localizationParams
   );
 
   // Build hash input

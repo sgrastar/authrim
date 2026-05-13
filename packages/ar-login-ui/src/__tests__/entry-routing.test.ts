@@ -135,6 +135,59 @@ describe('common-entry routing', () => {
 		});
 	});
 
+	it('allows a tenant-host login challenge only when it resolves for the current tenant', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(jsonResponse({ challenge_id: 'challenge-current' }));
+
+		const result = await loginLoad({
+			cookies: createCookies(),
+			fetch,
+			request: new Request('https://first.multi-tenant.authrim.com/login?challenge_id=challenge-current'),
+			url: new URL('https://first.multi-tenant.authrim.com/login?challenge_id=challenge-current')
+		} as never);
+
+		expect(result).toEqual({});
+		expect(fetch).toHaveBeenCalledWith('/auth/login-challenge?challenge_id=challenge-current', {
+			headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
+		});
+	});
+
+	it('does not treat a wrong-tenant login challenge as a discovery bypass', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ error: 'invalid_request' }, 400))
+			.mockResolvedValueOnce(
+				jsonResponse({
+					config: {
+						tenant_id: 'first',
+						mode: 'discovery_optional',
+						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						selection_policy: 'select_if_multiple',
+						allow_manual_tenant_entry: true,
+						remember_last_tenant: true,
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true,
+						redirect_tenant_discover_to_common_entry: true
+					},
+					single_tenant_mode: false,
+					is_common_entry_host: false,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
+				})
+			);
+
+		await expect(
+			loginLoad({
+				cookies: createCookies(),
+				fetch,
+				request: new Request('https://first.multi-tenant.authrim.com/login?challenge_id=wrong'),
+				url: new URL('https://first.multi-tenant.authrim.com/login?challenge_id=wrong')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location:
+				'https://multi-tenant.authrim.com/discover?expected_tenant_id=first&return_to=https%3A%2F%2Ffirst.multi-tenant.authrim.com%2Flogin%3Fchallenge_id%3Dwrong'
+		});
+	});
+
 	it('redirects tenant-host /login to the shared discover screen when common discovery is required', async () => {
 		const fetch = vi.fn().mockResolvedValueOnce(
 			jsonResponse({

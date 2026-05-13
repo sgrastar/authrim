@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertUserImportJobStorageKeys,
   buildUserImportResultKey,
   buildUserImportUploadKey,
   parseUserImportCsv,
@@ -15,6 +16,26 @@ describe('user-import-jobs helpers', () => {
     expect(buildUserImportResultKey('tenant-a', 'job-1')).toBe(
       'exports/tenant-a/users-import/job-1/result.json'
     );
+  });
+
+  it('rejects cross-tenant import and result object keys', () => {
+    expect(() =>
+      assertUserImportJobStorageKeys({
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        input_r2_key: 'imports/tenant-b/upload-1/users.csv',
+        result_r2_key: buildUserImportResultKey('tenant-a', 'job-1'),
+      })
+    ).toThrow('input_r2_key does not belong to the job tenant');
+
+    expect(() =>
+      assertUserImportJobStorageKeys({
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        input_r2_key: buildUserImportUploadKey('tenant-a', 'upload-1', 'users.csv'),
+        result_r2_key: buildUserImportResultKey('tenant-b', 'job-1'),
+      })
+    ).toThrow('result_r2_key does not belong to the job tenant');
   });
 
   it('parses header-based CSV with quoted fields', () => {

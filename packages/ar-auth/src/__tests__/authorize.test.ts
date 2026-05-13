@@ -242,6 +242,10 @@ describe('Authorization Handler', () => {
     });
 
     app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+      await next();
+    });
     app.get('/authorize', authorizeHandler);
     env = createMockEnv();
   });

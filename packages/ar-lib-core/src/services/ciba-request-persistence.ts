@@ -34,8 +34,19 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
     private readonly tenantId?: string
   ) {}
 
+  private resolveWriteTenantId(recordTenantId: string | undefined): string | undefined {
+    const normalizedRecordTenantId = recordTenantId?.trim() || undefined;
+    if (!this.tenantId) {
+      return normalizedRecordTenantId;
+    }
+    if (normalizedRecordTenantId && normalizedRecordTenantId !== this.tenantId) {
+      throw new Error('CIBA request persistence tenant mismatch');
+    }
+    return this.tenantId;
+  }
+
   async storeRequest(metadata: CIBARequestMetadata): Promise<void> {
-    const tenantId = metadata.tenant_id ?? this.tenantId;
+    const tenantId = this.resolveWriteTenantId(metadata.tenant_id);
 
     if (tenantId) {
       const updated = await this.db.execute(
@@ -204,9 +215,9 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
                 client_notification_token, client_notification_endpoint, created_at, expires_at,
                 last_poll_at, poll_count, interval, user_id, sub, nonce, token_issued, token_issued_at
            FROM ciba_requests
-          WHERE auth_req_id = ?
-            AND tenant_id = ?`,
-        [authReqId, this.tenantId]
+          WHERE tenant_id = ?
+            AND auth_req_id = ?`,
+        [this.tenantId, authReqId]
       );
 
       return mapCIBARequestRow(row);
@@ -233,9 +244,9 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
                 client_notification_token, client_notification_endpoint, created_at, expires_at,
                 last_poll_at, poll_count, interval, user_id, sub, nonce, token_issued, token_issued_at
            FROM ciba_requests
-          WHERE user_code = ?
-            AND tenant_id = ?`,
-        [userCode, this.tenantId]
+          WHERE tenant_id = ?
+            AND user_code = ?`,
+        [this.tenantId, userCode]
       );
 
       return mapCIBARequestRow(row);
@@ -262,10 +273,10 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
                 client_notification_token, client_notification_endpoint, created_at, expires_at,
                 last_poll_at, poll_count, interval, user_id, sub, nonce, token_issued, token_issued_at
            FROM ciba_requests
-          WHERE login_hint = ? AND client_id = ? AND status = 'pending' AND tenant_id = ?
+          WHERE tenant_id = ? AND login_hint = ? AND client_id = ? AND status = 'pending'
           ORDER BY created_at DESC
           LIMIT 1`,
-        [loginHint, clientId, this.tenantId]
+        [this.tenantId, loginHint, clientId]
       );
 
       return mapCIBARequestRow(row);
@@ -296,9 +307,9 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
       await this.db.execute(
         `UPDATE ciba_requests
             SET status = ?, user_id = ?, sub = ?, nonce = ?
-          WHERE auth_req_id = ?
-            AND tenant_id = ?`,
-        ['approved', userId, sub, nonce ?? null, authReqId, this.tenantId]
+          WHERE tenant_id = ?
+            AND auth_req_id = ?`,
+        ['approved', userId, sub, nonce ?? null, this.tenantId, authReqId]
       );
       return;
     }
@@ -314,8 +325,8 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   async denyRequest(authReqId: string): Promise<void> {
     if (this.tenantId) {
       await this.db.execute(
-        'UPDATE ciba_requests SET status = ? WHERE auth_req_id = ? AND tenant_id = ?',
-        ['denied', authReqId, this.tenantId]
+        'UPDATE ciba_requests SET status = ? WHERE tenant_id = ? AND auth_req_id = ?',
+        ['denied', this.tenantId, authReqId]
       );
       return;
     }
@@ -329,8 +340,8 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   async updatePoll(authReqId: string, lastPollAt: number, pollCount: number): Promise<void> {
     if (this.tenantId) {
       await this.db.execute(
-        'UPDATE ciba_requests SET last_poll_at = ?, poll_count = ? WHERE auth_req_id = ? AND tenant_id = ?',
-        [lastPollAt, pollCount, authReqId, this.tenantId]
+        'UPDATE ciba_requests SET last_poll_at = ?, poll_count = ? WHERE tenant_id = ? AND auth_req_id = ?',
+        [lastPollAt, pollCount, this.tenantId, authReqId]
       );
       return;
     }
@@ -344,8 +355,8 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   async markTokenIssued(authReqId: string, tokenIssuedAt: number): Promise<void> {
     if (this.tenantId) {
       await this.db.execute(
-        'UPDATE ciba_requests SET token_issued = ?, token_issued_at = ? WHERE auth_req_id = ? AND tenant_id = ?',
-        [1, tokenIssuedAt, authReqId, this.tenantId]
+        'UPDATE ciba_requests SET token_issued = ?, token_issued_at = ? WHERE tenant_id = ? AND auth_req_id = ?',
+        [1, tokenIssuedAt, this.tenantId, authReqId]
       );
       return;
     }
@@ -358,9 +369,9 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
 
   async deleteRequest(authReqId: string): Promise<void> {
     if (this.tenantId) {
-      await this.db.execute('DELETE FROM ciba_requests WHERE auth_req_id = ? AND tenant_id = ?', [
-        authReqId,
+      await this.db.execute('DELETE FROM ciba_requests WHERE tenant_id = ? AND auth_req_id = ?', [
         this.tenantId,
+        authReqId,
       ]);
       return;
     }
@@ -371,8 +382,8 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
   async deleteExpired(nowMs: number): Promise<number> {
     if (this.tenantId) {
       const result = await this.db.execute(
-        'DELETE FROM ciba_requests WHERE expires_at < ? AND tenant_id = ?',
-        [nowMs, this.tenantId]
+        'DELETE FROM ciba_requests WHERE tenant_id = ? AND expires_at < ?',
+        [this.tenantId, nowMs]
       );
       return result.rowsAffected;
     }
@@ -388,13 +399,30 @@ class DatabaseCIBARequestPersistenceAdapter implements CIBARequestPersistenceAda
 
 export function createCIBARequestPersistenceAdapter(
   source: DatabaseSource | null | undefined,
-  partition: string = 'ciba-request-store',
-  tenantId?: string
+  partition: string,
+  tenantId: string
+): CIBARequestPersistenceAdapter | null {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('CIBA request persistence requires a tenantId');
+  }
+
+  const adapter = ensureOptionalDatabaseAdapter(source, partition);
+  if (!adapter) {
+    return null;
+  }
+
+  return new DatabaseCIBARequestPersistenceAdapter(adapter, normalizedTenantId);
+}
+
+export function createGlobalCIBARequestPersistenceAdapter(
+  source: DatabaseSource | null | undefined,
+  partition: string = 'ciba-request-store-system'
 ): CIBARequestPersistenceAdapter | null {
   const adapter = ensureOptionalDatabaseAdapter(source, partition);
   if (!adapter) {
     return null;
   }
 
-  return new DatabaseCIBARequestPersistenceAdapter(adapter, tenantId);
+  return new DatabaseCIBARequestPersistenceAdapter(adapter);
 }

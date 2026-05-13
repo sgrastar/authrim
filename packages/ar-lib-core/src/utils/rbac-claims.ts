@@ -17,12 +17,18 @@
  * ```typescript
  * import { getUserRBACClaims, getIDTokenRBACClaims, getAccessTokenRBACClaims } from '@authrim/ar-lib-core';
  *
- * const claims = await getUserRBACClaims(env.DB, subjectId);
+ * const claims = await getUserRBACClaims(env.DB, subjectId, tenantId);
  * // Add to token: { ...claims }
  *
  * // Or with environment variable control:
- * const idTokenClaims = await getIDTokenRBACClaims(env.DB, subjectId, env.RBAC_ID_TOKEN_CLAIMS);
- * const accessTokenClaims = await getAccessTokenRBACClaims(env.DB, subjectId, env.RBAC_ACCESS_TOKEN_CLAIMS);
+ * const idTokenClaims = await getIDTokenRBACClaims(env.DB, subjectId, {
+ *   claimsConfig: env.RBAC_ID_TOKEN_CLAIMS,
+ *   tenantId,
+ * });
+ * const accessTokenClaims = await getAccessTokenRBACClaims(env.DB, subjectId, {
+ *   claimsConfig: env.RBAC_ACCESS_TOKEN_CLAIMS,
+ *   tenantId,
+ * });
  * ```
  */
 
@@ -49,6 +55,14 @@ const log = createLogger().module('RBAC_CLAIMS');
 
 function getRBACDatabaseAdapter(db: DatabaseSource) {
   return ensureDatabaseAdapter(db, 'rbac-claims');
+}
+
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
 }
 
 // =============================================================================
@@ -168,7 +182,7 @@ export interface RBACClaimsOptions {
   cache?: KVNamespace; // REBAC_CACHE KV namespace
   claimsConfig?: string; // Comma-separated list of claims to include
   env?: Env; // Environment bindings for dynamic TTL
-  tenantId?: string; // Tenant ID for multi-tenant isolation (default: 'default')
+  tenantId: string; // Tenant ID for multi-tenant isolation
 }
 
 /**
@@ -196,22 +210,22 @@ export interface CompositeRBACCache {
 function buildRBACCacheKey(
   subjectId: string,
   tokenType: 'id' | 'access',
-  claimsConfig?: string,
-  tenantId?: string
+  claimsConfig: string | undefined,
+  tenantId: string
 ): string {
   // Include claimsConfig hash to differentiate cache entries with different claim sets
   const configHash = claimsConfig
     ? Buffer.from(claimsConfig).toString('base64').slice(0, 8)
     : 'default';
-  const tenant = tenantId || '__global__';
+  const tenant = requireTenantId(tenantId, 'buildRBACCacheKey');
   return `${RBAC_CACHE_PREFIX}${tenant}:${tokenType}:${subjectId}:${configHash}`;
 }
 
 /**
  * Build cache key for Composite RBAC cache (all data in one entry)
  */
-function buildCompositeRBACCacheKey(subjectId: string, tenantId?: string): string {
-  const tenant = tenantId || '__global__';
+function buildCompositeRBACCacheKey(subjectId: string, tenantId: string): string {
+  const tenant = requireTenantId(tenantId, 'buildCompositeRBACCacheKey');
   return `${RBAC_CACHE_PREFIX}composite:${tenant}:${subjectId}`;
 }
 
@@ -234,10 +248,10 @@ function buildCompositeRBACCacheKey(subjectId: string, tenantId?: string): strin
 export async function getCompositeRBACCache(
   db: DatabaseSource,
   subjectId: string,
-  options: RBACClaimsOptions = {}
+  options: Partial<RBACClaimsOptions> = {}
 ): Promise<CompositeRBACCache> {
   const { cache, env } = options;
-  const tenantId = options.tenantId ?? 'default';
+  const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
 
   // Try cache first
   if (cache) {
@@ -447,7 +461,7 @@ interface ResolvedOrgInfo {
 export async function resolveEffectiveRoles(
   db: DatabaseSource,
   subjectId: string,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000); // UNIX seconds
 
@@ -536,11 +550,12 @@ export async function resolveUserType(
  *
  * @param db - D1 database
  * @param subjectId - User ID
+ * @param tenantId - Tenant ID
  * @returns RBACTokenClaims object
  *
  * @example
  * ```typescript
- * const rbacClaims = await getUserRBACClaims(env.DB, userId);
+ * const rbacClaims = await getUserRBACClaims(env.DB, userId, tenantId);
  * // Result:
  * // {
  * //   authrim_roles: ['end_user', 'org_admin'],
@@ -554,7 +569,7 @@ export async function resolveUserType(
 export async function getUserRBACClaims(
   db: DatabaseSource,
   subjectId: string,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<RBACTokenClaims> {
   // Fetch all RBAC info in parallel
   const [roles, orgInfo, userType] = await Promise.all([
@@ -608,13 +623,13 @@ export async function getIDTokenRBACClaims(
   claimsConfigOrOptions?: string | RBACClaimsOptions
 ): Promise<Partial<RBACTokenClaims>> {
   // Parse options
-  const options: RBACClaimsOptions =
+  const options: Partial<RBACClaimsOptions> =
     typeof claimsConfigOrOptions === 'string'
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
   const { cache, claimsConfig } = options;
-  const tenantId = options.tenantId ?? 'default';
+  const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
 
   // Try cache first
   if (cache) {
@@ -680,13 +695,13 @@ export async function getAccessTokenRBACClaims(
   claimsConfigOrOptions?: string | RBACClaimsOptions
 ): Promise<Partial<RBACTokenClaims>> {
   // Parse options
-  const options: RBACClaimsOptions =
+  const options: Partial<RBACClaimsOptions> =
     typeof claimsConfigOrOptions === 'string'
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
   const { cache, claimsConfig } = options;
-  const tenantId = options.tenantId ?? 'default';
+  const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
 
   // Try cache first
   if (cache) {
@@ -729,8 +744,8 @@ export async function getAccessTokenRBACClaims(
 async function getAccessTokenRBACClaimsInternal(
   db: DatabaseSource,
   subjectId: string,
-  claimsConfig?: string,
-  tenantId: string = 'default'
+  claimsConfig: string | undefined,
+  tenantId: string
 ): Promise<Partial<RBACTokenClaims>> {
   const enabledClaims = parseClaimsConfig<AccessTokenClaimKey>(
     claimsConfig,
@@ -795,7 +810,7 @@ async function getAccessTokenRBACClaimsInternal(
 export async function resolveScopedRoles(
   db: DatabaseSource,
   subjectId: string,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<TokenScopedRole[]> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -917,7 +932,7 @@ export async function resolveRelationshipsSummary(
 export async function resolvePermissions(
   db: DatabaseSource,
   subjectId: string,
-  tenantId: string = 'default'
+  tenantId: string
 ): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -1019,8 +1034,8 @@ function parseClaimsConfig<T extends string>(config: string | undefined, default
 export async function getIDTokenRBACClaimsConfigurable(
   db: DatabaseSource,
   subjectId: string,
-  claimsConfig?: string,
-  tenantId: string = 'default'
+  claimsConfig: string | undefined,
+  tenantId: string
 ): Promise<Partial<RBACTokenClaims>> {
   const enabledClaims = parseClaimsConfig<IDTokenClaimKey>(claimsConfig, DEFAULT_ID_TOKEN_CLAIMS);
 

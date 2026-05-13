@@ -18,6 +18,7 @@ import {
   buildAuthCodeShardInstanceName,
   timingSafeEqual,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -73,6 +74,7 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
   const action = c.req.query('action') || 'warmup'; // 'warmup' or 'reload-config'
   const batchSize = Math.min(Math.max(parseInt(c.req.query('batch_size') || '32', 10), 1), 64);
   const dryRun = c.req.query('dry_run') === 'true';
+  const tenantId = getTenantIdFromContext(c);
 
   const startTime = Date.now();
   const result: WarmupResult = {
@@ -98,7 +100,7 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
       const promises: Promise<void>[] = [];
 
       for (let j = i; j < batchEnd; j++) {
-        const instanceName = buildAuthCodeShardInstanceName(j);
+        const instanceName = buildAuthCodeShardInstanceName(j, tenantId);
         const doId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
         const doStub = c.env.AUTH_CODE_STORE.get(doId);
         // Use RPC to reload config
@@ -164,7 +166,7 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
         const promises: Promise<void>[] = [];
 
         for (let j = i; j < batchEnd; j++) {
-          const instanceName = buildAuthCodeShardInstanceName(j);
+          const instanceName = buildAuthCodeShardInstanceName(j, tenantId);
           const doId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
           const doStub = c.env.AUTH_CODE_STORE.get(doId);
           // Use RPC status call to trigger DO initialization

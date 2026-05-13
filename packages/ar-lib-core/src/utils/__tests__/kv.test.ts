@@ -97,26 +97,28 @@ describe('KV Utilities', () => {
     it('should store and retrieve state parameter', async () => {
       const state = 'test-state-123';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeState(env, state, clientId);
-      const retrieved = await getState(env, state);
+      await storeState(env, state, clientId, tenantId);
+      const retrieved = await getState(env, state, tenantId);
 
       expect(retrieved).toBe(clientId);
     });
 
     it('should return null for non-existent state', async () => {
-      const retrieved = await getState(env, 'non-existent-state');
+      const retrieved = await getState(env, 'non-existent-state', 'tenant-1');
       expect(retrieved).toBeNull();
     });
 
     it('should delete state parameter', async () => {
       const state = 'test-state-delete';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeState(env, state, clientId);
-      await deleteState(env, state);
+      await storeState(env, state, clientId, tenantId);
+      await deleteState(env, state, tenantId);
 
-      const retrieved = await getState(env, state);
+      const retrieved = await getState(env, state, tenantId);
       expect(retrieved).toBeNull();
     });
   });
@@ -125,26 +127,28 @@ describe('KV Utilities', () => {
     it('should store and retrieve nonce parameter', async () => {
       const nonce = 'test-nonce-123';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeNonce(env, nonce, clientId);
-      const retrieved = await getNonce(env, nonce);
+      await storeNonce(env, nonce, clientId, tenantId);
+      const retrieved = await getNonce(env, nonce, tenantId);
 
       expect(retrieved).toBe(clientId);
     });
 
     it('should return null for non-existent nonce', async () => {
-      const retrieved = await getNonce(env, 'non-existent-nonce');
+      const retrieved = await getNonce(env, 'non-existent-nonce', 'tenant-1');
       expect(retrieved).toBeNull();
     });
 
     it('should delete nonce parameter', async () => {
       const nonce = 'test-nonce-delete';
       const clientId = 'test-client';
+      const tenantId = 'tenant-1';
 
-      await storeNonce(env, nonce, clientId);
-      await deleteNonce(env, nonce);
+      await storeNonce(env, nonce, clientId, tenantId);
+      await deleteNonce(env, nonce, tenantId);
 
-      const retrieved = await getNonce(env, nonce);
+      const retrieved = await getNonce(env, nonce, tenantId);
       expect(retrieved).toBeNull();
     });
   });
@@ -387,6 +391,7 @@ describe('KV Utilities', () => {
 
       await putClient(env, {
         client_id: clientId,
+        tenant_id: 'default',
         client_name: 'Write-Through Client',
         redirect_uris: 'http://example.com/callback' as unknown as string[],
       });
@@ -538,7 +543,7 @@ describe('KV Utilities', () => {
       });
       expect(coreAdapter.queryOne).toHaveBeenCalledWith(
         expect.stringContaining('FROM oauth_client_consents'),
-        ['user-1', 'client-1', 'tenant-a']
+        ['tenant-a', 'user-1', 'client-1']
       );
     });
 

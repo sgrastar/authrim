@@ -22,7 +22,6 @@ import type { Env } from '../types';
 import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
 import {
   getRegionShardConfig,
-  getDefaultTenantId,
   resolveShardForNewResource,
   parseRegionId,
   createRegionId,
@@ -138,13 +137,18 @@ export function parseVPRequestId(requestId: string): (ParsedRegionId & { uuid: s
 export function getVPRequestStoreById(
   env: Env,
   requestId: string,
-  tenantId: string = getDefaultTenantId(env as unknown as Parameters<typeof getDefaultTenantId>[0])
+  tenantId: string
 ): {
   stub: VPRequestStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   uuid: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('VP request store lookup requires tenantId');
+  }
+
   const parsed = parseVPRequestId(requestId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded VP request ID format: ${requestId}`);
@@ -157,7 +161,7 @@ export function getVPRequestStoreById(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'vprequest',
     resolution.shardIndex

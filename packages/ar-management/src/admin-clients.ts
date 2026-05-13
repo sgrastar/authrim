@@ -368,6 +368,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.json<{
       client_name: string;
+      description?: string | null;
       redirect_uris: string[];
       grant_types?: string[];
       response_types?: string[];
@@ -439,6 +440,17 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: 'client_name is required',
+        },
+        400
+      );
+    }
+
+    const descriptionValidation = validateOptionalStringField(body.description, 'description');
+    if (!descriptionValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: descriptionValidation.error,
         },
         400
       );
@@ -836,6 +848,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
 
     const client = await authCtx.repositories.client.create({
       client_name: body.client_name,
+      description: descriptionValidation.value,
       client_secret_hash: clientSecretHash,
       tenant_id: tenantId,
       application_type: applicationTypeValidation.value ?? 'web',
@@ -916,6 +929,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       client_id: client.client_id,
       client_secret_hash: client.client_secret_hash ?? undefined,
       client_name: client.client_name,
+      description: client.description ?? undefined,
       application_type: client.application_type ?? undefined,
       trust_group: client.trust_group ?? undefined,
       trust_group_id: client.trust_group_id ?? undefined,
@@ -1034,6 +1048,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           client_id: client.client_id,
           client_secret: clientSecret,
           client_name: client.client_name,
+          description: client.description,
           application_type: client.application_type,
           trust_group: client.trust_group,
           browser_public_client_mode: client.browser_public_client_mode,
@@ -1280,6 +1295,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     const {
       client_name,
+      description,
       redirect_uris,
       grant_types,
       response_types,
@@ -1324,6 +1340,17 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       default_audience,
       default_resource,
     } = body;
+
+    const descriptionValidation = validateOptionalStringField(description, 'description');
+    if (!descriptionValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: descriptionValidation.error,
+        },
+        400
+      );
+    }
 
     let validatedAllowedOrigins: string[] | undefined;
     if (allowed_redirect_origins !== undefined) {
@@ -1759,6 +1786,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     const hasClientUpdates = [
       client_name,
+      description,
       redirect_uris,
       grant_types,
       response_types,
@@ -1815,6 +1843,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
     const updatedClient = hasClientUpdates
       ? await authCtx.repositories.client.update(clientId, {
           client_name,
+          description: descriptionValidation.value,
           redirect_uris,
           grant_types,
           response_types,
@@ -2158,15 +2187,15 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
       `UPDATE oauth_clients SET
         client_secret_hash = ?,
         updated_at = ?
-       WHERE client_id = ? AND tenant_id = ?`,
-      [newSecretHash, nowTs, clientId, tenantId]
+       WHERE tenant_id = ? AND client_id = ?`,
+      [newSecretHash, nowTs, tenantId, clientId]
     );
 
     let revokedTokens = 0;
     if (body.revoke_existing_tokens) {
       const tokenResult = await adapter.execute(
-        'UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE client_id = ? AND tenant_id = ? AND revoked = 0',
-        [nowTs, clientId, tenantId]
+        'UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE tenant_id = ? AND client_id = ? AND revoked = 0',
+        [nowTs, tenantId, clientId]
       );
       revokedTokens = tokenResult.rowsAffected;
     }

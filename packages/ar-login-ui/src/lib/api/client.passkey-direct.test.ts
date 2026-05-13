@@ -325,4 +325,39 @@ describe('LoginUI external IdP adapter boundary', () => {
 
 		expect(url.pathname).toBe('/api/external/github%2F..%2Fevil/start');
 	});
+
+	it('builds a SAML SP start URL with return_url and without PKCE parameters', async () => {
+		const { externalIdpAPI } = await loadClient();
+
+		const result = await externalIdpAPI.startLogin(
+			'saml:saml-idp-1',
+			'https://login.example.com/',
+			'/saml/sp/login?idp=saml-idp-1',
+			'saml_sp'
+		);
+		const url = new URL(result.url);
+
+		expect(url.pathname).toBe('/saml/sp/login');
+		expect(url.searchParams.get('idp')).toBe('saml-idp-1');
+		expect(url.searchParams.get('return_url')).toBe('https://login.example.com/');
+		expect(url.searchParams.has('client_id')).toBe(false);
+		expect(url.searchParams.has('code_challenge')).toBe(false);
+	});
+
+	it('returns direct external provider start URLs without adding OAuth parameters', async () => {
+		const { externalIdpAPI } = await loadClient();
+
+		const result = await externalIdpAPI.startLogin(
+			'wallet-vp',
+			'https://login.example.com/callback',
+			'/vp/login?profile=employee',
+			'direct'
+		);
+		const url = new URL(result.url);
+
+		expect(url.pathname).toBe('/vp/login');
+		expect(url.searchParams.get('profile')).toBe('employee');
+		expect(url.searchParams.has('redirect_uri')).toBe(false);
+		expect(url.searchParams.has('code_challenge')).toBe(false);
+	});
 });

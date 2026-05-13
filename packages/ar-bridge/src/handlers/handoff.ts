@@ -149,6 +149,7 @@ async function createHandoffSession(
   const log = getLogger(c).module('HANDOFF');
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown';
   const { handoff_token, state, client_id } = body;
+  const tenantId = getTenantIdFromContext(c);
 
   // 0. Rate Limiting（brute force対策）
   const rateLimitKey = `handoff:verify:${client_id}:${clientIp}`;
@@ -158,7 +159,7 @@ async function createHandoffSession(
   };
 
   try {
-    const { allowed } = await checkRateLimit(c.env, rateLimitKey, rateLimitConfig);
+    const { allowed } = await checkRateLimit(c.env, rateLimitKey, rateLimitConfig, tenantId);
 
     if (!allowed) {
       log.warn('Rate limit exceeded', {
@@ -196,7 +197,6 @@ async function createHandoffSession(
   }
 
   // client_idに紐づくallowedRedirectUrisからoriginを抽出して検証
-  const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const client = await authCtx.repositories.client.findByClientId(client_id);
 
@@ -269,7 +269,11 @@ async function createHandoffSession(
   }
 
   // 2. ハンドオフトークンを消費
-  const handoffStore = await getChallengeStoreByChallengeId(c.env, handoff_token);
+  const handoffStore = await getChallengeStoreByChallengeId(
+    c.env,
+    handoff_token,
+    getTenantIdFromContext(c)
+  );
 
   let handoffData: {
     challenge: string; // sessionId
@@ -285,6 +289,7 @@ async function createHandoffSession(
   try {
     handoffData = (await handoffStore.consumeChallengeRpc({
       id: `handoff:${handoff_token}`,
+      tenantId: getTenantIdFromContext(c),
       type: 'handoff',
     })) as typeof handoffData;
   } catch {

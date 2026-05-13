@@ -356,8 +356,8 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       field_value: string;
       field_type: string;
     }>(
-      'SELECT field_name, field_value, field_type FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?',
-      [userId, tenantId]
+      'SELECT field_name, field_value, field_type FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
 
     const requiredViolations = await getRequiredCustomClaimViolationStatuses({
@@ -594,9 +594,9 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         await ensureDatabaseAdapter(
           customClaimSources.nonPiiDb,
           'admin-user-create-rollback-custom-fields'
-        ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
-          userId,
+        ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
           tenantId,
+          userId,
         ]);
 
         if (customClaimSources.piiDb) {

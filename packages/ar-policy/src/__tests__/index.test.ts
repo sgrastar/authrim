@@ -509,6 +509,27 @@ describe('Policy Service API', () => {
       expect(body.error).toBe('invalid_request');
     });
 
+    it('should reject legacy ReBAC checks without an explicit tenant_id', async () => {
+      const mockEnvWithRebac = {
+        ...mockEnv,
+        ENABLE_REBAC: 'true',
+        DB: createMockD1(),
+      };
+      const req = createRequest('/api/rebac/check', {
+        method: 'POST',
+        body: {
+          user_id: 'user:user_123',
+          relation: 'viewer',
+          object: 'document:doc_456',
+        },
+      });
+      const res = await app.fetch(req, mockEnvWithRebac);
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid_request');
+    });
+
     it('should perform ReBAC check when enabled with DB', async () => {
       const mockEnvWithRebac = {
         ...mockEnv,
@@ -521,6 +542,7 @@ describe('Policy Service API', () => {
           user_id: 'user:user_123',
           relation: 'viewer',
           object: 'document:doc_456',
+          tenant_id: 'default',
         },
       });
       const res = await app.fetch(req, mockEnvWithRebac);

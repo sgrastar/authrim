@@ -640,8 +640,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         'POST',
         parEndpointUrl,
         undefined, // No access token at PAR stage
-        c.env.DPOP_JTI_STORE,
-        params.client_id
+        c.env,
+        params.client_id,
+        getTenantIdFromContext(c)
       );
 
       if (!dpopValidation.valid) {

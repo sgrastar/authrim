@@ -23,12 +23,17 @@ import { handleSPACS } from '../sp/acs';
 import { handleSPSLO } from '../sp/slo';
 import { handleSPMetadata } from '../sp/metadata';
 import { handleIdPMetadata } from '../idp/metadata';
+import { handleIdPSLO } from '../idp/slo';
+import { getSAMLMetadataSigningCertificates } from '../common/saml-signing-keys';
 
 const {
   mockValidateCustomClaimWrite,
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
   mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockGetSigningKey,
+  mockGetSigningCertificate,
+  mockGetSPConfig,
 } = vi.hoisted(() => ({
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
@@ -37,12 +42,19 @@ const {
     missingRequiredFields: [],
   }),
   mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+  mockGetSigningKey: vi.fn().mockResolvedValue({
+    kid: 'mock-kid',
+    privateKeyPem: 'mock-key',
+  }),
+  mockGetSigningCertificate: vi.fn().mockResolvedValue('mock-cert'),
+  mockGetSPConfig: vi.fn(),
 }));
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
 vi.mock('../admin/providers', () => ({
   getIdPConfigByEntityId: (...args: any[]) => mockGetIdPConfigByEntityId(...args),
+  getSPConfig: (...args: any[]) => mockGetSPConfig(...args),
 }));
 
 vi.mock('../common/signature', () => ({
@@ -52,8 +64,8 @@ vi.mock('../common/signature', () => ({
 }));
 
 vi.mock('../common/key-utils', () => ({
-  getSigningKey: vi.fn().mockResolvedValue({ privateKeyPem: 'mock-key' }),
-  getSigningCertificate: vi.fn().mockResolvedValue('mock-cert'),
+  getSigningKey: (...args: any[]) => mockGetSigningKey(...args),
+  getSigningCertificate: (...args: any[]) => mockGetSigningCertificate(...args),
 }));
 
 // Mock structured logger and event publisher
@@ -273,6 +285,26 @@ describe('SAML Integration', () => {
       lifecycleState: 'active',
       missingRequiredFields: [],
     });
+    mockGetSigningKey.mockReset().mockResolvedValue({
+      kid: 'mock-kid',
+      privateKeyPem: 'mock-key',
+    });
+    mockGetSigningCertificate.mockReset().mockResolvedValue('mock-cert');
+    mockGetSPConfig
+      .mockReset()
+      .mockImplementation(async (_env: unknown, _tenantId: string, entityId: string) => {
+        if (entityId === 'https://sp.example.com/saml') {
+          return {
+            entityId: 'https://sp.example.com/saml',
+            acsUrl: 'https://sp.example.com/saml/acs',
+            sloUrl: 'https://sp.example.com/saml/slo',
+            certificate: 'mock-sp-certificate',
+            signingKeyPolicy: {},
+            allowedBindings: ['post', 'redirect'],
+          };
+        }
+        return null;
+      });
     mockUsers = new Map();
 
     // Seed test user
@@ -314,6 +346,7 @@ describe('SAML Integration', () => {
     // Mock environment
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
       UI_URL: 'https://ui.example.com',
       DB: {
         prepare: vi.fn().mockImplementation((sql: string) => ({
@@ -383,13 +416,21 @@ describe('SAML Integration', () => {
       Object.assign(c, { env: mockEnv });
       return handleSPSLO(c as any);
     });
+    app.post('/saml/idp/slo', (c) => {
+      Object.assign(c, { env: mockEnv });
+      return handleIdPSLO(c as any);
+    });
   });
 
   /**
    * Helper to call ACS handler directly (for success path tests)
    * This bypasses Hono to ensure mocks are properly applied
    */
-  async function callACSDirectly(samlResponse: string, relayState?: string): Promise<Response> {
+  async function callACSDirectly(
+    samlResponse: string,
+    relayState?: string,
+    options: { tenantId?: string; headerTenantId?: string } = {}
+  ): Promise<Response> {
     const formData = new FormData();
     formData.append('SAMLResponse', samlResponse);
     if (relayState) {
@@ -401,16 +442,72 @@ describe('SAML Integration', () => {
       env: mockEnv,
       req: {
         formData: async () => formData,
-        header: vi.fn().mockReturnValue(undefined),
+        header: vi.fn((name: string) =>
+          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
+        ),
       },
       json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
-      get: vi.fn().mockReturnValue('default'),
+      get: vi.fn((key: string) =>
+        key === 'tenantId' ? (options.tenantId ?? 'default') : undefined
+      ),
       executionCtx: {
         waitUntil: vi.fn(),
       },
     };
 
     return handleSPACS(context as unknown as Parameters<typeof handleSPACS>[0]);
+  }
+
+  async function callMetadataDirectly(
+    handler: typeof handleSPMetadata | typeof handleIdPMetadata,
+    options: {
+      tenantId?: string;
+      headerTenantId?: string;
+      env?: Partial<Env>;
+    } = {}
+  ): Promise<Response> {
+    const context = {
+      env: {
+        ...mockEnv,
+        ...options.env,
+      },
+      req: {
+        header: vi.fn((name: string) =>
+          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
+        ),
+      },
+      get: vi.fn((key: string) => (key === 'tenantId' ? options.tenantId : undefined)),
+    };
+
+    return handler(context as unknown as Parameters<typeof handler>[0]);
+  }
+
+  async function callIdPSLODirectly(
+    samlResponse: string,
+    options: { tenantId?: string; headerTenantId?: string } = {}
+  ): Promise<Response> {
+    const formData = new FormData();
+    formData.append('SAMLResponse', samlResponse);
+
+    const context = {
+      env: mockEnv,
+      req: {
+        method: 'POST',
+        formData: async () => formData,
+        header: vi.fn((name: string) =>
+          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
+        ),
+      },
+      json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
+      get: vi.fn((key: string) =>
+        key === 'tenantId' ? (options.tenantId ?? 'default') : undefined
+      ),
+      executionCtx: {
+        waitUntil: vi.fn(),
+      },
+    };
+
+    return handleIdPSLO(context as unknown as Parameters<typeof handleIdPSLO>[0]);
   }
 
   describe('POST /saml/sp/acs - Assertion Consumer Service', () => {
@@ -553,6 +650,78 @@ describe('SAML Integration', () => {
       expect(res.status).toBeGreaterThanOrEqual(400);
     });
 
+    it('should reject strict InResponseTo when the stored request is only present in another tenant', async () => {
+      const tenantBStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
+      const tenantAStoreFetch = vi
+        .fn()
+        .mockResolvedValue(new Response('Not found', { status: 404 }));
+      const idFromName = vi.fn((name: string) => name);
+
+      (mockEnv as Partial<Env> & { SAML_STRICT_INRESPONSETO: string }).SAML_STRICT_INRESPONSETO =
+        'true';
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName,
+        get: vi.fn((id: string) => ({
+          fetch: id.includes('tenant:tenant-b:') ? tenantBStoreFetch : tenantAStoreFetch,
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: '_tenant_b_request',
+        }),
+        undefined,
+        { tenantId: 'tenant-a' }
+      );
+
+      expect(res.status).toBe(400);
+      expect(idFromName).toHaveBeenCalledWith(
+        'tenant:tenant-a:saml:sp:idp:https%3A%2F%2Fidp.example.com'
+      );
+      expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-b:'));
+      expect(tenantAStoreFetch).toHaveBeenCalledWith(
+        'https://saml-request-store/consume/_tenant_b_request',
+        { method: 'POST' }
+      );
+      expect(tenantBStoreFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject strict InResponseTo when tenant-a has the request but tenant-b context does not', async () => {
+      const tenantAStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
+      const tenantBStoreFetch = vi
+        .fn()
+        .mockResolvedValue(new Response('Not found', { status: 404 }));
+      const idFromName = vi.fn((name: string) => name);
+
+      (mockEnv as Partial<Env> & { SAML_STRICT_INRESPONSETO: string }).SAML_STRICT_INRESPONSETO =
+        'true';
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName,
+        get: vi.fn((id: string) => ({
+          fetch: id.includes('tenant:tenant-a:') ? tenantAStoreFetch : tenantBStoreFetch,
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: '_shared_request',
+        }),
+        undefined,
+        { tenantId: 'tenant-b' }
+      );
+
+      expect(res.status).toBe(400);
+      expect(idFromName).toHaveBeenCalledWith(
+        'tenant:tenant-b:saml:sp:idp:https%3A%2F%2Fidp.example.com'
+      );
+      expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-a:'));
+      expect(tenantBStoreFetch).toHaveBeenCalledWith(
+        'https://saml-request-store/consume/_shared_request',
+        { method: 'POST' }
+      );
+      expect(tenantAStoreFetch).not.toHaveBeenCalled();
+    });
+
     it('should redirect on successful SAML Response', async () => {
       // Use direct handler call to ensure mocks are properly applied
       const res = await callACSDirectly(
@@ -682,6 +851,8 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toContain('application/samlmetadata+xml');
+      expect(res.headers.get('ETag')).toMatch(/^W\/"saml-metadata-[a-z0-9]+"$/);
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
       const body = await res.text();
       expect(body).toContain('<md:EntityDescriptor');
       expect(body).toContain('xml:lang="en"');
@@ -695,11 +866,129 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toContain('application/samlmetadata+xml');
+      expect(res.headers.get('ETag')).toMatch(/^W\/"saml-metadata-[a-z0-9]+"$/);
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
       const body = await res.text();
       expect(body).toContain('<md:EntityDescriptor');
       expect(body).toContain('xml:lang="en"');
       expect(body).toContain('https://auth.example.com/saml/idp');
     });
+
+    it('should return 304 when metadata If-None-Match matches the current ETag', async () => {
+      const firstRes = await app.fetch(new Request('http://localhost/saml/sp/metadata'));
+      const etag = firstRes.headers.get('ETag');
+
+      const secondRes = await app.fetch(
+        new Request('http://localhost/saml/sp/metadata', {
+          headers: {
+            'If-None-Match': etag ?? '',
+          },
+        })
+      );
+
+      expect(etag).toMatch(/^W\/"saml-metadata-[a-z0-9]+"$/);
+      expect(secondRes.status).toBe(304);
+      expect(secondRes.headers.get('ETag')).toBe(etag);
+    });
+
+    it('should reject metadata when public X-Tenant-Id conflicts with resolved tenant context', async () => {
+      await expect(
+        callMetadataDirectly(handleIdPMetadata, {
+          tenantId: 'tenant-a',
+          headerTenantId: 'tenant-b',
+        })
+      ).rejects.toThrow('SAML tenant header conflicts with resolved tenant context');
+      await expect(
+        callMetadataDirectly(handleSPMetadata, {
+          tenantId: 'tenant-a',
+          headerTenantId: 'tenant-b',
+        })
+      ).rejects.toThrow('SAML tenant header conflicts with resolved tenant context');
+
+      expect(mockGetSigningKey).not.toHaveBeenCalled();
+      expect(mockGetSigningCertificate).not.toHaveBeenCalled();
+    });
+
+    it('should not use public X-Tenant-Id to select metadata signing keys', async () => {
+      const res = await callMetadataDirectly(handleSPMetadata, {
+        headerTenantId: 'tenant-b',
+        env: {
+          DEFAULT_TENANT_ID: 'tenant-default',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('https://auth.example.com/saml/sp');
+      expect(mockGetSigningKey).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-default',
+        expect.objectContaining({
+          keyRef: 'tenant:tenant-default:saml:sp:signing',
+        })
+      );
+      expect(mockGetSigningCertificate).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-default',
+        expect.objectContaining({
+          keyRef: 'tenant:tenant-default:saml:sp:signing',
+        })
+      );
+      expect(mockGetSigningKey).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-b',
+        expect.anything()
+      );
+      expect(mockGetSigningCertificate).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-b',
+        expect.anything()
+      );
+    });
+
+    it('should fail closed for IdP and SP metadata when BASE_DOMAIN is set without request context', async () => {
+      await expect(
+        callMetadataDirectly(handleIdPMetadata, {
+          env: {
+            BASE_DOMAIN: 'auth.example.com',
+            DEFAULT_TENANT_ID: 'tenant-default',
+          },
+        })
+      ).rejects.toThrow('multi-tenant runtime requires request context resolution');
+      await expect(
+        callMetadataDirectly(handleSPMetadata, {
+          env: {
+            BASE_DOMAIN: 'auth.example.com',
+            DEFAULT_TENANT_ID: 'tenant-default',
+          },
+        })
+      ).rejects.toThrow('multi-tenant runtime requires request context resolution');
+
+      expect(mockGetSigningKey).not.toHaveBeenCalled();
+      expect(mockGetSigningCertificate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['next', 'tenant:tenant-b:saml:idp:next:signing'],
+      ['backup', 'tenant:tenant-b:saml:idp:backup:signing'],
+    ] as const)(
+      'should reject metadata certificate publication when %s keyRef belongs to another tenant',
+      async (slot, keyRef) => {
+        await expect(
+          getSAMLMetadataSigningCertificates(mockEnv as Env, {
+            tenantId: 'tenant-a',
+            role: 'idp',
+            policy: {
+              metadataCertificatePublication:
+                slot === 'next' ? 'active_next' : 'active_next_backup',
+              [slot]: {
+                slot,
+                keyRef,
+              },
+            },
+          })
+        ).rejects.toThrow('SAML signing key reference must be tenant-scoped');
+      }
+    );
   });
 
   describe('POST /saml/sp/slo - Single Logout (POST Binding)', () => {
@@ -858,6 +1147,47 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(302);
       expect(res.headers.get('Location')).toBe('https://app.example.com/logged-out');
       expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0'); // Cookie cleared
+    });
+  });
+
+  describe('POST /saml/idp/slo - Single Logout (POST Binding)', () => {
+    it('should isolate outbound LogoutResponse correlation by tenant for the same requestId', async () => {
+      const requestId = '_shared_logout_request';
+      const tenantAKey = `saml:logout-request:tenant:tenant-a:id:${requestId}`;
+      const tenantBKey = `saml:logout-request:tenant:tenant-b:id:${requestId}`;
+      const stateStoreGet = vi.fn(async (key: string) => {
+        if (key === tenantAKey) {
+          return JSON.stringify({
+            version: 1,
+            tenantId: 'tenant-a',
+            spEntityId: 'https://sp.example.com/saml',
+            requestId,
+            issuedAt: Date.now() - 1000,
+            expiresAt: Date.now() + 120000,
+          });
+        }
+        return null;
+      });
+      const stateStoreDelete = vi.fn();
+
+      mockEnv.STATE_STORE = {
+        get: stateStoreGet,
+        delete: stateStoreDelete,
+        put: vi.fn(),
+      } as unknown as Env['STATE_STORE'];
+
+      await expect(
+        callIdPSLODirectly(
+          createMockLogoutResponse({
+            issuer: 'https://sp.example.com/saml',
+            inResponseTo: requestId,
+          }),
+          { tenantId: 'tenant-b' }
+        )
+      ).rejects.toThrow('LogoutResponse InResponseTo does not match an outbound LogoutRequest');
+      expect(stateStoreGet).toHaveBeenCalledWith(tenantBKey);
+      expect(stateStoreGet).not.toHaveBeenCalledWith(tenantAKey);
+      expect(stateStoreDelete).not.toHaveBeenCalled();
     });
   });
 

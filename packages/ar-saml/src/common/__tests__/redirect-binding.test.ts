@@ -15,6 +15,7 @@ import {
   buildLogoutRequest,
   buildLogoutResponse,
   encodeForRedirectBinding,
+  encodeForRedirectBindingQueryValue,
   parseLogoutRequestPost,
   parseLogoutRequestRedirect,
   parseLogoutResponseRedirect,
@@ -156,6 +157,25 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
       expect(parsed.inResponseTo).toBe('_logout_request_456');
       expect(parsed.statusCode).toBe('urn:oasis:names:tc:SAML:2.0:status:Success');
     });
+
+    it('should encode standard Base64 query values for signed Redirect binding', () => {
+      const responseOptions: LogoutResponseOptions = {
+        id: '_logout_response_query_value',
+        issueInstant: new Date().toISOString(),
+        issuer: 'https://idp.example.com',
+        destination: 'https://sp.example.com/slo',
+        inResponseTo: '_logout_request_query_value',
+        statusCode: 'urn:oasis:names:tc:SAML:2.0:status:Success',
+      };
+
+      const xml = buildLogoutResponse(responseOptions);
+      const encoded = encodeForRedirectBindingQueryValue(xml);
+      const parsed = parseLogoutResponseRedirect(encoded);
+
+      expect(encoded).not.toContain('-');
+      expect(encoded).not.toContain('_');
+      expect(parsed.id).toBe('_logout_response_query_value');
+    });
   });
 
   describe('RelayState Handling', () => {
@@ -244,6 +264,37 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
         encodeURIComponent(relayState),
         signResult.signature,
         signResult.sigAlg,
+        testCertificate
+      );
+
+      expect(isValid).toBe(true);
+    });
+
+    it('should sign and verify LogoutResponse redirect binding query values', async () => {
+      const xml = buildLogoutResponse({
+        id: '_logout_response_signed_redirect',
+        issueInstant: new Date().toISOString(),
+        issuer: 'https://idp.example.com',
+        destination: 'https://sp.example.com/slo',
+        inResponseTo: '_logout_request_signed_redirect',
+        statusCode: 'urn:oasis:names:tc:SAML:2.0:status:Success',
+      });
+      const samlResponse = encodeForRedirectBindingQueryValue(xml);
+
+      const signResult = await signRedirectBinding(
+        'SAMLResponse',
+        samlResponse,
+        'relayState123',
+        testPrivateKey
+      );
+
+      const url = new URL(`https://sp.example.com/slo?${signResult.signedUrl}`);
+      const isValid = await verifyRedirectBindingSignature(
+        'SAMLResponse',
+        getRawQueryParam(url.search, 'SAMLResponse')!,
+        getRawQueryParam(url.search, 'RelayState'),
+        url.searchParams.get('Signature')!,
+        url.searchParams.get('SigAlg')!,
         testCertificate
       );
 
@@ -428,3 +479,10 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
     });
   });
 });
+
+function getRawQueryParam(search: string, name: string): string | undefined {
+  const prefix = `${name}=`;
+  const query = search.startsWith('?') ? search.slice(1) : search;
+  const match = query.split('&').find((part) => part.startsWith(prefix));
+  return match ? match.slice(prefix.length) : undefined;
+}

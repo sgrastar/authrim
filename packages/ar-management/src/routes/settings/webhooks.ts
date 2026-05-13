@@ -355,10 +355,10 @@ async function loadWebhookDeliveryPayload(
     ? ((
         await getObjectCatalogObjectRecordByPublicArtifactId(
           adapter,
+          tenantId,
           detailArtifactId,
           'canonical_json',
-          0,
-          tenantId
+          0
         )
       )?.logical.id ?? null)
     : null;

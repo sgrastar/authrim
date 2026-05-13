@@ -27,6 +27,7 @@
 import { generateId, getCurrentTimestamp } from '../base';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { SessionClientWithWebhook } from '../../types/logout';
+import { requireTenantId } from '../tenant';
 
 /**
  * Session-Client association entity
@@ -57,7 +58,7 @@ export interface SessionClient {
 export interface CreateSessionClientInput {
   /** Optional ID (auto-generated if not provided) */
   id?: string;
-  /** Tenant ID (defaults to the repository tenant) */
+  /** Tenant ID */
   tenant_id?: string;
   /** Session ID */
   session_id: string;
@@ -115,9 +116,9 @@ export class SessionClientRepository {
   protected readonly adapter: DatabaseAdapter;
   protected readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter, tenantId = 'default') {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'SessionClientRepository');
   }
 
   /**
@@ -131,7 +132,12 @@ export class SessionClientRepository {
    */
   async createOrUpdate(input: CreateSessionClientInput): Promise<SessionClient> {
     const now = getCurrentTimestamp();
-    const tenantId = input.tenant_id ?? this.tenantId;
+    const tenantId = input.tenant_id
+      ? requireTenantId(input.tenant_id, 'SessionClientRepository.createOrUpdate')
+      : this.tenantId;
+    if (tenantId !== this.tenantId) {
+      throw new Error('SessionClientRepository tenant mismatch');
+    }
 
     // Check if association already exists
     const existing = await this.findBySessionAndClient(input.session_id, input.client_id, tenantId);
@@ -192,9 +198,20 @@ export class SessionClientRepository {
     clientId: string,
     tenantId = this.tenantId
   ): Promise<SessionClient | null> {
+    const normalizedTenantId = requireTenantId(
+      tenantId,
+      'SessionClientRepository.findBySessionAndClient'
+    );
+    if (normalizedTenantId !== this.tenantId) {
+      throw new Error('SessionClientRepository tenant mismatch');
+    }
     const sql =
       'SELECT * FROM session_clients WHERE tenant_id = ? AND session_id = ? AND client_id = ?';
-    const row = await this.adapter.queryOne<SessionClientRow>(sql, [tenantId, sessionId, clientId]);
+    const row = await this.adapter.queryOne<SessionClientRow>(sql, [
+      normalizedTenantId,
+      sessionId,
+      clientId,
+    ]);
     return row ? this.rowToEntity(row) : null;
   }
 

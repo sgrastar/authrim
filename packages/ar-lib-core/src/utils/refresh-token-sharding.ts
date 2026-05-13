@@ -330,12 +330,12 @@ export function buildRegionAwareRefreshTokenInstanceName(
  * @param clientId - Client identifier
  * @param generation - Generation number (0 for legacy)
  * @param shardIndex - Shard index (null for legacy)
- * @param tenantId - Tenant identifier (default: 'default')
+ * @param tenantId - Tenant identifier
  * @returns DO instance name
  *
  * @example
- * buildRefreshTokenRotatorInstanceName('client-abc', 1, 7)
- * // => 'tenant:default:refresh-rotator:client-abc:v1:shard-7'
+ * buildRefreshTokenRotatorInstanceName('client-abc', 1, 7, 'tenant-a')
+ * // => 'tenant:tenant-a:refresh-rotator:client-abc:v1:shard-7'
  *
  * buildRefreshTokenRotatorInstanceName('client-abc', 0, null)
  * // => 'tenant:default:refresh-rotator:client-abc'
@@ -344,15 +344,20 @@ export function buildRefreshTokenRotatorInstanceName(
   clientId: string,
   generation: number,
   shardIndex: number | null,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): string {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Refresh token rotator instance name requires tenantId');
+  }
+
   // Legacy (generation=0 or no shard index)
   if (generation === 0 || shardIndex === null) {
-    return `tenant:${tenantId}:refresh-rotator:${clientId}`;
+    return `tenant:${normalizedTenantId}:refresh-rotator:${clientId}`;
   }
 
   // New format with generation and shard
-  return `tenant:${tenantId}:refresh-rotator:${clientId}:v${generation}:shard-${shardIndex}`;
+  return `tenant:${normalizedTenantId}:refresh-rotator:${clientId}:v${generation}:shard-${shardIndex}`;
 }
 
 /**
@@ -368,9 +373,15 @@ export function getRefreshTokenRotatorId(
   env: Env,
   clientId: string,
   generation: number,
-  shardIndex: number | null
+  shardIndex: number | null,
+  tenantId: string
 ): DurableObjectId {
-  const instanceName = buildRefreshTokenRotatorInstanceName(clientId, generation, shardIndex);
+  const instanceName = buildRefreshTokenRotatorInstanceName(
+    clientId,
+    generation,
+    shardIndex,
+    tenantId
+  );
   return env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
 }
 
@@ -389,8 +400,15 @@ const shardConfigCache = new Map<string, { config: RefreshTokenShardConfig; expi
  * @param clientId - Client ID (null for global)
  * @returns KV key string
  */
-export function buildShardConfigKvKey(clientId: string | null): string {
-  return `${SHARD_CONFIG_KV_PREFIX}:${clientId ?? GLOBAL_CONFIG_KEY}`;
+export function buildShardConfigKvKey(clientId: string | null, tenantId: string): string {
+  const clientKey = clientId ?? GLOBAL_CONFIG_KEY;
+  if (!tenantId.trim()) {
+    throw new Error('Refresh token shard config key requires tenantId');
+  }
+  if (!tenantId || tenantId === DEFAULT_TENANT_ID) {
+    return `${SHARD_CONFIG_KV_PREFIX}:${clientKey}`;
+  }
+  return `${SHARD_CONFIG_KV_PREFIX}:tenant:${tenantId}:${clientKey}`;
 }
 
 /**
@@ -408,9 +426,14 @@ export function buildShardConfigKvKey(clientId: string | null): string {
  */
 export async function getRefreshTokenShardConfig(
   env: Env,
-  clientId: string
+  clientId: string,
+  tenantId: string
 ): Promise<RefreshTokenShardConfig> {
-  const cacheKey = `shard-config:${clientId}`;
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Refresh token shard config requires tenantId');
+  }
+  const cacheKey = `shard-config:${normalizedTenantId}:${clientId}`;
   const now = Date.now();
 
   // Check cache
@@ -427,7 +450,7 @@ export async function getRefreshTokenShardConfig(
   if (kv) {
     // Client-specific
     const clientConfig = await kv.get<RefreshTokenShardConfig>(
-      buildShardConfigKvKey(clientId),
+      buildShardConfigKvKey(clientId, normalizedTenantId),
       'json'
     );
     if (clientConfig) {
@@ -435,7 +458,7 @@ export async function getRefreshTokenShardConfig(
     } else {
       // Global fallback
       const globalConfig = await kv.get<RefreshTokenShardConfig>(
-        buildShardConfigKvKey(null),
+        buildShardConfigKvKey(null, normalizedTenantId),
         'json'
       );
       if (globalConfig) {
@@ -473,7 +496,8 @@ export async function getRefreshTokenShardConfig(
 export async function saveRefreshTokenShardConfig(
   env: Env,
   clientId: string | null,
-  config: RefreshTokenShardConfig
+  config: RefreshTokenShardConfig,
+  tenantId: string
 ): Promise<void> {
   // Use AUTHRIM_CONFIG KV namespace (bound as env.AUTHRIM_CONFIG)
   const kv = env.AUTHRIM_CONFIG ?? env.KV;
@@ -481,10 +505,15 @@ export async function saveRefreshTokenShardConfig(
     throw new Error('KV binding not available (AUTHRIM_CONFIG or KV)');
   }
 
-  await kv.put(buildShardConfigKvKey(clientId), JSON.stringify(config));
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Refresh token shard config save requires tenantId');
+  }
+
+  await kv.put(buildShardConfigKvKey(clientId, normalizedTenantId), JSON.stringify(config));
 
   // Invalidate cache
-  const cacheKey = `shard-config:${clientId ?? GLOBAL_CONFIG_KEY}`;
+  const cacheKey = `shard-config:${normalizedTenantId}:${clientId ?? GLOBAL_CONFIG_KEY}`;
   shardConfigCache.delete(cacheKey);
 }
 
@@ -586,21 +615,26 @@ export interface RefreshTokenRouteResult {
  * @param env - Environment with DO bindings
  * @param jti - Token JTI
  * @param clientId - Client identifier
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Route result with DO stub and routing info
  */
 export function routeRefreshTokenWithRegion(
   env: Env,
   jti: string,
   clientId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): RefreshTokenRouteResult {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Refresh token routing requires tenantId');
+  }
+
   const parsed = parseRefreshTokenJti(jti);
 
   // Region-aware format: use embedded region/shard info with locationHint
   if (parsed.isRegionAware && parsed.regionKey && parsed.shardIndex !== null) {
     const instanceName = buildRegionAwareRefreshTokenInstanceName(
-      tenantId,
+      normalizedTenantId,
       parsed.regionKey,
       parsed.shardIndex
     );
@@ -616,13 +650,19 @@ export function routeRefreshTokenWithRegion(
   }
 
   // Legacy format: use existing routing
-  const rotatorId = getRefreshTokenRotatorId(env, clientId, parsed.generation, parsed.shardIndex);
+  const rotatorId = getRefreshTokenRotatorId(
+    env,
+    clientId,
+    parsed.generation,
+    parsed.shardIndex,
+    normalizedTenantId
+  );
   const stub = env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     clientId,
     parsed.generation,
     parsed.shardIndex,
-    tenantId
+    normalizedTenantId
   );
 
   return {
@@ -644,8 +684,13 @@ export function routeRefreshTokenWithRegion(
  * @param clientId - Client identifier
  * @returns Durable Object stub for the RefreshTokenRotator
  */
-export function routeRefreshToken(env: Env, jti: string, clientId: string): DurableObjectStub {
-  const result = routeRefreshTokenWithRegion(env, jti, clientId);
+export function routeRefreshToken(
+  env: Env,
+  jti: string,
+  clientId: string,
+  tenantId: string
+): DurableObjectStub {
+  const result = routeRefreshTokenWithRegion(env, jti, clientId, tenantId);
   return result.stub;
 }
 
@@ -654,13 +699,13 @@ export function routeRefreshToken(env: Env, jti: string, clientId: string): Dura
  *
  * @param jti - Token JTI
  * @param clientId - Client identifier
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Routing information
  */
 export function getRefreshTokenRoutingInfo(
   jti: string,
   clientId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): {
   generation: number;
   shardIndex: number | null;
@@ -669,12 +714,17 @@ export function getRefreshTokenRoutingInfo(
   isLegacy: boolean;
   isRegionAware: boolean;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Refresh token routing info requires tenantId');
+  }
+
   const parsed = parseRefreshTokenJti(jti);
 
   let instanceName: string;
   if (parsed.isRegionAware && parsed.regionKey && parsed.shardIndex !== null) {
     instanceName = buildRegionAwareRefreshTokenInstanceName(
-      tenantId,
+      normalizedTenantId,
       parsed.regionKey,
       parsed.shardIndex
     );
@@ -683,7 +733,7 @@ export function getRefreshTokenRoutingInfo(
       clientId,
       parsed.generation,
       parsed.shardIndex,
-      tenantId
+      normalizedTenantId
     );
   }
 
@@ -720,16 +770,21 @@ export interface RegionAwareRefreshTokenJtiResult {
  * @param env - Environment object with KV bindings
  * @param userId - User identifier (for shard calculation)
  * @param clientId - Client identifier (for shard calculation)
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Promise containing the new JTI and routing info
  */
 export async function generateRegionAwareRefreshTokenJti(
   env: Env,
   userId: string,
   clientId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<RegionAwareRefreshTokenJtiResult> {
-  const config = await getRegionShardConfig(env, tenantId);
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Refresh token JTI generation requires tenantId');
+  }
+
+  const config = await getRegionShardConfig(env, normalizedTenantId);
   const randomPart = generateRefreshTokenRandomPart();
 
   // Use userId:clientId as shard key for consistent routing
@@ -744,7 +799,7 @@ export async function generateRegionAwareRefreshTokenJti(
   );
 
   const instanceName = buildRegionAwareRefreshTokenInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     resolution.shardIndex
   );

@@ -16,7 +16,7 @@ describe('DeviceSecretRepository', () => {
   beforeEach(() => {
     adapter = new MockDatabaseAdapter();
     adapter.initTable('device_secrets');
-    repository = new DeviceSecretRepository(adapter);
+    repository = new DeviceSecretRepository(adapter, 'default');
   });
 
   describe('createSecret', () => {

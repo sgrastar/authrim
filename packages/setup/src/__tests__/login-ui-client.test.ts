@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { ensureLoginUiClient } from '../core/login-ui-client.js';
 import { buildBrowserClientMetadata } from '../core/browser-client-metadata.js';
+import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
 function textResponse(body: string, status: number): Response {
   return new Response(body, {
@@ -28,7 +28,7 @@ describe('ensureLoginUiClient', () => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
 
-    tempDir = await mkdtemp(join(tmpdir(), 'authrim-login-ui-client-'));
+    tempDir = await mkdtemp(join('/private/tmp', 'authrim-login-ui-client-'));
     adminApiSecretPath = join(tempDir, 'admin_api_secret.txt');
     await writeFile(adminApiSecretPath, 'secret-token');
   });
@@ -112,6 +112,59 @@ describe('ensureLoginUiClient', () => {
     expect(secondCallHeaders['X-Tenant-Id']).toBe('default');
   });
 
+  it('prefers setup machine private_key_jwt over legacy admin API secret', async () => {
+    const secrets = generateAllSecrets('login-ui-test-key');
+    await saveKeysToDirectory(secrets, { targetDir: tempDir });
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: 'machine-admin-token',
+          token_type: 'Bearer',
+          expires_in: 600,
+          scope: 'admin:clients:*',
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'client-machine',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://single-ar-router.example.workers.dev',
+      loginUiUrl: 'https://single-ar-login-ui.workers.dev',
+      adminApiSecretPath,
+      tenantId: 'default',
+      maxRetries: 1,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      clientId: 'client-machine',
+      alreadyExists: false,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://single-ar-router.example.workers.dev/token'
+    );
+
+    const tokenBody = new URLSearchParams(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(tokenBody.get('grant_type')).toBe('client_credentials');
+    expect(tokenBody.get('client_assertion_type')).toBe(
+      'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+    );
+
+    const listHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    const createHeaders = fetchMock.mock.calls[2]?.[1]?.headers as Record<string, string>;
+    expect(listHeaders.Authorization).toBe('Bearer machine-admin-token');
+    expect(createHeaders.Authorization).toBe('Bearer machine-admin-token');
+  });
+
   it('creates the built-in Login UI client with browser refresh tokens disabled', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
@@ -136,6 +189,7 @@ describe('ensureLoginUiClient', () => {
       unknown
     >;
     expect(createBody).toMatchObject({
+      description: 'System-managed public OAuth client used by the built-in Authrim Login UI.',
       token_endpoint_auth_method: 'none',
       require_pkce: true,
       browser_public_client_mode: 'cookie_fallback',

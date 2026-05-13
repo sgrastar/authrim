@@ -11,6 +11,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   createStepUpErrorResponse,
+  getTenantIdFromContext,
   type ApprovalDecisionStatus,
   type ApprovalTransportMethod,
   type ApprovalApproverSubjectType,
@@ -23,16 +24,20 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
-import type { AuthenticationResponseJSON, AuthenticatorTransportFuture } from '@simplewebauthn/server';
-import { getApprovalCompletionArtifact, consumeApprovalCompletionArtifact } from '../approval-completion-artifact';
+import type {
+  AuthenticationResponseJSON,
+  AuthenticatorTransportFuture,
+} from '@simplewebauthn/server';
+import {
+  getApprovalCompletionArtifact,
+  consumeApprovalCompletionArtifact,
+} from '../approval-completion-artifact';
 import { issueApprovalDecisionReceipt } from '../approval-completion-receipt';
 import {
   buildApprovalCompletionRequirements,
   resolveApprovalCompletionMode,
 } from '../approval-completion-guidance';
-import {
-  appendApprovalTransportEvent,
-} from '../approval-transport-detail';
+import { appendApprovalTransportEvent } from '../approval-transport-detail';
 import {
   renderApprovalArtifactPortalPage,
   renderApprovalCibaDevicePage,
@@ -54,14 +59,13 @@ import {
 } from '../approval-ciba-notification';
 import { resolveApprovalNotificationPolicy } from '../approval-notification-policy';
 import { verifyApprovalOtpChallenge } from '../approval-otp';
-import {
-  ApprovalWorkflowPolicyError,
-  applyApprovalDecisionForRequest,
-} from '../approval-workflow';
+import { ApprovalWorkflowPolicyError, applyApprovalDecisionForRequest } from '../approval-workflow';
 
 const ApprovalArtifactDecisionSchema = z.object({
   decision: z.enum(['approved', 'denied']),
-  method: z.enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth']).optional(),
+  method: z
+    .enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth'])
+    .optional(),
   transport_channel: z.string().min(1).optional(),
   reason_code: z.string().min(1).optional(),
   reason_note: z.string().min(1).optional(),
@@ -128,7 +132,9 @@ type PendingApprovalArtifactState = {
   adapter: ReturnType<typeof getAdminAdapter>;
   requestRepo: ApprovalRequestRepository;
   approvalRepo: ApprovalRequestApprovalRepository;
-  request: NonNullable<Awaited<ReturnType<ApprovalRequestRepository['getApprovalRequestByPublicId']>>>;
+  request: NonNullable<
+    Awaited<ReturnType<ApprovalRequestRepository['getApprovalRequestByPublicId']>>
+  >;
   approval: NonNullable<Awaited<ReturnType<ApprovalRequestApprovalRepository['getApprovalById']>>>;
   artifact: NonNullable<Awaited<ReturnType<typeof getApprovalCompletionArtifact>>>;
 };
@@ -161,9 +167,10 @@ function toBase64URLString(input: CredentialIDLike): string {
 
 async function loadPendingApprovalArtifactState(
   env: Env,
-  artifactId: string
+  artifactId: string,
+  tenantId: string
 ): Promise<PendingApprovalArtifactState | null> {
-  const artifact = await getApprovalCompletionArtifact(env, artifactId);
+  const artifact = await getApprovalCompletionArtifact(env, artifactId, tenantId);
   if (!artifact || artifact.consumed) {
     return null;
   }
@@ -252,7 +259,11 @@ function buildApprovalStepUpStatus(
 
 approvalArtifactsRouter.post('/:artifactId/reauth/assert', adminAuthMiddleware({}), async (c) => {
   try {
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -269,7 +280,8 @@ approvalArtifactsRouter.post('/:artifactId/reauth/assert', adminAuthMiddleware({
       return c.json(
         {
           error: 'approval_completion_not_supported',
-          error_description: 'Reauth completion is currently only supported for admin user approvers.',
+          error_description:
+            'Reauth completion is currently only supported for admin user approvers.',
         },
         409
       );
@@ -290,7 +302,8 @@ approvalArtifactsRouter.post('/:artifactId/reauth/assert', adminAuthMiddleware({
       return c.json(
         {
           error: 'approval_completion_actor_mismatch',
-          error_description: 'The authenticated admin session does not match the intended approver.',
+          error_description:
+            'The authenticated admin session does not match the intended approver.',
         },
         403
       );
@@ -320,7 +333,11 @@ approvalArtifactsRouter.post('/:artifactId/reauth/assert', adminAuthMiddleware({
 approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
   try {
     const body = ApprovalArtifactPasskeyOptionsSchema.parse(await c.req.json().catch(() => ({})));
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -429,7 +446,11 @@ approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
 approvalArtifactsRouter.post('/:artifactId/passkey/verify', async (c) => {
   try {
     const body = ApprovalArtifactPasskeyVerifySchema.parse(await c.req.json());
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -586,7 +607,11 @@ approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
   let stepUpState: PendingApprovalArtifactState | null = null;
   try {
     const body = ApprovalArtifactOtpVerifySchema.parse(await c.req.json());
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     stepUpState = state;
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -611,6 +636,7 @@ approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
     }
 
     const verification = await verifyApprovalOtpChallenge(c.env, {
+      tenantId: state.request.tenant_id,
       artifactId: state.artifact.artifact_id,
       code: body.code,
       target: state.approval.transport_channel,
@@ -637,11 +663,7 @@ approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
         },
       });
     }
-    if (
-      stepUpState &&
-      error instanceof Error &&
-      error.message.startsWith('Invalid approval OTP')
-    ) {
+    if (stepUpState && error instanceof Error && error.message.startsWith('Invalid approval OTP')) {
       const inputState: StepUpInputState = {
         field: 'code',
         method: stepUpState.artifact.method,
@@ -670,7 +692,11 @@ approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
 
 approvalArtifactsRouter.post('/:artifactId/ciba/start', async (c) => {
   try {
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -745,7 +771,11 @@ approvalArtifactsRouter.post('/:artifactId/ciba/start', async (c) => {
 
 approvalArtifactsRouter.get('/:artifactId/ciba/status', async (c) => {
   try {
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -795,7 +825,11 @@ approvalArtifactsRouter.get('/:artifactId/ciba/status', async (c) => {
 
 approvalArtifactsRouter.get('/:artifactId/ciba/device', async (c) => {
   try {
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return new Response('Approval artifact not found or no longer active.', { status: 404 });
     }
@@ -826,7 +860,11 @@ approvalArtifactsRouter.get('/:artifactId/ciba/device', async (c) => {
 approvalArtifactsRouter.post('/:artifactId/ciba/respond', async (c) => {
   try {
     const body = ApprovalArtifactCibaRespondSchema.parse(await c.req.json());
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -868,7 +906,10 @@ approvalArtifactsRouter.post('/:artifactId/ciba/respond', async (c) => {
         },
       });
     }
-    if (error instanceof Error && /verification code|request mismatch|metadata not found/i.test(error.message)) {
+    if (
+      error instanceof Error &&
+      /verification code|request mismatch|metadata not found/i.test(error.message)
+    ) {
       return c.json(
         {
           error: 'auth_failed',
@@ -883,7 +924,11 @@ approvalArtifactsRouter.post('/:artifactId/ciba/respond', async (c) => {
 
 approvalArtifactsRouter.get('/:artifactId', async (c) => {
   try {
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -925,7 +970,11 @@ approvalArtifactsRouter.get('/:artifactId', async (c) => {
 approvalArtifactsRouter.post('/:artifactId/switch-method', async (c) => {
   try {
     const body = ApprovalArtifactSwitchMethodSchema.parse(await c.req.json());
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1011,7 +1060,11 @@ approvalArtifactsRouter.post('/:artifactId/switch-method', async (c) => {
 
 approvalArtifactsRouter.get('/:artifactId/portal', async (c) => {
   try {
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return new Response('Approval artifact not found or no longer active.', { status: 404 });
     }
@@ -1040,7 +1093,11 @@ approvalArtifactsRouter.get('/:artifactId/portal', async (c) => {
 approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
   try {
     const body = ApprovalArtifactDecisionSchema.parse(await c.req.json());
-    const state = await loadPendingApprovalArtifactState(c.env, c.req.param('artifactId')!);
+    const state = await loadPendingApprovalArtifactState(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
     if (!state) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1065,7 +1122,8 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         return createStepUpErrorResponse(
           {
             error: 'invalid_step_up_input',
-            error_description: 'The completion assertion method does not match the artifact method.',
+            error_description:
+              'The completion assertion method does not match the artifact method.',
             code: 'invalid_step_up_input',
             field: 'completion_assertion.method',
             status: buildApprovalStepUpStatus(state),
@@ -1081,7 +1139,8 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         return createStepUpErrorResponse(
           {
             error: 'invalid_step_up_input',
-            error_description: 'The completion assertion actor does not match the intended approver.',
+            error_description:
+              'The completion assertion actor does not match the intended approver.',
             code: 'invalid_step_up_input',
             field: 'completion_assertion.actor_subject_id',
             details: {
@@ -1101,7 +1160,8 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         return createStepUpErrorResponse(
           {
             error: 'invalid_step_up_input',
-            error_description: 'The completion assertion actor does not match the intended approver.',
+            error_description:
+              'The completion assertion actor does not match the intended approver.',
             code: 'invalid_step_up_input',
             field: 'completion_assertion.actor_subject_type',
             details: {
@@ -1117,7 +1177,11 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
     }
 
     const occurredAt = Date.now();
-    const artifact = await consumeApprovalCompletionArtifact(c.env, c.req.param('artifactId')!);
+    const artifact = await consumeApprovalCompletionArtifact(
+      c.env,
+      c.req.param('artifactId')!,
+      getTenantIdFromContext(c)
+    );
 
     const result = await applyApprovalDecisionForRequest(
       c,
@@ -1133,42 +1197,40 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         nextStatus: body.decision as ApprovalDecisionStatus,
         actorSubjectType: artifact.approver_subject_type,
         actorSubjectId: artifact.approver_subject_id,
-        method:
-          (body.method ?? artifact.method ?? state.approval.method ?? null) as ApprovalTransportMethod | null,
+        method: (body.method ??
+          artifact.method ??
+          state.approval.method ??
+          null) as ApprovalTransportMethod | null,
         transportChannel:
           body.transport_channel ?? artifact.transport_channel ?? state.approval.transport_channel,
         reasonCode: body.reason_code ?? state.request.reason_code,
         reasonNote: body.reason_note ?? null,
-        transportSummary:
-          body.transport_summary ?? {
-            provider: 'authrim.approval_artifact',
-            delivery_status: body.decision === 'approved' ? 'approved' : 'denied',
-            target: artifact.transport_channel ?? artifact.approver_subject_id,
-            correlation_id: artifact.investigation_id,
-            transport_request_id: artifact.artifact_id,
+        transportSummary: body.transport_summary ?? {
+          provider: 'authrim.approval_artifact',
+          delivery_status: body.decision === 'approved' ? 'approved' : 'denied',
+          target: artifact.transport_channel ?? artifact.approver_subject_id,
+          correlation_id: artifact.investigation_id,
+          transport_request_id: artifact.artifact_id,
+        },
+        transportDetail: body.transport_detail ?? {
+          request: {
+            artifact_id: artifact.artifact_id,
           },
-        transportDetail:
-          body.transport_detail ?? {
-            request: {
-              artifact_id: artifact.artifact_id,
-            },
-            response: {
-              decision: body.decision,
-            },
-            metadata: {
-              completion_source: 'approval_artifact',
-              completion_assertion: body.completion_assertion ?? null,
-            },
+          response: {
+            decision: body.decision,
           },
+          metadata: {
+            completion_source: 'approval_artifact',
+            completion_assertion: body.completion_assertion ?? null,
+          },
+        },
         occurredAt,
       }
     );
 
     const updatedApproval =
       result.approvals.find((item) => item.id === state.approval.id) ?? state.approval;
-    let receipt:
-      | Awaited<ReturnType<typeof issueApprovalDecisionReceipt>>
-      | null = null;
+    let receipt: Awaited<ReturnType<typeof issueApprovalDecisionReceipt>> | null = null;
 
     try {
       receipt = await issueApprovalDecisionReceipt(c.env, {
@@ -1187,8 +1249,10 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         actorSubjectId: artifact.approver_subject_id,
         requestStatus: result.request.status,
         approval: updatedApproval,
-        method:
-          (body.method ?? artifact.method ?? state.approval.method ?? null) as ApprovalTransportMethod | null,
+        method: (body.method ??
+          artifact.method ??
+          state.approval.method ??
+          null) as ApprovalTransportMethod | null,
         transportChannel:
           body.transport_channel ?? artifact.transport_channel ?? state.approval.transport_channel,
         reasonCode: body.reason_code ?? state.request.reason_code,

@@ -3222,6 +3222,10 @@ export function getHtmlTemplate(
           <span class="infra-label" data-i18n="web.preview.adminUi">Admin UI:</span>
           <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.workers.dev</span>
         </div>
+        <div class="infra-item" id="preview-admin-api-mode-row">
+          <span class="infra-label">Admin UI API mode:</span>
+          <span class="infra-value" id="preview-admin-api-mode">cross-site-proxy</span>
+        </div>
       </div>
 
       <div class="button-group">
@@ -5184,6 +5188,54 @@ export function getHtmlTemplate(
     window.refreshApiDomainUi = refreshApiDomainUi;
     window.renderDeployManualWildcardWarning = renderDeployManualWildcardWarning;
 
+    function getOriginFromPreviewUrl(value) {
+      try {
+        return new URL(value).origin;
+      } catch {
+        return '';
+      }
+    }
+
+    function hostWithinBaseDomain(host, baseDomain) {
+      if (!host || !baseDomain) return false;
+      const normalizedHost = host.toLowerCase();
+      const normalizedBase = baseDomain.toLowerCase();
+      return normalizedHost === normalizedBase || normalizedHost.endsWith('.' + normalizedBase);
+    }
+
+    function describeAdminPreviewMode(mode) {
+      if (mode === 'same-origin') {
+        return 'same-origin - relative Admin API calls on the same origin';
+      }
+      if (mode === 'same-site-cross-origin') {
+        return 'same-site-cross-origin - direct Admin API calls with credentialed CORS';
+      }
+      return 'cross-site-proxy - Admin UI Worker BFF via Service Binding';
+    }
+
+    function resolveAdminPreviewMode(apiUrl, adminUrl, baseDomain) {
+      const apiOrigin = getOriginFromPreviewUrl(apiUrl);
+      const adminOrigin = getOriginFromPreviewUrl(adminUrl);
+      if (apiOrigin && adminOrigin && apiOrigin === adminOrigin) {
+        return 'same-origin';
+      }
+
+      try {
+        const apiHost = new URL(apiUrl).hostname;
+        const adminHost = new URL(adminUrl).hostname;
+        if (
+          hostWithinBaseDomain(apiHost, baseDomain) &&
+          hostWithinBaseDomain(adminHost, baseDomain)
+        ) {
+          return 'same-site-cross-origin';
+        }
+      } catch {
+        // Fall through to proxy mode for incomplete preview input.
+      }
+
+      return 'cross-site-proxy';
+    }
+
     function updatePreview() {
       const env = document.getElementById('env').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '{env}';
       const baseDomain = document.getElementById('base-domain').value.trim();
@@ -5272,6 +5324,19 @@ export function getHtmlTemplate(
         previewAdmin.style.color = '';
       }
       document.getElementById('admin-default').textContent = adminUiWorkerDomain;
+
+      const apiPreviewUrl = document.getElementById('preview-issuer').textContent.trim();
+      const adminPreviewUrl = previewAdmin.textContent.trim();
+      const adminApiModeRow = document.getElementById('preview-admin-api-mode-row');
+      const adminApiModeEl = document.getElementById('preview-admin-api-mode');
+      if (adminUiEnabled && adminPreviewUrl.startsWith('https://')) {
+        adminApiModeRow.style.display = '';
+        adminApiModeEl.textContent = describeAdminPreviewMode(
+          resolveAdminPreviewMode(apiPreviewUrl, adminPreviewUrl, baseDomain)
+        );
+      } else {
+        adminApiModeRow.style.display = 'none';
+      }
 
       // === マルチテナント拡張プレビュー ===
       const previewMtSection = document.getElementById('preview-multi-tenant-section');
@@ -6496,8 +6561,14 @@ export function getHtmlTemplate(
           keysDir + '/private.pem (RSA Private Key)',
           keysDir + '/public.jwk.json (JWK Public Key)',
           keysDir + '/rp_token_encryption_key.txt',
+          keysDir + '/object_encryption_root_key.txt',
+          keysDir + '/version_manager_secret.txt',
           keysDir + '/admin_api_secret.txt',
           keysDir + '/key_manager_secret.txt',
+          keysDir + '/setup_machine_private.pem',
+          keysDir + '/setup_machine_public.jwk.json',
+          keysDir + '/admin_ui_bff_private.pem',
+          keysDir + '/admin_ui_bff_public.jwk.json',
           keysDir + '/setup_token.txt'
         ]
       };

@@ -22,13 +22,19 @@
  * - GET    /api/admin/saml-providers/:id - Get SAML provider
  * - PUT    /api/admin/saml-providers/:id - Update SAML provider
  * - DELETE /api/admin/saml-providers/:id - Delete SAML provider
+ * - GET    /api/admin/saml-attribute-presets - List SAML attribute presets
  * - POST   /api/admin/saml-providers/:id/import-metadata - Import metadata
+ * - POST   /api/admin/saml-providers/:id/refresh-metadata - Refresh metadata URL
+ * - POST   /api/admin/saml-providers/:id/signing-rollover/publish-next - Publish next signing certificate
+ * - POST   /api/admin/saml-providers/:id/signing-rollover/promote-next - Promote next signing certificate
+ * - POST   /api/admin/saml-providers/:id/signing-rollover/retire-backup - Retire backup signing certificate
  */
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  adminAuthMiddleware,
   requestContextMiddleware,
   pluginContextMiddleware,
   diagnosticLoggingMiddleware,
@@ -52,8 +58,14 @@ import {
   handleGetProvider,
   handleUpdateProvider,
   handleDeleteProvider,
+  handleListAttributePresets,
   handleImportMetadata,
+  handleRefreshMetadata,
+  handlePublishSigningNext,
+  handlePromoteSigningNext,
+  handleRetireSigningBackup,
 } from './admin/providers';
+import { handleScheduled } from './scheduled';
 
 // Create Hono app with Cloudflare Workers bindings
 const app = new Hono<{ Bindings: Env }>();
@@ -163,6 +175,8 @@ app.get('/saml/sp/slo', handleSPSLO);
 // Admin Endpoints
 // ============================================================================
 
+app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
+
 /**
  * List SAML Providers
  */
@@ -189,9 +203,29 @@ app.put('/api/admin/saml-providers/:id', handleUpdateProvider);
 app.delete('/api/admin/saml-providers/:id', handleDeleteProvider);
 
 /**
+ * List SAML Attribute Presets
+ */
+app.get('/api/admin/saml-attribute-presets', handleListAttributePresets);
+
+/**
  * Import Metadata
  */
 app.post('/api/admin/saml-providers/:id/import-metadata', handleImportMetadata);
+
+/**
+ * Refresh Metadata
+ */
+app.post('/api/admin/saml-providers/:id/refresh-metadata', handleRefreshMetadata);
+
+/**
+ * Signing Rollover Operations
+ */
+app.post('/api/admin/saml-providers/:id/signing-rollover/publish-next', handlePublishSigningNext);
+app.post('/api/admin/saml-providers/:id/signing-rollover/promote-next', handlePromoteSigningNext);
+app.post(
+  '/api/admin/saml-providers/:id/signing-rollover/retire-backup',
+  handleRetireSigningBackup
+);
 
 // 404 handler
 app.notFound((c) => {
@@ -205,4 +239,11 @@ app.onError((err, c) => {
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
-export default app;
+export { app, handleScheduled };
+
+export default {
+  fetch(request: Request, env?: Env, ctx?: ExecutionContext): Promise<Response> {
+    return Promise.resolve(app.fetch(request, env, ctx));
+  },
+  scheduled: handleScheduled,
+};

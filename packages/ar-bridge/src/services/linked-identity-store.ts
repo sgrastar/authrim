@@ -7,7 +7,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   ensureDatabaseAdapter,
   type DatabaseAdapter,
-  getDefaultTenantId,
   resolveUserStoreRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 import type { LinkedIdentity, TokenResponse } from '../types';
@@ -160,10 +159,10 @@ export async function createLinkedIdentity(
     emailVerified?: boolean;
     tokens: TokenResponse;
     rawClaims?: Record<string, unknown>;
-    tenantId?: string;
+    tenantId: string;
   }
 ): Promise<string> {
-  const tenantId = params.tenantId || getDefaultTenantId(env);
+  const tenantId = params.tenantId;
   const id = crypto.randomUUID();
   const now = Date.now();
   const tokenExpiresAt = params.tokens.expires_in

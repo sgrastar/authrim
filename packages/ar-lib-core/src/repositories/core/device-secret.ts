@@ -105,6 +105,14 @@ export interface DeviceSecretCreateOptions {
   maxSecretsBehavior?: 'revoke_oldest' | 'reject';
 }
 
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Device Secret Repository
  *
@@ -117,7 +125,7 @@ export interface DeviceSecretCreateOptions {
 export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
   private readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter, tenantId: string = 'default') {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     super(adapter, {
       tableName: 'device_secrets',
       softDelete: true,
@@ -142,7 +150,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
         'is_active',
       ],
     });
-    this.tenantId = tenantId;
+    this.tenantId = requireTenantId(tenantId, 'DeviceSecretRepository');
   }
 
   /**
@@ -219,7 +227,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
   ): Promise<CreateDeviceSecretResult | DeviceSecretValidationResult> {
     const maxSecrets = options?.maxSecretsPerUser ?? DEFAULT_MAX_SECRETS_PER_USER;
     const maxBehavior = options?.maxSecretsBehavior ?? 'revoke_oldest';
-    const tenantId = input.tenant_id ?? this.tenantId;
+    const tenantId = requireTenantId(input.tenant_id ?? this.tenantId, 'DeviceSecretRepository.createSecret');
 
     // Check existing secrets count for user
     const existingCount = await this.countByUserId(
@@ -372,7 +380,10 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
     options: { maxUseCount?: number; tenantId?: string } = {}
   ): Promise<DeviceSecretValidationResult> {
     const { maxUseCount = 10 } = options; // Default: 10 uses max
-    const tenantId = options.tenantId ?? this.tenantId;
+    const tenantId = requireTenantId(
+      options.tenantId ?? this.tenantId,
+      'DeviceSecretRepository.validateAndUse'
+    );
 
     // Hash the raw secret for lookup
     const secretHash = await this.hashDeviceSecret(deviceSecret);
@@ -575,7 +586,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    * Find device secrets by user ID
    *
    * @param userId - User ID
-   * @param tenantId - Tenant ID (default: 'default')
+   * @param tenantId - Tenant ID
    * @param validOnly - If true, return only non-expired, non-revoked secrets
    * @returns Array of device secrets
    */

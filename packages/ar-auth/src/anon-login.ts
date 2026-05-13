@@ -196,10 +196,15 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
       const deviceSignature = await hashDeviceIdentifiers(deviceIdentifiers, hmacSecret);
 
       // Store challenge in ChallengeStore
-      const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge.challenge_id);
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        challenge.challenge_id,
+        getTenantIdFromContext(c)
+      );
 
       await challengeStore.storeChallengeRpc({
         id: `anon_login:${challenge.challenge_id}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'anon_login',
         userId: '', // Will be set on verify
         challenge: challenge.challenge,
@@ -276,7 +281,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Get challenge from ChallengeStore
-      const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        challenge_id,
+        getTenantIdFromContext(c)
+      );
 
       let challengeData: {
         challenge: string;
@@ -293,6 +302,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         // Consume challenge atomically
         challengeData = (await challengeStore.consumeChallengeRpc({
           id: `anon_login:${challenge_id}`,
+          tenantId,
           type: 'anon_login',
         })) as typeof challengeData;
       } catch (error) {
@@ -569,12 +579,10 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Update last_login_at (fire-and-forget)
       authCtx.coreAdapter
-        .execute('UPDATE users_core SET last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?', [
-          now,
-          now,
-          userId,
-          tenantId,
-        ])
+        .execute(
+          'UPDATE users_core SET last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+          [now, now, userId, tenantId]
+        )
         .catch((error) => {
           log.error(
             'Failed to update user login timestamp',

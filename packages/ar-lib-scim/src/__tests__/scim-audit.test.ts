@@ -26,7 +26,7 @@ import { createScimAuditLog, logScimAudit } from '../utils/scim-audit';
  * Create a mock Hono context for SCIM operations
  */
 function createMockContext(options: {
-  tenantId?: string;
+  tenantId?: string | null;
   headers?: Record<string, string | undefined>;
 }): Context<{ Bindings: Env }> {
   const headers = {
@@ -47,7 +47,7 @@ function createMockContext(options: {
     },
     get: vi.fn((key: string) => {
       if (key === 'tenantId') {
-        return options.tenantId;
+        return options.tenantId === null ? undefined : (options.tenantId ?? 'tenant-a');
       }
       return undefined;
     }),
@@ -95,17 +95,12 @@ describe('createScimAuditLog', () => {
     );
   });
 
-  it('should use default tenant when tenantId is not in context', async () => {
-    const context = createMockContext({}); // No tenantId
+  it('should skip audit logging when tenantId is not in context', async () => {
+    const context = createMockContext({ tenantId: null });
 
     await createScimAuditLog(context, 'scim.user.delete', 'scim_user', 'user-789', {});
 
-    expect(mockCreateAuditLog).toHaveBeenCalledWith(
-      context.env,
-      expect.objectContaining({
-        tenantId: 'default',
-      })
-    );
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
   });
 
   describe('IP Address Extraction', () => {

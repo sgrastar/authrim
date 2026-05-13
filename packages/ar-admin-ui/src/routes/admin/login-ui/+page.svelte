@@ -112,11 +112,12 @@
 		pendingPatches = [];
 
 		try {
-			const tenantInfo = await getTenantInfo(scopeContext.tenantId ?? settingsContext.tenantId);
+			const selectedTenantId = resolveSelectedTenantId();
+			const tenantInfo = await getTenantInfo(selectedTenantId);
 			const uiConfigResult = await adminUiConfigAPI.get();
 			const tenantSettingsResult = await adminSettingsAPI.getSettings(
 				'tenant',
-				scopeContext.tenantId ?? settingsContext.tenantId
+				selectedTenantId
 			);
 			const nextUiConfigForm: UIConfigForm = {
 				baseUrl: uiConfigResult.config.baseUrl ?? '',
@@ -160,6 +161,17 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function resolveSelectedTenantId(): string {
+		const selectedTenantId =
+			scopeContext.tenantId?.trim() ||
+			settingsContext.current.tenantId?.trim() ||
+			settingsContext.availableTenants[0]?.id?.trim();
+		if (!selectedTenantId) {
+			throw new Error('Tenant context is required to load Login UI settings');
+		}
+		return selectedTenantId;
 	}
 
 	// Get current value (considering pending patches)
@@ -326,11 +338,7 @@
 							clear: ['tenant.allowed_origins']
 						};
 
-			await adminSettingsAPI.updateSettings(
-				'tenant',
-				request,
-				scopeContext.tenantId ?? settingsContext.tenantId
-			);
+			await adminSettingsAPI.updateSettings('tenant', request, resolveSelectedTenantId());
 
 			trustedOriginsSuccessMessage = 'Trusted origins updated.';
 			await loadData();

@@ -7,7 +7,7 @@ import { adminFetch } from '$lib/api/admin-request';
  * - Session status check
  * - Logout
  *
- * Uses both Cookie and X-Session-Id header for Safari ITP compatibility.
+ * Uses HttpOnly cookie-backed Admin sessions.
  */
 
 import type {
@@ -18,31 +18,11 @@ import type {
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
-/**
- * Get session ID from localStorage for Safari ITP compatibility
- */
-function getSessionId(): string | null {
-	if (typeof localStorage !== 'undefined') {
-		return localStorage.getItem('sessionId');
-	}
-	return null;
-}
-
-/**
- * Build headers with optional session ID for Safari ITP compatibility
- */
 function buildHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
-	const headers: Record<string, string> = {
+	return {
 		'Content-Type': 'application/json',
 		...additionalHeaders
 	};
-
-	const sessionId = getSessionId();
-	if (sessionId && sessionId !== 'session-from-cookie') {
-		headers['X-Session-Id'] = sessionId;
-	}
-
-	return headers;
 }
 
 /**
@@ -65,9 +45,12 @@ export interface SessionStatus {
 	active: boolean;
 	session_id: string;
 	user_id: string;
+	tenant_id: string;
 	email?: string;
 	name?: string;
 	roles: string[];
+	admin_scope: 'platform' | 'tenant';
+	is_platform_admin: boolean;
 	expires_at: number;
 	created_at: number;
 	last_login_at?: number | null;
@@ -202,7 +185,6 @@ export const adminAuthAPI = {
 		});
 		// Clear localStorage
 		if (typeof localStorage !== 'undefined') {
-			localStorage.removeItem('sessionId');
 			localStorage.removeItem('userId');
 			localStorage.removeItem('userEmail');
 			localStorage.removeItem('userName');

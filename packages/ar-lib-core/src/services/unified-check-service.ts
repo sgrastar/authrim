@@ -40,7 +40,6 @@ import { generateAuditId } from './check-audit-service';
 import type { ReBACService, CheckRequest as ReBACCheckRequest } from '../rebac';
 import { hasIdLevelPermission, getUserIdLevelPermissions } from '../utils/resource-permissions';
 import { createLogger } from '../utils/logger';
-import { DEFAULT_TENANT_ID } from '../utils/tenant-context';
 
 const log = createLogger().module('UNIFIED-CHECK-SERVICE');
 
@@ -242,8 +241,6 @@ export interface UnifiedCheckServiceConfig {
   policyEvaluator?: PolicyEvaluator;
   /** Audit service for permission check logging (optional) */
   auditService?: CheckAuditService;
-  /** Defensive fallback when caller omitted tenant_id */
-  defaultTenantId?: string;
 }
 
 /**
@@ -287,7 +284,6 @@ export class UnifiedCheckService {
   private enableAbac: boolean;
   private policyEvaluator?: PolicyEvaluator;
   private auditService?: CheckAuditService;
-  private defaultTenantId: string;
 
   constructor(config: UnifiedCheckServiceConfig) {
     this.db = ensureDatabaseAdapter(config.db, 'policy-check');
@@ -304,7 +300,6 @@ export class UnifiedCheckService {
     this.enableAbac = config.enableAbac ?? false;
     this.policyEvaluator = config.policyEvaluator;
     this.auditService = config.auditService;
-    this.defaultTenantId = config.defaultTenantId ?? DEFAULT_TENANT_ID;
   }
 
   /**
@@ -328,7 +323,10 @@ export class UnifiedCheckService {
   ): Promise<CheckApiResponse> {
     const startTime = performance.now();
     let parsed: ParsedPermission | undefined;
-    let tenantId = request.tenant_id ?? this.defaultTenantId;
+    const tenantId = request.tenant_id?.trim();
+    if (!tenantId) {
+      throw new Error('UnifiedCheckService requires tenant_id');
+    }
 
     try {
       // Parse permission
@@ -615,9 +613,8 @@ export class UnifiedCheckService {
   ): Promise<{ allowed: boolean; roleName?: string }> {
     try {
       // Query user's roles
-      const rolesResult = await this.db
-        .query<{ name: string; permissions_json: string }>(
-          `SELECT r.name, r.permissions_json
+      const rolesResult = await this.db.query<{ name: string; permissions_json: string }>(
+        `SELECT r.name, r.permissions_json
            FROM roles r
            INNER JOIN role_assignments ra ON r.id = ra.role_id
            WHERE ra.subject_id = ?
@@ -625,8 +622,8 @@ export class UnifiedCheckService {
              AND r.tenant_id = ?
              AND r.is_active = 1
              AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-          [context.subjectId, context.tenantId, context.tenantId, Math.floor(Date.now() / 1000)]
-        );
+        [context.subjectId, context.tenantId, context.tenantId, Math.floor(Date.now() / 1000)]
+      );
 
       const permissionToCheck =
         context.parsed.type === 'type_level'
@@ -717,12 +714,11 @@ export class UnifiedCheckService {
 
       // Organization membership check
       if (context.resourceContext.org_id) {
-        const orgMemberResult = await this.db
-          .queryOne(
-            `SELECT 1 FROM organization_memberships
+        const orgMemberResult = await this.db.queryOne(
+          `SELECT 1 FROM organization_memberships
              WHERE tenant_id = ? AND user_id = ? AND org_id = ? AND is_active = 1`,
-            [context.tenantId, context.subjectId, context.resourceContext.org_id]
-          );
+          [context.tenantId, context.subjectId, context.resourceContext.org_id]
+        );
 
         if (orgMemberResult) {
           return { allowed: true, ruleName: 'org_member_access' };

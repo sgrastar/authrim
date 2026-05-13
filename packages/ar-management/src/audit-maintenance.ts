@@ -67,7 +67,7 @@ async function copyRetentionCandidatesToArchive(input: {
 }): Promise<{ archived: number; deleted: number; failed: boolean }> {
   const { primaryAdapter, archiveAdapter, logType, beforeTime, tenantId, batchSize } = input;
   if (logType === 'event') {
-    const candidates = await primaryAdapter.listRetentionCandidates(
+    const candidates = await primaryAdapter.listTenantRetentionCandidates(
       'event',
       beforeTime,
       tenantId,
@@ -82,7 +82,7 @@ async function copyRetentionCandidatesToArchive(input: {
       return { archived: 0, deleted: 0, failed: true };
     }
 
-    const deleted = await primaryAdapter.deleteByRetention('event', beforeTime, tenantId, batchSize);
+    const deleted = await primaryAdapter.deleteTenantByRetention('event', beforeTime, tenantId, batchSize);
     return {
       archived: candidates.length,
       deleted,
@@ -90,7 +90,7 @@ async function copyRetentionCandidatesToArchive(input: {
     };
   }
 
-  const candidates = await primaryAdapter.listRetentionCandidates(
+  const candidates = await primaryAdapter.listTenantRetentionCandidates(
     'pii',
     beforeTime,
     tenantId,
@@ -105,7 +105,7 @@ async function copyRetentionCandidatesToArchive(input: {
     return { archived: 0, deleted: 0, failed: true };
   }
 
-  const deleted = await primaryAdapter.deleteByRetention('pii', beforeTime, tenantId, batchSize);
+  const deleted = await primaryAdapter.deleteTenantByRetention('pii', beforeTime, tenantId, batchSize);
   return {
     archived: candidates.length,
     deleted,
@@ -318,8 +318,8 @@ export async function cleanupResolvedAuditPrimaries(
           summary.piiDeleted += piiResult.deleted;
         }
       } else {
-        summary.eventDeleted += await eventAdapter.deleteByRetention('event', now, tenantId, batchSize);
-        summary.piiDeleted += await piiAdapter.deleteByRetention('pii', now, tenantId, batchSize);
+        summary.eventDeleted += await eventAdapter.deleteTenantByRetention('event', now, tenantId, batchSize);
+        summary.piiDeleted += await piiAdapter.deleteTenantByRetention('pii', now, tenantId, batchSize);
       }
       summary.processedTenants += 1;
     }

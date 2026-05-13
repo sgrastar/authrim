@@ -73,7 +73,7 @@ describe('UserCustomDataFetcher', () => {
     expect(result.get('department')).toBe('engineering');
     expect(mockDb.query).toHaveBeenCalledWith(
       expect.stringContaining('user_custom_fields'),
-      ['user-1', 'default', 'department']
+      ['default', 'user-1', 'department']
     );
   });
 

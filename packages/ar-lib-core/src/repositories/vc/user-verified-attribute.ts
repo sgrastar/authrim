@@ -119,7 +119,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
              verified_at = ?,
              expires_at = ?,
              updated_at = ?
-         WHERE id = ?`,
+         WHERE tenant_id = ? AND id = ?`,
         [
           input.attribute_value,
           input.source_type,
@@ -128,6 +128,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
           now,
           input.expires_at ?? null,
           now,
+          input.tenant_id,
           existing.id,
         ]
       );
@@ -213,7 +214,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
            verified_at = ?,
            expires_at = ?,
            updated_at = ?
-       WHERE id = ?`,
+       WHERE tenant_id = ? AND id = ?`,
       [
         input.attribute_value,
         input.source_type,
@@ -222,6 +223,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
         now,
         input.expires_at ?? null,
         now,
+        input.tenant_id,
         raced.id,
       ]
     );
