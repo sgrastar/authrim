@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureLoginUiClient } from '../core/login-ui-client.js';
 import { buildBrowserClientMetadata } from '../core/browser-client-metadata.js';
@@ -28,7 +28,9 @@ describe('ensureLoginUiClient', () => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
 
-    tempDir = await mkdtemp(join('/private/tmp', 'authrim-login-ui-client-'));
+    const testTempRoot = join(process.cwd(), '.tmp-tests');
+    await mkdir(testTempRoot, { recursive: true });
+    tempDir = await mkdtemp(join(testTempRoot, 'authrim-login-ui-client-'));
     adminApiSecretPath = join(tempDir, 'admin_api_secret.txt');
     await writeFile(adminApiSecretPath, 'secret-token');
   });

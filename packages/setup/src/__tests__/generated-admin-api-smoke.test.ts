@@ -1,17 +1,28 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createDefaultConfig } from '../core/config.js';
 import { runGeneratedAdminApiSmoke } from '../core/generated-admin-api-smoke.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
 describe('generated admin api smoke', () => {
+  let baseDir = '';
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
+  afterEach(async () => {
+    if (baseDir) {
+      await rm(baseDir, { recursive: true, force: true });
+      baseDir = '';
+    }
+  });
+
   it('runs admin smoke against a generated environment', async () => {
-    const baseDir = await mkdtemp(join('/private/tmp', 'authrim-admin-smoke-'));
+    const testTempRoot = join(process.cwd(), '.tmp-tests');
+    await mkdir(testTempRoot, { recursive: true });
+    baseDir = await mkdtemp(join(testTempRoot, 'authrim-admin-smoke-'));
     const env = 'single';
     const envDir = join(baseDir, '.authrim', env);
     const keysDir = join(baseDir, '.authrim-keys', env);
