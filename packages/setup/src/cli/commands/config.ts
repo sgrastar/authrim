@@ -185,9 +185,7 @@ async function showConfig(configPath: string, jsonOutput?: boolean, env?: string
     console.log(
       `  Default Residency: ${chalk.cyan(config.profiles.defaults.residency || 'builtin:residency:auto')}`
     );
-    console.log(
-      `  Registry Backend:  ${chalk.cyan(config.profiles.registry.backend || 'kv')}`
-    );
+    console.log(`  Registry Backend:  ${chalk.cyan(config.profiles.registry.backend || 'kv')}`);
     console.log(`  Seeded Storage:    ${chalk.cyan(config.profiles.seed.storage.length)}`);
     console.log(`  Seeded Audit:      ${chalk.cyan(config.profiles.seed.audit.length)}`);
     console.log(`  Seeded Residency:  ${chalk.cyan(config.profiles.seed.residency.length)}`);

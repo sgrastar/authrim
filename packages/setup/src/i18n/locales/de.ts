@@ -1018,8 +1018,7 @@ const de: Translations = {
   'web.email.cloudflareSetup': 'Cloudflare Email Service',
   'web.email.cloudflareRequirements': 'Voraussetzungen',
   'web.email.cloudflareRequirementPaid': 'Ein Workers-Paid-Plan ist erforderlich',
-  'web.email.cloudflareRequirementDns':
-    'Cloudflare-DNS bzw. Domain-Onboarding ist erforderlich',
+  'web.email.cloudflareRequirementDns': 'Cloudflare-DNS bzw. Domain-Onboarding ist erforderlich',
   'web.email.cloudflareRequirementManual':
     'Die Domain-Einrichtung im Cloudflare-Dashboard ist weiterhin manuell',
   'web.email.resendSetup': 'Resend-Konfiguration',

@@ -49,10 +49,7 @@ const CACHE_TTL_MS = 30000; // 30 seconds
 /**
  * Load DCR settings from KV
  */
-async function loadDCRSettingsFromKV(
-  env: Env,
-  tenantId: string
-): Promise<Record<string, unknown>> {
+async function loadDCRSettingsFromKV(env: Env, tenantId: string): Promise<Record<string, unknown>> {
   if (!tenantId.trim()) {
     throw new Error('DCR settings require tenantId');
   }
@@ -140,10 +137,7 @@ export async function getDCRSetting<K extends keyof DCRSettings>(
 /**
  * Get all DCR settings
  */
-export async function getAllDCRSettings(
-  env: Env,
-  tenantId: string
-): Promise<DCRSettings> {
+export async function getAllDCRSettings(env: Env, tenantId: string): Promise<DCRSettings> {
   return {
     'dcr.enabled': await getDCRSetting('dcr.enabled', env, tenantId),
     'dcr.require_initial_access_token': await getDCRSetting(

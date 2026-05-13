@@ -37,16 +37,19 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
     if (sql.includes('SELECT jti, client_id, generation FROM user_token_families')) {
       const tenantId = params?.[0] as string;
       const userId = params?.[1] as string;
-      const maybeClientId =
-        typeof params?.[2] === 'string' ? (params?.[2] as string) : undefined;
+      const maybeClientId = typeof params?.[2] === 'string' ? (params?.[2] as string) : undefined;
       const maybeNow =
         typeof params?.[2] === 'number'
           ? (params?.[2] as number)
           : (params?.[3] as number | undefined);
       return this.all()
         .filter((row) => row.user_id === userId && row.tenant_id === tenantId)
-        .filter((row) => (typeof maybeClientId === 'string' ? row.client_id === maybeClientId : true))
-        .filter((row) => (typeof maybeNow === 'number' ? row.is_revoked === 0 && row.expires_at > maybeNow : true))
+        .filter((row) =>
+          typeof maybeClientId === 'string' ? row.client_id === maybeClientId : true
+        )
+        .filter((row) =>
+          typeof maybeNow === 'number' ? row.is_revoked === 0 && row.expires_at > maybeNow : true
+        )
         .map((row) => ({
           jti: row.jti,
           client_id: row.client_id,
@@ -55,7 +58,12 @@ class InMemoryRefreshTokenFamilyIndexAdapter implements DatabaseAdapter {
     }
 
     if (sql.includes('GROUP BY generation')) {
-      const [nowMs, _nowMs2, tenantId, clientId] = params as [number, number, string, string | null];
+      const [nowMs, _nowMs2, tenantId, clientId] = params as [
+        number,
+        number,
+        string,
+        string | null,
+      ];
       const groups = new Map<number, FamilyRow[]>();
 
       for (const row of this.all()) {

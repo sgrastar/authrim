@@ -25,7 +25,10 @@ export function resolveAuditPersistenceAdapterFromEnv(
   partition: string
 ): DatabaseAdapter {
   const sources = resolveAuditPersistenceSourcesFromEnv(env);
-  return ensureDatabaseAdapter(logType === 'pii' ? sources.piiSource : sources.coreSource, partition);
+  return ensureDatabaseAdapter(
+    logType === 'pii' ? sources.piiSource : sources.coreSource,
+    partition
+  );
 }
 
 export function resolveLegacyAuditLogAdapterFromEnv(

@@ -94,10 +94,10 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
         id: string;
         email: string | null;
         name: string | null;
-      }>(
-        `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-        [tenantId, ...userIds]
-      );
+      }>(`SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`, [
+        tenantId,
+        ...userIds,
+      ]);
 
       const piiMap = new Map<string, { email: string | null; name: string | null }>();
       for (const pii of piiResults) {
@@ -588,7 +588,10 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         userId,
       });
     } catch (customFieldError) {
-      logSanitizedError('Custom claim persistence failed during admin user create', customFieldError);
+      logSanitizedError(
+        'Custom claim persistence failed during admin user create',
+        customFieldError
+      );
 
       try {
         await ensureDatabaseAdapter(

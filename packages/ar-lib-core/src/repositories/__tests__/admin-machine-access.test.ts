@@ -72,10 +72,7 @@ describe('AdminMachineAccessRepository', () => {
   });
 
   it('replaces principal and credential permission grants', async () => {
-    await repo.setPrincipalPermissions('amp_setup', [
-      'admin:tenants.read',
-      'admin:clients.create',
-    ]);
+    await repo.setPrincipalPermissions('amp_setup', ['admin:tenants.read', 'admin:clients.create']);
     await repo.setCredentialPermissions('amk_setup_1', ['admin:clients.create']);
 
     expect(await repo.getPrincipalPermissions('amp_setup')).toEqual([

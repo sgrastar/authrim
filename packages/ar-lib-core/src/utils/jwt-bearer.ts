@@ -335,9 +335,10 @@ function parseTrustedIssuersJson(envVar: string): Map<string, TrustedIssuer> {
 
       issuers.set(entry.issuer, {
         issuer: entry.issuer,
-        ...(isRecord(entry.jwks) && Array.isArray(entry.jwks.keys) && {
-          jwks: entry.jwks as TrustedIssuer['jwks'],
-        }),
+        ...(isRecord(entry.jwks) &&
+          Array.isArray(entry.jwks.keys) && {
+            jwks: entry.jwks as TrustedIssuer['jwks'],
+          }),
         ...(typeof entry.jwks_uri === 'string' && { jwks_uri: entry.jwks_uri }),
         ...(isStringArray(entry.allowed_subjects) && {
           allowed_subjects: entry.allowed_subjects,

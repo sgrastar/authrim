@@ -181,7 +181,7 @@ describe('Error Response Consistency', () => {
 
     it('serializes fatal metadata for runtime compatibility responses', async () => {
       const response = createCompatibilityErrorResponse('legacy_endpoint_not_supported', 404);
-      const body = await response.json() as {
+      const body = (await response.json()) as {
         error: string;
         error_uri: string;
         error_details: { code: string; severity: string; retryable: boolean };

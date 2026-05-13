@@ -1,5 +1,6 @@
-<script lang="ts">
-	import { onMount } from 'svelte';
+	<script lang="ts">
+		import { onMount } from 'svelte';
+		import { SvelteDate } from 'svelte/reactivity';
 	import {
 		adminJobsAPI,
 		getJobStatusColor,
@@ -176,9 +177,9 @@
 	});
 
 	function openCreateReportDialog() {
-		const now = new Date();
-		const to = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-		const from = new Date(to);
+		const now = new SvelteDate();
+		const to = new SvelteDate(now.getFullYear(), now.getMonth(), now.getDate());
+		const from = new SvelteDate(to);
 		from.setDate(from.getDate() - 7);
 		reportType = 'user_activity';
 		reportFromDate = from.toISOString().slice(0, 10);

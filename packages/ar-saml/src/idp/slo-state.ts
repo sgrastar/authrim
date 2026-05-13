@@ -7,11 +7,7 @@ export interface SAMLOutboundLogoutRequestStore {
 }
 
 export interface SAMLLogoutFanoutTransactionStore extends SAMLOutboundLogoutRequestStore {
-  list(options?: {
-    prefix?: string;
-    cursor?: string;
-    limit?: number;
-  }): Promise<{
+  list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{
     keys: Array<{ name: string }>;
     list_complete: boolean;
     cursor?: string;
@@ -308,7 +304,8 @@ export function observeExpiredSAMLIdPLogoutFanoutTransaction(
       ...target,
       status: 'timeout' as const,
       completedAt: now,
-      failureReason: target.status === 'sent' ? 'logout_response_timeout' : 'logout_request_not_sent',
+      failureReason:
+        target.status === 'sent' ? 'logout_response_timeout' : 'logout_request_not_sent',
     };
   });
 
@@ -384,10 +381,7 @@ async function updateSAMLIdPLogoutFanoutTarget(
     transactionId: string;
     spEntityId: string;
   },
-  update: (
-    target: SAMLIdPLogoutFanoutTargetRecord,
-    now: number
-  ) => SAMLIdPLogoutFanoutTargetRecord
+  update: (target: SAMLIdPLogoutFanoutTargetRecord, now: number) => SAMLIdPLogoutFanoutTargetRecord
 ): Promise<SAMLIdPLogoutFanoutTransactionRecord | null> {
   const transaction = await getSAMLIdPLogoutFanoutTransaction(store, options);
   if (!transaction) {
@@ -424,9 +418,7 @@ async function putSAMLIdPLogoutFanoutTransaction(
   );
 }
 
-function parseOutboundLogoutRequestRecord(
-  value: string
-): SAMLOutboundLogoutRequestRecord | null {
+function parseOutboundLogoutRequestRecord(value: string): SAMLOutboundLogoutRequestRecord | null {
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     if (

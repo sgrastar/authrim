@@ -697,47 +697,53 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
 
     try {
       if (logType === 'event') {
-        const result = await this.db.prepare(sql).bind(...params).all<{
-          id: string;
-          tenant_id: string;
-          event_type: string;
-          event_category: string;
-          result: string;
-          severity: string;
-          error_code: string | null;
-          error_message: string | null;
-          anonymized_user_id: string | null;
-          client_id: string | null;
-          session_id: string | null;
-          request_id: string | null;
-          duration_ms: number | null;
-          details_r2_key: string | null;
-          details_json: string | null;
-          retention_until: number | null;
-          created_at: number;
-        }>();
+        const result = await this.db
+          .prepare(sql)
+          .bind(...params)
+          .all<{
+            id: string;
+            tenant_id: string;
+            event_type: string;
+            event_category: string;
+            result: string;
+            severity: string;
+            error_code: string | null;
+            error_message: string | null;
+            anonymized_user_id: string | null;
+            client_id: string | null;
+            session_id: string | null;
+            request_id: string | null;
+            duration_ms: number | null;
+            details_r2_key: string | null;
+            details_json: string | null;
+            retention_until: number | null;
+            created_at: number;
+          }>();
         return (result.results ?? []).map((row) => this.mapEventLogRow(row));
       }
 
-      const result = await this.db.prepare(sql).bind(...params).all<{
-        id: string;
-        tenant_id: string;
-        user_id: string;
-        anonymized_user_id: string;
-        change_type: string;
-        affected_fields: string;
-        values_r2_key: string | null;
-        values_encrypted: string | null;
-        encryption_key_id: string;
-        encryption_iv: string;
-        actor_user_id: string | null;
-        actor_type: string;
-        request_id: string | null;
-        legal_basis: string | null;
-        consent_reference: string | null;
-        retention_until: number;
-        created_at: number;
-      }>();
+      const result = await this.db
+        .prepare(sql)
+        .bind(...params)
+        .all<{
+          id: string;
+          tenant_id: string;
+          user_id: string;
+          anonymized_user_id: string;
+          change_type: string;
+          affected_fields: string;
+          values_r2_key: string | null;
+          values_encrypted: string | null;
+          encryption_key_id: string;
+          encryption_iv: string;
+          actor_user_id: string | null;
+          actor_type: string;
+          request_id: string | null;
+          legal_basis: string | null;
+          consent_reference: string | null;
+          retention_until: number;
+          created_at: number;
+        }>();
       return (result.results ?? []).map((row) => this.mapPIILogRow(row));
     } catch {
       return [];

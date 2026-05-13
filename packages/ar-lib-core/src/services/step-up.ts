@@ -978,12 +978,7 @@ export async function completeStepUpAction(
 ): Promise<StepUpActionResponse> {
   assertActionIdShape(input.actionId);
   const now = input.now ?? Date.now();
-  const action = await loadActionWithChallenge(
-    env,
-    input.actionId,
-    now,
-    input.tenantId
-  );
+  const action = await loadActionWithChallenge(env, input.actionId, now, input.tenantId);
   if (!action) {
     throw new StepUpFlowError({
       error: 'invalid_request',
@@ -1088,12 +1083,7 @@ export async function resendStepUpAction(
 ): Promise<StepUpActionResponse> {
   assertActionIdShape(input.actionId);
   const now = input.now ?? Date.now();
-  const action = await loadActionWithChallenge(
-    env,
-    input.actionId,
-    now,
-    input.tenantId
-  );
+  const action = await loadActionWithChallenge(env, input.actionId, now, input.tenantId);
   if (!action) {
     throw new StepUpFlowError({
       error: 'invalid_request',

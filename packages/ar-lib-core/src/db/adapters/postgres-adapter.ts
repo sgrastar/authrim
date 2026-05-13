@@ -1,4 +1,11 @@
-import type { DatabaseAdapter, ExecuteResult, HealthStatus, PreparedStatement, QueryOptions, TransactionContext } from '../adapter';
+import type {
+  DatabaseAdapter,
+  ExecuteResult,
+  HealthStatus,
+  PreparedStatement,
+  QueryOptions,
+  TransactionContext,
+} from '../adapter';
 import type { Client as NodePgClient } from 'pg';
 
 interface PgQueryResult<T = unknown> {
@@ -47,13 +54,7 @@ function toPostgresSql(sql: string): string {
       inDoubleQuote = !inDoubleQuote;
     }
 
-    if (
-      char === '?' &&
-      !inSingleQuote &&
-      !inDoubleQuote &&
-      !inLineComment &&
-      !inBlockComment
-    ) {
+    if (char === '?' && !inSingleQuote && !inDoubleQuote && !inLineComment && !inBlockComment) {
       index += 1;
       result += `$${index}`;
       continue;

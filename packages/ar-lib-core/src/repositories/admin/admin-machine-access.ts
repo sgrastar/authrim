@@ -199,9 +199,7 @@ interface AdminMachineClientCredentialRow extends AdminMachinePrincipalRow {
 export class AdminMachineAccessRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
 
-  async createPrincipal(
-    input: AdminMachinePrincipalCreateInput
-  ): Promise<AdminMachinePrincipal> {
+  async createPrincipal(input: AdminMachinePrincipalCreateInput): Promise<AdminMachinePrincipal> {
     const now = getCurrentTimestamp();
     const row: AdminMachinePrincipalRow = {
       id: input.id ?? generateId(),
@@ -631,9 +629,10 @@ export class AdminMachineAccessRepository {
   ): Promise<void> {
     const now = getCurrentTimestamp();
     await this.adapter.transaction(async (tx) => {
-      await tx.execute('DELETE FROM admin_machine_credential_tenant_scopes WHERE credential_id = ?', [
-        credentialId,
-      ]);
+      await tx.execute(
+        'DELETE FROM admin_machine_credential_tenant_scopes WHERE credential_id = ?',
+        [credentialId]
+      );
       for (const scope of scopes) {
         await tx.execute(
           `INSERT INTO admin_machine_credential_tenant_scopes (
@@ -731,9 +730,7 @@ export class AdminMachineAccessRepository {
     };
   }
 
-  private credentialFromJoinedRow(
-    row: AdminMachineClientCredentialRow
-  ): AdminMachineCredential {
+  private credentialFromJoinedRow(row: AdminMachineClientCredentialRow): AdminMachineCredential {
     return this.credentialFromRow({
       id: row.credential_id,
       principal_id: row.credential_principal_id,

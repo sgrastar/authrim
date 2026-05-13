@@ -937,9 +937,10 @@ export class OIDCRPClient {
       throw new Error(`Userinfo request failed: ${response.status}`);
     }
 
-    const userInfo = JSON.parse(
-      await readResponseTextWithLimit(response, 64 * 1024)
-    ) as Record<string, unknown>;
+    const userInfo = JSON.parse(await readResponseTextWithLimit(response, 64 * 1024)) as Record<
+      string,
+      unknown
+    >;
 
     // Validate sub claim is present (OIDC Core Section 5.3.2 - REQUIRED)
     if (

@@ -269,12 +269,14 @@ export function buildAuditStorageConfigFromProfile(
     batchConfig?: AuditStorageConfig['batchConfig'];
   } = {}
 ): AuditStorageConfig {
-  const primaryEventBackendId = profile.primary?.type === 'd1'
-    ? 'd1-core'
-    : targetToBackendId(profile.primary) ?? 'archive-only';
-  const primaryPiiBackendId = profile.primary?.type === 'd1'
-    ? 'd1-pii'
-    : targetToBackendId(profile.primary) ?? 'archive-only';
+  const primaryEventBackendId =
+    profile.primary?.type === 'd1'
+      ? 'd1-core'
+      : (targetToBackendId(profile.primary) ?? 'archive-only');
+  const primaryPiiBackendId =
+    profile.primary?.type === 'd1'
+      ? 'd1-pii'
+      : (targetToBackendId(profile.primary) ?? 'archive-only');
   const profileRetention = profile.retention;
   const retentionConfig = options.retentionConfig ?? {
     eventLogRetentionDays:

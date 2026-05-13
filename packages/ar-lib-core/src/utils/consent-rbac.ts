@@ -381,10 +381,14 @@ export async function getConsentUserInfo(
 
   if (dbPII) {
     const piiAdapter = ensureDatabaseAdapter(dbPII, 'consent-user-pii');
-    const userPII = await piiAdapter.queryOne<{ email: string; name: string | null; picture: string | null }>(
-      'SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?',
-      [subjectId, tenantId]
-    );
+    const userPII = await piiAdapter.queryOne<{
+      email: string;
+      name: string | null;
+      picture: string | null;
+    }>('SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?', [
+      subjectId,
+      tenantId,
+    ]);
 
     if (userPII) {
       email = userPII.email;

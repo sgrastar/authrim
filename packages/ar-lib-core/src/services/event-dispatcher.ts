@@ -61,10 +61,7 @@ export interface EventDispatcherConfig {
   /** Function to decrypt webhook secrets */
   decryptSecret: SecretDecryptor;
   /** Optional runtime-aware audit log writer */
-  auditLogWriter?: (
-    event: UnifiedEvent,
-    context: EventHandlerContext
-  ) => Promise<void>;
+  auditLogWriter?: (event: UnifiedEvent, context: EventHandlerContext) => Promise<void>;
   /** Options */
   options?: EventDispatcherOptions;
 }

@@ -1023,8 +1023,7 @@ const es: Translations = {
   'web.email.cloudflareSetup': 'Cloudflare Email Service',
   'web.email.cloudflareRequirements': 'Requisitos',
   'web.email.cloudflareRequirementPaid': 'Se requiere un plan Workers Paid',
-  'web.email.cloudflareRequirementDns':
-    'Se requiere Cloudflare DNS / incorporación del dominio',
+  'web.email.cloudflareRequirementDns': 'Se requiere Cloudflare DNS / incorporación del dominio',
   'web.email.cloudflareRequirementManual':
     'La configuración del dominio en el panel de Cloudflare sigue siendo manual',
   'web.email.resendSetup': 'Configuración de Resend',

@@ -16,11 +16,10 @@ function base64FromArrayBuffer(buffer: ArrayBuffer): string {
 }
 
 async function generateEs256PrivateKeyPem(): Promise<string> {
-	const keyPair = await crypto.subtle.generateKey(
-		{ name: 'ECDSA', namedCurve: 'P-256' },
-		true,
-		['sign', 'verify']
-	);
+	const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+		'sign',
+		'verify'
+	]);
 	const pkcs8 = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
 	const base64 = base64FromArrayBuffer(pkcs8).replace(/(.{64})/g, '$1\n');
 	return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;

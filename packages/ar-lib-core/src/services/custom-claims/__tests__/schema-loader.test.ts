@@ -36,10 +36,9 @@ describe('SchemaLoader', () => {
       const result = await loader.loadActiveSchemas('default');
 
       expect(result).toEqual(schemas);
-      expect(mockDb.query).toHaveBeenCalledWith(
-        expect.stringContaining('custom_claim_schemas'),
-        ['default']
-      );
+      expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining('custom_claim_schemas'), [
+        'default',
+      ]);
     });
 
     it('returns cached schemas when available', async () => {

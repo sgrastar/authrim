@@ -380,10 +380,7 @@ function bytesToBase64url(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
   }
 
-  return btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/[=]/g, '');
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
 }
 
 /**

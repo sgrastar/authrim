@@ -121,48 +121,48 @@ operationalLogsRouter.get('/', async (c) => {
 });
 
 operationalLogsRouter.get('/:id', async (c) => {
-    try {
-      const id = c.req.param('id')!;
-      const access = await requireAdminPermissionOrElevationGrant(c as AdminContext, {
-        directPermission: ADMIN_PERMISSIONS.OPERATIONAL_LOGS_DETAIL_READ,
-        requestSurface: 'operational_logs',
-        requestedAction: 'detail_read',
-        resourceClass: 'operational_log_detail',
-        resourceIds: [id],
-        detailClass: 'reason_detail',
-        targetAudience: 'admin_api',
-      });
-      if (access instanceof Response) {
-        return access;
-      }
-      const adapter = getAdminAdapter(c);
-      const tenantId = getTenantIdFromContext(c);
-      const entry = await getOperationalLog(
-        adapter,
-        getOperationalLogStorageOptions(c as AdminContext),
-        tenantId,
-        id
-      );
-
-      if (!entry) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-      }
-
-      await auditAdminSensitiveRead(c as AdminContext, access, {
-        action: 'operational_log.detail_read',
-        resourceType: 'operational_log',
-        resourceId: id,
-        metadata: {
-          subject_type: entry.subject_type,
-          subject_id: entry.subject_id,
-          request_id: entry.request_id,
-        },
-      });
-
-      return c.json(entry);
-    } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  try {
+    const id = c.req.param('id')!;
+    const access = await requireAdminPermissionOrElevationGrant(c as AdminContext, {
+      directPermission: ADMIN_PERMISSIONS.OPERATIONAL_LOGS_DETAIL_READ,
+      requestSurface: 'operational_logs',
+      requestedAction: 'detail_read',
+      resourceClass: 'operational_log_detail',
+      resourceIds: [id],
+      detailClass: 'reason_detail',
+      targetAudience: 'admin_api',
+    });
+    if (access instanceof Response) {
+      return access;
     }
+    const adapter = getAdminAdapter(c);
+    const tenantId = getTenantIdFromContext(c);
+    const entry = await getOperationalLog(
+      adapter,
+      getOperationalLogStorageOptions(c as AdminContext),
+      tenantId,
+      id
+    );
+
+    if (!entry) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    await auditAdminSensitiveRead(c as AdminContext, access, {
+      action: 'operational_log.detail_read',
+      resourceType: 'operational_log',
+      resourceId: id,
+      metadata: {
+        subject_type: entry.subject_type,
+        subject_id: entry.subject_id,
+        request_id: entry.request_id,
+      },
+    });
+
+    return c.json(entry);
+  } catch {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
 });
 
 export default operationalLogsRouter;

@@ -6,11 +6,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createAuthContextFromHono,
-  getTenantIdFromContext,
-  getLogger,
-} from '@authrim/ar-lib-core';
+import { createAuthContextFromHono, getTenantIdFromContext, getLogger } from '@authrim/ar-lib-core';
 
 // =============================================================================
 // Types

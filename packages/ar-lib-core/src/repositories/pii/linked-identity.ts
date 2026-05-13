@@ -310,11 +310,7 @@ export class LinkedIdentityRepository extends BaseRepository<LinkedIdentity> {
    * @param adapter - Optional partition-specific adapter
    * @returns True if updated
    */
-  async updateLastUsed(
-    tenantId: string,
-    id: string,
-    adapter?: DatabaseAdapter
-  ): Promise<boolean> {
+  async updateLastUsed(tenantId: string, id: string, adapter?: DatabaseAdapter): Promise<boolean> {
     const db = adapter ?? this.adapter;
     const now = getCurrentTimestamp();
     const result = await db.execute(
@@ -337,10 +333,10 @@ export class LinkedIdentityRepository extends BaseRepository<LinkedIdentity> {
     adapter?: DatabaseAdapter
   ): Promise<boolean> {
     const db = adapter ?? this.adapter;
-    const result = await db.execute('DELETE FROM linked_identities WHERE id = ? AND tenant_id = ?', [
-      id,
-      tenantId,
-    ]);
+    const result = await db.execute(
+      'DELETE FROM linked_identities WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
     return result.rowsAffected > 0;
   }
 

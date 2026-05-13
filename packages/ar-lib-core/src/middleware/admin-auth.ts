@@ -299,13 +299,17 @@ async function authenticateMachineAccessToken(
     }
 
     const tokenPermissions = payload.scope.split(/\s+/).filter((scope) => scope.length > 0);
-    const [principalPermissions, credentialPermissions, principalTenantScopes, credentialTenantScopes] =
-      await Promise.all([
-        machineRepo.getPrincipalPermissions(principal.id),
-        machineRepo.getCredentialPermissions(credential.id),
-        machineRepo.getPrincipalTenantScopes(principal.id),
-        machineRepo.getCredentialTenantScopes(credential.id),
-      ]);
+    const [
+      principalPermissions,
+      credentialPermissions,
+      principalTenantScopes,
+      credentialTenantScopes,
+    ] = await Promise.all([
+      machineRepo.getPrincipalPermissions(principal.id),
+      machineRepo.getCredentialPermissions(credential.id),
+      machineRepo.getPrincipalTenantScopes(principal.id),
+      machineRepo.getCredentialTenantScopes(credential.id),
+    ]);
     const currentPermissions =
       credentialPermissions.length > 0
         ? intersectMachinePermissionSets(principalPermissions, credentialPermissions)
@@ -315,7 +319,10 @@ async function authenticateMachineAccessToken(
     }
 
     const tenantScope = stringArrayClaim(payload.tenant_scope);
-    const currentTenantScope = resolveMachineTenantScope(principalTenantScopes, credentialTenantScopes);
+    const currentTenantScope = resolveMachineTenantScope(
+      principalTenantScopes,
+      credentialTenantScopes
+    );
     if (!isSubsetOfTenantScope(tenantScope, currentTenantScope)) {
       return null;
     }

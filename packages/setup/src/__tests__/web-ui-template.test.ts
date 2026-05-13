@@ -34,8 +34,12 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES
     );
 
-    expect(html).toContain('<input type="text" id="tenant-name" placeholder="default" value="default"');
-    expect(html).toContain('<button type="button" id="tenant-name-random" class="btn-secondary">Generate Random</button>');
+    expect(html).toContain(
+      '<input type="text" id="tenant-name" placeholder="default" value="default"'
+    );
+    expect(html).toContain(
+      '<button type="button" id="tenant-name-random" class="btn-secondary">Generate Random</button>'
+    );
     expect(html).toContain('function generateRandomTenantIdInBrowser()');
     expect(html).toContain('start with a lowercase letter');
     expect(html).toContain('1-63 characters');

@@ -682,7 +682,9 @@ describe('Router Worker', () => {
     });
 
     it('should not apply query access_token rejection to external IdP callbacks', async () => {
-      const req = new Request('https://example.com/auth/external/github/callback?access_token=provider-token');
+      const req = new Request(
+        'https://example.com/auth/external/github/callback?access_token=provider-token'
+      );
       const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);

@@ -7,12 +7,7 @@
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import { requireTenantId } from '../tenant';
-import {
-  BaseRepository,
-  type BaseEntity,
-  generateId,
-  getCurrentTimestamp,
-} from '../base';
+import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 import type {
   ApprovalDecisionStatus,
   ApprovalRequest,
@@ -334,7 +329,8 @@ export class ApprovalRequestRepository extends BaseRepository<ApprovalRequestEnt
       public_request_id: entity.public_request_id,
       tenant_id: entity.tenant_id,
       investigation_id: entity.investigation_id,
-      requester_subject_type: entity.requester_subject_type as ApprovalRequest['requester_subject_type'],
+      requester_subject_type:
+        entity.requester_subject_type as ApprovalRequest['requester_subject_type'],
       requester_subject_id: entity.requester_subject_id,
       target_subject_type: entity.target_subject_type as ApprovalRequest['target_subject_type'],
       target_subject_id: entity.target_subject_id,
@@ -346,7 +342,11 @@ export class ApprovalRequestRepository extends BaseRepository<ApprovalRequestEnt
       scope_json: JSON.parse(entity.scope_json) as ApprovalRequest['scope_json'],
       reason_code: entity.reason_code,
       reason_note: entity.reason_note,
-      reference: parseReference(entity.reference_system, entity.reference_value, entity.reference_url),
+      reference: parseReference(
+        entity.reference_system,
+        entity.reference_value,
+        entity.reference_url
+      ),
       ticket_reference: parseReference(
         entity.ticket_reference_system,
         entity.ticket_reference_value,
@@ -386,7 +386,9 @@ export class ApprovalRequestApprovalRepository extends BaseRepository<ApprovalRe
     });
   }
 
-  async createApproval(input: ApprovalRequestApprovalCreateInput): Promise<ApprovalRequestApproval> {
+  async createApproval(
+    input: ApprovalRequestApprovalCreateInput
+  ): Promise<ApprovalRequestApproval> {
     const id = generateId();
     const now = getCurrentTimestamp();
     const requestedAt = input.requested_at ?? now;
@@ -683,12 +685,7 @@ export class ElevationGrantRepository extends BaseRepository<ElevationGrantEntit
     now?: number;
   }): Promise<ElevationGrant[]> {
     const now = filters.now ?? getCurrentTimestamp();
-    const where = [
-      'tenant_id = ?',
-      'status = ?',
-      'actor_subject_type = ?',
-      'actor_subject_id = ?',
-    ];
+    const where = ['tenant_id = ?', 'status = ?', 'actor_subject_type = ?', 'actor_subject_id = ?'];
     const params: unknown[] = [
       filters.tenantId,
       'active',

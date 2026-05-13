@@ -98,10 +98,7 @@ export async function listEnabledProviders(
 /**
  * List all providers (for admin)
  */
-export async function listAllProviders(
-  env: Env,
-  tenantId: string
-): Promise<UpstreamProvider[]> {
+export async function listAllProviders(env: Env, tenantId: string): Promise<UpstreamProvider[]> {
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-all');
   const result = await coreAdapter.query<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC',

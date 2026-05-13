@@ -175,10 +175,7 @@ export function getAuditTimeRange(
   return [fromTs, toTs];
 }
 
-export function fromStoredAuditTimestamp(
-  createdAt: number,
-  context: AuditHotQueryContext
-): string {
+export function fromStoredAuditTimestamp(createdAt: number, context: AuditHotQueryContext): string {
   return new Date(
     context.createdAtUnit === 'milliseconds' ? createdAt : createdAt * 1000
   ).toISOString();

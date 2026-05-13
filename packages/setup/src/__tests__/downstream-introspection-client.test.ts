@@ -81,8 +81,12 @@ describe('ensureDownstreamIntrospectionClient', () => {
     expect(result.success).toBe(true);
     expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    await expect(readFile(join(tempDir, 'downstream_grant_introspection_client_id.txt'), 'utf-8')).resolves.toContain('downstream-client-1');
-    await expect(readFile(join(tempDir, 'downstream_grant_introspection_client_secret.txt'), 'utf-8')).resolves.toContain('downstream-secret-1');
+    await expect(
+      readFile(join(tempDir, 'downstream_grant_introspection_client_id.txt'), 'utf-8')
+    ).resolves.toContain('downstream-client-1');
+    await expect(
+      readFile(join(tempDir, 'downstream_grant_introspection_client_secret.txt'), 'utf-8')
+    ).resolves.toContain('downstream-secret-1');
   });
 
   it('sends X-Tenant-Id for tenant-scoped admin APIs', async () => {

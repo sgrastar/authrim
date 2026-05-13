@@ -227,7 +227,10 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
   ): Promise<CreateDeviceSecretResult | DeviceSecretValidationResult> {
     const maxSecrets = options?.maxSecretsPerUser ?? DEFAULT_MAX_SECRETS_PER_USER;
     const maxBehavior = options?.maxSecretsBehavior ?? 'revoke_oldest';
-    const tenantId = requireTenantId(input.tenant_id ?? this.tenantId, 'DeviceSecretRepository.createSecret');
+    const tenantId = requireTenantId(
+      input.tenant_id ?? this.tenantId,
+      'DeviceSecretRepository.createSecret'
+    );
 
     // Check existing secrets count for user
     const existingCount = await this.countByUserId(

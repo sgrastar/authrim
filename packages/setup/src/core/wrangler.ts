@@ -941,9 +941,7 @@ export function toToml(config: WranglerConfig, envName?: string): string {
 
     if (config.triggers?.crons && config.triggers.crons.length > 0) {
       lines.push(`[env.${envName}.triggers]`);
-      lines.push(
-        `crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`
-      );
+      lines.push(`crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`);
       lines.push('');
     }
 
@@ -1108,9 +1106,7 @@ export function toToml(config: WranglerConfig, envName?: string): string {
 
     if (config.triggers?.crons && config.triggers.crons.length > 0) {
       lines.push('[triggers]');
-      lines.push(
-        `crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`
-      );
+      lines.push(`crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`);
       lines.push('');
     }
 

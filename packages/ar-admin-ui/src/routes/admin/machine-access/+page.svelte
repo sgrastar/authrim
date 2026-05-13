@@ -419,7 +419,7 @@
 				<label>
 					Type
 					<select class="form-select" bind:value={createPrincipalType}>
-						{#each PRINCIPAL_TYPES as type}
+						{#each PRINCIPAL_TYPES as type (type)}
 							<option value={type}>{formatPrincipalType(type)}</option>
 						{/each}
 					</select>
@@ -557,7 +557,7 @@
 					<label>
 						Algorithm
 						<select class="form-select" bind:value={credentialAlg}>
-							{#each ALGORITHMS as alg}
+							{#each ALGORITHMS as alg (alg)}
 								<option value={alg}>{alg}</option>
 							{/each}
 						</select>
@@ -602,7 +602,7 @@
 					<label>
 						Algorithm
 						<select class="form-select" bind:value={rotateAlg}>
-							{#each ALGORITHMS as alg}
+							{#each ALGORITHMS as alg (alg)}
 								<option value={alg}>{alg}</option>
 							{/each}
 						</select>

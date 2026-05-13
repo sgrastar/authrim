@@ -616,7 +616,7 @@ export async function confirmDomainVerification(c: Context) {
   }
 
   const domain = body.domain.toLowerCase().trim();
-    const coreAdapter = resolveSettingsCoreAdapter(c);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get mapping with verification details

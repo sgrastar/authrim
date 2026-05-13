@@ -14,8 +14,8 @@ import {
 function isD1Database(value: unknown): value is D1Database {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      typeof (value as { prepare?: unknown }).prepare === 'function'
+    typeof value === 'object' &&
+    typeof (value as { prepare?: unknown }).prepare === 'function'
   );
 }
 
@@ -93,7 +93,8 @@ export function createExternalAuditStorageAdapter(
     return null;
   }
 
-  const id = options?.id ?? target.connectionRef ?? target.bindingRef ?? `${target.type}-${logType}`;
+  const id =
+    options?.id ?? target.connectionRef ?? target.bindingRef ?? `${target.type}-${logType}`;
 
   if (target.type === 'postgres') {
     return createHyperdriveAuditAdapter(hyperdrive, {

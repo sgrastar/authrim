@@ -6,10 +6,7 @@ import {
   validateTenantStorageProfileOverride,
 } from '../storage-boundary-policy';
 
-function createStorageProfile(
-  id: string,
-  slices: StorageProfile['slices']
-): StorageProfile {
+function createStorageProfile(id: string, slices: StorageProfile['slices']): StorageProfile {
   return {
     id,
     kind: 'storage',

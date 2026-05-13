@@ -226,7 +226,11 @@ export class IssuedCredentialRepository extends BaseRepository<IssuedCredential>
   /**
    * Update credential claims (for deferred issuance)
    */
-  async updateClaims(tenantId: string, id: string, claims: Record<string, unknown>): Promise<boolean> {
+  async updateClaims(
+    tenantId: string,
+    id: string,
+    claims: Record<string, unknown>
+  ): Promise<boolean> {
     const result = await this.adapter.execute(
       'UPDATE issued_credentials SET claims = ?, updated_at = ? WHERE tenant_id = ? AND public_id = ?',
       [JSON.stringify(claims), getCurrentTimestamp(), tenantId, id]

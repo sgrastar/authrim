@@ -1694,7 +1694,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(
     `    ${t('infra.api')}        ${chalk.gray(getWorkersDevUrl(envPrefix + '-ar-router'))}`
   );
-  console.log(`    ${t('infra.ui')}         ${chalk.gray(getUiWorkersDevUrl(envPrefix + '-ar-ui'))}`);
+  console.log(
+    `    ${t('infra.ui')}         ${chalk.gray(getUiWorkersDevUrl(envPrefix + '-ar-ui'))}`
+  );
   console.log('');
 
   // Step 5: Tenant configuration
@@ -3283,7 +3285,11 @@ async function ensureHyperdriveReference(
 async function configureRequiredHyperdriveReferences(
   config: AuthrimConfig,
   seededProfile?: {
-    primary?: { type: 'd1' | 'postgres' | 'mysql'; bindingRef?: string; connectionRef?: string } | null;
+    primary?: {
+      type: 'd1' | 'postgres' | 'mysql';
+      bindingRef?: string;
+      connectionRef?: string;
+    } | null;
     archive?:
       | { type: 'd1' | 'postgres' | 'mysql'; bindingRef?: string; connectionRef?: string }
       | { type: 'r2'; bucketRef: string; prefix?: string }
@@ -3333,10 +3339,17 @@ async function configureRequiredHyperdriveReferences(
   };
 
   const activeAuditProfile =
-    config.profiles.seed.audit.find((profile) => profile.id === config.profiles.defaults.audit) ?? null;
+    config.profiles.seed.audit.find((profile) => profile.id === config.profiles.defaults.audit) ??
+    null;
   if (activeAuditProfile) {
-    registerAuditTarget(activeAuditProfile.primary, `Active audit profile ${activeAuditProfile.id} primary`);
-    registerAuditTarget(activeAuditProfile.archive, `Active audit profile ${activeAuditProfile.id} archive`);
+    registerAuditTarget(
+      activeAuditProfile.primary,
+      `Active audit profile ${activeAuditProfile.id} primary`
+    );
+    registerAuditTarget(
+      activeAuditProfile.archive,
+      `Active audit profile ${activeAuditProfile.id} archive`
+    );
   }
 
   if (seededProfile) {
@@ -3473,7 +3486,7 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
           ? 'postgres-primary'
           : existingProfile?.primary.type === 'mysql'
             ? 'mysql-primary'
-          : 'd1-primary',
+            : 'd1-primary',
   });
 
   const useDirectUrl = await confirm({
@@ -3528,7 +3541,9 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     },
   });
 
-  const parsedHeaders = headersInput.trim() ? (JSON.parse(headersInput) as Record<string, string>) : {};
+  const parsedHeaders = headersInput.trim()
+    ? (JSON.parse(headersInput) as Record<string, string>)
+    : {};
 
   const seededProfile = {
     id: profileId.trim(),
@@ -3540,7 +3555,7 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
           ? 'PostgreSQL-backed audit profile with archive and generic HTTP forwarding sink.'
           : deliveryMode === 'mysql-primary'
             ? 'MySQL-backed audit profile with archive and generic HTTP forwarding sink.'
-          : 'D1-backed audit profile with archive and generic HTTP forwarding sink.',
+            : 'D1-backed audit profile with archive and generic HTTP forwarding sink.',
     primary:
       deliveryMode === 'archive-only'
         ? null
@@ -3556,11 +3571,11 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
                 connectionRef: 'audit-primary-mysql',
                 dataset: 'event_log',
               }
-          : {
-              type: 'd1' as const,
-              bindingRef: 'DB',
-              dataset: 'event_log',
-            },
+            : {
+                type: 'd1' as const,
+                bindingRef: 'DB',
+                dataset: 'event_log',
+              },
     archive: {
       type: 'r2' as const,
       bucketRef: 'DIAGNOSTIC_LOGS',

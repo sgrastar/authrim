@@ -42,8 +42,8 @@ import { getTenantIdFromContext } from '@authrim/ar-lib-core';
 export const USERINFO_CUSTOMER_PROFILE_RESOURCE_CLASS = 'customer_profile';
 export const USERINFO_CUSTOMER_PROFILE_DETAIL_CLASS = 'profile_export';
 export const DEFAULT_USERINFO_PROTECTED_AUDIENCE =
-  getProductProtectedResourceDefinition(USERINFO_CUSTOMER_PROFILE_RESOURCE_CLASS)?.defaultAudience ??
-  'svc://op-userinfo/customer-profile';
+  getProductProtectedResourceDefinition(USERINFO_CUSTOMER_PROFILE_RESOURCE_CLASS)
+    ?.defaultAudience ?? 'svc://op-userinfo/customer-profile';
 
 export interface ProtectedCustomerProfileResource {
   id: string;
@@ -121,7 +121,10 @@ export interface ProtectedCustomerProfileRawView extends ProtectedCustomerProfil
 
 export interface ProtectedCustomerProfileRouteOptions {
   audience?: string;
-  verifyToken?: (input: { token: string; c: Context<{ Bindings: Env }> }) => Promise<Record<string, unknown>>;
+  verifyToken?: (input: {
+    token: string;
+    c: Context<{ Bindings: Env }>;
+  }) => Promise<Record<string, unknown>>;
   introspectToken?: (input: {
     token: string;
     c: Context<{ Bindings: Env }>;
@@ -182,10 +185,13 @@ function resolveProtectedCustomerProfileAudience(
 }
 
 function resolveProtectedCustomerProfileIntrospectionClient(
-  env: Pick<Env, 'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID' | 'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET'> | undefined
-):
-  | { clientId: string; clientSecret: string }
-  | null {
+  env:
+    | Pick<
+        Env,
+        'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID' | 'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET'
+      >
+    | undefined
+): { clientId: string; clientSecret: string } | null {
   const clientId = env?.DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID?.trim();
   const clientSecret = env?.DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) {
@@ -299,7 +305,10 @@ function readNullableString(
     return null;
   }
   if (typeof value !== 'string') {
-    return invalidDelegatedWriteRequest(`input.${field} must be a string or null`, `input.${field}`);
+    return invalidDelegatedWriteRequest(
+      `input.${field} must be a string or null`,
+      `input.${field}`
+    );
   }
   return value;
 }
@@ -313,7 +322,10 @@ function readRequiredString(
   }
   const value = input[field];
   if (typeof value !== 'string' || value.trim().length === 0) {
-    return invalidDelegatedWriteRequest(`input.${field} must be a non-empty string`, `input.${field}`);
+    return invalidDelegatedWriteRequest(
+      `input.${field} must be a non-empty string`,
+      `input.${field}`
+    );
   }
   return value;
 }
@@ -624,7 +636,9 @@ function buildMaskedProfile(
   };
 }
 
-function buildRawProfile(resource: ProtectedCustomerProfileResource): ProtectedCustomerProfileRawView {
+function buildRawProfile(
+  resource: ProtectedCustomerProfileResource
+): ProtectedCustomerProfileRawView {
   return {
     ...buildSummaryProfile(resource),
     name: resource.name,
@@ -712,9 +726,7 @@ async function introspectProtectedCustomerProfileToken(input: {
     throw new Error(`Introspection failed with status ${response.status}`);
   }
 
-  return JSON.parse(
-    await readResponseTextWithLimit(response, 16 * 1024)
-  ) as IntrospectionResponse;
+  return JSON.parse(await readResponseTextWithLimit(response, 16 * 1024)) as IntrospectionResponse;
 }
 
 export function createProtectedCustomerProfileAuthorizer(
@@ -758,9 +770,7 @@ export function createProtectedCustomerProfileRouter(
     '/users/:userId',
     requiredIdempotencyMiddleware({ ttlSeconds: 300, redactFields: [] }),
     async (c) => {
-      const actor = (c as any).get('delegatedWriteActor') as
-        | DelegatedWriteActorContext
-        | undefined;
+      const actor = (c as any).get('delegatedWriteActor') as DelegatedWriteActorContext | undefined;
       if (!actor) {
         return noStoreJson(
           {
@@ -877,30 +887,27 @@ export function createProtectedCustomerProfileRouter(
     }
   );
 
-  router.use(
-    '/:userId',
-    async (c, next) => {
-      const env = c.env as Env | undefined;
-      const expectedAudience = resolveProtectedCustomerProfileAudience(env, options.audience);
-      const authorizer = createProtectedCustomerProfileAuthorizer(expectedAudience);
-      const verifyTokenImpl =
-        options.verifyToken ??
-        (async ({ token, c: context }: { token: string; c: Context<{ Bindings: Env }> }) =>
-          verifyProtectedCustomerProfileToken({
-            token,
-            c: context,
-            audience: expectedAudience,
-          }));
-      const introspectTokenImpl =
-        options.introspectToken ??
-        (resolveProtectedCustomerProfileIntrospectionClient(env as Env)
-          ? async ({ token, c: context }: { token: string; c: Context<{ Bindings: Env }> }) =>
-              introspectProtectedCustomerProfileToken({ token, c: context })
-          : undefined);
+  router.use('/:userId', async (c, next) => {
+    const env = c.env as Env | undefined;
+    const expectedAudience = resolveProtectedCustomerProfileAudience(env, options.audience);
+    const authorizer = createProtectedCustomerProfileAuthorizer(expectedAudience);
+    const verifyTokenImpl =
+      options.verifyToken ??
+      (async ({ token, c: context }: { token: string; c: Context<{ Bindings: Env }> }) =>
+        verifyProtectedCustomerProfileToken({
+          token,
+          c: context,
+          audience: expectedAudience,
+        }));
+    const introspectTokenImpl =
+      options.introspectToken ??
+      (resolveProtectedCustomerProfileIntrospectionClient(env as Env)
+        ? async ({ token, c: context }: { token: string; c: Context<{ Bindings: Env }> }) =>
+            introspectProtectedCustomerProfileToken({ token, c: context })
+        : undefined);
 
-      const middleware = createDownstreamGrantProtectedResourceMiddleware<
-        ProtectedCustomerProfileResource
-      >({
+    const middleware =
+      createDownstreamGrantProtectedResourceMiddleware<ProtectedCustomerProfileResource>({
         authorizer,
         verifyToken: verifyTokenImpl,
         introspectToken: introspectTokenImpl,
@@ -932,13 +939,11 @@ export function createProtectedCustomerProfileRouter(
         },
       });
 
-      return middleware(c, next);
-    }
-  );
+    return middleware(c, next);
+  });
 
   router.get('/:userId', (c) => {
-    const context =
-      getDownstreamGrantProtectedResourceContext<ProtectedCustomerProfileResource>(c);
+    const context = getDownstreamGrantProtectedResourceContext<ProtectedCustomerProfileResource>(c);
     if (!context || !context.resource) {
       return c.json(
         {

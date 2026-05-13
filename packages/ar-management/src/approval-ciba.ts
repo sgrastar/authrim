@@ -278,7 +278,11 @@ export async function respondToApprovalCibaRequest(input: {
   };
   await saveStoredState(input.env, input.artifactId, nextState);
 
-  const refreshedMetadata = await getMetadataByAuthReqId(input.env, input.tenantId, stored.auth_req_id);
+  const refreshedMetadata = await getMetadataByAuthReqId(
+    input.env,
+    input.tenantId,
+    stored.auth_req_id
+  );
   return {
     authReqId: stored.auth_req_id,
     createdAt: stored.created_at,

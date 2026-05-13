@@ -20,10 +20,7 @@ import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR } from '../core/paths.js';
 
 function decodeJwtSegment(segment: string): Record<string, unknown> {
-  return JSON.parse(Buffer.from(segment, 'base64url').toString('utf-8')) as Record<
-    string,
-    unknown
-  >;
+  return JSON.parse(Buffer.from(segment, 'base64url').toString('utf-8')) as Record<string, unknown>;
 }
 
 describe('Admin Machine Access setup bootstrap', () => {

@@ -15,7 +15,7 @@ import {
 	updateAuditPrimaryType,
 	updateAuditRetentionBoolean,
 	updateAuditRetentionNumber,
-	updateAuditSinkField,
+	updateAuditSinkField
 } from '../runtime-profile-audit-editor';
 
 describe('runtime-profile-audit-editor helpers', () => {
@@ -26,7 +26,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 		expect(parsed.profile?.archive).toEqual({
 			type: 'r2',
 			bucketRef: 'DIAGNOSTIC_LOGS',
-			prefix: 'audit/',
+			prefix: 'audit/'
 		});
 		expect(parsed.profile?.sinks).toHaveLength(1);
 		expect(parsed.profile?.sinks[0]?.type).toBe('http');
@@ -43,7 +43,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 		expect(parsed.profile?.sinks.map((sink) => sink.type)).toEqual(['http', 'logpush']);
 		expect(parsed.profile?.sinks[1]).toMatchObject({
 			type: 'logpush',
-			destinationRef: 'LOGPUSH',
+			destinationRef: 'LOGPUSH'
 		});
 	});
 
@@ -56,7 +56,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 		expect(parsed.profile?.archive).toEqual({
 			type: 'r2',
 			bucketRef: 'DIAGNOSTIC_LOGS',
-			prefix: 'audit/',
+			prefix: 'audit/'
 		});
 	});
 
@@ -80,11 +80,11 @@ describe('runtime-profile-audit-editor helpers', () => {
 
 		expect(parsed.profile?.archive).toMatchObject({
 			type: 'r2',
-			bucketRef: 'AUDIT_ARCHIVE',
+			bucketRef: 'AUDIT_ARCHIVE'
 		});
 		expect(parsed.profile?.sinks[0]).toMatchObject({
 			type: 'http',
-			urlRef: 'AUDIT_HTTP_URL',
+			urlRef: 'AUDIT_HTTP_URL'
 		});
 		expect(parsed.profile?.sinkFailureMode).toBe('retry_until_ttl');
 	});
@@ -138,7 +138,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 				urlRef: 'AUDIT_HTTP_URL',
 				authTokenRef: 'AUDIT_HTTP_TOKEN',
 				method: 'POST',
-				format: 'json',
+				format: 'json'
 			})
 		).toBe('HTTP · AUDIT_HTTP_URL');
 		expect(
@@ -149,15 +149,15 @@ describe('runtime-profile-audit-editor helpers', () => {
 				method: 'POST',
 				format: 'json',
 				headers: {
-					Authorization: 'Bearer example',
-				},
+					Authorization: 'Bearer example'
+				}
 			})
 		).toEqual([
 			'urlRef: AUDIT_HTTP_URL',
 			'authTokenRef: AUDIT_HTTP_TOKEN',
 			'method: POST',
 			'format: json',
-			'headers: 1',
+			'headers: 1'
 		]);
 	});
 

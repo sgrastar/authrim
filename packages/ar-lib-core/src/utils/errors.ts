@@ -7,10 +7,7 @@
 
 import type { Context } from 'hono';
 import { ERROR_CODES, HTTP_STATUS } from '../constants';
-import {
-  createPhase1ErrorDetails,
-  type CompatibilityErrorDetailCode,
-} from '../errors/details';
+import { createPhase1ErrorDetails, type CompatibilityErrorDetailCode } from '../errors/details';
 import { createLogger } from './logger';
 
 const log = createLogger().module('OIDC_ERROR');
@@ -22,8 +19,7 @@ const COMPATIBILITY_ERROR_DESCRIPTIONS: Record<CompatibilityErrorCode, string> =
     'Legacy app_suite configuration is no longer supported. Use trust_group instead.',
   legacy_native_sso_discovery_unsupported:
     'Legacy Native SSO discovery fields are no longer supported.',
-  legacy_endpoint_not_supported:
-    'This legacy endpoint is no longer supported in Authrim Phase 1.',
+  legacy_endpoint_not_supported: 'This legacy endpoint is no longer supported in Authrim Phase 1.',
   legacy_passkey_error_unsupported:
     'Legacy passkey error names are no longer supported. Use the canonical Phase 1 passkey errors.',
 };

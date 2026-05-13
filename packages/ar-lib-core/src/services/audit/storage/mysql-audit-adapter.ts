@@ -93,9 +93,7 @@ function buildInsertIfNotExistsSql(
   const selectStatements = Array.from({ length: rowCount }, (_, rowIdx) => {
     const offset = rowIdx * columns.length;
     if (rowIdx === 0) {
-      return `SELECT ${columns
-        .map((column, columnIdx) => `? AS \`${column}\``)
-        .join(', ')}`;
+      return `SELECT ${columns.map((column, columnIdx) => `? AS \`${column}\``).join(', ')}`;
     }
     return `SELECT ${columns.map(() => '?').join(', ')}`;
   });
@@ -347,10 +345,11 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
     const { sql, params } = this.buildEventLogQuery(options);
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
-    const result = await client.query<EventLogDbRow>(
-      `${sql} LIMIT ? OFFSET ?`,
-      [...params, limit + 1, offset]
-    );
+    const result = await client.query<EventLogDbRow>(`${sql} LIMIT ? OFFSET ?`, [
+      ...params,
+      limit + 1,
+      offset,
+    ]);
 
     const rows = result.rows;
     const hasMore = rows.length > limit;
@@ -382,10 +381,11 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
     const { sql, params } = this.buildPIILogQuery(options);
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
-    const result = await client.query<PIILogDbRow>(
-      `${sql} LIMIT ? OFFSET ?`,
-      [...params, limit + 1, offset]
-    );
+    const result = await client.query<PIILogDbRow>(`${sql} LIMIT ? OFFSET ?`, [
+      ...params,
+      limit + 1,
+      offset,
+    ]);
 
     const rows = result.rows;
     const hasMore = rows.length > limit;
@@ -650,8 +650,12 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
       const client = await this.getClient();
       const table = qualifyTable(this.schema, logType === 'event' ? 'event_log' : 'pii_log');
       const params = tenantId ? [beforeTime, tenantId, batchSize] : [beforeTime, batchSize];
-      const where = tenantId ? 'target.retention_until < ? AND target.tenant_id = ?' : 'target.retention_until < ?';
-      const subqueryWhere = tenantId ? 'retention_until < ? AND tenant_id = ?' : 'retention_until < ?';
+      const where = tenantId
+        ? 'target.retention_until < ? AND target.tenant_id = ?'
+        : 'target.retention_until < ?';
+      const subqueryWhere = tenantId
+        ? 'retention_until < ? AND tenant_id = ?'
+        : 'retention_until < ?';
       const result = await client.execute(
         `DELETE target
          FROM ${table} target

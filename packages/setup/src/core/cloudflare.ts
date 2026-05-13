@@ -111,9 +111,7 @@ export interface MigrationProfileConfig {
   };
 }
 
-export function shouldMirrorPiiMigrationsToCore(
-  config?: MigrationProfileConfig | null
-): boolean {
+export function shouldMirrorPiiMigrationsToCore(config?: MigrationProfileConfig | null): boolean {
   return config?.profiles?.defaults?.storage === 'builtin:storage:single-db';
 }
 
@@ -1592,7 +1590,10 @@ export async function executeD1Migration(
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
     const { readFileSync } = await import('node:fs');
     const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
-    const tempSqlPath = pathJoin(tmpdir(), `authrim-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`);
+    const tempSqlPath = pathJoin(
+      tmpdir(),
+      `authrim-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`
+    );
     await writeFile(tempSqlPath, renderedSql, 'utf-8');
     try {
       await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes']);
@@ -3253,7 +3254,9 @@ export async function detectEnvironments(
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan legacy Pages projects: ${error instanceof Error ? error.message : error}`);
+    progress(
+      `  ⚠️ Could not scan legacy Pages projects: ${error instanceof Error ? error.message : error}`
+    );
   }
 
   // Filter: only keep environments that have actual Workers or D1 databases

@@ -1,6 +1,10 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { getDefaultTenantId, isMultiTenantEnabled, isValidTenantIdentifier } from '@authrim/ar-lib-core';
+import {
+  getDefaultTenantId,
+  isMultiTenantEnabled,
+  isValidTenantIdentifier,
+} from '@authrim/ar-lib-core';
 
 export type InternalTokenRefreshTenantResolution =
   | { ok: true; tenantId: string }

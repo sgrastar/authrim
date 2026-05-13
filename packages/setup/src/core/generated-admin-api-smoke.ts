@@ -72,13 +72,13 @@ async function runAdminJsonRequest(options: {
   validate?: (payload: unknown, check: SmokeCheck) => void;
 }): Promise<unknown> {
   const response = await fetchJsonWithTimeout(
-      `${options.baseUrl}${options.path}`,
-      options.timeoutMs,
-      {
-        method: options.method ?? 'GET',
-        headers: getAdminHeaders(options.adminSecret, options.tenantId),
-        body: options.body ? JSON.stringify(options.body) : undefined,
-      }
+    `${options.baseUrl}${options.path}`,
+    options.timeoutMs,
+    {
+      method: options.method ?? 'GET',
+      headers: getAdminHeaders(options.adminSecret, options.tenantId),
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    }
   );
   options.check.httpStatus = response.status;
 
@@ -91,10 +91,7 @@ async function runAdminJsonRequest(options: {
   }
 
   if (options.expectedStatus && response.status !== options.expectedStatus) {
-    addFail(
-      options.check,
-      `HTTP ${options.expectedStatus} expected, actual=${response.status}`
-    );
+    addFail(options.check, `HTTP ${options.expectedStatus} expected, actual=${response.status}`);
     return response.payload;
   }
 
@@ -167,10 +164,7 @@ export async function runGeneratedAdminApiSmoke(
 
   try {
     if (options.clientId) {
-      addPass(
-        profilesCheck,
-        `check-api-keys 用 client_id として ${options.clientId} を使用します`
-      );
+      addPass(profilesCheck, `check-api-keys 用 client_id として ${options.clientId} を使用します`);
     } else {
       const dcrCheck = makeSmokeCheck(
         'temporary-dcr-enable',
@@ -544,7 +538,10 @@ export async function runGeneratedAdminApiSmoke(
       'check api key create',
       `${target.baseUrl}/api/admin/check-api-keys`
     );
-    addWarn(skipCheck, 'client_id を用意できなかったため check-api-keys mutation をスキップしました');
+    addWarn(
+      skipCheck,
+      'client_id を用意できなかったため check-api-keys mutation をスキップしました'
+    );
     checks.push(finalizeCheck(skipCheck, 'check api key create をスキップしました'));
   }
 
@@ -687,7 +684,9 @@ export async function runGeneratedAdminApiSmoke(
     } else {
       addPass(cleanupCheck, `HTTP ${cleanupResponse.status || 404}`);
     }
-    checks.push(finalizeCheck(cleanupCheck, 'temporary initial access token cleanup を確認しました'));
+    checks.push(
+      finalizeCheck(cleanupCheck, 'temporary initial access token cleanup を確認しました')
+    );
   }
 
   if (temporaryDcr) {

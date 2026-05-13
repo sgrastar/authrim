@@ -669,9 +669,9 @@ const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
 
 function requireAiGrantAdminAccess(requiredPermission: string) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const authContext = (c as unknown as { get: (key: string) => unknown }).get(
-      'adminAuth'
-    ) as AdminAuthContext | undefined;
+    const authContext = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
+      | AdminAuthContext
+      | undefined;
 
     if (!authContext) {
       return c.json(

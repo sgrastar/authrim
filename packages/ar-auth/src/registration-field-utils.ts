@@ -43,7 +43,9 @@ function toMissingRequiredRegistrationField(
 }
 
 function isBlank(value: unknown): boolean {
-  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+  return (
+    value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
+  );
 }
 
 export async function validateRegistrationFieldSubmission(
@@ -296,11 +298,5 @@ export async function persistRegistrationFieldValuesFromEnv(
   values: Record<string, unknown> | undefined
 ): Promise<void> {
   const sources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
-  await persistRegistrationFieldValues(
-    sources.nonPiiDb,
-    sources.piiDb,
-    tenantId,
-    userId,
-    values
-  );
+  await persistRegistrationFieldValues(sources.nonPiiDb, sources.piiDb, tenantId, userId, values);
 }

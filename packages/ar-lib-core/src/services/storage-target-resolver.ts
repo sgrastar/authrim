@@ -10,10 +10,7 @@ function normalizeBindingCandidates(ref: string | undefined): string[] {
   return [...new Set([ref, normalized, `HYPERDRIVE_${normalized}`])];
 }
 
-function resolveHyperdriveBinding(
-  env: object,
-  target: StorageTarget
-): Hyperdrive | null {
+function resolveHyperdriveBinding(env: object, target: StorageTarget): Hyperdrive | null {
   if (target.driver !== 'postgres' && target.driver !== 'mysql') {
     return null;
   }

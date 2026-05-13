@@ -43,12 +43,10 @@ describe('UserVerifiedAttributeRepository', () => {
 
   it('handles a unique-race by re-reading and updating the existing attribute', async () => {
     const adapter = createMockAdapter();
-    vi.mocked(adapter.queryOne)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: 'attr-raced',
-        created_at: 200,
-      });
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 'attr-raced',
+      created_at: 200,
+    });
     vi.mocked(adapter.execute)
       .mockRejectedValueOnce(new Error('UNIQUE constraint failed'))
       .mockResolvedValueOnce({ success: true, rowsAffected: 1 });

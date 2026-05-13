@@ -548,7 +548,10 @@ export async function rotateCheckApiKey(c: Context) {
     );
 
     if (deactivateResult.rowsAffected !== 1) {
-      await db.execute('DELETE FROM check_api_keys WHERE id = ? AND tenant_id = ?', [newId, tenantId]);
+      await db.execute('DELETE FROM check_api_keys WHERE id = ? AND tenant_id = ?', [
+        newId,
+        tenantId,
+      ]);
       return c.json(
         {
           error: 'conflict',

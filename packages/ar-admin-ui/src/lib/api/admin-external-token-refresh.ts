@@ -42,7 +42,9 @@ export const adminExternalTokenRefreshAPI = {
 		});
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
-			throw new Error(error.error_description || error.message || 'Failed to load token refresh config');
+			throw new Error(
+				error.error_description || error.message || 'Failed to load token refresh config'
+			);
 		}
 		return response.json();
 	},
@@ -58,7 +60,9 @@ export const adminExternalTokenRefreshAPI = {
 		});
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
-			throw new Error(error.error_description || error.message || 'Failed to update token refresh config');
+			throw new Error(
+				error.error_description || error.message || 'Failed to update token refresh config'
+			);
 		}
 		return response.json();
 	},
@@ -71,7 +75,9 @@ export const adminExternalTokenRefreshAPI = {
 		);
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
-			throw new Error(error.error_description || error.message || 'Failed to load token refresh runs');
+			throw new Error(
+				error.error_description || error.message || 'Failed to load token refresh runs'
+			);
 		}
 		return response.json();
 	},

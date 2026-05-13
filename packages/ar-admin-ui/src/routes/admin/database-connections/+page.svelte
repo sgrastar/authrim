@@ -170,7 +170,7 @@
 				<p class="muted">No database connections.</p>
 			{:else}
 				<div class="table">
-					{#each items as item}
+					{#each items as item (item.id)}
 						<button
 							class:selected={selected?.id === item.id}
 							class="row"

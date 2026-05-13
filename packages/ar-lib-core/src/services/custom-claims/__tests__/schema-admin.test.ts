@@ -45,7 +45,9 @@ describe('schema-admin', () => {
 
     expect(result.total).toBe(2);
     expect(result.schemas).toEqual([{ id: 'schema-1' }, { id: 'schema-2' }]);
-    expect(mockAdapter.query.mock.calls[0][0]).toContain('COUNT(*) as count FROM custom_claim_schemas');
+    expect(mockAdapter.query.mock.calls[0][0]).toContain(
+      'COUNT(*) as count FROM custom_claim_schemas'
+    );
     expect(mockAdapter.query.mock.calls[0][1]).toEqual([
       'tenant-1',
       '%dept%',
@@ -62,7 +64,9 @@ describe('schema-admin', () => {
   it('fetches a schema by id', async () => {
     mockAdapter.query.mockResolvedValueOnce([{ id: 'schema-1' }]);
 
-    await expect(getCustomClaimSchemaById(mockAdapter as any, 'tenant-1', 'schema-1')).resolves.toEqual({
+    await expect(
+      getCustomClaimSchemaById(mockAdapter as any, 'tenant-1', 'schema-1')
+    ).resolves.toEqual({
       id: 'schema-1',
     });
   });
@@ -75,10 +79,11 @@ describe('schema-admin', () => {
         excludeSchemaId: 'schema-2',
       })
     ).resolves.toEqual({ id: 'schema-1' });
-    expect(mockAdapter.query).toHaveBeenCalledWith(
-      expect.stringContaining('id != ?'),
-      ['tenant-1', 'department', 'schema-2']
-    );
+    expect(mockAdapter.query).toHaveBeenCalledWith(expect.stringContaining('id != ?'), [
+      'tenant-1',
+      'department',
+      'schema-2',
+    ]);
   });
 
   it('inserts a schema row from a field map', async () => {
@@ -89,10 +94,13 @@ describe('schema-admin', () => {
       display_label: 'Department',
     });
 
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('active_field_key'),
-      ['schema-1', 'tenant-1', 'department', 'Department', 'department']
-    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(expect.stringContaining('active_field_key'), [
+      'schema-1',
+      'tenant-1',
+      'department',
+      'Department',
+      'department',
+    ]);
   });
 
   it('updates schema fields with optional status guard and version increment', async () => {
@@ -130,7 +138,9 @@ describe('schema-admin', () => {
   });
 
   it('deletes a schema row by id', async () => {
-    await expect(deleteCustomClaimSchemaById(mockAdapter as any, 'tenant-1', 'schema-1')).resolves.toBe(1);
+    await expect(
+      deleteCustomClaimSchemaById(mockAdapter as any, 'tenant-1', 'schema-1')
+    ).resolves.toBe(1);
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       'DELETE FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
       ['schema-1', 'tenant-1']

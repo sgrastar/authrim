@@ -44,10 +44,10 @@ vi.mock('@authrim/ar-lib-core', () => {
     }),
     checkCredentialStatus: vi.fn().mockResolvedValue(true),
     decodeBase64Url: vi.fn((value: string) => {
-      const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(
-        Math.ceil(value.length / 4) * 4,
-        '='
-      );
+      const padded = value
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+        .padEnd(Math.ceil(value.length / 4) * 4, '=');
       return atob(padded);
     }),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),

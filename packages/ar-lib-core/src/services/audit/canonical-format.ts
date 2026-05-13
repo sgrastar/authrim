@@ -130,9 +130,7 @@ export function buildCanonicalAuditBatch(
   return {
     ...buildCanonicalPayloadBase(target, body, channel),
     recordType: 'audit_batch',
-    records: body.entries.map((entry) =>
-      buildCanonicalAuditRecord(target, body, entry, channel)
-    ),
+    records: body.entries.map((entry) => buildCanonicalAuditRecord(target, body, entry, channel)),
   };
 }
 
@@ -144,7 +142,10 @@ export function extractAuditEntryFromCanonicalPayload(
   }
 
   const candidate = payload as Record<string, unknown>;
-  if (candidate.schema === AUDIT_CANONICAL_LOG_FORMAT_V1 && candidate.recordType === 'audit_record') {
+  if (
+    candidate.schema === AUDIT_CANONICAL_LOG_FORMAT_V1 &&
+    candidate.recordType === 'audit_record'
+  ) {
     const entry = candidate.entry;
     if (entry && typeof entry === 'object') {
       return entry as EventLogEntry | PIILogEntry;

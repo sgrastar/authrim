@@ -454,25 +454,33 @@ const AuditProfileSeedSchema = z.object({
   version: RuntimeProfileVersionSchema,
   metadata: RuntimeProfileMetadataSchema,
   primary: DatabaseAuditTargetSeedSchema.nullable(),
-  archive: z.union([DatabaseAuditTargetSeedSchema, z.object({
-    type: z.literal('r2'),
-    bucketRef: z.string().min(1),
-    prefix: z.string().min(1).optional(),
-  })]).nullable().optional(),
-  sinks: z.array(
-    z.union([
+  archive: z
+    .union([
+      DatabaseAuditTargetSeedSchema,
       z.object({
-        type: z.literal('logpush'),
-        destinationRef: z.string().min(1),
-        dataset: z.string().min(1).optional(),
+        type: z.literal('r2'),
+        bucketRef: z.string().min(1),
+        prefix: z.string().min(1).optional(),
       }),
-      z.object({
-        type: z.literal('firehose'),
-        streamRef: z.string().min(1),
-      }),
-      HttpAuditTargetSeedSchema,
     ])
-  ).default([]),
+    .nullable()
+    .optional(),
+  sinks: z
+    .array(
+      z.union([
+        z.object({
+          type: z.literal('logpush'),
+          destinationRef: z.string().min(1),
+          dataset: z.string().min(1).optional(),
+        }),
+        z.object({
+          type: z.literal('firehose'),
+          streamRef: z.string().min(1),
+        }),
+        HttpAuditTargetSeedSchema,
+      ])
+    )
+    .default([]),
   retention: AuditRetentionSeedSchema.optional(),
   archiveFailureMode: z.enum(['best_effort', 'gate_cleanup']).optional(),
   sinkFailureMode: z.enum(['best_effort', 'retry_until_ttl']).optional(),

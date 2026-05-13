@@ -6,7 +6,10 @@ export function isPlatformRuntimeFeatureFlag(key: string): boolean {
 	return key === RUNTIME_TOKEN_EXCHANGE_FEATURE_KEY;
 }
 
-export function shouldRenderRuntimeFeatureFlag(key: string, scopeLevel: 'platform' | 'tenant' | 'client'): boolean {
+export function shouldRenderRuntimeFeatureFlag(
+	key: string,
+	scopeLevel: 'platform' | 'tenant' | 'client'
+): boolean {
 	if (!isPlatformRuntimeFeatureFlag(key)) {
 		return true;
 	}
@@ -38,9 +41,7 @@ export function applyRuntimeFeatureFlagOverrides(
 	};
 }
 
-export function splitRuntimeFeatureFlagPatches(
-	patches: UIPatch[]
-): {
+export function splitRuntimeFeatureFlagPatches(patches: UIPatch[]): {
 	genericPatches: UIPatch[];
 	tokenExchangeEnabled?: boolean;
 } {

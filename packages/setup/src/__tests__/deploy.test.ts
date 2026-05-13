@@ -154,7 +154,8 @@ describe('deployUiWorkerComponent', () => {
       adminUiBffSecrets: {
         ADMIN_UI_BFF_CLIENT_ID: 'authrim-admin-ui-bff',
         ADMIN_UI_BFF_KEY_ID: 'bff-key-1',
-        ADMIN_UI_BFF_PRIVATE_KEY_PEM: '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
+        ADMIN_UI_BFF_PRIVATE_KEY_PEM:
+          '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
         ADMIN_UI_BFF_SCOPES: 'admin-ui:proxy',
       },
     });

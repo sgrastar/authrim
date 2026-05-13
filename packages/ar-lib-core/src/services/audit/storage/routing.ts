@@ -4,10 +4,7 @@ import type {
   AuditStorageConfig,
   AuditStorageRoutingRule,
 } from './adapter';
-import {
-  hasAuditStorageRoutingTargets,
-  normalizeAuditStorageRoutingTargets,
-} from './adapter';
+import { hasAuditStorageRoutingTargets, normalizeAuditStorageRoutingTargets } from './adapter';
 
 export interface AuditRoutingContext {
   tenantId: string;

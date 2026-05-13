@@ -8,10 +8,9 @@ export const load: LayoutServerLoad = async (event) => {
 	const discoveryConfig = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(
 		() => null
 	);
-	const shouldLoadTenantBranding =
-		discoveryConfig
-			? discoveryConfig.single_tenant_mode || !discoveryConfig.is_common_entry_host
-			: true;
+	const shouldLoadTenantBranding = discoveryConfig
+		? discoveryConfig.single_tenant_mode || !discoveryConfig.is_common_entry_host
+		: true;
 
 	return {
 		preferredLanguage,

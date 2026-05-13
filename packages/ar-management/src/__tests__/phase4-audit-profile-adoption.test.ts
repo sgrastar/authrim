@@ -37,10 +37,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import { adminSecurityIpReputationHandler } from '../admin-security';
-import {
-  adminComplianceStatusHandler,
-  adminDataRetentionStatusHandler,
-} from '../admin-compliance';
+import { adminComplianceStatusHandler, adminDataRetentionStatusHandler } from '../admin-compliance';
 
 function createSqlAwareMockDB(
   handler: (
@@ -58,7 +55,9 @@ function createSqlAwareMockDB(
           return statement;
         }),
         first: vi.fn(async () => (await handler(sql, boundParams, 'first')) ?? null),
-        all: vi.fn(async () => ({ results: ((await handler(sql, boundParams, 'all')) ?? []) as any[] })),
+        all: vi.fn(async () => ({
+          results: ((await handler(sql, boundParams, 'all')) ?? []) as any[],
+        })),
         run: vi.fn(async () => (await handler(sql, boundParams, 'run')) ?? { success: true }),
       };
       return statement;
@@ -96,7 +95,11 @@ function createMockContext(options: {
 describe('Phase 4 audit profile adoption', () => {
   it('uses event_log for IP reputation checks when the standard audit profile is active', async () => {
     const mockDB = createSqlAwareMockDB(async (sql, params, op) => {
-      if (sql.includes('FROM event_log') && sql.includes("LIKE 'auth.%failed%'") && op === 'first') {
+      if (
+        sql.includes('FROM event_log') &&
+        sql.includes("LIKE 'auth.%failed%'") &&
+        op === 'first'
+      ) {
         expect(params[0]).toBe('default');
         expect(params[1]).toBe('203.0.113.10');
         return { count: 3 };
@@ -168,7 +171,11 @@ describe('Phase 4 audit profile adoption', () => {
           }),
         };
       }
-      if (sql.includes('FROM users_core') && sql.includes("pii_status = 'deleted'") && op === 'first') {
+      if (
+        sql.includes('FROM users_core') &&
+        sql.includes("pii_status = 'deleted'") &&
+        op === 'first'
+      ) {
         return { pending_deletions: 0 };
       }
       if (sql.includes('FROM signing_keys') && op === 'first') {

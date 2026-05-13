@@ -33,8 +33,7 @@ export type DownstreamGrantSubjectTokenType =
   | TokenTypeURN
   | typeof ELEVATION_GRANT_SUBJECT_TOKEN_TYPE;
 
-export interface ExchangeDownstreamGrantSubjectTokenInput
-  extends DownstreamGrantClientRequestOptions {
+export interface ExchangeDownstreamGrantSubjectTokenInput extends DownstreamGrantClientRequestOptions {
   tokenEndpoint: string;
   client: DownstreamGrantClientCredentials;
   subjectToken: string;
@@ -54,8 +53,7 @@ export interface IntrospectDownstreamGrantTokenInput extends DownstreamGrantClie
 
 export type DownstreamGrantIntrospectionMode = 'never' | 'if_required' | 'always';
 
-export interface ExchangeAndEvaluateDownstreamGrantInput
-  extends ExchangeDownstreamGrantSubjectTokenInput {
+export interface ExchangeAndEvaluateDownstreamGrantInput extends ExchangeDownstreamGrantSubjectTokenInput {
   introspectionEndpoint?: string | null;
   introspectionMode?: DownstreamGrantIntrospectionMode;
   authorization?: Omit<DownstreamGrantServiceAuthorizationInput, 'decision'>;

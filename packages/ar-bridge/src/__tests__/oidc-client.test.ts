@@ -37,15 +37,17 @@ vi.mock('@authrim/ar-lib-core', () => ({
     }
     return response.json();
   }),
-  readResponseTextWithLimit: vi.fn(async (response: Response & { json?: () => Promise<unknown> }) => {
-    if (typeof response.text === 'function') {
-      return response.text();
+  readResponseTextWithLimit: vi.fn(
+    async (response: Response & { json?: () => Promise<unknown> }) => {
+      if (typeof response.text === 'function') {
+        return response.text();
+      }
+      if (typeof response.json === 'function') {
+        return JSON.stringify(await response.json());
+      }
+      return '';
     }
-    if (typeof response.json === 'function') {
-      return JSON.stringify(await response.json());
-    }
-    return '';
-  }),
+  ),
 }));
 
 import { OIDCRPClient } from '../clients/oidc-client';

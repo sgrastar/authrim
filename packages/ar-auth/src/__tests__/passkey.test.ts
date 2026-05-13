@@ -877,7 +877,9 @@ describe('Passkey Handlers', () => {
           public_key: expect.any(String),
         })
       );
-      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO user_custom_fields'));
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO user_custom_fields')
+      );
     });
   });
 

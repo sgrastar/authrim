@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  SAML_MESSAGE_LIMITS,
-  parsePostBindingFormDataWithLimit,
-} from '../message-limits';
+import { SAML_MESSAGE_LIMITS, parsePostBindingFormDataWithLimit } from '../message-limits';
 
 describe('SAML POST binding body limits', () => {
   it('parses urlencoded POST binding form data within the body limit', async () => {

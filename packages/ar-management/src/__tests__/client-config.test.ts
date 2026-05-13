@@ -62,7 +62,9 @@ function createMockContext(options: {
 
   return {
     req: {
-      param: vi.fn((name: string) => (name === 'client_id' ? (options.clientId ?? 'client-123') : undefined)),
+      param: vi.fn((name: string) =>
+        name === 'client_id' ? (options.clientId ?? 'client-123') : undefined
+      ),
       header: vi.fn((name: string) => {
         if (name.toLowerCase() === 'authorization') {
           return 'Bearer reg-token';
@@ -83,7 +85,9 @@ function createMockContext(options: {
     } as Env,
     get: vi.fn((key: string) => store.get(key)),
     set: vi.fn((key: string, value: unknown) => store.set(key, value)),
-    json: vi.fn((body, status = 200, headers) => new Response(JSON.stringify(body), { status, headers })),
+    json: vi.fn(
+      (body, status = 200, headers) => new Response(JSON.stringify(body), { status, headers })
+    ),
     body: vi.fn((body, status = 200) => new Response(body, { status })),
   } as any;
 }
@@ -95,7 +99,9 @@ describe('client-config update handler', () => {
     mocked.timingSafeEqual.mockReturnValue(true);
     mocked.getTenantIdFromContext.mockReturnValue('default');
     mocked.buildKVKey.mockReturnValue('client:client-123');
-    mocked.getRequestCache.mockReturnValue({ clients: new Map([['client-123', { client_id: 'client-123' }]]) });
+    mocked.getRequestCache.mockReturnValue({
+      clients: new Map([['client-123', { client_id: 'client-123' }]]),
+    });
     mocked.createErrorResponse.mockImplementation(
       (_c: unknown, code: { error: string; error_description: string }) =>
         new Response(JSON.stringify(code), { status: 500 })
@@ -159,11 +165,14 @@ describe('client-config update handler', () => {
     expect(body.client_name).toBe('Smoke Client Updated');
 
     expect(adapter.execute).toHaveBeenCalledTimes(1);
-    const executeParams = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as unknown[];
+    const executeParams = (adapter.execute as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[1] as unknown[];
     expect(executeParams).toBeDefined();
     expect(executeParams.some((value) => value === undefined)).toBe(false);
 
-    const requestCache = mocked.getRequestCache.mock.results[0]?.value as { clients: Map<string, unknown> };
+    const requestCache = mocked.getRequestCache.mock.results[0]?.value as {
+      clients: Map<string, unknown>;
+    };
     expect(requestCache.clients.has('client-123')).toBe(false);
     expect(mocked.getClientCached).toHaveBeenCalledTimes(3);
   });

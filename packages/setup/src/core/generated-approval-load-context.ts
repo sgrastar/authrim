@@ -87,12 +87,18 @@ async function runJsonRequest(options: {
 }): Promise<unknown> {
   const headers =
     options.headers ??
-    (options.adminSecret ? getAdminHeaders(options.adminSecret, options.tenantId) : { accept: 'application/json' });
-  const response = await fetchJsonWithTimeout(`${options.baseUrl}${options.path}`, options.timeoutMs, {
-    method: options.method ?? 'GET',
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+    (options.adminSecret
+      ? getAdminHeaders(options.adminSecret, options.tenantId)
+      : { accept: 'application/json' });
+  const response = await fetchJsonWithTimeout(
+    `${options.baseUrl}${options.path}`,
+    options.timeoutMs,
+    {
+      method: options.method ?? 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    }
+  );
   options.check.httpStatus = response.status;
 
   if (!response.ok) {
@@ -118,11 +124,15 @@ function asString(value: unknown): string | null {
 }
 
 function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 function firstRecordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => isRecord(item)) : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => isRecord(item))
+    : [];
 }
 
 function encodeBasicAuth(clientId: string, clientSecret: string): string {
@@ -482,15 +492,18 @@ export async function createGeneratedApprovalLoadContext(
       }
       subjectToken = asString(payload.subject_token) ?? undefined;
       const integrationHint = isRecord(payload.integration_hint) ? payload.integration_hint : null;
-      const productRoute = isRecord(integrationHint?.product_route) ? integrationHint.product_route : null;
+      const productRoute = isRecord(integrationHint?.product_route)
+        ? integrationHint.product_route
+        : null;
       const productRouteDefaultAudience = asString(productRoute?.default_audience) ?? undefined;
       const hintedTargetAudience = asString(integrationHint?.target_audience) ?? undefined;
       targetAudience =
         hintedTargetAudience && hintedTargetAudience !== 'admin_api'
           ? hintedTargetAudience
-          : productRouteDefaultAudience ?? hintedTargetAudience;
+          : (productRouteDefaultAudience ?? hintedTargetAudience);
       protectedResourcePath =
-        resolveProtectedResourcePath(asString(productRoute?.path_template), targetSubjectId!) ?? undefined;
+        resolveProtectedResourcePath(asString(productRoute?.path_template), targetSubjectId!) ??
+        undefined;
 
       if (subjectToken) {
         addPass(check, 'confirmed subject_token');
@@ -499,9 +512,7 @@ export async function createGeneratedApprovalLoadContext(
       }
     },
   });
-  checks.push(
-    finalizeCheck(subjectTokenCheck, 'Verified approval-load subject-token issuance')
-  );
+  checks.push(finalizeCheck(subjectTokenCheck, 'Verified approval-load subject-token issuance'));
 
   if (!subjectToken || !targetAudience || !protectedResourcePath) {
     throw new Error('approval_load_subject_context_incomplete');
@@ -564,7 +575,13 @@ export async function createGeneratedApprovalLoadContext(
     );
   } else {
     addPass(tokenExchangeCheck, `HTTP ${tokenExchangeResponse.status}`);
-    if (validateJsonObject(tokenExchangeCheck, tokenExchangeResponse.payload, 'approval load token exchange')) {
+    if (
+      validateJsonObject(
+        tokenExchangeCheck,
+        tokenExchangeResponse.payload,
+        'approval load token exchange'
+      )
+    ) {
       downstreamAccessToken = asString(tokenExchangeResponse.payload.access_token) ?? undefined;
       if (downstreamAccessToken) {
         addPass(tokenExchangeCheck, 'confirmed access_token');

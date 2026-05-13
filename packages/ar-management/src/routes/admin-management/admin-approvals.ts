@@ -37,7 +37,10 @@ import {
   type ApprovalTransportMethod,
   type ElevationGrant,
 } from '@authrim/ar-lib-core';
-import { auditAdminSensitiveRead, requireAdminPermissionOrElevationGrant } from '../../admin-elevation-access';
+import {
+  auditAdminSensitiveRead,
+  requireAdminPermissionOrElevationGrant,
+} from '../../admin-elevation-access';
 import {
   appendApprovalTransportEvent,
   loadApprovalTransportDetail,
@@ -46,9 +49,7 @@ import { issueApprovalCompletionArtifact } from '../../approval-completion-artif
 import { buildApprovalCompletionRequirements } from '../../approval-completion-guidance';
 import { buildApprovalGrantIntegrationHint } from '../../approval-grant-integration-hint';
 import { listApprovalDecisionReceiptsForEvidence } from '../../approval-decision-receipt-tracking';
-import {
-  ApprovalTransportChannelResolutionError,
-} from '../../approval-approver-contact';
+import { ApprovalTransportChannelResolutionError } from '../../approval-approver-contact';
 import { dispatchApprovalNotification } from '../../approval-notification-dispatch';
 import { resolveApprovalNotificationTransport } from '../../approval-notification-resolution';
 import {
@@ -121,7 +122,9 @@ const ApprovalStepSchema = z.object({
   subject_id: z.string().min(1).optional(),
   relation_type: z.string().min(1).optional(),
   relation_source: z.string().min(1).optional(),
-  method: z.enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth']).optional(),
+  method: z
+    .enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth'])
+    .optional(),
   transport_channel: z.string().min(1).optional(),
   expires_at: z.number().int().positive().optional(),
 });
@@ -162,7 +165,9 @@ const ApprovalRequestCreateSchema = z.object({
 });
 
 const ApprovalDecisionBodySchema = z.object({
-  method: z.enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth']).optional(),
+  method: z
+    .enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth'])
+    .optional(),
   transport_channel: z.string().min(1).optional(),
   reason_code: z.string().min(1).optional(),
   reason_note: z.string().min(1).optional(),
@@ -182,13 +187,25 @@ const ApprovalGrantRevokeSchema = z.object({
 
 const ApprovalGrantSubjectTokenSchema = z.object({
   client_id: z.string().min(1),
-  expires_in: z.number().int().min(60).max(30 * 60).optional(),
+  expires_in: z
+    .number()
+    .int()
+    .min(60)
+    .max(30 * 60)
+    .optional(),
 });
 
 const ApprovalArtifactIssueSchema = z.object({
-  method: z.enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth']).optional(),
+  method: z
+    .enum(['ciba', 'passkey', 'portal_confirm', 'email_otp', 'sms_otp', 'reauth'])
+    .optional(),
   transport_channel: z.string().min(1).optional(),
-  expires_in_seconds: z.number().int().min(60).max(60 * 60).optional(),
+  expires_in_seconds: z
+    .number()
+    .int()
+    .min(60)
+    .max(60 * 60)
+    .optional(),
 });
 
 export const adminApprovalsRouter = new Hono<{
@@ -351,14 +368,10 @@ async function dispatchAndRecordNotificationAttempt(
 
   const requestWithDetail = await appendApprovalTransportEvent(c, adapter, requestRepo, request, {
     kind:
-      action === 'initial'
-        ? 'step_initial'
-        : action === 'resend'
-          ? 'step_resend'
-          : 'step_remind',
+      action === 'initial' ? 'step_initial' : action === 'resend' ? 'step_resend' : 'step_remind',
     actorSubjectType: 'admin_user',
     actorSubjectId:
-      action === 'initial' ? request.requester_subject_id : c.get('adminAuth')?.userId ?? null,
+      action === 'initial' ? request.requester_subject_id : (c.get('adminAuth')?.userId ?? null),
     requestStatus: request.status,
     approval: updatedApproval,
     method: dispatchResult.method,
@@ -401,7 +414,8 @@ async function notifyPendingApproval(
       return c.json(
         {
           error: 'approval_request_not_pending',
-          error_description: 'Only pending or partially approved requests can be reminded or resent.',
+          error_description:
+            'Only pending or partially approved requests can be reminded or resent.',
         },
         409
       );
@@ -428,7 +442,10 @@ async function notifyPendingApproval(
       last_notified_at?: number | null;
       notification_count?: number;
     };
-    if (notificationState.last_notified_at && now - notificationState.last_notified_at < cooldownMs) {
+    if (
+      notificationState.last_notified_at &&
+      now - notificationState.last_notified_at < cooldownMs
+    ) {
       const retryAfterMs = cooldownMs - (now - notificationState.last_notified_at);
       return c.json(
         {
@@ -465,7 +482,9 @@ async function notifyPendingApproval(
 
     return c.json(
       formatApprovalResponse(notification.requestWithDetail, approvals, grants, {
-        notificationResults: [formatNotificationResult(notification.approval, action, notification.result)],
+        notificationResults: [
+          formatNotificationResult(notification.approval, action, notification.result),
+        ],
       })
     );
   } catch (error) {
@@ -635,20 +654,17 @@ adminApprovalsRouter.post('/', async (c) => {
 
     const approvals = await Promise.all(
       resolvedSteps.map(async (step) => {
-        const resolvedTransport = await resolveApprovalNotificationTransport(
-          c as AdminContext,
-          {
-            request,
-            approval: {
-              side: step.side,
-              subject_type: step.subject_type,
-              subject_id: step.subject_id ?? null,
-              method: step.method ?? null,
-              transport_channel: step.transport_channel ?? null,
-            },
-            strictMethod: !!step.method,
-          }
-        );
+        const resolvedTransport = await resolveApprovalNotificationTransport(c as AdminContext, {
+          request,
+          approval: {
+            side: step.side,
+            subject_type: step.subject_type,
+            subject_id: step.subject_id ?? null,
+            method: step.method ?? null,
+            transport_channel: step.transport_channel ?? null,
+          },
+          strictMethod: !!step.method,
+        });
 
         return approvalRepo.createApproval({
           approval_request_id: request.id,
@@ -719,7 +735,10 @@ adminApprovalsRouter.post('/', async (c) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: error.issues[0]?.path.join('.') || 'body', reason: error.issues[0]?.message || 'Invalid approval request payload' },
+        variables: {
+          field: error.issues[0]?.path.join('.') || 'body',
+          reason: error.issues[0]?.message || 'Invalid approval request payload',
+        },
       });
     }
     if (error instanceof ApprovalStepResolutionError) {
@@ -1071,44 +1090,38 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
           : approval.expires_at,
     });
 
-    const requestWithDetail = await appendApprovalTransportEvent(
-      c,
-      adapter,
-      requestRepo,
-      request,
-      {
-        kind: 'step_artifact_issued',
-        actorSubjectType: 'admin_user',
-        actorSubjectId: c.get('adminAuth')?.userId ?? null,
-        requestStatus: request.status,
-        approval,
-        method: resolvedTransport.method,
-        transportChannel: resolvedTransport.transportChannel,
-        reasonCode: request.reason_code,
-        reasonNote: request.reason_note,
-        transportSummary: {
-          provider: 'authrim.approval_artifact',
-          delivery_status: 'issued',
-          target: resolvedTransport.transportChannel ?? approval.subject_id ?? null,
-          correlation_id: request.investigation_id,
-          transport_request_id: artifact.artifact_id,
+    const requestWithDetail = await appendApprovalTransportEvent(c, adapter, requestRepo, request, {
+      kind: 'step_artifact_issued',
+      actorSubjectType: 'admin_user',
+      actorSubjectId: c.get('adminAuth')?.userId ?? null,
+      requestStatus: request.status,
+      approval,
+      method: resolvedTransport.method,
+      transportChannel: resolvedTransport.transportChannel,
+      reasonCode: request.reason_code,
+      reasonNote: request.reason_note,
+      transportSummary: {
+        provider: 'authrim.approval_artifact',
+        delivery_status: 'issued',
+        target: resolvedTransport.transportChannel ?? approval.subject_id ?? null,
+        correlation_id: request.investigation_id,
+        transport_request_id: artifact.artifact_id,
+      },
+      transportDetail: {
+        request: {
+          artifact_id: artifact.artifact_id,
+          completion_path: `/api/approval-artifacts/${encodeURIComponent(artifact.artifact_id)}`,
         },
-        transportDetail: {
-          request: {
-            artifact_id: artifact.artifact_id,
-            completion_path: `/api/approval-artifacts/${encodeURIComponent(artifact.artifact_id)}`,
-          },
-          response: {
-            issued: true,
-          },
-          metadata: {
-            acceptable_methods: resolvedTransport.acceptableMethods,
-            selection_source: resolvedTransport.source,
-            fallback_from_method: resolvedTransport.fallbackFromMethod,
-          },
+        response: {
+          issued: true,
         },
-      }
-    );
+        metadata: {
+          acceptable_methods: resolvedTransport.acceptableMethods,
+          selection_source: resolvedTransport.source,
+          fallback_from_method: resolvedTransport.fallbackFromMethod,
+        },
+      },
+    });
 
     return c.json({
       artifact,
@@ -1224,7 +1237,11 @@ adminApprovalsRouter.get('/:requestId/receipts', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const receipts = await listApprovalDecisionReceiptsForEvidence(c.env, detail, request.tenant_id);
+    const receipts = await listApprovalDecisionReceiptsForEvidence(
+      c.env,
+      detail,
+      request.tenant_id
+    );
 
     await auditAdminSensitiveRead(c as AdminContext, access, {
       action: 'approval.decision_receipts_read',
@@ -1303,30 +1320,37 @@ async function updateApprovalDecision(
     }
 
     const actorSubjectId = c.get('adminAuth')?.userId ?? null;
-    const result = await applyApprovalDecisionForRequest(c, {
-      adapter,
-      requestRepo,
-      approvalRepo,
-      grantRepo,
-    }, {
-      request,
-      approval,
-      nextStatus,
-      actorSubjectType: 'admin_user',
-      actorSubjectId,
-      method: (body.method ?? null) as ApprovalTransportMethod | null,
-      transportChannel: body.transport_channel ?? null,
-      reasonCode: body.reason_code ?? null,
-      reasonNote: body.reason_note ?? null,
-      transportSummary: body.transport_summary ?? null,
-      transportDetail: body.transport_detail ?? null,
-    });
+    const result = await applyApprovalDecisionForRequest(
+      c,
+      {
+        adapter,
+        requestRepo,
+        approvalRepo,
+        grantRepo,
+      },
+      {
+        request,
+        approval,
+        nextStatus,
+        actorSubjectType: 'admin_user',
+        actorSubjectId,
+        method: (body.method ?? null) as ApprovalTransportMethod | null,
+        transportChannel: body.transport_channel ?? null,
+        reasonCode: body.reason_code ?? null,
+        reasonNote: body.reason_note ?? null,
+        transportSummary: body.transport_summary ?? null,
+        transportDetail: body.transport_detail ?? null,
+      }
+    );
 
     return c.json(formatApprovalResponse(result.request, result.approvals, result.grants));
   } catch (error) {
     if (error instanceof z.ZodError) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: error.issues[0]?.path.join('.') || 'body', reason: error.issues[0]?.message || 'Invalid approval decision payload' },
+        variables: {
+          field: error.issues[0]?.path.join('.') || 'body',
+          reason: error.issues[0]?.message || 'Invalid approval decision payload',
+        },
       });
     }
     if (error instanceof ApprovalWorkflowPolicyError) {
@@ -1410,7 +1434,10 @@ adminApprovalsRouter.post('/:requestId/cancel', async (c) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: error.issues[0]?.path.join('.') || 'body', reason: error.issues[0]?.message || 'Invalid cancellation payload' },
+        variables: {
+          field: error.issues[0]?.path.join('.') || 'body',
+          reason: error.issues[0]?.message || 'Invalid cancellation payload',
+        },
       });
     }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

@@ -82,7 +82,12 @@ async function copyRetentionCandidatesToArchive(input: {
       return { archived: 0, deleted: 0, failed: true };
     }
 
-    const deleted = await primaryAdapter.deleteTenantByRetention('event', beforeTime, tenantId, batchSize);
+    const deleted = await primaryAdapter.deleteTenantByRetention(
+      'event',
+      beforeTime,
+      tenantId,
+      batchSize
+    );
     return {
       archived: candidates.length,
       deleted,
@@ -105,7 +110,12 @@ async function copyRetentionCandidatesToArchive(input: {
     return { archived: 0, deleted: 0, failed: true };
   }
 
-  const deleted = await primaryAdapter.deleteTenantByRetention('pii', beforeTime, tenantId, batchSize);
+  const deleted = await primaryAdapter.deleteTenantByRetention(
+    'pii',
+    beforeTime,
+    tenantId,
+    batchSize
+  );
   return {
     archived: candidates.length,
     deleted,
@@ -133,7 +143,10 @@ export async function cleanupResolvedAuditPrimaries(
 
   const createPrimaryAdapter =
     options.createPrimaryAdapter ??
-    (async (target: AuditTarget, logType: 'event' | 'pii'): Promise<IAuditStorageAdapter | null> => {
+    (async (
+      target: AuditTarget,
+      logType: 'event' | 'pii'
+    ): Promise<IAuditStorageAdapter | null> => {
       const cacheKey = JSON.stringify({ target, logType });
       if (externalAdapterCache.has(cacheKey)) {
         return externalAdapterCache.get(cacheKey) ?? null;
@@ -161,7 +174,12 @@ export async function cleanupResolvedAuditPrimaries(
   const createArchiveAdapter =
     options.createArchiveAdapter ??
     (async (target: AuditTarget, logType: 'event' | 'pii', profile: AuditProfile) => {
-      const cacheKey = JSON.stringify({ target, logType, profileId: profile.id, usage: 'archive-retention' });
+      const cacheKey = JSON.stringify({
+        target,
+        logType,
+        profileId: profile.id,
+        usage: 'archive-retention',
+      });
       if (archiveAdapterCache.has(cacheKey)) {
         return archiveAdapterCache.get(cacheKey) ?? null;
       }
@@ -318,20 +336,31 @@ export async function cleanupResolvedAuditPrimaries(
           summary.piiDeleted += piiResult.deleted;
         }
       } else {
-        summary.eventDeleted += await eventAdapter.deleteTenantByRetention('event', now, tenantId, batchSize);
-        summary.piiDeleted += await piiAdapter.deleteTenantByRetention('pii', now, tenantId, batchSize);
+        summary.eventDeleted += await eventAdapter.deleteTenantByRetention(
+          'event',
+          now,
+          tenantId,
+          batchSize
+        );
+        summary.piiDeleted += await piiAdapter.deleteTenantByRetention(
+          'pii',
+          now,
+          tenantId,
+          batchSize
+        );
       }
       summary.processedTenants += 1;
     }
   } finally {
     await Promise.all(
-      [...Array.from(externalAdapterCache.values()), ...Array.from(archiveAdapterCache.values())].map(
-        async (adapter) => {
-          if (adapter) {
-            await adapter.close();
-          }
+      [
+        ...Array.from(externalAdapterCache.values()),
+        ...Array.from(archiveAdapterCache.values()),
+      ].map(async (adapter) => {
+        if (adapter) {
+          await adapter.close();
         }
-      )
+      })
     );
   }
 

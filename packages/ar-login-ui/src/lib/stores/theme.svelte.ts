@@ -57,9 +57,7 @@ function getSavedPreferences() {
 
 	return {
 		savedTheme: localStorage.getItem(STORAGE_KEY_THEME) as ThemeMode | null,
-		savedLightVariant: localStorage.getItem(
-			STORAGE_KEY_LIGHT_VARIANT
-		) as LightVariant | null,
+		savedLightVariant: localStorage.getItem(STORAGE_KEY_LIGHT_VARIANT) as LightVariant | null,
 		savedDarkVariant: localStorage.getItem(STORAGE_KEY_DARK_VARIANT) as DarkVariant | null
 	};
 }

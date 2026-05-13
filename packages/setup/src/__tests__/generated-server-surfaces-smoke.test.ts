@@ -91,7 +91,11 @@ describe('generated server-surface smoke', () => {
       if (url.endsWith('/api/admin/users') && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
         const requiredFieldKey = String(schemas[0]?.field_key ?? 'department');
-        if (!(requiredFieldKey in body) || body[requiredFieldKey] == null || body[requiredFieldKey] === '') {
+        if (
+          !(requiredFieldKey in body) ||
+          body[requiredFieldKey] == null ||
+          body[requiredFieldKey] === ''
+        ) {
           return new Response(
             JSON.stringify({
               error: 'invalid_request',
@@ -117,7 +121,9 @@ describe('generated server-surface smoke', () => {
         return new Response(
           JSON.stringify({
             user: { id: createdUserId },
-            customFields: [{ field_name: requiredFieldKey, field_value: 'Engineering', field_type: 'string' }],
+            customFields: [
+              { field_name: requiredFieldKey, field_value: 'Engineering', field_type: 'string' },
+            ],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         );
@@ -154,7 +160,12 @@ describe('generated server-surface smoke', () => {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
         const ext = body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];
         const requiredFieldKey = String(schemas[0]?.field_key ?? 'department');
-        if (!ext || typeof ext !== 'object' || ext === null || !(requiredFieldKey in (ext as Record<string, unknown>))) {
+        if (
+          !ext ||
+          typeof ext !== 'object' ||
+          ext === null ||
+          !(requiredFieldKey in (ext as Record<string, unknown>))
+        ) {
           return new Response(
             JSON.stringify({
               schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],

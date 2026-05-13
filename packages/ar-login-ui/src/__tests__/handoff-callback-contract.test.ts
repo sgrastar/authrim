@@ -4,10 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const callbackSource = readFileSync(
-	resolve(__dirname, '../routes/callback/+page.svelte'),
-	'utf8'
-);
+const callbackSource = readFileSync(resolve(__dirname, '../routes/callback/+page.svelte'), 'utf8');
 
 describe('hosted handoff callback contract', () => {
 	it('uses cookie-only finalize instead of the JSON token verification path', () => {

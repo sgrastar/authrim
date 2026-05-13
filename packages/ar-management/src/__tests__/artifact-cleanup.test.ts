@@ -193,9 +193,9 @@ describe('artifact cleanup', () => {
     expect(sensitiveDelete).toHaveBeenCalledWith(
       'sensitive/default/approval/request-1/detail.json'
     );
-    expect(mockPurgeDeletedObjectCatalogObjectsForSystemCleanup).toHaveBeenCalledWith(
-      mockAdapter,
-      ['physical-1', 'physical-2']
-    );
+    expect(mockPurgeDeletedObjectCatalogObjectsForSystemCleanup).toHaveBeenCalledWith(mockAdapter, [
+      'physical-1',
+      'physical-2',
+    ]);
   });
 });

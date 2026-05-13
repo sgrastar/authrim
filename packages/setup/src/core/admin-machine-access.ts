@@ -4,7 +4,11 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AuthrimConfig } from './config.js';
 import type { JWK } from './keys.js';
-import { fetchWithTimeout, readResponseJsonWithLimit, readResponseTextWithLimit } from './http-limits.js';
+import {
+  fetchWithTimeout,
+  readResponseJsonWithLimit,
+  readResponseTextWithLimit,
+} from './http-limits.js';
 import { getPortableSqlExpressions } from './sql-portability.js';
 
 export const ADMIN_MACHINE_AUDIENCE = 'authrim:admin-api';
@@ -113,7 +117,10 @@ function derToJose(signature: Buffer): Buffer {
     throw new Error('Invalid ES256 signature component length');
   }
 
-  return Buffer.concat([Buffer.concat([Buffer.alloc(32 - r.length), r]), Buffer.concat([Buffer.alloc(32 - s.length), s])]);
+  return Buffer.concat([
+    Buffer.concat([Buffer.alloc(32 - r.length), r]),
+    Buffer.concat([Buffer.alloc(32 - s.length), s]),
+  ]);
 }
 
 export function getSetupMachinePrivateKeyPath(keysDir: string): string {
@@ -258,7 +265,9 @@ export async function requestAdminMachineAccessToken(
   };
 }
 
-export async function buildAdminMachineHeaders(options: AdminMachineTokenRequest): Promise<Record<string, string>> {
+export async function buildAdminMachineHeaders(
+  options: AdminMachineTokenRequest
+): Promise<Record<string, string>> {
   const token = await requestAdminMachineAccessToken(options);
   return {
     Authorization: `Bearer ${token.accessToken}`,
@@ -292,7 +301,8 @@ export function buildSetupMachineAccessBootstrapSql(
 
   const permissionSql = permissions
     .map(
-      (permission) => `SELECT ${sqlString(principalId)}, ${sqlString(permission)}, ${sqlExpr.nowEpochMilliseconds}, 'bootstrap', 'setup'`
+      (permission) =>
+        `SELECT ${sqlString(principalId)}, ${sqlString(permission)}, ${sqlExpr.nowEpochMilliseconds}, 'bootstrap', 'setup'`
     )
     .join('\nUNION ALL\n');
 

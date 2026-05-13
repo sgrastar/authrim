@@ -2,32 +2,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
-const { mockAdapter, mockAuditRepo, mockUserRepo, mockLoadAdminAuditDetail, mockGrantRepo } = vi.hoisted(() => ({
-  mockAdapter: {
-    query: vi.fn(),
-    queryOne: vi.fn(),
-    execute: vi.fn(),
-  } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
-  mockAuditRepo: {
-    getAuditLogWithDetailReference: vi.fn(),
-    searchAuditLogs: vi.fn(),
-  },
-  mockUserRepo: {
-    getAdminUser: vi.fn(),
-  },
-  mockLoadAdminAuditDetail: vi.fn(),
-  mockGrantRepo: {
-    getElevationGrantByPublicId: vi.fn(),
-    listActiveElevationGrants: vi.fn(),
-  },
-}));
+const { mockAdapter, mockAuditRepo, mockUserRepo, mockLoadAdminAuditDetail, mockGrantRepo } =
+  vi.hoisted(() => ({
+    mockAdapter: {
+      query: vi.fn(),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
+    mockAuditRepo: {
+      getAuditLogWithDetailReference: vi.fn(),
+      searchAuditLogs: vi.fn(),
+    },
+    mockUserRepo: {
+      getAdminUser: vi.fn(),
+    },
+    mockLoadAdminAuditDetail: vi.fn(),
+    mockGrantRepo: {
+      getElevationGrantByPublicId: vi.fn(),
+      listActiveElevationGrants: vi.fn(),
+    },
+  }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    adminAuthMiddleware:
-      vi.fn((options?: { requirePermissions?: string[] }) =>
+    adminAuthMiddleware: vi.fn(
+      (options?: { requirePermissions?: string[] }) =>
         async (c: any, next: () => Promise<void>) => {
           const permissionsHeader = c.req.header('X-Admin-Permissions') || '';
           const permissions = permissionsHeader
@@ -57,7 +58,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
           await next();
         }
-      ),
+    ),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     AdminAuditLogRepository: vi.fn(function MockAdminAuditLogRepository() {
@@ -163,8 +164,7 @@ describe('adminAuditRouter detail permission', () => {
       {
         method: 'GET',
         headers: {
-          'X-Admin-Permissions':
-            'admin:admin_audit:read,admin:admin_audit:detail:read',
+          'X-Admin-Permissions': 'admin:admin_audit:read,admin:admin_audit:detail:read',
         },
       },
       mockEnv

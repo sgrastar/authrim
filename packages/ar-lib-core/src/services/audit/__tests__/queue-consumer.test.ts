@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../../db';
-import {
-  cleanupExpiredTenantEventLogs,
-  cleanupExpiredGlobalPIILogs,
-} from '../queue-consumer';
+import { cleanupExpiredTenantEventLogs, cleanupExpiredGlobalPIILogs } from '../queue-consumer';
 
 function createMockAdapter(rowsAffected: number): DatabaseAdapter {
   return {

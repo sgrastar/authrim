@@ -201,11 +201,7 @@ export async function resolveSAMLSessionIndexToSessionId(
     sessionIndex: string;
   }
 ): Promise<string | null> {
-  const key = buildSAMLSessionIndexKey(
-    options.tenantId,
-    options.spEntityId,
-    options.sessionIndex
-  );
+  const key = buildSAMLSessionIndexKey(options.tenantId, options.spEntityId, options.sessionIndex);
   const stored = await store.get(key);
   if (!stored) {
     return null;
@@ -246,11 +242,14 @@ async function resolvePersistentNameID(
   }
 
   if (context.allowCreate === false) {
-    throw new SAMLNameIDPolicyError('AuthnRequest NameIDPolicy AllowCreate=false is not satisfied', {
-      requested_format: NAMEID_FORMATS.PERSISTENT,
-      allow_create: false,
-      registry_available: Boolean(context.persistentRegistry),
-    });
+    throw new SAMLNameIDPolicyError(
+      'AuthnRequest NameIDPolicy AllowCreate=false is not satisfied',
+      {
+        requested_format: NAMEID_FORMATS.PERSISTENT,
+        allow_create: false,
+        registry_available: Boolean(context.persistentRegistry),
+      }
+    );
   }
 
   const nameId = await generatePairwiseSubject(
@@ -328,14 +327,12 @@ function generateSAMLSessionIndex(): string {
   return `sidx_${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
 }
 
-function parseSAMLSessionIndexRecord(value: string):
-  | {
-      tenantId: string;
-      spEntityId: string;
-      sessionId: string;
-      expiresAt: number;
-    }
-  | null {
+function parseSAMLSessionIndexRecord(value: string): {
+  tenantId: string;
+  spEntityId: string;
+  sessionId: string;
+  expiresAt: number;
+} | null {
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     if (
@@ -358,11 +355,9 @@ function parseSAMLSessionIndexRecord(value: string):
   }
 }
 
-function parseSAMLPersistentNameIDRegistryRecord(value: string | null):
-  | {
-      nameId: string;
-    }
-  | null {
+function parseSAMLPersistentNameIDRegistryRecord(value: string | null): {
+  nameId: string;
+} | null {
   if (!value) {
     return null;
   }

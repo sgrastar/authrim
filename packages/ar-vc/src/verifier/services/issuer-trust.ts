@@ -11,7 +11,6 @@ import {
   resolveDID,
   createLogger,
   buildIssuerUrl,
-  getDefaultTenantId,
 } from '@authrim/ar-lib-core';
 import type { TrustedIssuerRepository, TrustedIssuerRecord } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';

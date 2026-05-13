@@ -28,19 +28,21 @@ import {
   adminUserEffectivePermissionsHandler,
 } from '../admin-rbac';
 
-function createMockAdapter(options: {
-  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-  query?: (sql: string, params: unknown[]) => unknown[] | Promise<unknown[]>;
-} = {}): DatabaseAdapter {
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+    query?: (sql: string, params: unknown[]) => unknown[] | Promise<unknown[]>;
+  } = {}
+): DatabaseAdapter {
   const queryImpl: DatabaseAdapter['query'] = async <T>(
     sql: string,
     params: unknown[] = []
-  ): Promise<T[]> => (((await options.query?.(sql, params)) ?? []) as T[]);
+  ): Promise<T[]> => ((await options.query?.(sql, params)) ?? []) as T[];
 
   const queryOneImpl: DatabaseAdapter['queryOne'] = async <T>(
     sql: string,
     params: unknown[] = []
-  ): Promise<T | null> => (((await options.queryOne?.(sql, params)) ?? null) as T | null);
+  ): Promise<T | null> => ((await options.queryOne?.(sql, params)) ?? null) as T | null;
 
   const transactionImpl: DatabaseAdapter['transaction'] = async <T>(
     fn: Parameters<DatabaseAdapter['transaction']>[0]

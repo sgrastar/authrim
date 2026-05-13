@@ -104,8 +104,7 @@ describe('object-catalog helpers', () => {
         const objectIndex = params[3];
         const logical =
           state.logical.find(
-            (row) =>
-              row.id === identifier && (tenantId === undefined || row.tenant_id === tenantId)
+            (row) => row.id === identifier && (tenantId === undefined || row.tenant_id === tenantId)
           ) ??
           state.logical.find(
             (row) =>

@@ -370,11 +370,7 @@ export class RoleRepository {
    */
   async userHasRole(userId: string, roleId: string): Promise<boolean> {
     const sql = 'SELECT 1 FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?';
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [
-      this.tenantId,
-      userId,
-      roleId,
-    ]);
+    const result = await this.adapter.queryOne<{ 1: number }>(sql, [this.tenantId, userId, roleId]);
     return result !== null;
   }
 

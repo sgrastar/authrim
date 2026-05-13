@@ -248,7 +248,10 @@ CREATE TABLE sessions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'def
       );
 
       const migrationSql = readFileSync(
-        new URL('../../../../migrations/077_oauth_client_tenant_scoped_identity.sql', import.meta.url),
+        new URL(
+          '../../../../migrations/077_oauth_client_tenant_scoped_identity.sql',
+          import.meta.url
+        ),
         'utf-8'
       );
       runSqlite(sqlite3Path, dbPath, migrationSql);
@@ -356,7 +359,10 @@ CREATE TABLE sessions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'def
       );
 
       const tenantScopedMigrationSql = readFileSync(
-        new URL('../../../../migrations/077_oauth_client_tenant_scoped_identity.sql', import.meta.url),
+        new URL(
+          '../../../../migrations/077_oauth_client_tenant_scoped_identity.sql',
+          import.meta.url
+        ),
         'utf-8'
       );
       const restoreDevicePolicySql = readFileSync(

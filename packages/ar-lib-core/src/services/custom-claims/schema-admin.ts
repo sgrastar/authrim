@@ -35,10 +35,7 @@ function getAdapter(db: DatabaseSource) {
   return ensureDatabaseAdapter(db, 'custom-claims-schema-admin');
 }
 
-function normalizeActiveFieldKey(
-  fieldKey: unknown,
-  isActive: unknown
-): string | null {
+function normalizeActiveFieldKey(fieldKey: unknown, isActive: unknown): string | null {
   return typeof fieldKey === 'string' && (isActive === 1 || isActive === true) ? fieldKey : null;
 }
 
@@ -183,7 +180,11 @@ export async function updateCustomClaimSchemaFields(
   const adapter = getAdapter(db);
   const normalizedUpdates = { ...updates };
   if ('field_key' in normalizedUpdates || 'is_active' in normalizedUpdates) {
-    const existing = await getCustomClaimSchemaById<Record<string, unknown>>(db, tenantId, schemaId);
+    const existing = await getCustomClaimSchemaById<Record<string, unknown>>(
+      db,
+      tenantId,
+      schemaId
+    );
     if (!existing) {
       return 0;
     }

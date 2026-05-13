@@ -75,9 +75,9 @@ async function resolveDiscovery(
 	});
 
 	if (!response.ok) {
-		const error: { message?: string } = await readJsonWithLimit<{ message?: string }>(response).catch(
-			() => ({})
-		);
+		const error: { message?: string } = await readJsonWithLimit<{ message?: string }>(
+			response
+		).catch(() => ({}));
 		throw new Error(error.message || 'Failed to resolve tenant');
 	}
 
@@ -310,8 +310,7 @@ export const actions: Actions = {
 				await redirectResolvedCandidate(event, config, result.candidate, {
 					expectedTenantId,
 					returnTo,
-					loginHint:
-						loginHint || (mode === 'email' && value ? value : null)
+					loginHint: loginHint || (mode === 'email' && value ? value : null)
 				});
 
 				if (config.config.selection_policy === 'always_select') {

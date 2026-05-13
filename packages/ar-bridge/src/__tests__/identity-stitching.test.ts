@@ -16,72 +16,71 @@ const {
   mockCreateAuditLog,
   MockD1Adapter,
   sqlTracker,
-} =
-  vi.hoisted(() => {
-    // Storage for tracking SQL calls - differentiate between DB and DB_PII
-    const tracker = {
-      coreDb: [] as { method: string; sql: string; params: unknown[] }[],
-      piiDb: [] as { method: string; sql: string; params: unknown[] }[],
-      reset() {
-        this.coreDb.length = 0;
-        this.piiDb.length = 0;
-      },
-    };
+} = vi.hoisted(() => {
+  // Storage for tracking SQL calls - differentiate between DB and DB_PII
+  const tracker = {
+    coreDb: [] as { method: string; sql: string; params: unknown[] }[],
+    piiDb: [] as { method: string; sql: string; params: unknown[] }[],
+    reset() {
+      this.coreDb.length = 0;
+      this.piiDb.length = 0;
+    },
+  };
 
-    // Mock functions for Core DB (env.DB)
-    const coreQueryOneMock = vi.fn().mockResolvedValue(null);
-    const coreExecuteMock = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+  // Mock functions for Core DB (env.DB)
+  const coreQueryOneMock = vi.fn().mockResolvedValue(null);
+  const coreExecuteMock = vi.fn().mockResolvedValue({ rowsAffected: 1 });
 
-    // Mock functions for PII DB (env.DB_PII)
-    const piiQueryOneMock = vi.fn().mockResolvedValue(null);
-    const validateCustomClaimWriteMock = vi.fn().mockResolvedValue({ ok: true });
-    const persistCustomClaimWriteMock = vi.fn().mockResolvedValue(undefined);
-    const syncUserLifecycleStateMock = vi.fn().mockResolvedValue({
-      lifecycleState: 'active',
-      missingRequiredFields: [],
-    });
-    const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
+  // Mock functions for PII DB (env.DB_PII)
+  const piiQueryOneMock = vi.fn().mockResolvedValue(null);
+  const validateCustomClaimWriteMock = vi.fn().mockResolvedValue({ ok: true });
+  const persistCustomClaimWriteMock = vi.fn().mockResolvedValue(undefined);
+  const syncUserLifecycleStateMock = vi.fn().mockResolvedValue({
+    lifecycleState: 'active',
+    missingRequiredFields: [],
+  });
+  const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
 
-    // Create a class that wraps the mock functions and tracks calls
-    // The class determines binding type from the db option's _isPii marker
-    class D1AdapterClass {
-      private binding: 'core' | 'pii';
+  // Create a class that wraps the mock functions and tracks calls
+  // The class determines binding type from the db option's _isPii marker
+  class D1AdapterClass {
+    private binding: 'core' | 'pii';
 
-      constructor(options: { db: unknown }) {
-        // Determine which DB this adapter is for based on the binding marker
-        this.binding = options.db && (options.db as { _isPii?: boolean })._isPii ? 'pii' : 'core';
-      }
-
-      execute = (sql: string, params?: unknown[]) => {
-        tracker.coreDb.push({ method: 'execute', sql, params: params || [] });
-        return coreExecuteMock(sql, params);
-      };
-
-      queryOne = (sql: string, params?: unknown[]) => {
-        if (this.binding === 'pii') {
-          tracker.piiDb.push({ method: 'queryOne', sql, params: params || [] });
-          return piiQueryOneMock(sql, params);
-        } else {
-          tracker.coreDb.push({ method: 'queryOne', sql, params: params || [] });
-          return coreQueryOneMock(sql, params);
-        }
-      };
-
-      query = vi.fn().mockResolvedValue([]);
+    constructor(options: { db: unknown }) {
+      // Determine which DB this adapter is for based on the binding marker
+      this.binding = options.db && (options.db as { _isPii?: boolean })._isPii ? 'pii' : 'core';
     }
 
-    return {
-      mockCoreQueryOne: coreQueryOneMock,
-      mockCoreExecute: coreExecuteMock,
-      mockPiiQueryOne: piiQueryOneMock,
-      mockValidateCustomClaimWrite: validateCustomClaimWriteMock,
-      mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
-      mockSyncUserLifecycleState: syncUserLifecycleStateMock,
-      mockCreateAuditLog: createAuditLogMock,
-      MockD1Adapter: D1AdapterClass,
-      sqlTracker: tracker,
+    execute = (sql: string, params?: unknown[]) => {
+      tracker.coreDb.push({ method: 'execute', sql, params: params || [] });
+      return coreExecuteMock(sql, params);
     };
-  });
+
+    queryOne = (sql: string, params?: unknown[]) => {
+      if (this.binding === 'pii') {
+        tracker.piiDb.push({ method: 'queryOne', sql, params: params || [] });
+        return piiQueryOneMock(sql, params);
+      } else {
+        tracker.coreDb.push({ method: 'queryOne', sql, params: params || [] });
+        return coreQueryOneMock(sql, params);
+      }
+    };
+
+    query = vi.fn().mockResolvedValue([]);
+  }
+
+  return {
+    mockCoreQueryOne: coreQueryOneMock,
+    mockCoreExecute: coreExecuteMock,
+    mockPiiQueryOne: piiQueryOneMock,
+    mockValidateCustomClaimWrite: validateCustomClaimWriteMock,
+    mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
+    mockSyncUserLifecycleState: syncUserLifecycleStateMock,
+    mockCreateAuditLog: createAuditLogMock,
+    MockD1Adapter: D1AdapterClass,
+    sqlTracker: tracker,
+  };
+});
 
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
 vi.mock('@authrim/ar-lib-core', () => ({

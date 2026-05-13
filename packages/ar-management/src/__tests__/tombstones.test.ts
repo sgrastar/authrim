@@ -16,19 +16,21 @@ vi.mock('@authrim/ar-lib-core', async () => {
 
 import { listTombstones } from '../routes/settings/tombstones';
 
-function createMockAdapter(options: {
-  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-  query?: (sql: string, params: unknown[]) => unknown[] | Promise<unknown[]>;
-} = {}): DatabaseAdapter {
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+    query?: (sql: string, params: unknown[]) => unknown[] | Promise<unknown[]>;
+  } = {}
+): DatabaseAdapter {
   const queryImpl: DatabaseAdapter['query'] = async <T>(
     sql: string,
     params: unknown[] = []
-  ): Promise<T[]> => (((await options.query?.(sql, params)) ?? []) as T[]);
+  ): Promise<T[]> => ((await options.query?.(sql, params)) ?? []) as T[];
 
   const queryOneImpl: DatabaseAdapter['queryOne'] = async <T>(
     sql: string,
     params: unknown[] = []
-  ): Promise<T | null> => (((await options.queryOne?.(sql, params)) ?? null) as T | null);
+  ): Promise<T | null> => ((await options.queryOne?.(sql, params)) ?? null) as T | null;
 
   return {
     query: vi.fn(queryImpl) as unknown as DatabaseAdapter['query'],
@@ -74,10 +76,18 @@ describe('tombstones routes', () => {
           expect(params).toEqual(['acme']);
           return { count: 1 };
         }
-        if (sql.includes('SELECT COUNT(*) as count FROM users_pii_tombstone WHERE tenant_id = ? AND retention_until < ?')) {
+        if (
+          sql.includes(
+            'SELECT COUNT(*) as count FROM users_pii_tombstone WHERE tenant_id = ? AND retention_until < ?'
+          )
+        ) {
           return { count: 0 };
         }
-        if (sql.includes('SELECT COUNT(*) as count FROM users_pii_tombstone WHERE tenant_id = ? AND deleted_at >= ?')) {
+        if (
+          sql.includes(
+            'SELECT COUNT(*) as count FROM users_pii_tombstone WHERE tenant_id = ? AND deleted_at >= ?'
+          )
+        ) {
           return { count: 1 };
         }
         return null;

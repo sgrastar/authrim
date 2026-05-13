@@ -106,7 +106,9 @@ export class DeviceInstallationRepository extends BaseRepository<DeviceInstallat
     this.tenantId = requireTenantId(tenantId, 'DeviceInstallationRepository');
   }
 
-  async createInstallation(input: CreateDeviceInstallationInput): Promise<DeviceInstallation | null> {
+  async createInstallation(
+    input: CreateDeviceInstallationInput
+  ): Promise<DeviceInstallation | null> {
     const now = getCurrentTimestamp();
     const tenantId = requireTenantId(
       input.tenant_id ?? this.tenantId,
@@ -398,10 +400,7 @@ export class DeviceInstallationRepository extends BaseRepository<DeviceInstallat
     }
   }
 
-  private async updateFromDeviceSecret(
-    id: string,
-    deviceSecret: DeviceSecret
-  ): Promise<boolean> {
+  private async updateFromDeviceSecret(id: string, deviceSecret: DeviceSecret): Promise<boolean> {
     return this.updateInstallation(id, deviceSecret.tenant_id, {
       client_id: deviceSecret.client_id,
       trust_group_id: deviceSecret.trust_group_id,

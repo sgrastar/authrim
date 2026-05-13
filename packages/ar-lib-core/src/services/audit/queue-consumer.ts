@@ -11,21 +11,13 @@
 import type { MessageBatch, Message } from '@cloudflare/workers-types';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../../db';
 import type { AuditTarget } from '../../types/runtime-profile';
-import type {
-  AuditQueueFanoutPlan,
-  AuditQueueMessage,
-  EventLogEntry,
-  PIILogEntry,
-} from './types';
+import type { AuditQueueFanoutPlan, AuditQueueMessage, EventLogEntry, PIILogEntry } from './types';
 import { sanitizeErrorMessage } from './utils';
 import { createLogger, type Logger } from '../../utils/logger';
 import { createR2AuditAdapter } from './storage';
 import { createAuditPrimaryStorageAdapter } from './external-primary';
 import { resolveTenantRuntimeProfilesFromEnv } from '../runtime-profile-resolver';
-import {
-  buildCanonicalAuditBatch,
-  buildCanonicalAuditRecord,
-} from './canonical-format';
+import { buildCanonicalAuditBatch, buildCanonicalAuditRecord } from './canonical-format';
 import { safeFetch } from '../../utils/url-security';
 
 export interface AuditQueueConsumerEnv {
@@ -223,7 +215,10 @@ async function writeArchiveTarget(
   }
 }
 
-function emitLogpushSink(target: Extract<AuditTarget, { type: 'logpush' }>, body: AuditQueueMessage) {
+function emitLogpushSink(
+  target: Extract<AuditTarget, { type: 'logpush' }>,
+  body: AuditQueueMessage
+) {
   for (const entry of body.entries) {
     console.log(JSON.stringify(buildCanonicalAuditRecord(target, body, entry, 'logpush')));
   }
@@ -236,9 +231,9 @@ async function deliverHttpSink(
 ): Promise<void> {
   const resolvedUrl =
     target.url ??
-    ((target.urlRef
-      ? (env as unknown as Record<string, unknown>)[target.urlRef]
-      : undefined) as string | undefined);
+    ((target.urlRef ? (env as unknown as Record<string, unknown>)[target.urlRef] : undefined) as
+      | string
+      | undefined);
 
   if (!resolvedUrl) {
     throw new Error(`HTTP sink URL not resolved: ${target.urlRef ?? 'missing_url'}`);
@@ -306,7 +301,8 @@ async function processFanoutMessage(
   logger: Logger
 ): Promise<void> {
   const fanout = body.fanout as AuditQueueFanoutPlan;
-  const archives = fanout.archives.length > 0 ? fanout.archives : fanout.archive ? [fanout.archive] : [];
+  const archives =
+    fanout.archives.length > 0 ? fanout.archives : fanout.archive ? [fanout.archive] : [];
 
   for (const archive of archives) {
     try {

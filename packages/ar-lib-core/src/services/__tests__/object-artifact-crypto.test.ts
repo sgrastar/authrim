@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decryptObjectArtifact, encryptObjectArtifact } from '../object-artifact-crypto';
 
-const ROOT_KEY =
-  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 describe('object-artifact-crypto', () => {
   it('encrypts and decrypts export artifacts with AAD-bound context', async () => {

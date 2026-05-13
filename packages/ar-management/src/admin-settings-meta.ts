@@ -1324,12 +1324,7 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         await adapter.execute(
           `INSERT INTO oauth_clients (${clientInsertColumns.join(', ')})
            VALUES (${clientPlaceholders})`,
-          [
-            newTenantId,
-            ...OAUTH_CLIENT_CLONE_COLUMNS.map((column) => client[column]),
-            nowTs,
-            nowTs,
-          ]
+          [newTenantId, ...OAUTH_CLIENT_CLONE_COLUMNS.map((column) => client[column]), nowTs, nowTs]
         );
         clonedItems.clients++;
       }

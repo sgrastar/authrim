@@ -528,7 +528,9 @@ async function fetchConfiguredExternalLoginProviders(
     const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
     const rawProviders = kvSettings['login-methods.external_providers'];
     const providers =
-      typeof rawProviders === 'string' ? safeParseJsonArray<ExternalLoginProviderConfig>(rawProviders) : rawProviders;
+      typeof rawProviders === 'string'
+        ? safeParseJsonArray<ExternalLoginProviderConfig>(rawProviders)
+        : rawProviders;
 
     if (!Array.isArray(providers)) return [];
 

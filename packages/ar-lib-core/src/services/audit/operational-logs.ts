@@ -234,10 +234,11 @@ export async function getOperationalLog(
   tenantId: string,
   logId: string
 ): Promise<
-  (Omit<OperationalLogEntry, 'reason_detail_encrypted'> & {
-    reason_detail: string;
-    detail_object_catalog_id?: string | null;
-  }) | null
+  | (Omit<OperationalLogEntry, 'reason_detail_encrypted'> & {
+      reason_detail: string;
+      detail_object_catalog_id?: string | null;
+    })
+  | null
 > {
   const options = resolveStorageOptions(encryptionKeyOrOptions);
   const entry = await adapter.queryOne<OperationalLogEntry>(
@@ -258,7 +259,11 @@ export async function getOperationalLog(
       'canonical_json',
       0
     );
-    if (!record || record.logical.tenantId !== tenantId || record.physical.bucketBinding !== 'SENSITIVE_DETAILS') {
+    if (
+      !record ||
+      record.logical.tenantId !== tenantId ||
+      record.physical.bucketBinding !== 'SENSITIVE_DETAILS'
+    ) {
       return null;
     }
     const object = await options.objectStorage.bucket.get(record.physical.objectKey);
@@ -282,7 +287,10 @@ export async function getOperationalLog(
     if (!entry.reason_detail_encrypted || !options.inlineEncryptionKey) {
       return null;
     }
-    const decrypted = await decryptValue(entry.reason_detail_encrypted, options.inlineEncryptionKey);
+    const decrypted = await decryptValue(
+      entry.reason_detail_encrypted,
+      options.inlineEncryptionKey
+    );
     reasonDetail = decrypted.decrypted;
   }
 

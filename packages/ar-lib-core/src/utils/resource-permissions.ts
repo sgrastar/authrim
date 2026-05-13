@@ -190,10 +190,7 @@ export async function getUserIdLevelPermissions(
 
   // Query for direct user permissions and role-based permissions
   // Note: Role inheritance would require joining with role_assignments
-  const rows = await ensureDatabaseAdapter(
-    db,
-    'resource-permissions'
-  ).query<ResourcePermissionRow>(
+  const rows = await ensureDatabaseAdapter(db, 'resource-permissions').query<ResourcePermissionRow>(
     `SELECT *
        FROM resource_permissions
        WHERE tenant_id = ?

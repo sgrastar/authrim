@@ -379,8 +379,7 @@ describe('KV Utilities', () => {
 
       await expect(getClient(env, 'default', clientId, env.DB)).rejects.toMatchObject({
         error: 'legacy_app_suite_not_supported',
-        error_uri:
-          'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_uri: 'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
         statusCode: 400,
       });
       expect(env.DB.prepare).not.toHaveBeenCalled();
@@ -499,10 +498,10 @@ describe('KV Utilities', () => {
         coreDb: coreAdapter,
       });
 
-      expect(coreAdapter.queryOne).toHaveBeenCalledWith(
-        expect.stringContaining('tenant_id = ?'),
-        ['user-1', 'tenant-a']
-      );
+      expect(coreAdapter.queryOne).toHaveBeenCalledWith(expect.stringContaining('tenant_id = ?'), [
+        'user-1',
+        'tenant-a',
+      ]);
     });
   });
 
@@ -528,13 +527,7 @@ describe('KV Utilities', () => {
       });
       (env as unknown as { DB?: D1Database }).DB = undefined;
 
-      const consent = await getCachedConsent(
-        env,
-        'user-1',
-        'client-1',
-        'tenant-a',
-        coreAdapter
-      );
+      const consent = await getCachedConsent(env, 'user-1', 'client-1', 'tenant-a', coreAdapter);
 
       expect(consent).toEqual({
         scope: 'openid profile',
@@ -558,13 +551,7 @@ describe('KV Utilities', () => {
       (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
       (env as unknown as Record<string, string>).CONSENT_CACHE_TTL = '120';
 
-      const consent = await getCachedConsent(
-        env,
-        'user-2',
-        'client-2',
-        'tenant-b',
-        coreAdapter
-      );
+      const consent = await getCachedConsent(env, 'user-2', 'client-2', 'tenant-b', coreAdapter);
 
       expect(consent).toEqual({
         scope: 'openid email',

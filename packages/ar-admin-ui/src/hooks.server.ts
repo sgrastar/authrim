@@ -768,10 +768,14 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
 
 		try {
 			if (includeTransportBffMode && bffMachineCredentialConfig) {
-				const accessToken = await requestBffAdminAccessToken(apiPublicUrl, bffMachineCredentialConfig, {
-					tenantId: event.request.headers.get('x-tenant-id'),
-					sendRequest: (request) => arRouter.fetch(request)
-				});
+				const accessToken = await requestBffAdminAccessToken(
+					apiPublicUrl,
+					bffMachineCredentialConfig,
+					{
+						tenantId: event.request.headers.get('x-tenant-id'),
+						sendRequest: (request) => arRouter.fetch(request)
+					}
+				);
 				headers.set('Authorization', `Bearer ${accessToken}`);
 			}
 			const response = await Promise.race([

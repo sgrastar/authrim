@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest';
 import {
 	buildClientDownstreamGrantFormFromClient,
 	createPresetClientDownstreamGrantForm,
@@ -6,7 +6,7 @@ import {
 	parseTextareaList,
 	toClientDownstreamGrantCreateInput,
 	toClientDownstreamGrantUpdateInput
-} from '../client-downstream-grant'
+} from '../client-downstream-grant';
 
 describe('client-downstream-grant helpers', () => {
 	it('enables token exchange defaults for the m2m preset', () => {
@@ -14,12 +14,12 @@ describe('client-downstream-grant helpers', () => {
 			token_exchange_allowed: true,
 			client_credentials_allowed: true,
 			delegation_mode: 'delegation'
-		})
-	})
+		});
+	});
 
 	it('parses textarea lists by newline and comma', () => {
-		expect(parseTextareaList('svc-a\nsvc-b, svc-c')).toEqual(['svc-a', 'svc-b', 'svc-c'])
-	})
+		expect(parseTextareaList('svc-a\nsvc-b, svc-c')).toEqual(['svc-a', 'svc-b', 'svc-c']);
+	});
 
 	it('parses scope restrictions by whitespace and commas', () => {
 		expect(parseScopeRestrictionList('openid profile,\nemail custom:read')).toEqual([
@@ -27,8 +27,8 @@ describe('client-downstream-grant helpers', () => {
 			'profile',
 			'email',
 			'custom:read'
-		])
-	})
+		]);
+	});
 
 	it('builds create input from the downstream grant form', () => {
 		expect(
@@ -55,8 +55,8 @@ describe('client-downstream-grant helpers', () => {
 				'svc://op-userinfo/customer-profile',
 				'svc://op-userinfo/customer-export'
 			]
-		})
-	})
+		});
+	});
 
 	it('builds update input with nullable text fields', () => {
 		expect(
@@ -79,8 +79,8 @@ describe('client-downstream-grant helpers', () => {
 			allowed_scopes: [],
 			allowed_subject_token_clients: [],
 			allowed_token_exchange_resources: []
-		})
-	})
+		});
+	});
 
 	it('maps client arrays back into form textareas', () => {
 		expect(
@@ -103,6 +103,6 @@ describe('client-downstream-grant helpers', () => {
 			allowed_scopes: 'openid profile',
 			allowed_subject_token_clients: 'svc-client-a\nsvc-client-b',
 			allowed_token_exchange_resources: 'svc://op-userinfo/customer-profile'
-		})
-	})
-})
+		});
+	});
+});

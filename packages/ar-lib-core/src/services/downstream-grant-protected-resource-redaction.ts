@@ -46,9 +46,7 @@ export function projectDownstreamGrantProtectedResource<
     return projector.summary(input.resource);
   }
   if (input.redactionLevel === 'masked') {
-    return projector.masked
-      ? projector.masked(input.resource)
-      : projector.summary(input.resource);
+    return projector.masked ? projector.masked(input.resource) : projector.summary(input.resource);
   }
   if (projector.raw) {
     return projector.raw(input.resource);

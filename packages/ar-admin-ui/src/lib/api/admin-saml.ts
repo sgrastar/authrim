@@ -150,7 +150,9 @@ export const adminSAMLAPI = {
 		return await response.json();
 	},
 
-	async promoteSigningNext(providerId: string): Promise<{ success: boolean; config: SAMLProviderConfig }> {
+	async promoteSigningNext(
+		providerId: string
+	): Promise<{ success: boolean; config: SAMLProviderConfig }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}/signing-rollover/promote-next`,
 			{

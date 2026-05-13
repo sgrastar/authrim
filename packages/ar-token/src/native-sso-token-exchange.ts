@@ -136,15 +136,7 @@ export function nativeSSOInvalidGrant(
     audit?: NativeSSOFailureAuditContext;
   } = {}
 ): Response {
-  return nativeSSOError(
-    c,
-    'invalid_grant',
-    errorDescription,
-    code,
-    400,
-    'reauthenticate',
-    options
-  );
+  return nativeSSOError(c, 'invalid_grant', errorDescription, code, 400, 'reauthenticate', options);
 }
 
 export async function validateNativeSSODeviceSecretBinding(

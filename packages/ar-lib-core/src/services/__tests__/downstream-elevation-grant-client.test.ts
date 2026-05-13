@@ -55,9 +55,13 @@ describe('downstream elevation grant client helpers', () => {
     const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://auth.example.com/token');
     expect(request.method).toBe('POST');
-    expect(String(request.body)).toContain('grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange');
+    expect(String(request.body)).toContain(
+      'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange'
+    );
     expect(String(request.body)).toContain('subject_token=subject-token');
-    expect(String(request.body)).toContain('subject_token_type=urn%3Aauthrim%3Atoken-type%3Aelevation-grant');
+    expect(String(request.body)).toContain(
+      'subject_token_type=urn%3Aauthrim%3Atoken-type%3Aelevation-grant'
+    );
     expect(String(request.body)).toContain('scope=profile_export+audit_detail');
     expect((request.headers as Headers).get('Authorization')).toBe(
       `Basic ${Buffer.from('svc-client-1:svc-secret').toString('base64')}`

@@ -28,10 +28,7 @@ import {
   getTenantIdFromContext,
   getTenantSettings,
 } from '@authrim/ar-lib-core';
-import {
-  cloudflareEmailPlugin,
-  resendEmailPlugin,
-} from '@authrim/ar-lib-plugin';
+import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { getRequestIssuer } from './issuer';
 

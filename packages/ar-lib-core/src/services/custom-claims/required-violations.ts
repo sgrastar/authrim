@@ -96,7 +96,9 @@ export async function getRequiredCustomClaimViolationStatuses(
   const nonPiiKeys = requiredSchemas
     .filter((schema) => schema.is_pii !== 1)
     .map((schema) => schema.field_key);
-  const piiKeys = requiredSchemas.filter((schema) => schema.is_pii === 1).map((schema) => schema.field_key);
+  const piiKeys = requiredSchemas
+    .filter((schema) => schema.is_pii === 1)
+    .map((schema) => schema.field_key);
   const piiKeySet = new Set(piiKeys);
   const results: RequiredCustomClaimViolationStatus[] = [];
 

@@ -40,7 +40,9 @@ describe('schema-catalog', () => {
     ];
     mockAdapter.query.mockResolvedValueOnce(rows);
 
-    await expect(listRegistrationFieldSchemas(mockAdapter as any, 'tenant-1')).resolves.toEqual(rows);
+    await expect(listRegistrationFieldSchemas(mockAdapter as any, 'tenant-1')).resolves.toEqual(
+      rows
+    );
     expect(mockAdapter.query).toHaveBeenCalledWith(
       expect.stringContaining('show_on_registration = 1'),
       ['tenant-1']
@@ -107,17 +109,19 @@ describe('schema-catalog', () => {
       },
     ]);
 
-    await expect(listRegistrationFieldDefinitions(mockAdapter as any, 'tenant-1')).resolves.toEqual([
-      {
-        field_key: 'department',
-        display_label: 'Department',
-        field_type: 'string',
-        required: true,
-        order: 2,
-        placeholder: 'Engineering',
-        validation_rules: { min_length: 2 },
-      },
-    ]);
+    await expect(listRegistrationFieldDefinitions(mockAdapter as any, 'tenant-1')).resolves.toEqual(
+      [
+        {
+          field_key: 'department',
+          display_label: 'Department',
+          field_type: 'string',
+          required: true,
+          order: 2,
+          placeholder: 'Engineering',
+          validation_rules: { min_length: 2 },
+        },
+      ]
+    );
   });
 
   it('seeds only missing custom claim schemas', async () => {

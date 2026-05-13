@@ -49,9 +49,7 @@ describe('site classifier', () => {
   });
 
   it('does not treat different localhost ports as same-site by default', () => {
-    expect(classifyUiApiSite('http://localhost:8786', 'http://localhost:5173')).toBe(
-      'cross-site'
-    );
+    expect(classifyUiApiSite('http://localhost:8786', 'http://localhost:5173')).toBe('cross-site');
   });
 
   it('allows localhost same-site only with explicit dev option', () => {

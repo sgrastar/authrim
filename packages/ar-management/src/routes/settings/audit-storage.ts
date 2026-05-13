@@ -548,7 +548,9 @@ export async function updateAuditStorageConfig(c: Context<{ Bindings: Env }>) {
   }
 
   if (Array.isArray(body.backends)) {
-    const enabledArchive = body.backends.find((backend) => backend.enabled && backend.type === 'R2');
+    const enabledArchive = body.backends.find(
+      (backend) => backend.enabled && backend.type === 'R2'
+    );
     if (enabledArchive?.r2Config?.binding) {
       nextProfile.archive = {
         type: 'r2',
@@ -568,9 +570,7 @@ export async function updateAuditStorageConfig(c: Context<{ Bindings: Env }>) {
           {
             type: 'logpush' as const,
             destinationRef: backend.logpushConfig.destinationRef,
-            ...(backend.logpushConfig.dataset
-              ? { dataset: backend.logpushConfig.dataset }
-              : {}),
+            ...(backend.logpushConfig.dataset ? { dataset: backend.logpushConfig.dataset } : {}),
           },
         ];
       }
@@ -616,8 +616,7 @@ export async function updateAuditStorageConfig(c: Context<{ Bindings: Env }>) {
     config: storageView.config,
     source: 'runtime_profile',
     profile_id: MANAGED_AUDIT_PROFILE_ID,
-    note:
-      'Storage configuration updated via the managed audit profile. Batch settings remain transitional.',
+    note: 'Storage configuration updated via the managed audit profile. Batch settings remain transitional.',
   });
 }
 

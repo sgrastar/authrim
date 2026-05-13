@@ -246,15 +246,21 @@ describe('StatusListManager', () => {
       await manager.revoke('tenant1', alloc1.listId, alloc1.index);
       await manager.revoke('tenant1', alloc3.listId, alloc3.index);
 
-      expect(await manager.getStatus('tenant1', alloc1.listId, alloc1.index)).toBe(StatusValue.INVALID);
-      expect(await manager.getStatus('tenant1', alloc2.listId, alloc2.index)).toBe(StatusValue.VALID);
-      expect(await manager.getStatus('tenant1', alloc3.listId, alloc3.index)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', alloc1.listId, alloc1.index)).toBe(
+        StatusValue.INVALID
+      );
+      expect(await manager.getStatus('tenant1', alloc2.listId, alloc2.index)).toBe(
+        StatusValue.VALID
+      );
+      expect(await manager.getStatus('tenant1', alloc3.listId, alloc3.index)).toBe(
+        StatusValue.INVALID
+      );
     });
 
     it('should throw error for non-existent list', async () => {
-      await expect(manager.updateStatus('tenant1', 'non-existent', 0, StatusValue.INVALID)).rejects.toThrow(
-        'Status list not found: non-existent'
-      );
+      await expect(
+        manager.updateStatus('tenant1', 'non-existent', 0, StatusValue.INVALID)
+      ).rejects.toThrow('Status list not found: non-existent');
     });
   });
 

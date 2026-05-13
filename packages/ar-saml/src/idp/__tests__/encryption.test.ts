@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SAML_NAMESPACES, XML_ENCRYPTION_ALGORITHMS } from '../../common/constants';
-import {
-  findElement,
-  getAttribute,
-  parseXml,
-} from '../../common/xml-utils';
+import { findElement, getAttribute, parseXml } from '../../common/xml-utils';
 import { buildSAMLResponse } from '../assertion';
 import {
   applySAMLAssertionEncryptionPolicy,

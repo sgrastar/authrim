@@ -93,11 +93,7 @@ export function parseDelegatedWriteEnvelope<Input = unknown>(
   }
 
   if (!isRecord(body.audit)) {
-    throw new DelegatedWriteEnvelopeError(
-      'invalid_request',
-      'audit must be an object',
-      'audit'
-    );
+    throw new DelegatedWriteEnvelopeError('invalid_request', 'audit must be an object', 'audit');
   }
 
   for (const field of Object.keys(body.audit)) {

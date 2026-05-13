@@ -216,7 +216,12 @@ export async function getSessionStoreForNewSession(
     shardIndex,
   };
 
-  const instanceName = buildRegionInstanceName(normalizedTenantId, regionKey, 'session', shardIndex);
+  const instanceName = buildRegionInstanceName(
+    normalizedTenantId,
+    regionKey,
+    'session',
+    shardIndex
+  );
   const stub = getRegionAwareDOStub(
     env.SESSION_STORE as unknown as DurableObjectNamespace,
     instanceName,

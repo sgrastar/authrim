@@ -240,7 +240,10 @@ export function buildApiSmokeTargets(config: AuthrimConfig): ApiSmokeTarget[] {
   ];
 }
 
-async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<{
+async function fetchJsonWithTimeout(
+  url: string,
+  timeoutMs: number
+): Promise<{
   ok: boolean;
   status: number;
   contentType: string | null;
@@ -332,7 +335,10 @@ export async function runGeneratedApiSmoke(
     }
 
     if (!response.contentType?.includes('application/json')) {
-      fail(check, `content-type expected=application/json actual=${response.contentType ?? '(missing)'}`);
+      fail(
+        check,
+        `content-type expected=application/json actual=${response.contentType ?? '(missing)'}`
+      );
       checks.push(check);
       continue;
     }

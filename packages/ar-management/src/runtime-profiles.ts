@@ -32,7 +32,11 @@ import {
 } from './runtime-profile-reference-status';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 
-const VALID_KINDS = ['storage', 'audit', 'residency'] as const satisfies readonly RuntimeProfileKind[];
+const VALID_KINDS = [
+  'storage',
+  'audit',
+  'residency',
+] as const satisfies readonly RuntimeProfileKind[];
 const QUERY_SCHEMA = z.object({
   kind: z.enum(VALID_KINDS).optional(),
   include_builtins: z
@@ -113,9 +117,13 @@ const AuditTargetSchema = z
     }),
     z.object({
       type: z.literal('http'),
-      url: z.string().url().refine((value) => value.startsWith('https://'), {
-        message: 'HTTP audit targets must use https URLs',
-      }).optional(),
+      url: z
+        .string()
+        .url()
+        .refine((value) => value.startsWith('https://'), {
+          message: 'HTTP audit targets must use https URLs',
+        })
+        .optional(),
       urlRef: z.string().min(1).optional(),
       authTokenRef: z.string().min(1).optional(),
       method: z.literal('POST').optional(),
@@ -183,24 +191,30 @@ const AuditProfileBodySchema = z
             type: z.literal('firehose'),
             streamRef: z.string().min(1),
           }),
-          z.object({
-            type: z.literal('http'),
-            url: z.string().url().refine((value) => value.startsWith('https://'), {
-              message: 'HTTP audit targets must use https URLs',
-            }).optional(),
-            urlRef: z.string().min(1).optional(),
-            authTokenRef: z.string().min(1).optional(),
-            method: z.literal('POST').optional(),
-            headers: z.record(z.string(), z.string()).optional(),
-            format: z.literal('json').optional(),
-          }).superRefine((value, ctx) => {
-            if (!value.url && !value.urlRef) {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: 'HTTP audit targets require url or urlRef',
-              });
-            }
-          }),
+          z
+            .object({
+              type: z.literal('http'),
+              url: z
+                .string()
+                .url()
+                .refine((value) => value.startsWith('https://'), {
+                  message: 'HTTP audit targets must use https URLs',
+                })
+                .optional(),
+              urlRef: z.string().min(1).optional(),
+              authTokenRef: z.string().min(1).optional(),
+              method: z.literal('POST').optional(),
+              headers: z.record(z.string(), z.string()).optional(),
+              format: z.literal('json').optional(),
+            })
+            .superRefine((value, ctx) => {
+              if (!value.url && !value.urlRef) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: 'HTTP audit targets require url or urlRef',
+                });
+              }
+            }),
         ])
       )
       .default([]),
@@ -288,7 +302,10 @@ function buildStoragePolicyCatalog(context: StoragePolicyContext) {
 async function loadStoragePolicyContext(env: Env): Promise<StoragePolicyContext> {
   const defaults = await loadEnvironmentProfileDefaultsFromEnv(env);
   const registry = createRuntimeProfileRegistryFromEnv(env);
-  const defaultStorageProfile = await registry.get<StorageProfile>('storage', defaults.storageProfileId);
+  const defaultStorageProfile = await registry.get<StorageProfile>(
+    'storage',
+    defaults.storageProfileId
+  );
 
   if (!defaultStorageProfile) {
     throw new Error(`storage_profile_not_found:${defaults.storageProfileId}`);
@@ -324,11 +341,15 @@ function parseRuntimeProfileBody(
 ): RuntimeProfileDraft | null {
   if (kind === 'storage') {
     const parsed = StorageProfileBodySchema.safeParse(body);
-    return parsed.success ? ({ kind, ...parsed.data } as Omit<StorageProfile, 'id' | 'builtin'>) : null;
+    return parsed.success
+      ? ({ kind, ...parsed.data } as Omit<StorageProfile, 'id' | 'builtin'>)
+      : null;
   }
   if (kind === 'audit') {
     const parsed = AuditProfileBodySchema.safeParse(body);
-    return parsed.success ? ({ kind, ...parsed.data } as Omit<AuditProfile, 'id' | 'builtin'>) : null;
+    return parsed.success
+      ? ({ kind, ...parsed.data } as Omit<AuditProfile, 'id' | 'builtin'>)
+      : null;
   }
 
   const parsed = ResidencyProfileBodySchema.safeParse(body);
@@ -351,10 +372,7 @@ function buildPersistedProfile(
   return { ...(parsed as Omit<ResidencyProfile, 'id' | 'builtin'>), id, builtin: false };
 }
 
-function validateAuditProfileForEnvironment(
-  profile: AuditProfile,
-  env: Env
-): string[] {
+function validateAuditProfileForEnvironment(profile: AuditProfile, env: Env): string[] {
   return validateAuditOperationalConstraints(profile, {
     queueConfigured: Boolean(env.AUDIT_QUEUE),
   });
@@ -394,7 +412,9 @@ function describeOptionalRuntimeProfileActivationStatus(
   return describeRuntimeProfileActivationStatus(env, profile);
 }
 
-async function loadRuntimeProfileReferenceCatalog(env: Env): Promise<RuntimeProfileReferenceCatalog> {
+async function loadRuntimeProfileReferenceCatalog(
+  env: Env
+): Promise<RuntimeProfileReferenceCatalog> {
   const registry = createRuntimeProfileRegistryFromEnv(env);
   const entries = await Promise.all(VALID_KINDS.map(async (kind) => await registry.list(kind)));
   return buildRuntimeProfileReferenceCatalog(env, entries.flat() as RuntimeProfile[]);
@@ -417,10 +437,7 @@ export async function adminRuntimeProfileListHandler(c: Context<{ Bindings: Env 
     const kinds = requestedKind ? [requestedKind] : VALID_KINDS;
 
     const listed = await Promise.all(
-      kinds.map(async (kind) => [
-        kind,
-        await registry.list(kind, { includeBuiltins }),
-      ] as const)
+      kinds.map(async (kind) => [kind, await registry.list(kind, { includeBuiltins })] as const)
     );
     const profiles = Object.fromEntries(listed);
     const storagePolicyContext =
@@ -431,13 +448,12 @@ export async function adminRuntimeProfileListHandler(c: Context<{ Bindings: Env 
     const referenceStatus = Object.fromEntries(
       Object.entries(profiles).map(([profileKind, entries]) => [
         profileKind,
-        (entries as RuntimeProfile[]).reduce<Record<string, ReturnType<typeof describeRuntimeProfileReferenceStatus>>>(
-          (acc, profile) => {
-            acc[profile.id] = describeRuntimeProfileReferenceStatus(c.env, profile);
-            return acc;
-          },
-          {}
-        ),
+        (entries as RuntimeProfile[]).reduce<
+          Record<string, ReturnType<typeof describeRuntimeProfileReferenceStatus>>
+        >((acc, profile) => {
+          acc[profile.id] = describeRuntimeProfileReferenceStatus(c.env, profile);
+          return acc;
+        }, {}),
       ])
     );
     const activationStatus = buildRuntimeProfileActivationStatusMap(

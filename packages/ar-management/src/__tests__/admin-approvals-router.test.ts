@@ -76,8 +76,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       ...actual.ADMIN_PERMISSIONS,
       APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
     },
-    adminAuthMiddleware:
-      vi.fn((options?: { requirePermissions?: string[] }) =>
+    adminAuthMiddleware: vi.fn(
+      (options?: { requirePermissions?: string[] }) =>
         async (c: any, next: () => Promise<void>) => {
           const permissions = (c.req.header('X-Admin-Permissions') || '')
             .split(',')
@@ -101,8 +101,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
               return c.json(
                 {
                   error: 'insufficient_permissions',
-                  error_description:
-                    'You do not have the required permissions for this operation.',
+                  error_description: 'You do not have the required permissions for this operation.',
                 },
                 403
               );
@@ -111,7 +110,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
           await next();
         }
-      ),
+    ),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     ensureDatabaseAdapter: vi.fn(() => mockAdapter),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
@@ -189,7 +188,9 @@ describe('admin approvals router', () => {
     mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([]);
     mockGrantRepo.listElevationGrantsForRequest.mockResolvedValue([]);
     mockGetTenantSettings.mockResolvedValue(null);
-    mockAppendApprovalTransportEvent.mockImplementation(async (_c, _adapter, _repo, request) => request);
+    mockAppendApprovalTransportEvent.mockImplementation(
+      async (_c, _adapter, _repo, request) => request
+    );
     mockLoadApprovalTransportDetail.mockResolvedValue(null);
     mockListApprovalDecisionReceiptsForEvidence.mockResolvedValue([]);
     mockDispatchApprovalNotification.mockResolvedValue({
@@ -1309,9 +1310,8 @@ describe('admin approvals router', () => {
 
   it('issues a downstream grant subject token for an active elevation grant', async () => {
     const app = createApp();
-    const actual = await vi.importActual<typeof import('@authrim/ar-lib-core')>(
-      '@authrim/ar-lib-core'
-    );
+    const actual =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
     const keySet = await actual.generateKeySet('approval-subject-kid-1');
     const request = {
       id: 'req-1',
@@ -1718,42 +1718,40 @@ describe('admin approvals router', () => {
         status: 'approved',
       },
     ]);
-    mockGrantRepo.listElevationGrantsForRequest
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          id: 'grant-1',
-          public_grant_id: 'egr_public_1',
-          approval_request_id: 'req-1',
+    mockGrantRepo.listElevationGrantsForRequest.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: 'grant-1',
+        public_grant_id: 'egr_public_1',
+        approval_request_id: 'req-1',
+        tenant_id: 'tenant-a',
+        status: 'active',
+        target_audience: 'admin_api',
+        resource_class: 'admin_audit_detail',
+        redaction_level: 'masked',
+        scope_canonical: '{"version":1}',
+        scope_json: {
+          version: 1,
+          surface: 'admin_audit',
+          action: 'detail_read',
           tenant_id: 'tenant-a',
-          status: 'active',
-          target_audience: 'admin_api',
           resource_class: 'admin_audit_detail',
-          redaction_level: 'masked',
-          scope_canonical: '{"version":1}',
-          scope_json: {
-            version: 1,
-            surface: 'admin_audit',
-            action: 'detail_read',
-            tenant_id: 'tenant-a',
-            resource_class: 'admin_audit_detail',
-            resource_ids: ['user-1'],
-          },
-          authorization_details_json: {
-            type: 'authrim_break_glass',
-          },
-          requester_subject_type: 'admin_user',
-          requester_subject_id: 'admin-1',
-          actor_subject_type: 'admin_user',
-          actor_subject_id: 'admin-1',
-          issued_at: Date.now(),
-          expires_at: Date.now() + 60_000,
-          revoked_at: null,
-          revoke_reason: null,
-          created_at: Date.now(),
-          updated_at: Date.now(),
+          resource_ids: ['user-1'],
         },
-      ]);
+        authorization_details_json: {
+          type: 'authrim_break_glass',
+        },
+        requester_subject_type: 'admin_user',
+        requester_subject_id: 'admin-1',
+        actor_subject_type: 'admin_user',
+        actor_subject_id: 'admin-1',
+        issued_at: Date.now(),
+        expires_at: Date.now() + 60_000,
+        revoked_at: null,
+        revoke_reason: null,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      },
+    ]);
     mockRequestRepo.updateApprovalRequestStatus.mockResolvedValue({
       ...request,
       status: 'approved',
@@ -1782,10 +1780,7 @@ describe('admin approvals router', () => {
         method: 'portal_confirm',
       })
     );
-    expect(mockRequestRepo.updateApprovalRequestStatus).toHaveBeenCalledWith(
-      'req-1',
-      'approved'
-    );
+    expect(mockRequestRepo.updateApprovalRequestStatus).toHaveBeenCalledWith('req-1', 'approved');
     expect(mockGrantRepo.createElevationGrant).toHaveBeenCalledWith(
       expect.objectContaining({
         approval_request_id: 'req-1',
@@ -1884,11 +1879,7 @@ describe('admin approvals router', () => {
     expect(await res.json()).toMatchObject({
       error: 'self_approval_not_allowed',
     });
-    expect(mockGetTenantSettings).toHaveBeenCalledWith(
-      mockEnv.SETTINGS,
-      'tenant-a',
-      'support-ops'
-    );
+    expect(mockGetTenantSettings).toHaveBeenCalledWith(mockEnv.SETTINGS, 'tenant-a', 'support-ops');
     expect(mockApprovalRepo.updateApproval).not.toHaveBeenCalled();
     expect(mockRequestRepo.updateApprovalRequestStatus).not.toHaveBeenCalled();
   });

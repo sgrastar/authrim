@@ -5,12 +5,7 @@
  */
 
 import type { Env } from '../../types';
-import {
-  decodeBase64Url,
-  safeFetchJson,
-  createLogger,
-  buildIssuerUrl,
-} from '@authrim/ar-lib-core';
+import { decodeBase64Url, safeFetchJson, createLogger, buildIssuerUrl } from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
 
 const log = createLogger().module('VCI-TOKEN');

@@ -6,10 +6,7 @@ vi.mock(
   async () => await import('../../object-artifact-crypto.ts')
 );
 
-import {
-  getOperationalLog,
-  storeOperationalLog,
-} from '../operational-logs.ts';
+import { getOperationalLog, storeOperationalLog } from '../operational-logs.ts';
 
 interface StoredObject {
   body: Uint8Array;
@@ -123,14 +120,14 @@ describe('operational-logs', () => {
         const now = params[2] as number;
         return (
           dbState.operationalLogs.find(
-            (row) => row.id === params[0] && row.tenant_id === params[1] && Number(row.expires_at) > now
+            (row) =>
+              row.id === params[0] && row.tenant_id === params[1] && Number(row.expires_at) > now
           ) ?? null
         );
       }
       if (sql.includes('FROM object_catalog oc')) {
         const logical = dbState.objectCatalog.find(
-          (row) =>
-            row.tenant_id === params[0] && row.id === params[1] && row.deleted_at === null
+          (row) => row.tenant_id === params[0] && row.id === params[1] && row.deleted_at === null
         );
         const physical = dbState.objectCatalogObjects.find(
           (row) =>
@@ -168,10 +165,8 @@ describe('operational-logs', () => {
     query: vi.fn(async () => []),
   };
 
-  const objectRootKey =
-    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-  const piiKey =
-    'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+  const objectRootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const piiKey = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -233,19 +228,15 @@ describe('operational-logs', () => {
   });
 
   it('falls back to inline encrypted storage when object storage is unavailable', async () => {
-    const logId = await storeOperationalLog(
-      adapter as any,
-      piiKey,
-      {
-        tenantId: 'tenant-a',
-        subjectType: 'user',
-        subjectId: 'user-2',
-        actorId: 'admin-2',
-        action: 'user.suspend',
-        reasonDetail: 'Inline detail',
-        requestId: 'req-2',
-      }
-    );
+    const logId = await storeOperationalLog(adapter as any, piiKey, {
+      tenantId: 'tenant-a',
+      subjectType: 'user',
+      subjectId: 'user-2',
+      actorId: 'admin-2',
+      action: 'user.suspend',
+      reasonDetail: 'Inline detail',
+      requestId: 'req-2',
+    });
 
     const row = dbState.operationalLogs[0];
     expect(typeof row.reason_detail_encrypted).toBe('string');

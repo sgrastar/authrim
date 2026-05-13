@@ -7,13 +7,14 @@ import {
   loadPublicCatalogObjectArtifact,
 } from '../object-artifact-store';
 
-const OBJECT_ROOT_KEY =
-  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 function createMockBucket(
   initial: Record<string, { body: Uint8Array; contentType?: string }> = {}
 ): R2Bucket {
-  const store = new Map<string, { body: Uint8Array; contentType?: string }>(Object.entries(initial));
+  const store = new Map<string, { body: Uint8Array; contentType?: string }>(
+    Object.entries(initial)
+  );
   return {
     get: vi.fn(async (key: string) => {
       const object = store.get(key);
@@ -79,15 +80,19 @@ describe('object-artifact-store helpers', () => {
       }),
     } as any;
 
-    const loaded = await loadCatalogObjectArtifact(adapter, {
-      EXPORT_ARTIFACTS: bucket,
-      OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
-    } as any, {
-      tenantId: 'default',
-      objectCatalogId: 'catalog-1',
-      expectedClass: 'user_export',
-      expectedBucketBinding: 'EXPORT_ARTIFACTS',
-    });
+    const loaded = await loadCatalogObjectArtifact(
+      adapter,
+      {
+        EXPORT_ARTIFACTS: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
+      } as any,
+      {
+        tenantId: 'default',
+        objectCatalogId: 'catalog-1',
+        expectedClass: 'user_export',
+        expectedBucketBinding: 'EXPORT_ARTIFACTS',
+      }
+    );
 
     expect(loaded?.encrypted).toBe(true);
     expect(loaded?.content).toBe(payload);
@@ -419,15 +424,19 @@ describe('object-artifact-store helpers', () => {
       }),
     } as any;
 
-    const loaded = await loadCatalogObjectArtifact(adapter, {
-      EXPORT_ARTIFACTS: bucket,
-      OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
-    } as any, {
-      tenantId: 'default',
-      objectCatalogId: 'catalog-4',
-      expectedClass: 'user_export',
-      expectedBucketBinding: 'EXPORT_ARTIFACTS',
-    });
+    const loaded = await loadCatalogObjectArtifact(
+      adapter,
+      {
+        EXPORT_ARTIFACTS: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
+      } as any,
+      {
+        tenantId: 'default',
+        objectCatalogId: 'catalog-4',
+        expectedClass: 'user_export',
+        expectedBucketBinding: 'EXPORT_ARTIFACTS',
+      }
+    );
 
     expect(loaded).toBeNull();
   });

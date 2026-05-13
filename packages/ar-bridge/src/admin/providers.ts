@@ -111,7 +111,10 @@ function validateProviderOutboundUrl(
  */
 export async function handleAdminListProviders(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  const forbidden = await requireAdminProviderPermission(c, ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ
+  );
   if (forbidden) {
     return forbidden;
   }
@@ -413,7 +416,10 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
  */
 export async function handleAdminGetProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  const forbidden = await requireAdminProviderPermission(c, ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ
+  );
   if (forbidden) {
     return forbidden;
   }

@@ -1,9 +1,4 @@
-import {
-	PKCEHelper,
-	base64urlEncode,
-	type CryptoProvider,
-	type PKCEPair
-} from '@authrim/core';
+import { PKCEHelper, base64urlEncode, type CryptoProvider, type PKCEPair } from '@authrim/core';
 
 class LoginUiBrowserCryptoProvider implements CryptoProvider {
 	private requireCrypto(): Crypto {

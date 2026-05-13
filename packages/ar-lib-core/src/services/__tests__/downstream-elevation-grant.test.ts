@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestRepository, ElevationGrantRepository } from '../../repositories/admin/admin-approval-request';
+import {
+  ApprovalRequestRepository,
+  ElevationGrantRepository,
+} from '../../repositories/admin/admin-approval-request';
 import { MockDatabaseAdapter } from '../../repositories/__tests__/mock-adapter';
 import { canonicalizeApprovalScope, generateInvestigationId } from '../approval-governance';
 import {

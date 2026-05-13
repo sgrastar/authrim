@@ -35,18 +35,14 @@ const mockListNonPiiFieldUsage = vi.fn(async (_db: unknown, _tenantId: string) =
     count: row.count,
   }));
 });
-const mockCountUsersWithNonPiiFieldData = vi.fn(async (_db: unknown, _tenantId: string, fieldKey: string) => {
-  const rows = await mockDbQuery('COUNT_NON_PII_FIELD_USERS', fieldKey);
-  return rows[0]?.count || 0;
-});
+const mockCountUsersWithNonPiiFieldData = vi.fn(
+  async (_db: unknown, _tenantId: string, fieldKey: string) => {
+    const rows = await mockDbQuery('COUNT_NON_PII_FIELD_USERS', fieldKey);
+    return rows[0]?.count || 0;
+  }
+);
 const mockDeleteStoredCustomClaimData = vi.fn(
-  async ({
-    fieldKey,
-    isPii,
-  }: {
-    fieldKey: string;
-    isPii: boolean;
-  }) => {
+  async ({ fieldKey, isPii }: { fieldKey: string; isPii: boolean }) => {
     if (!isPii) {
       const result = await mockDbExecute(
         'DELETE FROM user_custom_fields WHERE tenant_id = ? AND field_name = ?',
@@ -87,15 +83,7 @@ const mockDeleteStoredCustomClaimData = vi.fn(
   }
 );
 const mockRenameStoredCustomClaimData = vi.fn(
-  async ({
-    oldKey,
-    newKey,
-    isPii,
-  }: {
-    oldKey: string;
-    newKey: string;
-    isPii: boolean;
-  }) => {
+  async ({ oldKey, newKey, isPii }: { oldKey: string; newKey: string; isPii: boolean }) => {
     if (!isPii) {
       const result = await mockDbExecute(
         'UPDATE user_custom_fields SET field_name = ? WHERE tenant_id = ? AND field_name = ?',
@@ -183,8 +171,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       mockCountUsersWithNonPiiCustomClaimData(db, tenantId),
     countUsersWithPiiCustomClaimData: (dbPii: unknown, tenantId: string) =>
       mockCountUsersWithPiiCustomClaimData(dbPii, tenantId),
-    listNonPiiFieldUsage: (db: unknown, tenantId: string) =>
-      mockListNonPiiFieldUsage(db, tenantId),
+    listNonPiiFieldUsage: (db: unknown, tenantId: string) => mockListNonPiiFieldUsage(db, tenantId),
     countUsersWithNonPiiFieldData: (db: unknown, tenantId: string, fieldKey: string) =>
       mockCountUsersWithNonPiiFieldData(db, tenantId, fieldKey),
     deleteStoredCustomClaimData: (params: {
@@ -742,13 +729,7 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(201);
-      expect(mockDbExecute.mock.calls[0][1].slice(-5)).toEqual([
-        0,
-        0,
-        0,
-        null,
-        'employee_id',
-      ]);
+      expect(mockDbExecute.mock.calls[0][1].slice(-5)).toEqual([0, 0, 0, null, 'employee_id']);
     });
   });
 
@@ -842,10 +823,7 @@ describe('Custom Claims Admin API', () => {
 
   describe('POST /api/admin/custom-claims/required-violations/detect', () => {
     it('should rescan active users and return violating previews', async () => {
-      mockDbQuery.mockResolvedValueOnce([
-        { id: 'user-1' },
-        { id: 'user-2' },
-      ]);
+      mockDbQuery.mockResolvedValueOnce([{ id: 'user-1' }, { id: 'user-2' }]);
       mockGetRequiredCustomClaimViolationStatuses.mockResolvedValue({
         requiredSchemaCount: 1,
         users: [
@@ -1055,7 +1033,9 @@ describe('Custom Claims Admin API', () => {
 
     it('should clear registration_required when signup visibility is disabled on update', async () => {
       mockDbQuery
-        .mockResolvedValueOnce([createSchemaRow({ show_on_registration: 1, registration_required: 1 })])
+        .mockResolvedValueOnce([
+          createSchemaRow({ show_on_registration: 1, registration_required: 1 }),
+        ])
         .mockResolvedValueOnce([
           createSchemaRow({ show_on_registration: 0, registration_required: 0 }),
         ]);

@@ -66,9 +66,7 @@ describe('org-domain-resolver', () => {
 
   it('creates organization membership through adapter execute', async () => {
     const adapter = createMockAdapter();
-    vi.mocked(adapter.queryOne)
-      .mockResolvedValueOnce({ id: 'org-1' })
-      .mockResolvedValueOnce(null);
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce({ id: 'org-1' }).mockResolvedValueOnce(null);
     vi.mocked(adapter.execute).mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
     const result = await joinOrganization(adapter, 'user-1', 'org-1', 'tenant-1', 'admin');
@@ -83,9 +81,7 @@ describe('org-domain-resolver', () => {
 
   it('assigns org-scoped roles through adapter execute', async () => {
     const adapter = createMockAdapter();
-    vi.mocked(adapter.queryOne)
-      .mockResolvedValueOnce({ id: 'role-1' })
-      .mockResolvedValueOnce(null);
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce({ id: 'role-1' }).mockResolvedValueOnce(null);
     vi.mocked(adapter.execute).mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
     const result = await assignRoleToUser(adapter, 'user-1', 'role-1', 'org-1', 'tenant-1');

@@ -23,7 +23,9 @@ describe('HyperdriveAuditAdapter', () => {
 
     const adapter = new HyperdriveAuditAdapter({
       id: 'audit-pg',
-      hyperdrive: { connectionString: 'postgres://user:pass@example.com:5432/authrim' } as Hyperdrive,
+      hyperdrive: {
+        connectionString: 'postgres://user:pass@example.com:5432/authrim',
+      } as Hyperdrive,
       schema: 'audit',
       isPiiDb: false,
       clientFactory,
@@ -45,7 +47,9 @@ describe('HyperdriveAuditAdapter', () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 7 });
     const adapter = new HyperdriveAuditAdapter({
       id: 'audit-pg',
-      hyperdrive: { connectionString: 'postgres://user:pass@example.com:5432/authrim' } as Hyperdrive,
+      hyperdrive: {
+        connectionString: 'postgres://user:pass@example.com:5432/authrim',
+      } as Hyperdrive,
       schema: 'audit',
       isPiiDb: false,
       clientFactory: async () => ({
@@ -54,13 +58,20 @@ describe('HyperdriveAuditAdapter', () => {
       }),
     });
 
-    const deleted = await adapter.deleteTenantByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
+    const deleted = await adapter.deleteTenantByRetention(
+      'event',
+      1_700_000_000_000,
+      'tenant-1',
+      50
+    );
 
     expect(deleted).toBe(7);
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0]?.[0]).toContain('WITH doomed AS');
     expect(query.mock.calls[0]?.[0]).toContain('DELETE FROM audit.event_log');
-    expect(query.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(query.mock.calls[0]?.[0]).toContain(
+      'ORDER BY retention_until ASC, created_at ASC, id ASC'
+    );
     expect(query.mock.calls[0]?.[0]).toContain('tenant_id = $2');
     expect(query.mock.calls[0]?.[1]).toEqual([1_700_000_000_000, 'tenant-1', 50]);
   });
@@ -92,7 +103,9 @@ describe('HyperdriveAuditAdapter', () => {
     });
     const adapter = new HyperdriveAuditAdapter({
       id: 'audit-pg',
-      hyperdrive: { connectionString: 'postgres://user:pass@example.com:5432/authrim' } as Hyperdrive,
+      hyperdrive: {
+        connectionString: 'postgres://user:pass@example.com:5432/authrim',
+      } as Hyperdrive,
       schema: 'audit',
       isPiiDb: false,
       clientFactory: async () => ({
@@ -101,11 +114,18 @@ describe('HyperdriveAuditAdapter', () => {
       }),
     });
 
-    const rows = await adapter.listTenantRetentionCandidates('event', 1_700_000_000_000, 'tenant-1', 25);
+    const rows = await adapter.listTenantRetentionCandidates(
+      'event',
+      1_700_000_000_000,
+      'tenant-1',
+      25
+    );
 
     expect(rows).toEqual([expect.objectContaining({ id: 'evt-1' })]);
     expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(query.mock.calls[0]?.[0]).toContain(
+      'ORDER BY retention_until ASC, created_at ASC, id ASC'
+    );
     expect(query.mock.calls[0]?.[0]).toContain('FROM audit.event_log');
   });
 
@@ -113,7 +133,9 @@ describe('HyperdriveAuditAdapter', () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ value: 1 }], rowCount: 1 });
     const adapter = new HyperdriveAuditAdapter({
       id: 'audit-pg',
-      hyperdrive: { connectionString: 'postgres://user:pass@example.com:5432/authrim' } as Hyperdrive,
+      hyperdrive: {
+        connectionString: 'postgres://user:pass@example.com:5432/authrim',
+      } as Hyperdrive,
       schema: 'audit',
       isPiiDb: false,
       clientFactory: async () => ({

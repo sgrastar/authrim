@@ -216,7 +216,7 @@ export class CheckAuditService {
         entry.reason ?? null,
         entry.apiKeyId ?? null,
         entry.clientId ?? null,
-        checkedAt
+        checkedAt,
       ]
     );
   }

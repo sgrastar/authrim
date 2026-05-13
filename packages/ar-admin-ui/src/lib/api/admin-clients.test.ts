@@ -1,20 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { adminClientsAPI } from './admin-clients'
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { adminClientsAPI } from './admin-clients';
 
 describe('adminClientsAPI', () => {
 	afterEach(() => {
-		vi.restoreAllMocks()
-	})
+		vi.restoreAllMocks();
+	});
 
 	it('posts downstream grant fields when creating a client', async () => {
-		const fetchMock = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(
-				new Response(JSON.stringify({ client: { client_id: 'client_1', client_name: 'svc' } }), {
-					status: 201,
-					headers: { 'Content-Type': 'application/json' }
-				})
-			)
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify({ client: { client_id: 'client_1', client_name: 'svc' } }), {
+				status: 201,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
 
 		await adminClientsAPI.create({
 			client_name: 'svc',
@@ -28,7 +26,7 @@ describe('adminClientsAPI', () => {
 			allowed_scopes: ['openid', 'profile'],
 			default_scope: 'openid profile',
 			default_audience: 'svc://op-userinfo/customer-profile'
-		})
+		});
 
 		expect(fetchMock).toHaveBeenCalledWith(
 			expect.stringContaining('/api/admin/clients'),
@@ -48,18 +46,16 @@ describe('adminClientsAPI', () => {
 					default_audience: 'svc://op-userinfo/customer-profile'
 				})
 			})
-		)
-	})
+		);
+	});
 
 	it('posts downstream grant fields when updating a client', async () => {
-		const fetchMock = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(
-				new Response(JSON.stringify({ client: { client_id: 'client_1', client_name: 'svc' } }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				})
-			)
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify({ client: { client_id: 'client_1', client_name: 'svc' } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
 
 		await adminClientsAPI.update('client_1', {
 			token_exchange_allowed: false,
@@ -70,7 +66,7 @@ describe('adminClientsAPI', () => {
 			allowed_scopes: ['profile_export'],
 			default_scope: null,
 			default_audience: null
-		})
+		});
 
 		expect(fetchMock).toHaveBeenCalledWith(
 			expect.stringContaining('/api/admin/clients/client_1'),
@@ -87,6 +83,6 @@ describe('adminClientsAPI', () => {
 					default_audience: null
 				})
 			})
-		)
-	})
-})
+		);
+	});
+});

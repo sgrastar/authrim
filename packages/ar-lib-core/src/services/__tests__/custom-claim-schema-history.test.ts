@@ -32,9 +32,7 @@ describe('CustomClaimSchemaHistoryManager', () => {
 
       expect(changes.added).toEqual(['newOnly']);
       expect(changes.removed).toEqual(['oldOnly']);
-      expect(changes.modified).toEqual([
-        { key: 'update', oldValue: 'before', newValue: 'after' },
-      ]);
+      expect(changes.modified).toEqual([{ key: 'update', oldValue: 'before', newValue: 'after' }]);
     });
   });
 
@@ -68,7 +66,15 @@ describe('CustomClaimSchemaHistoryManager', () => {
       );
       expect(mockAdapter.execute).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO custom_claim_schema_history'),
-        expect.arrayContaining(['tenant-1', 'schema-1', 3, 'update', 'admin-1', 'admin', 'admin_api'])
+        expect.arrayContaining([
+          'tenant-1',
+          'schema-1',
+          3,
+          'update',
+          'admin-1',
+          'admin',
+          'admin_api',
+        ])
       );
     });
   });

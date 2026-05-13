@@ -163,11 +163,7 @@ export class SettingsHistoryManager {
   private tenantId: string;
   private config: SettingsHistoryConfig;
 
-  constructor(
-    db: DatabaseSource,
-    tenantId: string,
-    config: SettingsHistoryConfig = {}
-  ) {
+  constructor(db: DatabaseSource, tenantId: string, config: SettingsHistoryConfig = {}) {
     this.adapter = ensureDatabaseAdapter(db, 'settings-history');
     this.tenantId = requireTenantId(tenantId, 'SettingsHistoryManager');
     this.config = {

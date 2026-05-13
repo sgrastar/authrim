@@ -15,7 +15,9 @@ describe('audit-sql-dialect', () => {
   });
 
   it('renders timeline grouping expressions from one dedicated helper', () => {
-    expect(getAuditTimelineGrouping('hour', 'sqlite', 'milliseconds')).toContain("strftime('%Y-%m-%d %H:00:00'");
+    expect(getAuditTimelineGrouping('hour', 'sqlite', 'milliseconds')).toContain(
+      "strftime('%Y-%m-%d %H:00:00'"
+    );
     expect(getAuditTimelineGrouping('week', 'mysql', 'milliseconds')).toContain(
       "DATE_FORMAT(FROM_UNIXTIME((created_at / 1000.0)), '%x-%v')"
     );

@@ -9,7 +9,11 @@ import {
 } from './paths.js';
 import { loadLockFileAuto, type AuthrimLock } from './lock.js';
 import { parseConfig, type AuthrimConfig } from './config.js';
-import { buildResourceIdsFromLock, parseWranglerToml, validateWranglerConfigs } from './wrangler.js';
+import {
+  buildResourceIdsFromLock,
+  parseWranglerToml,
+  validateWranglerConfigs,
+} from './wrangler.js';
 import { checkWranglerStatus } from './wrangler-sync.js';
 import {
   CORE_WORKER_COMPONENTS,
@@ -64,7 +68,10 @@ const PROFILE_AWARE_COMPONENTS: WorkerComponent[] = [
 const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
 
 function normalizeHyperdriveRefCandidates(ref: string): string[] {
-  const normalized = ref.trim().replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
+  const normalized = ref
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .toUpperCase();
   return [...new Set([ref.trim(), normalized, `HYPERDRIVE_${normalized}`])];
 }
 
@@ -88,8 +95,7 @@ function resolveConfiguredHyperdriveReference(
   return (
     Object.values(configured).find(
       (entry) =>
-        entry.driver === driver &&
-        normalizeHyperdriveRefCandidates(ref).includes(entry.binding)
+        entry.driver === driver && normalizeHyperdriveRefCandidates(ref).includes(entry.binding)
     ) ?? null
   );
 }
@@ -187,7 +193,11 @@ function parseWranglerVars(content: string, env: string): Record<string, string>
   return vars;
 }
 
-function isSeededProfile(config: AuthrimConfig, kind: 'storage' | 'audit' | 'residency', id: string): boolean {
+function isSeededProfile(
+  config: AuthrimConfig,
+  kind: 'storage' | 'audit' | 'residency',
+  id: string
+): boolean {
   return (config.profiles.seed[kind] ?? []).some((profile) => profile.id === id);
 }
 
@@ -442,14 +452,24 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
   );
 
   if (config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
-    inspectStorageProfileTarget(config, check, 'storage profile builtin:storage:external-postgres / users_core', {
-      driver: 'postgres',
-      connectionRef: 'core-primary',
-    });
-    inspectStorageProfileTarget(config, check, 'storage profile builtin:storage:external-postgres / users_pii', {
-      driver: 'postgres',
-      connectionRef: 'pii-primary',
-    });
+    inspectStorageProfileTarget(
+      config,
+      check,
+      'storage profile builtin:storage:external-postgres / users_core',
+      {
+        driver: 'postgres',
+        connectionRef: 'core-primary',
+      }
+    );
+    inspectStorageProfileTarget(
+      config,
+      check,
+      'storage profile builtin:storage:external-postgres / users_pii',
+      {
+        driver: 'postgres',
+        connectionRef: 'pii-primary',
+      }
+    );
   }
 
   const seededStorage = resolveSeededStorageProfile(config, config.profiles.defaults.storage);
@@ -458,7 +478,12 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
       if (!target) {
         continue;
       }
-      inspectStorageProfileTarget(config, check, `storage profile ${seededStorage.id} / ${slice}`, target);
+      inspectStorageProfileTarget(
+        config,
+        check,
+        `storage profile ${seededStorage.id} / ${slice}`,
+        target
+      );
     }
   }
 
@@ -547,7 +572,11 @@ async function validateDeployWranglers(
     if (component !== 'ar-router' && component !== 'ar-async') {
       for (const binding of BUILTIN_D1_BINDINGS) {
         if (!parsed.d1[binding]) {
-          pushDetail(check, 'fail', `${component}: ${binding} binding が wrangler.toml にありません`);
+          pushDetail(
+            check,
+            'fail',
+            `${component}: ${binding} binding が wrangler.toml にありません`
+          );
         }
       }
     }
@@ -664,7 +693,9 @@ export async function validateGeneratedEnvironment(
   const baseDir = resolve(options.baseDir);
   const envPaths = getEnvironmentPaths({ baseDir, env: options.env });
   const configPath = options.configPath ? resolve(options.configPath) : envPaths.config;
-  const packagesDir = options.packagesDir ? resolve(options.packagesDir) : join(baseDir, 'packages');
+  const packagesDir = options.packagesDir
+    ? resolve(options.packagesDir)
+    : join(baseDir, 'packages');
 
   const configCheck = makeCheck('config', 'config.json を読める');
   let config: AuthrimConfig;
@@ -701,7 +732,10 @@ export async function validateGeneratedEnvironment(
       lockPath: loadedLock.path,
       lockType: loadedLock.type,
       enabledComponents: [],
-      checks: [finishCheck(configCheck, 'config.json を読めます'), finishCheck(lockCheck, 'lock.json を読めません')],
+      checks: [
+        finishCheck(configCheck, 'config.json を読めます'),
+        finishCheck(lockCheck, 'lock.json を読めません'),
+      ],
     };
   }
   pushDetail(lockCheck, 'pass', `${loadedLock.path} (${loadedLock.type})`);

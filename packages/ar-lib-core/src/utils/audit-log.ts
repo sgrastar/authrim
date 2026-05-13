@@ -205,9 +205,7 @@ function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefi
   return c.req.header('X-Request-Id') || c.req.header('X-Correlation-Id') || undefined;
 }
 
-function getAdminProxyMetadataFromContext(
-  c: Context<{ Bindings: Env }>
-): Record<string, unknown> {
+function getAdminProxyMetadataFromContext(c: Context<{ Bindings: Env }>): Record<string, unknown> {
   const requestId = getRequestIdFromContext(c);
   const apiMode = c.req.header('X-Authrim-Admin-UI-Api-Mode');
   const forwardedHost =

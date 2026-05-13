@@ -308,7 +308,8 @@ export class FlowStateStore {
     this.runtimeState.lastActivityAt = now;
     if (Array.isArray(body.requestTimestamps)) {
       this.runtimeState.requestTimestamps = body.requestTimestamps.filter(
-        (timestamp): timestamp is number => typeof timestamp === 'number' && Number.isFinite(timestamp)
+        (timestamp): timestamp is number =>
+          typeof timestamp === 'number' && Number.isFinite(timestamp)
       );
     }
 
@@ -538,10 +539,7 @@ export class FlowStateStore {
     };
   }
 
-  private validateInitRequest(
-    request: Request,
-    params: CreateRuntimeStateParams
-  ): Response | null {
+  private validateInitRequest(request: Request, params: CreateRuntimeStateParams): Response | null {
     const tenantId = this.getRequiredHeader(request, 'X-Tenant-Id', 'tenant_required');
     if (tenantId instanceof Response) {
       return tenantId;
@@ -578,7 +576,9 @@ export class FlowStateStore {
     }
 
     if (!this.runtimeState) {
-      return options.allowMissingState ? null : this.jsonError('Session not found', 'session_not_found', 404);
+      return options.allowMissingState
+        ? null
+        : this.jsonError('Session not found', 'session_not_found', 404);
     }
 
     if (this.runtimeState.tenantId !== tenantId) {
@@ -592,11 +592,7 @@ export class FlowStateStore {
     return null;
   }
 
-  private getRequiredHeader(
-    request: Request,
-    headerName: string,
-    code: string
-  ): string | Response {
+  private getRequiredHeader(request: Request, headerName: string, code: string): string | Response {
     const value = request.headers.get(headerName)?.trim();
     if (!value) {
       return this.jsonError(`${headerName} header is required`, code, 400);

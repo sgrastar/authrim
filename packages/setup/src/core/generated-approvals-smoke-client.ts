@@ -64,23 +64,27 @@ export async function resolveGeneratedApprovalSmokeClient(
     'approval smoke service client bootstrap',
     `${options.baseUrl}/api/admin/clients`
   );
-  const response = await fetchJsonWithTimeout(`${options.baseUrl}/api/admin/clients`, options.timeoutMs, {
-    method: 'POST',
-    headers: getAdminHeaders(options.adminSecret, options.tenantId),
-    body: JSON.stringify({
-      client_name: `Approval Smoke Service Client ${Date.now()}`,
-      redirect_uris: ['https://approval-smoke.example.invalid/callback'],
-      grant_types: ['authorization_code', 'refresh_token', 'client_credentials'],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'client_secret_basic',
-      token_exchange_allowed: true,
-      delegation_mode: 'delegation',
-      client_credentials_allowed: true,
-      allowed_scopes: ['openid', 'profile'],
-      default_scope: 'openid profile',
-      default_audience: options.defaultAudience,
-    }),
-  });
+  const response = await fetchJsonWithTimeout(
+    `${options.baseUrl}/api/admin/clients`,
+    options.timeoutMs,
+    {
+      method: 'POST',
+      headers: getAdminHeaders(options.adminSecret, options.tenantId),
+      body: JSON.stringify({
+        client_name: `Approval Smoke Service Client ${Date.now()}`,
+        redirect_uris: ['https://approval-smoke.example.invalid/callback'],
+        grant_types: ['authorization_code', 'refresh_token', 'client_credentials'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'client_secret_basic',
+        token_exchange_allowed: true,
+        delegation_mode: 'delegation',
+        client_credentials_allowed: true,
+        allowed_scopes: ['openid', 'profile'],
+        default_scope: 'openid profile',
+        default_audience: options.defaultAudience,
+      }),
+    }
+  );
   check.httpStatus = response.status;
 
   if (!response.ok || !isRecord(response.payload)) {
@@ -107,7 +111,10 @@ export async function resolveGeneratedApprovalSmokeClient(
 
   addPass(check, `temporary client_id=${clientId}`);
   if (options.clientId?.trim() && !options.clientSecret?.trim()) {
-    addPass(check, `provided client_id=${options.clientId.trim()} は secret 未指定のため使用しません`);
+    addPass(
+      check,
+      `provided client_id=${options.clientId.trim()} は secret 未指定のため使用しません`
+    );
   } else {
     addPass(check, 'temporary service client を使用します');
   }

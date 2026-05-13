@@ -60,10 +60,7 @@ import {
   configureDownstreamIntrospectionDeployment,
   resolveDownstreamIntrospectionKeysDir,
 } from '../../core/downstream-introspection-deploy.js';
-import {
-  describeAdminUiApiMode,
-  resolveUiDeploymentSettings,
-} from '../../core/ui-deployment.js';
+import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { resolveIssuerUrl } from '../../core/url-config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';

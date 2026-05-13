@@ -18,17 +18,9 @@ export type ApprovalRequestStatus =
   | 'expired'
   | 'cancelled';
 
-export type ApprovalDecisionStatus =
-  | 'pending'
-  | 'approved'
-  | 'denied'
-  | 'expired'
-  | 'cancelled';
+export type ApprovalDecisionStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled';
 
-export type ApprovalApproverSide =
-  | 'admin_operator'
-  | 'customer_data_owner'
-  | 'guardian_delegate';
+export type ApprovalApproverSide = 'admin_operator' | 'customer_data_owner' | 'guardian_delegate';
 
 export type ApprovalApproverSubjectType =
   | 'admin_user'

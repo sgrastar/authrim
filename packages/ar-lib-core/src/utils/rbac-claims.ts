@@ -1059,7 +1059,9 @@ export async function getIDTokenRBACClaimsConfigurable(
   const [roles, scopedRoles, userType, orgInfo, orgName, orgs, relationships] = await Promise.all([
     needsRoles ? resolveEffectiveRoles(db, subjectId, tenantId) : Promise.resolve([]),
     needsScopedRoles ? resolveScopedRoles(db, subjectId, tenantId) : Promise.resolve([]),
-    needsUserType ? resolveUserType(db, subjectId, tenantId) : Promise.resolve('end_user' as UserType),
+    needsUserType
+      ? resolveUserType(db, subjectId, tenantId)
+      : Promise.resolve('end_user' as UserType),
     needsBasicOrgInfo ? resolveOrganizationInfo(db, subjectId, tenantId) : Promise.resolve(null),
     needsOrgName ? resolveOrganizationName(db, subjectId, tenantId) : Promise.resolve(null),
     needsOrgs ? resolveAllOrganizations(db, subjectId, tenantId) : Promise.resolve([]),

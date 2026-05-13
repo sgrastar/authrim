@@ -294,7 +294,12 @@ describe('Consent RBAC Utilities', () => {
         },
       });
 
-      const result = await validateActingAsRelationship(db, 'delegate-123', 'principal-456', 'default');
+      const result = await validateActingAsRelationship(
+        db,
+        'delegate-123',
+        'principal-456',
+        'default'
+      );
 
       expect(result.valid).toBe(true);
       expect(result.relationship_type).toBe('delegate');

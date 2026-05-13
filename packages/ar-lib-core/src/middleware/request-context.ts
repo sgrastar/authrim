@@ -159,7 +159,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     );
     let tenantId = tenantResult.tenantId;
     const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
-    if (!tenantResult.success && shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)) {
+    if (
+      !tenantResult.success &&
+      shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)
+    ) {
       const vanityTenantId = await resolveTenantFromVanityHost(
         authCoreSource,
         c.env.AUTHRIM_CONFIG,
@@ -239,7 +242,11 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       (requestClass === 'tenant_scoped_admin' || tenantResult.success);
 
     if (shouldValidateTenantExists) {
-      const exists = await validateTenantExistsAsync(authCoreSource, c.env.AUTHRIM_CONFIG, tenantId);
+      const exists = await validateTenantExistsAsync(
+        authCoreSource,
+        c.env.AUTHRIM_CONFIG,
+        tenantId
+      );
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
         errorLogger.warn('Tenant existence check failed', {

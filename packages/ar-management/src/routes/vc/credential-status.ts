@@ -66,7 +66,11 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Update status in the status list
-    await statusListManager.revoke(tenantId, credential.status_list_id, credential.status_list_index);
+    await statusListManager.revoke(
+      tenantId,
+      credential.status_list_id,
+      credential.status_list_index
+    );
 
     // Update credential status in database
     await issuedCredentialRepo.updateStatus(tenantId, credentialId, 'revoked');

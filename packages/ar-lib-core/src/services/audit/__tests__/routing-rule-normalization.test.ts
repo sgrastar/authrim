@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  hasAuditStorageRoutingTargets,
-  normalizeAuditStorageRoutingTargets,
-} from '../storage';
+import { hasAuditStorageRoutingTargets, normalizeAuditStorageRoutingTargets } from '../storage';
 
 describe('audit routing target normalization', () => {
   it('promotes legacy backend to primaryStore', () => {

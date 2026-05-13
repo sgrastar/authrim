@@ -1306,7 +1306,11 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
         schemaId: id,
         updates: {
           operation_status: 'error',
-          operation_detail: JSON.stringify({ operation: 'delete', field_key: fieldKey, error: errorMsg }),
+          operation_detail: JSON.stringify({
+            operation: 'delete',
+            field_key: fieldKey,
+            error: errorMsg,
+          }),
           updated_at: Math.floor(Date.now() / 1000),
         },
       });

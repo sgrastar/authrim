@@ -42,9 +42,7 @@ describe('storage-admin', () => {
       { fieldName: 'department', count: 2 },
       { fieldName: 'title', count: 1 },
     ]);
-    await expect(countUsersWithNonPiiFieldData(adapter, 'tenant-1', 'department')).resolves.toBe(
-      2
-    );
+    await expect(countUsersWithNonPiiFieldData(adapter, 'tenant-1', 'department')).resolves.toBe(2);
   });
 
   it('returns approximate PII user counts', async () => {

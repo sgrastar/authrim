@@ -1011,8 +1011,7 @@ const ko: Translations = {
   'web.email.resendApiKeyConfirmInvalid':
     'API 키가 "re_"로 시작하지 않습니다. 유효한 Resend API 키가 아닐 수 있습니다. 그래도 계속하시겠습니까?',
   'web.email.fromEmailAddress': '발신 이메일 주소',
-  'web.email.cloudflareFromHint':
-    'Cloudflare Email Service에 온보딩된 도메인의 주소여야 합니다',
+  'web.email.cloudflareFromHint': 'Cloudflare Email Service에 온보딩된 도메인의 주소여야 합니다',
   'web.email.fromEmailHint': 'Resend 계정에서 인증된 도메인이어야 합니다',
   'web.email.fromEmailMissing': '발신 이메일 주소를 입력해 주세요',
   'web.email.fromEmailInvalid': '유효한 이메일 주소를 입력해 주세요',

@@ -37,7 +37,10 @@ function buildCommonDiscoverRedirect(
 	return target.toString();
 }
 
-function consumeVerifiedGrantCookie(event: Parameters<PageServerLoad>[0], currentUrl: string): boolean {
+function consumeVerifiedGrantCookie(
+	event: Parameters<PageServerLoad>[0],
+	currentUrl: string
+): boolean {
 	const verifiedUrl = event.cookies.get(DISCOVERY_GRANT_VERIFIED_COOKIE);
 	if (verifiedUrl !== currentUrl) {
 		return false;

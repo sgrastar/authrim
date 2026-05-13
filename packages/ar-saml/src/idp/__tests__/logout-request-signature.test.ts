@@ -76,11 +76,14 @@ describe('validateSAMLLogoutRequestSignature', () => {
       }
     );
 
-    expect(verifyXmlSignature).toHaveBeenCalledWith('<LogoutRequest><Signature /></LogoutRequest>', {
-      certificateOrKey: 'sp-certificate',
-      expectedId: '_logout123',
-      strictXswProtection: true,
-    });
+    expect(verifyXmlSignature).toHaveBeenCalledWith(
+      '<LogoutRequest><Signature /></LogoutRequest>',
+      {
+        certificateOrKey: 'sp-certificate',
+        expectedId: '_logout123',
+        strictXswProtection: true,
+      }
+    );
   });
 
   it('tries rollover certificates when verifying signed POST LogoutRequest', async () => {

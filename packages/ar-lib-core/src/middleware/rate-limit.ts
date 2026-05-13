@@ -328,7 +328,9 @@ export async function checkRateLimit(
   config: RateLimitConfig,
   tenantId?: string
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
-  const rateLimitKey = tenantId?.trim() ? `tenant:${tenantId.trim()}:rate-limit:${clientIP}` : clientIP;
+  const rateLimitKey = tenantId?.trim()
+    ? `tenant:${tenantId.trim()}:rate-limit:${clientIP}`
+    : clientIP;
 
   // Try DO-based rate limiting first
   try {

@@ -433,8 +433,9 @@ describe('support operations admin router', () => {
       true
     );
     expect(executedSql.some((sql) => sql.includes('INSERT INTO admin_jobs'))).toBe(true);
-    const jobConfig = mockAdapter.execute.mock.calls
-      .find((call) => String(call[0]).includes('INSERT INTO admin_jobs'))?.[1]?.[4] as string;
+    const jobConfig = mockAdapter.execute.mock.calls.find((call) =>
+      String(call[0]).includes('INSERT INTO admin_jobs')
+    )?.[1]?.[4] as string;
     expect(JSON.parse(jobConfig)).toEqual(
       expect.objectContaining({
         snapshot_cutoff: expect.any(Number),

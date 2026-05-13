@@ -4,9 +4,7 @@ import type { Env } from '../types/env';
 
 type AdminDatabaseBindings = Partial<Pick<Env, 'DB' | 'DB_ADMIN'>>;
 
-export function resolveAdminDatabaseSource(
-  env: AdminDatabaseBindings
-): DatabaseSource | null {
+export function resolveAdminDatabaseSource(env: AdminDatabaseBindings): DatabaseSource | null {
   return env.DB_ADMIN ?? env.DB ?? null;
 }
 

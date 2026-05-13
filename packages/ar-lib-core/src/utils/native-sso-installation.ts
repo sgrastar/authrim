@@ -11,7 +11,9 @@ export type NativeSSOInstallationMetadata = {
   app_display_name?: string;
 };
 
-export function getDeviceSecretInstallationId(deviceSecret: Pick<DeviceSecret, 'id' | 'installation_id'>): string {
+export function getDeviceSecretInstallationId(
+  deviceSecret: Pick<DeviceSecret, 'id' | 'installation_id'>
+): string {
   return deviceSecret.installation_id ?? deviceSecret.id;
 }
 
@@ -61,7 +63,8 @@ export function buildNativeSSOInstallationMetadata(input: {
     input.deviceSecret.last_used_at ?? input.fallbackLastSeenAtMs
   );
   const appDisplayName =
-    typeof input.clientMetadata?.client_name === 'string' && input.clientMetadata.client_name.length > 0
+    typeof input.clientMetadata?.client_name === 'string' &&
+    input.clientMetadata.client_name.length > 0
       ? input.clientMetadata.client_name
       : undefined;
 
@@ -91,7 +94,8 @@ export function buildNativeSSOInstallationMetadataFromInstallation(input: {
     input.installation.last_seen_at ?? input.fallbackLastSeenAtMs
   );
   const appDisplayName =
-    typeof input.clientMetadata?.client_name === 'string' && input.clientMetadata.client_name.length > 0
+    typeof input.clientMetadata?.client_name === 'string' &&
+    input.clientMetadata.client_name.length > 0
       ? input.clientMetadata.client_name
       : undefined;
 

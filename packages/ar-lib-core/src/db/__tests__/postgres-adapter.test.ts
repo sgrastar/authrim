@@ -40,9 +40,7 @@ describe('PostgresAdapter', () => {
     ]);
 
     expect(query.mock.calls[0]?.[0]).toBe('BEGIN');
-    expect(query.mock.calls[1]?.[0]).toBe(
-      'INSERT INTO event_log (id, tenant_id) VALUES ($1, $2)'
-    );
+    expect(query.mock.calls[1]?.[0]).toBe('INSERT INTO event_log (id, tenant_id) VALUES ($1, $2)');
     expect(query.mock.calls[2]?.[0]).toBe('DELETE FROM event_log WHERE id = $1');
     expect(query.mock.calls[3]?.[0]).toBe('COMMIT');
   });

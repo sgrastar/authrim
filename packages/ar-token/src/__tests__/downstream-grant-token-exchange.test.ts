@@ -156,9 +156,8 @@ describe('downstream elevation grant token exchange', () => {
   });
 
   it('mints downstream access tokens with approval authorization details', async () => {
-    const actual = await vi.importActual<typeof import('@authrim/ar-lib-core')>(
-      '@authrim/ar-lib-core'
-    );
+    const actual =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
     const keySet = await actual.generateKeySet('subject-kid-1');
     mocks.mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'subject-kid-1' });
 
@@ -230,9 +229,8 @@ describe('downstream elevation grant token exchange', () => {
   });
 
   it('preserves requested audience even if a second parseBody call would be empty', async () => {
-    const actual = await vi.importActual<typeof import('@authrim/ar-lib-core')>(
-      '@authrim/ar-lib-core'
-    );
+    const actual =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
     const keySet = await actual.generateKeySet('subject-kid-1');
     mocks.mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'subject-kid-1' });
 
@@ -269,9 +267,7 @@ describe('downstream elevation grant token exchange', () => {
       client_secret: 'top-secret',
       audience: 'https://service.example.com',
     };
-    vi.mocked(ctx.req.parseBody)
-      .mockResolvedValueOnce(firstParsedBody)
-      .mockResolvedValueOnce({});
+    vi.mocked(ctx.req.parseBody).mockResolvedValueOnce(firstParsedBody).mockResolvedValueOnce({});
 
     const response = await tokenHandler(ctx);
     const body = await parseJsonResponse<{ access_token: string }>(response);

@@ -5,8 +5,7 @@ import {
   loadApprovalTransportDetail,
 } from '../approval-transport-detail';
 
-const OBJECT_ROOT_KEY =
-  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 interface StoredObject {
   body: Uint8Array;
@@ -256,11 +255,7 @@ describe('approval-transport-detail helpers', () => {
     expect(state.physical).toHaveLength(1);
     expect(objectStore.store.size).toBe(1);
 
-    const loadedInitial = await loadApprovalTransportDetail(
-      c as any,
-      adapter,
-      requestWithDetail
-    );
+    const loadedInitial = await loadApprovalTransportDetail(c as any, adapter, requestWithDetail);
     expect(loadedInitial?.events).toHaveLength(1);
     expect(loadedInitial?.events[0]?.kind).toBe('request_created');
 
@@ -322,15 +317,13 @@ describe('approval-transport-detail helpers', () => {
       }
     );
 
-    expect(updatedRequest.detail_object_catalog_id).toBe(requestWithDetail.detail_object_catalog_id);
+    expect(updatedRequest.detail_object_catalog_id).toBe(
+      requestWithDetail.detail_object_catalog_id
+    );
     expect(state.logical).toHaveLength(1);
     expect(state.physical).toHaveLength(1);
 
-    const loadedUpdated = await loadApprovalTransportDetail(
-      c as any,
-      adapter,
-      updatedRequest
-    );
+    const loadedUpdated = await loadApprovalTransportDetail(c as any, adapter, updatedRequest);
     expect(loadedUpdated?.events).toHaveLength(2);
     expect(loadedUpdated?.events[1]?.kind).toBe('step_remind');
     expect(loadedUpdated?.events[1]?.notification_count).toBe(2);

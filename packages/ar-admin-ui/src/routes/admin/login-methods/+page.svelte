@@ -1,11 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		adminLoginMethodsAPI,
-		type LoginMethodExternalProvider,
-		type LoginMethodProviderStartMode,
-		type LoginMethodProviderType
-	} from '$lib/api/admin-login-methods';
+		import {
+			adminLoginMethodsAPI,
+			type LoginMethodExternalProvider,
+			type LoginMethodProviderType
+		} from '$lib/api/admin-login-methods';
 	import type { CategorySettings } from '$lib/api/admin-settings';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 

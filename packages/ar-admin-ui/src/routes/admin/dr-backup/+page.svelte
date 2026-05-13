@@ -176,7 +176,7 @@
 
 			{#if selectedStorageDestinationId}
 				<div class="selected-destination">
-					{#each storageDestinations.filter((d) => d.id === selectedStorageDestinationId) as destination}
+					{#each storageDestinations.filter((d) => d.id === selectedStorageDestinationId) as destination (destination.id)}
 						<div class="destination-name">{destination.display_name || destination.name}</div>
 						<div class="destination-meta">
 							{providerLabel(destination)} · {destination.scope_type}

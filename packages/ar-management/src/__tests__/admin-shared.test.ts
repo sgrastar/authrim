@@ -154,8 +154,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 import { loadAdminAuditDetail, writeAdminAuditLog } from '../admin-shared';
 
-const OBJECT_ROOT_KEY =
-  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 function createMockBucket(initial: Record<string, StoredObject> = {}) {
   const store = new Map<string, StoredObject>(Object.entries(initial));

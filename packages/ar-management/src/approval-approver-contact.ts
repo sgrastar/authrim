@@ -133,7 +133,10 @@ export async function resolveApprovalTransportChannel(
     (method === 'email_otp' && looksLikeEmail(subjectId)) ||
     (method === 'sms_otp' && looksLikePhone(subjectId));
   const channelMatchesUnresolvedSubjectId =
-    !!existingChannel && !!subjectId && existingChannel === subjectId && !subjectIdIsResolvedContact;
+    !!existingChannel &&
+    !!subjectId &&
+    existingChannel === subjectId &&
+    !subjectIdIsResolvedContact;
 
   if (existingChannel && !channelMatchesUnresolvedSubjectId) {
     return existingChannel;

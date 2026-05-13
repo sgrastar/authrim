@@ -1018,8 +1018,7 @@ const pt: Translations = {
   'web.email.cloudflareSetup': 'Cloudflare Email Service',
   'web.email.cloudflareRequirements': 'Requisitos',
   'web.email.cloudflareRequirementPaid': 'É necessário um plano Workers Paid',
-  'web.email.cloudflareRequirementDns':
-    'Cloudflare DNS / onboarding de domínio é necessário',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / onboarding de domínio é necessário',
   'web.email.cloudflareRequirementManual':
     'A configuração do domínio no painel da Cloudflare ainda é manual',
   'web.email.resendSetup': 'Configuração do Resend',
@@ -1033,8 +1032,7 @@ const pt: Translations = {
   'web.email.resendApiKeyConfirmInvalid':
     'A chave API não começa com "re_". Talvez ela não seja uma chave API válida do Resend. Deseja continuar mesmo assim?',
   'web.email.fromEmailAddress': 'Endereço de Email do Remetente',
-  'web.email.cloudflareFromHint':
-    'Deve ser de um domínio integrado ao Cloudflare Email Service',
+  'web.email.cloudflareFromHint': 'Deve ser de um domínio integrado ao Cloudflare Email Service',
   'web.email.fromEmailHint': 'Deve ser de um domínio verificado na sua conta Resend',
   'web.email.fromEmailMissing': 'Por favor, informe um endereço de email do remetente',
   'web.email.fromEmailInvalid': 'Por favor, informe um endereço de email válido',

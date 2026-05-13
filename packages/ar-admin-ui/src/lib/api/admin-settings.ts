@@ -411,7 +411,9 @@ export const adminTokenExchangeSettingsAPI = {
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.error_description || error.message || 'Failed to fetch token exchange settings');
+			throw new Error(
+				error.error_description || error.message || 'Failed to fetch token exchange settings'
+			);
 		}
 
 		return response.json();
@@ -432,7 +434,9 @@ export const adminTokenExchangeSettingsAPI = {
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.error_description || error.message || 'Failed to update token exchange settings');
+			throw new Error(
+				error.error_description || error.message || 'Failed to update token exchange settings'
+			);
 		}
 
 		return response.json();

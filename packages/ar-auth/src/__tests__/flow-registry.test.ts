@@ -53,10 +53,11 @@ describe('FlowRegistry', () => {
     const result = await registry.getFlow('login', 'tenant-1', 'client-1');
 
     expect(result).toEqual(clientFlow);
-    expect(adapter.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM flows'),
-      ['tenant-1', 'human-basic', 'client-1']
-    );
+    expect(adapter.query).toHaveBeenCalledWith(expect.stringContaining('FROM flows'), [
+      'tenant-1',
+      'human-basic',
+      'client-1',
+    ]);
   });
 
   it('falls back to the tenant default flow when client-specific flow is absent', async () => {
@@ -71,15 +72,14 @@ describe('FlowRegistry', () => {
     const result = await registry.getFlow('login', 'tenant-1', 'client-1');
 
     expect(result).toEqual(tenantFlow);
-    expect(adapter.query).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('client_id = ?'),
-      ['tenant-1', 'human-basic', 'client-1']
-    );
-    expect(adapter.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('client_id IS NULL'),
-      ['tenant-1', 'human-basic']
-    );
+    expect(adapter.query).toHaveBeenNthCalledWith(1, expect.stringContaining('client_id = ?'), [
+      'tenant-1',
+      'human-basic',
+      'client-1',
+    ]);
+    expect(adapter.query).toHaveBeenNthCalledWith(2, expect.stringContaining('client_id IS NULL'), [
+      'tenant-1',
+      'human-basic',
+    ]);
   });
 });

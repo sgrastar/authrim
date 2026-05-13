@@ -29,7 +29,11 @@ import {
   getNestedValue,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
-import { getAuditHotQuerySqlSpec, getAuditHotQuerySupport, getAuditTimeRange } from './audit-hot-query';
+import {
+  getAuditHotQuerySqlSpec,
+  getAuditHotQuerySupport,
+  getAuditTimeRange,
+} from './audit-hot-query';
 
 // =============================================================================
 // Constants
@@ -248,12 +252,10 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     };
 
     // 2. Get audit log statistics
-    let auditStats:
-      | {
-          total: number;
-          last_30_days: number;
-        }
-      | null = null;
+    let auditStats: {
+      total: number;
+      last_30_days: number;
+    } | null = null;
     if (hotQuery.supported && hotQuery.context) {
       const { tableName } = getAuditHotQuerySqlSpec(hotQuery.context);
       const [auditFromTs] = getAuditTimeRange(thirtyDaysAgo, nowTs, hotQuery.context);
@@ -414,7 +416,9 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
         retention_days: tenantSettings.audit_log_retention_days,
         total_entries: auditStats?.total || 0,
         entries_last_30_days: auditStats?.last_30_days || 0,
-        ...(hotQuery.supported ? { hot_query_status: 'supported' as const } : { hot_query_status: hotQuery.status }),
+        ...(hotQuery.supported
+          ? { hot_query_status: 'supported' as const }
+          : { hot_query_status: hotQuery.status }),
       },
       mfa_status: {
         enforced: tenantSettings.mfa_enforced,
@@ -1097,14 +1101,12 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
 
     // Audit logs statistics
     const auditRetentionDays = tenantSettings?.audit_log_retention_days || 90;
-    let auditStats:
-      | {
-          total: number;
-          pending_deletion: number;
-          oldest_date: number | null;
-          deleted_last_30_days: number;
-        }
-      | null = null;
+    let auditStats: {
+      total: number;
+      pending_deletion: number;
+      oldest_date: number | null;
+      deleted_last_30_days: number;
+    } | null = null;
     if (hotQuery.supported && hotQuery.context) {
       const { tableName } = getAuditHotQuerySqlSpec(hotQuery.context);
       const [retentionThreshold] = getAuditTimeRange(
@@ -1138,7 +1140,9 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
       next_cleanup_date: toISOString(tenantSettings?.next_cleanup_at ?? null),
       last_cleanup_date: toISOString(tenantSettings?.last_cleanup_at ?? null),
       records_deleted_last_30_days: auditStats?.deleted_last_30_days || 0,
-      ...(hotQuery.supported ? { hot_query_status: 'supported' as const } : { hot_query_status: hotQuery.status }),
+      ...(hotQuery.supported
+        ? { hot_query_status: 'supported' as const }
+        : { hot_query_status: hotQuery.status }),
     });
 
     // Sessions statistics

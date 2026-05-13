@@ -33,11 +33,7 @@ const PRINCIPAL_TYPES = new Set<AdminMachinePrincipalType>([
   'integration',
 ]);
 
-const CREDENTIAL_ALGORITHMS = new Set<AdminMachineCredentialAlgorithm>([
-  'ES256',
-  'PS256',
-  'RS256',
-]);
+const CREDENTIAL_ALGORITHMS = new Set<AdminMachineCredentialAlgorithm>(['ES256', 'PS256', 'RS256']);
 const DEFAULT_ROTATION_OVERLAP_SECONDS = 24 * 60 * 60;
 const MAX_ROTATION_OVERLAP_SECONDS = 7 * 24 * 60 * 60;
 
@@ -237,16 +233,7 @@ async function credentialIsWithinActorScope(
   );
 }
 
-const PRIVATE_JWK_FIELDS = new Set([
-  'd',
-  'p',
-  'q',
-  'dp',
-  'dq',
-  'qi',
-  'oth',
-  'k',
-]);
+const PRIVATE_JWK_FIELDS = new Set(['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']);
 
 function hasPrivateJwkMaterial(jwk: Record<string, unknown>): boolean {
   return Object.keys(jwk).some((key) => PRIVATE_JWK_FIELDS.has(key));
@@ -256,7 +243,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function validatePublicJwk(jwk: Record<string, unknown>, alg: AdminMachineCredentialAlgorithm): boolean {
+function validatePublicJwk(
+  jwk: Record<string, unknown>,
+  alg: AdminMachineCredentialAlgorithm
+): boolean {
   if (hasPrivateJwkMaterial(jwk)) {
     return false;
   }
@@ -277,10 +267,7 @@ function validatePublicJwk(jwk: Record<string, unknown>, alg: AdminMachineCreden
 
   if (alg === 'ES256') {
     return (
-      jwk.kty === 'EC' &&
-      jwk.crv === 'P-256' &&
-      isNonEmptyString(jwk.x) &&
-      isNonEmptyString(jwk.y)
+      jwk.kty === 'EC' && jwk.crv === 'P-256' && isNonEmptyString(jwk.x) && isNonEmptyString(jwk.y)
     );
   }
   return jwk.kty === 'RSA' && isNonEmptyString(jwk.n) && isNonEmptyString(jwk.e);
@@ -670,7 +657,9 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
     publicJwkJson = null;
   }
   const requestedTenantScopes =
-    body?.tenant_scopes === undefined ? undefined : parseTenantScopesForActor(c, body.tenant_scopes);
+    body?.tenant_scopes === undefined
+      ? undefined
+      : parseTenantScopesForActor(c, body.tenant_scopes);
   if (
     !kid ||
     !displayName ||
@@ -723,11 +712,7 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
     requestedPermissions === undefined ? oldPermissions : requestedPermissions,
     actor
   );
-  await repo.setCredentialTenantScopes(
-    newCredential.id,
-    effectiveTenantScopes,
-    actor
-  );
+  await repo.setCredentialTenantScopes(newCredential.id, effectiveTenantScopes, actor);
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.credential.rotated',
     resourceType: 'admin_machine_credential',
@@ -742,10 +727,13 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
     },
   });
 
-  return c.json({
-    credential: newCredential,
-    previous_credential: await repo.findCredentialById(oldCredentialId),
-  }, 201);
+  return c.json(
+    {
+      credential: newCredential,
+      previous_credential: await repo.findCredentialById(oldCredentialId),
+    },
+    201
+  );
 });
 
 machineAccessRouter.post('/principals/:id/disable', async (c) => {

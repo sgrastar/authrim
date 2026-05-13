@@ -135,9 +135,13 @@ export async function recordApprovalCibaNotificationDispatch(input: {
     last_notified_at: now,
   };
   const ttlSeconds = Math.max(1, Math.ceil((input.expiresAt - now) / 1000));
-  await input.env.AUTHRIM_CONFIG.put(getDeliveryStateKey(input.artifactId), JSON.stringify(nextState), {
-    expirationTtl: ttlSeconds,
-  });
+  await input.env.AUTHRIM_CONFIG.put(
+    getDeliveryStateKey(input.artifactId),
+    JSON.stringify(nextState),
+    {
+      expirationTtl: ttlSeconds,
+    }
+  );
   return nextState;
 }
 
@@ -155,14 +159,9 @@ async function resolveCibaTarget(
   }
 
   try {
-    const emailTarget = await resolveApprovalTransportChannel(
-      c,
-      request,
-      approval,
-      {
-        method: 'email_otp',
-      }
-    );
+    const emailTarget = await resolveApprovalTransportChannel(c, request, approval, {
+      method: 'email_otp',
+    });
     if (emailTarget && looksLikeEmail(emailTarget)) {
       return { channel: 'email', target: emailTarget };
     }
@@ -173,14 +172,9 @@ async function resolveCibaTarget(
   }
 
   try {
-    const smsTarget = await resolveApprovalTransportChannel(
-      c,
-      request,
-      approval,
-      {
-        method: 'sms_otp',
-      }
-    );
+    const smsTarget = await resolveApprovalTransportChannel(c, request, approval, {
+      method: 'sms_otp',
+    });
     if (smsTarget && looksLikePhone(smsTarget)) {
       return { channel: 'sms', target: smsTarget };
     }
@@ -214,7 +208,10 @@ export async function dispatchApprovalCibaUserCode(
   const pluginCtx = getPluginContext(c);
   const notifier = pluginCtx.registry.getNotifier(channel) as NotificationHandler | undefined;
   if (!notifier) {
-    throw new ApprovalCibaNotificationError(`No ${channel} notifier is configured for CIBA delivery.`, 503);
+    throw new ApprovalCibaNotificationError(
+      `No ${channel} notifier is configured for CIBA delivery.`,
+      503
+    );
   }
 
   const body =
@@ -236,7 +233,10 @@ export async function dispatchApprovalCibaUserCode(
   const result = await notifier.send({
     channel,
     to: target,
-    subject: channel === 'email' ? `Approval device confirmation: ${input.request.request_surface}` : undefined,
+    subject:
+      channel === 'email'
+        ? `Approval device confirmation: ${input.request.request_surface}`
+        : undefined,
     body,
     metadata: {
       kind: 'approval_ciba',

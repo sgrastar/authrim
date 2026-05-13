@@ -64,7 +64,9 @@ export async function getLatestRelease(
   repository: string = DEFAULT_REPOSITORY
 ): Promise<string | null> {
   try {
-    const response = await fetchWithTimeout(`${GITHUB_API_BASE}/repos/${repository}/releases/latest`);
+    const response = await fetchWithTimeout(
+      `${GITHUB_API_BASE}/repos/${repository}/releases/latest`
+    );
     if (!response.ok) {
       return null;
     }
@@ -83,7 +85,9 @@ export async function getCommitHash(
   gitRef: string = DEFAULT_BRANCH
 ): Promise<string | null> {
   try {
-    const response = await fetchWithTimeout(`${GITHUB_API_BASE}/repos/${repository}/commits/${gitRef}`);
+    const response = await fetchWithTimeout(
+      `${GITHUB_API_BASE}/repos/${repository}/commits/${gitRef}`
+    );
     if (!response.ok) {
       return null;
     }

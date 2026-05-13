@@ -3,14 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { validateVCIAccessToken } from '../token-validation';
 import type { Env } from '../../../types';
 
-function createKeyManagerEnv(jwks: { keys: unknown[] }): Pick<Env, 'KEY_MANAGER'> {
+function createKeyManagerEnv(jwks: { keys: unknown[] }): {
+  bindings: Pick<Env, 'KEY_MANAGER'>;
+  mocks: { idFromName: ReturnType<typeof vi.fn> };
+} {
+  const idFromName = vi.fn((name: string) => name);
   return {
-    KEY_MANAGER: {
-      idFromName: vi.fn((name: string) => name),
-      get: vi.fn(() => ({
-        fetch: vi.fn(async () => Response.json(jwks)),
-      })),
-    } as unknown as Env['KEY_MANAGER'],
+    bindings: {
+      KEY_MANAGER: {
+        idFromName,
+        get: vi.fn(() => ({
+          fetch: vi.fn(async () => Response.json(jwks)),
+        })),
+      } as unknown as Env['KEY_MANAGER'],
+    },
+    mocks: { idFromName },
   };
 }
 
@@ -18,10 +25,11 @@ describe('validateVCIAccessToken', () => {
   it('derives the fallback DID issuer from the expected request tenant', async () => {
     const { publicKey, privateKey } = await generateKeyPair('ES256');
     const publicJwk = await exportJWK(publicKey);
+    const keyManager = createKeyManagerEnv({
+      keys: [{ ...publicJwk, alg: 'ES256', kid: 'tenant-acme-key' }],
+    });
     const env = {
-      ...createKeyManagerEnv({
-        keys: [{ ...publicJwk, alg: 'ES256', kid: 'tenant-acme-key' }],
-      }),
+      ...keyManager.bindings,
       BASE_DOMAIN: 'oidc.example.com',
       NAKED_DOMAIN_AS_ISSUER: 'true',
       PRIMARY_TENANT_ID: 'default',
@@ -49,7 +57,7 @@ describe('validateVCIAccessToken', () => {
       tenantId: 'acme',
       vct: 'UniversityDegreeCredential',
     });
-    expect(env.KEY_MANAGER.idFromName).toHaveBeenCalledWith('acme-v3');
-    expect(env.KEY_MANAGER.idFromName).not.toHaveBeenCalledWith('default-v3');
+    expect(keyManager.mocks.idFromName).toHaveBeenCalledWith('acme-v3');
+    expect(keyManager.mocks.idFromName).not.toHaveBeenCalledWith('default-v3');
   });
 });

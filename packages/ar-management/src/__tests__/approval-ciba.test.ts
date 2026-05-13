@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApprovalCompletionArtifact, ApprovalRequest, ApprovalRequestApproval, CIBARequestMetadata, Env } from '@authrim/ar-lib-core';
+import type {
+  ApprovalCompletionArtifact,
+  ApprovalRequest,
+  ApprovalRequestApproval,
+  CIBARequestMetadata,
+  Env,
+} from '@authrim/ar-lib-core';
 
 const {
   mockGenerateAuthReqId,

@@ -31,8 +31,8 @@ describe('tenant-domain-resolver', () => {
   it('returns all active candidates in priority order', async () => {
     const adapter = createMockAdapter();
     vi.mocked(adapter.query).mockResolvedValueOnce([
-        { tenant_id: 'acme', priority: 20 },
-        { tenant_id: 'beta', priority: 10 },
+      { tenant_id: 'acme', priority: 20 },
+      { tenant_id: 'beta', priority: 10 },
     ]);
 
     const result = await resolveTenantCandidatesFromEmailDomain(
@@ -51,8 +51,8 @@ describe('tenant-domain-resolver', () => {
   it('returns the highest-priority tenant for the single-result helper', async () => {
     const adapter = createMockAdapter();
     vi.mocked(adapter.query).mockResolvedValueOnce([
-        { tenant_id: 'acme', priority: 20 },
-        { tenant_id: 'beta', priority: 10 },
+      { tenant_id: 'acme', priority: 20 },
+      { tenant_id: 'beta', priority: 10 },
     ]);
 
     const result = await resolveTenantFromEmailDomain(adapter, 'user@example.com', {} as never);

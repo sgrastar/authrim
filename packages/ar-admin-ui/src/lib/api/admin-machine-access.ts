@@ -105,12 +105,14 @@ async function parseError(response: Response, fallback: string): Promise<Error> 
 }
 
 export const adminMachineAccessAPI = {
-	async list(params: {
-		status?: AdminMachinePrincipalStatus;
-		principal_type?: AdminMachinePrincipalType;
-		page?: number;
-		limit?: number;
-	} = {}): Promise<ListPrincipalsResponse> {
+	async list(
+		params: {
+			status?: AdminMachinePrincipalStatus;
+			principal_type?: AdminMachinePrincipalType;
+			page?: number;
+			limit?: number;
+		} = {}
+	): Promise<ListPrincipalsResponse> {
 		const query = new URLSearchParams();
 		if (params.status) query.set('status', params.status);
 		if (params.principal_type) query.set('principal_type', params.principal_type);

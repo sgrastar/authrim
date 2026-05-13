@@ -222,10 +222,7 @@ app.post('/api/admin/saml-providers/:id/refresh-metadata', handleRefreshMetadata
  */
 app.post('/api/admin/saml-providers/:id/signing-rollover/publish-next', handlePublishSigningNext);
 app.post('/api/admin/saml-providers/:id/signing-rollover/promote-next', handlePromoteSigningNext);
-app.post(
-  '/api/admin/saml-providers/:id/signing-rollover/retire-backup',
-  handleRetireSigningBackup
-);
+app.post('/api/admin/saml-providers/:id/signing-rollover/retire-backup', handleRetireSigningBackup);
 
 // 404 handler
 app.notFound((c) => {

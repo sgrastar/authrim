@@ -392,14 +392,7 @@ export async function writeAdminAuditLog(
       detailPayload.metadata
     );
     const detailObjectCatalogId = hasExternalizableDetail
-      ? await storeAdminAuditDetail(
-          c,
-          adminAdapter,
-          tenantId,
-          auditLogId,
-          detailPayload,
-          createdAt
-        )
+      ? await storeAdminAuditDetail(c, adminAdapter, tenantId, auditLogId, detailPayload, createdAt)
       : null;
 
     await auditRepo.createAuditLog({
@@ -424,9 +417,7 @@ export async function writeAdminAuditLog(
       session_id: adminAuth?.sessionId ?? undefined,
       before: detailObjectCatalogId ? undefined : (detailPayload.before ?? undefined),
       after: detailObjectCatalogId ? undefined : (detailPayload.after ?? undefined),
-      metadata: detailObjectCatalogId
-        ? inlineAuditMetadata
-        : (detailPayload.metadata ?? undefined),
+      metadata: detailObjectCatalogId ? inlineAuditMetadata : (detailPayload.metadata ?? undefined),
       detail_object_catalog_id: detailObjectCatalogId ?? undefined,
     });
   } catch (error) {

@@ -20,20 +20,19 @@ vi.mock('@authrim/ar-lib-core', async () => {
 
 import { rotateCheckApiKey } from '../routes/settings/check-api-keys';
 
-function createMockAdapter(options: {
-  queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-  execute?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
-} = {}): DatabaseAdapter {
+function createMockAdapter(
+  options: {
+    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+    execute?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+  } = {}
+): DatabaseAdapter {
   const queryOneImpl: DatabaseAdapter['queryOne'] = async <T>(
     sql: string,
     params: unknown[] = []
-  ): Promise<T | null> => (((await options.queryOne?.(sql, params)) ?? null) as T | null);
+  ): Promise<T | null> => ((await options.queryOne?.(sql, params)) ?? null) as T | null;
 
-  const executeImpl: DatabaseAdapter['execute'] = async (
-    sql: string,
-    params: unknown[] = []
-  ) =>
-    (((await options.execute?.(sql, params)) ?? {
+  const executeImpl: DatabaseAdapter['execute'] = async (sql: string, params: unknown[] = []) =>
+    ((await options.execute?.(sql, params)) ?? {
       success: true,
       rowsAffected: 0,
       insertId: undefined,
@@ -41,7 +40,7 @@ function createMockAdapter(options: {
       success: boolean;
       rowsAffected: number;
       insertId?: string | number | bigint | undefined;
-    });
+    };
 
   return {
     query: vi.fn().mockResolvedValue([]),

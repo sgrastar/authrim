@@ -19,8 +19,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    adminAuthMiddleware:
-      vi.fn((options?: { requirePermissions?: string[] }) =>
+    adminAuthMiddleware: vi.fn(
+      (options?: { requirePermissions?: string[] }) =>
         async (c: any, next: () => Promise<void>) => {
           const permissions = (c.req.header('X-Admin-Permissions') || '')
             .split(',')
@@ -44,8 +44,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
               return c.json(
                 {
                   error: 'insufficient_permissions',
-                  error_description:
-                    'You do not have the required permissions for this operation.',
+                  error_description: 'You do not have the required permissions for this operation.',
                 },
                 403
               );
@@ -54,7 +53,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
           await next();
         }
-      ),
+    ),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getOperationalLog: mockGetOperationalLog,
@@ -162,8 +161,7 @@ describe('operational logs router', () => {
       {
         method: 'GET',
         headers: {
-          'X-Admin-Permissions':
-            'admin:operational_logs:read,admin:operational_logs:detail:read',
+          'X-Admin-Permissions': 'admin:operational_logs:read,admin:operational_logs:detail:read',
         },
       },
       mockEnv

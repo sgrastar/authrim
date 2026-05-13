@@ -135,9 +135,7 @@ function unknownErrorToResponse(error: unknown): Response {
     return stepUpFlowErrorToResponse(error);
   }
   const description =
-    error instanceof StepUpPolicyError
-      ? error.message
-      : 'Step-up request could not be processed';
+    error instanceof StepUpPolicyError ? error.message : 'Step-up request could not be processed';
   return new Response(
     JSON.stringify({
       error: 'server_error',

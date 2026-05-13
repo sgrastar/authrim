@@ -14,45 +14,46 @@ export interface StorageSliceBoundaryPolicy {
   compatibilityShorthand?: boolean;
 }
 
-export const STORAGE_SLICE_BOUNDARY_POLICIES: Readonly<Record<StorageSlice, StorageSliceBoundaryPolicy>> =
-  {
-    users_core: {
-      slice: 'users_core',
-      boundaryClass: 'auth_core',
-      tenantOverrideAllowed: false,
-      d1Default: true,
-      nonD1OptionRequired: false,
-      compatibilityShorthand: true,
-    },
-    users_pii: {
-      slice: 'users_pii',
-      boundaryClass: 'pii',
-      tenantOverrideAllowed: true,
-      d1Default: true,
-      nonD1OptionRequired: true,
-    },
-    custom_claims: {
-      slice: 'custom_claims',
-      boundaryClass: 'custom_extension',
-      tenantOverrideAllowed: true,
-      d1Default: true,
-      nonD1OptionRequired: true,
-    },
-    registration_fields: {
-      slice: 'registration_fields',
-      boundaryClass: 'custom_extension',
-      tenantOverrideAllowed: true,
-      d1Default: true,
-      nonD1OptionRequired: true,
-    },
-    custom_pii: {
-      slice: 'custom_pii',
-      boundaryClass: 'custom_extension',
-      tenantOverrideAllowed: true,
-      d1Default: true,
-      nonD1OptionRequired: true,
-    },
-  } as const;
+export const STORAGE_SLICE_BOUNDARY_POLICIES: Readonly<
+  Record<StorageSlice, StorageSliceBoundaryPolicy>
+> = {
+  users_core: {
+    slice: 'users_core',
+    boundaryClass: 'auth_core',
+    tenantOverrideAllowed: false,
+    d1Default: true,
+    nonD1OptionRequired: false,
+    compatibilityShorthand: true,
+  },
+  users_pii: {
+    slice: 'users_pii',
+    boundaryClass: 'pii',
+    tenantOverrideAllowed: true,
+    d1Default: true,
+    nonD1OptionRequired: true,
+  },
+  custom_claims: {
+    slice: 'custom_claims',
+    boundaryClass: 'custom_extension',
+    tenantOverrideAllowed: true,
+    d1Default: true,
+    nonD1OptionRequired: true,
+  },
+  registration_fields: {
+    slice: 'registration_fields',
+    boundaryClass: 'custom_extension',
+    tenantOverrideAllowed: true,
+    d1Default: true,
+    nonD1OptionRequired: true,
+  },
+  custom_pii: {
+    slice: 'custom_pii',
+    boundaryClass: 'custom_extension',
+    tenantOverrideAllowed: true,
+    d1Default: true,
+    nonD1OptionRequired: true,
+  },
+} as const;
 
 const IMPLICIT_AUTH_CORE_TARGET: StorageTarget = {
   driver: 'd1',

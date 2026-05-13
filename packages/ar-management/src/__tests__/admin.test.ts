@@ -1627,7 +1627,9 @@ describe('Admin API Handlers', () => {
         expect.stringContaining('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?')
       );
       expect(coreSqls).toContainEqual(
-        expect.stringContaining('DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?')
+        expect.stringContaining(
+          'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?'
+        )
       );
       expect(coreSqls).toContainEqual(
         expect.stringContaining('DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?')

@@ -29,7 +29,10 @@ export function getUiWorkersDevUrl(workerName: string, workersSubdomain?: string
   return getWorkersDevUrl(workerName, workersSubdomain);
 }
 
-function normalizeWorkersDevUrl(url: string | null | undefined, workersSubdomain?: string | null): string | undefined {
+function normalizeWorkersDevUrl(
+  url: string | null | undefined,
+  workersSubdomain?: string | null
+): string | undefined {
   if (!url) {
     return undefined;
   }

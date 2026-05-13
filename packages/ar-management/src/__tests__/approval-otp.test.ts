@@ -20,52 +20,66 @@ function createMockEnv() {
   let challenge: Challenge | null = null;
 
   const challengeStore = {
-    storeChallengeRpc: vi.fn(async (request: {
-      id: string;
-      tenantId: string;
-      type: Challenge['type'];
-      userId: string;
-      challenge: string;
-      ttl: number;
-      email?: string;
-      metadata?: Record<string, unknown>;
-    }) => {
-      challenge = {
-        id: request.id,
-        tenantId: request.tenantId,
-        type: request.type,
-        userId: request.userId,
-        challenge: request.challenge,
-        email: request.email,
-        metadata: request.metadata,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + request.ttl * 1000,
-        consumed: false,
-      };
-      return { success: true };
-    }),
+    storeChallengeRpc: vi.fn(
+      async (request: {
+        id: string;
+        tenantId: string;
+        type: Challenge['type'];
+        userId: string;
+        challenge: string;
+        ttl: number;
+        email?: string;
+        metadata?: Record<string, unknown>;
+      }) => {
+        challenge = {
+          id: request.id,
+          tenantId: request.tenantId,
+          type: request.type,
+          userId: request.userId,
+          challenge: request.challenge,
+          email: request.email,
+          metadata: request.metadata,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + request.ttl * 1000,
+          consumed: false,
+        };
+        return { success: true };
+      }
+    ),
     getChallengeRpc: vi.fn(async () => challenge),
-    consumeChallengeRpc: vi.fn(async (request: { id: string; tenantId: string; type: Challenge['type']; challenge?: string }) => {
-      if (!challenge || challenge.id !== request.id || challenge.type !== request.type || challenge.consumed) {
-        throw new Error('Challenge not found or already consumed');
+    consumeChallengeRpc: vi.fn(
+      async (request: {
+        id: string;
+        tenantId: string;
+        type: Challenge['type'];
+        challenge?: string;
+      }) => {
+        if (
+          !challenge ||
+          challenge.id !== request.id ||
+          challenge.type !== request.type ||
+          challenge.consumed
+        ) {
+          throw new Error('Challenge not found or already consumed');
+        }
+        if (challenge.tenantId !== request.tenantId) {
+          throw new Error('Challenge tenant mismatch');
+        }
+        if (request.challenge && request.challenge !== challenge.challenge) {
+          throw new Error('Challenge value mismatch');
+        }
+        challenge = {
+          ...challenge,
+          consumed: true,
+        };
+        return {
+          challenge: challenge.challenge,
+          userId: challenge.userId,
+          email: challenge.email,
+          metadata: challenge.metadata,
+        };
       }
-      if (challenge.tenantId !== request.tenantId) {
-        throw new Error('Challenge tenant mismatch');
-      }
-      if (request.challenge && request.challenge !== challenge.challenge) {
-        throw new Error('Challenge value mismatch');
-      }
-      challenge = {
-        ...challenge,
-        consumed: true,
-      };
-      return {
-        challenge: challenge.challenge,
-        userId: challenge.userId,
-        email: challenge.email,
-        metadata: challenge.metadata,
-      };
-    }),
+    ),
   };
 
   mockGetChallengeStoreByChallengeId.mockResolvedValue(challengeStore);

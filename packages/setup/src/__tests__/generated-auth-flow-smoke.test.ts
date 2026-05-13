@@ -85,10 +85,13 @@ describe('generated auth flow smoke', () => {
     fetchMock.mockImplementationOnce(async (_input, init) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as { client_name?: string };
       updatedClientName = body.client_name ?? '';
-      return new Response(JSON.stringify({ client_id: 'client-1', client_name: updatedClientName }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ client_id: 'client-1', client_name: updatedClientName }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      );
     });
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ access_token: 'access-1', token_type: 'Bearer' }), {
@@ -230,10 +233,13 @@ describe('generated auth flow smoke', () => {
     fetchMock.mockImplementationOnce(async (_input, init) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as { client_name?: string };
       updatedClientName = body.client_name ?? '';
-      return new Response(JSON.stringify({ client_id: 'client-1', client_name: updatedClientName }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ client_id: 'client-1', client_name: updatedClientName }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      );
     });
     fetchMock.mockResolvedValueOnce(
       new Response(

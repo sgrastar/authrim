@@ -5,7 +5,10 @@ import {
   ElevationGrantRepository,
 } from '../admin/admin-approval-request';
 import { MockDatabaseAdapter } from './mock-adapter';
-import { canonicalizeApprovalScope, generateInvestigationId } from '../../services/approval-governance';
+import {
+  canonicalizeApprovalScope,
+  generateInvestigationId,
+} from '../../services/approval-governance';
 
 let adapter: MockDatabaseAdapter;
 let requestRepo: ApprovalRequestRepository;

@@ -93,8 +93,7 @@ export const SAML_INTEROPERABILITY_MATRIX: SAMLInteropMatrixEntry[] = [
     area: 'encryption',
     status: 'covered',
     ciTest: 'encryption.test.ts',
-    notes:
-      'Default XML Encryption uses RSA-OAEP with SHA-256/MGF1-SHA256 and AES-256-GCM.',
+    notes: 'Default XML Encryption uses RSA-OAEP with SHA-256/MGF1-SHA256 and AES-256-GCM.',
   },
   {
     id: 'xml-encryption-legacy-explicit-opt-in',

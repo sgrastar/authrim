@@ -6,11 +6,7 @@ import { createDefaultConfig } from '../core/config.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import { WORKER_COMPONENTS } from '../core/naming.js';
-import {
-  buildResourceIdsFromLock,
-  generateWranglerConfig,
-  toToml,
-} from '../core/wrangler.js';
+import { buildResourceIdsFromLock, generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { validateGeneratedEnvironment } from '../core/generated-env-validator.js';
 
 const tempDirs: string[] = [];
@@ -62,7 +58,11 @@ async function writeGeneratedEnvironment(
     ],
     kv: [
       { binding: 'CLIENTS_CACHE', name: `${env.toUpperCase()}-CLIENTS_CACHE`, id: 'kv-clients' },
-      { binding: 'INITIAL_ACCESS_TOKENS', name: `${env.toUpperCase()}-INITIAL_ACCESS_TOKENS`, id: 'kv-iat' },
+      {
+        binding: 'INITIAL_ACCESS_TOKENS',
+        name: `${env.toUpperCase()}-INITIAL_ACCESS_TOKENS`,
+        id: 'kv-iat',
+      },
       { binding: 'SETTINGS', name: `${env.toUpperCase()}-SETTINGS`, id: 'kv-settings' },
       { binding: 'REBAC_CACHE', name: `${env.toUpperCase()}-REBAC_CACHE`, id: 'kv-rebac' },
       { binding: 'USER_CACHE', name: `${env.toUpperCase()}-USER_CACHE`, id: 'kv-user' },
@@ -101,7 +101,9 @@ describe('validateGeneratedEnvironment', () => {
   afterEach(async () => {
     await Promise.all(
       tempDirs.splice(0).map(async (dir) => {
-        await import('node:fs/promises').then(({ rm }) => rm(dir, { recursive: true, force: true }));
+        await import('node:fs/promises').then(({ rm }) =>
+          rm(dir, { recursive: true, force: true })
+        );
       })
     );
   });
@@ -123,10 +125,10 @@ describe('validateGeneratedEnvironment', () => {
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
 
     expect(result.ok).toBe(false);
-    expect(result.checks.find((check) => check.id === 'active-profile-compatibility')?.details).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('builtin:storage:external-postgres'),
-      ])
+    expect(
+      result.checks.find((check) => check.id === 'active-profile-compatibility')?.details
+    ).toEqual(
+      expect.arrayContaining([expect.stringContaining('builtin:storage:external-postgres')])
     );
   });
 

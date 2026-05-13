@@ -33,11 +33,13 @@ function createMockEnv(listData: typeof mockListData | null = mockListData): Env
     DB: {
       prepare: vi.fn().mockImplementation((sql: string) => ({
         bind: vi.fn().mockImplementation((tenantId?: string) => ({
-          first: vi.fn().mockResolvedValue(
-            sql.includes('FROM status_lists') && listData?.tenant_id === tenantId
-              ? listData
-              : null
-          ),
+          first: vi
+            .fn()
+            .mockResolvedValue(
+              sql.includes('FROM status_lists') && listData?.tenant_id === tenantId
+                ? listData
+                : null
+            ),
         })),
       })),
       batch: vi.fn().mockResolvedValue([]),

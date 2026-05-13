@@ -147,9 +147,9 @@ describe('runtime profile admin handlers', () => {
       };
     };
     expect(allBody.include_builtins).toBe(true);
-    expect(allBody.profiles.storage.some((profile) => profile.id === DEFAULT_STORAGE_PROFILE_ID)).toBe(
-      true
-    );
+    expect(
+      allBody.profiles.storage.some((profile) => profile.id === DEFAULT_STORAGE_PROFILE_ID)
+    ).toBe(true);
     expect(allBody.profiles.storage.some((profile) => profile.id === 'tenant-a-storage')).toBe(
       true
     );
@@ -679,7 +679,12 @@ describe('runtime profile admin handlers', () => {
     );
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
-      reference_status: Array<{ path: string; resolution: string; severity: string; activation: string }>;
+      reference_status: Array<{
+        path: string;
+        resolution: string;
+        severity: string;
+        activation: string;
+      }>;
       activation_status: { activatable: boolean; state: string };
     };
     expect(getBody.reference_status).toEqual(
@@ -749,7 +754,12 @@ describe('runtime profile admin handlers', () => {
     );
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
-      reference_status: Array<{ path: string; resolution: string; severity: string; activation: string }>;
+      reference_status: Array<{
+        path: string;
+        resolution: string;
+        severity: string;
+        activation: string;
+      }>;
       activation_status: { activatable: boolean; state: string };
     };
     expect(getBody.reference_status).toEqual(
@@ -846,7 +856,11 @@ describe('runtime profile admin handlers', () => {
     const app = createTestApp();
     const env = createEnv();
 
-    const invalidRes = await app.request('/api/admin/runtime-profiles?kind=unknown', undefined, env);
+    const invalidRes = await app.request(
+      '/api/admin/runtime-profiles?kind=unknown',
+      undefined,
+      env
+    );
     expect(invalidRes.status).toBe(400);
 
     const builtinPutRes = await app.request(

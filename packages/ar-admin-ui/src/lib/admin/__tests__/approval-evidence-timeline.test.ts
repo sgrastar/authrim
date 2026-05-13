@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import type { ApprovalTransportEvidenceEvent } from '$lib/api/admin-approvals'
+import { describe, expect, it } from 'vitest';
+import type { ApprovalTransportEvidenceEvent } from '$lib/api/admin-approvals';
 import {
 	getApprovalEvidenceArtifactSwitch,
 	getApprovalEvidenceCompletionArtifact,
@@ -7,7 +7,7 @@ import {
 	getApprovalEvidenceGrantSubjectTokenIssue,
 	getApprovalEvidenceEventDescriptor,
 	getApprovalEvidenceEventMeta
-} from '../approval-evidence-timeline'
+} from '../approval-evidence-timeline';
 
 describe('approval evidence timeline helpers', () => {
 	it('describes approval switch events with stable labels', () => {
@@ -17,14 +17,14 @@ describe('approval evidence timeline helpers', () => {
 			at: Date.now(),
 			request_status: 'pending',
 			transport_detail: null
-		} satisfies ApprovalTransportEvidenceEvent)
+		} satisfies ApprovalTransportEvidenceEvent);
 
 		expect(descriptor).toEqual({
 			title: 'Notification Reissued',
 			tone: 'warning',
 			summary: 'The completion path or notification was reissued for the pending step.'
-		})
-	})
+		});
+	});
 
 	it('describes grant revoke events with a danger tone', () => {
 		const descriptor = getApprovalEvidenceEventDescriptor({
@@ -33,14 +33,14 @@ describe('approval evidence timeline helpers', () => {
 			at: Date.now(),
 			request_status: 'approved',
 			transport_detail: null
-		} satisfies ApprovalTransportEvidenceEvent)
+		} satisfies ApprovalTransportEvidenceEvent);
 
 		expect(descriptor).toEqual({
 			title: 'Grant Revoked',
 			tone: 'danger',
 			summary: 'An active elevation grant was revoked before expiry.'
-		})
-	})
+		});
+	});
 
 	it('extracts artifact switch and completion artifact metadata', () => {
 		const event = {
@@ -65,20 +65,20 @@ describe('approval evidence timeline helpers', () => {
 					}
 				}
 			}
-		} satisfies ApprovalTransportEvidenceEvent
+		} satisfies ApprovalTransportEvidenceEvent;
 
 		expect(getApprovalEvidenceArtifactSwitch(event)).toEqual({
 			previousArtifactId: 'apc_1',
 			previousMethod: 'portal_confirm',
 			requestedMethod: 'passkey',
 			allowedMethods: ['portal_confirm', 'passkey', 'reauth']
-		})
-	expect(getApprovalEvidenceCompletionArtifact(event)).toEqual({
+		});
+		expect(getApprovalEvidenceCompletionArtifact(event)).toEqual({
 			artifactId: 'apc_2',
 			path: '/api/approval-artifacts/apc_2/portal',
 			expiresAt: 1730000000000
-		})
-	})
+		});
+	});
 
 	it('extracts decision receipt metadata', () => {
 		const descriptor = getApprovalEvidenceEventDescriptor({
@@ -101,13 +101,13 @@ describe('approval evidence timeline helpers', () => {
 					}
 				}
 			}
-		} satisfies ApprovalTransportEvidenceEvent)
+		} satisfies ApprovalTransportEvidenceEvent);
 
 		expect(descriptor).toEqual({
 			title: 'Decision Receipt Issued',
 			tone: 'success',
 			summary: 'A post-decision receipt was recorded for approver follow-up and audit.'
-		})
+		});
 		expect(
 			getApprovalEvidenceDecisionReceipt({
 				id: 'evt-receipt',
@@ -129,7 +129,7 @@ describe('approval evidence timeline helpers', () => {
 						}
 					}
 				}
-				} satisfies ApprovalTransportEvidenceEvent)
+			} satisfies ApprovalTransportEvidenceEvent)
 		).toEqual({
 			receiptId: 'adr_1',
 			path: '/api/approval-receipts/adr_1',
@@ -138,8 +138,8 @@ describe('approval evidence timeline helpers', () => {
 			requestStatus: 'approved',
 			expiresAt: 1730000100000,
 			grantIds: ['egr_1']
-		})
-	})
+		});
+	});
 
 	it('extracts downstream subject token issuance metadata', () => {
 		const descriptor = getApprovalEvidenceEventDescriptor({
@@ -168,14 +168,14 @@ describe('approval evidence timeline helpers', () => {
 					}
 				}
 			}
-		} satisfies ApprovalTransportEvidenceEvent)
+		} satisfies ApprovalTransportEvidenceEvent);
 
 		expect(descriptor).toEqual({
 			title: 'Subject Token Issued',
 			tone: 'info',
 			summary:
 				'A downstream subject token was issued for service-side token exchange and protected resource access.'
-		})
+		});
 		expect(
 			getApprovalEvidenceGrantSubjectTokenIssue({
 				id: 'evt-token',
@@ -203,7 +203,7 @@ describe('approval evidence timeline helpers', () => {
 						}
 					}
 				}
-				} satisfies ApprovalTransportEvidenceEvent)
+			} satisfies ApprovalTransportEvidenceEvent)
 		).toEqual({
 			grantId: 'egr_1',
 			clientId: 'svc-client-1',
@@ -218,8 +218,8 @@ describe('approval evidence timeline helpers', () => {
 			requiresOnlineCheck: true,
 			failClosed: true,
 			requireFullAccess: true
-		})
-	})
+		});
+	});
 
 	it('builds concise event meta strings', () => {
 		const meta = getApprovalEvidenceEventMeta({
@@ -232,7 +232,7 @@ describe('approval evidence timeline helpers', () => {
 			notification_action: 'resend',
 			notification_count: 2,
 			reason_code: 'support_case'
-		} satisfies ApprovalTransportEvidenceEvent)
+		} satisfies ApprovalTransportEvidenceEvent);
 
 		expect(meta).toEqual([
 			'Method: passkey',
@@ -240,6 +240,6 @@ describe('approval evidence timeline helpers', () => {
 			'Notify: resend',
 			'Count: 2',
 			'Reason: support_case'
-		])
-	})
-})
+		]);
+	});
+});

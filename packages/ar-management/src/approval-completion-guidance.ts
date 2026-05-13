@@ -1,7 +1,4 @@
-import type {
-  ApprovalApproverSubjectType,
-  ApprovalTransportMethod,
-} from '@authrim/ar-lib-core';
+import type { ApprovalApproverSubjectType, ApprovalTransportMethod } from '@authrim/ar-lib-core';
 
 export type ApprovalCompletionMode = 'artifact_only' | 'step_up_required';
 
@@ -12,16 +9,14 @@ export interface ApprovalCompletionRequirementsView {
   artifact_path: string;
   portal_path: string;
   switch_method_path: string | null;
-  assertion_endpoints:
-    | {
-        options?: string;
-        verify?: string;
-        assert?: string;
-        start?: string;
-        status?: string;
-        device?: string;
-      }
-    | null;
+  assertion_endpoints: {
+    options?: string;
+    verify?: string;
+    assert?: string;
+    start?: string;
+    status?: string;
+    device?: string;
+  } | null;
   transport_channel: string | null;
   guidance_title: string;
   guidance_body: string;

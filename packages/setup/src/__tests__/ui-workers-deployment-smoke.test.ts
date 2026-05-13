@@ -28,8 +28,8 @@ describe('UI Workers deployment smoke tests', () => {
       expect(pkg.scripts?.['deploy:production']).toContain('wrangler deploy');
       expect(pkg.scripts?.['deploy:preview']).not.toContain('wrangler pages');
       expect(pkg.scripts?.['deploy:production']).not.toContain('wrangler pages');
-      expect(svelteConfig).toContain("@sveltejs/adapter-cloudflare");
-      expect(svelteConfig).toContain("routes:");
+      expect(svelteConfig).toContain('@sveltejs/adapter-cloudflare');
+      expect(svelteConfig).toContain('routes:');
     }
   );
 

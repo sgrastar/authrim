@@ -400,7 +400,11 @@ export class ClientRepository {
   async create(input: CreateClientInput): Promise<OAuthClient> {
     const now = getCurrentTimestamp();
     const clientId = input.client_id || generateId();
-    const tenantId = resolveInputTenantId(this.tenantId, input.tenant_id, 'ClientRepository.create');
+    const tenantId = resolveInputTenantId(
+      this.tenantId,
+      input.tenant_id,
+      'ClientRepository.create'
+    );
 
     const client: OAuthClient = {
       client_id: clientId,

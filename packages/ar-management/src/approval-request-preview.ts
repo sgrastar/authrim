@@ -21,10 +21,7 @@ import {
 import { type ApprovalNotificationPolicySource } from './approval-notification-policy';
 import { describeApprovalCompletionMethod } from './approval-completion-guidance';
 import { resolveApprovalNotificationTransport } from './approval-notification-resolution';
-import {
-  getApprovalPresetExpiry,
-  resolveApprovalEffectivePolicy,
-} from './approval-policy-presets';
+import { getApprovalPresetExpiry, resolveApprovalEffectivePolicy } from './approval-policy-presets';
 
 type AdminContext = Context<any, any, any>;
 
@@ -193,8 +190,7 @@ export async function resolveApprovalSteps(
       relationships.forEach((relationship, index) => {
         resolved.push({
           ...step,
-          step_key:
-            relationships.length === 1 ? step.step_key : `${step.step_key}:${index + 1}`,
+          step_key: relationships.length === 1 ? step.step_key : `${step.step_key}:${index + 1}`,
           subject_type: 'customer_delegate',
           subject_id: relationship.from_id,
           relation_type:
@@ -245,8 +241,8 @@ export function buildApprovalPreviewRequest(input: {
   return {
     investigation_id: scope.normalized.investigation_id ?? generateInvestigationId(),
     tenant_id: tenantId,
-    requester_subject_type:
-      (body.requester_subject_type ?? requesterSubjectType) as ApprovalApproverSubjectType,
+    requester_subject_type: (body.requester_subject_type ??
+      requesterSubjectType) as ApprovalApproverSubjectType,
     requester_subject_id: body.requester_subject_id ?? requesterSubjectId,
     target_subject_type: body.target_subject_type,
     target_subject_id: body.target_subject_id,
@@ -279,7 +275,8 @@ function buildSyntheticApprovalRequest(
     public_request_id: 'preview',
     tenant_id: preview.tenant_id,
     investigation_id: preview.investigation_id,
-    requester_subject_type: preview.requester_subject_type as ApprovalRequest['requester_subject_type'],
+    requester_subject_type:
+      preview.requester_subject_type as ApprovalRequest['requester_subject_type'],
     requester_subject_id: preview.requester_subject_id,
     target_subject_type: preview.target_subject_type as ApprovalRequest['target_subject_type'],
     target_subject_id: preview.target_subject_id,
@@ -339,14 +336,11 @@ export async function previewApprovalRequestResolution(
           method: step.method ?? null,
           transport_channel: step.transport_channel ?? null,
         };
-        const resolvedTransport = await resolveApprovalNotificationTransport(
-          c,
-          {
-            request: syntheticRequest,
-            approval: previewApproval,
-            strictMethod: !!step.method,
-          }
-        );
+        const resolvedTransport = await resolveApprovalNotificationTransport(c, {
+          request: syntheticRequest,
+          approval: previewApproval,
+          strictMethod: !!step.method,
+        });
         selectedMethod = resolvedTransport.method;
         transportChannel = resolvedTransport.transportChannel;
         acceptableMethods = resolvedTransport.acceptableMethods;
@@ -379,7 +373,9 @@ export async function previewApprovalRequestResolution(
         guidance_title: completionGuide?.guidance_title ?? null,
         guidance_body: completionGuide?.guidance_body ?? null,
         fallback_note: completionGuide?.fallback_note ?? null,
-        ...(transportResolutionError ? { transport_resolution_error: transportResolutionError } : {}),
+        ...(transportResolutionError
+          ? { transport_resolution_error: transportResolutionError }
+          : {}),
       } satisfies ApprovalPreviewResolvedStep;
     })
   );

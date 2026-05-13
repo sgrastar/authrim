@@ -46,7 +46,9 @@ function isProviderLike(value: unknown): value is Partial<LoginMethodExternalPro
 	return typeof value === 'object' && value !== null;
 }
 
-function normalizeProvider(provider: Partial<LoginMethodExternalProvider>): LoginMethodExternalProvider {
+function normalizeProvider(
+	provider: Partial<LoginMethodExternalProvider>
+): LoginMethodExternalProvider {
 	const type = normalizeType(provider.type);
 	return {
 		id: String(provider.id || ''),

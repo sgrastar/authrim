@@ -1745,11 +1745,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
 
     if (!attemptResult.allowed) {
       // Invalidate the challenge when max attempts exceeded
-      const challengeStore = await getChallengeStoreByChallengeId(
-        c.env,
-        attempt_id,
-        tenantId
-      );
+      const challengeStore = await getChallengeStoreByChallengeId(c.env, attempt_id, tenantId);
       await challengeStore.deleteChallengeRpc(`direct_email_code:${attempt_id}`).catch(() => {});
 
       return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
@@ -1758,11 +1754,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Consume challenge
-    const challengeStore = await getChallengeStoreByChallengeId(
-      c.env,
-      attempt_id,
-      tenantId
-    );
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, attempt_id, tenantId);
 
     let challengeData: {
       challenge: string;

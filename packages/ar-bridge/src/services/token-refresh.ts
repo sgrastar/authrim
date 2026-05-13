@@ -138,10 +138,7 @@ export async function refreshExpiringTokens(env: Env): Promise<number> {
  *
  * @returns Number of tokens successfully refreshed
  */
-export async function refreshExpiringTokensForTenant(
-  env: Env,
-  tenantId: string
-): Promise<number> {
+export async function refreshExpiringTokensForTenant(env: Env, tenantId: string): Promise<number> {
   const config = await getTokenRefreshConfig(env);
   return refreshExpiringTokensForTenantWithConfig(env, tenantId, config);
 }
@@ -232,12 +229,7 @@ async function refreshExpiringTokensForTenantWithConfig(
   const threshold = now + config.refreshThresholdSeconds * 1000;
 
   // Find linked identities with tokens expiring soon
-  const expiringIdentities = await findExpiringTokens(
-    env,
-    tenantId,
-    threshold,
-    config.batchSize
-  );
+  const expiringIdentities = await findExpiringTokens(env, tenantId, threshold, config.batchSize);
 
   if (expiringIdentities.length === 0) {
     return 0;
@@ -525,9 +517,7 @@ export function normalizeTokenRefreshConfig(
 ): TokenRefreshConfig {
   return {
     enabled:
-      typeof config.enabled === 'boolean'
-        ? config.enabled
-        : DEFAULT_TOKEN_REFRESH_CONFIG.enabled,
+      typeof config.enabled === 'boolean' ? config.enabled : DEFAULT_TOKEN_REFRESH_CONFIG.enabled,
     refreshThresholdSeconds: normalizePositiveInteger(
       config.refreshThresholdSeconds,
       DEFAULT_TOKEN_REFRESH_CONFIG.refreshThresholdSeconds
@@ -571,7 +561,8 @@ async function startTokenRefreshRun(
   const runId = `etr_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Date.now();
   const actorType =
-    input.actor?.actorType ?? (input.actor?.authMethod === 'machine_access_token' ? 'machine' : null);
+    input.actor?.actorType ??
+    (input.actor?.authMethod === 'machine_access_token' ? 'machine' : null);
   const actorId = input.actor?.actorId ?? null;
 
   try {

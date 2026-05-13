@@ -1550,10 +1550,7 @@ export const externalIdpAPI = {
 		url: string;
 	}> {
 		const encodedProviderId = encodeURIComponent(providerId);
-		const targetUrl = new URL(
-			startUrl || `/api/external/${encodedProviderId}/start`,
-			API_BASE_URL
-		);
+		const targetUrl = new URL(startUrl || `/api/external/${encodedProviderId}/start`, API_BASE_URL);
 
 		if (startMode === 'direct') {
 			return { url: targetUrl.toString() };

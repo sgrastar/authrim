@@ -76,10 +76,7 @@ async function fetchJsonCheck(options: {
   }
 
   if (options.expectedStatus && response.status !== options.expectedStatus) {
-    addFail(
-      options.check,
-      `HTTP ${options.expectedStatus} expected, actual=${response.status}`
-    );
+    addFail(options.check, `HTTP ${options.expectedStatus} expected, actual=${response.status}`);
   } else {
     addPass(options.check, `HTTP ${response.status}`);
   }
@@ -171,7 +168,9 @@ export async function runGeneratedAuthFlowSmoke(
       `initial access token creation failed: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  checks.push(finalizeCheck(iatCheck, 'dynamic client registration initial access token を確認しました'));
+  checks.push(
+    finalizeCheck(iatCheck, 'dynamic client registration initial access token を確認しました')
+  );
 
   const registerCheck = makeSmokeCheck(
     'dcr-register',
@@ -334,7 +333,10 @@ export async function runGeneratedAuthFlowSmoke(
 
     let accessToken = '';
     if (!tokenResponse.ok) {
-      if (clientCredentialsMode === 'auto' && isUnsupportedClientCredentialsResponse(tokenResponse.payload)) {
+      if (
+        clientCredentialsMode === 'auto' &&
+        isUnsupportedClientCredentialsResponse(tokenResponse.payload)
+      ) {
         addWarn(
           tokenCheck,
           `client_credentials が無効のため token/introspect/revoke をスキップしました: ${tokenResponse.status}`
@@ -386,7 +388,9 @@ export async function runGeneratedAuthFlowSmoke(
           }
         },
       });
-      checks.push(finalizeCheck(introspectCheck, 'token introspection before revoke を確認しました'));
+      checks.push(
+        finalizeCheck(introspectCheck, 'token introspection before revoke を確認しました')
+      );
 
       const revokeCheck = makeSmokeCheck(
         'token-revoke',
@@ -485,7 +489,9 @@ export async function runGeneratedAuthFlowSmoke(
     } else {
       addPass(cleanupCheck, `HTTP ${cleanupResponse.status || 404}`);
     }
-    checks.push(finalizeCheck(cleanupCheck, 'temporary initial access token cleanup を確認しました'));
+    checks.push(
+      finalizeCheck(cleanupCheck, 'temporary initial access token cleanup を確認しました')
+    );
   }
 
   if (temporaryDcr) {

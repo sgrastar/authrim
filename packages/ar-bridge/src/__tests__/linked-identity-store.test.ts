@@ -1,42 +1,43 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockQueryOne, mockQuery, mockExecute, mockEnsureDatabaseAdapter, sqlTracker } =
-  vi.hoisted(() => {
-  const tracker = {
-    calls: [] as { method: string; sql: string; params: unknown[] }[],
-    reset() {
-      this.calls.length = 0;
-    },
-  };
+const { mockQueryOne, mockQuery, mockExecute, mockEnsureDatabaseAdapter, sqlTracker } = vi.hoisted(
+  () => {
+    const tracker = {
+      calls: [] as { method: string; sql: string; params: unknown[] }[],
+      reset() {
+        this.calls.length = 0;
+      },
+    };
 
-  const queryOne = vi.fn().mockResolvedValue(null);
-  const query = vi.fn().mockResolvedValue([]);
-  const execute = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+    const queryOne = vi.fn().mockResolvedValue(null);
+    const query = vi.fn().mockResolvedValue([]);
+    const execute = vi.fn().mockResolvedValue({ rowsAffected: 1 });
 
-  const adapter = {
-    queryOne: (sql: string, params?: unknown[]) => {
-      tracker.calls.push({ method: 'queryOne', sql, params: params || [] });
-      return queryOne(sql, params);
-    },
-    query: (sql: string, params?: unknown[]) => {
-      tracker.calls.push({ method: 'query', sql, params: params || [] });
-      return query(sql, params);
-    },
-    execute: (sql: string, params?: unknown[]) => {
-      tracker.calls.push({ method: 'execute', sql, params: params || [] });
-      return execute(sql, params);
-    },
-  };
-  const ensureDatabaseAdapter = vi.fn(() => adapter);
+    const adapter = {
+      queryOne: (sql: string, params?: unknown[]) => {
+        tracker.calls.push({ method: 'queryOne', sql, params: params || [] });
+        return queryOne(sql, params);
+      },
+      query: (sql: string, params?: unknown[]) => {
+        tracker.calls.push({ method: 'query', sql, params: params || [] });
+        return query(sql, params);
+      },
+      execute: (sql: string, params?: unknown[]) => {
+        tracker.calls.push({ method: 'execute', sql, params: params || [] });
+        return execute(sql, params);
+      },
+    };
+    const ensureDatabaseAdapter = vi.fn(() => adapter);
 
-  return {
-    mockQueryOne: queryOne,
-    mockQuery: query,
-    mockExecute: execute,
-    mockEnsureDatabaseAdapter: ensureDatabaseAdapter,
-    sqlTracker: tracker,
-  };
-});
+    return {
+      mockQueryOne: queryOne,
+      mockQuery: query,
+      mockExecute: execute,
+      mockEnsureDatabaseAdapter: ensureDatabaseAdapter,
+      sqlTracker: tracker,
+    };
+  }
+);
 
 vi.mock('@authrim/ar-lib-core', () => ({
   ensureDatabaseAdapter: mockEnsureDatabaseAdapter,

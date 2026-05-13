@@ -264,9 +264,9 @@ describe('resolveSAMLNameIDValue', () => {
       },
     };
 
-    expect(resolveSAMLPersistentNameIDRegistryStore({ KV: kvRegistry, STATE_STORE: stateStore })).toBe(
-      kvRegistry
-    );
+    expect(
+      resolveSAMLPersistentNameIDRegistryStore({ KV: kvRegistry, STATE_STORE: stateStore })
+    ).toBe(kvRegistry);
     expect(resolveSAMLPersistentNameIDRegistryStore({ STATE_STORE: stateStore })).toBe(stateStore);
     expect(resolveSAMLPersistentNameIDRegistryStore({})).toBeUndefined();
   });
@@ -283,11 +283,7 @@ describe('resolveSAMLNameIDValue', () => {
 
   it('builds a tenant and SP scoped persistent NameID registry key', () => {
     expect(
-      buildSAMLPersistentNameIDRegistryKey(
-        'tenant-a',
-        'https://sp.example.com/saml',
-        'user-123'
-      )
+      buildSAMLPersistentNameIDRegistryKey('tenant-a', 'https://sp.example.com/saml', 'user-123')
     ).toBe(
       'saml:persistent-nameid:tenant:tenant-a:sp:https%3A%2F%2Fsp.example.com%2Fsaml:subject:user-123'
     );

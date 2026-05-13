@@ -30,7 +30,9 @@ describe('SAML metadata interoperability fixtures', () => {
     expect(config.nameIdFormat).toBe(expected.nameIdFormat);
     expect(config.allowedBindings).toEqual([...expected.allowedBindings]);
     if ('metadataRequestedAttributeCount' in expected) {
-      expect(config.metadataRequestedAttributes).toHaveLength(expected.metadataRequestedAttributeCount);
+      expect(config.metadataRequestedAttributes).toHaveLength(
+        expected.metadataRequestedAttributeCount
+      );
     }
     if ('metadataSuggestedAttributeCount' in expected) {
       expect(config.metadataAttributeReleasePolicySuggestion?.attributes).toHaveLength(

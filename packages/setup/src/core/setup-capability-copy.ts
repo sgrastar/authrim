@@ -310,7 +310,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       '멀티테넌트 라우팅용 DNS 전제를 확인하지 못해 네이키드 도메인 구성은 추가 확인이 필요합니다.',
     pages: 'UI Workers',
-    pagesOk: 'Workers API에 도달할 수 있어 Login/Admin UI의 Workers 배포에 필요한 전제를 충족합니다.',
+    pagesOk:
+      'Workers API에 도달할 수 있어 Login/Admin UI의 Workers 배포에 필요한 전제를 충족합니다.',
     pagesReview:
       'Workers API를 확인하지 못해 Workers 배포가 가능할 수도 있지만 추가 확인이 필요합니다.',
   },
@@ -344,7 +345,8 @@ export const SETUP_CAPABILITY_COPY: Record<string, SetupCapabilityCopy> = {
     nakedDomainReview:
       'Не удалось проверить DNS-предпосылки для мультитенантной маршрутизации, поэтому конфигурация naked domain требует проверки.',
     pages: 'UI Workers',
-    pagesOk: 'API Workers доступен и удовлетворяет требованиям для деплоя Login/Admin UI в Workers.',
+    pagesOk:
+      'API Workers доступен и удовлетворяет требованиям для деплоя Login/Admin UI в Workers.',
     pagesReview:
       'Не удалось проверить API Workers, поэтому деплой в Workers может сработать, но требует проверки.',
   },

@@ -512,9 +512,10 @@ function buildBlockExpression(action?: SupportOpsActionName): string {
   END`;
 }
 
-function buildSnapshotCutoffExpression(
-  resource: { table: string; fields: Record<string, { column: string }> }
-): string {
+function buildSnapshotCutoffExpression(resource: {
+  table: string;
+  fields: Record<string, { column: string }>;
+}): string {
   const createdAt = resource.fields.created_at?.column;
   const updatedAt = resource.fields.updated_at?.column;
   if (!createdAt || !updatedAt) {
@@ -931,7 +932,11 @@ supportOpsRouter.post('/aggregate', async (c) => {
 
     let lowCountSuppressedGroups = 0;
     let complementarySuppressedGroups = 0;
-    const visibleCandidates: Array<{ key: Record<string, unknown>; count: number; rawCount: number }> = [];
+    const visibleCandidates: Array<{
+      key: Record<string, unknown>;
+      count: number;
+      rawCount: number;
+    }> = [];
     for (const row of rows) {
       const rawCount = Number(row.count ?? 0);
       const bucketedCount = bucketAggregateCount(rawCount, resource.minCount);
@@ -1720,7 +1725,9 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
       return jsonError(c, 409, 'not_executable', 'Action must be approved before execution');
     }
     const approvedBy =
-      approvalActors.length > 0 ? approvalActors.join(',') : `approval:${action.approval_request_id}`;
+      approvalActors.length > 0
+        ? approvalActors.join(',')
+        : `approval:${action.approval_request_id}`;
     const approvalTransition = await authCtx.coreAdapter.execute(
       `UPDATE support_operation_actions
           SET status = 'approved', approved_by = ?, approved_at = ?, updated_at = ?

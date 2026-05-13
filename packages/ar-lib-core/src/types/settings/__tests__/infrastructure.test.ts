@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  INFRASTRUCTURE_DEFAULTS,
-  INFRASTRUCTURE_SETTINGS_META,
-} from '../infrastructure';
+import { INFRASTRUCTURE_DEFAULTS, INFRASTRUCTURE_SETTINGS_META } from '../infrastructure';
 import {
   DEFAULT_AUDIT_PROFILE_ID,
   DEFAULT_RESIDENCY_PROFILE_ID,

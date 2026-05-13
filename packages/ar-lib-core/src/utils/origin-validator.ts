@@ -49,15 +49,16 @@ export function isAllowedOrigin(origin: string | undefined, allowedPatterns: str
  * @returns RegExp for matching
  */
 function patternToRegex(pattern: string): RegExp | null {
-  if (!/^https:\/\/\*\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::\d{1,5})?$/i.test(pattern)) {
+  if (
+    !/^https:\/\/\*\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::\d{1,5})?$/i.test(
+      pattern
+    )
+  ) {
     return null;
   }
 
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(
-    `^${escaped.replaceAll('*', '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?')}$`,
-    'i'
-  );
+  return new RegExp(`^${escaped.replaceAll('*', '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?')}$`, 'i');
 }
 
 /**

@@ -23,21 +23,11 @@ describe('Direct Auth compatibility endpoints', () => {
 
 describe('Direct Auth channel metadata policy', () => {
   it('allows native clients to use the native channel by default', () => {
-    expect(
-      isDirectAuthClientChannelAllowed(
-        { application_type: 'native' },
-        'native'
-      )
-    ).toBe(true);
+    expect(isDirectAuthClientChannelAllowed({ application_type: 'native' }, 'native')).toBe(true);
   });
 
   it('rejects native clients on browser channel unless explicitly allowed', () => {
-    expect(
-      isDirectAuthClientChannelAllowed(
-        { application_type: 'native' },
-        'browser'
-      )
-    ).toBe(false);
+    expect(isDirectAuthClientChannelAllowed({ application_type: 'native' }, 'browser')).toBe(false);
     expect(
       isDirectAuthClientChannelAllowed(
         { application_type: 'native', allowed_channels: ['browser'] },
@@ -47,12 +37,7 @@ describe('Direct Auth channel metadata policy', () => {
   });
 
   it('rejects web clients on native channel unless explicitly allowed', () => {
-    expect(
-      isDirectAuthClientChannelAllowed(
-        { application_type: 'web' },
-        'native'
-      )
-    ).toBe(false);
+    expect(isDirectAuthClientChannelAllowed({ application_type: 'web' }, 'native')).toBe(false);
     expect(
       isDirectAuthClientChannelAllowed(
         { application_type: 'web', allowed_channels: ['native'] },

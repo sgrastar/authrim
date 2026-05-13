@@ -101,9 +101,11 @@ export function promoteSAMLNextSigningCertificate(
     ...policy,
     active,
     next: undefined,
-    backup: keepPreviousAsBackup ? previousActive ?? policy.backup : policy.backup,
+    backup: keepPreviousAsBackup ? (previousActive ?? policy.backup) : policy.backup,
     metadataCertificatePublication:
-      keepPreviousAsBackup && (previousActive || policy.backup) ? 'active_next_backup' : 'active_only',
+      keepPreviousAsBackup && (previousActive || policy.backup)
+        ? 'active_next_backup'
+        : 'active_only',
   };
 }
 

@@ -49,7 +49,9 @@ function normalizeSinks(value: unknown): AuditTargetDraft[] {
 	if (!Array.isArray(value)) {
 		return [];
 	}
-	return value.filter((entry): entry is AuditTargetDraft => isRecord(entry) && typeof entry.type === 'string');
+	return value.filter(
+		(entry): entry is AuditTargetDraft => isRecord(entry) && typeof entry.type === 'string'
+	);
 }
 
 function normalizeDraft(value: Record<string, unknown>): AuditProfileDraft {
@@ -103,7 +105,9 @@ function createAuditSinkTemplate(sinkType: EditableAuditSinkType): AuditTargetDr
 			};
 }
 
-function createAuditPrimaryTarget(type: Exclude<EditableAuditPrimaryType, 'archive-only'>): AuditTargetDraft {
+function createAuditPrimaryTarget(
+	type: Exclude<EditableAuditPrimaryType, 'archive-only'>
+): AuditTargetDraft {
 	if (type === 'd1') {
 		return {
 			type: 'd1',

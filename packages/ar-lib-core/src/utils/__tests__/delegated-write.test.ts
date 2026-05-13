@@ -64,7 +64,10 @@ describe('delegated write envelope', () => {
     expect(delegatedError?.field).toBe('audit.ticket_id');
 
     const response = createDelegatedWriteEnvelopeErrorResponse(delegatedError!);
-    const body = (await response.json()) as { error: string; error_details?: { code?: string; field?: string } };
+    const body = (await response.json()) as {
+      error: string;
+      error_details?: { code?: string; field?: string };
+    };
 
     expect(response.status).toBe(400);
     expect(response.headers.get('Cache-Control')).toBe('no-store');

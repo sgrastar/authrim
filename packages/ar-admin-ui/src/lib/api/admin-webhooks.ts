@@ -106,7 +106,10 @@ interface RawWebhookDeliverySummary {
 	has_detail: boolean;
 }
 
-interface RawWebhookDeliveryDetail extends Omit<RawWebhookDeliverySummary, 'request_body_preview' | 'response_body_preview'> {
+interface RawWebhookDeliveryDetail extends Omit<
+	RawWebhookDeliverySummary,
+	'request_body_preview' | 'response_body_preview'
+> {
 	request_body: string | null;
 	response_body: string | null;
 }

@@ -613,7 +613,7 @@ describe('protected customer profile route', () => {
       },
       env
     );
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       error: string;
       error_details?: { code?: string };
       step_up?: { step_up_token?: string };
@@ -652,7 +652,7 @@ describe('protected customer profile route', () => {
       },
       env
     );
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       customer_profile?: { sub?: string; name?: string; locale?: string };
       actor?: { id?: string };
       subject?: { id?: string };

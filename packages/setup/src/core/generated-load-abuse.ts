@@ -104,7 +104,9 @@ export function summarizeLatency(values: number[]): LoadLatencySummary {
   };
 }
 
-export async function runConcurrentStage(stage: StageDefinition): Promise<GeneratedLoadStageResult> {
+export async function runConcurrentStage(
+  stage: StageDefinition
+): Promise<GeneratedLoadStageResult> {
   const durations: number[] = [];
   const statusCounts = new Map<number, number>();
   const failureSamples: string[] = [];
@@ -198,7 +200,8 @@ async function getIntrospectionValidationSnapshot(input: {
     );
   }
   const settings = isRecord(response.payload.settings) ? response.payload.settings : null;
-  const strictValidation = settings && isRecord(settings.strictValidation) ? settings.strictValidation : null;
+  const strictValidation =
+    settings && isRecord(settings.strictValidation) ? settings.strictValidation : null;
   return {
     value: strictValidation?.value === true,
     source: typeof strictValidation?.source === 'string' ? strictValidation.source : 'unknown',
@@ -232,7 +235,10 @@ async function putIntrospectionValidation(input: {
   }
 }
 
-function getProfileStages(context: GeneratedApprovalLoadContext, profile: 'safe' | 'medium'): StageDefinition[] {
+function getProfileStages(
+  context: GeneratedApprovalLoadContext,
+  profile: 'safe' | 'medium'
+): StageDefinition[] {
   const baseUrl = context.baseUrl;
   const adminHeaders = {
     authorization: `Bearer ${context.adminSecret}`,
@@ -355,14 +361,16 @@ function getProfileStages(context: GeneratedApprovalLoadContext, profile: 'safe'
             audience: 'svc://op-userinfo/customer-profile',
           }).toString(),
         });
-        const hasToken = isRecord(response.payload) && typeof response.payload.access_token === 'string';
+        const hasToken =
+          isRecord(response.payload) && typeof response.payload.access_token === 'string';
         return {
           ok: response.ok && response.status === 200 && hasToken,
           status: response.status,
           retryAfterSeconds: extractRetryAfterSeconds(response.payload),
-          failureSample: response.ok && hasToken
-            ? undefined
-            : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
+          failureSample:
+            response.ok && hasToken
+              ? undefined
+              : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
         };
       },
     },
@@ -389,9 +397,10 @@ function getProfileStages(context: GeneratedApprovalLoadContext, profile: 'safe'
           ok: response.ok && response.status === 200 && active,
           status: response.status,
           retryAfterSeconds: extractRetryAfterSeconds(response.payload),
-          failureSample: response.ok && active
-            ? undefined
-            : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
+          failureSample:
+            response.ok && active
+              ? undefined
+              : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
         };
       },
     },
@@ -415,10 +424,7 @@ function getProfileStages(context: GeneratedApprovalLoadContext, profile: 'safe'
         const profileValue = payload?.profile;
         const profileData = isRecord(profileValue) ? profileValue : null;
         return {
-          ok:
-            response.ok &&
-            response.status === 200 &&
-            profileData?.sub === context.userId,
+          ok: response.ok && response.status === 200 && profileData?.sub === context.userId,
           status: response.status,
           retryAfterSeconds: extractRetryAfterSeconds(response.payload),
           failureSample:
@@ -482,7 +488,9 @@ function getProfileStages(context: GeneratedApprovalLoadContext, profile: 'safe'
           ok,
           status: response.status,
           retryAfterSeconds: extractRetryAfterSeconds(response.payload),
-          failureSample: ok ? undefined : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
+          failureSample: ok
+            ? undefined
+            : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
         };
       },
     },
@@ -495,7 +503,9 @@ export async function runGeneratedLoadAbuse(
   const target = await resolveGeneratedSmokeTarget(options);
   const profile = options.profile ?? 'safe';
   const context = await createGeneratedApprovalLoadContext(options);
-  const bootstrapChecks = context.checks.flatMap((check) => check.details.map((detail) => `${check.id}: ${detail}`));
+  const bootstrapChecks = context.checks.flatMap((check) =>
+    check.details.map((detail) => `${check.id}: ${detail}`)
+  );
   const cleanupNotes: string[] = [];
   const interStageCooldownsMs: number[] = [];
   let restoreStrictValidation = false;

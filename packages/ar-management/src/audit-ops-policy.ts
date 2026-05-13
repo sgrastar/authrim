@@ -231,7 +231,7 @@ export function buildAuditOperationalPolicy(input: {
         ? {
             note: queueConfigured
               ? 'Fan-out delivery retries use Cloudflare Queue retry/DLQ semantics.'
-              : 'Fan-out targets exist, but AUDIT_QUEUE is unavailable so retries are not possible.'
+              : 'Fan-out targets exist, but AUDIT_QUEUE is unavailable so retries are not possible.',
           }
         : {}),
     },
@@ -245,7 +245,7 @@ export function buildAuditOperationalPolicy(input: {
           ? 'No archive/sink fan-out targets are configured. Only synchronous primary writes apply.'
           : backpressureMode === 'queue_fanout'
             ? 'Archive/sink fan-out is queue-backed. batchConfig is the current operator-facing queue shaping control.'
-          : 'Archive/sink fan-out targets exist, but AUDIT_QUEUE is missing so queue-based backpressure is currently unavailable.',
+            : 'Archive/sink fan-out targets exist, but AUDIT_QUEUE is missing so queue-based backpressure is currently unavailable.',
     },
     queue: {
       binding: DEFAULT_AUDIT_WRITE_CONFIG.queueConfig.binding,

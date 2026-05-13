@@ -222,7 +222,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     id: 'builtin:audit:minimal',
     kind: 'audit',
     label: 'Minimal Audit',
-    description: 'Keep audit logs only in the primary database without archive or forwarding sinks.',
+    description:
+      'Keep audit logs only in the primary database without archive or forwarding sinks.',
     builtin: true,
     version: 1,
     primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
@@ -263,7 +264,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     id: DEFAULT_RESIDENCY_PROFILE_ID,
     kind: 'residency',
     label: 'Default Residency',
-    description: 'No explicit jurisdiction restriction. Use the nearest or deployment-chosen region.',
+    description:
+      'No explicit jurisdiction restriction. Use the nearest or deployment-chosen region.',
     builtin: true,
     version: 1,
     locationHint: 'auto',
@@ -273,7 +275,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     id: EU_RESIDENCY_PROFILE_ID,
     kind: 'residency',
     label: 'EU Residency',
-    description: 'Prefer EU jurisdiction for storage backends that support legal location constraints.',
+    description:
+      'Prefer EU jurisdiction for storage backends that support legal location constraints.',
     builtin: true,
     version: 1,
     locationHint: 'weur',

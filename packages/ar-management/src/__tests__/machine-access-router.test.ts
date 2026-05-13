@@ -28,8 +28,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    adminAuthMiddleware:
-      vi.fn((options?: { requirePermissions?: string[] }) =>
+    adminAuthMiddleware: vi.fn(
+      (options?: { requirePermissions?: string[] }) =>
         async (c: any, next: () => Promise<void>) => {
           const permissions = (c.req.header('X-Admin-Permissions') || '')
             .split(',')
@@ -60,7 +60,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
           return next();
         }
-      ),
+    ),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({})),
     AdminMachineAccessRepository: vi.fn(function MockAdminMachineAccessRepository() {
       return mockRepo;

@@ -10,7 +10,10 @@ import type {
   ElevationGrant,
   StructuredReference,
 } from '../types/approval';
-import { ApprovalRequestRepository, ElevationGrantRepository } from '../repositories/admin/admin-approval-request';
+import {
+  ApprovalRequestRepository,
+  ElevationGrantRepository,
+} from '../repositories/admin/admin-approval-request';
 import { createAccessToken, importPrivateKeyFromPEM } from '../utils/jwt';
 import { parseToken } from '../utils/jwt';
 
@@ -130,8 +133,7 @@ export interface DownstreamGrantServiceAuthorizationResult {
   enforcement: DownstreamGrantEnforcementProfile | null;
 }
 
-export interface DownstreamGrantServiceEvaluationResult
-  extends DownstreamGrantServiceAuthorizationResult {
+export interface DownstreamGrantServiceEvaluationResult extends DownstreamGrantServiceAuthorizationResult {
   decision: DownstreamGrantServiceDecision | null;
   requiresOnlineCheck: boolean;
   failClosed: boolean;
@@ -209,10 +211,7 @@ type DownstreamGrantTokenVerifier = (token: string) => Promise<JwtLikePayload>;
 
 export interface DownstreamGrantHonoMiddlewareOptions {
   authorizer: DownstreamGrantServiceAuthorizer;
-  verifyToken?: (input: {
-    token: string;
-    c: Context<any, any, any>;
-  }) => Promise<JwtLikePayload>;
+  verifyToken?: (input: { token: string; c: Context<any, any, any> }) => Promise<JwtLikePayload>;
   introspectToken?: (input: {
     token: string;
     c: Context<any, any, any>;
@@ -227,7 +226,9 @@ export interface DownstreamGrantHonoMiddlewareOptions {
   resolveLocalAuthorization?: (input: {
     c: Context<any, any, any>;
     decision: DownstreamGrantServiceDecision;
-  }) => Promise<DownstreamGrantServiceAuthorizationInput['localAuthorization']> | DownstreamGrantServiceAuthorizationInput['localAuthorization'];
+  }) =>
+    | Promise<DownstreamGrantServiceAuthorizationInput['localAuthorization']>
+    | DownstreamGrantServiceAuthorizationInput['localAuthorization'];
   onDeny?: (input: {
     c: Context<any, any, any>;
     authorization: DownstreamGrantServiceEvaluationResult;
@@ -270,9 +271,7 @@ function toAudienceArray(value: unknown): string[] {
     return [value.trim()];
   }
   if (Array.isArray(value)) {
-    return value
-      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
-      .filter(Boolean);
+    return value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean);
   }
   return [];
 }
@@ -301,9 +300,7 @@ export function extractDownstreamGrantTokenFromAuthorizationHeader(
   return token;
 }
 
-function normalizeAuthorizationDetails(
-  value: unknown
-): Array<Record<string, unknown>> {
+function normalizeAuthorizationDetails(value: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(value)) {
     return value.filter(
       (entry): entry is Record<string, unknown> =>
@@ -325,9 +322,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return null;
 }
 
-function findDownstreamGrantAuthorizationDetail(
-  value: unknown
-): Record<string, unknown> | null {
+function findDownstreamGrantAuthorizationDetail(value: unknown): Record<string, unknown> | null {
   return (
     normalizeAuthorizationDetails(value).find(
       (entry) => entry.type === DOWNSTREAM_GRANT_AUTHORIZATION_DETAIL_TYPE
@@ -422,10 +417,7 @@ function buildElevationGrantSubjectClaims(
   clientId: string,
   request: ApprovalRequest,
   grant: ElevationGrant
-): Omit<
-  Parameters<typeof createAccessToken>[0],
-  'iat' | 'exp' | 'jti'
-> {
+): Omit<Parameters<typeof createAccessToken>[0], 'iat' | 'exp' | 'jti'> {
   const authorizationDetails = [buildDownstreamGrantAuthorizationDetail(request, grant)];
 
   return {
@@ -591,12 +583,12 @@ export function extractDownstreamGrantDecisionContext(
       ? source.resource_ids.filter((value): value is string => typeof value === 'string')
       : Array.isArray(scope?.resource_ids)
         ? scope.resource_ids.filter((value): value is string => typeof value === 'string')
-      : [],
+        : [],
     detailClasses: Array.isArray(source.detail_classes)
       ? source.detail_classes.filter((value): value is string => typeof value === 'string')
       : Array.isArray(scope?.detail_classes)
         ? scope.detail_classes.filter((value): value is string => typeof value === 'string')
-      : [],
+        : [],
     dataset: asString(source.dataset) ?? asString(scope?.dataset),
     audience:
       asString(source.audience) ??
@@ -611,7 +603,7 @@ export function extractDownstreamGrantDecisionContext(
     requesterSubjectId: asString(source.requester_subject_id) ?? '',
     ticketReference: asRecord(source.ticket_reference)
       ? (source.ticket_reference as StructuredReference)
-        : null,
+      : null,
     reference: asRecord(source.reference) ? (source.reference as StructuredReference) : null,
     policyPreset: asString(source.policy_preset) ?? '',
     reuseScope: (asString(source.reuse_scope) ?? 'request') as ApprovalRequest['reuse_scope'],
@@ -745,10 +737,7 @@ export function authorizeDownstreamGrantServiceAccess(
     };
   }
 
-  if (
-    input.requiredResourceId &&
-    !context.resourceIds.includes(input.requiredResourceId)
-  ) {
+  if (input.requiredResourceId && !context.resourceIds.includes(input.requiredResourceId)) {
     return {
       allowed: false,
       reasonCode: 'grant_resource_scope_mismatch',
@@ -773,10 +762,7 @@ export function authorizeDownstreamGrantServiceAccess(
     };
   }
 
-  if (
-    input.requiredDetailClass &&
-    !context.detailClasses.includes(input.requiredDetailClass)
-  ) {
+  if (input.requiredDetailClass && !context.detailClasses.includes(input.requiredDetailClass)) {
     return {
       allowed: false,
       reasonCode: 'grant_detail_class_mismatch',
@@ -789,9 +775,7 @@ export function authorizeDownstreamGrantServiceAccess(
 
   if (
     input.requiredDetailClasses?.length &&
-    input.requiredDetailClasses.some(
-      (detailClass) => !context.detailClasses.includes(detailClass)
-    )
+    input.requiredDetailClasses.some((detailClass) => !context.detailClasses.includes(detailClass))
   ) {
     return {
       allowed: false,
@@ -843,9 +827,7 @@ function withDecisionMetadata(
   return {
     ...result,
     decision,
-    requiresOnlineCheck: enforcement
-      ? shouldRequireDownstreamOnlineCheck(enforcement)
-      : false,
+    requiresOnlineCheck: enforcement ? shouldRequireDownstreamOnlineCheck(enforcement) : false,
     failClosed: enforcement ? shouldFailClosedForDownstreamGrant(enforcement) : false,
   };
 }
@@ -1082,7 +1064,11 @@ export function downstreamGrantMiddleware(
 export function getDownstreamGrantMiddlewareContext(
   c: Context<any, any, any>
 ): DownstreamGrantMiddlewareContextDecision | null {
-  return (c.get(DOWNSTREAM_GRANT_DECISION_CONTEXT_KEY) as DownstreamGrantMiddlewareContextDecision | undefined) ?? null;
+  return (
+    (c.get(DOWNSTREAM_GRANT_DECISION_CONTEXT_KEY) as
+      | DownstreamGrantMiddlewareContextDecision
+      | undefined) ?? null
+  );
 }
 
 export function shouldRequireDownstreamOnlineCheck(

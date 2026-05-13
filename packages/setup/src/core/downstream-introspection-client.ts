@@ -176,10 +176,13 @@ async function getClientById(
   clientId: string,
   tenantId?: string
 ): Promise<boolean> {
-  const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`, {
-    method: 'GET',
-    headers: buildAdminHeaders(adminBearerToken, tenantId),
-  });
+  const response = await fetchWithTimeout(
+    `${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`,
+    {
+      method: 'GET',
+      headers: buildAdminHeaders(adminBearerToken, tenantId),
+    }
+  );
 
   if (response.status === 404) {
     return false;
@@ -400,7 +403,8 @@ export async function ensureDownstreamIntrospectionClient(
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const shouldRetry = attempt < maxRetries && isRetryableDownstreamIntrospectionError(message);
+        const shouldRetry =
+          attempt < maxRetries && isRetryableDownstreamIntrospectionError(message);
 
         if (!shouldRetry) {
           return {
@@ -430,9 +434,12 @@ export async function ensureDownstreamIntrospectionClient(
   }
 }
 
-export async function loadDownstreamIntrospectionClientSecrets(keysDir: string): Promise<
-  Record<'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID' | 'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET', string> | null
-> {
+export async function loadDownstreamIntrospectionClientSecrets(
+  keysDir: string
+): Promise<Record<
+  'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID' | 'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET',
+  string
+> | null> {
   const clientIdPath = getClientIdPath(keysDir);
   const clientSecretPath = getClientSecretPath(keysDir);
 

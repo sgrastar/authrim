@@ -127,7 +127,9 @@ async function getUserPermissionsFromRoles(
   const now = Math.floor(Date.now() / 1000);
 
   // Get permissions from all active roles
-  const rows = await ensureDatabaseAdapter(db, 'policy-embedding').query<{ permissions_json: string }>(
+  const rows = await ensureDatabaseAdapter(db, 'policy-embedding').query<{
+    permissions_json: string;
+  }>(
     `SELECT DISTINCT r.permissions_json
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id

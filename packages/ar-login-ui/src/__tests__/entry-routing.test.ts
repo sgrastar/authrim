@@ -136,12 +136,16 @@ describe('common-entry routing', () => {
 	});
 
 	it('allows a tenant-host login challenge only when it resolves for the current tenant', async () => {
-		const fetch = vi.fn().mockResolvedValueOnce(jsonResponse({ challenge_id: 'challenge-current' }));
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ challenge_id: 'challenge-current' }));
 
 		const result = await loginLoad({
 			cookies: createCookies(),
 			fetch,
-			request: new Request('https://first.multi-tenant.authrim.com/login?challenge_id=challenge-current'),
+			request: new Request(
+				'https://first.multi-tenant.authrim.com/login?challenge_id=challenge-current'
+			),
 			url: new URL('https://first.multi-tenant.authrim.com/login?challenge_id=challenge-current')
 		} as never);
 
@@ -236,7 +240,7 @@ describe('common-entry routing', () => {
 						remember_last_tenant: true,
 						redirect_default_login_to_discovery: true,
 						require_common_discovery_before_login: true,
-					redirect_tenant_discover_to_common_entry: true
+						redirect_tenant_discover_to_common_entry: true
 					},
 					single_tenant_mode: false,
 					is_common_entry_host: false,
@@ -286,7 +290,7 @@ describe('common-entry routing', () => {
 						remember_last_tenant: true,
 						redirect_default_login_to_discovery: true,
 						require_common_discovery_before_login: true,
-					redirect_tenant_discover_to_common_entry: true
+						redirect_tenant_discover_to_common_entry: true
 					},
 					single_tenant_mode: false,
 					is_common_entry_host: false,
@@ -297,8 +301,7 @@ describe('common-entry routing', () => {
 				jsonResponse({
 					valid: true,
 					tenant_id: 'first',
-					target_url:
-						'https://first.multi-tenant.authrim.com/login?login_hint=user%40example.com'
+					target_url: 'https://first.multi-tenant.authrim.com/login?login_hint=user%40example.com'
 				})
 			);
 
@@ -360,12 +363,9 @@ describe('common-entry routing', () => {
 		const result = await loginLoad({
 			cookies,
 			fetch,
-			request: new Request(
-				'https://mt-ar-login-ui.pages.dev/login?login_hint=user%40example.com',
-				{
-					headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
-				}
-			),
+			request: new Request('https://mt-ar-login-ui.pages.dev/login?login_hint=user%40example.com', {
+				headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
+			}),
 			url: new URL('https://mt-ar-login-ui.pages.dev/login?login_hint=user%40example.com')
 		} as never);
 

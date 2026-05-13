@@ -155,10 +155,7 @@ export function getChallengeShardIndexByUserId(userId: string, shardCount: numbe
  * buildChallengeShardInstanceName(7)
  * // => "tenant:default:challenge:shard-7"
  */
-export function buildChallengeShardInstanceName(
-  shardIndex: number,
-  tenantId: string
-): string {
+export function buildChallengeShardInstanceName(shardIndex: number, tenantId: string): string {
   return `tenant:${tenantId}:challenge:shard-${shardIndex}`;
 }
 

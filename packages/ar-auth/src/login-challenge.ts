@@ -273,7 +273,11 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
     // Retrieve login challenge from ChallengeStore (RPC)
     // Use challengeId-based sharding
     const requestTenantId = getTenantIdFromContext(c);
-    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, requestTenantId);
+    const challengeStore = await getChallengeStoreByChallengeId(
+      c.env,
+      challenge_id,
+      requestTenantId
+    );
 
     const challengeData = await challengeStore.getChallengeRpc(challenge_id);
 

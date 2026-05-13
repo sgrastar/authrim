@@ -13,5 +13,9 @@
  */
 
 export { D1Adapter, createD1Adapter, type D1AdapterConfig } from './d1-adapter';
-export { PostgresAdapter, createPostgresAdapter, type PostgresAdapterConfig } from './postgres-adapter';
+export {
+  PostgresAdapter,
+  createPostgresAdapter,
+  type PostgresAdapterConfig,
+} from './postgres-adapter';
 export { MysqlAdapter, createMysqlAdapter, type MysqlAdapterConfig } from './mysql-adapter';

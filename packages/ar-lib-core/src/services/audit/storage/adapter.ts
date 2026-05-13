@@ -513,8 +513,8 @@ export function normalizeAuditStorageRoutingTargets(
 export function hasAuditStorageRoutingTargets(targets: AuditStorageRoutingTargets): boolean {
   return Boolean(
     targets.primaryStore ||
-      (targets.archiveStores && targets.archiveStores.length > 0) ||
-      (targets.forwardingSinks && targets.forwardingSinks.length > 0)
+    (targets.archiveStores && targets.archiveStores.length > 0) ||
+    (targets.forwardingSinks && targets.forwardingSinks.length > 0)
   );
 }
 

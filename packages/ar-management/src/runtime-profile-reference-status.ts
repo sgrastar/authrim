@@ -56,13 +56,13 @@ export interface RuntimeProfileReferenceCatalog {
   };
 }
 
-export const RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY: RuntimeProfileReferenceManagementPolicy = {
-  mode: 'setup_only',
-  future: 'admin_ui_planned',
-  activationPolicy: 'save_ok_activate_ng',
-  note:
-    'bindingRef and connectionRef resources are provisioned through setup today. Admin APIs may store profile references, but default activation is rejected when required runtime references are unresolved.',
-};
+export const RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY: RuntimeProfileReferenceManagementPolicy =
+  {
+    mode: 'setup_only',
+    future: 'admin_ui_planned',
+    activationPolicy: 'save_ok_activate_ng',
+    note: 'bindingRef and connectionRef resources are provisioned through setup today. Admin APIs may store profile references, but default activation is rejected when required runtime references are unresolved.',
+  };
 
 function createEntry(
   entry: RuntimeProfileReferenceStatusEntry
@@ -80,25 +80,25 @@ function getEnvBinding(env: Env, ref: string | undefined): unknown {
 function isD1DatabaseLike(value: unknown): boolean {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      typeof (value as { prepare?: unknown }).prepare === 'function'
+    typeof value === 'object' &&
+    typeof (value as { prepare?: unknown }).prepare === 'function'
   );
 }
 
 function isR2BucketLike(value: unknown): boolean {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      typeof (value as { get?: unknown }).get === 'function' &&
-      typeof (value as { put?: unknown }).put === 'function'
+    typeof value === 'object' &&
+    typeof (value as { get?: unknown }).get === 'function' &&
+    typeof (value as { put?: unknown }).put === 'function'
   );
 }
 
 function isHyperdriveLike(value: unknown): boolean {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      typeof (value as { connectionString?: unknown }).connectionString === 'string'
+    typeof value === 'object' &&
+    typeof (value as { connectionString?: unknown }).connectionString === 'string'
   );
 }
 
@@ -124,10 +124,7 @@ function deriveConnectionAliasesFromBinding(ref: string): string[] {
   return [...new Set([trimmed, dashed])].filter(Boolean);
 }
 
-function resolveStorageHyperdriveBinding(
-  env: Env,
-  target: StorageTarget
-): Hyperdrive | null {
+function resolveStorageHyperdriveBinding(env: Env, target: StorageTarget): Hyperdrive | null {
   if (target.driver !== 'postgres' && target.driver !== 'mysql') {
     return null;
   }
@@ -348,7 +345,9 @@ function describeAuditTarget(
       reference: target.bucketRef,
       ...(configured
         ? {}
-        : { reason: `Archive bucket binding ${target.bucketRef} is not configured in the runtime environment.` }),
+        : {
+            reason: `Archive bucket binding ${target.bucketRef} is not configured in the runtime environment.`,
+          }),
     });
   }
 
@@ -543,10 +542,7 @@ export function buildRuntimeProfileReferenceCatalog(
     }
   }
 
-  const addBindingRef = (
-    bindingRef: string | undefined,
-    type: 'd1' | 'r2' | 'hyperdrive'
-  ) => {
+  const addBindingRef = (bindingRef: string | undefined, type: 'd1' | 'r2' | 'hyperdrive') => {
     if (!bindingRef) {
       return;
     }

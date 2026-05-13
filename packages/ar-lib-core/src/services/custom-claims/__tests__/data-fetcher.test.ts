@@ -71,10 +71,11 @@ describe('UserCustomDataFetcher', () => {
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.get('department')).toBe('engineering');
-    expect(mockDb.query).toHaveBeenCalledWith(
-      expect.stringContaining('user_custom_fields'),
-      ['default', 'user-1', 'department']
-    );
+    expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining('user_custom_fields'), [
+      'default',
+      'user-1',
+      'department',
+    ]);
   });
 
   it('fetches PII data from users_pii', async () => {

@@ -207,9 +207,9 @@ export async function getPrimaryTenantVanityDomain(
     if (!isVanityDomainRow(row)) return null;
 
     const mapped = mapRow(row);
-    await kv?.put(cacheKey, JSON.stringify(mapped), { expirationTtl: CACHE_TTL_SECONDS }).catch(
-      () => {}
-    );
+    await kv
+      ?.put(cacheKey, JSON.stringify(mapped), { expirationTtl: CACHE_TTL_SECONDS })
+      .catch(() => {});
     return mapped;
   } catch (error) {
     log.warn('Failed to load primary tenant vanity domain', { tenantId, error: String(error) });

@@ -1009,8 +1009,7 @@ const id: Translations = {
   'web.email.cloudflareSetup': 'Cloudflare Email Service',
   'web.email.cloudflareRequirements': 'Persyaratan',
   'web.email.cloudflareRequirementPaid': 'Paket Workers Paid wajib',
-  'web.email.cloudflareRequirementDns':
-    'Cloudflare DNS / onboarding domain wajib',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / onboarding domain wajib',
   'web.email.cloudflareRequirementManual':
     'Penyiapan domain di dashboard Cloudflare masih harus dilakukan secara manual',
   'web.email.resendSetup': 'Konfigurasi Resend',

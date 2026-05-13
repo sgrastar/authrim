@@ -362,7 +362,12 @@ export async function ensureLoginUiClient(
         if (existingClient) {
           if (existingClient.needsMigration) {
             onProgress?.(`Migrating Login UI client to public client: ${existingClient.clientId}`);
-            await updateClientToPublic(apiBaseUrl, adminBearerToken, existingClient.clientId, tenantId);
+            await updateClientToPublic(
+              apiBaseUrl,
+              adminBearerToken,
+              existingClient.clientId,
+              tenantId
+            );
             onProgress?.(
               'Login UI client migrated to public client (token_endpoint_auth_method=none, require_pkce=true)'
             );

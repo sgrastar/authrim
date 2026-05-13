@@ -3500,9 +3500,7 @@ describe('Client Authentication Tests', () => {
           },
         })
       );
-      const body = await parseJsonResponse<{ error: string; error_description: string }>(
-        response
-      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
 
       expect(response.status).toBe(401);
       expect(body.error).toBe('invalid_client');
@@ -3576,9 +3574,7 @@ describe('Client Authentication Tests', () => {
           },
         })
       );
-      const body = await parseJsonResponse<{ error: string; error_description: string }>(
-        response
-      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
 
       expect(response.status).toBe(401);
       expect(body.error).toBe('invalid_client');

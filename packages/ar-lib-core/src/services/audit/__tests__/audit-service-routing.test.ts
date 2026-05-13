@@ -11,7 +11,9 @@ function createMockD1(firstResults: unknown[] = [null]): D1Database {
     bind: vi.fn().mockReturnThis(),
     first: vi
       .fn()
-      .mockImplementation(async () => (firstQueue.length > 0 ? firstQueue.shift() ?? null : null)),
+      .mockImplementation(async () =>
+        firstQueue.length > 0 ? (firstQueue.shift() ?? null) : null
+      ),
     run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
   };
 
@@ -25,7 +27,7 @@ function createMockD1(firstResults: unknown[] = [null]): D1Database {
 
 function createMockQueue() {
   return {
-    send: vi.fn<[(AuditQueueMessage)], Promise<void>>().mockResolvedValue(undefined),
+    send: vi.fn<[AuditQueueMessage], Promise<void>>().mockResolvedValue(undefined),
   } as unknown as Queue<AuditQueueMessage>;
 }
 

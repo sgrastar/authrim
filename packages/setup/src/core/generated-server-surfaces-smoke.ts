@@ -75,7 +75,9 @@ function asBoolean(value: unknown): boolean {
 }
 
 function asRecordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => isRecord(item)) : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => isRecord(item))
+    : [];
 }
 
 function getRuntimeProfileListItems(
@@ -122,11 +124,15 @@ async function runJsonRequest(options: {
   expectedStatus?: number;
   validate?: (payload: unknown, check: SmokeCheck) => void;
 }): Promise<unknown> {
-  const response = await fetchJsonWithTimeout(`${options.baseUrl}${options.path}`, options.timeoutMs, {
-    method: options.method ?? 'GET',
-    headers: options.headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  const response = await fetchJsonWithTimeout(
+    `${options.baseUrl}${options.path}`,
+    options.timeoutMs,
+    {
+      method: options.method ?? 'GET',
+      headers: options.headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    }
+  );
   options.check.httpStatus = response.status;
   const payload = parseJsonLikePayload(response);
 
@@ -194,7 +200,9 @@ function buildExampleValue(schema: CustomClaimSchemaSummary): unknown {
   }
   if (schema.fieldType === 'enum') {
     const values = Array.isArray(schema.validationRules?.enum_values)
-      ? schema.validationRules?.enum_values.filter((value): value is string => typeof value === 'string')
+      ? schema.validationRules?.enum_values.filter(
+          (value): value is string => typeof value === 'string'
+        )
       : [];
     return values[0] ?? 'smoke-enum';
   }
@@ -224,7 +232,10 @@ function buildAdminCustomFieldPayload(
   return { ...payload, ...(overrides ?? {}) };
 }
 
-function buildScimUserBody(email: string, requiredSchemas: CustomClaimSchemaSummary[]): Record<string, unknown> {
+function buildScimUserBody(
+  email: string,
+  requiredSchemas: CustomClaimSchemaSummary[]
+): Record<string, unknown> {
   const enterpriseExtension: Record<string, unknown> = {};
   for (const schema of requiredSchemas) {
     enterpriseExtension[schema.fieldKey] = buildExampleValue(schema);
@@ -250,7 +261,9 @@ function findMissingRequiredField(payload: unknown, fieldKey: string): boolean {
 }
 
 function pickSupportedScimField(schemas: CustomClaimSchemaSummary[]): string | null {
-  const activeKeys = new Set(schemas.filter((schema) => schema.isActive).map((schema) => schema.fieldKey));
+  const activeKeys = new Set(
+    schemas.filter((schema) => schema.isActive).map((schema) => schema.fieldKey)
+  );
   for (const key of SCIM_SUPPORTED_REQUIRED_KEYS) {
     if (!activeKeys.has(key)) {
       return key;
@@ -262,7 +275,9 @@ function pickSupportedScimField(schemas: CustomClaimSchemaSummary[]): string | n
 function canSatisfyRequiredSchemasViaScim(schemas: CustomClaimSchemaSummary[]): boolean {
   return schemas.every(
     (schema) =>
-      SCIM_SUPPORTED_REQUIRED_KEYS.includes(schema.fieldKey as (typeof SCIM_SUPPORTED_REQUIRED_KEYS)[number]) &&
+      SCIM_SUPPORTED_REQUIRED_KEYS.includes(
+        schema.fieldKey as (typeof SCIM_SUPPORTED_REQUIRED_KEYS)[number]
+      ) &&
       (schema.fieldType === 'string' || schema.fieldType === 'enum')
   );
 }
@@ -325,7 +340,10 @@ async function deleteAdminUser(input: {
   } else if (response.status === 404) {
     addWarn(check, `user_id=${input.userId} は既に削除されています`);
   } else {
-    addWarn(check, `user cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`);
+    addWarn(
+      check,
+      `user cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
+    );
   }
   input.checks.push(finalizeCheck(check, 'cleanup temporary user を実行しました'));
 }
@@ -360,7 +378,10 @@ async function deleteCustomClaimSchema(input: {
   } else if (response.status === 404) {
     addWarn(check, `schema_id=${input.schemaId} は既に存在しません`);
   } else {
-    addWarn(check, `schema cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`);
+    addWarn(
+      check,
+      `schema cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
+    );
   }
   input.checks.push(finalizeCheck(check, 'cleanup temporary custom claim schema を実行しました'));
 }
@@ -396,7 +417,10 @@ async function deleteRuntimeProfile(input: {
   } else if (response.status === 404) {
     addWarn(check, `profile_id=${input.profileId} は既に存在しません`);
   } else {
-    addWarn(check, `runtime profile cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`);
+    addWarn(
+      check,
+      `runtime profile cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
+    );
   }
   input.checks.push(finalizeCheck(check, 'cleanup temporary runtime profile を実行しました'));
 }
@@ -431,7 +455,10 @@ async function deleteRoutingRule(input: {
   } else if (response.status === 404) {
     addWarn(check, `routing rule ${input.ruleName} は既に存在しません`);
   } else {
-    addWarn(check, `routing rule cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`);
+    addWarn(
+      check,
+      `routing rule cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
+    );
   }
   input.checks.push(finalizeCheck(check, 'cleanup temporary audit routing rule を実行しました'));
 }
@@ -466,7 +493,10 @@ async function revokeScimToken(input: {
   } else if (response.status === 404) {
     addWarn(check, 'SCIM token は既に削除されています');
   } else {
-    addWarn(check, `SCIM token cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`);
+    addWarn(
+      check,
+      `SCIM token cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
+    );
   }
   input.checks.push(finalizeCheck(check, 'cleanup temporary SCIM token を実行しました'));
 }
@@ -562,7 +592,12 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(createSmokeSchemaCheck, 'create temporary required registration field を確認しました'));
+    checks.push(
+      finalizeCheck(
+        createSmokeSchemaCheck,
+        'create temporary required registration field を確認しました'
+      )
+    );
 
     const registrationFieldsCheck = makeSmokeCheck(
       'server-surfaces-registration-fields',
@@ -584,7 +619,9 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(registrationFieldsCheck, 'public registration fields を確認しました'));
+    checks.push(
+      finalizeCheck(registrationFieldsCheck, 'public registration fields を確認しました')
+    );
 
     const refreshSchemasCheck = makeSmokeCheck(
       'server-surfaces-custom-claims-refresh',
@@ -599,16 +636,23 @@ export async function runGeneratedServerSurfacesSmoke(
       headers: getAdminHeaders(adminSecret, tenantId),
       validate: (payload, check) => {
         currentSchemas = parseSchemaSummaries(payload);
-        const requiredSchemas = currentSchemas.filter((schema) => schema.isActive && schema.isRequired);
+        const requiredSchemas = currentSchemas.filter(
+          (schema) => schema.isActive && schema.isRequired
+        );
         addPass(check, `active required schemas=${requiredSchemas.length}`);
       },
     });
     checks.push(finalizeCheck(refreshSchemasCheck, 'refresh schemas after create を確認しました'));
 
     const requiredSchemas = currentSchemas.filter((schema) => schema.isActive && schema.isRequired);
-    const smokeRequiredSchemas = requiredSchemas.filter((schema) => schema.fieldKey === smokeFieldKey);
+    const smokeRequiredSchemas = requiredSchemas.filter(
+      (schema) => schema.fieldKey === smokeFieldKey
+    );
     if (smokeRequiredSchemas.length === 0) {
-      const check = makeSmokeCheck('server-surfaces-required-smoke-schema-missing', 'temporary required schema missing');
+      const check = makeSmokeCheck(
+        'server-surfaces-required-smoke-schema-missing',
+        'temporary required schema missing'
+      );
       addFail(check, `${smokeFieldKey} が required schema 一覧に含まれていません`);
       checks.push(finalizeCheck(check, 'temporary required schema missing'));
       return {
@@ -692,7 +736,12 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(adminCreateCheck, 'admin user create succeeds when required fields are present を確認しました'));
+    checks.push(
+      finalizeCheck(
+        adminCreateCheck,
+        'admin user create succeeds when required fields are present を確認しました'
+      )
+    );
 
     if (!createdUserId) {
       return {
@@ -725,7 +774,12 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(adminGetCheck, 'admin user detail returns persisted custom field を確認しました'));
+    checks.push(
+      finalizeCheck(
+        adminGetCheck,
+        'admin user detail returns persisted custom field を確認しました'
+      )
+    );
 
     const adminUpdateCheck = makeSmokeCheck(
       'server-surfaces-admin-update-required-fail',
@@ -751,7 +805,9 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(adminUpdateCheck, 'admin user update required validation を確認しました'));
+    checks.push(
+      finalizeCheck(adminUpdateCheck, 'admin user update required validation を確認しました')
+    );
 
     const scimSupportedActiveRequired = requiredSchemas.filter((schema) =>
       SCIM_SUPPORTED_REQUIRED_KEYS.includes(
@@ -795,7 +851,12 @@ export async function runGeneratedServerSurfacesSmoke(
             }
           },
         });
-        checks.push(finalizeCheck(scimSchemaCheck, 'create temporary SCIM-compatible required field を確認しました'));
+        checks.push(
+          finalizeCheck(
+            scimSchemaCheck,
+            'create temporary SCIM-compatible required field を確認しました'
+          )
+        );
 
         const refreshScimSchemasCheck = makeSmokeCheck(
           'server-surfaces-scim-refresh-schemas',
@@ -813,7 +874,9 @@ export async function runGeneratedServerSurfacesSmoke(
             addPass(check, `schemas=${currentSchemas.length}`);
           },
         });
-        checks.push(finalizeCheck(refreshScimSchemasCheck, 'refresh schemas for SCIM checks を確認しました'));
+        checks.push(
+          finalizeCheck(refreshScimSchemasCheck, 'refresh schemas for SCIM checks を確認しました')
+        );
       }
     }
 
@@ -852,7 +915,9 @@ export async function runGeneratedServerSurfacesSmoke(
     checks.push(finalizeCheck(scimTokenCheck, 'create temporary SCIM token を確認しました'));
 
     if (scimToken && scimTargetField) {
-      const activeRequiredSchemas = currentSchemas.filter((schema) => schema.isActive && schema.isRequired);
+      const activeRequiredSchemas = currentSchemas.filter(
+        (schema) => schema.isActive && schema.isRequired
+      );
       const scimMissingCheck = makeSmokeCheck(
         'server-surfaces-scim-create-required-fail',
         'SCIM create fails when required field is missing',
@@ -878,7 +943,9 @@ export async function runGeneratedServerSurfacesSmoke(
           }
         },
       });
-      checks.push(finalizeCheck(scimMissingCheck, 'SCIM create required validation を確認しました'));
+      checks.push(
+        finalizeCheck(scimMissingCheck, 'SCIM create required validation を確認しました')
+      );
 
       const scimCreatableRequiredSchemas = activeRequiredSchemas.filter((schema) =>
         SCIM_SUPPORTED_REQUIRED_KEYS.includes(
@@ -896,11 +963,15 @@ export async function runGeneratedServerSurfacesSmoke(
           scimCreatableRequiredSchemas
         );
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          const response = await fetchJsonWithTimeout(`${target.baseUrl}/scim/v2/Users`, timeoutMs, {
-            method: 'POST',
-            headers: getScimHeaders(scimToken.token),
-            body: JSON.stringify(scimValidBody),
-          });
+          const response = await fetchJsonWithTimeout(
+            `${target.baseUrl}/scim/v2/Users`,
+            timeoutMs,
+            {
+              method: 'POST',
+              headers: getScimHeaders(scimToken.token),
+              body: JSON.stringify(scimValidBody),
+            }
+          );
           scimCreateValidCheck.httpStatus = response.status;
           const payload = parseJsonLikePayload(response);
 
@@ -919,7 +990,8 @@ export async function runGeneratedServerSurfacesSmoke(
             break;
           }
 
-          const retryAfterMs = response.status === 401 ? parseRetryAfterMilliseconds(response) : null;
+          const retryAfterMs =
+            response.status === 401 ? parseRetryAfterMilliseconds(response) : null;
           if (retryAfterMs && attempt === 0) {
             addWarn(
               scimCreateValidCheck,
@@ -935,7 +1007,12 @@ export async function runGeneratedServerSurfacesSmoke(
           );
           break;
         }
-        checks.push(finalizeCheck(scimCreateValidCheck, 'SCIM create succeeds when required fields are present を確認しました'));
+        checks.push(
+          finalizeCheck(
+            scimCreateValidCheck,
+            'SCIM create succeeds when required fields are present を確認しました'
+          )
+        );
       } else {
         const scimSkipCheck = makeSmokeCheck(
           'server-surfaces-scim-create-valid-skip',
@@ -1011,7 +1088,12 @@ export async function runGeneratedServerSurfacesSmoke(
         addPass(check, `profile_id=${createdRuntimeProfileId}`);
       },
     });
-    checks.push(finalizeCheck(runtimeProfileCreateCheck, 'create temporary audit runtime profile を確認しました'));
+    checks.push(
+      finalizeCheck(
+        runtimeProfileCreateCheck,
+        'create temporary audit runtime profile を確認しました'
+      )
+    );
 
     const runtimeProfileGetCheck = makeSmokeCheck(
       'server-surfaces-runtime-profile-get',
@@ -1036,7 +1118,9 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(runtimeProfileGetCheck, 'get temporary audit runtime profile を確認しました'));
+    checks.push(
+      finalizeCheck(runtimeProfileGetCheck, 'get temporary audit runtime profile を確認しました')
+    );
 
     const runtimeProfileListCheck = makeSmokeCheck(
       'server-surfaces-runtime-profile-list',
@@ -1077,7 +1161,9 @@ export async function runGeneratedServerSurfacesSmoke(
       }
       await wait(runtimeProfileListIsKvBackend ? 5000 : 1500);
     }
-    checks.push(finalizeCheck(runtimeProfileListCheck, 'list audit runtime profiles を確認しました'));
+    checks.push(
+      finalizeCheck(runtimeProfileListCheck, 'list audit runtime profiles を確認しました')
+    );
 
     const tenantRuntimeProfilesCheck = makeSmokeCheck(
       'server-surfaces-tenant-runtime-profiles',
@@ -1098,7 +1184,9 @@ export async function runGeneratedServerSurfacesSmoke(
         addPass(check, `tenant_id=${tenantId}`);
       },
     });
-    checks.push(finalizeCheck(tenantRuntimeProfilesCheck, 'tenant effective runtime profiles を確認しました'));
+    checks.push(
+      finalizeCheck(tenantRuntimeProfilesCheck, 'tenant effective runtime profiles を確認しました')
+    );
 
     const auditStorageConfigCheck = makeSmokeCheck(
       'phase4-audit-storage-config',
@@ -1170,7 +1258,9 @@ export async function runGeneratedServerSurfacesSmoke(
         addPass(check, `rule_name=${createdRoutingRuleName}`);
       },
     });
-    checks.push(finalizeCheck(routingRuleCreateCheck, 'create temporary audit routing rule を確認しました'));
+    checks.push(
+      finalizeCheck(routingRuleCreateCheck, 'create temporary audit routing rule を確認しました')
+    );
 
     const routingRuleListCheck = makeSmokeCheck(
       'phase4-routing-rule-list',

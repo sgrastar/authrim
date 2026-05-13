@@ -8,9 +8,7 @@ import {
   describeApprovalCompletionMethod,
   resolveApprovalCompletionMode,
 } from './approval-completion-guidance';
-import {
-  resolveApprovalNotificationTransport,
-} from './approval-notification-resolution';
+import { resolveApprovalNotificationTransport } from './approval-notification-resolution';
 import type { ApprovalNotificationPolicySource } from './approval-notification-policy';
 
 type AdminContext = Context<any, any, any>;
@@ -79,7 +77,8 @@ export async function resolveApprovalStepGuide(
       status: input.approval.status,
       expires_at: input.approval.expires_at,
       selection_source: null,
-      resolution_error: error instanceof Error ? error.message : 'Failed to resolve approval step guide',
+      resolution_error:
+        error instanceof Error ? error.message : 'Failed to resolve approval step guide',
       guide: null,
     };
   }

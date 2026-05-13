@@ -84,10 +84,7 @@ function buildAuditActorView(
       machine_principal_type: principalType,
       machine_credential_id: getMetadataString(metadata, 'admin_machine_credential_id'),
       machine_client_id: clientId,
-      machine_client_auth_method: getMetadataString(
-        metadata,
-        'admin_machine_client_auth_method'
-      ),
+      machine_client_auth_method: getMetadataString(metadata, 'admin_machine_client_auth_method'),
     };
   }
 

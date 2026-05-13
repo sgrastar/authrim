@@ -50,8 +50,9 @@ function createMockCoreDb(state: {
 
           if (sql.includes('FROM user_custom_fields')) {
             const [_, ...rest] = args;
-            const fieldCount = state.schemas.filter((schema) => schema.is_required && !schema.is_pii)
-              .length;
+            const fieldCount = state.schemas.filter(
+              (schema) => schema.is_required && !schema.is_pii
+            ).length;
             const fieldNames = new Set(rest.slice(rest.length - fieldCount));
             const userIds = rest.slice(0, rest.length - fieldCount);
             const results = userIds.flatMap((userId: string) => {

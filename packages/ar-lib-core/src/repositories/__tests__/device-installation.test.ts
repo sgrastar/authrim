@@ -64,25 +64,28 @@ describe('DeviceInstallationRepository', () => {
       last_seen_at: 1_778_000_000_000,
       is_active: 1,
     });
-    expect(adapter.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO device_installations'), [
-      'inst-explicit',
-      'default',
-      'user-001',
-      'native-client',
-      'tg-wallet',
-      null,
-      null,
-      'ds-001',
-      'sid-001',
-      'My Phone',
-      'ios',
-      expect.any(Number),
-      expect.any(Number),
-      1_778_000_000_000,
-      null,
-      null,
-      1,
-    ]);
+    expect(adapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO device_installations'),
+      [
+        'inst-explicit',
+        'default',
+        'user-001',
+        'native-client',
+        'tg-wallet',
+        null,
+        null,
+        'ds-001',
+        'sid-001',
+        'My Phone',
+        'ios',
+        expect.any(Number),
+        expect.any(Number),
+        1_778_000_000_000,
+        null,
+        null,
+        1,
+      ]
+    );
   });
 
   it('creates a target-side installation for cross-client Native SSO', async () => {
@@ -108,25 +111,28 @@ describe('DeviceInstallationRepository', () => {
       device_platform: 'ios',
       last_seen_at: 1_778_000_000_000,
     });
-    expect(adapter.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO device_installations'), [
-      expect.stringMatching(/^inst_/),
-      'default',
-      'user-001',
-      'target-client',
-      'tg-wallet',
-      'inst-source',
-      'source-client',
-      null,
-      'sid-001',
-      'iPhone',
-      'ios',
-      expect.any(Number),
-      expect.any(Number),
-      1_778_000_000_000,
-      null,
-      null,
-      1,
-    ]);
+    expect(adapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO device_installations'),
+      [
+        expect.stringMatching(/^inst_/),
+        'default',
+        'user-001',
+        'target-client',
+        'tg-wallet',
+        'inst-source',
+        'source-client',
+        null,
+        'sid-001',
+        'iPhone',
+        'ios',
+        expect.any(Number),
+        expect.any(Number),
+        1_778_000_000_000,
+        null,
+        null,
+        1,
+      ]
+    );
   });
 
   it('falls back without throwing when the canonical table is not migrated yet', async () => {

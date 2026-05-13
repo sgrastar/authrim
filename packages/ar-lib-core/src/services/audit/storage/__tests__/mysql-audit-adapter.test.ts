@@ -70,13 +70,20 @@ describe('MysqlAuditAdapter', () => {
       }),
     });
 
-    const deleted = await adapter.deleteTenantByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
+    const deleted = await adapter.deleteTenantByRetention(
+      'event',
+      1_700_000_000_000,
+      'tenant-1',
+      50
+    );
 
     expect(deleted).toBe(5);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0]?.[0]).toContain('DELETE target');
     expect(execute.mock.calls[0]?.[0]).toContain('INNER JOIN');
-    expect(execute.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(execute.mock.calls[0]?.[0]).toContain(
+      'ORDER BY retention_until ASC, created_at ASC, id ASC'
+    );
     expect(execute.mock.calls[0]?.[1]).toEqual([1_700_000_000_000, 'tenant-1', 50]);
   });
 
@@ -124,11 +131,18 @@ describe('MysqlAuditAdapter', () => {
       }),
     });
 
-    const rows = await adapter.listTenantRetentionCandidates('event', 1_700_000_000_000, 'tenant-1', 25);
+    const rows = await adapter.listTenantRetentionCandidates(
+      'event',
+      1_700_000_000_000,
+      'tenant-1',
+      25
+    );
 
     expect(rows).toEqual([expect.objectContaining({ id: 'evt-1' })]);
     expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(query.mock.calls[0]?.[0]).toContain(
+      'ORDER BY retention_until ASC, created_at ASC, id ASC'
+    );
     expect(query.mock.calls[0]?.[0]).toContain('FROM `event_log`');
   });
 });

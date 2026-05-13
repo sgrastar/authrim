@@ -67,8 +67,7 @@ export function resolveApprovalEffectivePolicy(
     APPROVAL_NOTIFICATION_COOLDOWN_SECONDS[
       policyPreset as keyof typeof APPROVAL_NOTIFICATION_COOLDOWN_SECONDS
     ] ?? APPROVAL_NOTIFICATION_COOLDOWN_SECONDS.default;
-  const ttl =
-    APPROVAL_PRESETS[policyPreset as ApprovalPolicyPreset]?.requestTtlSeconds ?? null;
+  const ttl = APPROVAL_PRESETS[policyPreset as ApprovalPolicyPreset]?.requestTtlSeconds ?? null;
 
   return {
     preset: policyPreset,

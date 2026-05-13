@@ -66,7 +66,11 @@ export function evaluateDeviceSecretRevokePolicy(
 
   if (
     callerClass === 'confidential_or_service_client' &&
-    isTrustGroupAllowlisted(clientMetadata, target, policyMetadata.device_secret_revoke_trust_groups)
+    isTrustGroupAllowlisted(
+      clientMetadata,
+      target,
+      policyMetadata.device_secret_revoke_trust_groups
+    )
   ) {
     return { allowed: true, callerClass };
   }

@@ -81,12 +81,18 @@ async function runJsonRequest(options: {
 }): Promise<unknown> {
   const headers =
     options.headers ??
-    (options.adminSecret ? getAdminHeaders(options.adminSecret, options.tenantId) : { accept: 'application/json' });
-  const response = await fetchJsonWithTimeout(`${options.baseUrl}${options.path}`, options.timeoutMs, {
-    method: options.method ?? 'GET',
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+    (options.adminSecret
+      ? getAdminHeaders(options.adminSecret, options.tenantId)
+      : { accept: 'application/json' });
+  const response = await fetchJsonWithTimeout(
+    `${options.baseUrl}${options.path}`,
+    options.timeoutMs,
+    {
+      method: options.method ?? 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    }
+  );
   options.check.httpStatus = response.status;
 
   if (!response.ok) {
@@ -112,11 +118,15 @@ function asString(value: unknown): string | null {
 }
 
 function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 function firstRecordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => isRecord(item)) : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => isRecord(item))
+    : [];
 }
 
 function encodeBasicAuth(clientId: string, clientSecret: string): string {
@@ -419,7 +429,9 @@ export async function runGeneratedApprovalsSmoke(
           }
         },
       });
-      checks.push(finalizeCheck(issueArtifactCheck, 'manual approval artifact issue を確認しました'));
+      checks.push(
+        finalizeCheck(issueArtifactCheck, 'manual approval artifact issue を確認しました')
+      );
     }
 
     if (!artifactPath) {
@@ -500,10 +512,7 @@ export async function runGeneratedApprovalsSmoke(
       if ((portalResponse.contentType ?? '').includes('text/html')) {
         addPass(portalCheck, 'Content-Type=text/html を確認しました');
       } else {
-        addWarn(
-          portalCheck,
-          `portal content-type=${portalResponse.contentType ?? 'missing'}`
-        );
+        addWarn(portalCheck, `portal content-type=${portalResponse.contentType ?? 'missing'}`);
       }
       if (portalResponse.bodyText?.includes(artifactCompletePath)) {
         addPass(portalCheck, `portal に complete path=${artifactCompletePath} を確認しました`);
@@ -616,7 +625,9 @@ export async function runGeneratedApprovalsSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(requestReadCheck, 'approval request read after completion を確認しました'));
+    checks.push(
+      finalizeCheck(requestReadCheck, 'approval request read after completion を確認しました')
+    );
 
     const receiptsCheck = makeSmokeCheck(
       'approval-receipts-admin-read',
@@ -643,7 +654,9 @@ export async function runGeneratedApprovalsSmoke(
         }
       },
     });
-    checks.push(finalizeCheck(receiptsCheck, 'approval decision receipts admin read を確認しました'));
+    checks.push(
+      finalizeCheck(receiptsCheck, 'approval decision receipts admin read を確認しました')
+    );
 
     if (grantId && resolvedClientId) {
       const subjectTokenCheck = makeSmokeCheck(
@@ -674,8 +687,13 @@ export async function runGeneratedApprovalsSmoke(
           } else {
             addFail(check, 'subject_token が見つかりませんでした');
           }
-          const integrationHint = isRecord(payload.integration_hint) ? payload.integration_hint : null;
-          if (integrationHint && asString(integrationHint.subject_token_client_id) === resolvedClientId) {
+          const integrationHint = isRecord(payload.integration_hint)
+            ? payload.integration_hint
+            : null;
+          if (
+            integrationHint &&
+            asString(integrationHint.subject_token_client_id) === resolvedClientId
+          ) {
             addPass(check, `client_id=${resolvedClientId}`);
           }
           const productRoute = isRecord(integrationHint?.product_route)
@@ -686,28 +704,36 @@ export async function runGeneratedApprovalsSmoke(
           targetAudience =
             hintedTargetAudience && hintedTargetAudience !== 'admin_api'
               ? hintedTargetAudience
-              : productRouteDefaultAudience ?? hintedTargetAudience;
+              : (productRouteDefaultAudience ?? hintedTargetAudience);
           if (targetAudience) {
             addPass(check, `target_audience=${targetAudience}`);
           } else {
             addWarn(check, 'integration_hint.target_audience を解決できませんでした');
           }
           protectedResourcePath =
-            resolveProtectedResourcePath(asString(productRoute?.path_template), targetSubjectId!) ?? undefined;
+            resolveProtectedResourcePath(asString(productRoute?.path_template), targetSubjectId!) ??
+            undefined;
           if (protectedResourcePath) {
             addPass(check, `protected_resource_path=${protectedResourcePath}`);
           }
         },
       });
-      checks.push(finalizeCheck(subjectTokenCheck, 'approval grant subject token issue を確認しました'));
+      checks.push(
+        finalizeCheck(subjectTokenCheck, 'approval grant subject token issue を確認しました')
+      );
     } else if (grantId) {
       const subjectTokenWarn = makeSmokeCheck(
         'approval-subject-token',
         'approval grant subject token issue',
         `${target.baseUrl}/api/admin/approvals/${requestId}/grants/${grantId}/subject-token`
       );
-      addWarn(subjectTokenWarn, 'service client を解決できないため subject token issue はスキップしました');
-      checks.push(finalizeCheck(subjectTokenWarn, 'approval grant subject token issue をスキップしました'));
+      addWarn(
+        subjectTokenWarn,
+        'service client を解決できないため subject token issue はスキップしました'
+      );
+      checks.push(
+        finalizeCheck(subjectTokenWarn, 'approval grant subject token issue をスキップしました')
+      );
     }
 
     if (subjectToken && resolvedClientId && resolvedClientSecret && targetAudience) {
@@ -717,21 +743,25 @@ export async function runGeneratedApprovalsSmoke(
         `${target.baseUrl}/token`
       );
       let downstreamAccessToken: string | undefined;
-      const tokenExchangeResponse = await fetchJsonWithTimeout(`${target.baseUrl}/token`, timeoutMs, {
-        method: 'POST',
-        headers: {
-          authorization: `Basic ${encodeBasicAuth(resolvedClientId, resolvedClientSecret)}`,
-          accept: 'application/json',
-          'content-type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-          subject_token: subjectToken,
-          subject_token_type: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
-          requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-          audience: targetAudience,
-        }).toString(),
-      });
+      const tokenExchangeResponse = await fetchJsonWithTimeout(
+        `${target.baseUrl}/token`,
+        timeoutMs,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Basic ${encodeBasicAuth(resolvedClientId, resolvedClientSecret)}`,
+            accept: 'application/json',
+            'content-type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+            subject_token: subjectToken,
+            subject_token_type: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
+            requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+            audience: targetAudience,
+          }).toString(),
+        }
+      );
       tokenExchangeCheck.httpStatus = tokenExchangeResponse.status;
 
       if (!tokenExchangeResponse.ok) {
@@ -741,7 +771,13 @@ export async function runGeneratedApprovalsSmoke(
         );
       } else {
         addPass(tokenExchangeCheck, `HTTP ${tokenExchangeResponse.status}`);
-        if (validateJsonObject(tokenExchangeCheck, tokenExchangeResponse.payload, 'token exchange response')) {
+        if (
+          validateJsonObject(
+            tokenExchangeCheck,
+            tokenExchangeResponse.payload,
+            'token exchange response'
+          )
+        ) {
           downstreamAccessToken = asString(tokenExchangeResponse.payload.access_token) ?? undefined;
           if (downstreamAccessToken) {
             addPass(tokenExchangeCheck, 'access_token を確認しました');
@@ -750,7 +786,9 @@ export async function runGeneratedApprovalsSmoke(
           }
         }
       }
-      checks.push(finalizeCheck(tokenExchangeCheck, 'approval downstream token exchange を確認しました'));
+      checks.push(
+        finalizeCheck(tokenExchangeCheck, 'approval downstream token exchange を確認しました')
+      );
 
       if (downstreamAccessToken) {
         const introspectionCheck = makeSmokeCheck(
@@ -758,18 +796,22 @@ export async function runGeneratedApprovalsSmoke(
           'approval downstream token introspection',
           `${target.baseUrl}/introspect`
         );
-        const introspectionResponse = await fetchJsonWithTimeout(`${target.baseUrl}/introspect`, timeoutMs, {
-          method: 'POST',
-          headers: {
-            authorization: `Basic ${encodeBasicAuth(resolvedClientId, resolvedClientSecret)}`,
-            accept: 'application/json',
-            'content-type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            token: downstreamAccessToken,
-            token_type_hint: 'access_token',
-          }).toString(),
-        });
+        const introspectionResponse = await fetchJsonWithTimeout(
+          `${target.baseUrl}/introspect`,
+          timeoutMs,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Basic ${encodeBasicAuth(resolvedClientId, resolvedClientSecret)}`,
+              accept: 'application/json',
+              'content-type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              token: downstreamAccessToken,
+              token_type_hint: 'access_token',
+            }).toString(),
+          }
+        );
         introspectionCheck.httpStatus = introspectionResponse.status;
 
         if (!introspectionResponse.ok) {
@@ -779,7 +821,13 @@ export async function runGeneratedApprovalsSmoke(
           );
         } else {
           addPass(introspectionCheck, `HTTP ${introspectionResponse.status}`);
-          if (validateJsonObject(introspectionCheck, introspectionResponse.payload, 'token introspection')) {
+          if (
+            validateJsonObject(
+              introspectionCheck,
+              introspectionResponse.payload,
+              'token introspection'
+            )
+          ) {
             if (introspectionResponse.payload.active === true) {
               addPass(introspectionCheck, 'active=true を確認しました');
             } else {
@@ -789,13 +837,24 @@ export async function runGeneratedApprovalsSmoke(
               ? introspectionResponse.payload.authrim_elevation
               : null;
             if (asString(elevation?.resource_class) === 'customer_profile') {
-              addPass(introspectionCheck, 'authrim_elevation.resource_class=customer_profile を確認しました');
+              addPass(
+                introspectionCheck,
+                'authrim_elevation.resource_class=customer_profile を確認しました'
+              );
             } else {
-              addWarn(introspectionCheck, 'authrim_elevation.resource_class を確認できませんでした');
+              addWarn(
+                introspectionCheck,
+                'authrim_elevation.resource_class を確認できませんでした'
+              );
             }
           }
         }
-        checks.push(finalizeCheck(introspectionCheck, 'approval downstream token introspection を確認しました'));
+        checks.push(
+          finalizeCheck(
+            introspectionCheck,
+            'approval downstream token introspection を確認しました'
+          )
+        );
 
         if (protectedResourcePath) {
           const protectedResourceCheck = makeSmokeCheck(
@@ -858,7 +917,13 @@ export async function runGeneratedApprovalsSmoke(
             );
           } else {
             addPass(protectedResourceCheck, `HTTP ${protectedResourceResponse.status}`);
-            if (validateJsonObject(protectedResourceCheck, protectedResourceResponse.payload, 'protected resource')) {
+            if (
+              validateJsonObject(
+                protectedResourceCheck,
+                protectedResourceResponse.payload,
+                'protected resource'
+              )
+            ) {
               if (retriedProtectedResourceRead) {
                 addPass(
                   protectedResourceCheck,
@@ -883,16 +948,24 @@ export async function runGeneratedApprovalsSmoke(
               }
             }
           }
-          checks.push(finalizeCheck(protectedResourceCheck, 'approval protected resource read を確認しました'));
+          checks.push(
+            finalizeCheck(protectedResourceCheck, 'approval protected resource read を確認しました')
+          );
         } else {
           const protectedResourceWarn = makeSmokeCheck(
             'approval-protected-resource-read',
             'approval protected resource read',
             `${target.baseUrl}/api/protected/customer-profiles/${encodeURIComponent(targetSubjectId)}`
           );
-          addWarn(protectedResourceWarn, 'integration_hint.product_route が無いため protected resource read はスキップしました');
+          addWarn(
+            protectedResourceWarn,
+            'integration_hint.product_route が無いため protected resource read はスキップしました'
+          );
           checks.push(
-            finalizeCheck(protectedResourceWarn, 'approval protected resource read をスキップしました')
+            finalizeCheck(
+              protectedResourceWarn,
+              'approval protected resource read をスキップしました'
+            )
           );
         }
       }
@@ -906,7 +979,9 @@ export async function runGeneratedApprovalsSmoke(
         protectedResourceWarn,
         'service client secret を解決できないため token exchange / protected resource read はスキップしました'
       );
-      checks.push(finalizeCheck(protectedResourceWarn, 'approval protected resource read をスキップしました'));
+      checks.push(
+        finalizeCheck(protectedResourceWarn, 'approval protected resource read をスキップしました')
+      );
     }
 
     return {

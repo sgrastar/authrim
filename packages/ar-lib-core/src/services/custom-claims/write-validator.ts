@@ -62,7 +62,9 @@ export interface GetMissingRequiredCustomClaimsParams {
 }
 
 function isBlank(value: unknown): boolean {
-  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+  return (
+    value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
+  );
 }
 
 function getRequiredFieldError(label: string): string {
@@ -317,16 +319,24 @@ export async function getMissingRequiredCustomClaims(
 ): Promise<MissingRequiredCustomClaim[]> {
   const { db, dbPii = null, schemaDb = db, cache = null, tenantId, userId } = params;
   const schemas = await new SchemaLoader(schemaDb, cache).loadActiveSchemas(tenantId);
-  const existingValues = await new UserCustomDataFetcher(db, dbPii).fetch(tenantId, userId, schemas);
+  const existingValues = await new UserCustomDataFetcher(db, dbPii).fetch(
+    tenantId,
+    userId,
+    schemas
+  );
 
   return collectMissingRequiredCustomClaims(schemas, existingValues);
 }
 
-export async function persistCustomClaimWrite(params: PersistCustomClaimWriteParams): Promise<void> {
+export async function persistCustomClaimWrite(
+  params: PersistCustomClaimWriteParams
+): Promise<void> {
   const { db, dbPii = null, tenantId, userId, validation } = params;
   const coreAdapter = ensureDatabaseAdapter(db, 'custom-claims-write-core');
   const piiAdapter = ensureOptionalDatabaseAdapter(dbPii, 'custom-claims-write-pii');
-  const schemaMap = new Map(validation.schemas.map((schema) => [schema.field_key, schema] as const));
+  const schemaMap = new Map(
+    validation.schemas.map((schema) => [schema.field_key, schema] as const)
+  );
 
   for (const [fieldKey, fieldValue] of Object.entries(validation.nonPiiValues)) {
     const schema = schemaMap.get(fieldKey);

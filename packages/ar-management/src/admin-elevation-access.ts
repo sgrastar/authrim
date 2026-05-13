@@ -61,11 +61,7 @@ function normalizeIds(values: Array<string | null | undefined> | undefined): str
   }
 
   return Array.from(
-    new Set(
-      values
-        .map((value) => value?.trim())
-        .filter((value): value is string => !!value)
-    )
+    new Set(values.map((value) => value?.trim()).filter((value): value is string => !!value))
   );
 }
 

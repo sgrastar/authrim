@@ -145,10 +145,11 @@ export async function handleListProviders(c: AdminSAMLContext): Promise<Response
 /**
  * List built-in SAML attribute presets.
  */
-export async function handleListAttributePresets(
-  c: AdminSAMLContext
-): Promise<Response> {
-  const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_ATTRIBUTE_PRESETS_READ);
+export async function handleListAttributePresets(c: AdminSAMLContext): Promise<Response> {
+  const forbidden = await requireSAMLAdminPermission(
+    c,
+    ADMIN_PERMISSIONS.SAML_ATTRIBUTE_PRESETS_READ
+  );
   if (forbidden) {
     return forbidden;
   }

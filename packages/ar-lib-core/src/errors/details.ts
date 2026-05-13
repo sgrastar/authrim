@@ -113,9 +113,8 @@ export interface Phase1ErrorDetails<Code extends Phase1ErrorDetailCode = Phase1E
   [key: string]: unknown;
 }
 
-export type Phase1ErrorDetailsOverrides = Partial<
-  Omit<Phase1ErrorDetails, 'code'>
-> & Record<string, unknown>;
+export type Phase1ErrorDetailsOverrides = Partial<Omit<Phase1ErrorDetails, 'code'>> &
+  Record<string, unknown>;
 
 export const PHASE1_ERROR_DETAIL_DEFINITIONS: Phase1ErrorDetailDefinitions = {
   invalid_cursor: {

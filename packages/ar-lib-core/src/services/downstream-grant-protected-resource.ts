@@ -32,8 +32,9 @@ export interface DownstreamGrantProtectedResourceResolutionInput<Resource> {
   resource: Resource;
 }
 
-export interface DownstreamGrantProtectedResourceLocalAuthorizationInput<Resource>
-  extends DownstreamGrantProtectedResourceResolutionInput<Resource> {
+export interface DownstreamGrantProtectedResourceLocalAuthorizationInput<
+  Resource,
+> extends DownstreamGrantProtectedResourceResolutionInput<Resource> {
   decision: DownstreamGrantServiceDecision;
 }
 
@@ -42,9 +43,10 @@ export interface DownstreamGrantProtectedResourceOptions<Resource> {
   verifyToken?: DownstreamGrantHonoMiddlewareOptions['verifyToken'];
   introspectToken?: DownstreamGrantHonoMiddlewareOptions['introspectToken'];
   resolveResourceId: (c: HonoContext) => Promise<string> | string;
-  loadResource: (
-    input: { c: HonoContext; resourceId: string }
-  ) => Promise<Resource | null | undefined> | Resource | null | undefined;
+  loadResource: (input: {
+    c: HonoContext;
+    resourceId: string;
+  }) => Promise<Resource | null | undefined> | Resource | null | undefined;
   resolveRequiredResourceIds?: (
     input: DownstreamGrantProtectedResourceResolutionInput<Resource>
   ) => Promise<string[] | null | undefined> | string[] | null | undefined;
@@ -81,9 +83,10 @@ function getStoredProtectedResourceContext<Resource>(
   c: HonoContext
 ): DownstreamGrantProtectedResourceContext<Resource> | null {
   return (
-    (c.get(
-      DOWNSTREAM_GRANT_PROTECTED_RESOURCE_KEY
-    ) as DownstreamGrantProtectedResourceContext<Resource> | null | undefined) ?? null
+    (c.get(DOWNSTREAM_GRANT_PROTECTED_RESOURCE_KEY) as
+      | DownstreamGrantProtectedResourceContext<Resource>
+      | null
+      | undefined) ?? null
   );
 }
 
@@ -162,8 +165,9 @@ export function createDownstreamGrantProtectedResourceMiddleware<Resource>(
     });
 
     const authorizationResponse = await authorizationMiddleware(c, async () => {
-      const decisionContext =
-        getDownstreamGrantMiddlewareContext(c) as DownstreamGrantMiddlewareContextDecision | null;
+      const decisionContext = getDownstreamGrantMiddlewareContext(
+        c
+      ) as DownstreamGrantMiddlewareContextDecision | null;
       const current = getStoredProtectedResourceContext<Resource>(c);
       if (!current || !decisionContext) {
         await next();

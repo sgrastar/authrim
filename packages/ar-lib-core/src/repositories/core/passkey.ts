@@ -317,8 +317,7 @@ export class PasskeyRepository {
     }
 
     const now = getCurrentTimestamp();
-    const sql =
-      'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ? AND tenant_id = ?';
+    const sql = 'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ? AND tenant_id = ?';
 
     await this.adapter.execute(sql, [newCounter, now, id, this.tenantId]);
 
@@ -372,10 +371,7 @@ export class PasskeyRepository {
    */
   async credentialIdExists(credentialId: string): Promise<boolean> {
     const sql = 'SELECT 1 FROM passkeys WHERE tenant_id = ? AND credential_id = ?';
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [
-      this.tenantId,
-      credentialId,
-    ]);
+    const result = await this.adapter.queryOne<{ 1: number }>(sql, [this.tenantId, credentialId]);
     return result !== null;
   }
 

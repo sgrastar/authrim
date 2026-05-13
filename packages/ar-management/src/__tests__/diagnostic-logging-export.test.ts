@@ -5,15 +5,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    adminAuthMiddleware:
-      vi.fn(() => async (c: { set?: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
-        c.set?.('adminAuth', {
-          userId: 'admin-1',
-          authMethod: 'test',
-          permissions: ['admin:diagnostics:read'],
-        });
-        await next();
-      }),
+    adminAuthMiddleware: vi.fn(
+      () =>
+        async (c: { set?: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
+          c.set?.('adminAuth', {
+            userId: 'admin-1',
+            authMethod: 'test',
+            permissions: ['admin:diagnostics:read'],
+          });
+          await next();
+        }
+    ),
   };
 });
 

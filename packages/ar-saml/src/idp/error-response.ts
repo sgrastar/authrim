@@ -85,7 +85,7 @@ export function applySAMLErrorResponseOverride(
     secondLevelStatusCode:
       override.secondLevelStatusCode === null
         ? undefined
-        : override.secondLevelStatusCode ?? input.secondLevelStatusCode,
+        : (override.secondLevelStatusCode ?? input.secondLevelStatusCode),
     statusMessage: override.statusMessage ?? input.statusMessage,
   };
 }

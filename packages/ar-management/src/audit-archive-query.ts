@@ -141,7 +141,7 @@ function matchesArchiveResourceFilter(
       ? details.resourceId
       : typeof details?.resource_id === 'string'
         ? details.resource_id
-        : entry.clientId ?? null;
+        : (entry.clientId ?? null);
 
   if (resourceType && entryResourceType !== resourceType) {
     return false;

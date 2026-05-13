@@ -1011,8 +1011,7 @@ const ru: Translations = {
   'web.email.cloudflareSetup': 'Cloudflare Email Service',
   'web.email.cloudflareRequirements': 'Требования',
   'web.email.cloudflareRequirementPaid': 'Требуется тариф Workers Paid',
-  'web.email.cloudflareRequirementDns':
-    'Требуется Cloudflare DNS / онбординг домена',
+  'web.email.cloudflareRequirementDns': 'Требуется Cloudflare DNS / онбординг домена',
   'web.email.cloudflareRequirementManual':
     'Настройка домена в панели Cloudflare по-прежнему выполняется вручную',
   'web.email.resendSetup': 'Конфигурация Resend',

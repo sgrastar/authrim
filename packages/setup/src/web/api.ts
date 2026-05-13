@@ -94,10 +94,7 @@ import {
 } from '../core/version.js';
 import { completeInitialSetup } from '../core/admin.js';
 import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
-import {
-  describeAdminUiApiMode,
-  resolveUiDeploymentSettings,
-} from '../core/ui-deployment.js';
+import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
 import {
   configureDownstreamIntrospectionDeployment,

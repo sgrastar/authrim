@@ -43,40 +43,34 @@ export interface ApprovalTransportEvidenceEvent {
   actor_subject_type: ApprovalApproverSubjectType | null;
   actor_subject_id: string | null;
   request_status: ApprovalRequestStatus;
-  approval_step:
-    | {
-        id: string;
-        step_key: string;
-        side: ApprovalRequestApproval['side'];
-        subject_type: ApprovalRequestApproval['subject_type'];
-        subject_id: string | null;
-        relation_type: string | null;
-        relation_source: string | null;
-        status: ApprovalDecisionStatus;
-      }
-    | null;
+  approval_step: {
+    id: string;
+    step_key: string;
+    side: ApprovalRequestApproval['side'];
+    subject_type: ApprovalRequestApproval['subject_type'];
+    subject_id: string | null;
+    relation_type: string | null;
+    relation_source: string | null;
+    status: ApprovalDecisionStatus;
+  } | null;
   method: ApprovalTransportMethod | null;
   transport_channel: string | null;
   reason_code: string | null;
   reason_note: string | null;
   notification_action: 'initial' | 'remind' | 'resend' | null;
   notification_count: number | null;
-  transport_summary:
-    | {
-        provider: string | null;
-        delivery_status: string | null;
-        target: string | null;
-        correlation_id: string | null;
-        transport_request_id: string | null;
-      }
-    | null;
-  transport_detail:
-    | {
-        request: Record<string, unknown> | null;
-        response: Record<string, unknown> | null;
-        metadata: Record<string, unknown> | null;
-      }
-    | null;
+  transport_summary: {
+    provider: string | null;
+    delivery_status: string | null;
+    target: string | null;
+    correlation_id: string | null;
+    transport_request_id: string | null;
+  } | null;
+  transport_detail: {
+    request: Record<string, unknown> | null;
+    response: Record<string, unknown> | null;
+    metadata: Record<string, unknown> | null;
+  } | null;
 }
 
 export interface ApprovalTransportEvidence {
@@ -259,8 +253,7 @@ async function persistApprovalTransportDetail(
   });
 
   return (
-    (await requestRepo.updateApprovalRequestDetailObjectCatalogId(request.id, catalogId)) ??
-    request
+    (await requestRepo.updateApprovalRequestDetailObjectCatalogId(request.id, catalogId)) ?? request
   );
 }
 
@@ -274,12 +267,12 @@ export async function loadApprovalTransportDetail(
   }
 
   const loaded = await loadCatalogObjectJson<ApprovalTransportEvidence>(adapter, c.env, {
-      tenantId: request.tenant_id,
-      objectCatalogId: request.detail_object_catalog_id,
-      expectedClass: 'approval_transport_detail',
-      expectedBucketBinding: 'SENSITIVE_DETAILS',
-      allowPlaintextFallback: false,
-    });
+    tenantId: request.tenant_id,
+    objectCatalogId: request.detail_object_catalog_id,
+    expectedClass: 'approval_transport_detail',
+    expectedBucketBinding: 'SENSITIVE_DETAILS',
+    allowPlaintextFallback: false,
+  });
   return loaded?.value ?? null;
 }
 
@@ -294,7 +287,8 @@ export async function appendApprovalTransportEvent(
     return request;
   }
 
-  const detail = (await loadApprovalTransportDetail(c, adapter, request)) ?? createEmptyEvidence(request);
+  const detail =
+    (await loadApprovalTransportDetail(c, adapter, request)) ?? createEmptyEvidence(request);
   detail.request.status = request.status;
   detail.request.redaction_level = request.redaction_level;
   detail.request.expires_at = request.expires_at;

@@ -1079,8 +1079,7 @@ const en: Translations = {
   'web.envDetail.emailProviderNone': 'Not configured',
   'web.envDetail.emailCloudflareRequirements': 'Requirements',
   'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan is required',
-  'web.envDetail.emailCloudflareRequirementDns':
-    'Cloudflare DNS/domain onboarding is required',
+  'web.envDetail.emailCloudflareRequirementDns': 'Cloudflare DNS/domain onboarding is required',
   'web.envDetail.emailCloudflareRequirementManual':
     'Domain setup in the Cloudflare dashboard is still manual',
   'web.envDetail.emailCloudflareFromHint':

@@ -10,10 +10,12 @@ export const SAML_MESSAGE_LIMITS = {
   redirectInflatedChars: 512 * 1024,
 } as const;
 
-type PostBindingRequestLike = Request | {
-  raw?: Request;
-  formData?: () => Promise<FormData>;
-};
+type PostBindingRequestLike =
+  | Request
+  | {
+      raw?: Request;
+      formData?: () => Promise<FormData>;
+    };
 
 export async function parsePostBindingFormDataWithLimit(
   requestLike: PostBindingRequestLike
@@ -114,11 +116,7 @@ export function inflateRedirectBindingMessage(encoded: string, label: string): s
     throw new Error(`${label} exceeds maximum compressed size`);
   }
 
-  return inflateRawToStringLimited(
-    compressed,
-    SAML_MESSAGE_LIMITS.redirectInflatedChars,
-    label
-  );
+  return inflateRawToStringLimited(compressed, SAML_MESSAGE_LIMITS.redirectInflatedChars, label);
 }
 
 export function inflateRawToStringLimited(

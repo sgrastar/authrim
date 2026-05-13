@@ -83,7 +83,8 @@ describe('generated approvals smoke', () => {
       if (url.endsWith('/api/approval-artifacts/apc_1/complete') && method === 'POST') {
         expect(init?.headers).toMatchObject({
           origin: 'https://single-ar-router.example.workers.dev',
-          referer: 'https://single-ar-router.example.workers.dev/api/approval-artifacts/apc_1/portal',
+          referer:
+            'https://single-ar-router.example.workers.dev/api/approval-artifacts/apc_1/portal',
         });
         return new Response(
           JSON.stringify({
@@ -128,7 +129,10 @@ describe('generated approvals smoke', () => {
         );
       }
 
-      if (url.endsWith('/api/admin/approvals/apr_public_1/grants/egr_public_1/subject-token') && method === 'POST') {
+      if (
+        url.endsWith('/api/admin/approvals/apr_public_1/grants/egr_public_1/subject-token') &&
+        method === 'POST'
+      ) {
         return new Response(
           JSON.stringify({
             subject_token: 'subject-token-jwt',
@@ -149,9 +153,7 @@ describe('generated approvals smoke', () => {
         expect(String(init?.body)).toContain(
           'subject_token_type=urn%3Aauthrim%3Atoken-type%3Aelevation-grant'
         );
-        expect(String(init?.body)).toContain(
-          'audience=svc%3A%2F%2Fop-userinfo%2Fcustomer-profile'
-        );
+        expect(String(init?.body)).toContain('audience=svc%3A%2F%2Fop-userinfo%2Fcustomer-profile');
         return new Response(
           JSON.stringify({
             access_token: 'access-token-jwt',
@@ -343,7 +345,10 @@ describe('generated approvals smoke', () => {
         );
       }
 
-      if (url.endsWith('/api/admin/approvals/apr_public_1/grants/egr_public_1/subject-token') && method === 'POST') {
+      if (
+        url.endsWith('/api/admin/approvals/apr_public_1/grants/egr_public_1/subject-token') &&
+        method === 'POST'
+      ) {
         return new Response(
           JSON.stringify({
             subject_token: 'subject-token-jwt',
@@ -424,7 +429,9 @@ describe('generated approvals smoke', () => {
     });
 
     expect(result.ok).toBe(true);
-    const protectedRead = result.checks.find((check) => check.id === 'approval-protected-resource-read');
+    const protectedRead = result.checks.find(
+      (check) => check.id === 'approval-protected-resource-read'
+    );
     expect(protectedRead?.details).toEqual(
       expect.arrayContaining([
         expect.stringContaining('grant_missing を受信したため'),

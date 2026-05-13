@@ -1,8 +1,5 @@
 import type { AuthrimConfig } from './config.js';
-import {
-  classifyUiApiSite,
-  type UiApiSiteClassification,
-} from './site-classifier.js';
+import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
 import { ensureHttps } from './url-config.js';
 import type { UiEnvConfig } from './ui-env.js';
 

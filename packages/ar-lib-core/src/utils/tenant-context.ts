@@ -328,10 +328,7 @@ export function parseShardedAuthCode(
  * @param tenantId - Tenant ID
  * @returns DO instance name for the shard
  */
-export function buildAuthCodeShardInstanceName(
-  shardIndex: number,
-  tenantId: string
-): string {
+export function buildAuthCodeShardInstanceName(shardIndex: number, tenantId: string): string {
   return `tenant:${requireTenantId(tenantId, 'buildAuthCodeShardInstanceName')}:auth-code:shard-${shardIndex}`;
 }
 
@@ -510,10 +507,7 @@ export async function getSessionShardCount(env: Env): Promise<number> {
  * @param tenantId - Tenant ID
  * @returns DO instance name for the shard
  */
-export function buildSessionShardInstanceName(
-  shardIndex: number,
-  tenantId: string
-): string {
+export function buildSessionShardInstanceName(shardIndex: number, tenantId: string): string {
   return `tenant:${requireTenantId(tenantId, 'buildSessionShardInstanceName')}:session:shard-${shardIndex}`;
 }
 

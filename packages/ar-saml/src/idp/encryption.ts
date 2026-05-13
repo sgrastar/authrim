@@ -1,9 +1,5 @@
 import type { SAMLSPConfig } from '@authrim/ar-lib-core';
-import {
-  DIGEST_ALGORITHMS,
-  SAML_NAMESPACES,
-  XML_ENCRYPTION_ALGORITHMS,
-} from '../common/constants';
+import { DIGEST_ALGORITHMS, SAML_NAMESPACES, XML_ENCRYPTION_ALGORITHMS } from '../common/constants';
 import {
   createElement,
   findElement,
@@ -62,7 +58,11 @@ export async function applySAMLAssertionEncryptionPolicy(
   }
 
   if (spConfig.encryptAssertions) {
-    return encryptSAMLAssertion(xml, encryptionCertificate, resolveXmlEncryptionAlgorithms(spConfig));
+    return encryptSAMLAssertion(
+      xml,
+      encryptionCertificate,
+      resolveXmlEncryptionAlgorithms(spConfig)
+    );
   }
 
   return encryptSAMLNameID(xml, encryptionCertificate, resolveXmlEncryptionAlgorithms(spConfig));
@@ -143,12 +143,7 @@ async function buildEncryptedSAMLWrapper(
   const encryptedData = createElement(doc, SAML_NAMESPACES.XENC, 'EncryptedData', 'xenc');
   setAttribute(encryptedData, 'Type', ENCRYPTED_ELEMENT_TYPE);
 
-  const dataEncryptionMethod = createElement(
-    doc,
-    SAML_NAMESPACES.XENC,
-    'EncryptionMethod',
-    'xenc'
-  );
+  const dataEncryptionMethod = createElement(doc, SAML_NAMESPACES.XENC, 'EncryptionMethod', 'xenc');
   setAttribute(dataEncryptionMethod, 'Algorithm', algorithms.dataAlgorithmUri);
   encryptedData.appendChild(dataEncryptionMethod);
 
@@ -170,12 +165,7 @@ function buildEncryptedKey(
   algorithms: ResolvedSAMLXmlEncryptionAlgorithms
 ): XMLElement {
   const encryptedKeyElement = createElement(doc, SAML_NAMESPACES.XENC, 'EncryptedKey', 'xenc');
-  const keyEncryptionMethod = createElement(
-    doc,
-    SAML_NAMESPACES.XENC,
-    'EncryptionMethod',
-    'xenc'
-  );
+  const keyEncryptionMethod = createElement(doc, SAML_NAMESPACES.XENC, 'EncryptionMethod', 'xenc');
   setAttribute(keyEncryptionMethod, 'Algorithm', algorithms.keyAlgorithmUri);
 
   if (algorithms.digestAlgorithmUri) {
@@ -251,19 +241,14 @@ async function encryptXmlElement(
   };
 }
 
-async function importRsaOaepPublicKey(
-  pem: string,
-  hash: 'SHA-1' | 'SHA-256'
-): Promise<CryptoKey> {
+async function importRsaOaepPublicKey(pem: string, hash: 'SHA-1' | 'SHA-256'): Promise<CryptoKey> {
   const der = pemToDer(pem);
-  const spki = pem.includes('BEGIN CERTIFICATE') ? extractSubjectPublicKeyInfoWithFallback(der) : der;
-  return crypto.subtle.importKey(
-    'spki',
-    toArrayBuffer(spki),
-    { name: 'RSA-OAEP', hash },
-    false,
-    ['encrypt']
-  );
+  const spki = pem.includes('BEGIN CERTIFICATE')
+    ? extractSubjectPublicKeyInfoWithFallback(der)
+    : der;
+  return crypto.subtle.importKey('spki', toArrayBuffer(spki), { name: 'RSA-OAEP', hash }, false, [
+    'encrypt',
+  ]);
 }
 
 function extractSubjectPublicKeyInfoWithFallback(certDer: Uint8Array): Uint8Array {
@@ -275,10 +260,7 @@ function extractSubjectPublicKeyInfoWithFallback(certDer: Uint8Array): Uint8Arra
 }
 
 function resolveEncryptionCertificate(
-  spConfig: Pick<
-    SAMLSPConfig,
-    'encryptionCertificate' | 'encryptionCertificates'
-  >
+  spConfig: Pick<SAMLSPConfig, 'encryptionCertificate' | 'encryptionCertificates'>
 ): string | undefined {
   return spConfig.encryptionCertificate || spConfig.encryptionCertificates?.[0];
 }

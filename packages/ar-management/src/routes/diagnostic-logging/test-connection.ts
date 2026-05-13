@@ -7,10 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createDiagnosticLogR2Adapter,
-  getTenantIdFromContext,
-} from '@authrim/ar-lib-core';
+import { createDiagnosticLogR2Adapter, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
 /**
  * Test R2 connection for diagnostic logging

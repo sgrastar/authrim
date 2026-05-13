@@ -161,7 +161,7 @@ describe('generateRoutes', () => {
 
     const toml = toToml(config);
 
-    expect((toml.match(/\[\[send_email\]\]/g) ?? [])).toHaveLength(1);
+    expect(toml.match(/\[\[send_email\]\]/g) ?? []).toHaveLength(1);
     expect(toml).not.toContain('env.undefined.send_email');
   });
 
@@ -298,8 +298,16 @@ describe('generateRoutes', () => {
       environment: { prefix: 'portable' },
       urls: {
         api: { custom: null, auto: 'https://portable-ar-router.example.workers.dev' },
-        loginUi: { custom: null, auto: 'https://portable-ar-login-ui.workers.dev', sameAsApi: false },
-        adminUi: { custom: null, auto: 'https://portable-ar-admin-ui.workers.dev', sameAsApi: false },
+        loginUi: {
+          custom: null,
+          auto: 'https://portable-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://portable-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
       },
       tenant: {
         name: 'default',
@@ -888,8 +896,16 @@ id = "kv-id"
       environment: { prefix: 'imports' },
       urls: {
         api: { custom: null, auto: 'https://imports-ar-router.example.workers.dev' },
-        loginUi: { custom: null, auto: 'https://imports-ar-login-ui.workers.dev', sameAsApi: false },
-        adminUi: { custom: null, auto: 'https://imports-ar-admin-ui.workers.dev', sameAsApi: false },
+        loginUi: {
+          custom: null,
+          auto: 'https://imports-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://imports-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
       },
       tenant: {
         name: 'default',

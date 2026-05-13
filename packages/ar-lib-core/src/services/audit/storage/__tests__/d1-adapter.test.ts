@@ -137,9 +137,7 @@ describe('D1AuditAdapter', () => {
       ],
     });
     const run = vi.fn().mockResolvedValue({ meta: { changes: 1 } });
-    bind
-      .mockReturnValueOnce({ all })
-      .mockReturnValueOnce({ run });
+    bind.mockReturnValueOnce({ all }).mockReturnValueOnce({ run });
     const prepare = vi.fn().mockReturnValue({ bind });
     const adapter = new D1AuditAdapter({
       id: 'audit-d1',
@@ -153,7 +151,12 @@ describe('D1AuditAdapter', () => {
       'tenant-1',
       50
     );
-    const deleted = await adapter.deleteTenantByRetention('event', 1_700_000_000_000, 'tenant-1', 50);
+    const deleted = await adapter.deleteTenantByRetention(
+      'event',
+      1_700_000_000_000,
+      'tenant-1',
+      50
+    );
 
     expect(candidates).toEqual([
       expect.objectContaining({
@@ -161,9 +164,13 @@ describe('D1AuditAdapter', () => {
         retentionUntil: 1_690_000_000_000,
       }),
     ]);
-    expect(prepare.mock.calls[0]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(prepare.mock.calls[0]?.[0]).toContain(
+      'ORDER BY retention_until ASC, created_at ASC, id ASC'
+    );
     expect(prepare.mock.calls[1]?.[0]).toContain('WHERE id IN');
-    expect(prepare.mock.calls[1]?.[0]).toContain('ORDER BY retention_until ASC, created_at ASC, id ASC');
+    expect(prepare.mock.calls[1]?.[0]).toContain(
+      'ORDER BY retention_until ASC, created_at ASC, id ASC'
+    );
     expect(deleted).toBe(1);
   });
 });

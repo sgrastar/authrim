@@ -55,7 +55,12 @@ export async function cleanupExpiredDataExportArtifacts(
   for (const row of expiredRows) {
     try {
       if (row.object_catalog_id) {
-        await tombstoneObjectCatalogEntryForTenant(adapter, row.tenant_id, row.object_catalog_id, now);
+        await tombstoneObjectCatalogEntryForTenant(
+          adapter,
+          row.tenant_id,
+          row.object_catalog_id,
+          now
+        );
       } else if (row.file_path) {
         await deleteBucketObject(env.EXPORT_ARTIFACTS, row.file_path);
       }

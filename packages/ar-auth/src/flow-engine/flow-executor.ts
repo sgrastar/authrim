@@ -316,8 +316,7 @@ export class FlowExecutor {
 
     // セキュリティ対策: レート制限（Critical 3）
     // セッション状態からリクエストタイムスタンプを取得（DO側で実装されていない場合は空配列）
-    let requestTimestamps =
-      checkResponse.state.requestTimestamps || [];
+    let requestTimestamps = checkResponse.state.requestTimestamps || [];
     const now = Date.now();
     const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1分間のウィンドウ
     const MAX_REQUESTS_PER_WINDOW = 30; // 1分間に最大30リクエスト

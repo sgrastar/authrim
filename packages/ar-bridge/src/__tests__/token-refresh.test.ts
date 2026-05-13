@@ -105,10 +105,7 @@ describe('scheduled bridge token refresh', () => {
       }),
       [TOKEN_REFRESH_TENANT_CURSOR_KEY]: 'tenant-a',
     });
-    mockCoreAdapter.query.mockResolvedValue([
-      { id: 'tenant-b' },
-      { id: 'tenant-c' },
-    ]);
+    mockCoreAdapter.query.mockResolvedValue([{ id: 'tenant-b' }, { id: 'tenant-c' }]);
 
     const result = await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
@@ -267,7 +264,10 @@ describe('scheduled bridge token refresh', () => {
 });
 
 describe('internal bridge token refresh tenant resolution', () => {
-  function createContext(headers: Record<string, string | undefined>, env: Record<string, unknown>) {
+  function createContext(
+    headers: Record<string, string | undefined>,
+    env: Record<string, unknown>
+  ) {
     return {
       env,
       req: {

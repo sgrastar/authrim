@@ -31,7 +31,9 @@ describe('LoginUI session storage keys', () => {
 
 		expect(value).toBe('github');
 		expect(sessionStorage.getItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId)).toBeNull();
-		expect(sessionStorage.getItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalProviderId)).toBeNull();
+		expect(
+			sessionStorage.getItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalProviderId)
+		).toBeNull();
 	});
 
 	it('falls back to legacy callback keys during cleanup-only migration', () => {
@@ -42,7 +44,9 @@ describe('LoginUI session storage keys', () => {
 		]);
 
 		expect(value).toBe('/dashboard');
-		expect(sessionStorage.getItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalReturnUrl)).toBeNull();
+		expect(
+			sessionStorage.getItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalReturnUrl)
+		).toBeNull();
 	});
 
 	it('removes stale PKCE verifier cleanup keys without touching unrelated state', () => {
@@ -51,7 +55,9 @@ describe('LoginUI session storage keys', () => {
 
 		removeLoginUiSessionItems([LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.pkceCodeVerifier]);
 
-		expect(sessionStorage.getItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.pkceCodeVerifier)).toBeNull();
+		expect(
+			sessionStorage.getItem(LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.pkceCodeVerifier)
+		).toBeNull();
 		expect(sessionStorage.getItem('unrelated')).toBe('keep');
 	});
 });

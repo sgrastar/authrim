@@ -39,9 +39,7 @@ function looksLikePhone(value: string): boolean {
   return /^\+?[0-9().\-\s]{6,}$/.test(value);
 }
 
-function dedupeMethods(
-  methods: readonly ApprovalTransportMethod[]
-): ApprovalTransportMethod[] {
+function dedupeMethods(methods: readonly ApprovalTransportMethod[]): ApprovalTransportMethod[] {
   return Array.from(new Set(methods));
 }
 

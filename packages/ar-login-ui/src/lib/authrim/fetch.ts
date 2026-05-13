@@ -1,7 +1,4 @@
-import {
-	LOGIN_UI_SESSION_PROFILE,
-	type AuthrimLoginUISessionProfile
-} from './session-profile';
+import { LOGIN_UI_SESSION_PROFILE, type AuthrimLoginUISessionProfile } from './session-profile';
 
 export interface AuthrimFetchOptions extends RequestInit {
 	baseUrl?: string;

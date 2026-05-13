@@ -17,8 +17,6 @@ describe('body limit utilities', () => {
       body: 'hello!',
     });
 
-    await expect(readRequestTextWithLimit(request, 5)).rejects.toThrow(
-      'Body exceeds maximum size'
-    );
+    await expect(readRequestTextWithLimit(request, 5)).rejects.toThrow('Body exceeds maximum size');
   });
 });
