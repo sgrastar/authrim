@@ -51,6 +51,9 @@
 	let clientInfo = $state<ClientInfo | null>(null);
 	let clientInfoLoading = $state(false);
 	let authorizationChallengeId = $state('');
+	let samlRequestId = $state('');
+	let samlSpEntityId = $state('');
+	let returnTo = $state('');
 
 	// External IdP error
 	function getExternalIdpErrorMessage(
@@ -153,6 +156,9 @@
 		// Fetch login methods + challenge data in parallel
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
 		authorizationChallengeId = urlChallengeId || '';
+		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
+		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
+		returnTo = $page.url.searchParams.get('return_to') || '';
 		const urlLoginHint = $page.url.searchParams.get('login_hint');
 		if (urlLoginHint) {
 			email = urlLoginHint;
@@ -228,6 +234,23 @@
 		});
 	}
 
+	function buildPostAuthRedirect(redirectUrl?: string): string {
+		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
+			const params = new SvelteURLSearchParams({
+				saml_request_id: samlRequestId,
+				saml_sp_entity_id: samlSpEntityId,
+				return_to: 'saml_sso'
+			});
+			return `/saml/idp/sso?${params.toString()}`;
+		}
+
+		if (redirectUrl && isValidRedirectUrl(redirectUrl)) {
+			return redirectUrl;
+		}
+
+		return '/';
+	}
+
 	async function handlePasskeyLogin() {
 		if (authActionLoading) return;
 		error = '';
@@ -254,11 +277,7 @@
 
 			await auth.refreshFromSession();
 
-			if (verifyData?.redirect_url && isValidRedirectUrl(verifyData.redirect_url)) {
-				window.location.href = verifyData.redirect_url;
-			} else {
-				window.location.href = '/';
-			}
+			window.location.href = buildPostAuthRedirect(verifyData?.redirect_url);
 		} catch (err) {
 			error =
 				err instanceof Error ? err.message : 'An error occurred during passkey authentication';
@@ -289,6 +308,11 @@
 			const params = new SvelteURLSearchParams({ email });
 			if (authorizationChallengeId) {
 				params.set('challenge_id', authorizationChallengeId);
+			}
+			if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
+				params.set('saml_request_id', samlRequestId);
+				params.set('saml_sp_entity_id', samlSpEntityId);
+				params.set('return_to', 'saml_sso');
 			}
 			window.location.href = `/verify-email-code?${params.toString()}`;
 		} catch (err) {

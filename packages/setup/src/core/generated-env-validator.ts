@@ -240,7 +240,7 @@ function inspectStorageProfileTarget(
     pushDetail(
       check,
       'fail',
-      `${scope}: driver=${target.driver} は setup 生成の primary binding だけでは active default として実行できません`
+      `${scope}: driver=${target.driver} cannot be used as an active default with only setup-generated primary bindings`
     );
     return;
   }
@@ -248,7 +248,7 @@ function inspectStorageProfileTarget(
     pushDetail(
       check,
       'fail',
-      `${scope}: bindingRef=${target.bindingRef ?? '(missing)'} は built-in D1 binding ではありません`
+      `${scope}: bindingRef=${target.bindingRef ?? '(missing)'} is not a built-in D1 binding`
     );
   }
 }
@@ -287,7 +287,7 @@ function inspectAuditDatabaseTarget(
     pushDetail(
       check,
       'fail',
-      `${scope}: type=${target.type} は setup 生成の D1 binding だけでは active default として実行できません`
+      `${scope}: type=${target.type} cannot be used as an active default with only setup-generated D1 bindings`
     );
     return;
   }
@@ -295,7 +295,7 @@ function inspectAuditDatabaseTarget(
     pushDetail(
       check,
       'fail',
-      `${scope}: bindingRef=${target.bindingRef ?? '(missing)'} は built-in D1 binding ではありません`
+      `${scope}: bindingRef=${target.bindingRef ?? '(missing)'} is not a built-in D1 binding`
     );
   }
 }
@@ -303,7 +303,7 @@ function inspectAuditDatabaseTarget(
 function inspectNonDefaultProfiles(config: AuthrimConfig): ValidationCheck {
   const check = makeCheck(
     'seeded-profile-portability',
-    '非デフォルトの seed profile は保存可能だが、setup-only reference は warning として表示する'
+    'Non-default seed profiles are storable, but setup-only references are reported as warnings'
   );
   const activeStorageId = config.profiles.defaults.storage;
   const activeAuditId = config.profiles.defaults.audit;
@@ -409,7 +409,7 @@ function inspectNonDefaultProfiles(config: AuthrimConfig): ValidationCheck {
     }
   }
 
-  return finishCheck(check, '非デフォルトの seed profile に setup 未解決 backend はありません');
+  return finishCheck(check, 'Non-default seed profiles have no unresolved setup backends');
 }
 
 function expectedProfileVars(config: AuthrimConfig): Record<string, string> {
@@ -427,7 +427,7 @@ async function readConfig(configPath: string): Promise<AuthrimConfig> {
 }
 
 function validateDefaultProfileReferences(config: AuthrimConfig): ValidationCheck {
-  const check = makeCheck('default-profiles', 'default profile 参照が定義済み');
+  const check = makeCheck('default-profiles', 'default profile references are defined');
   const defaults = [
     ['storage', config.profiles.defaults.storage],
     ['audit', config.profiles.defaults.audit],
@@ -439,16 +439,16 @@ function validateDefaultProfileReferences(config: AuthrimConfig): ValidationChec
       pushDetail(check, 'pass', `${kind}: ${id}`);
       continue;
     }
-    pushDetail(check, 'fail', `${kind}: ${id} は builtin でも seeded profile でもありません`);
+    pushDetail(check, 'fail', `${kind}: ${id} is neither built-in nor a seeded profile`);
   }
 
-  return finishCheck(check, 'default profile 参照はすべて解決できます');
+  return finishCheck(check, 'All default profile references can be resolved');
 }
 
 function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCheck {
   const check = makeCheck(
     'active-profile-compatibility',
-    'active default profile は setup 出力だけで activation 可能'
+    'Active default profiles can be activated using only setup output'
   );
 
   if (config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
@@ -503,19 +503,19 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
     );
   }
 
-  return finishCheck(check, 'active default profile は setup 出力だけで activation できます');
+  return finishCheck(check, 'Active default profiles can be activated using only setup output');
 }
 
 function validateRequiredD1Bindings(lock: AuthrimLock): ValidationCheck {
-  const check = makeCheck('lock-d1-bindings', 'lock.json に required D1 binding が揃っている');
+  const check = makeCheck('lock-d1-bindings', 'lock.json has all required D1 bindings');
   for (const binding of BUILTIN_D1_BINDINGS) {
     if (lock.d1[binding]?.id) {
       pushDetail(check, 'pass', `${binding}: ${lock.d1[binding].id}`);
     } else {
-      pushDetail(check, 'fail', `${binding} が lock.json にありません`);
+      pushDetail(check, 'fail', `${binding} is missing from lock.json`);
     }
   }
-  return finishCheck(check, 'required D1 binding はすべて lock.json にあります');
+  return finishCheck(check, 'All required D1 bindings are present in lock.json');
 }
 
 async function validateDeployWranglers(
@@ -527,7 +527,7 @@ async function validateDeployWranglers(
 ): Promise<ValidationCheck> {
   const check = makeCheck(
     'deploy-wranglers',
-    'deploy wrangler.toml が lock resource と active profile vars に一致する'
+    'deploy wrangler.toml matches lock resources and active profile vars'
   );
   const enabledComponents = Array.from(
     getEnabledComponents({
@@ -542,7 +542,7 @@ async function validateDeployWranglers(
   for (const component of enabledComponents) {
     const deployPath = join(packagesDir, component, 'wrangler.toml');
     if (!existsSync(deployPath)) {
-      pushDetail(check, 'fail', `${component}: packages/${component}/wrangler.toml がありません`);
+      pushDetail(check, 'fail', `${component}: packages/${component}/wrangler.toml is missing`);
     }
   }
 
@@ -575,7 +575,7 @@ async function validateDeployWranglers(
           pushDetail(
             check,
             'fail',
-            `${component}: ${binding} binding が wrangler.toml にありません`
+            `${component}: ${binding} binding is missing from wrangler.toml`
           );
         }
       }
@@ -645,11 +645,11 @@ async function validateDeployWranglers(
     pushDetail(
       check,
       'fail',
-      'PROFILE_REGISTRY_BACKEND=kv ですが AUTHRIM_CONFIG namespace が lock.json にありません'
+      'PROFILE_REGISTRY_BACKEND=kv but AUTHRIM_CONFIG namespace is missing from lock.json'
     );
   }
 
-  return finishCheck(check, 'deploy wrangler.toml は lock と active profile vars に一致しています');
+  return finishCheck(check, 'deploy wrangler.toml matches lock resources and active profile vars');
 }
 
 async function validateMasterWranglers(
@@ -660,31 +660,31 @@ async function validateMasterWranglers(
 ): Promise<ValidationCheck> {
   const check = makeCheck(
     'master-wranglers',
-    '.authrim/{env}/wrangler の master config が package deploy copy と同期している'
+    '.authrim/{env}/wrangler master config is synchronized with package deploy copies'
   );
   if (!existsSync(envPaths.wrangler)) {
-    pushDetail(check, 'fail', `${envPaths.wrangler} がありません`);
-    return finishCheck(check, 'master wrangler config は同期しています');
+    pushDetail(check, 'fail', `${envPaths.wrangler} is missing`);
+    return finishCheck(check, 'master wrangler config is synchronized');
   }
 
   const statuses = await checkWranglerStatus({ baseDir, env, packagesDir });
   for (const status of statuses) {
     if (!status.masterExists) {
-      pushDetail(check, 'fail', `${status.component}: master config がありません`);
+      pushDetail(check, 'fail', `${status.component}: master config is missing`);
       continue;
     }
     if (!status.deployExists) {
-      pushDetail(check, 'fail', `${status.component}: deploy copy がありません`);
+      pushDetail(check, 'fail', `${status.component}: deploy copy is missing`);
       continue;
     }
     if (!status.inSync) {
-      pushDetail(check, 'fail', `${status.component}: master と deploy copy がズレています`);
+      pushDetail(check, 'fail', `${status.component}: master and deploy copy are out of sync`);
       continue;
     }
     pushDetail(check, 'pass', `${status.component}: in sync`);
   }
 
-  return finishCheck(check, 'master wrangler config は package deploy copy と同期しています');
+  return finishCheck(check, 'master wrangler config is synchronized with package deploy copies');
 }
 
 export async function validateGeneratedEnvironment(
@@ -697,7 +697,7 @@ export async function validateGeneratedEnvironment(
     ? resolve(options.packagesDir)
     : join(baseDir, 'packages');
 
-  const configCheck = makeCheck('config', 'config.json を読める');
+  const configCheck = makeCheck('config', 'config.json is readable');
   let config: AuthrimConfig;
   try {
     config = await readConfig(configPath);
@@ -716,14 +716,14 @@ export async function validateGeneratedEnvironment(
       lockPath: envPaths.lock,
       lockType: 'new',
       enabledComponents: [],
-      checks: [finishCheck(configCheck, 'config.json を読めません')],
+      checks: [finishCheck(configCheck, 'config.json is not readable')],
     };
   }
 
-  const lockCheck = makeCheck('lock', 'lock.json を読める');
+  const lockCheck = makeCheck('lock', 'lock.json is readable');
   const loadedLock = await loadLockFileAuto(baseDir, options.env);
   if (!loadedLock.lock) {
-    pushDetail(lockCheck, 'fail', `${loadedLock.path} がありません`);
+    pushDetail(lockCheck, 'fail', `${loadedLock.path} is missing`);
     return {
       ok: false,
       env: options.env,
@@ -733,8 +733,8 @@ export async function validateGeneratedEnvironment(
       lockType: loadedLock.type,
       enabledComponents: [],
       checks: [
-        finishCheck(configCheck, 'config.json を読めます'),
-        finishCheck(lockCheck, 'lock.json を読めません'),
+        finishCheck(configCheck, 'config.json is readable'),
+        finishCheck(lockCheck, 'lock.json is not readable'),
       ],
     };
   }
@@ -752,8 +752,8 @@ export async function validateGeneratedEnvironment(
   );
 
   const checks = [
-    finishCheck(configCheck, 'config.json を読めます'),
-    finishCheck(lockCheck, 'lock.json を読めます'),
+    finishCheck(configCheck, 'config.json is readable'),
+    finishCheck(lockCheck, 'lock.json is readable'),
     validateRequiredD1Bindings(lock),
     validateDefaultProfileReferences(config),
     validateActiveProfileCompatibility(config),

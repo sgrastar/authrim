@@ -1,27 +1,16 @@
 import {
   addFail,
   addPass,
-  addWarn,
-  createTemporaryInitialAccessToken,
-  deleteTemporarySmokeClient,
-  ensureTemporaryDcrEnabled,
   fetchJsonWithTimeout,
   finalizeCheck,
   isRecord,
   isSmokeSuccessful,
   makeSmokeCheck,
   readGeneratedAdminApiSecret,
-  registerTemporarySmokeClient,
-  revokeTemporaryInitialAccessToken,
-  restoreTemporaryDcrEnabled,
   resolveGeneratedSmokeTarget,
-  resolveSmokeClientRegistrationDefaults,
   withTenantHeader,
   type GeneratedSmokeOptions,
-  type RegisteredSmokeClient,
   type SmokeCheck,
-  type TemporaryDcrEnableState,
-  type TemporaryInitialAccessToken,
 } from './generated-smoke-common.js';
 
 export interface GeneratedAdminApiSmokeOptions extends GeneratedSmokeOptions {
@@ -41,10 +30,10 @@ export interface GeneratedAdminApiSmokeResult {
 
 function validateJsonObject(check: SmokeCheck, payload: unknown, label: string): boolean {
   if (!isRecord(payload)) {
-    addFail(check, `${label}: payload が object ではありません`);
+    addFail(check, `${label}: payload is not an object`);
     return false;
   }
-  addPass(check, `${label}: JSON object を確認しました`);
+  addPass(check, `${label}: JSON object verified`);
   return true;
 }
 
@@ -100,26 +89,37 @@ async function runAdminJsonRequest(options: {
   return response.payload;
 }
 
+function getClientFromPayload(payload: unknown): Record<string, unknown> | null {
+  if (!isRecord(payload) || !isRecord(payload.client)) {
+    return null;
+  }
+  return payload.client;
+}
+
 export async function runGeneratedAdminApiSmoke(
   options: GeneratedAdminApiSmokeOptions
 ): Promise<GeneratedAdminApiSmokeResult> {
   const target = await resolveGeneratedSmokeTarget(options);
   const timeoutMs = options.timeoutMs ?? 10_000;
-  const { secret: adminSecret, path: adminSecretPath } = await readGeneratedAdminApiSecret({
+  const adminAccess = await readGeneratedAdminApiSecret({
     baseDir: target.baseDir,
     env: target.env,
     adminSecret: options.adminSecret,
     adminSecretPath: options.adminSecretPath,
     baseUrl: target.baseUrl,
     tenantId: target.tenantId,
+    config: target.config,
   });
+  const adminSecret = adminAccess.secret;
+  const adminSecretPath = adminAccess.path;
   const tenantId = target.tenantId;
-  const clientRegistrationDefaults = resolveSmokeClientRegistrationDefaults(target.config);
 
+  try {
   const checks: SmokeCheck[] = [];
-  let temporaryClient: RegisteredSmokeClient | null = null;
-  let temporaryIat: TemporaryInitialAccessToken | null = null;
-  let temporaryDcr: TemporaryDcrEnableState | null = null;
+  const smokeRunId = Date.now();
+  const clientName = `Generated Admin Smoke Client ${smokeRunId}`;
+  const updatedDescription = `Generated environment validation smoke ${smokeRunId}`;
+  let createdClientId = '';
 
   const statsCheck = makeSmokeCheck(
     'admin-stats',
@@ -137,584 +137,146 @@ export async function runGeneratedAdminApiSmoke(
       validateJsonObject(check, payload, 'admin stats');
     },
   });
-  checks.push(finalizeCheck(statsCheck, 'admin stats endpoint を確認しました'));
+  checks.push(finalizeCheck(statsCheck, 'admin stats endpoint verified'));
 
-  const profilesCheck = makeSmokeCheck(
-    'runtime-profiles-defaults',
-    'runtime profile defaults endpoint',
-    `${target.baseUrl}/api/admin/runtime-profiles/defaults`
+  const clientsListCheck = makeSmokeCheck(
+    'admin-clients-list',
+    'admin clients list',
+    `${target.baseUrl}/api/admin/clients`
   );
   await runAdminJsonRequest({
-    check: profilesCheck,
+    check: clientsListCheck,
     baseUrl: target.baseUrl,
-    path: '/api/admin/runtime-profiles/defaults',
+    path: '/api/admin/clients',
     adminSecret,
     tenantId,
     timeoutMs,
     validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'runtime profile defaults')) {
+      if (!validateJsonObject(check, payload, 'admin clients list')) {
         return;
       }
-      if (!('defaults' in (payload as Record<string, unknown>))) {
-        addWarn(check, 'defaults field が見つかりませんでした');
+      if (!Array.isArray((payload as Record<string, unknown>).clients)) {
+        addFail(check, 'clients is not an array');
       }
     },
   });
-  checks.push(finalizeCheck(profilesCheck, 'runtime profile defaults endpoint を確認しました'));
+  checks.push(finalizeCheck(clientsListCheck, 'admin clients list verified'));
 
-  try {
-    if (options.clientId) {
-      addPass(profilesCheck, `check-api-keys 用 client_id として ${options.clientId} を使用します`);
-    } else {
-      const dcrCheck = makeSmokeCheck(
-        'temporary-dcr-enable',
-        'temporary DCR enable for admin smoke',
-        `${target.baseUrl}/api/admin/tenants/${tenantId}/settings/dcr`
-      );
-      try {
-        temporaryDcr = await ensureTemporaryDcrEnabled({
-          baseUrl: target.baseUrl,
-          timeoutMs,
-          adminSecret,
-          tenantId,
-        });
-        addPass(
-          dcrCheck,
-          temporaryDcr.changed
-            ? 'dcr.enabled を一時的に有効化しました'
-            : 'dcr.enabled は既に有効です'
-        );
-      } catch (error) {
-        addWarn(
-          dcrCheck,
-          `temporary DCR enable をスキップしました: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-      checks.push(finalizeCheck(dcrCheck, 'temporary DCR enable を確認しました'));
-
-      temporaryIat = await createTemporaryInitialAccessToken({
-        baseUrl: target.baseUrl,
-        timeoutMs,
-        adminSecret,
-        tenantId,
-        description: 'Portability Admin Smoke Temporary IAT',
-      });
-      temporaryClient = await registerTemporarySmokeClient({
-        baseUrl: target.baseUrl,
-        timeoutMs,
-        tenantId,
-        initialAccessToken: temporaryIat.token,
-        grantTypes: clientRegistrationDefaults.grantTypes,
-        responseTypes: clientRegistrationDefaults.responseTypes,
-        clientCredentialsAllowed: clientRegistrationDefaults.supportsClientCredentials,
-        clientNamePrefix: 'Portability Admin Smoke Client',
-      });
-    }
-  } catch (error) {
-    const clientWarn = makeSmokeCheck(
-      'smoke-client-bootstrap',
-      'admin smoke 用 temporary client bootstrap',
-      `${target.baseUrl}/register`
-    );
-    addWarn(
-      clientWarn,
-      `temporary client bootstrap をスキップしました: ${error instanceof Error ? error.message : String(error)}`
-    );
-    checks.push(finalizeCheck(clientWarn, 'temporary client bootstrap をスキップしました'));
-  }
-
-  const tokenRuleName = `portability-smoke-rule-${Date.now()}`;
-  let tokenRuleId = '';
-  const tokenRuleCreateCheck = makeSmokeCheck(
-    'token-claim-rules-create',
-    'token claim rule create',
-    `${target.baseUrl}/api/admin/token-claim-rules`
+  const clientCreateCheck = makeSmokeCheck(
+    'admin-client-create',
+    'admin client create',
+    `${target.baseUrl}/api/admin/clients`
   );
-  const tokenRuleCreatePayload = await runAdminJsonRequest({
-    check: tokenRuleCreateCheck,
+  await runAdminJsonRequest({
+    check: clientCreateCheck,
     baseUrl: target.baseUrl,
-    path: '/api/admin/token-claim-rules',
+    path: '/api/admin/clients',
     method: 'POST',
     adminSecret,
     tenantId,
     timeoutMs,
     expectedStatus: 201,
     body: {
-      name: tokenRuleName,
-      token_type: 'access',
-      condition: { field: 'user_type', operator: 'eq', value: 'end_user' },
-      actions: [
-        {
-          type: 'add_claim',
-          claim_name: 'portability_smoke',
-          claim_value: 'ok',
-        },
-      ],
-      priority: 1,
-      is_active: true,
+      client_name: clientName,
+      description: 'Generated environment validation smoke client',
+      redirect_uris: ['https://example.invalid/authrim/generated-admin-smoke/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'client_secret_basic',
+      require_pkce: true,
     },
     validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'token claim rule create response')) {
+      if (!validateJsonObject(check, payload, 'admin client create response')) {
         return;
       }
-      if (typeof (payload as Record<string, unknown>).id === 'string') {
-        tokenRuleId = String((payload as Record<string, unknown>).id);
-        addPass(check, `rule id=${tokenRuleId}`);
-      } else {
-        addFail(check, 'rule id が返ってきませんでした');
+      const client = getClientFromPayload(payload);
+      const clientId = typeof client?.client_id === 'string' ? client.client_id : '';
+      if (!clientId) {
+        addFail(check, 'client.client_id was not returned');
+        return;
       }
+      createdClientId = clientId;
+      addPass(check, `client_id=${createdClientId}`);
     },
   });
-  void tokenRuleCreatePayload;
-  checks.push(finalizeCheck(tokenRuleCreateCheck, 'token claim rule create を確認しました'));
+  checks.push(finalizeCheck(clientCreateCheck, 'admin client create verified'));
 
-  if (tokenRuleId) {
-    const tokenRuleGetCheck = makeSmokeCheck(
-      'token-claim-rules-get',
-      'token claim rule get',
-      `${target.baseUrl}/api/admin/token-claim-rules/${tokenRuleId}`
+  if (createdClientId) {
+    const clientGetCheck = makeSmokeCheck(
+      'admin-client-get',
+      'admin client get',
+      `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
     );
     await runAdminJsonRequest({
-      check: tokenRuleGetCheck,
+      check: clientGetCheck,
       baseUrl: target.baseUrl,
-      path: `/api/admin/token-claim-rules/${tokenRuleId}`,
+      path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
       adminSecret,
       tenantId,
       timeoutMs,
       validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'token claim rule get response')) {
+        if (!validateJsonObject(check, payload, 'admin client get response')) {
           return;
         }
-        if ((payload as Record<string, unknown>).name !== tokenRuleName) {
-          addFail(check, `name expected=${tokenRuleName}`);
+        const client = getClientFromPayload(payload);
+        if (client?.client_id !== createdClientId) {
+          addFail(check, `client_id expected=${createdClientId}`);
         }
       },
     });
-    checks.push(finalizeCheck(tokenRuleGetCheck, 'token claim rule get を確認しました'));
-  }
+    checks.push(finalizeCheck(clientGetCheck, 'admin client get verified'));
 
-  const permissionResourceId = `smoke-resource-${Date.now()}`;
-  let permissionId = '';
-  const permissionCreateCheck = makeSmokeCheck(
-    'resource-permissions-create',
-    'resource permission create',
-    `${target.baseUrl}/api/admin/resource-permissions`
-  );
-  await runAdminJsonRequest({
-    check: permissionCreateCheck,
-    baseUrl: target.baseUrl,
-    path: '/api/admin/resource-permissions',
-    method: 'POST',
-    adminSecret,
-    tenantId,
-    timeoutMs,
-    expectedStatus: 201,
-    body: {
-      subject_type: 'user',
-      subject_id: 'smoke-subject',
-      resource_type: 'document',
-      resource_id: permissionResourceId,
-      actions: ['read'],
-    },
-    validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'resource permission create response')) {
-        return;
-      }
-      if (typeof (payload as Record<string, unknown>).id === 'string') {
-        permissionId = String((payload as Record<string, unknown>).id);
-        addPass(check, `permission id=${permissionId}`);
-      } else {
-        addFail(check, 'permission id が返ってきませんでした');
-      }
-    },
-  });
-  checks.push(finalizeCheck(permissionCreateCheck, 'resource permission create を確認しました'));
-
-  const permissionCheckCheck = makeSmokeCheck(
-    'resource-permissions-check',
-    'resource permission check',
-    `${target.baseUrl}/api/admin/resource-permissions/check`
-  );
-  await runAdminJsonRequest({
-    check: permissionCheckCheck,
-    baseUrl: target.baseUrl,
-    path: '/api/admin/resource-permissions/check',
-    method: 'POST',
-    adminSecret,
-    tenantId,
-    timeoutMs,
-    body: {
-      subject_id: 'smoke-subject',
-      resource_type: 'document',
-      resource_id: permissionResourceId,
-      action: 'read',
-    },
-    validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'resource permission check response')) {
-        return;
-      }
-      if ((payload as Record<string, unknown>).allowed !== true) {
-        addFail(check, 'allowed=true を期待しました');
-      }
-    },
-  });
-  checks.push(finalizeCheck(permissionCheckCheck, 'resource permission check を確認しました'));
-
-  const webhookName = `portability-smoke-webhook-${Date.now()}`;
-  let webhookId = '';
-  const webhookCreateCheck = makeSmokeCheck(
-    'webhooks-create',
-    'webhook create',
-    `${target.baseUrl}/api/admin/webhooks`
-  );
-  await runAdminJsonRequest({
-    check: webhookCreateCheck,
-    baseUrl: target.baseUrl,
-    path: '/api/admin/webhooks',
-    method: 'POST',
-    adminSecret,
-    tenantId,
-    timeoutMs,
-    expectedStatus: 201,
-    body: {
-      name: webhookName,
-      url: 'https://example.invalid/authrim-portability-smoke',
-      events: ['user.created'],
-      secret: '0123456789abcdef0123456789abcdef',
-    },
-    validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'webhook create response')) {
-        return;
-      }
-      const webhook = (payload as Record<string, unknown>).webhook;
-      if (isRecord(webhook) && typeof webhook.id === 'string') {
-        webhookId = webhook.id;
-        addPass(check, `webhook id=${webhookId}`);
-      } else {
-        addFail(check, 'webhook id が返ってきませんでした');
-      }
-    },
-  });
-  checks.push(finalizeCheck(webhookCreateCheck, 'webhook create を確認しました'));
-
-  if (webhookId) {
-    const webhookGetCheck = makeSmokeCheck(
-      'webhooks-get',
-      'webhook get',
-      `${target.baseUrl}/api/admin/webhooks/${webhookId}`
+    const clientUpdateCheck = makeSmokeCheck(
+      'admin-client-update',
+      'admin client update',
+      `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
     );
     await runAdminJsonRequest({
-      check: webhookGetCheck,
+      check: clientUpdateCheck,
       baseUrl: target.baseUrl,
-      path: `/api/admin/webhooks/${webhookId}`,
+      path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
+      method: 'PUT',
       adminSecret,
       tenantId,
       timeoutMs,
-      validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'webhook get response')) {
-          return;
-        }
-        const webhook = (payload as Record<string, unknown>).webhook;
-        if (!isRecord(webhook) || webhook.name !== webhookName) {
-          addFail(check, `webhook name expected=${webhookName}`);
-        }
-      },
-    });
-    checks.push(finalizeCheck(webhookGetCheck, 'webhook get を確認しました'));
-  }
-
-  const checkApiListCheck = makeSmokeCheck(
-    'check-api-keys-list',
-    'check api keys list',
-    `${target.baseUrl}/api/admin/check-api-keys`
-  );
-  await runAdminJsonRequest({
-    check: checkApiListCheck,
-    baseUrl: target.baseUrl,
-    path: '/api/admin/check-api-keys',
-    adminSecret,
-    tenantId,
-    timeoutMs,
-    validate: (payload, check) => {
-      validateJsonObject(check, payload, 'check api keys list');
-    },
-  });
-  checks.push(finalizeCheck(checkApiListCheck, 'check api keys list を確認しました'));
-
-  const checkApiClientId = options.clientId || temporaryClient?.clientId;
-  let checkApiKeyId = '';
-  if (checkApiClientId) {
-    const checkApiCreateCheck = makeSmokeCheck(
-      'check-api-keys-create',
-      'check api key create',
-      `${target.baseUrl}/api/admin/check-api-keys`
-    );
-    await runAdminJsonRequest({
-      check: checkApiCreateCheck,
-      baseUrl: target.baseUrl,
-      path: '/api/admin/check-api-keys',
-      method: 'POST',
-      adminSecret,
-      tenantId,
-      timeoutMs,
-      expectedStatus: 201,
       body: {
-        client_id: checkApiClientId,
-        name: `Portability Smoke Check API Key ${Date.now()}`,
-        allowed_operations: ['check'],
-        rate_limit_tier: 'moderate',
+        description: updatedDescription,
       },
       validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'check api key create response')) {
+        if (!validateJsonObject(check, payload, 'admin client update response')) {
           return;
         }
-        if (typeof (payload as Record<string, unknown>).id === 'string') {
-          checkApiKeyId = String((payload as Record<string, unknown>).id);
-          addPass(check, `api key id=${checkApiKeyId}`);
-        } else {
-          addFail(check, 'api key id が返ってきませんでした');
+        const client = getClientFromPayload(payload);
+        if (client?.description !== updatedDescription) {
+          addFail(check, `description expected=${updatedDescription}`);
         }
       },
     });
-    checks.push(finalizeCheck(checkApiCreateCheck, 'check api key create を確認しました'));
+    checks.push(finalizeCheck(clientUpdateCheck, 'admin client update verified'));
 
-    if (checkApiKeyId) {
-      const checkApiGetCheck = makeSmokeCheck(
-        'check-api-keys-get',
-        'check api key get',
-        `${target.baseUrl}/api/admin/check-api-keys/${checkApiKeyId}`
-      );
-      await runAdminJsonRequest({
-        check: checkApiGetCheck,
-        baseUrl: target.baseUrl,
-        path: `/api/admin/check-api-keys/${checkApiKeyId}`,
-        adminSecret,
-        tenantId,
-        timeoutMs,
-        validate: (payload, check) => {
-          if (!validateJsonObject(check, payload, 'check api key get response')) {
-            return;
-          }
-          if ((payload as Record<string, unknown>).id !== checkApiKeyId) {
-            addFail(check, `id expected=${checkApiKeyId}`);
-          }
-        },
-      });
-      checks.push(finalizeCheck(checkApiGetCheck, 'check api key get を確認しました'));
-
-      const checkApiRotateCheck = makeSmokeCheck(
-        'check-api-keys-rotate',
-        'check api key rotate',
-        `${target.baseUrl}/api/admin/check-api-keys/${checkApiKeyId}/rotate`
-      );
-      let rotatedKeyId = '';
-      await runAdminJsonRequest({
-        check: checkApiRotateCheck,
-        baseUrl: target.baseUrl,
-        path: `/api/admin/check-api-keys/${checkApiKeyId}/rotate`,
-        method: 'POST',
-        adminSecret,
-        tenantId,
-        timeoutMs,
-        expectedStatus: 201,
-        validate: (payload, check) => {
-          if (!validateJsonObject(check, payload, 'check api key rotate response')) {
-            return;
-          }
-          if (typeof (payload as Record<string, unknown>).id === 'string') {
-            rotatedKeyId = String((payload as Record<string, unknown>).id);
-            checkApiKeyId = rotatedKeyId;
-            addPass(check, `rotated api key id=${rotatedKeyId}`);
-          } else {
-            addFail(check, 'rotated api key id が返ってきませんでした');
-          }
-        },
-      });
-      checks.push(finalizeCheck(checkApiRotateCheck, 'check api key rotate を確認しました'));
-    }
-  } else {
-    const skipCheck = makeSmokeCheck(
-      'check-api-keys-create',
-      'check api key create',
-      `${target.baseUrl}/api/admin/check-api-keys`
-    );
-    addWarn(
-      skipCheck,
-      'client_id を用意できなかったため check-api-keys mutation をスキップしました'
-    );
-    checks.push(finalizeCheck(skipCheck, 'check api key create をスキップしました'));
-  }
-
-  if (checkApiKeyId) {
-    const checkApiDeleteCheck = makeSmokeCheck(
-      'check-api-keys-delete',
-      'check api key delete',
-      `${target.baseUrl}/api/admin/check-api-keys/${checkApiKeyId}`
+    const clientDeleteCheck = makeSmokeCheck(
+      'admin-client-delete',
+      'admin client delete',
+      `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
     );
     await runAdminJsonRequest({
-      check: checkApiDeleteCheck,
+      check: clientDeleteCheck,
       baseUrl: target.baseUrl,
-      path: `/api/admin/check-api-keys/${checkApiKeyId}`,
+      path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
       method: 'DELETE',
       adminSecret,
       tenantId,
       timeoutMs,
       validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'check api key delete response')) {
+        if (!validateJsonObject(check, payload, 'admin client delete response')) {
           return;
         }
         if ((payload as Record<string, unknown>).success !== true) {
-          addFail(check, 'success=true を期待しました');
+          addFail(check, 'success=true was expected');
         }
       },
     });
-    checks.push(finalizeCheck(checkApiDeleteCheck, 'check api key delete を確認しました'));
-  }
-
-  if (webhookId) {
-    const webhookDeleteCheck = makeSmokeCheck(
-      'webhooks-delete',
-      'webhook delete',
-      `${target.baseUrl}/api/admin/webhooks/${webhookId}`
-    );
-    await runAdminJsonRequest({
-      check: webhookDeleteCheck,
-      baseUrl: target.baseUrl,
-      path: `/api/admin/webhooks/${webhookId}`,
-      method: 'DELETE',
-      adminSecret,
-      tenantId,
-      timeoutMs,
-      validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'webhook delete response')) {
-          return;
-        }
-        if ((payload as Record<string, unknown>).deleted !== webhookId) {
-          addFail(check, `deleted expected=${webhookId}`);
-        }
-      },
-    });
-    checks.push(finalizeCheck(webhookDeleteCheck, 'webhook delete を確認しました'));
-  }
-
-  if (permissionId) {
-    const permissionDeleteCheck = makeSmokeCheck(
-      'resource-permissions-delete',
-      'resource permission delete',
-      `${target.baseUrl}/api/admin/resource-permissions/${permissionId}`
-    );
-    await runAdminJsonRequest({
-      check: permissionDeleteCheck,
-      baseUrl: target.baseUrl,
-      path: `/api/admin/resource-permissions/${permissionId}`,
-      method: 'DELETE',
-      adminSecret,
-      tenantId,
-      timeoutMs,
-      validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'resource permission delete response')) {
-          return;
-        }
-      },
-    });
-    checks.push(finalizeCheck(permissionDeleteCheck, 'resource permission delete を確認しました'));
-  }
-
-  if (tokenRuleId) {
-    const tokenRuleDeleteCheck = makeSmokeCheck(
-      'token-claim-rules-delete',
-      'token claim rule delete',
-      `${target.baseUrl}/api/admin/token-claim-rules/${tokenRuleId}`
-    );
-    await runAdminJsonRequest({
-      check: tokenRuleDeleteCheck,
-      baseUrl: target.baseUrl,
-      path: `/api/admin/token-claim-rules/${tokenRuleId}`,
-      method: 'DELETE',
-      adminSecret,
-      tenantId,
-      timeoutMs,
-      validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'token claim rule delete response')) {
-          return;
-        }
-      },
-    });
-    checks.push(finalizeCheck(tokenRuleDeleteCheck, 'token claim rule delete を確認しました'));
-  }
-
-  if (temporaryClient) {
-    const cleanupCheck = makeSmokeCheck(
-      'temporary-client-cleanup',
-      'temporary smoke client cleanup',
-      temporaryClient.registrationClientUri
-    );
-    const cleanupResponse = await deleteTemporarySmokeClient(temporaryClient, timeoutMs);
-    cleanupCheck.httpStatus = cleanupResponse.status;
-    if (!cleanupResponse.ok && cleanupResponse.status !== 204) {
-      addWarn(
-        cleanupCheck,
-        `temporary client cleanup failed: ${cleanupResponse.status} ${cleanupResponse.error ?? cleanupResponse.bodyText ?? ''}`
-      );
-    } else {
-      addPass(cleanupCheck, `HTTP ${cleanupResponse.status || 204}`);
-    }
-    checks.push(finalizeCheck(cleanupCheck, 'temporary smoke client cleanup を確認しました'));
-  }
-
-  if (temporaryIat) {
-    const cleanupCheck = makeSmokeCheck(
-      'temporary-iat-cleanup',
-      'temporary initial access token cleanup',
-      `${target.baseUrl}/api/admin/iat-tokens/${temporaryIat.tokenHash}`
-    );
-    const cleanupResponse = await revokeTemporaryInitialAccessToken({
-      baseUrl: target.baseUrl,
-      timeoutMs,
-      adminSecret,
-      tokenHash: temporaryIat.tokenHash,
-      tenantId,
-    });
-    cleanupCheck.httpStatus = cleanupResponse.status;
-    if (!cleanupResponse.ok && cleanupResponse.status !== 404) {
-      addWarn(
-        cleanupCheck,
-        `temporary IAT cleanup failed: ${cleanupResponse.status} ${cleanupResponse.error ?? cleanupResponse.bodyText ?? ''}`
-      );
-    } else {
-      addPass(cleanupCheck, `HTTP ${cleanupResponse.status || 404}`);
-    }
-    checks.push(
-      finalizeCheck(cleanupCheck, 'temporary initial access token cleanup を確認しました')
-    );
-  }
-
-  if (temporaryDcr) {
-    const cleanupCheck = makeSmokeCheck(
-      'temporary-dcr-restore',
-      'temporary DCR restore',
-      `${target.baseUrl}/api/admin/tenants/${tenantId}/settings/dcr`
-    );
-    try {
-      const cleanupResponse = await restoreTemporaryDcrEnabled({
-        baseUrl: target.baseUrl,
-        timeoutMs,
-        adminSecret,
-        tenantId,
-        state: temporaryDcr,
-      });
-      cleanupCheck.httpStatus = cleanupResponse.status;
-      addPass(
-        cleanupCheck,
-        temporaryDcr.changed ? 'dcr.enabled を元の状態へ戻しました' : 'restore は不要でした'
-      );
-    } catch (error) {
-      addWarn(
-        cleanupCheck,
-        `temporary DCR restore failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    checks.push(finalizeCheck(cleanupCheck, 'temporary DCR restore を確認しました'));
+    checks.push(finalizeCheck(clientDeleteCheck, 'admin client delete verified'));
   }
 
   return {
@@ -725,4 +287,7 @@ export async function runGeneratedAdminApiSmoke(
     adminSecretPath,
     checks,
   };
+  } finally {
+    await adminAccess.cleanup?.();
+  }
 }

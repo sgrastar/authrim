@@ -276,13 +276,16 @@ export interface SAMLErrorResponseOverride {
 
 export type SAMLAuthnRequestSignaturePolicy = 'required' | 'optional' | 'disabled';
 export type SAMLAuthnRequestLegacyAlgorithmPolicy = 'disabled' | 'explicit_opt_in';
+export type SAMLAuthnContextClassRefMode = 'legacy_static' | 'session';
 export type SAMLAttributeReleaseFailureUserMessageMode = 'generic' | 'detailed';
 export type SAMLLogoutResponseBinding = 'auto' | 'post' | 'redirect';
 export type SAMLSPProfile = 'baseline' | 'strict' | 'academic_publisher' | 'legacy';
 export type SAMLAttributePresetId =
+  | 'basic.v1'
   | 'academic_publisher.v1'
   | 'enterprise_saas.v1'
-  | 'research_federation.v1';
+  | 'research_federation.v1'
+  | `custom:${string}`;
 export type SAMLSigningRole = 'idp' | 'sp';
 export type SAMLSigningKeyScope = 'tenant_role' | 'provider';
 export type SAMLSigningCertificateSlot = 'active' | 'next' | 'backup';
@@ -387,6 +390,8 @@ export interface SAMLLogoutResponse {
  * Used when Authrim acts as IdP
  */
 export interface SAMLSPConfig {
+  /** Operator note shown in Admin UI */
+  description?: string;
   /** SP Entity ID */
   entityId: string;
   /** Assertion Consumer Service URL */
@@ -421,6 +426,12 @@ export interface SAMLSPConfig {
   keyEncryptionAlgorithm?: SAMLKeyEncryptionAlgorithm;
   /** AuthnRequest signature verification policy */
   authnRequestSignaturePolicy?: SAMLAuthnRequestSignaturePolicy;
+  /** AuthnContext emission policy. Default legacy_static preserves older SP behavior. */
+  authnContextClassRefMode?: SAMLAuthnContextClassRefMode;
+  /** AuthnContext emitted for legacy/static mode. */
+  defaultAuthnContextClassRef?: string;
+  /** AuthnContext emitted for passkey sessions when session-aware mode is enabled. */
+  passkeyAuthnContextClassRef?: string;
   /** LogoutRequest signature verification policy */
   logoutRequestSignaturePolicy?: SAMLAuthnRequestSignaturePolicy;
   /** LogoutResponse signature verification policy */
@@ -489,6 +500,10 @@ export interface SAMLAssertionConsumerService {
  * Used when Authrim acts as SP
  */
 export interface SAMLIdPConfig {
+  /** Operator note shown in Admin UI */
+  description?: string;
+  /** SP display name sent as AuthnRequest ProviderName when Authrim acts as SP */
+  providerName?: string;
   /** IdP Entity ID */
   entityId: string;
   /** SSO URL */
@@ -501,6 +516,11 @@ export interface SAMLIdPConfig {
   nameIdFormat: NameIDFormat;
   /** Authrim signing key policy when acting as SP for this IdP */
   signingKeyPolicy?: SAMLSigningKeyPolicy;
+  /** AuthnContext policy for assertions returned by this IdP */
+  authnContextPolicy?: {
+    mode: 'observe' | 'require_any';
+    allowedClassRefs?: string[];
+  };
   /**
    * SAML attribute to Authrim claim mapping.
    * Standard targets are OIDC-style claims such as email or name.
@@ -649,8 +669,16 @@ export interface SAMLProviderCreateRequest {
   name: string;
   /** Provider type */
   providerType: 'saml_idp' | 'saml_sp';
-  /** Configuration */
-  config: SAMLIdPConfig | SAMLSPConfig;
+  /** Configuration. Required unless metadataXml or metadataUrl is supplied. */
+  config?: SAMLIdPConfig | SAMLSPConfig;
+  /** Metadata XML string for metadata-first registration */
+  metadataXml?: string;
+  /** Metadata URL to fetch for metadata-first registration */
+  metadataUrl?: string;
+  /** Optional Authrim profile defaults to apply for SP metadata */
+  samlProfile?: SAMLSPProfile;
+  /** Optional built-in attribute preset to clone into the SP release policy */
+  attributePresetId?: SAMLAttributePresetId;
   /** Enable/disable */
   enabled?: boolean;
 }

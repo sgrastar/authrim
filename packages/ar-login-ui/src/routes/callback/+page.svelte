@@ -71,8 +71,7 @@
 			if (!finalizeResponse.ok) {
 				const data = await finalizeResponse.json().catch(() => ({}));
 				errorCode = data.error || 'handoff_finalize_failed';
-				errorMessage =
-					data.error_description || 'Handoff session could not be finalized securely';
+				errorMessage = data.error_description || 'Handoff session could not be finalized securely';
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -137,8 +136,13 @@
 				LOGIN_UI_SESSION_STORAGE_KEYS.externalReturnUrl,
 				[LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalReturnUrl]
 			);
+			const callbackReturnUrl = params.get('return_url');
 			const returnUrl =
-				storedReturnUrl && isValidReturnUrl(storedReturnUrl) ? storedReturnUrl : '/';
+				storedReturnUrl && isValidReturnUrl(storedReturnUrl)
+					? storedReturnUrl
+					: callbackReturnUrl && isValidReturnUrl(callbackReturnUrl)
+						? callbackReturnUrl
+						: '/';
 
 			setTimeout(() => {
 				window.location.href = returnUrl;
@@ -181,10 +185,9 @@
 		if (code) {
 			let providerId: string | null = null;
 			try {
-				providerId = consumeLoginUiSessionItem(
-					LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId,
-					[LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalProviderId]
-				);
+				providerId = consumeLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId, [
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalProviderId
+				]);
 				removeLoginUiSessionItems([
 					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.pkceCodeVerifier,
 					LOGIN_UI_SESSION_STORAGE_KEYS.externalReturnUrl,

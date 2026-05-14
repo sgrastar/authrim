@@ -5,7 +5,7 @@ import { SAML_INTEROPERABILITY_MATRIX } from '../../common/interoperability-matr
 import { findElement, getAttribute, parseXml } from '../../common/xml-utils';
 import { buildIdPMetadata } from '../../idp/metadata';
 import { buildSPMetadata } from '../../sp/metadata';
-import { parseIdPMetadata, parseSPMetadata } from '../providers';
+import { handlePreviewMetadata, parseIdPMetadata, parseSPMetadata } from '../providers';
 
 describe('SAML metadata interoperability fixtures', () => {
   it.each(syntheticSPMetadataFixtures)('imports $id metadata', ({ metadataXml, expected }) => {
@@ -302,4 +302,113 @@ describe('SAML metadata interoperability fixtures', () => {
     expect(config.certificate).toContain('IDPCERT');
     expect(config.allowedBindings).toEqual(['post', 'redirect']);
   });
+
+  it('explains when SP metadata is imported as IdP metadata', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+  entityID="https://sp.example.test/saml/sp">
+  <md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:AssertionConsumerService
+      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+      Location="https://sp.example.test/saml/acs"
+      index="0"
+      isDefault="true" />
+  </md:SPSSODescriptor>
+</md:EntityDescriptor>`;
+
+    expect(() => parseIdPMetadata(xml)).toThrow(
+      'Metadata is for a SAML Service Provider, not an Identity Provider'
+    );
+  });
+
+  it('explains when IdP metadata is imported as SP metadata', () => {
+    const xml = buildIdPMetadata({
+      entityId: 'https://tenant.example.com/saml/idp',
+      issuerUrl: 'https://tenant.example.com',
+      signingCertificates: [
+        {
+          slot: 'active',
+          certificate: '-----BEGIN CERTIFICATE-----\nIDPCERT\n-----END CERTIFICATE-----',
+        },
+      ],
+    });
+
+    expect(() => parseSPMetadata(xml)).toThrow(
+      'Metadata is for a SAML Identity Provider, not a Service Provider'
+    );
+  });
+
+  it('previews metadata and detects the provider role before registration', async () => {
+    const response = await handlePreviewMetadata(
+      createPreviewContext({
+        metadataXml: buildIdPMetadata({
+          entityId: 'https://tenant.example.com/saml/idp',
+          issuerUrl: 'https://tenant.example.com',
+          signingCertificates: [
+            {
+              slot: 'active',
+              certificate: '-----BEGIN CERTIFICATE-----\nIDPCERT\n-----END CERTIFICATE-----',
+            },
+          ],
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      providerType: string;
+      config: { entityId: string; ssoUrl?: string };
+    };
+    expect(body.providerType).toBe('saml_idp');
+    expect(body.config.entityId).toBe('https://tenant.example.com/saml/idp');
+    expect(body.config.ssoUrl).toBe('https://tenant.example.com/saml/idp/sso');
+  });
+
+  it('previews SP metadata as a service provider registration', async () => {
+    const response = await handlePreviewMetadata(
+      createPreviewContext({
+        metadataXml: `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+  entityID="IAMShowcase">
+  <md:SPSSODescriptor
+    AuthnRequestsSigned="false"
+    WantAssertionsSigned="false"
+    protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:AssertionConsumerService
+      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+      Location="https://sptest.iamshowcase.com/acs"
+      index="0"
+      isDefault="true" />
+  </md:SPSSODescriptor>
+</md:EntityDescriptor>`,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      providerType: string;
+      config: { entityId: string; acsUrl?: string; authnRequestSignaturePolicy?: string };
+    };
+    expect(body.providerType).toBe('saml_sp');
+    expect(body.config.entityId).toBe('IAMShowcase');
+    expect(body.config.acsUrl).toBe('https://sptest.iamshowcase.com/acs');
+    expect(body.config.authnRequestSignaturePolicy).toBe('optional');
+  });
 });
+
+function createPreviewContext(body: unknown) {
+  return {
+    req: {
+      json: async () => body,
+      header: () => undefined,
+    },
+    get: (key: string) =>
+      key === 'adminAuth' ? { permissions: ['admin:saml_providers:create'] } : undefined,
+    json: (value: unknown, status?: number) =>
+      new Response(JSON.stringify(value), {
+        status: status ?? 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    env: {},
+  } as never;
+}

@@ -31,6 +31,7 @@ import {
   runMigrationsForEnvironment,
   ensureInitialAdminRolesInD1,
   ensureAdminUiBffMachineAccessInD1,
+  cleanupSetupMachineAccessInD1,
   ensureSetupMachineAccessInD1,
   ensureInitialTenantInD1,
   seedRuntimeProfiles,
@@ -96,6 +97,7 @@ import { completeInitialSetup } from '../core/admin.js';
 import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
+import { waitForRouterWorkerReady } from '../core/worker-readiness.js';
 import {
   configureDownstreamIntrospectionDeployment,
   resolveDownstreamIntrospectionKeysDir,
@@ -1352,6 +1354,8 @@ export function createApiRoutes(): Hono {
   // Deploy (with lock - long-running operation)
   api.post('/deploy', async (c) => {
     return withLock(async () => {
+      let cleanupEnv: string | undefined;
+      let cleanupKeysDir: string | undefined;
       try {
         const body = await c.req.json();
         const {
@@ -1362,6 +1366,7 @@ export function createApiRoutes(): Hono {
           skipBuild = false,
           runMigrations = true,
         } = body;
+        cleanupEnv = env;
 
         state.status = 'deploying';
         state.error = null;
@@ -1450,6 +1455,7 @@ export function createApiRoutes(): Hono {
         } else {
           keysDir = (resolved.paths as LegacyPaths).keys;
         }
+        cleanupKeysDir = keysDir;
 
         if (!dryRun && existsSync(keysDir)) {
           await ensureSupplementalKeysForWebDeploy(keysDir);
@@ -1591,6 +1597,19 @@ export function createApiRoutes(): Hono {
         let uiWorkersSummary = null;
 
         const workersSuccess = summary.failedCount === 0;
+        let setupMachineAccessCleanupDone = false;
+        const cleanupEphemeralSetupMachineAccess = async (): Promise<void> => {
+          if (setupMachineAccessCleanupDone || dryRun) {
+            return;
+          }
+          setupMachineAccessCleanupDone = true;
+          const cleanupResult = await cleanupSetupMachineAccessInD1(env, keysDir, addProgress);
+          if (!cleanupResult.success) {
+            addProgress(
+              `⚠️ Setup machine access cleanup failed: ${cleanupResult.error || 'unknown error'}`
+            );
+          }
+        };
 
         // Update lock file with deployed workers information
         if (workersSuccess && !dryRun && summary.successCount > 0) {
@@ -1634,6 +1653,23 @@ export function createApiRoutes(): Hono {
           } catch (lockError) {
             // Non-fatal: log but continue
             addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
+          }
+        }
+
+        const apiBaseUrl =
+          cfg?.urls?.api?.custom ||
+          cfg?.urls?.api?.auto ||
+          `https://${env}-ar-router.workers.dev`;
+
+        if (workersSuccess && !dryRun) {
+          const readinessResult = await waitForRouterWorkerReady({
+            apiBaseUrl,
+            onProgress: addProgress,
+          });
+          if (!readinessResult.ready) {
+            throw new Error(
+              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+            );
           }
         }
 
@@ -1773,11 +1809,6 @@ export function createApiRoutes(): Hono {
         ) {
           addProgress('Deploying Login/Admin UI to Cloudflare Workers...');
 
-          const apiBaseUrl =
-            cfg?.urls?.api?.custom ||
-            cfg?.urls?.api?.auto ||
-            `https://${env}-ar-router.workers.dev`;
-
           let loginUiClientId: string | undefined;
           if (cfg?.components?.loginUi && !dryRun) {
             const loginUiUrl =
@@ -1804,11 +1835,14 @@ export function createApiRoutes(): Hono {
                 addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
               }
             } else {
+              await cleanupEphemeralSetupMachineAccess();
               throw new Error(
                 `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
               );
             }
           }
+
+          await cleanupEphemeralSetupMachineAccess();
 
           const loginUiSettings = resolveUiDeploymentSettings({
             component: 'ar-login-ui',
@@ -1879,6 +1913,8 @@ export function createApiRoutes(): Hono {
           }
         }
 
+        await cleanupEphemeralSetupMachineAccess();
+
         const uiWorkersSuccess = uiWorkersSummary ? uiWorkersSummary.failedCount === 0 : true;
 
         if (
@@ -1935,6 +1971,13 @@ export function createApiRoutes(): Hono {
           logPath: state.logPath,
         });
       } catch (error) {
+        try {
+          if (cleanupEnv && cleanupKeysDir) {
+            await cleanupSetupMachineAccessInD1(cleanupEnv, cleanupKeysDir, addProgress);
+          }
+        } catch {
+          // Cleanup is best-effort in the error path; the primary deploy error is more useful.
+        }
         state.status = 'error';
         state.error = sanitizeError(error);
         addProgress(`❌ Deployment failed: ${state.error}`);
@@ -2506,6 +2549,22 @@ export function createApiRoutes(): Hono {
           addProgress(`Lock file updated: ${lockPath}`);
         }
 
+        if (summary.failedCount === 0 && componentsToUpdate.includes('ar-router')) {
+          const apiBaseUrl =
+            config.urls?.api?.custom ||
+            config.urls?.api?.auto ||
+            `https://${env}-ar-router.workers.dev`;
+          const readinessResult = await waitForRouterWorkerReady({
+            apiBaseUrl,
+            onProgress: addProgress,
+          });
+          if (!readinessResult.ready) {
+            throw new Error(
+              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+            );
+          }
+        }
+
         if (summary.failedCount === 0) {
           await maybeConfigureDownstreamIntrospectionForWebDeploy({
             env,
@@ -2657,33 +2716,72 @@ export function createApiRoutes(): Hono {
 
             let loginUiClientId: string | undefined;
             if (componentName === 'ar-login-ui' && !dryRun) {
-              const loginUiUrl =
-                cfg?.urls?.loginUi?.custom ||
-                cfg?.urls?.loginUi?.auto ||
-                `https://${env}-ar-login-ui.workers.dev`;
-              const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
-
-              const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
-              const clientResult = await ensureLoginUiClient({
-                apiBaseUrl,
-                loginUiUrl,
-                adminApiSecretPath,
-                keysDir,
-                tenantId: cfg?.tenant?.name,
-                onProgress: addProgress,
-              });
-
-              if (clientResult.success && clientResult.clientId) {
-                loginUiClientId = clientResult.clientId;
-                if (clientResult.alreadyExists) {
-                  addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
-                } else {
-                  addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
-                }
-              } else {
-                throw new Error(
-                  `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+              let setupMachineReady = false;
+              try {
+                const setupMachineResult = await ensureSetupMachineAccessInD1(
+                  env,
+                  cfg as AuthrimConfig,
+                  keysDir,
+                  addProgress
                 );
+                if (!setupMachineResult.success) {
+                  throw new Error(
+                    `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
+                  );
+                }
+                setupMachineReady = true;
+
+                const readinessResult = await waitForRouterWorkerReady({
+                  apiBaseUrl,
+                  onProgress: addProgress,
+                });
+                if (!readinessResult.ready) {
+                  throw new Error(
+                    `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+                  );
+                }
+
+                const loginUiUrl =
+                  cfg?.urls?.loginUi?.custom ||
+                  cfg?.urls?.loginUi?.auto ||
+                  `https://${env}-ar-login-ui.workers.dev`;
+                const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+
+                const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
+                const clientResult = await ensureLoginUiClient({
+                  apiBaseUrl,
+                  loginUiUrl,
+                  adminApiSecretPath,
+                  keysDir,
+                  tenantId: cfg?.tenant?.name,
+                  onProgress: addProgress,
+                });
+
+                if (clientResult.success && clientResult.clientId) {
+                  loginUiClientId = clientResult.clientId;
+                  if (clientResult.alreadyExists) {
+                    addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
+                  } else {
+                    addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
+                  }
+                } else {
+                  throw new Error(
+                    `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+                  );
+                }
+              } finally {
+                if (setupMachineReady) {
+                  const cleanupResult = await cleanupSetupMachineAccessInD1(
+                    env,
+                    keysDir,
+                    addProgress
+                  );
+                  if (!cleanupResult.success) {
+                    addProgress(
+                      `⚠️ Setup machine access cleanup failed: ${cleanupResult.error || 'unknown error'}`
+                    );
+                  }
+                }
               }
             }
 

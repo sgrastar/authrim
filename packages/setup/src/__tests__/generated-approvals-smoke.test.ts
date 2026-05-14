@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { createDefaultConfig } from '../core/config.js';
 import { runGeneratedApprovalsSmoke } from '../core/generated-approvals-smoke.js';
 
+vi.mock('execa', () => ({
+  execa: vi.fn(async () => ({ stdout: '', stderr: '', all: '', exitCode: 0 })),
+}));
+
 describe('generated approvals smoke', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -34,6 +38,18 @@ describe('generated approvals smoke', () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = typeof input === 'string' ? input : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
+
+      if (url.endsWith('/token') && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            access_token: 'machine-admin-token',
+            token_type: 'Bearer',
+            expires_in: 600,
+            scope: 'admin:*',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
 
       if (url.endsWith('/api/admin/users') && method === 'POST') {
         return new Response(JSON.stringify({ user: { id: 'user-1' } }), {
@@ -256,6 +272,18 @@ describe('generated approvals smoke', () => {
       const url = typeof input === 'string' ? input : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
 
+      if (url.endsWith('/token') && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            access_token: 'machine-admin-token',
+            token_type: 'Bearer',
+            expires_in: 600,
+            scope: 'admin:*',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+
       if (url.endsWith('/api/admin/users') && method === 'POST') {
         return new Response(JSON.stringify({ user: { id: 'user-1' } }), {
           status: 201,
@@ -434,8 +462,8 @@ describe('generated approvals smoke', () => {
     );
     expect(protectedRead?.details).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('grant_missing を受信したため'),
-        expect.stringContaining('retry 後に protected resource read が成功しました'),
+        expect.stringContaining('grant_missing received'),
+        expect.stringContaining('protected resource read succeeded after retry'),
       ])
     );
     expect(protectedReadCount).toBe(2);

@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { createDefaultConfig } from '../core/config.js';
 import { runGeneratedServerSurfacesSmoke } from '../core/generated-server-surfaces-smoke.js';
 
+vi.mock('execa', () => ({
+  execa: vi.fn(async () => ({ stdout: '', stderr: '', all: '', exitCode: 0 })),
+}));
+
 describe('generated server-surface smoke', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -41,6 +45,18 @@ describe('generated server-surface smoke', () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = typeof input === 'string' ? input : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
+
+      if (url.endsWith('/token') && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            access_token: 'machine-admin-token',
+            token_type: 'Bearer',
+            expires_in: 600,
+            scope: 'admin:*',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
 
       if (url.endsWith('/api/admin/custom-claims?limit=100') && method === 'GET') {
         return new Response(JSON.stringify({ schemas, pagination: { total: schemas.length } }), {

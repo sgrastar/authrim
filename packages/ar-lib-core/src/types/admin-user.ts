@@ -579,6 +579,8 @@ export const ADMIN_PERMISSIONS = {
   SAML_PROVIDERS_SIGNING_RETIRE_BACKUP: 'admin:saml_providers:signing:retire_backup',
   SAML_PROVIDERS_ALL: 'admin:saml_providers:*',
   SAML_ATTRIBUTE_PRESETS_READ: 'admin:saml_attribute_presets:read',
+  SAML_ATTRIBUTE_PRESETS_WRITE: 'admin:saml_attribute_presets:write',
+  SAML_ATTRIBUTE_PRESETS_DELETE: 'admin:saml_attribute_presets:delete',
 
   // Admin jobs / artifacts
   JOBS_READ: 'admin:jobs:read',

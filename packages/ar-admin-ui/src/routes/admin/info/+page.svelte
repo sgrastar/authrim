@@ -264,7 +264,8 @@
 			<div class="url-grid">
 				{#if info.components.saml}
 					{@render urlRow('SSO (Single Sign-On)', info.saml.sso, 'saml_sso')}
-					{@render urlRow('Metadata', info.saml.metadata, 'saml_metadata', info.saml.metadata)}
+					{@render urlRow('IdP Metadata', info.saml.idp_metadata, 'saml_idp_metadata', info.saml.idp_metadata)}
+					{@render urlRow('SP Metadata', info.saml.sp_metadata ?? info.saml.metadata, 'saml_sp_metadata', info.saml.sp_metadata ?? info.saml.metadata)}
 					{@render urlRow('ACS (Assertion Consumer Service)', info.saml.acs, 'saml_acs')}
 					{@render urlRow('SLO (Single Logout)', info.saml.slo, 'saml_slo')}
 				{:else}

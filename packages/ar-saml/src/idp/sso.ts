@@ -13,7 +13,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import type { SAMLAuthnRequest, SAMLSPConfig } from '@authrim/ar-lib-core';
+import type { SAMLAuthnRequest, SAMLRequestData, SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
@@ -75,6 +75,7 @@ import {
   resolveSAMLPersistentNameIDRegistryStore,
   resolveSAMLTransientNameIDStore,
 } from './subject';
+import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import {
   applySAMLErrorResponseOverride,
   buildSAMLIdPErrorResponse,
@@ -82,10 +83,13 @@ import {
 } from './error-response';
 import { scheduleSAMLPolicyFailureAudit } from './audit';
 import { buildSAMLAssertionTiming } from './assertion-timing';
+import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 
 interface AuthenticatedSAMLSession {
   userId: string;
   sessionId: string;
+  acr?: string;
+  amr?: string[];
 }
 
 interface ParsedAuthnRequestInput {
@@ -93,6 +97,7 @@ interface ParsedAuthnRequestInput {
   relayState?: string;
   binding: 'redirect' | 'post';
   xml: string;
+  storedRequestValidated?: boolean;
   redirectSignature?: SAMLRedirectSignatureInput;
 }
 
@@ -112,7 +117,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
     if (method === 'GET') {
       // HTTP-Redirect Binding
-      parsedInput = await parseRedirectBinding(c);
+      parsedInput = (await parseStoredAuthnRequest(c, tenantId)) ?? (await parseRedirectBinding(c));
     } else {
       // HTTP-POST Binding
       parsedInput = await parsePostBinding(c);
@@ -130,13 +135,15 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     try {
-      await validateSAMLAuthnRequestSignature({
-        authnRequest,
-        spConfig,
-        binding: parsedInput.binding,
-        xml: parsedInput.xml,
-        redirectSignature: parsedInput.redirectSignature,
-      });
+      if (!parsedInput.storedRequestValidated) {
+        await validateSAMLAuthnRequestSignature({
+          authnRequest,
+          spConfig,
+          binding: parsedInput.binding,
+          xml: parsedInput.xml,
+          redirectSignature: parsedInput.redirectSignature,
+        });
+      }
       validateSAMLResponseProtocolBinding(authnRequest);
       resolveSAMLResponseDestination(authnRequest, spConfig);
     } catch (error) {
@@ -285,6 +292,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         // Conformance mode: redirect to builtin login
         const loginUrl = new URL('/flow/login', buildIssuerUrl(env, tenantId));
         loginUrl.searchParams.set('saml_request_id', authnRequest.id);
+        loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
         loginUrl.searchParams.set('return_to', 'saml_sso');
         if (authnInteraction.forceReauthentication) {
           loginUrl.searchParams.set('force_authn', 'true');
@@ -296,6 +304,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         const loginPath = uiConfig.paths?.login || '/login';
         const loginUrl = new URL(loginPath, uiConfig.baseUrl);
         loginUrl.searchParams.set('saml_request_id', authnRequest.id);
+        loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
         loginUrl.searchParams.set('return_to', 'saml_sso');
         if (authnInteraction.forceReauthentication) {
           loginUrl.searchParams.set('force_authn', 'true');
@@ -326,7 +335,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         spConfig,
         userInfo,
         tenantId,
-        authnInteraction.session.sessionId,
+        authnInteraction.session,
         log
       );
     } catch (error) {
@@ -486,6 +495,53 @@ async function parseRedirectBinding(c: Context<{ Bindings: Env }>): Promise<{
   };
 }
 
+async function parseStoredAuthnRequest(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<ParsedAuthnRequestInput | null> {
+  const url = new URL(c.req.url);
+  const requestId = url.searchParams.get('saml_request_id');
+  if (!requestId) {
+    return null;
+  }
+
+  const spEntityId = url.searchParams.get('saml_sp_entity_id');
+  if (!spEntityId) {
+    throw new Error('Missing saml_sp_entity_id parameter');
+  }
+
+  const samlRequestStoreId = c.env.SAML_REQUEST_STORE.idFromName(
+    buildSAMLRequestStoreInstanceName(tenantId, 'idp', spEntityId)
+  );
+  const samlRequestStore = c.env.SAML_REQUEST_STORE.get(samlRequestStoreId);
+  const response = await samlRequestStore.fetch(
+    `https://saml-request-store/consume/${encodeURIComponent(requestId)}`,
+    { method: 'POST' }
+  );
+
+  if (!response.ok) {
+    throw new Error('Stored SAML request not found or already used');
+  }
+
+  const storedRequest = (await response.json()) as SAMLRequestData;
+  if (
+    storedRequest.type !== 'authn_request' ||
+    storedRequest.issuer !== spEntityId ||
+    storedRequest.requestId !== requestId ||
+    !storedRequest.data
+  ) {
+    throw new Error('Stored SAML request is invalid');
+  }
+
+  return {
+    authnRequest: storedRequest.data as SAMLAuthnRequest,
+    relayState: storedRequest.relayState,
+    binding: storedRequest.binding === 'post' ? 'post' : 'redirect',
+    xml: '',
+    storedRequestValidated: true,
+  };
+}
+
 /**
  * Parse HTTP-POST binding parameters
  */
@@ -638,7 +694,7 @@ async function checkUserAuthentication(
   env: Env
 ): Promise<AuthenticatedSAMLSession | null> {
   // Check for session cookie
-  const sessionId = c.req.header('Cookie')?.match(/authrim_session=([^;]+)/)?.[1];
+  const sessionId = extractAuthrimSessionIdFromCookieHeader(c.req.header('Cookie'));
 
   if (!sessionId) {
     return null;
@@ -663,8 +719,20 @@ async function checkUserAuthentication(
       return null;
     }
 
-    const session = (await response.json()) as { userId?: string };
-    return session.userId ? { userId: session.userId, sessionId } : null;
+    const session = (await response.json()) as {
+      userId?: string;
+      data?: { acr?: unknown; amr?: unknown };
+    };
+    return session.userId
+      ? {
+          userId: session.userId,
+          sessionId,
+          acr: typeof session.data?.acr === 'string' ? session.data.acr : undefined,
+          amr: Array.isArray(session.data?.amr)
+            ? session.data.amr.filter((value): value is string => typeof value === 'string')
+            : undefined,
+        }
+      : null;
   } catch {
     return null;
   }
@@ -696,6 +764,7 @@ async function storeAuthnRequest(
       type: 'authn_request',
       data: authnRequest,
       relayState,
+      used: false,
       expiresAt: Date.now() + DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000,
     }),
   });
@@ -722,7 +791,7 @@ async function generateSAMLResponse(
   spConfig: SAMLSPConfig,
   userInfo: SAMLUserInfo,
   tenantId: string,
-  sessionId: string,
+  authSession: AuthenticatedSAMLSession,
   log?: { debug(message: string, context?: Record<string, unknown>): void }
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
@@ -741,7 +810,7 @@ async function generateSAMLResponse(
     allowCreate: authnRequest.nameIdPolicy?.allowCreate ?? true,
     transientStore: resolveSAMLTransientNameIDStore(env),
     transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
-    sessionId,
+    sessionId: authSession.sessionId,
   });
 
   // Determine ACS URL
@@ -756,7 +825,13 @@ async function generateSAMLResponse(
     });
   }
 
-  const authnContextClassRef = resolveSAMLAuthnContextClassRef(authnRequest);
+  const authnContextClassRef = resolveSAMLAuthnContextClassRef(authnRequest, {
+    spConfig,
+    session: {
+      acr: authSession.acr,
+      amr: authSession.amr,
+    },
+  });
   const timing = buildSAMLAssertionTiming({
     assertionValiditySeconds:
       spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
@@ -778,7 +853,7 @@ async function generateSAMLResponse(
     sessionIndex: await createSAMLSessionIndex(env.STATE_STORE, {
       tenantId,
       spEntityId: spConfig.entityId,
-      sessionId,
+      sessionId: authSession.sessionId,
       ttlSeconds: DEFAULTS.SESSION_VALIDITY_SECONDS,
     }),
     notBefore: timing.notBefore,
@@ -868,35 +943,16 @@ function sendSAMLResponse(
 ): Response {
   // Encode response as Base64
   const encodedResponse = btoa(responseXml);
+  const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
+  if (relayState) {
+    fields.push({ name: 'RelayState', value: relayState });
+  }
 
-  // Build auto-submit form (HTTP-POST binding)
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML SSO</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(acsUrl)}">
-    <input type="hidden" name="SAMLResponse" value="${escapeHtml(encodedResponse)}" />
-    ${relayState ? `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue to Service Provider</button>
-    </noscript>
-  </form>
-</body>
-</html>
-`;
-
-  return new Response(html, {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-    },
+  return buildSAMLPostBindingResponse({
+    title: 'SAML SSO',
+    actionUrl: acsUrl,
+    fields,
+    buttonText: 'Continue to Service Provider',
   });
 }
 

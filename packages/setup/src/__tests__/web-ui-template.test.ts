@@ -67,6 +67,24 @@ describe('getHtmlTemplate', () => {
     );
   });
 
+  it('renders copy buttons for detailed progress logs', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('.progress-log-copy-btn');
+    expect(html).toContain('id="provision-log-copy-btn"');
+    expect(html).toContain('id="deploy-log-copy-btn"');
+    expect(html).toContain('id="delete-log-copy-btn"');
+    expect(html).toContain("setupLogCopyButton('provision-log-copy-btn', 'provision-output')");
+    expect(html).toContain("setupLogCopyButton('deploy-log-copy-btn', 'deploy-output')");
+    expect(html).toContain("setupLogCopyButton('delete-log-copy-btn', 'delete-output')");
+  });
+
   it('renders prerequisite capability list styles and client-side renderer', () => {
     const html = getHtmlTemplate(
       'session-token',

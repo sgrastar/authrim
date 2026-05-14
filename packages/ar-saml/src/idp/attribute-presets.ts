@@ -10,6 +10,7 @@ export const SAML_ATTRIBUTE_PRESET_VERSION = '2026-05-11';
 export type SAMLAttributePresetId = CoreSAMLAttributePresetId;
 
 export type SAMLAttributePresetProfile =
+  | 'basic'
   | 'academic_publisher'
   | 'enterprise_saas'
   | 'research_federation';
@@ -17,6 +18,24 @@ export type SAMLAttributePresetProfile =
 interface SAMLAttributeDescriptor {
   name: string;
   friendlyName: string;
+}
+
+export const BASIC_ATTRIBUTES = {
+  mail: {
+    name: 'urn:oid:0.9.2342.19200300.100.1.3',
+    friendlyName: 'mail',
+  },
+  displayName: {
+    name: 'urn:oid:2.16.840.1.113730.3.1.241',
+    friendlyName: 'displayName',
+  },
+} as const;
+
+export function buildBasicAttributeReleaseRules(): SAMLAttributeReleaseRule[] {
+  return [
+    claimRule(BASIC_ATTRIBUTES.mail, 'email', true),
+    claimRule(BASIC_ATTRIBUTES.displayName, 'name'),
+  ];
 }
 
 export interface SAMLAttributePresetDefinition {
@@ -204,6 +223,16 @@ export function buildResearchFederationAttributeReleaseRules(
 
 export const SAML_BUILTIN_ATTRIBUTE_PRESETS: readonly SAMLAttributePresetDefinition[] = [
   {
+    id: 'basic.v1',
+    version: SAML_ATTRIBUTE_PRESET_VERSION,
+    profile: 'basic',
+    label: 'Basic Profile',
+    description: 'Minimal email and display name attributes for common SAML service providers.',
+    stability: 'stable',
+    applicationMode: 'clone_edit',
+    buildRules: buildBasicAttributeReleaseRules,
+  },
+  {
     id: 'academic_publisher.v1',
     version: SAML_ATTRIBUTE_PRESET_VERSION,
     profile: 'academic_publisher',
@@ -275,6 +304,10 @@ export function applySAMLAttributePresetToSPConfig(
 
 export function normalizeSAMLSPAttributePresetConfig(config: SAMLSPConfig): SAMLSPConfig {
   if (!config.attributePresetId) {
+    return config;
+  }
+
+  if (config.attributePresetId.startsWith('custom:')) {
     return config;
   }
 

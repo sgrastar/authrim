@@ -91,7 +91,11 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
   }
 
   // Return XML response
-  return buildSAMLMetadataResponse(metadataXml, c.req.header('If-None-Match'));
+  return buildSAMLMetadataResponse(
+    metadataXml,
+    c.req.header('If-None-Match'),
+    'authrim-saml-idp-metadata.xml'
+  );
 }
 
 export interface IdPMetadataOptions {

@@ -12,6 +12,7 @@ import { NAMEID_FORMATS } from '../../common/constants';
 describe('SAML built-in attribute preset catalog', () => {
   it('publishes stable preset identifiers with clone/edit semantics', () => {
     expect(SAML_BUILTIN_ATTRIBUTE_PRESETS.map((preset) => preset.id)).toEqual([
+      'basic.v1',
       'academic_publisher.v1',
       'enterprise_saas.v1',
       'research_federation.v1',
@@ -20,9 +21,33 @@ describe('SAML built-in attribute preset catalog', () => {
     for (const preset of SAML_BUILTIN_ATTRIBUTE_PRESETS) {
       expect(preset.version).toBe(SAML_ATTRIBUTE_PRESET_VERSION);
       expect(preset.applicationMode).toBe('clone_edit');
-      expect(preset.stability).toBe('experimental');
+      expect(['stable', 'experimental']).toContain(preset.stability);
       expect(preset.buildRules().length).toBeGreaterThan(0);
     }
+  });
+
+  it('includes a basic email/name preset for common SPs', () => {
+    const preset = getSAMLAttributePreset('basic.v1');
+
+    expect(preset.label).toBe('Basic Profile');
+    expect(preset.buildRules()).toEqual([
+      {
+        name: 'urn:oid:0.9.2342.19200300.100.1.3',
+        friendlyName: 'mail',
+        nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+        source: 'claim',
+        claim: 'email',
+        required: true,
+      },
+      {
+        name: 'urn:oid:2.16.840.1.113730.3.1.241',
+        friendlyName: 'displayName',
+        nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+        source: 'claim',
+        claim: 'name',
+        required: false,
+      },
+    ]);
   });
 
   it('returns cloned release policies so saved SP configs can be edited independently', () => {

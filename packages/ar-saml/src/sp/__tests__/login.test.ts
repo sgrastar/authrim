@@ -121,6 +121,27 @@ describe('SP login tenant signing boundary', () => {
     );
     expect(mockSignRedirectBinding).toHaveBeenCalled();
   });
+
+  it('adds ProviderName to AuthnRequest for IdP display', async () => {
+    mockGetIdPConfig.mockResolvedValue({
+      providerName: 'Authrim Test SP',
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      attributeMapping: {},
+      allowedBindings: ['post'],
+    });
+
+    const { context } = createLoginContext(mockEnv, 'tenant-a');
+    const res = await handleSPLogin(context);
+    const html = await res.text();
+    const requestValue = html.match(/name="SAMLRequest" value="([^"]+)"/)?.[1];
+    expect(requestValue).toBeTruthy();
+    const xml = atob(requestValue!);
+
+    expect(xml).toContain('ProviderName="Authrim Test SP"');
+  });
 });
 
 function createLoginContext(

@@ -63,6 +63,7 @@ export const AUTHN_CONTEXT = {
   PASSWORD: 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
   PASSWORD_PROTECTED_TRANSPORT: 'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport',
   UNSPECIFIED: 'urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified',
+  AUTHRIM_PHISHING_RESISTANT: 'urn:authrim:acr:phishing-resistant',
 } as const;
 
 /**

@@ -1,7 +1,10 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
+	import { Modal } from '$lib/components';
 	import {
 		adminSAMLAPI,
+		type SAMLAttributeReleaseRule,
 		type SAMLAttributePreset,
 		type SAMLProvider,
 		type SAMLProviderConfig
@@ -13,6 +16,29 @@
 	let error = $state('');
 	let actionMessage = $state('');
 	let busyProviderId = $state<string | null>(null);
+	let selectedPreset = $state<SAMLAttributePreset | null>(null);
+	let showCreatePreset = $state(false);
+	let creatingPreset = $state(false);
+	let presetActionError = $state('');
+	let customPresetLabel = $state('');
+	let customPresetDescription = $state('');
+	let customPresetProfile = $state('custom');
+	let customPresetAttributesJson = $state(
+		JSON.stringify(
+			[
+				{
+					name: 'urn:oid:0.9.2342.19200300.100.1.3',
+					friendlyName: 'mail',
+					nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+					source: 'claim',
+					claim: 'email',
+					required: true
+				}
+			],
+			null,
+			2
+		)
+	);
 
 	onMount(() => {
 		void loadSAML();
@@ -29,13 +55,14 @@
 			providers = providerResult.providers;
 			presets = presetResult.presets;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load SAML operations data';
+			error = err instanceof Error ? err.message : 'Failed to load SAML data';
 		} finally {
 			loading = false;
 		}
 	}
 
-	async function refreshMetadata(provider: SAMLProvider) {
+	async function refreshMetadata(provider: SAMLProvider, event?: Event) {
+		event?.stopPropagation();
 		busyProviderId = provider.id;
 		actionMessage = '';
 		error = '';
@@ -52,7 +79,8 @@
 		}
 	}
 
-	async function promoteNext(provider: SAMLProvider) {
+	async function promoteNext(provider: SAMLProvider, event?: Event) {
+		event?.stopPropagation();
 		busyProviderId = provider.id;
 		actionMessage = '';
 		error = '';
@@ -67,7 +95,8 @@
 		}
 	}
 
-	async function retireBackup(provider: SAMLProvider) {
+	async function retireBackup(provider: SAMLProvider, event?: Event) {
+		event?.stopPropagation();
 		busyProviderId = provider.id;
 		actionMessage = '';
 		error = '';
@@ -88,39 +117,136 @@
 		);
 	}
 
+	function navigateToProvider(id: string) {
+		goto(`/admin/saml/${id}`);
+	}
+
+	function navigateToNew() {
+		goto('/admin/saml/new');
+	}
+
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
-		return type === 'saml_sp' ? 'Service Provider' : 'Identity Provider';
+		return type === 'saml_sp' ? 'SP' : 'IdP';
+	}
+
+	function providerTypeBadge(type: SAMLProvider['providerType']) {
+		return type === 'saml_sp' ? 'badge badge-info' : 'badge badge-neutral';
 	}
 
 	function metadataStatus(provider: SAMLProvider) {
 		const diff = provider.config.metadataRefreshStatus?.diff;
-		if (!provider.config.metadataUrl) return 'local';
-		if (!diff) return 'not checked';
-		if (diff.expired) return 'expired';
-		if (diff.changed) return 'changed';
-		return 'current';
+		if (!provider.config.metadataUrl) return provider.config.metadataXml ? 'Uploaded' : 'Manual';
+		if (!diff) return 'Not checked';
+		if (diff.expired) return 'Expired';
+		if (diff.changed) return 'Changed';
+		return 'Current';
 	}
 
-	function statusClass(status: string) {
-		if (status === 'expired') return 'danger';
-		if (status === 'changed') return 'warn';
-		if (status === 'current') return 'ok';
-		return 'muted';
+	function metadataStatusBadge(provider: SAMLProvider) {
+		const status = metadataStatus(provider);
+		if (status === 'Current') return 'badge badge-success';
+		if (status === 'Expired') return 'badge badge-danger';
+		if (status === 'Changed') return 'badge badge-warning';
+		return 'badge badge-neutral';
+	}
+
+	function signingSummary(provider: SAMLProvider) {
+		const policy = provider.config.signingKeyPolicy;
+		if (!policy?.active && !policy?.next && !policy?.backup) return 'None';
+		const states = [];
+		if (policy.active) states.push('active');
+		if (policy.next) states.push('next');
+		if (policy.backup) states.push('backup');
+		return states.join(' / ');
 	}
 
 	function formatDate(value: string | number | undefined) {
 		if (!value) return '-';
 		const date = typeof value === 'number' ? new Date(value) : new Date(value);
 		if (Number.isNaN(date.getTime())) return '-';
-		return date.toLocaleString();
+		return date.toLocaleDateString();
 	}
 
-	function formatExpiry(seconds: number | undefined) {
-		if (typeof seconds !== 'number') return '-';
-		const days = Math.floor(seconds / 86400);
-		if (days >= 1) return `${days}d`;
-		const hours = Math.floor(seconds / 3600);
-		return `${hours}h`;
+	function viewPreset(preset: SAMLAttributePreset) {
+		selectedPreset = preset;
+	}
+
+	function closePresetView() {
+		selectedPreset = null;
+	}
+
+	function openCreatePreset() {
+		presetActionError = '';
+		showCreatePreset = true;
+	}
+
+	function closeCreatePreset() {
+		showCreatePreset = false;
+		presetActionError = '';
+	}
+
+	function parseCustomPresetRules(): SAMLAttributeReleaseRule[] {
+		const parsed = JSON.parse(customPresetAttributesJson) as unknown;
+		if (!Array.isArray(parsed)) {
+			throw new Error('Attributes JSON must be an array');
+		}
+		for (const rule of parsed) {
+			if (
+				!rule ||
+				typeof rule !== 'object' ||
+				typeof (rule as SAMLAttributeReleaseRule).name !== 'string' ||
+				typeof (rule as SAMLAttributeReleaseRule).source !== 'string'
+			) {
+				throw new Error('Each attribute rule must include name and source');
+			}
+		}
+		return parsed as SAMLAttributeReleaseRule[];
+	}
+
+	async function createCustomPreset() {
+		if (!customPresetLabel.trim()) {
+			presetActionError = 'Preset name is required';
+			return;
+		}
+
+		creatingPreset = true;
+		presetActionError = '';
+		try {
+			const attributes = parseCustomPresetRules();
+			const result = await adminSAMLAPI.createAttributePreset({
+				label: customPresetLabel.trim(),
+				description: customPresetDescription.trim() || undefined,
+				profile: customPresetProfile.trim() || 'custom',
+				appliesTo: 'sp_attribute_release',
+				attributeReleasePolicy: { attributes }
+			});
+			presets = [...presets, result.preset];
+			customPresetLabel = '';
+			customPresetDescription = '';
+			customPresetProfile = 'custom';
+			showCreatePreset = false;
+			actionMessage = 'Custom SP attribute release preset created';
+		} catch (err) {
+			presetActionError =
+				err instanceof Error ? err.message : 'Failed to create SAML attribute preset';
+		} finally {
+			creatingPreset = false;
+		}
+	}
+
+	async function deleteCustomPreset(preset: SAMLAttributePreset) {
+		if (!preset.isCustom) return;
+		if (!window.confirm(`Delete custom preset ${preset.label}?`)) return;
+		presetActionError = '';
+		try {
+			await adminSAMLAPI.deleteAttributePreset(preset.id);
+			presets = presets.filter((item) => item.id !== preset.id);
+			if (selectedPreset?.id === preset.id) selectedPreset = null;
+			actionMessage = 'Custom SP attribute release preset deleted';
+		} catch (err) {
+			presetActionError =
+				err instanceof Error ? err.message : 'Failed to delete SAML attribute preset';
+		}
 	}
 </script>
 
@@ -128,15 +254,24 @@
 	<title>SAML - Admin Dashboard - Authrim</title>
 </svelte:head>
 
-<div class="page-container">
+<div class="admin-page">
 	<div class="page-header">
 		<div>
 			<h1 class="page-title">SAML</h1>
+			<p class="page-description">
+				Register external SAML IdPs for sign-in and SAML SPs that trust Authrim as their IdP.
+			</p>
 		</div>
-		<button class="btn btn-secondary" onclick={loadSAML} disabled={loading}>
-			<i class="i-ph-arrow-clockwise"></i>
-			Refresh
-		</button>
+		<div class="page-actions">
+			<button class="btn btn-primary" onclick={navigateToNew}>
+				<i class="i-ph-plus"></i>
+				Add Provider
+			</button>
+			<button class="btn btn-secondary" onclick={loadSAML} disabled={loading}>
+				<i class="i-ph-arrow-clockwise"></i>
+				Refresh
+			</button>
+		</div>
 	</div>
 
 	{#if error}
@@ -148,372 +283,362 @@
 	{/if}
 
 	{#if loading}
-		<div class="loading-state">Loading SAML operations...</div>
+		<div class="loading-state">
+			<i class="i-ph-circle-notch loading-spinner"></i>
+			<p>Loading...</p>
+		</div>
+	{:else if providers.length === 0}
+		<div class="panel">
+			<div class="empty-state">
+				<p class="empty-state-description">No SAML providers configured.</p>
+				<p class="empty-state-hint">
+					Add an IdP for external SAML sign-in, or add an SP that trusts Authrim as its IdP.
+				</p>
+				<div class="empty-actions">
+					<button class="btn btn-primary" onclick={navigateToNew}>Add Provider</button>
+				</div>
+			</div>
+		</div>
 	{:else}
-		<section class="section">
-			<div class="section-header">
-				<h2>Providers</h2>
-				<span class="count">{providers.length}</span>
+		<div class="data-table-container">
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th>Name</th>
+						<th>Type</th>
+						<th>Status</th>
+						<th>Metadata</th>
+						<th>Entity ID</th>
+						<th>Valid Until</th>
+						<th>Signing</th>
+						<th class="text-right">Actions</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each providers as provider (provider.id)}
+						<tr
+							onclick={() => navigateToProvider(provider.id)}
+							onkeydown={(event) => event.key === 'Enter' && navigateToProvider(provider.id)}
+							tabindex="0"
+							role="button"
+						>
+							<td>
+								<div class="provider-cell">
+									<div class="provider-icon-fallback">
+										{providerTypeLabel(provider.providerType)}
+									</div>
+									<div>
+										<div class="cell-primary">{provider.name}</div>
+										{#if provider.config.description}
+											<div class="cell-secondary">{provider.config.description}</div>
+										{/if}
+									</div>
+								</div>
+							</td>
+							<td>
+								<span class={providerTypeBadge(provider.providerType)}>
+									{providerTypeLabel(provider.providerType)}
+								</span>
+							</td>
+							<td>
+								<span class={provider.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
+									{provider.enabled ? 'Enabled' : 'Disabled'}
+								</span>
+							</td>
+							<td>
+								<span class={metadataStatusBadge(provider)}>{metadataStatus(provider)}</span>
+							</td>
+							<td class="mono truncate" style="max-width: 280px;">
+								{provider.config.entityId || '-'}
+							</td>
+							<td>{formatDate(provider.config.metadataRefreshStatus?.diff.validUntil)}</td>
+							<td class="muted">{signingSummary(provider)}</td>
+							<td class="text-right" onclick={(event) => event.stopPropagation()}>
+								<div class="row-actions">
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={(event) => refreshMetadata(provider, event)}
+										disabled={!provider.config.metadataUrl || busyProviderId === provider.id}
+									>
+										Metadata
+									</button>
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={(event) => promoteNext(provider, event)}
+										disabled={!provider.config.signingKeyPolicy?.next ||
+											busyProviderId === provider.id}
+									>
+										Promote
+									</button>
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={(event) => retireBackup(provider, event)}
+										disabled={!provider.config.signingKeyPolicy?.backup ||
+											busyProviderId === provider.id}
+									>
+										Retire
+									</button>
+								</div>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<div class="panel presets-panel">
+			<div class="panel-header">
+				<div>
+					<h2 class="panel-title">SP Attribute Release Presets</h2>
+					<p class="form-hint">
+						Reusable templates for attributes Authrim releases when acting as a SAML IdP for SPs.
+					</p>
+				</div>
+				<div class="preset-header-actions">
+					<span class="badge badge-neutral">{presets.length}</span>
+					<button class="btn btn-secondary btn-sm" onclick={openCreatePreset}>
+						<i class="i-ph-plus"></i>
+						Add Custom
+					</button>
+				</div>
 			</div>
 
-			{#if providers.length === 0}
-				<div class="empty-state">No SAML providers found.</div>
+			{#if presetActionError}
+				<div class="alert alert-error">{presetActionError}</div>
+			{/if}
+
+			{#if presets.length === 0}
+				<div class="empty-state compact-empty">No attribute presets available.</div>
 			{:else}
-				<div class="provider-grid">
-					{#each providers as provider (provider.id)}
-						<article class="provider-card">
-							<div class="provider-top">
-								<div>
-									<h3>{provider.name}</h3>
-									<p>{provider.config.entityId || '-'}</p>
-								</div>
-								<div class="badges">
-									<span class="badge">{providerTypeLabel(provider.providerType)}</span>
-									<span class="badge" class:disabled={!provider.enabled}>
-										{provider.enabled ? 'enabled' : 'disabled'}
-									</span>
-								</div>
-							</div>
-
-							<div class="details">
-								<div>
-									<span>Metadata</span>
-									<strong class={statusClass(metadataStatus(provider))}>
-										{metadataStatus(provider)}
-									</strong>
-								</div>
-								<div>
-									<span>Valid until</span>
-									<strong>{formatDate(provider.config.metadataRefreshStatus?.diff.validUntil)}</strong>
-								</div>
-								<div>
-									<span>Expires in</span>
-									<strong>{formatExpiry(provider.config.metadataRefreshStatus?.diff.expiresInSeconds)}</strong>
-								</div>
-								<div>
-									<span>Last checked</span>
-									<strong>{formatDate(provider.config.metadataRefreshStatus?.lastCheckedAt)}</strong>
-								</div>
-							</div>
-
-							{#if provider.providerType === 'saml_sp'}
-								<div class="attribute-summary">
-									<span>
-										Requested attributes:
-										<strong>{provider.config.metadataRequestedAttributes?.length ?? 0}</strong>
-									</span>
-									<span>
-										Release suggestions:
-										<strong>
-											{provider.config.metadataAttributeReleasePolicySuggestion?.attributes.length ?? 0}
-										</strong>
-									</span>
-								</div>
-							{/if}
-
-							<div class="key-row">
-								<span>Signing</span>
-								<div class="badges">
-									<span class="badge" class:disabled={!provider.config.signingKeyPolicy?.active}>
-										active
-									</span>
-									<span class="badge" class:disabled={!provider.config.signingKeyPolicy?.next}>
-										next
-									</span>
-									<span class="badge" class:disabled={!provider.config.signingKeyPolicy?.backup}>
-										backup
-									</span>
-								</div>
-							</div>
-
-							<div class="actions">
-								<button
-									class="btn btn-secondary"
-									onclick={() => refreshMetadata(provider)}
-									disabled={!provider.config.metadataUrl || busyProviderId === provider.id}
-								>
-									<i class="i-ph-arrows-clockwise"></i>
-									Metadata
-								</button>
-								<button
-									class="btn btn-secondary"
-									onclick={() => promoteNext(provider)}
-									disabled={!provider.config.signingKeyPolicy?.next || busyProviderId === provider.id}
-								>
-									<i class="i-ph-arrow-up"></i>
-									Promote
-								</button>
-								<button
-									class="btn btn-secondary"
-									onclick={() => retireBackup(provider)}
-									disabled={!provider.config.signingKeyPolicy?.backup || busyProviderId === provider.id}
-								>
-									<i class="i-ph-trash"></i>
-									Retire
-								</button>
-							</div>
-						</article>
-					{/each}
+				<div class="data-table-container compact-table">
+					<table class="data-table">
+						<thead>
+							<tr>
+								<th>Preset</th>
+								<th>Profile</th>
+								<th>Mode</th>
+								<th>Stability</th>
+								<th>Attributes</th>
+								<th class="text-right">Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each presets as preset (preset.id)}
+								<tr>
+									<td>
+										<div class="cell-primary">{preset.label}</div>
+										<div class="cell-secondary">{preset.description}</div>
+									</td>
+									<td><span class="badge badge-info">{preset.profile}</span></td>
+									<td>{preset.applicationMode}</td>
+									<td>
+										<span class={preset.isCustom ? 'badge badge-neutral' : 'badge badge-warning'}>
+											{preset.isCustom ? 'custom' : preset.stability}
+										</span>
+									</td>
+									<td>{preset.attributeReleasePolicy.attributes.length}</td>
+									<td class="text-right">
+										<div class="row-actions">
+											<button class="btn btn-secondary btn-sm" onclick={() => viewPreset(preset)}>
+												View
+											</button>
+											{#if preset.isCustom}
+												<button
+													class="btn btn-danger btn-sm"
+													onclick={() => deleteCustomPreset(preset)}
+												>
+													Delete
+												</button>
+											{/if}
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
 			{/if}
-		</section>
-
-		<section class="section">
-			<div class="section-header">
-				<h2>Attribute Presets</h2>
-				<span class="count">{presets.length}</span>
-			</div>
-
-			<div class="preset-grid">
-				{#each presets as preset (preset.id)}
-					<article class="preset-card">
-						<div class="preset-top">
-							<h3>{preset.label}</h3>
-							<span class="badge">{preset.profile}</span>
-						</div>
-						<p>{preset.description}</p>
-						<div class="attribute-summary">
-							<span>
-								Attributes:
-								<strong>{preset.attributeReleasePolicy.attributes.length}</strong>
-							</span>
-							<span>
-								Mode:
-								<strong>{preset.applicationMode}</strong>
-							</span>
-							<span>
-								Stability:
-								<strong>{preset.stability}</strong>
-							</span>
-						</div>
-					</article>
-				{/each}
-			</div>
-		</section>
+		</div>
 	{/if}
 </div>
 
-<style>
-	.page-container {
-		padding: 24px;
-		max-width: 1280px;
-		margin: 0 auto;
-	}
+<Modal
+	open={!!selectedPreset}
+	onClose={closePresetView}
+	title={selectedPreset?.label || 'SP Attribute Release Preset'}
+	size="xl"
+>
+	{#if selectedPreset}
+		<div class="preset-summary">
+			<span class="badge badge-info">{selectedPreset.profile}</span>
+			<span class="badge badge-neutral">{selectedPreset.appliesTo}</span>
+			<span class={selectedPreset.isCustom ? 'badge badge-neutral' : 'badge badge-warning'}>
+				{selectedPreset.isCustom ? 'custom' : selectedPreset.stability}
+			</span>
+		</div>
+		<p class="modal-description">{selectedPreset.description}</p>
 
-	.page-header,
-	.section-header,
-	.provider-top,
-	.preset-top,
-	.key-row,
-	.actions,
-	.badges,
-	.attribute-summary {
+		<div class="data-table-container preset-rules-table">
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th>Attribute Name</th>
+						<th>Friendly Name</th>
+						<th>Source</th>
+						<th>Claim / Resolver</th>
+						<th>Required</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each selectedPreset.attributeReleasePolicy.attributes as rule}
+						<tr>
+							<td class="mono truncate" style="max-width: 320px;">{rule.name}</td>
+							<td>{rule.friendlyName || '-'}</td>
+							<td><span class="badge badge-neutral">{rule.source}</span></td>
+							<td>{rule.claim || rule.computed || '-'}</td>
+							<td>{rule.required ? 'Yes' : 'No'}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+	{/if}
+</Modal>
+
+<Modal
+	open={showCreatePreset}
+	onClose={closeCreatePreset}
+	title="Create Custom SP Attribute Release Preset"
+	size="xl"
+>
+	{#if presetActionError}
+		<div class="alert alert-error">{presetActionError}</div>
+	{/if}
+
+	<div class="form-grid">
+		<div class="form-group">
+			<label for="customPresetLabel" class="form-label">Preset Name *</label>
+			<input id="customPresetLabel" bind:value={customPresetLabel} class="form-input" />
+		</div>
+		<div class="form-group">
+			<label for="customPresetProfile" class="form-label">Profile</label>
+			<input id="customPresetProfile" bind:value={customPresetProfile} class="form-input" />
+		</div>
+		<div class="form-group form-group-full">
+			<label for="customPresetDescription" class="form-label">Description</label>
+			<textarea
+				id="customPresetDescription"
+				bind:value={customPresetDescription}
+				class="form-input form-textarea"
+				rows="3"
+			></textarea>
+		</div>
+		<div class="form-group form-group-full">
+			<label for="customPresetAttributes" class="form-label">Attribute Rules JSON *</label>
+			<textarea
+				id="customPresetAttributes"
+				bind:value={customPresetAttributesJson}
+				class="form-input form-textarea monospace"
+				rows="14"
+			></textarea>
+			<p class="form-hint">
+				Enter an array of SAML attribute release rules. Each rule needs at least name and source.
+			</p>
+		</div>
+	</div>
+
+	{#snippet footer()}
+		<button class="btn btn-secondary" onclick={closeCreatePreset} disabled={creatingPreset}>
+			Cancel
+		</button>
+		<button class="btn btn-primary" onclick={createCustomPreset} disabled={creatingPreset}>
+			{creatingPreset ? 'Creating...' : 'Create Preset'}
+		</button>
+	{/snippet}
+</Modal>
+
+<style>
+	.provider-cell {
 		display: flex;
 		align-items: center;
 		gap: 12px;
+		min-width: 0;
 	}
 
-	.page-header,
-	.section-header,
-	.provider-top,
-	.preset-top,
-	.key-row {
-		justify-content: space-between;
-	}
-
-	.page-title {
-		margin: 0;
-		font-size: 28px;
+	.provider-icon-fallback {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: var(--radius-md);
+		background: var(--primary-light);
+		color: var(--primary);
+		font-size: 0.75rem;
 		font-weight: 700;
+		flex: 0 0 auto;
+	}
+
+	.cell-primary {
+		font-weight: 600;
 		color: var(--text-primary);
 	}
 
-	.section {
-		margin-top: 24px;
+	.cell-secondary {
+		margin-top: 2px;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		max-width: 420px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.section-header h2 {
-		margin: 0;
-		font-size: 18px;
-		font-weight: 650;
-		color: var(--text-primary);
-	}
-
-	.count,
-	.badge {
+	.row-actions,
+	.empty-actions,
+	.preset-header-actions,
+	.preset-summary {
 		display: inline-flex;
 		align-items: center;
-		min-height: 24px;
-		padding: 3px 8px;
-		border-radius: 6px;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-size: 12px;
-		font-weight: 600;
-	}
-
-	.badge.disabled {
-		opacity: 0.45;
-	}
-
-	.provider-grid,
-	.preset-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-		gap: 16px;
-		margin-top: 14px;
-	}
-
-	.provider-card,
-	.preset-card {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		padding: 16px;
-		background: var(--bg-primary);
-	}
-
-	.provider-card h3,
-	.preset-card h3 {
-		margin: 0;
-		font-size: 16px;
-		font-weight: 650;
-		color: var(--text-primary);
-	}
-
-	.provider-card p,
-	.preset-card p {
-		margin: 4px 0 0;
-		color: var(--text-secondary);
-		font-size: 13px;
-		overflow-wrap: anywhere;
-	}
-
-	.details {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 12px;
-		margin-top: 16px;
-	}
-
-	.details div {
-		display: grid;
-		gap: 3px;
-	}
-
-	.details span,
-	.key-row span,
-	.attribute-summary span {
-		color: var(--text-secondary);
-		font-size: 12px;
-	}
-
-	.details strong,
-	.attribute-summary strong {
-		color: var(--text-primary);
-		font-size: 13px;
-		font-weight: 650;
-	}
-
-	.ok {
-		color: #047857 !important;
-	}
-
-	.warn {
-		color: #a16207 !important;
-	}
-
-	.danger {
-		color: #b91c1c !important;
-	}
-
-	.muted {
-		color: var(--text-secondary) !important;
-	}
-
-	.attribute-summary {
-		flex-wrap: wrap;
-		margin-top: 14px;
-	}
-
-	.key-row,
-	.actions {
-		margin-top: 14px;
-	}
-
-	.actions {
-		flex-wrap: wrap;
 		justify-content: flex-end;
+		gap: 8px;
+		flex-wrap: wrap;
 	}
 
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		border-radius: 6px;
-		border: 1px solid var(--border-color);
-		padding: 8px 12px;
-		font-size: 13px;
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.btn-secondary {
-		background: var(--bg-primary);
-		color: var(--text-primary);
-	}
-
-	.btn:disabled {
-		opacity: 0.55;
-		cursor: not-allowed;
-	}
-
-	.alert,
-	.loading-state,
-	.empty-state {
+	.presets-panel {
 		margin-top: 16px;
-		border-radius: 8px;
-		padding: 12px 14px;
-		font-size: 14px;
 	}
 
-	.alert-error {
-		background: #fef2f2;
-		color: #991b1b;
-		border: 1px solid #fecaca;
+	.compact-table {
+		border-radius: var(--radius-md);
 	}
 
-	.alert-success {
-		background: #ecfdf5;
-		color: #065f46;
-		border: 1px solid #a7f3d0;
+	.compact-empty {
+		padding: 24px;
 	}
 
-	.loading-state,
-	.empty-state {
-		color: var(--text-secondary);
-		background: var(--bg-secondary);
+	.preset-rules-table {
+		margin-top: 16px;
 	}
 
-	@media (max-width: 720px) {
-		.page-container {
-			padding: 16px;
+	.form-textarea {
+		min-height: auto;
+		resize: vertical;
+		line-height: 1.45;
+	}
+
+	.monospace {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+	}
+
+	@media (max-width: 900px) {
+		.data-table-container {
+			overflow-x: auto;
 		}
 
-		.page-header,
-		.provider-top,
-		.preset-top,
-		.key-row {
-			align-items: flex-start;
-			flex-direction: column;
-		}
-
-		.provider-grid,
-		.preset-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.details {
-			grid-template-columns: 1fr;
+		.data-table {
+			min-width: 920px;
 		}
 	}
 </style>

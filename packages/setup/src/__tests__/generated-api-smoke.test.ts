@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import {
+  buildApiSmokeLoginProtocolBaseUrl,
   buildApiSmokeBaseUrl,
   buildApiSmokeTargets,
+  validateAuthorizeInvalidRequestResponse,
   validateDiscoveryPayload,
+  validateInvalidRequestPayload,
   validateJwksPayload,
   validateLoginMethodsPayload,
 } from '../core/generated-api-smoke.js';
@@ -38,7 +41,37 @@ describe('generated api smoke helpers', () => {
       'jwks',
       'auth-health',
       'login-methods',
+      'oidc-authorize-invalid-request',
+      'oidc-login-challenge-invalid-request',
+      'login-ui-oidc-authorize-proxy',
+      'login-ui-oidc-login-challenge-proxy',
     ]);
+  });
+
+  it('resolves the separate Login UI protocol base URL for generated workers', () => {
+    const config = createDefaultConfig('single');
+    config.urls = {
+      api: { custom: null, auto: 'https://single-ar-router.example.workers.dev' },
+      loginUi: { custom: null, auto: 'https://single-login.workers.dev', sameAsApi: false },
+      adminUi: { custom: null, auto: 'https://single-admin.workers.dev', sameAsApi: false },
+    };
+
+    expect(
+      buildApiSmokeLoginProtocolBaseUrl(config, 'https://single-ar-router.example.workers.dev')
+    ).toBe('https://single-login.workers.dev');
+  });
+
+  it('resolves the API origin as Login UI protocol base for same-origin UI', () => {
+    const config = createDefaultConfig('single');
+    config.urls = {
+      api: { custom: null, auto: 'https://single-ar-router.example.workers.dev' },
+      loginUi: { custom: null, auto: 'https://single-login.workers.dev', sameAsApi: true },
+      adminUi: { custom: null, auto: 'https://single-admin.workers.dev', sameAsApi: false },
+    };
+
+    expect(
+      buildApiSmokeLoginProtocolBaseUrl(config, 'https://single-ar-router.example.workers.dev')
+    ).toBe('https://single-ar-router.example.workers.dev');
   });
 
   it('accepts a valid discovery payload', () => {
@@ -63,7 +96,7 @@ describe('generated api smoke helpers', () => {
   });
 
   it('rejects an empty JWKS payload', () => {
-    expect(validateJwksPayload({ keys: [] })).toEqual(['keys が空です']);
+    expect(validateJwksPayload({ keys: [] })).toEqual(['keys is empty']);
   });
 
   it('accepts a valid login-methods payload', () => {
@@ -72,7 +105,7 @@ describe('generated api smoke helpers', () => {
         methods: {
           passkey: { enabled: true, capabilities: [] },
           emailCode: { enabled: true, steps: [] },
-          social: { enabled: false, providers: [] },
+          external: { enabled: false, providers: [] },
         },
         ui: {
           branding: { brandName: 'Authrim' },
@@ -81,5 +114,25 @@ describe('generated api smoke helpers', () => {
         meta: { cacheTTL: 300 },
       })
     ).toEqual([]);
+  });
+
+  it('accepts expected invalid_request payloads for browser OIDC helper probes', () => {
+    expect(
+      validateInvalidRequestPayload({
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      })
+    ).toEqual([]);
+  });
+
+  it('rejects router 404 bodies for browser OIDC helper probes', () => {
+    expect(
+      validateAuthorizeInvalidRequestResponse({
+        ok: false,
+        status: 404,
+        contentType: 'application/json',
+        bodyText: 'Authrim Router Worker',
+      })
+    ).toContain('request was handled by router 404 instead of OP_AUTH');
   });
 });

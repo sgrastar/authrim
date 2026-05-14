@@ -13,9 +13,13 @@ export function buildStableSAMLMetadataDescriptorId(
   return `_authrim_saml_${role}_${hash}`;
 }
 
-export function buildSAMLMetadataResponseHeaders(metadataXml: string): Record<string, string> {
+export function buildSAMLMetadataResponseHeaders(
+  metadataXml: string,
+  filename = 'authrim-saml-metadata.xml'
+): Record<string, string> {
   return {
     'Content-Type': 'application/samlmetadata+xml',
+    'Content-Disposition': `attachment; filename="${filename}"`,
     'Cache-Control': `public, max-age=${SAML_METADATA_CACHE_MAX_AGE_SECONDS}`,
     ETag: buildWeakSAMLMetadataETag(metadataXml),
     'X-Content-Type-Options': 'nosniff',
@@ -24,9 +28,10 @@ export function buildSAMLMetadataResponseHeaders(metadataXml: string): Record<st
 
 export function buildSAMLMetadataResponse(
   metadataXml: string,
-  requestIfNoneMatch?: string | null
+  requestIfNoneMatch?: string | null,
+  filename?: string
 ): Response {
-  const headers = buildSAMLMetadataResponseHeaders(metadataXml);
+  const headers = buildSAMLMetadataResponseHeaders(metadataXml, filename);
   const etag = headers.ETag;
 
   if (typeof etag === 'string' && doesIfNoneMatchCurrentETag(requestIfNoneMatch, etag)) {

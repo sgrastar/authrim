@@ -346,16 +346,20 @@ export async function ensureLoginUiClient(
   } = config;
 
   try {
-    const adminBearerToken = await resolveAdminBearerToken({
-      apiBaseUrl,
-      adminApiSecretPath,
-      keysDir,
-      tenantId,
-      onProgress,
-    });
+    let adminBearerToken: string | null = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        if (!adminBearerToken) {
+          adminBearerToken = await resolveAdminBearerToken({
+            apiBaseUrl,
+            adminApiSecretPath,
+            keysDir,
+            tenantId,
+            onProgress,
+          });
+        }
+
         onProgress?.('Checking for existing Login UI client...');
         const existingClient = await findExistingClient(apiBaseUrl, adminBearerToken, tenantId);
 

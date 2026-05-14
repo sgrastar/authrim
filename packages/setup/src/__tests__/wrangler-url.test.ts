@@ -126,7 +126,9 @@ describe('generateEnvVars - ar-management', () => {
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
     expect(vars['UI_URL']).toBe(expectedUiUrl);
-    expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
+    expect(vars['LOGIN_UI_ENABLED']).toBe(
+      (config.components?.loginUi ?? true) ? 'true' : 'false'
+    );
     expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
     expect(vars['SAML_ENABLED']).toBe((config.components?.saml ?? false) ? 'true' : 'false');
     expect(vars['ASYNC_ENABLED']).toBe((config.components?.async ?? false) ? 'true' : 'false');
@@ -166,12 +168,24 @@ describe('generateEnvVars - ar-saml', () => {
   it.each(SCENARIOS.map((s) => [scenarioLabel(s), s] as const))('%s', (_label, scenario) => {
     const config = buildAuthrimConfig(scenario) as AuthrimConfig;
     const vars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
+    const effectiveApiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+    const expectedUiUrl = isMultiTenantConfigured(config)
+      ? effectiveApiUrl
+      : scenario.expected.arAuthEnvVars.UI_URL;
 
     if (scenario.config.baseDomain) {
       expect(vars['ISSUER_URL']).toBe(scenario.config.apiAuto);
     } else {
       expect(vars['ISSUER_URL']).toBe(scenario.expected.issuerUrl);
     }
+
+    expect(vars['UI_URL']).toBe(expectedUiUrl);
+    expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
+    expect(vars['ENABLE_CONFORMANCE_MODE']).toBe('false');
+    expect(vars['ALLOWED_ORIGINS']).toBeDefined();
+    expect(vars['ALLOWED_ORIGINS'].split(',').sort()).toEqual(
+      [...scenario.expected.allowedOrigins].sort()
+    );
   });
 
   it('includes runtime profile defaults and registry backend for profile-aware workers', () => {
@@ -293,8 +307,10 @@ describe('sameAsApi produces UI_URL = API domain', () => {
     (_label, scenario) => {
       const config = buildAuthrimConfig(scenario) as AuthrimConfig;
       const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+      const samlVars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
       const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
       expect(vars['UI_URL']).toBe(apiUrl);
+      expect(samlVars['UI_URL']).toBe(apiUrl);
     }
   );
 });
@@ -376,9 +392,11 @@ describe('multi-tenant login UI canonical routing', () => {
     } satisfies AuthrimConfig;
 
     const authVars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
+    const samlVars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
     const routerVars = generateEnvVars('ar-router', config, WORKERS_SUBDOMAIN);
 
     expect(authVars['UI_URL']).toBe('https://test.authrim.com');
+    expect(samlVars['UI_URL']).toBe('https://test.authrim.com');
     expect(authVars['COOKIE_SAME_SITE']).toBe('Lax');
     expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('true');
     expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.my-project.workers.dev');

@@ -50,12 +50,12 @@ export async function resolveGeneratedApprovalSmokeClient(
       'approval smoke service client bootstrap',
       `${options.baseUrl}/api/admin/clients`
     );
-    addPass(check, 'provided client credentials を使用します');
+    addPass(check, 'provided client credentials will be used');
     addPass(check, `client_id=${options.clientId.trim()}`);
     return {
       clientId: options.clientId.trim(),
       clientSecret: options.clientSecret.trim(),
-      checks: [finalizeCheck(check, 'provided client credentials を確認しました')],
+      checks: [finalizeCheck(check, 'provided client credentials verified')],
     };
   }
 
@@ -93,7 +93,7 @@ export async function resolveGeneratedApprovalSmokeClient(
       `temporary service client create failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
     );
     return {
-      checks: [finalizeCheck(check, 'temporary service client create を確認しました')],
+      checks: [finalizeCheck(check, 'temporary service client create verified')],
     };
   }
 
@@ -103,9 +103,9 @@ export async function resolveGeneratedApprovalSmokeClient(
   const clientSecret = asString(client?.client_secret) ?? undefined;
 
   if (!clientId || !clientSecret) {
-    addFail(check, 'temporary service client credentials が response に含まれていませんでした');
+    addFail(check, 'temporary service client credentials were not included in the response');
     return {
-      checks: [finalizeCheck(check, 'temporary service client create を確認しました')],
+      checks: [finalizeCheck(check, 'temporary service client create verified')],
     };
   }
 
@@ -113,17 +113,17 @@ export async function resolveGeneratedApprovalSmokeClient(
   if (options.clientId?.trim() && !options.clientSecret?.trim()) {
     addPass(
       check,
-      `provided client_id=${options.clientId.trim()} は secret 未指定のため使用しません`
+      `provided client_id=${options.clientId.trim()} is ignored because client_secret is not specified`
     );
   } else {
-    addPass(check, 'temporary service client を使用します');
+    addPass(check, 'temporary service client will be used');
   }
 
   return {
     clientId,
     clientSecret,
     temporaryClientId: clientId,
-    checks: [finalizeCheck(check, 'temporary service client create を確認しました')],
+    checks: [finalizeCheck(check, 'temporary service client create verified')],
   };
 }
 
@@ -156,9 +156,9 @@ export async function cleanupGeneratedApprovalSmokeClient(options: {
 
   if (response.ok) {
     addPass(check, `HTTP ${response.status}`);
-    addPass(check, `client_id=${options.clientId} を cleanup しました`);
+    addPass(check, `client_id=${options.clientId} cleaned up`);
   } else if (response.status === 404) {
-    addPass(check, `client_id=${options.clientId} は既に存在しません`);
+    addPass(check, `client_id=${options.clientId} does not exist anymore`);
   } else {
     addFail(
       check,
@@ -166,5 +166,5 @@ export async function cleanupGeneratedApprovalSmokeClient(options: {
     );
   }
 
-  options.checks.push(finalizeCheck(check, 'approval smoke service client cleanup を実行しました'));
+  options.checks.push(finalizeCheck(check, 'approval smoke service client cleanup executed'));
 }

@@ -6154,6 +6154,13 @@ async function handleClientCredentialsGrant(
   formData: Record<string, string>
 ): Promise<Response> {
   const log = getLogger(c).module('TOKEN');
+  const requestedAudience = formData.audience;
+  const requestedResource = formData.resource;
+
+  if (requestedAudience === ADMIN_API_AUDIENCE) {
+    return handleAdminMachineClientCredentialsGrant(c, formData);
+  }
+
   // Check Feature Flag (hybrid: KV > env) - request-level cached
   let clientCredentialsEnabled = c.env.ENABLE_CLIENT_CREDENTIALS === 'true';
   try {
@@ -6178,12 +6185,6 @@ async function handleClientCredentialsGrant(
   }
 
   const requestedScope = formData.scope;
-  const requestedAudience = formData.audience;
-  const requestedResource = formData.resource;
-
-  if (requestedAudience === ADMIN_API_AUDIENCE) {
-    return handleAdminMachineClientCredentialsGrant(c, formData);
-  }
 
   // 1. Client Authentication (required for client_credentials)
   let client_id = formData.client_id;

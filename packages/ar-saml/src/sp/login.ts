@@ -35,6 +35,10 @@ import { signRedirectBinding } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
 
+type SAMLIdPConfigWithSPInitiationPolicy = SAMLIdPConfig & {
+  providerName?: string;
+};
+
 /**
  * Handle SP login initiation
  */
@@ -92,6 +96,8 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 function buildAuthnRequest(issuerUrl: string, idpConfig: SAMLIdPConfig): string {
   const spEntityId = `${issuerUrl}/saml/sp`;
   const acsUrl = `${issuerUrl}/saml/sp/acs`;
+  const providerName =
+    (idpConfig as SAMLIdPConfigWithSPInitiationPolicy).providerName?.trim() || 'Authrim';
 
   const doc = createDocument();
 
@@ -103,6 +109,7 @@ function buildAuthnRequest(issuerUrl: string, idpConfig: SAMLIdPConfig): string 
   setAttribute(authnRequest, 'Destination', idpConfig.ssoUrl);
   setAttribute(authnRequest, 'AssertionConsumerServiceURL', acsUrl);
   setAttribute(authnRequest, 'ProtocolBinding', BINDING_URIS.HTTP_POST);
+  setAttribute(authnRequest, 'ProviderName', providerName);
 
   // Add namespace declarations
   addNamespaceDeclarations(authnRequest, {

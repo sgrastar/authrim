@@ -319,49 +319,52 @@ export async function ensureDownstreamIntrospectionClient(
   } = input;
 
   try {
-    let adminBearerToken: string;
-    if (setupMachineKeyFilesExist(keysDir)) {
-      onProgress?.('Requesting Admin API access token with setup machine private_key_jwt');
-      adminBearerToken = (
-        await requestAdminMachineAccessToken({
-          apiBaseUrl,
-          keysDir,
-          tenantId,
-        })
-      ).accessToken;
-    } else if (adminApiSecretPath && existsSync(adminApiSecretPath)) {
-      adminBearerToken = await readAdminApiSecret(adminApiSecretPath);
-    } else {
-      return {
-        success: false,
-        error: adminApiSecretPath
-          ? `Admin API credential not found: ${adminApiSecretPath}`
-          : 'Admin API credential not found',
-      };
-    }
-
-    const stored = await readStoredCredentials(keysDir);
-
-    if (stored.clientId && stored.clientSecret) {
-      const exists = await getClientById(
-        apiBaseUrl,
-        adminBearerToken,
-        stored.clientId,
-        tenantId
-      ).catch(() => false);
-      if (exists) {
-        onProgress?.(`Downstream introspection client exists: ${stored.clientId}`);
-        return {
-          success: true,
-          clientId: stored.clientId,
-          clientSecret: stored.clientSecret,
-          alreadyExists: true,
-        };
-      }
-    }
+    let adminBearerToken: string | null = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        if (!adminBearerToken) {
+          if (setupMachineKeyFilesExist(keysDir)) {
+            onProgress?.('Requesting Admin API access token with setup machine private_key_jwt');
+            adminBearerToken = (
+              await requestAdminMachineAccessToken({
+                apiBaseUrl,
+                keysDir,
+                tenantId,
+              })
+            ).accessToken;
+          } else if (adminApiSecretPath && existsSync(adminApiSecretPath)) {
+            adminBearerToken = await readAdminApiSecret(adminApiSecretPath);
+          } else {
+            return {
+              success: false,
+              error: adminApiSecretPath
+                ? `Admin API credential not found: ${adminApiSecretPath}`
+                : 'Admin API credential not found',
+            };
+          }
+        }
+
+        const stored = await readStoredCredentials(keysDir);
+
+        if (stored.clientId && stored.clientSecret) {
+          const exists = await getClientById(
+            apiBaseUrl,
+            adminBearerToken,
+            stored.clientId,
+            tenantId
+          ).catch(() => false);
+          if (exists) {
+            onProgress?.(`Downstream introspection client exists: ${stored.clientId}`);
+            return {
+              success: true,
+              clientId: stored.clientId,
+              clientSecret: stored.clientSecret,
+              alreadyExists: true,
+            };
+          }
+        }
+
         const existing = await findClientByName(apiBaseUrl, adminBearerToken, tenantId);
 
         if (existing) {

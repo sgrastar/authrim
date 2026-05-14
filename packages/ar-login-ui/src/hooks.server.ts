@@ -167,9 +167,14 @@ function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 	return "connect-src 'self'";
 }
 
-function shouldProxyPath(pathname: string): boolean {
+export function shouldProxyPath(pathname: string): boolean {
 	return (
-		(pathname.startsWith('/api/') && pathname !== '/api/set-language') || pathname === '/logout'
+		(pathname.startsWith('/api/') && pathname !== '/api/set-language') ||
+		pathname.startsWith('/auth/') ||
+		pathname.startsWith('/handoff/') ||
+		pathname.startsWith('/saml/') ||
+		pathname === '/authorize' ||
+		pathname === '/logout'
 	);
 }
 
@@ -257,19 +262,31 @@ async function readBody(event: RequestEvent): Promise<string | undefined> {
 	return body;
 }
 
-function buildProxyResponse(response: Response): Response {
+export function buildProxyResponse(response: Response): Response {
 	const responseHeaders = new Headers();
+	const setCookieHeaders =
+		(response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
 	response.headers.forEach((value, key) => {
 		const lower = key.toLowerCase();
 		if (
 			lower === 'content-length' ||
 			lower === 'transfer-encoding' ||
-			lower === 'content-encoding'
+			lower === 'content-encoding' ||
+			lower === 'set-cookie'
 		) {
 			return;
 		}
 		responseHeaders.set(key, value);
 	});
+	for (const setCookie of setCookieHeaders) {
+		responseHeaders.append('Set-Cookie', setCookie);
+	}
+	if (setCookieHeaders.length === 0) {
+		const setCookie = response.headers.get('set-cookie');
+		if (setCookie) {
+			responseHeaders.append('Set-Cookie', setCookie);
+		}
+	}
 
 	return new Response(response.body, {
 		status: response.status,

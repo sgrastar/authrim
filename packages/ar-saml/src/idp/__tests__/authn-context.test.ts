@@ -30,6 +30,23 @@ describe('SAML AuthnContext handling', () => {
     );
   });
 
+  it('uses session-aware passkey context only when enabled for the SP', () => {
+    expect(
+      resolveSAMLAuthnContextClassRef(authnRequest(), {
+        spConfig: { authnContextClassRefMode: 'session' },
+        session: { amr: ['passkey'] },
+      })
+    ).toBe(AUTHN_CONTEXT.AUTHRIM_PHISHING_RESISTANT);
+  });
+
+  it('keeps legacy static context for passkey sessions unless opted in', () => {
+    expect(
+      resolveSAMLAuthnContextClassRef(authnRequest(), {
+        session: { amr: ['passkey'] },
+      })
+    ).toBe(AUTHN_CONTEXT.PASSWORD_PROTECTED_TRANSPORT);
+  });
+
   it('selects a supported requested AuthnContext', () => {
     expect(
       resolveSAMLAuthnContextClassRef(

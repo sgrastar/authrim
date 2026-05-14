@@ -81,6 +81,10 @@ Main checks:
 - `GET /.well-known/jwks.json`
 - `GET /api/auth/health`
 - `GET /api/auth/login-methods`
+- `GET /authorize` expects OP_AUTH `invalid_request`, not router 404
+- `GET /auth/login-challenge?challenge_id=...` expects OP_AUTH `invalid_request`, not router 404
+- when Login UI is enabled, the same OIDC browser-helper probes are also run against the Login UI
+  origin to verify Login UI proxy routing
 
 ## Admin API smoke
 
@@ -92,17 +96,18 @@ pnpm exec tsx test/environment-validation/smoke-generated-admin-api.ts --config 
 Main checks:
 
 - `GET /api/admin/stats`
-- `GET /api/admin/runtime-profiles/defaults`
-- `POST/GET/DELETE /api/admin/token-claim-rules`
-- `POST/check/DELETE /api/admin/resource-permissions`
-- `POST/GET/DELETE /api/admin/webhooks`
-- `POST/GET/rotate/DELETE /api/admin/check-api-keys`
+- `GET /api/admin/clients`
+- `POST /api/admin/clients`
+- `GET /api/admin/clients/:clientId`
+- `PUT /api/admin/clients/:clientId`
+- `DELETE /api/admin/clients/:clientId`
 
 Notes:
 
-- `ADMIN_API_SECRET` is loaded from generated keys by default
-- if no `client_id` is available for `check-api-keys`, the runner creates a temporary DCR client
-  and deletes it afterward
+- By default, the runner creates a temporary validation machine principal in `DB_ADMIN` with
+  `wrangler d1 execute`, obtains a short-lived Admin Machine Access token, and removes the
+  principal again after the smoke finishes.
+- `--admin-secret-path` remains available only as an explicit override for debugging.
 
 ## Auth and client lifecycle smoke
 
@@ -119,28 +124,27 @@ flowchart TD
     O1["Run smoke-generated-auth-flow.ts"]
   end
   subgraph R["Smoke Runner"]
-    R1["Check tenant, profile, and DCR defaults"]
-    R2["Register a temporary client"]
-    R3["Read the client back"]
-    R4["Update the client"]
+    R1["Create a temporary client through Admin Client API"]
+    R2["Read the client back"]
+    R3["Update the client"]
+    R4["Delete the client at cleanup"]
     R5{"Can this environment use client_credentials?"}
     R6["Request an access token"]
     R7["Inspect token state"]
     R8["Revoke the token"]
-    R9["Delete the temporary client"]
     R10["Record a warning and keep DCR lifecycle coverage only"]
   end
-  O1 --> R1 --> R2 --> R3 --> R4 --> R5
-  R5 -->|Yes| R6 --> R7 --> R8 --> R9
-  R5 -->|No / auto warning| R10 --> R9
+  O1 --> R1 --> R2 --> R3 --> R5
+  R5 -->|Yes| R6 --> R7 --> R8 --> R4
+  R5 -->|No / auto warning| R10 --> R4
 ```
 
 Main checks:
 
-- `POST /register`
-- `GET /clients/:client_id`
-- `PUT /clients/:client_id`
-- `DELETE /clients/:client_id`
+- `POST /api/admin/clients`
+- `GET /api/admin/clients/:clientId`
+- `PUT /api/admin/clients/:clientId`
+- `DELETE /api/admin/clients/:clientId`
 - `POST /token` (`client_credentials`, mode=`auto|on|off`)
 - `POST /introspect`
 - `POST /revoke`
@@ -148,7 +152,10 @@ Main checks:
 Notes:
 
 - `client_credentials` can be disabled by tenant, profile, or feature configuration
-- `--client-credentials auto` treats that case as a warning and still validates DCR lifecycle
+- DCR/IAT setup is no longer required for this smoke because the runner creates a temporary
+  validation machine principal for Admin Client API access.
+- `--client-credentials auto` treats that case as a warning and still validates Admin Client API
+  lifecycle
 
 ## Approval, completion, receipt, grant, and protected-resource smoke
 
@@ -207,6 +214,7 @@ Notes:
 - if no `--client-id` / `--client-secret` pair is provided, it creates a temporary service client
 - if a service client secret is available, it validates token exchange and a real protected
   product route
+- validation machine tokens are temporary and are removed from `DB_ADMIN` after the smoke cleanup
 
 ## Server-side schema, profile, SCIM, and audit smoke
 
@@ -263,6 +271,7 @@ Main checks:
 
 Notes:
 
+- validation machine tokens are temporary and are removed from `DB_ADMIN` after the smoke cleanup
 - when `PROFILE_REGISTRY_BACKEND=kv`, `GET /api/admin/runtime-profiles?kind=audit` can be affected
   by Cloudflare KV list consistency
 - this runner treats that as a runtime consistency note, not an automatic product failure
@@ -316,6 +325,8 @@ Purpose:
 - uses supported APIs only
 - checks whether approval, downstream grant, and protected-resource flows keep working under bounded
   concurrent pressure
+- if the temporary validation machine cannot access approval management, the runner preflights that
+  condition and exits as a documented skip instead of creating partial load-test state
 
 Main checks:
 

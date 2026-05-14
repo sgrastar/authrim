@@ -167,6 +167,65 @@ describe('ensureLoginUiClient', () => {
     expect(createHeaders.Authorization).toBe('Bearer machine-admin-token');
   });
 
+  it('retries setup machine token acquisition while workers.dev router is propagating', async () => {
+    const secrets = generateAllSecrets('login-ui-test-key');
+    await saveKeysToDirectory(secrets, { targetDir: tempDir });
+    const progress: string[] = [];
+
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(
+          JSON.stringify({
+            error_code: 1042,
+            error_name: 'workers_dev_script_not_found',
+            detail: 'No Workers script was found for this host on workers.dev.',
+          }),
+          404
+        )
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: 'machine-admin-token',
+          token_type: 'Bearer',
+          expires_in: 600,
+          scope: 'admin:clients:*',
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'client-machine-after-retry',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://single-ar-router.example.workers.dev',
+      loginUiUrl: 'https://single-ar-login-ui.workers.dev',
+      adminApiSecretPath,
+      tenantId: 'default',
+      onProgress: (message) => progress.push(message),
+      retryDelayMs: 1,
+      maxRetries: 2,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      clientId: 'client-machine-after-retry',
+      alreadyExists: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://single-ar-router.example.workers.dev/token'
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      'https://single-ar-router.example.workers.dev/token'
+    );
+  });
+
   it('creates the built-in Login UI client with browser refresh tokens disabled', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))

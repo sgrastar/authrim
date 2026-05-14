@@ -23,6 +23,9 @@
  * - PUT    /api/admin/saml-providers/:id - Update SAML provider
  * - DELETE /api/admin/saml-providers/:id - Delete SAML provider
  * - GET    /api/admin/saml-attribute-presets - List SAML attribute presets
+ * - POST   /api/admin/saml-attribute-presets - Create custom SAML attribute preset
+ * - DELETE /api/admin/saml-attribute-presets/:id - Delete custom SAML attribute preset
+ * - POST   /api/admin/saml-metadata/preview - Fetch and parse metadata before registration
  * - POST   /api/admin/saml-providers/:id/import-metadata - Import metadata
  * - POST   /api/admin/saml-providers/:id/refresh-metadata - Refresh metadata URL
  * - POST   /api/admin/saml-providers/:id/signing-rollover/publish-next - Publish next signing certificate
@@ -59,6 +62,9 @@ import {
   handleUpdateProvider,
   handleDeleteProvider,
   handleListAttributePresets,
+  handleCreateAttributePreset,
+  handleDeleteAttributePreset,
+  handlePreviewMetadata,
   handleImportMetadata,
   handleRefreshMetadata,
   handlePublishSigningNext,
@@ -206,6 +212,21 @@ app.delete('/api/admin/saml-providers/:id', handleDeleteProvider);
  * List SAML Attribute Presets
  */
 app.get('/api/admin/saml-attribute-presets', handleListAttributePresets);
+
+/**
+ * Create custom SAML Attribute Preset
+ */
+app.post('/api/admin/saml-attribute-presets', handleCreateAttributePreset);
+
+/**
+ * Delete custom SAML Attribute Preset
+ */
+app.delete('/api/admin/saml-attribute-presets/:id', handleDeleteAttributePreset);
+
+/**
+ * Preview Metadata
+ */
+app.post('/api/admin/saml-metadata/preview', handlePreviewMetadata);
 
 /**
  * Import Metadata

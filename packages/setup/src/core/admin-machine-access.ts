@@ -1,9 +1,9 @@
 import { createSign, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { chmod, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AuthrimConfig } from './config.js';
-import type { JWK } from './keys.js';
+import { generateEs256KeyPair, type JWK } from './keys.js';
 import {
   fetchWithTimeout,
   readResponseJsonWithLimit,
@@ -35,7 +35,7 @@ export const SETUP_MACHINE_DEFAULT_SCOPES = [
   'admin:database_connections:*',
   'admin:external_providers:*',
   'admin:saml_providers:*',
-  'admin:saml_attribute_presets:read',
+  'admin:saml_attribute_presets:*',
   'admin:tenant_domains:*',
 ] as const;
 
@@ -78,6 +78,16 @@ function safeAdminUiBffCredentialIdFromKid(kid: string): string {
 
 function base64UrlJson(value: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function buildPermissionValuesSql(principalId: string, permissions: readonly string[]): string {
+  const sqlExpr = getPortableSqlExpressions('sqlite');
+  return permissions
+    .map(
+      (permission) =>
+        `(${sqlString(principalId)}, ${sqlString(permission)}, ${sqlExpr.nowEpochMilliseconds}, 'bootstrap', 'setup')`
+    )
+    .join(',\n');
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -143,6 +153,54 @@ export async function loadSetupMachinePublicJwk(keysDir: string): Promise<JWK> {
   const path = getSetupMachinePublicJwkPath(keysDir);
   const content = await readFile(path, 'utf-8');
   return JSON.parse(content) as JWK;
+}
+
+async function writeSensitiveFile(path: string, content: string): Promise<void> {
+  await writeFile(path, content, 'utf-8');
+  await chmod(path, 0o600);
+}
+
+async function unlinkIfExists(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function ensureSetupMachineKeyFiles(keysDir: string): Promise<{
+  created: boolean;
+}> {
+  const privateKeyPath = getSetupMachinePrivateKeyPath(keysDir);
+  const publicJwkPath = getSetupMachinePublicJwkPath(keysDir);
+  const hasPrivateKey = existsSync(privateKeyPath);
+  const hasPublicJwk = existsSync(publicJwkPath);
+
+  if (hasPrivateKey && hasPublicJwk) {
+    return { created: false };
+  }
+
+  if (hasPrivateKey !== hasPublicJwk) {
+    throw new Error('setup_machine_key_pair_incomplete');
+  }
+
+  const keyPair = generateEs256KeyPair('authrim-setup-ephemeral');
+  await writeSensitiveFile(privateKeyPath, keyPair.privateKeyPem);
+  await writeSensitiveFile(publicJwkPath, JSON.stringify(keyPair.publicKeyJwk, null, 2));
+  return { created: true };
+}
+
+export async function deleteSetupMachineKeyFiles(keysDir: string): Promise<void> {
+  await unlinkIfExists(getSetupMachinePrivateKeyPath(keysDir));
+  await unlinkIfExists(getSetupMachinePublicJwkPath(keysDir));
 }
 
 export async function loadAdminUiBffPublicJwk(keysDir: string): Promise<JWK> {
@@ -284,6 +342,11 @@ export function buildSetupMachineAccessBootstrapSql(
     clientId?: string;
     principalId?: string;
     permissions?: readonly string[];
+    displayName?: string;
+    description?: string;
+    principalType?: string;
+    tokenTtlSeconds?: number;
+    createdByActorId?: string;
   } = {}
 ): string {
   const sqlExpr = getPortableSqlExpressions('sqlite');
@@ -291,6 +354,13 @@ export function buildSetupMachineAccessBootstrapSql(
   const principalId = options.principalId ?? SETUP_MACHINE_PRINCIPAL_ID;
   const tenantId = config.tenant?.name?.trim() || 'default';
   const permissions = options.permissions ?? SETUP_MACHINE_DEFAULT_SCOPES;
+  const displayName = options.displayName ?? 'Authrim Setup Tool';
+  const description =
+    options.description ??
+    'System-managed setup tool machine principal for bootstrap and deployment automation.';
+  const principalType = options.principalType ?? 'setup_tool';
+  const tokenTtlSeconds = options.tokenTtlSeconds ?? 600;
+  const createdByActorId = options.createdByActorId ?? 'setup';
 
   if (publicJwk.alg !== 'ES256' || typeof publicJwk.kid !== 'string' || !publicJwk.kid) {
     throw new Error('setup_machine_public_jwk_invalid');
@@ -298,13 +368,7 @@ export function buildSetupMachineAccessBootstrapSql(
 
   const credentialId = safeCredentialIdFromKid(publicJwk.kid);
   const publicJwkJson = JSON.stringify(publicJwk);
-
-  const permissionSql = permissions
-    .map(
-      (permission) =>
-        `SELECT ${sqlString(principalId)}, ${sqlString(permission)}, ${sqlExpr.nowEpochMilliseconds}, 'bootstrap', 'setup'`
-    )
-    .join('\nUNION ALL\n');
+  const permissionValuesSql = buildPermissionValuesSql(principalId, permissions);
 
   return `
 INSERT INTO admin_machine_principals (
@@ -315,14 +379,14 @@ INSERT INTO admin_machine_principals (
 SELECT
   ${sqlString(principalId)},
   ${sqlString(clientId)},
-  'Authrim Setup Tool',
-  'System-managed setup tool machine principal for bootstrap and deployment automation.',
-  'setup_tool',
+  ${sqlString(displayName)},
+  ${sqlString(description)},
+  ${sqlString(principalType)},
   'active',
   ${sqlString(ADMIN_MACHINE_AUDIENCE)},
-  600,
+  ${tokenTtlSeconds},
   'bootstrap',
-  'setup',
+  ${sqlString(createdByActorId)},
   ${sqlExpr.nowEpochMilliseconds},
   ${sqlExpr.nowEpochMilliseconds}
 WHERE NOT EXISTS (
@@ -331,12 +395,12 @@ WHERE NOT EXISTS (
 
 UPDATE admin_machine_principals
 SET client_id = ${sqlString(clientId)},
-    display_name = 'Authrim Setup Tool',
-    description = 'System-managed setup tool machine principal for bootstrap and deployment automation.',
-    principal_type = 'setup_tool',
+    display_name = ${sqlString(displayName)},
+    description = ${sqlString(description)},
+    principal_type = ${sqlString(principalType)},
     status = 'active',
     default_audience = ${sqlString(ADMIN_MACHINE_AUDIENCE)},
-    token_ttl_seconds = 600,
+    token_ttl_seconds = ${tokenTtlSeconds},
     updated_at = ${sqlExpr.nowEpochMilliseconds},
     disabled_at = NULL,
     disabled_by_actor_type = NULL,
@@ -389,7 +453,8 @@ WHERE principal_id = ${sqlString(principalId)};
 INSERT INTO admin_machine_principal_permissions (
   principal_id, permission, created_at, created_by_actor_type, created_by_actor_id
 )
-${permissionSql};
+VALUES
+${permissionValuesSql};
 
 DELETE FROM admin_machine_principal_tenant_scopes
 WHERE principal_id = ${sqlString(principalId)};
@@ -405,6 +470,56 @@ VALUES (
   'bootstrap',
   'setup'
 );
+`.trim();
+}
+
+export function buildSetupMachineAccessCleanupSql(
+  options: {
+    clientId?: string;
+    principalId?: string;
+    principalType?: string;
+  } = {}
+): string {
+  const clientId = options.clientId ?? SETUP_MACHINE_CLIENT_ID;
+  const principalId = options.principalId ?? SETUP_MACHINE_PRINCIPAL_ID;
+  const principalType = options.principalType ?? 'setup_tool';
+
+  return `
+DELETE FROM admin_machine_assertion_jti
+WHERE client_id = ${sqlString(clientId)}
+   OR credential_id IN (
+     SELECT id FROM admin_machine_credentials WHERE principal_id = ${sqlString(principalId)}
+   );
+
+DELETE FROM admin_machine_resource_scopes
+WHERE principal_id = ${sqlString(principalId)}
+   OR credential_id IN (
+     SELECT id FROM admin_machine_credentials WHERE principal_id = ${sqlString(principalId)}
+   );
+
+DELETE FROM admin_machine_credential_tenant_scopes
+WHERE credential_id IN (
+  SELECT id FROM admin_machine_credentials WHERE principal_id = ${sqlString(principalId)}
+);
+
+DELETE FROM admin_machine_credential_permissions
+WHERE credential_id IN (
+  SELECT id FROM admin_machine_credentials WHERE principal_id = ${sqlString(principalId)}
+);
+
+DELETE FROM admin_machine_principal_tenant_scopes
+WHERE principal_id = ${sqlString(principalId)};
+
+DELETE FROM admin_machine_principal_permissions
+WHERE principal_id = ${sqlString(principalId)};
+
+DELETE FROM admin_machine_credentials
+WHERE principal_id = ${sqlString(principalId)};
+
+DELETE FROM admin_machine_principals
+WHERE id = ${sqlString(principalId)}
+  AND client_id = ${sqlString(clientId)}
+  AND principal_type = ${sqlString(principalType)};
 `.trim();
 }
 
@@ -429,12 +544,7 @@ export function buildAdminUiBffMachineAccessBootstrapSql(
 
   const credentialId = safeAdminUiBffCredentialIdFromKid(publicJwk.kid);
   const publicJwkJson = JSON.stringify(publicJwk);
-  const permissionSql = permissions
-    .map(
-      (permission) =>
-        `SELECT ${sqlString(principalId)}, ${sqlString(permission)}, ${sqlExpr.nowEpochMilliseconds}, 'bootstrap', 'setup'`
-    )
-    .join('\nUNION ALL\n');
+  const permissionValuesSql = buildPermissionValuesSql(principalId, permissions);
 
   return `
 INSERT INTO admin_machine_principals (
@@ -519,7 +629,8 @@ WHERE principal_id = ${sqlString(principalId)};
 INSERT INTO admin_machine_principal_permissions (
   principal_id, permission, created_at, created_by_actor_type, created_by_actor_id
 )
-${permissionSql};
+VALUES
+${permissionValuesSql};
 
 DELETE FROM admin_machine_principal_tenant_scopes
 WHERE principal_id = ${sqlString(principalId)};

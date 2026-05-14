@@ -1,7 +1,9 @@
 import {
   fetchJsonWithTimeout,
   isRecord,
+  readGeneratedAdminApiSecret,
   resolveGeneratedSmokeTarget,
+  withTenantHeader,
   type GeneratedSmokeOptions,
 } from './generated-smoke-common.js';
 import { runGeneratedApprovalsSmoke } from './generated-approvals-smoke.js';
@@ -502,6 +504,51 @@ export async function runGeneratedLoadAbuse(
 ): Promise<GeneratedLoadAbuseResult> {
   const target = await resolveGeneratedSmokeTarget(options);
   const profile = options.profile ?? 'safe';
+  const adminAccess = await readGeneratedAdminApiSecret({
+    baseDir: target.baseDir,
+    env: target.env,
+    adminSecret: options.adminSecret,
+    adminSecretPath: options.adminSecretPath,
+    baseUrl: target.baseUrl,
+    tenantId: target.tenantId,
+    config: target.config,
+  });
+  const adminSecret = adminAccess.secret;
+  const approvalPreflight = await (async () => {
+    try {
+      return await fetchJsonWithTimeout(
+        `${target.baseUrl}/api/admin/approvals`,
+        options.timeoutMs ?? 10_000,
+        {
+          headers: withTenantHeader(
+            {
+              authorization: `Bearer ${adminSecret}`,
+              accept: 'application/json',
+            },
+            target.tenantId
+          ),
+        }
+      );
+    } finally {
+      await adminAccess.cleanup?.();
+    }
+  })();
+  if (approvalPreflight.status === 403) {
+    return {
+      ok: true,
+      env: target.env,
+      baseUrl: target.baseUrl,
+      configPath: target.configPath,
+      profile,
+      bootstrapChecks: [
+        `approval-load-preflight: skipped because Admin Machine Access cannot access approvals (${approvalPreflight.status})`,
+      ],
+      stages: [],
+      cleanupNotes: [],
+      interStageCooldownsMs: [],
+    };
+  }
+
   const context = await createGeneratedApprovalLoadContext(options);
   const bootstrapChecks = context.checks.flatMap((check) =>
     check.details.map((detail) => `${check.id}: ${detail}`)

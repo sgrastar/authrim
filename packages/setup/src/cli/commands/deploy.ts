@@ -40,6 +40,7 @@ import {
   runMigrationsForEnvironment,
   ensureInitialAdminRolesInD1,
   ensureAdminUiBffMachineAccessInD1,
+  cleanupSetupMachineAccessInD1,
   ensureSetupMachineAccessInD1,
   ensureInitialTenantInD1,
   seedRuntimeProfiles,
@@ -63,6 +64,7 @@ import {
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { resolveIssuerUrl } from '../../core/url-config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
+import { waitForRouterWorkerReady } from '../../core/worker-readiness.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
 import { saveMasterWranglerConfigs } from '../../core/wrangler-sync.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
@@ -770,14 +772,72 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     console.log(chalk.gray(`\nLock file updated: ${lockPath}`));
   }
 
+  let deploymentApiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+  if (!options.dryRun && !options.component && summary.failedCount === 0) {
+    if (!deploymentApiBaseUrl) {
+      const subdomain = await getWorkersSubdomain();
+      deploymentApiBaseUrl = subdomain
+        ? `https://${env}-ar-router.${subdomain}.workers.dev`
+        : `https://${env}-ar-router.workers.dev`;
+    }
+
+    const readinessSpinner = ora('Waiting for API router to become reachable...').start();
+    const readinessResult = await waitForRouterWorkerReady({
+      apiBaseUrl: deploymentApiBaseUrl,
+      onProgress: (msg) => {
+        readinessSpinner.text = msg;
+      },
+    });
+
+    if (readinessResult.ready) {
+      readinessSpinner.succeed('API router is reachable');
+    } else {
+      readinessSpinner.fail('API router did not become reachable');
+      console.error(
+        chalk.red(
+          `  ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+        )
+      );
+      process.exit(1);
+    }
+  }
+
   // Run D1 database migrations (unless skipped or dry-run)
   let migrationsSuccess = true;
   let initialTenantSuccess = true;
   let initialAdminRolesSuccess = true;
   let setupMachineAccessSuccess = true;
+  let setupMachineAccessCleanupDone = false;
   let adminUiBffMachineAccessSuccess = true;
   let runtimeProfileSeedSuccess = true;
   let uiWorkersSuccess = true;
+  const cleanupEphemeralSetupMachineAccess = async (): Promise<void> => {
+    if (
+      setupMachineAccessCleanupDone ||
+      options.dryRun ||
+      options.component ||
+      !setupMachineAccessSuccess
+    ) {
+      return;
+    }
+    setupMachineAccessCleanupDone = true;
+    const cleanupSpinner = ora('Removing setup machine access...').start();
+    const cleanupResult = await cleanupSetupMachineAccessInD1(
+      env,
+      getResolvedKeysDir(),
+      (msg) => {
+        cleanupSpinner.text = msg;
+      }
+    );
+    if (cleanupResult.success) {
+      cleanupSpinner.succeed('Setup machine access removed');
+    } else {
+      cleanupSpinner.warn('Setup machine access cleanup failed');
+      if (cleanupResult.error) {
+        console.log(chalk.yellow(`  ${cleanupResult.error}`));
+      }
+    }
+  };
   if (
     !options.skipMigrations &&
     !options.dryRun &&
@@ -932,7 +992,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       env,
       rootDir,
       keysDir,
-      apiBaseUrl: config.urls?.api?.custom || config.urls?.api?.auto,
+      apiBaseUrl: deploymentApiBaseUrl,
       tenantId: config.tenant?.name,
       dryRun: options.dryRun,
       onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
@@ -968,7 +1028,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   ) {
     console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Workers...\n'));
 
-    let apiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+    let apiBaseUrl = deploymentApiBaseUrl;
     if (!apiBaseUrl) {
       const subdomain = await getWorkersSubdomain();
       if (subdomain) {
@@ -1008,12 +1068,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           console.log(chalk.green(`  ✓ Login UI client created: ${loginUiClientId}`));
         }
       } else {
+        await cleanupEphemeralSetupMachineAccess();
         console.error(
           chalk.red(`  ✗ Login UI client creation failed: ${clientResult.error || 'unknown error'}`)
         );
         process.exit(1);
       }
     }
+
+    await cleanupEphemeralSetupMachineAccess();
 
     const loginUiSettings = resolveUiDeploymentSettings({
       component: 'ar-login-ui',
@@ -1198,6 +1261,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
     }
   }
+
+  await cleanupEphemeralSetupMachineAccess();
 }
 
 // =============================================================================

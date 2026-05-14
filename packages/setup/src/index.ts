@@ -232,23 +232,66 @@ program
             ? join(foundKeys.path, 'admin_api_secret.txt')
             : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keyFiles
                 .adminApiSecret;
+          const keysDir = foundKeys
+            ? foundKeys.path
+            : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keys;
 
-          const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
-          const clientResult = await ensureLoginUiClient({
+          const { waitForRouterWorkerReady } = await import('./core/worker-readiness.js');
+          const readinessResult = await waitForRouterWorkerReady({
             apiBaseUrl,
-            loginUiUrl,
-            adminApiSecretPath,
             onProgress: (msg) => {
               buildSpinner.text = msg;
             },
           });
-
-          if (clientResult.success && clientResult.clientId) {
-            loginUiClientId = clientResult.clientId;
-          } else {
+          if (!readinessResult.ready) {
             buildSpinner.fail(
-              `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
             );
+            process.exit(1);
+          }
+
+          const { ensureSetupMachineAccessInD1, cleanupSetupMachineAccessInD1 } = await import(
+            './core/cloudflare.js'
+          );
+          const setupMachineResult = await ensureSetupMachineAccessInD1(
+            env,
+            cfg as AuthrimConfig,
+            keysDir,
+            (msg) => {
+              buildSpinner.text = msg;
+            }
+          );
+          if (!setupMachineResult.success) {
+            buildSpinner.fail(
+              `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
+            );
+            process.exit(1);
+          }
+
+          let loginUiClientError: string | undefined;
+          try {
+            const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
+            const clientResult = await ensureLoginUiClient({
+              apiBaseUrl,
+              loginUiUrl,
+              adminApiSecretPath,
+              keysDir,
+              tenantId: (cfg as AuthrimConfig | null)?.tenant?.name,
+              onProgress: (msg) => {
+                buildSpinner.text = msg;
+              },
+            });
+
+            if (clientResult.success && clientResult.clientId) {
+              loginUiClientId = clientResult.clientId;
+            } else {
+              loginUiClientError = clientResult.error || 'unknown error';
+            }
+          } finally {
+            await cleanupSetupMachineAccessInD1(env, keysDir);
+          }
+          if (loginUiClientError) {
+            buildSpinner.fail(`Login UI client creation failed: ${loginUiClientError}`);
             process.exit(1);
           }
         }

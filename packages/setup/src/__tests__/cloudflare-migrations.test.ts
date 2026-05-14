@@ -148,6 +148,21 @@ describe('migration seed SQL portability', () => {
     }
   });
 
+  it('keeps Admin role assignment scope normalization independent from timestamp columns', () => {
+    const migrationFiles = [
+      new URL('../../../../migrations/admin/016_admin_role_assignment_scope_normalization.sql', import.meta.url),
+      new URL('../../migrations/admin/016_admin_role_assignment_scope_normalization.sql', import.meta.url),
+    ];
+
+    for (const fileUrl of migrationFiles) {
+      const sql = readFileSync(fileUrl, 'utf-8');
+      expect(sql).toContain('UPDATE admin_role_assignments');
+      expect(sql).toContain('SET scope_id = tenant_id');
+      expect(sql).not.toContain('updated_at');
+      expect(sql).not.toContain("strftime('%s', 'now')");
+    }
+  });
+
   it('replaces backend-specific epoch helpers in current and setup migration assets', () => {
     const migrationFiles = [
       new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),

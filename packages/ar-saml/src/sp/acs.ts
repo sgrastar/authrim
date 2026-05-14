@@ -24,6 +24,7 @@ import {
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
+  getChallengeStoreByChallengeId,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -48,6 +49,24 @@ import {
 import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { verifyXmlSignature, hasSignature } from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
+
+const SESSION_COOKIE_NAME = 'authrim_session';
+const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
+const SESSION_HANDOFF_TTL_SECONDS = 60;
+const SAML_SP_HANDOFF_AUDIENCE = 'saml_sp_cookie_handoff';
+const NO_STORE_HEADERS = {
+  'Cache-Control': 'no-store',
+  Pragma: 'no-cache',
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
+} as const;
+
+type SAMLIdPConfigWithAuthnContextPolicy = SAMLIdPConfig & {
+  authnContextPolicy?: {
+    mode: 'observe' | 'require_any';
+    allowedClassRefs?: string[];
+  };
+};
 
 /**
  * Handle ACS request (receive SAML Response from IdP)
@@ -149,6 +168,16 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       }
     }
 
+    const authnContextClassRef = assertion.authnStatement?.authnContext?.authnContextClassRef;
+    const authnContextError = validateAuthnContextPolicy(idpConfig, authnContextClassRef);
+    if (authnContextError) {
+      log.warn('AuthnContext policy rejected SAML assertion', {
+        issuer,
+        authnContextClassRef: authnContextClassRef || 'missing',
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
     // Extract user information from assertion
     const userInfo = extractUserInfo(assertion, idpConfig);
 
@@ -205,6 +234,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       metadata: JSON.stringify({
         method: 'saml',
         idp_entity_id: issuer,
+        authn_context_class_ref: authnContextClassRef,
       }),
       severity: 'info',
     }).catch((err: unknown) => {
@@ -219,12 +249,23 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       returnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${buildIssuerUrl(env, tenantId)}/`;
     }
 
+    const handoffResponse = await createSessionHandoffResponse(
+      c,
+      tenantId,
+      sessionId,
+      userId,
+      returnUrl
+    );
+    if (handoffResponse) {
+      return handoffResponse;
+    }
+
     // Set session cookie and redirect
     return new Response(null, {
       status: 302,
       headers: {
         Location: returnUrl,
-        'Set-Cookie': `authrim_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`,
+        'Set-Cookie': buildSessionCookie(sessionId),
       },
     });
   } catch (error) {
@@ -260,6 +301,122 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     });
 
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+async function createSessionHandoffResponse(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  sessionId: string,
+  userId: string,
+  returnUrl: string
+): Promise<Response | null> {
+  const env = c.env;
+  if (!shouldUseSessionHandoff(env, getRequestUrl(c), returnUrl)) {
+    return null;
+  }
+
+  const token = createHandoffToken();
+  const state = createHandoffToken();
+  const clientId = resolveLoginUiClientId(env);
+  const returnOrigin = getUrlOrigin(returnUrl);
+
+  try {
+    const handoffStore = await getChallengeStoreByChallengeId(env, token, tenantId);
+    const metadata: Record<string, unknown> = {
+      state,
+      aud: SAML_SP_HANDOFF_AUDIENCE,
+      created_at: Date.now(),
+      source: 'saml_sp',
+      return_url: returnUrl,
+      origin: returnOrigin,
+    };
+    if (clientId) {
+      metadata.client_id = clientId;
+    }
+
+    await handoffStore.storeChallengeRpc({
+      id: `handoff:${token}`,
+      tenantId,
+      type: 'handoff',
+      userId,
+      challenge: sessionId,
+      ttl: SESSION_HANDOFF_TTL_SECONDS,
+      metadata,
+    });
+  } catch (error) {
+    getLogger(c)
+      .module('SAML-SP')
+      .warn('CHALLENGE_STORE is unavailable for session handoff', {}, error as Error);
+    return null;
+  }
+
+  const callbackUrl = new URL('/callback', returnUrl);
+  callbackUrl.searchParams.set('handoff_token', token);
+  callbackUrl.searchParams.set('state', state);
+  callbackUrl.searchParams.set('return_url', returnUrl);
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: callbackUrl.toString(),
+      ...NO_STORE_HEADERS,
+    },
+  });
+}
+
+function shouldUseSessionHandoff(env: Env, requestUrl: string, returnUrl: string): boolean {
+  const requestOrigin = getUrlOrigin(requestUrl);
+  const returnOrigin = getUrlOrigin(returnUrl);
+  const uiOrigin = getUrlOrigin((env as unknown as Record<string, unknown>).UI_URL);
+
+  return Boolean(
+    requestOrigin &&
+    returnOrigin &&
+    uiOrigin &&
+    requestOrigin !== returnOrigin &&
+    returnOrigin === uiOrigin
+  );
+}
+
+function buildSessionCookie(sessionId: string): string {
+  return `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`;
+}
+
+function createHandoffToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function resolveLoginUiClientId(env: Env): string | undefined {
+  const candidates = [
+    (env as unknown as Record<string, unknown>).LOGIN_UI_CLIENT_ID,
+    (env as unknown as Record<string, unknown>).PUBLIC_LOGIN_UI_CLIENT_ID,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
+function getRequestUrl(c: Context<{ Bindings: Env }>): string {
+  return typeof c.req.url === 'string'
+    ? c.req.url
+    : buildIssuerUrl(c.env, resolveSAMLTenantIdFromContext(c));
+}
+
+function getUrlOrigin(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
   }
 }
 
@@ -745,6 +902,33 @@ async function validateInResponseTo(
   }
 }
 
+function validateAuthnContextPolicy(
+  idpConfig: SAMLIdPConfig,
+  authnContextClassRef: string | undefined
+): Error | null {
+  const policy = (idpConfig as SAMLIdPConfigWithAuthnContextPolicy).authnContextPolicy;
+  if (!policy || policy.mode === 'observe') {
+    return null;
+  }
+
+  if (policy.mode !== 'require_any') {
+    return null;
+  }
+
+  const allowedClassRefs = (policy.allowedClassRefs || [])
+    .map((value: string) => value.trim())
+    .filter(Boolean);
+  if (allowedClassRefs.length === 0) {
+    return null;
+  }
+
+  if (!authnContextClassRef || !allowedClassRefs.includes(authnContextClassRef)) {
+    return new Error('AuthnContextClassRef is not allowed by provider policy');
+  }
+
+  return null;
+}
+
 interface UserInfo {
   email?: string;
   name?: string;
@@ -948,6 +1132,7 @@ async function createSession(env: Env, userId: string, tenantId: string): Promis
       sessionId,
       userId,
       ttl: 3600, // 1 hour
+      tenantId,
       data: {
         amr: ['saml'],
         acr: 'urn:mace:incommon:iap:bronze',

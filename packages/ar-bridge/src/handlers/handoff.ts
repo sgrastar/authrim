@@ -279,10 +279,11 @@ async function createHandoffSession(
     challenge: string; // sessionId
     userId: string;
     metadata?: {
-      client_id: string;
+      client_id?: string;
       state: string;
       aud: string;
       created_at: number;
+      origin?: string;
     };
   };
 
@@ -301,11 +302,29 @@ async function createHandoffSession(
   }
 
   // 3. aud検証（トークン再利用防止）
-  if (handoffData.metadata?.aud !== 'handoff') {
+  const allowedHandoffAudiences = new Set(['handoff', 'saml_sp_cookie_handoff']);
+  if (
+    typeof handoffData.metadata?.aud !== 'string' ||
+    !allowedHandoffAudiences.has(handoffData.metadata.aud)
+  ) {
     log.error('Invalid token audience', {
-      expected: 'handoff',
+      expected: 'handoff or saml_sp_cookie_handoff',
       received: handoffData.metadata?.aud,
       client_id,
+    });
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  }
+
+  if (
+    handoffData.metadata.aud === 'saml_sp_cookie_handoff' &&
+    handoffData.metadata.origin &&
+    handoffData.metadata.origin !== origin
+  ) {
+    log.error('Origin mismatch - POTENTIAL ATTACK', {
+      expected: handoffData.metadata.origin,
+      received: origin,
+      client_id,
+      ip: clientIp,
     });
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
@@ -341,7 +360,7 @@ async function createHandoffSession(
   }
 
   // 5. client_id検証
-  if (handoffData.metadata?.client_id !== client_id) {
+  if (handoffData.metadata?.client_id && handoffData.metadata.client_id !== client_id) {
     log.error('Client ID mismatch - POTENTIAL ATTACK', {
       expected: handoffData.metadata?.client_id,
       received: client_id,

@@ -41,6 +41,9 @@ export interface TenantEndpoints {
 	};
 	saml: {
 		sso: string;
+		idp_metadata: string;
+		sp_metadata: string;
+		/** @deprecated Use sp_metadata for the SP metadata URL. */
 		metadata: string;
 		acs: string;
 		slo: string;

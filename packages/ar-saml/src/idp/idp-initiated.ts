@@ -22,7 +22,7 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 import { generateSAMLId } from '../common/xml-utils';
-import { NAMEID_FORMATS, AUTHN_CONTEXT, DEFAULTS, STATUS_CODES } from '../common/constants';
+import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
 import { getSamlUserInfoById } from '../common/user-store';
@@ -38,10 +38,15 @@ import {
   resolveSAMLTransientNameIDStore,
 } from './subject';
 import { buildSAMLAssertionTiming } from './assertion-timing';
+import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
+import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
+import { resolveSAMLAuthnContextClassRef } from './authn-context';
 
 interface AuthenticatedSAMLSession {
   userId: string;
   sessionId: string;
+  acr?: string;
+  amr?: string[];
 }
 
 /**
@@ -111,7 +116,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
       spConfig,
       userInfo,
       tenantId,
-      authenticatedSession.sessionId
+      authenticatedSession
     );
 
     // Return auto-submit form
@@ -129,7 +134,7 @@ async function checkUserAuthentication(
   c: Context<{ Bindings: Env }>,
   env: Env
 ): Promise<AuthenticatedSAMLSession | null> {
-  const sessionId = c.req.header('Cookie')?.match(/authrim_session=([^;]+)/)?.[1];
+  const sessionId = extractAuthrimSessionIdFromCookieHeader(c.req.header('Cookie'));
 
   if (!sessionId) {
     return null;
@@ -154,8 +159,20 @@ async function checkUserAuthentication(
       return null;
     }
 
-    const session = (await response.json()) as { userId?: string };
-    return session.userId ? { userId: session.userId, sessionId } : null;
+    const session = (await response.json()) as {
+      userId?: string;
+      data?: { acr?: unknown; amr?: unknown };
+    };
+    return session.userId
+      ? {
+          userId: session.userId,
+          sessionId,
+          acr: typeof session.data?.acr === 'string' ? session.data.acr : undefined,
+          amr: Array.isArray(session.data?.amr)
+            ? session.data.amr.filter((value): value is string => typeof value === 'string')
+            : undefined,
+        }
+      : null;
   } catch {
     return null;
   }
@@ -181,7 +198,7 @@ async function generateIdPInitiatedResponse(
   spConfig: SAMLSPConfig,
   userInfo: { id: string; email: string; name?: string },
   tenantId: string,
-  sessionId: string
+  authSession: AuthenticatedSAMLSession
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
     tenantId,
@@ -199,7 +216,7 @@ async function generateIdPInitiatedResponse(
     allowCreate: true,
     transientStore: resolveSAMLTransientNameIDStore(env),
     transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
-    sessionId,
+    sessionId: authSession.sessionId,
   });
 
   // Build attributes from mapping
@@ -226,12 +243,22 @@ async function generateIdPInitiatedResponse(
     sessionIndex: await createSAMLSessionIndex(env.STATE_STORE, {
       tenantId,
       spEntityId: spConfig.entityId,
-      sessionId,
+      sessionId: authSession.sessionId,
       ttlSeconds: DEFAULTS.SESSION_VALIDITY_SECONDS,
     }),
     notBefore: timing.notBefore,
     notOnOrAfter: timing.notOnOrAfter,
-    authnContextClassRef: AUTHN_CONTEXT.PASSWORD_PROTECTED_TRANSPORT,
+    authnContextClassRef: resolveSAMLAuthnContextClassRef(
+      {
+        id: responseId,
+        issueInstant: timing.issueInstant,
+        issuer: spConfig.entityId,
+      },
+      {
+        spConfig,
+        session: authSession,
+      }
+    ),
     attributes,
   });
 
@@ -253,34 +280,16 @@ function sendSAMLResponse(
   relayState?: string
 ): Response {
   const encodedResponse = btoa(responseXml);
+  const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
+  if (relayState) {
+    fields.push({ name: 'RelayState', value: relayState });
+  }
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML SSO - Redirecting...</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(spConfig.acsUrl)}">
-    <input type="hidden" name="SAMLResponse" value="${escapeHtml(encodedResponse)}" />
-    ${relayState ? `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue to Service Provider</button>
-    </noscript>
-  </form>
-</body>
-</html>
-`;
-
-  return new Response(html, {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-    },
+  return buildSAMLPostBindingResponse({
+    title: 'SAML SSO - Redirecting...',
+    actionUrl: spConfig.acsUrl,
+    fields,
+    buttonText: 'Continue to Service Provider',
   });
 }
 

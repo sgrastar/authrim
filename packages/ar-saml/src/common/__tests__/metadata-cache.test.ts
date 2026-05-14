@@ -27,12 +27,25 @@ describe('SAML metadata cache helpers', () => {
 
     expect(headers).toEqual({
       'Content-Type': 'application/samlmetadata+xml',
+      'Content-Disposition': 'attachment; filename="authrim-saml-metadata.xml"',
       'Cache-Control': `public, max-age=${SAML_METADATA_CACHE_MAX_AGE_SECONDS}`,
       ETag: expect.stringMatching(/^W\/"saml-metadata-[a-z0-9]+"$/),
       'X-Content-Type-Options': 'nosniff',
     });
     expect(headers.ETag).toBe(headersAgain.ETag);
     expect(SAML_METADATA_CACHE_DURATION).toBe('PT24H');
+  });
+
+  it('allows metadata endpoints to provide role-specific download filenames', () => {
+    const response = buildSAMLMetadataResponse(
+      metadataXml,
+      undefined,
+      'authrim-saml-sp-metadata.xml'
+    );
+
+    expect(response.headers.get('Content-Disposition')).toBe(
+      'attachment; filename="authrim-saml-sp-metadata.xml"'
+    );
   });
 
   it('returns 200 when If-None-Match is absent or stale', () => {

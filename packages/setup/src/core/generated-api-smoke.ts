@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parseConfig, type AuthrimConfig } from './config.js';
-import { resolveIssuerUrl } from './url-config.js';
+import { resolveIssuerUrl, resolveSharedLoginUiBaseUrl } from './url-config.js';
 import { resolveGeneratedEnvValidationTarget } from './generated-env-validator.js';
 
 type CheckStatus = 'pass' | 'fail';
@@ -32,8 +32,16 @@ export interface GeneratedApiSmokeOptions {
 interface ApiSmokeTarget {
   id: string;
   title: string;
-  path: string;
-  validate: (payload: unknown, baseUrl: string, config: AuthrimConfig) => string[];
+  path?: string;
+  resolveUrl?: (baseUrl: string, config: AuthrimConfig) => string;
+  expectedStatuses?: number[];
+  requireJson?: boolean;
+  validate?: (payload: unknown, baseUrl: string, config: AuthrimConfig) => string[];
+  validateResponse?: (
+    response: Awaited<ReturnType<typeof fetchJsonWithTimeout>>,
+    baseUrl: string,
+    config: AuthrimConfig
+  ) => string[];
 }
 
 function makeCheck(target: ApiSmokeTarget, url: string): ApiSmokeCheck {
@@ -63,9 +71,16 @@ export function buildApiSmokeBaseUrl(config: AuthrimConfig): string {
   return resolveIssuerUrl(config, { env: config.environment.prefix });
 }
 
+export function buildApiSmokeLoginProtocolBaseUrl(config: AuthrimConfig, baseUrl: string): string {
+  if (config.tenant.multiTenant || config.urls?.loginUi?.sameAsApi === true) {
+    return baseUrl;
+  }
+  return resolveSharedLoginUiBaseUrl(config, { env: config.environment.prefix });
+}
+
 export function validateRouterHealthPayload(payload: unknown): string[] {
   if (!isRecord(payload)) {
-    return ['payload が object ではありません'];
+    return ['payload is not an object'];
   }
   const failures: string[] = [];
   if (payload.status !== 'ok') {
@@ -79,7 +94,7 @@ export function validateRouterHealthPayload(payload: unknown): string[] {
 
 export function validateAuthHealthPayload(payload: unknown): string[] {
   if (!isRecord(payload)) {
-    return ['payload が object ではありません'];
+    return ['payload is not an object'];
   }
   const failures: string[] = [];
   if (payload.status !== 'ok') {
@@ -97,7 +112,7 @@ export function validateDiscoveryPayload(
   config: AuthrimConfig
 ): string[] {
   if (!isRecord(payload)) {
-    return ['payload が object ではありません'];
+    return ['payload is not an object'];
   }
   const failures: string[] = [];
 
@@ -117,10 +132,10 @@ export function validateDiscoveryPayload(
   }
 
   if (!Array.isArray(payload.response_types_supported)) {
-    failures.push('response_types_supported が配列ではありません');
+    failures.push('response_types_supported is not an array');
   }
   if (!Array.isArray(payload.grant_types_supported)) {
-    failures.push('grant_types_supported が配列ではありません');
+    failures.push('grant_types_supported is not an array');
   }
   if (config.components.async) {
     if (payload.device_authorization_endpoint !== `${baseUrl}/device_authorization`) {
@@ -140,32 +155,32 @@ export function validateDiscoveryPayload(
 
 export function validateJwksPayload(payload: unknown): string[] {
   if (!isRecord(payload)) {
-    return ['payload が object ではありません'];
+    return ['payload is not an object'];
   }
   const { keys } = payload;
   if (!Array.isArray(keys)) {
-    return ['keys が配列ではありません'];
+    return ['keys is not an array'];
   }
   if (keys.length === 0) {
-    return ['keys が空です'];
+    return ['keys is empty'];
   }
   const firstKey = keys[0];
   if (!isRecord(firstKey)) {
-    return ['keys[0] が object ではありません'];
+    return ['keys[0] is not an object'];
   }
   const failures: string[] = [];
   if (typeof firstKey.kid !== 'string' || !firstKey.kid) {
-    failures.push('keys[0].kid がありません');
+    failures.push('keys[0].kid is missing');
   }
   if (typeof firstKey.kty !== 'string' || !firstKey.kty) {
-    failures.push('keys[0].kty がありません');
+    failures.push('keys[0].kty is missing');
   }
   return failures;
 }
 
 export function validateLoginMethodsPayload(payload: unknown): string[] {
   if (!isRecord(payload)) {
-    return ['payload が object ではありません'];
+    return ['payload is not an object'];
   }
   const failures: string[] = [];
   const methods = payload.methods;
@@ -173,35 +188,113 @@ export function validateLoginMethodsPayload(payload: unknown): string[] {
   const meta = payload.meta;
 
   if (!isRecord(methods)) {
-    failures.push('methods が object ではありません');
+    failures.push('methods is not an object');
   } else {
     if (!isRecord(methods.passkey) || typeof methods.passkey.enabled !== 'boolean') {
-      failures.push('methods.passkey.enabled が不正です');
+      failures.push('methods.passkey.enabled is invalid');
     }
     if (!isRecord(methods.emailCode) || typeof methods.emailCode.enabled !== 'boolean') {
-      failures.push('methods.emailCode.enabled が不正です');
+      failures.push('methods.emailCode.enabled is invalid');
     }
-    if (!isRecord(methods.social) || !Array.isArray(methods.social.providers)) {
-      failures.push('methods.social.providers が不正です');
+    if (!isRecord(methods.external) || !Array.isArray(methods.external.providers)) {
+      failures.push('methods.external.providers is invalid');
     }
   }
 
   if (!isRecord(ui)) {
-    failures.push('ui が object ではありません');
+    failures.push('ui is not an object');
   } else {
     if (!isRecord(ui.branding) || typeof ui.branding.brandName !== 'string') {
-      failures.push('ui.branding.brandName が不正です');
+      failures.push('ui.branding.brandName is invalid');
     }
     if (!Array.isArray(ui.supportedLocales)) {
-      failures.push('ui.supportedLocales が配列ではありません');
+      failures.push('ui.supportedLocales is not an array');
     }
   }
 
   if (!isRecord(meta) || typeof meta.cacheTTL !== 'number') {
-    failures.push('meta.cacheTTL が不正です');
+    failures.push('meta.cacheTTL is invalid');
   }
 
   return failures;
+}
+
+export function validateInvalidRequestPayload(payload: unknown): string[] {
+  if (!isRecord(payload)) {
+    return ['payload is not an object'];
+  }
+  const failures: string[] = [];
+  if (payload.error !== 'invalid_request') {
+    failures.push(`error expected=invalid_request actual=${String(payload.error)}`);
+  }
+  if (typeof payload.error_description !== 'string' || payload.error_description.length === 0) {
+    failures.push('error_description is missing');
+  }
+  return failures;
+}
+
+export function validateAuthorizeInvalidRequestResponse(
+  response: Awaited<ReturnType<typeof fetchJsonWithTimeout>>
+): string[] {
+  const bodyText = response.bodyText ?? '';
+  const failures: string[] = [];
+  if (!bodyText.includes('invalid_request')) {
+    failures.push('body does not include invalid_request');
+  }
+  if (!bodyText.includes('response_type is required')) {
+    failures.push('body does not include response_type is required');
+  }
+  if (bodyText.includes('Authrim Router Worker')) {
+    failures.push('request was handled by router 404 instead of OP_AUTH');
+  }
+  return failures;
+}
+
+function buildBrowserOidcTargets(config: AuthrimConfig): ApiSmokeTarget[] {
+  const targets: ApiSmokeTarget[] = [
+    {
+      id: 'oidc-authorize-invalid-request',
+      title: 'OIDC authorize endpoint reaches OP_AUTH',
+      path: '/authorize',
+      expectedStatuses: [400],
+      requireJson: false,
+      validateResponse: (response) => validateAuthorizeInvalidRequestResponse(response),
+    },
+    {
+      id: 'oidc-login-challenge-invalid-request',
+      title: 'OIDC login challenge endpoint reaches OP_AUTH',
+      path: '/auth/login-challenge?challenge_id=authrim-validation-missing',
+      expectedStatuses: [400],
+      validate: (payload) => validateInvalidRequestPayload(payload),
+    },
+  ];
+
+  if (config.components.loginUi) {
+    targets.push(
+      {
+        id: 'login-ui-oidc-authorize-proxy',
+        title: 'Login UI OIDC authorize proxy reaches OP_AUTH',
+        resolveUrl: (baseUrl, currentConfig) =>
+          `${buildApiSmokeLoginProtocolBaseUrl(currentConfig, baseUrl)}/authorize`,
+        expectedStatuses: [400],
+        requireJson: false,
+        validateResponse: (response) => validateAuthorizeInvalidRequestResponse(response),
+      },
+      {
+        id: 'login-ui-oidc-login-challenge-proxy',
+        title: 'Login UI OIDC login challenge proxy reaches OP_AUTH',
+        resolveUrl: (baseUrl, currentConfig) =>
+          `${buildApiSmokeLoginProtocolBaseUrl(
+            currentConfig,
+            baseUrl
+          )}/auth/login-challenge?challenge_id=authrim-validation-missing`,
+        expectedStatuses: [400],
+        validate: (payload) => validateInvalidRequestPayload(payload),
+      }
+    );
+  }
+
+  return targets;
 }
 
 export function buildApiSmokeTargets(config: AuthrimConfig): ApiSmokeTarget[] {
@@ -237,6 +330,7 @@ export function buildApiSmokeTargets(config: AuthrimConfig): ApiSmokeTarget[] {
       path: '/api/auth/login-methods',
       validate: (payload) => validateLoginMethodsPayload(payload),
     },
+    ...buildBrowserOidcTargets(config),
   ];
 }
 
@@ -315,12 +409,24 @@ export async function runGeneratedApiSmoke(
   const timeoutMs = options.timeoutMs ?? 10_000;
 
   for (const targetCheck of buildApiSmokeTargets(config)) {
-    const url = `${baseUrl}${targetCheck.path}`;
+    const url = targetCheck.resolveUrl
+      ? targetCheck.resolveUrl(baseUrl, config)
+      : `${baseUrl}${targetCheck.path}`;
     const check = makeCheck(targetCheck, url);
     const response = await fetchJsonWithTimeout(url, timeoutMs);
     check.httpStatus = response.status;
+    const expectedStatuses = targetCheck.expectedStatuses ?? [];
 
-    if (!response.ok) {
+    if (expectedStatuses.length > 0 && !expectedStatuses.includes(response.status)) {
+      fail(check, `HTTP status expected=${expectedStatuses.join('|')} actual=${response.status}`);
+      if (response.bodyText) {
+        fail(check, response.bodyText.slice(0, 400));
+      }
+      checks.push(check);
+      continue;
+    }
+
+    if (expectedStatuses.length === 0 && !response.ok) {
       fail(
         check,
         response.status > 0
@@ -334,7 +440,18 @@ export async function runGeneratedApiSmoke(
       continue;
     }
 
-    if (!response.contentType?.includes('application/json')) {
+    if (targetCheck.validateResponse) {
+      const failures = targetCheck.validateResponse(response, baseUrl, config);
+      if (failures.length > 0) {
+        for (const message of failures) {
+          fail(check, message);
+        }
+        checks.push(check);
+        continue;
+      }
+    }
+
+    if (targetCheck.requireJson !== false && !response.contentType?.includes('application/json')) {
       fail(
         check,
         `content-type expected=application/json actual=${response.contentType ?? '(missing)'}`
@@ -343,13 +460,15 @@ export async function runGeneratedApiSmoke(
       continue;
     }
 
-    const failures = targetCheck.validate(response.payload, baseUrl, config);
-    if (failures.length > 0) {
-      for (const message of failures) {
-        fail(check, message);
+    if (targetCheck.validate) {
+      const failures = targetCheck.validate(response.payload, baseUrl, config);
+      if (failures.length > 0) {
+        for (const message of failures) {
+          fail(check, message);
+        }
+        checks.push(check);
+        continue;
       }
-      checks.push(check);
-      continue;
     }
 
     pass(check, `HTTP ${response.status}`);

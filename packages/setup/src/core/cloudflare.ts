@@ -22,7 +22,10 @@ import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
 import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-portability.js';
 import {
   buildAdminUiBffMachineAccessBootstrapSql,
+  buildSetupMachineAccessCleanupSql,
   buildSetupMachineAccessBootstrapSql,
+  deleteSetupMachineKeyFiles,
+  ensureSetupMachineKeyFiles,
   loadAdminUiBffPublicJwk,
   loadSetupMachinePublicJwk,
 } from './admin-machine-access.js';
@@ -135,6 +138,11 @@ async function wrangler(
       reject: false,
       timeout: options.timeout ?? 30000,
     });
+
+    if (result.exitCode !== 0) {
+      const detail = [result.stderr, result.stdout].filter(Boolean).join('\n');
+      throw new Error(`Wrangler command failed (${result.exitCode}): ${detail || args.join(' ')}`);
+    }
 
     return {
       stdout: result.stdout,
@@ -1689,6 +1697,8 @@ WHERE NOT EXISTS (
 );`;
 }
 
+const FRESH_SCHEMA_MIGRATION_FILE = '000_fresh_schema.sql';
+
 async function recordMigration(dbName: string, filename: string): Promise<void> {
   const sql = buildRecordMigrationSql(filename);
   try {
@@ -1740,10 +1750,19 @@ export async function runD1Migrations(
 
   let appliedCount = 0;
   let skippedCount = 0;
+  const hasFreshSchema = sqlFiles.includes(FRESH_SCHEMA_MIGRATION_FILE);
+  let freshSchemaApplied = hasFreshSchema && applied.has(FRESH_SCHEMA_MIGRATION_FILE);
 
   for (const sqlFile of sqlFiles) {
     if (applied.has(sqlFile)) {
       onProgress?.(`  ⏭  Skipping (already applied): ${sqlFile}`);
+      skippedCount++;
+      continue;
+    }
+
+    if (hasFreshSchema && freshSchemaApplied && sqlFile !== FRESH_SCHEMA_MIGRATION_FILE) {
+      onProgress?.(`  ⏭  Skipping (covered by fresh schema): ${sqlFile}`);
+      await recordMigration(dbName, sqlFile);
       skippedCount++;
       continue;
     }
@@ -1760,6 +1779,9 @@ export async function runD1Migrations(
 
     await recordMigration(dbName, sqlFile);
     appliedCount++;
+    if (sqlFile === FRESH_SCHEMA_MIGRATION_FILE) {
+      freshSchemaApplied = true;
+    }
   }
 
   return { success: true, appliedCount, skippedCount };
@@ -1988,6 +2010,7 @@ export async function ensureSetupMachineAccessInD1(
   const dbName = getD1DatabaseName(env, 'admin-db');
 
   try {
+    await ensureSetupMachineKeyFiles(keysDir);
     const publicJwk = await loadSetupMachinePublicJwk(keysDir);
     const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
 
@@ -2013,6 +2036,49 @@ export async function ensureSetupMachineAccessInD1(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     onProgress?.(`  ❌ Setup machine access bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Remove the deploy-only setup machine principal and its local private key.
+ *
+ * The initial admin setup token is managed separately and is intentionally not
+ * touched here.
+ */
+export async function cleanupSetupMachineAccessInD1(
+  env: string,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    const sql = buildSetupMachineAccessCleanupSql();
+
+    onProgress?.(`🧹 Removing setup machine access from ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Setup machine access cleanup failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    await deleteSetupMachineKeyFiles(keysDir);
+    onProgress?.('  ✅ Setup machine access removed');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Setup machine access cleanup failed: ${message}`);
     return { success: false, error: message };
   }
 }
@@ -3346,11 +3412,117 @@ export async function deleteQueue(name: string): Promise<boolean> {
   }
 }
 
+const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = {
+  AVATARS: 'authrim-avatars',
+  DIAGNOSTIC_LOGS: 'diagnostic-logs',
+  IMPORT_ARTIFACTS: 'import-artifacts',
+  EXPORT_ARTIFACTS: 'export-artifacts',
+  SENSITIVE_DETAILS: 'sensitive-details',
+};
+
+interface ObjectCatalogR2Row {
+  bucket_binding?: unknown;
+  object_key?: unknown;
+}
+
+export function getObjectCatalogR2BucketName(env: string, bucketBinding: string): string | null {
+  const suffix = OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING[bucketBinding];
+  return suffix ? `${env}-${suffix}` : null;
+}
+
+export function parseObjectCatalogR2RowsFromWranglerJson(
+  stdout: string
+): Array<{ bucketBinding: string; objectKey: string }> {
+  const payload = JSON.parse(stdout) as Array<{ results?: ObjectCatalogR2Row[] }>;
+  const rows = payload?.[0]?.results ?? [];
+  return rows.flatMap((row) => {
+    if (typeof row.bucket_binding !== 'string' || typeof row.object_key !== 'string') {
+      return [];
+    }
+    return [{ bucketBinding: row.bucket_binding, objectKey: row.object_key }];
+  });
+}
+
+async function queryObjectCatalogR2Objects(
+  dbName: string
+): Promise<Array<{ bucketBinding: string; objectKey: string }>> {
+  const { stdout } = await wrangler([
+    'd1',
+    'execute',
+    dbName,
+    '--remote',
+    '--yes',
+    '--command',
+    'SELECT bucket_binding, object_key FROM object_catalog_objects WHERE deleted_at IS NULL;',
+    '--json',
+  ]);
+  return parseObjectCatalogR2RowsFromWranglerJson(stdout);
+}
+
+async function collectKnownR2ObjectsByBucket(
+  env: string,
+  buckets: Array<{ name: string }>,
+  onProgress?: (message: string) => void
+): Promise<Map<string, string[]>> {
+  const targetBuckets = new Set(buckets.map((bucket) => bucket.name));
+  const objectsByBucket = new Map<string, Set<string>>();
+  const dbNames = [getD1DatabaseName(env, 'core-db'), getD1DatabaseName(env, 'admin-db')];
+
+  for (const dbName of dbNames) {
+    try {
+      const rows = await queryObjectCatalogR2Objects(dbName);
+      for (const row of rows) {
+        const bucketName = getObjectCatalogR2BucketName(env, row.bucketBinding);
+        if (!bucketName || !targetBuckets.has(bucketName)) {
+          continue;
+        }
+        const keys = objectsByBucket.get(bucketName) ?? new Set<string>();
+        keys.add(row.objectKey);
+        objectsByBucket.set(bucketName, keys);
+      }
+    } catch (error) {
+      onProgress?.(
+        `  ⚠️ Could not read object catalog from ${dbName}: ${sanitizeError(error)}`
+      );
+    }
+  }
+
+  return new Map(
+    [...objectsByBucket.entries()].map(([bucketName, keys]) => [bucketName, [...keys]])
+  );
+}
+
+async function removeKnownR2Objects(
+  bucketName: string,
+  objectKeys: string[],
+  onProgress?: (message: string) => void
+): Promise<void> {
+  if (objectKeys.length === 0) {
+    return;
+  }
+
+  onProgress?.(`  🧹 Emptying known R2 objects: ${bucketName} (${objectKeys.length})...`);
+  let removed = 0;
+  for (const objectKey of objectKeys) {
+    try {
+      await wrangler(['r2', 'object', 'delete', `${bucketName}/${objectKey}`, '--remote']);
+      removed += 1;
+    } catch (error) {
+      onProgress?.(`  ⚠️ R2 object cleanup skipped for ${bucketName}: ${sanitizeError(error)}`);
+    }
+  }
+  onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
+}
+
 /**
  * Delete an R2 bucket
  */
-export async function deleteR2Bucket(name: string): Promise<boolean> {
+export async function deleteR2Bucket(
+  name: string,
+  options: { objectKeys?: string[]; onProgress?: (message: string) => void } = {}
+): Promise<boolean> {
   try {
+    await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
     await wrangler(['r2', 'bucket', 'delete', name]);
     return true;
   } catch {
@@ -3427,6 +3599,29 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress('');
   }
 
+  // Delete R2 buckets before D1 so object_catalog_objects can still identify stored objects.
+  if (deleteR2 && envInfo.r2.length > 0) {
+    const knownR2ObjectsByBucket = await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress);
+    onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
+    for (const bucket of envInfo.r2) {
+      onProgress(`  ⏳ Deleting: ${bucket.name}...`);
+      const success = await deleteR2Bucket(bucket.name, {
+        objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
+        onProgress,
+      });
+      if (success) {
+        deleted.r2.push(bucket.name);
+        onProgress(`  ✅ ${bucket.name}`);
+      } else {
+        errors.push(
+          `Failed to delete R2: ${bucket.name} (bucket may still contain objects or require manual cleanup)`
+        );
+        onProgress(`  ❌ ${bucket.name}`);
+      }
+    }
+    onProgress('');
+  }
+
   // Delete D1 databases
   if (deleteD1 && envInfo.d1.length > 0) {
     onProgress(`📊 Deleting D1 Databases (${envInfo.d1.length})...`);
@@ -3473,23 +3668,6 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       } else {
         errors.push(`Failed to delete Queue: ${queue.name}`);
         onProgress(`  ❌ ${queue.name}`);
-      }
-    }
-    onProgress('');
-  }
-
-  // Delete R2 buckets
-  if (deleteR2 && envInfo.r2.length > 0) {
-    onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
-    for (const bucket of envInfo.r2) {
-      onProgress(`  ⏳ Deleting: ${bucket.name}...`);
-      const success = await deleteR2Bucket(bucket.name);
-      if (success) {
-        deleted.r2.push(bucket.name);
-        onProgress(`  ✅ ${bucket.name}`);
-      } else {
-        errors.push(`Failed to delete R2: ${bucket.name}`);
-        onProgress(`  ❌ ${bucket.name}`);
       }
     }
     onProgress('');

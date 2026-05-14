@@ -569,8 +569,6 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
       return this.getAssignment(assignmentId);
     }
 
-    updates.push('updated_at = ?');
-    values.push(getCurrentTimestamp());
     values.push(this.tenantId, assignmentId);
 
     await this.adapter.execute(

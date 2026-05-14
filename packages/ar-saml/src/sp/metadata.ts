@@ -86,7 +86,11 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
   }
 
   // Return XML response
-  return buildSAMLMetadataResponse(metadataXml, c.req.header('If-None-Match'));
+  return buildSAMLMetadataResponse(
+    metadataXml,
+    c.req.header('If-None-Match'),
+    'authrim-saml-sp-metadata.xml'
+  );
 }
 
 export interface SPMetadataOptions {

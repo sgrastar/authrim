@@ -1,14 +1,20 @@
-import { readFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execa } from 'execa';
 import { parseConfig, type AuthrimConfig } from './config.js';
 import { resolveGeneratedEnvValidationTarget } from './generated-env-validator.js';
-import { findKeysDirectory } from './paths.js';
 import { resolveIssuerUrl } from './url-config.js';
 import {
-  getSetupMachinePrivateKeyPath,
+  SETUP_MACHINE_PRIVATE_KEY_FILE,
+  SETUP_MACHINE_PUBLIC_JWK_FILE,
+  buildSetupMachineAccessBootstrapSql,
+  buildSetupMachineAccessCleanupSql,
   requestAdminMachineAccessToken,
-  setupMachineKeyFilesExist,
 } from './admin-machine-access.js';
+import { generateEs256KeyPair, type JWK } from './keys.js';
+import { getD1DatabaseName } from './naming.js';
 
 export type SmokeCheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -69,6 +75,12 @@ export interface TenantDcrSettingsSnapshot {
 export interface TemporaryDcrEnableState {
   changed: boolean;
   originalSource: string;
+}
+
+export interface GeneratedAdminApiAccess {
+  secret: string;
+  path: string;
+  cleanup?: () => Promise<void>;
 }
 
 export interface RegisterSmokeClientOptions {
@@ -232,42 +244,123 @@ export async function readGeneratedAdminApiSecret(options: {
   adminSecretPath?: string;
   baseUrl?: string;
   tenantId?: string;
-}): Promise<{ secret: string; path: string }> {
+  config?: AuthrimConfig;
+}): Promise<GeneratedAdminApiAccess> {
   if (options.adminSecret && options.adminSecret.trim()) {
     return { secret: options.adminSecret.trim(), path: '(inline)' };
   }
 
-  const explicitPath =
-    options.adminSecretPath ||
-    findKeysDirectory({
+  if (!options.adminSecretPath) {
+    if (!options.baseUrl || !options.config) {
+      throw new Error('validation_machine_access_requires_base_url_and_config');
+    }
+    return createGeneratedValidationMachineAccess({
       env: options.env,
-      sourceDir: options.baseDir,
-      keysBaseDir: options.baseDir,
-    })?.path;
-
-  if (!explicitPath) {
-    throw new Error('admin_api_secret_not_found');
-  }
-
-  if (!options.adminSecretPath && options.baseUrl && setupMachineKeyFilesExist(explicitPath)) {
-    const token = await requestAdminMachineAccessToken({
-      apiBaseUrl: options.baseUrl,
-      keysDir: explicitPath,
+      config: options.config,
+      baseUrl: options.baseUrl,
       tenantId: options.tenantId,
     });
-    return {
-      secret: token.accessToken,
-      path: getSetupMachinePrivateKeyPath(explicitPath),
-    };
   }
 
-  const secretPath = options.adminSecretPath || join(explicitPath, 'admin_api_secret.txt');
+  const secretPath = options.adminSecretPath;
   const secret = (await readFile(secretPath, 'utf-8')).trim();
   if (!secret) {
     throw new Error(`admin_api_secret_empty:${secretPath}`);
   }
 
   return { secret, path: secretPath };
+}
+
+async function executeGeneratedValidationMachineSql(env: string, sql: string): Promise<void> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+  const result = await execa(
+    'wrangler',
+    ['d1', 'execute', dbName, '--remote', '--yes', '--command', sql],
+    {
+      all: true,
+      reject: false,
+      timeout: 30_000,
+    }
+  );
+
+  if (result.exitCode !== 0) {
+    throw new Error(`validation_machine_sql_failed:${result.all || result.stderr || result.stdout}`);
+  }
+}
+
+async function writeGeneratedValidationMachineKeys(
+  keysDir: string,
+  keyId: string
+): Promise<void> {
+  const keyPair = generateEs256KeyPair(keyId);
+  await writeFile(join(keysDir, SETUP_MACHINE_PRIVATE_KEY_FILE), keyPair.privateKeyPem, 'utf-8');
+  await chmod(join(keysDir, SETUP_MACHINE_PRIVATE_KEY_FILE), 0o600);
+  await writeFile(
+    join(keysDir, SETUP_MACHINE_PUBLIC_JWK_FILE),
+    JSON.stringify(keyPair.publicKeyJwk, null, 2),
+    'utf-8'
+  );
+  await chmod(join(keysDir, SETUP_MACHINE_PUBLIC_JWK_FILE), 0o600);
+}
+
+async function createGeneratedValidationMachineAccess(options: {
+  env: string;
+  config: AuthrimConfig;
+  baseUrl: string;
+  tenantId?: string;
+}): Promise<GeneratedAdminApiAccess> {
+  const runId = `${Date.now()}-${randomBytes(6).toString('base64url')}`;
+  const clientId = `authrim-validation-${runId}`;
+  const principalId = `amp_authrim_validation_${runId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+  const keysDir = await mkdtemp(join(tmpdir(), 'authrim-validation-machine-'));
+  const cleanupSql = buildSetupMachineAccessCleanupSql({
+    clientId,
+    principalId,
+    principalType: 'ci',
+  });
+  const cleanup = async (): Promise<void> => {
+    try {
+      await executeGeneratedValidationMachineSql(options.env, cleanupSql);
+    } catch {
+      // Validation cleanup is best-effort; the credential is short-lived and scoped.
+    }
+    await rm(keysDir, { recursive: true, force: true });
+  };
+
+  try {
+    await writeGeneratedValidationMachineKeys(keysDir, `${clientId}-key`);
+    const publicJwk = JSON.parse(
+      await readFile(join(keysDir, SETUP_MACHINE_PUBLIC_JWK_FILE), 'utf-8')
+    ) as JWK;
+    const permissions = ['admin:*'];
+    const bootstrapSql = buildSetupMachineAccessBootstrapSql(options.config, publicJwk, {
+      clientId,
+      principalId,
+      principalType: 'ci',
+      displayName: 'Authrim Generated Environment Validation',
+      description:
+        'Temporary machine principal created by environment-validation smoke tests.',
+      permissions,
+      tokenTtlSeconds: 600,
+      createdByActorId: 'environment-validation',
+    });
+    await executeGeneratedValidationMachineSql(options.env, bootstrapSql);
+    const token = await requestAdminMachineAccessToken({
+      apiBaseUrl: options.baseUrl,
+      keysDir,
+      tenantId: options.tenantId,
+      clientId,
+      scopes: permissions,
+    });
+    return {
+      secret: token.accessToken,
+      path: `(temporary validation machine access: ${principalId})`,
+      cleanup,
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
 }
 
 function getAdminJsonHeaders(secret: string, tenantId?: string): Record<string, string> {

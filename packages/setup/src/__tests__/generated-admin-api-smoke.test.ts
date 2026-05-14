@@ -5,6 +5,10 @@ import { createDefaultConfig } from '../core/config.js';
 import { runGeneratedAdminApiSmoke } from '../core/generated-admin-api-smoke.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
+vi.mock('execa', () => ({
+  execa: vi.fn(async () => ({ stdout: '', stderr: '', all: '', exitCode: 0 })),
+}));
+
 describe('generated admin api smoke', () => {
   let baseDir = '';
 
@@ -19,7 +23,7 @@ describe('generated admin api smoke', () => {
     }
   });
 
-  it('runs admin smoke against a generated environment', async () => {
+  it('runs admin smoke against a generated environment with setup machine access', async () => {
     const testTempRoot = join(process.cwd(), '.tmp-tests');
     await mkdir(testTempRoot, { recursive: true });
     baseDir = await mkdtemp(join(testTempRoot, 'authrim-admin-smoke-'));
@@ -41,8 +45,6 @@ describe('generated admin api smoke', () => {
 
     const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
     vi.stubGlobal('fetch', fetchMock as typeof fetch);
-    let createdRuleName = '';
-    let createdWebhookName = '';
 
     fetchMock.mockResolvedValueOnce(
       new Response(
@@ -50,7 +52,7 @@ describe('generated admin api smoke', () => {
           access_token: 'machine-admin-token',
           token_type: 'Bearer',
           expires_in: 600,
-          scope: 'admin:clients:* admin:settings:*',
+          scope: 'admin:clients:*',
         }),
         {
           status: 200,
@@ -65,7 +67,7 @@ describe('generated admin api smoke', () => {
       })
     );
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ defaults: { storage: 'builtin:storage:single-d1' } }), {
+      new Response(JSON.stringify({ clients: [], pagination: { total: 0 } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -73,140 +75,17 @@ describe('generated admin api smoke', () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          version: 'sha256:dcr-v1',
-          values: { 'dcr.enabled': false },
-          sources: { 'dcr.enabled': 'default' },
-        }),
-        {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }
-      )
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          version: 'sha256:dcr-v2',
-          applied: ['dcr.enabled'],
-          rejected: {},
-        }),
-        {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }
-      )
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ token: 'iat-1', tokenHash: 'iat-hash-1' }), {
-        status: 201,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          client_id: 'client-1',
-          client_secret: 'secret-1',
-          registration_access_token: 'rat-1',
-          registration_client_uri: 'https://single-ar-router.example.workers.dev/clients/client-1',
+          client: {
+            client_id: 'client-1',
+            client_secret: 'secret-1',
+            client_name: 'Generated Admin Smoke Client',
+          },
         }),
         { status: 201, headers: { 'content-type': 'application/json' } }
       )
     );
-    fetchMock.mockImplementationOnce(async (_input, init) => {
-      const body = JSON.parse(String(init?.body ?? '{}')) as { name?: string };
-      createdRuleName = body.name ?? '';
-      return new Response(JSON.stringify({ id: 'tcr-1', name: createdRuleName }), {
-        status: 201,
-        headers: { 'content-type': 'application/json' },
-      });
-    });
-    fetchMock.mockImplementationOnce(async () => {
-      return new Response(JSON.stringify({ id: 'tcr-1', name: createdRuleName }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    });
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'rp-1' }), {
-        status: 201,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ allowed: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockImplementationOnce(async (_input, init) => {
-      const body = JSON.parse(String(init?.body ?? '{}')) as { name?: string };
-      createdWebhookName = body.name ?? '';
-      return new Response(
-        JSON.stringify({ success: true, webhook: { id: 'wh-1', name: createdWebhookName } }),
-        {
-          status: 201,
-          headers: { 'content-type': 'application/json' },
-        }
-      );
-    });
-    fetchMock.mockImplementationOnce(async () => {
-      return new Response(JSON.stringify({ webhook: { id: 'wh-1', name: createdWebhookName } }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    });
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ keys: [] }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'cak-1', api_key: 'key-1' }), {
-        status: 201,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'cak-1' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'cak-2', api_key: 'key-2' }), {
-        status: 201,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ deleted: 'wh-1' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: true }), {
+      new Response(JSON.stringify({ client: { client_id: 'client-1' } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -214,41 +93,41 @@ describe('generated admin api smoke', () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          version: 'sha256:dcr-v2',
-          values: { 'dcr.enabled': true },
-          sources: { 'dcr.enabled': 'kv' },
+          client: {
+            client_id: 'client-1',
+            description: 'Generated environment validation smoke 123',
+          },
         }),
-        {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }
+        { status: 200, headers: { 'content-type': 'application/json' } }
       )
     );
     fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          version: 'sha256:dcr-v3',
-          applied: [],
-          rejected: {},
-        }),
-        {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }
-      )
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
     );
+
+    vi.spyOn(Date, 'now').mockReturnValue(123);
 
     const result = await runGeneratedAdminApiSmoke({ baseDir, env });
 
     expect(result.ok).toBe(true);
-    expect(result.adminSecretPath).toContain('setup_machine_private.pem');
-    expect(result.checks.map((check) => check.id)).toContain('check-api-keys-rotate');
+    expect(result.adminSecretPath).toContain('temporary validation machine access');
+    expect(result.checks.map((check) => check.id)).toEqual([
+      'admin-stats',
+      'admin-clients-list',
+      'admin-client-create',
+      'admin-client-get',
+      'admin-client-update',
+      'admin-client-delete',
+    ]);
 
     const tokenCall = fetchMock.mock.calls[0];
     expect(String(tokenCall?.[0])).toBe('https://single-ar-router.example.workers.dev/token');
     const tokenForm = new URLSearchParams(String(tokenCall?.[1]?.body ?? ''));
     expect(tokenForm.get('grant_type')).toBe('client_credentials');
-    expect(tokenForm.get('client_id')).toBe('authrim-setup');
+    expect(tokenForm.get('client_id')).toMatch(/^authrim-validation-/);
     expect(tokenForm.get('audience')).toBe('authrim:admin-api');
     expect(tokenForm.get('client_assertion_type')).toBe(
       'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'

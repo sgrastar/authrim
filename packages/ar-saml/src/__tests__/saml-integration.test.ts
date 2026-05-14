@@ -34,6 +34,7 @@ const {
   mockGetSigningKey,
   mockGetSigningCertificate,
   mockGetSPConfig,
+  mockSessionStoreFetch,
 } = vi.hoisted(() => ({
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
@@ -48,6 +49,9 @@ const {
   }),
   mockGetSigningCertificate: vi.fn().mockResolvedValue('mock-cert'),
   mockGetSPConfig: vi.fn(),
+  mockSessionStoreFetch: vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
 }));
 
 // Mock modules
@@ -101,9 +105,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // Mock getSessionStoreForNewSession to avoid crypto dependency issues in tests
     getSessionStoreForNewSession: vi.fn().mockResolvedValue({
       stub: {
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
+        fetch: mockSessionStoreFetch,
       },
       sessionId: 'mock-session-id-12345',
     }),
@@ -140,6 +142,7 @@ function createMockSAMLResponse(
     notOnOrAfter?: string;
     audience?: string;
     inResponseTo?: string;
+    authnContextClassRef?: string;
     attributes?: Array<{ name: string; value: string; friendlyName?: string }>;
   } = {}
 ): string {
@@ -152,6 +155,7 @@ function createMockSAMLResponse(
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
     audience = 'https://auth.example.com/saml/sp',
     inResponseTo = undefined,
+    authnContextClassRef = 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
     attributes = [],
   } = options;
 
@@ -188,7 +192,7 @@ function createMockSAMLResponse(
     </saml:Conditions>
     <saml:AuthnStatement AuthnInstant="${new Date().toISOString()}">
       <saml:AuthnContext>
-        <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef>
+        <saml:AuthnContextClassRef>${authnContextClassRef}</saml:AuthnContextClassRef>
       </saml:AuthnContext>
     </saml:AuthnStatement>
     ${
@@ -276,6 +280,7 @@ describe('SAML Integration', () => {
   let app: Hono;
   let mockEnv: Partial<Env>;
   let mockUsers: Map<string, any>;
+  let mockChallengeStore: Map<string, any>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -290,6 +295,9 @@ describe('SAML Integration', () => {
       privateKeyPem: 'mock-key',
     });
     mockGetSigningCertificate.mockReset().mockResolvedValue('mock-cert');
+    mockSessionStoreFetch
+      .mockReset()
+      .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
     mockGetSPConfig
       .mockReset()
       .mockImplementation(async (_env: unknown, _tenantId: string, entityId: string) => {
@@ -306,6 +314,7 @@ describe('SAML Integration', () => {
         return null;
       });
     mockUsers = new Map();
+    mockChallengeStore = new Map();
 
     // Seed test user
     mockUsers.set('user-001', {
@@ -392,6 +401,15 @@ describe('SAML Integration', () => {
           fetch: vi.fn().mockResolvedValue(new Response('OK', { status: 200 })),
         }),
       } as any,
+      CHALLENGE_STORE: {
+        idFromName: vi.fn().mockReturnValue('mock-challenge-store-id'),
+        get: vi.fn().mockReturnValue({
+          storeChallengeRpc: vi.fn((request: any) => {
+            mockChallengeStore.set(request.id, request);
+            return Promise.resolve({ success: true });
+          }),
+        }),
+      } as any,
     };
 
     // Create Hono app
@@ -441,6 +459,7 @@ describe('SAML Integration', () => {
     const context = {
       env: mockEnv,
       req: {
+        url: 'https://auth.example.com/saml/sp/acs',
         formData: async () => formData,
         header: vi.fn((name: string) =>
           name === 'X-Tenant-Id' ? options.headerTenantId : undefined
@@ -732,6 +751,41 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(302);
       expect(res.headers.get('Location')).toBe('https://app.example.com/dashboard');
       expect(res.headers.get('Set-Cookie')).toContain('authrim_session=');
+      expect(mockSessionStoreFetch).toHaveBeenCalledWith(
+        'https://session-store/session',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"tenantId":"default"'),
+        })
+      );
+    });
+
+    it('should reject a SAML Response when AuthnContext is not allowed by IdP policy', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        certificate: 'mock-certificate',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+        },
+        allowedBindings: ['post', 'redirect'],
+        authnContextPolicy: {
+          mode: 'require_any',
+          allowedClassRefs: ['urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'],
+        },
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          authnContextClassRef: 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
+        }),
+        'https://app.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockSessionStoreFetch).not.toHaveBeenCalled();
     });
 
     it('should redirect to default URL when no RelayState', async () => {
@@ -739,8 +793,34 @@ describe('SAML Integration', () => {
       const res = await callACSDirectly(createMockSAMLResponse());
 
       expect(res.status).toBe(302);
-      // Without RelayState, should redirect to UI_URL
-      expect(res.headers.get('Location')).toBe('https://ui.example.com/');
+      expect(res.headers.get('Location')).toMatch(
+        /^https:\/\/ui\.example\.com\/callback\?handoff_token=/
+      );
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      expect(res.headers.get('Referrer-Policy')).toBe('no-referrer');
+    });
+
+    it('should redirect to Login UI callback with an OIDC-style one-time handoff artifact', async () => {
+      const res = await callACSDirectly(createMockSAMLResponse(), 'https://ui.example.com/');
+      const handoffLocation = res.headers.get('Location');
+
+      expect(res.status).toBe(302);
+      expect(handoffLocation).toMatch(/^https:\/\/ui\.example\.com\/callback\?handoff_token=/);
+      const locationUrl = new URL(handoffLocation!);
+      const token = locationUrl.searchParams.get('handoff_token');
+      const state = locationUrl.searchParams.get('state');
+      const challenge = mockChallengeStore.get(`handoff:${token}`);
+      expect(challenge).toBeDefined();
+      expect(challenge.challenge).toBe('mock-session-id-12345');
+      expect(challenge.metadata).toEqual(
+        expect.objectContaining({
+          aud: 'saml_sp_cookie_handoff',
+          state,
+          origin: 'https://ui.example.com',
+          return_url: 'https://ui.example.com/',
+        })
+      );
     });
 
     it('should reject JIT provisioning when required custom claims are missing', async () => {

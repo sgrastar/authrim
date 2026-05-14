@@ -157,6 +157,32 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /auth/* browser protocol helpers to OP_AUTH', async () => {
+        const req = new Request('https://example.com/auth/login-challenge?challenge_id=test');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route /auth/consent browser protocol helpers to OP_AUTH', async () => {
+        const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
+
+        await app.fetch(new Request('https://example.com/auth/consent?challenge_id=test'), env);
+        await app.fetch(
+          new Request('https://example.com/auth/consent', {
+            method: 'POST',
+            headers: {
+              Origin: 'https://example.com',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ challenge_id: 'test', approved: true }),
+          }),
+          env
+        );
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(2);
+      });
+
       it('should route /api/v1/registration-fields to OP_AUTH', async () => {
         const req = new Request('https://example.com/api/v1/registration-fields');
         await app.fetch(req, mockEnv);
@@ -456,6 +482,20 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /api/admin/saml-metadata/preview to OP_SAML', async () => {
+        const envWithAdminOrigin = {
+          ...mockEnv,
+          ALLOWED_ORIGINS: 'https://admin.example.com',
+        };
+        const req = new Request('https://example.com/api/admin/saml-metadata/preview', {
+          method: 'POST',
+          headers: { Origin: 'https://admin.example.com', 'X-Tenant-Id': 'default' },
+        });
+        await app.fetch(req, envWithAdminOrigin);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should return 404 when OP_SAML is not bound', async () => {
         const req = new Request('https://example.com/saml/sp/metadata');
         const env = { ...mockEnv, OP_SAML: undefined };
@@ -686,6 +726,18 @@ describe('Router Worker', () => {
         'https://example.com/auth/external/github/callback?access_token=provider-token'
       );
       const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should route handoff finalize to external IdP bridge', async () => {
+      const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
+      const req = new Request('https://example.com/handoff/finalize', {
+        method: 'POST',
+        headers: { Origin: 'https://example.com' },
+      });
+      const res = await app.fetch(req, env);
 
       expect(res.status).toBe(200);
       expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);

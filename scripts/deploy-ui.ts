@@ -12,21 +12,21 @@ import {
   type LegacyPaths,
 } from '../packages/setup/src/core/paths.js';
 import {
-  PAGES_COMPONENTS,
-  deployPagesComponent,
-  type PagesComponent,
+  UI_WORKER_COMPONENTS,
+  deployUiWorkerComponent,
+  type UiWorkerComponent,
 } from '../packages/setup/src/core/deploy.js';
 import { ensureLoginUiClient } from '../packages/setup/src/core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../packages/setup/src/core/ui-deployment.js';
 
 interface CliOptions {
   env: string;
-  package?: PagesComponent;
+  package?: UiWorkerComponent;
 }
 
 function parseArgs(argv: string[]): CliOptions {
   let env = '';
-  let pkg: PagesComponent | undefined;
+  let pkg: UiWorkerComponent | undefined;
 
   for (const arg of argv) {
     if (arg.startsWith('--env=')) {
@@ -35,8 +35,8 @@ function parseArgs(argv: string[]): CliOptions {
     }
 
     if (arg.startsWith('--package=')) {
-      const value = arg.slice('--package='.length) as PagesComponent;
-      if (!PAGES_COMPONENTS.includes(value)) {
+      const value = arg.slice('--package='.length) as UiWorkerComponent;
+      if (!UI_WORKER_COMPONENTS.includes(value)) {
         throw new Error(`Invalid package name: ${value}`);
       }
       pkg = value;
@@ -118,6 +118,7 @@ async function resolveLoginUiClientId(
     apiBaseUrl,
     loginUiUrl,
     adminApiSecretPath,
+    tenantId: config.tenant?.name,
     onProgress: (message) => console.log(message),
   });
 
@@ -140,7 +141,7 @@ async function deployComponent(
   env: string,
   config: AuthrimConfig,
   resolved: ReturnType<typeof resolvePaths>,
-  component: PagesComponent
+  component: UiWorkerComponent
 ): Promise<void> {
   const loginUiClientId =
     component === 'ar-login-ui'
@@ -153,12 +154,13 @@ async function deployComponent(
     loginUiClientId,
   });
 
-  const result = await deployPagesComponent(component, {
+  const result = await deployUiWorkerComponent(component, {
     env,
     rootDir,
     apiBaseUrl: uiSettings.apiBaseUrl,
     runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
     uiEnvConfig: uiSettings.uiEnv,
+    serviceBindingName: uiSettings.serviceBindingName,
     onProgress: (message) => console.log(message),
   });
 
@@ -176,7 +178,7 @@ async function main(): Promise<void> {
 
   const components = options.package
     ? [options.package]
-    : PAGES_COMPONENTS.filter((component) =>
+    : UI_WORKER_COMPONENTS.filter((component) =>
         component === 'ar-login-ui'
           ? config.components?.loginUi !== false
           : config.components?.adminUi !== false

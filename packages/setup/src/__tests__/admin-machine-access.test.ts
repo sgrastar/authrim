@@ -9,8 +9,13 @@ import {
   SETUP_MACHINE_DEFAULT_SCOPES,
   adminUiBffKeyFilesExist,
   buildAdminUiBffMachineAccessBootstrapSql,
+  buildSetupMachineAccessCleanupSql,
   buildSetupMachineAccessBootstrapSql,
   createSetupMachineClientAssertion,
+  deleteSetupMachineKeyFiles,
+  ensureSetupMachineKeyFiles,
+  getSetupMachinePrivateKeyPath,
+  getSetupMachinePublicJwkPath,
   loadAdminUiBffPublicJwk,
   loadSetupMachinePublicJwk,
   setupMachineKeyFilesExist,
@@ -87,11 +92,44 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(sql).toContain('INSERT INTO admin_machine_credentials');
     expect(sql).toContain("'ES256'");
     expect(sql).toContain('INSERT INTO admin_machine_principal_permissions');
+    expect(sql).toContain('VALUES');
     expect(sql).toContain("'admin:clients:*'");
+    expect(sql).not.toContain('UNION ALL');
     expect(sql).toContain('INSERT INTO admin_machine_principal_tenant_scopes');
     expect(sql).toContain("'allow'");
     expect(sql).toContain("'acme'");
     expect(sql).not.toContain('INSERT OR IGNORE');
+  });
+
+  it('builds setup machine cleanup SQL without touching Admin UI BFF principal', () => {
+    const sql = buildSetupMachineAccessCleanupSql();
+
+    expect(sql).toContain('DELETE FROM admin_machine_assertion_jti');
+    expect(sql).toContain('DELETE FROM admin_machine_resource_scopes');
+    expect(sql).toContain('DELETE FROM admin_machine_credentials');
+    expect(sql).toContain('DELETE FROM admin_machine_principals');
+    expect(sql).toContain("'authrim-setup'");
+    expect(sql).toContain("'amp_authrim_setup'");
+    expect(sql).toContain("principal_type = 'setup_tool'");
+    expect(sql).not.toContain(ADMIN_UI_BFF_CLIENT_ID);
+  });
+
+  it('regenerates and deletes deploy-only setup machine key files', async () => {
+    const secrets = generateAllSecrets('ephemeral-setup-test');
+    await saveKeysToDirectory(secrets, { keysBaseDir: testDir, env: 'prod' });
+
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    await deleteSetupMachineKeyFiles(keysDir);
+    expect(setupMachineKeyFilesExist(keysDir)).toBe(false);
+
+    const result = await ensureSetupMachineKeyFiles(keysDir);
+    expect(result.created).toBe(true);
+    expect(existsSync(getSetupMachinePrivateKeyPath(keysDir))).toBe(true);
+    expect(existsSync(getSetupMachinePublicJwkPath(keysDir))).toBe(true);
+
+    await deleteSetupMachineKeyFiles(keysDir);
+    expect(setupMachineKeyFilesExist(keysDir)).toBe(false);
+    expect(adminUiBffKeyFilesExist(keysDir)).toBe(true);
   });
 
   it('builds idempotent DB_ADMIN bootstrap SQL for admin_ui_bff principal', async () => {
@@ -109,7 +147,9 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(sql).toContain('INSERT INTO admin_machine_credentials');
     expect(sql).toContain("'ES256'");
     expect(sql).toContain('INSERT INTO admin_machine_principal_permissions');
+    expect(sql).toContain('VALUES');
     expect(sql).toContain("'admin-ui:proxy'");
+    expect(sql).not.toContain('UNION ALL');
     expect(sql).toContain('INSERT INTO admin_machine_principal_tenant_scopes');
     expect(sql).toContain("'allow'");
     expect(sql).toContain("'acme'");

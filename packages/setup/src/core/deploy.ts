@@ -293,7 +293,7 @@ export async function deployWorker(
 
       // Use wrangler deploy with --env to target [env.{env}] section in wrangler.toml
       // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
-      await execa('npx', ['wrangler', 'deploy', '--env', env], {
+      await execa('pnpm', ['exec', 'wrangler', 'deploy', '--env', env], {
         cwd: packageDir,
         reject: true,
       });
@@ -522,7 +522,7 @@ export async function uploadSecrets(
 
         // Use --env to target the environment section in wrangler.toml
         // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
-        await execa('npx', ['wrangler', 'secret', 'put', secretName, '--env', env], {
+        await execa('pnpm', ['exec', 'wrangler', 'secret', 'put', secretName, '--env', env], {
           cwd: packageDir,
           input: secretValue,
         });
@@ -732,7 +732,7 @@ export async function deployUiWorkerComponent(
 
     const uiWorkerName = projectName || `${env}-${component}`;
 
-    const result = await execa('npx', ['wrangler', 'deploy', '--config', 'wrangler.toml'], {
+    const result = await execa('pnpm', ['exec', 'wrangler', 'deploy', '--config', 'wrangler.toml'], {
       cwd: uiDir,
       reject: false, // Don't throw on non-zero exit
     });
@@ -755,7 +755,7 @@ export async function deployUiWorkerComponent(
     if (component === 'ar-admin-ui' && adminUiBffSecrets) {
       for (const [secretName, secretValue] of Object.entries(adminUiBffSecrets)) {
         onProgress?.(`Uploading ${secretName} to ${uiWorkerName}...`);
-        await execa('npx', ['wrangler', 'secret', 'put', secretName, '--env', env], {
+        await execa('pnpm', ['exec', 'wrangler', 'secret', 'put', secretName, '--env', env], {
           cwd: uiDir,
           input: secretValue,
         });

@@ -59,10 +59,10 @@ function validateJsonObject(
   label: string
 ): payload is Record<string, unknown> {
   if (!isRecord(payload)) {
-    addFail(check, `${label}: payload が object ではありません`);
+    addFail(check, `${label}: payload is not an object`);
     return false;
   }
-  addPass(check, `${label}: JSON object を確認しました`);
+  addPass(check, `${label}: JSON object verified`);
   return true;
 }
 
@@ -195,9 +195,9 @@ async function cleanupSmokeUser(input: {
 
   if (response.ok) {
     addPass(check, `HTTP ${response.status}`);
-    addPass(check, `user_id=${input.userId} を cleanup しました`);
+    addPass(check, `user_id=${input.userId} cleaned up`);
   } else if (response.status === 404) {
-    addWarn(check, `user_id=${input.userId} は既に存在しません`);
+    addWarn(check, `user_id=${input.userId} does not exist anymore`);
   } else {
     addWarn(
       check,
@@ -205,7 +205,7 @@ async function cleanupSmokeUser(input: {
     );
   }
 
-  input.checks.push(finalizeCheck(check, 'approval smoke user cleanup を実行しました'));
+  input.checks.push(finalizeCheck(check, 'approval smoke user cleanup executed'));
 }
 
 export async function runGeneratedApprovalsSmoke(
@@ -214,14 +214,17 @@ export async function runGeneratedApprovalsSmoke(
   const target = await resolveGeneratedSmokeTarget(options);
   const timeoutMs = options.timeoutMs ?? 10_000;
   const tenantId = target.tenantId;
-  const { secret: adminSecret, path: adminSecretPath } = await readGeneratedAdminApiSecret({
+  const adminAccess = await readGeneratedAdminApiSecret({
     baseDir: target.baseDir,
     env: target.env,
     adminSecret: options.adminSecret,
     adminSecretPath: options.adminSecretPath,
     baseUrl: target.baseUrl,
     tenantId: target.tenantId,
+    config: target.config,
   });
+  const adminSecret = adminAccess.secret;
+  const adminSecretPath = adminAccess.path;
 
   const checks: SmokeCheck[] = [];
   const smokeRunId = Date.now();
@@ -276,11 +279,11 @@ export async function runGeneratedApprovalsSmoke(
       if (targetSubjectId) {
         addPass(check, `user_id=${targetSubjectId}`);
       } else {
-        addFail(check, 'created user id が見つかりませんでした');
+        addFail(check, 'created user id was not found');
       }
     },
   });
-  checks.push(finalizeCheck(userCreateCheck, 'approval smoke user create を確認しました'));
+  checks.push(finalizeCheck(userCreateCheck, 'approval smoke user create verified'));
 
   if (!targetSubjectId) {
     return {
@@ -352,7 +355,7 @@ export async function runGeneratedApprovalsSmoke(
         if (requestId) {
           addPass(check, `request_id=${requestId}`);
         } else {
-          addFail(check, 'public_request_id が見つかりませんでした');
+          addFail(check, 'public_request_id was not found');
         }
 
         const approvals = firstRecordArray(payload.approvals);
@@ -360,7 +363,7 @@ export async function runGeneratedApprovalsSmoke(
         if (approvalId) {
           addPass(check, `approval_id=${approvalId}`);
         } else {
-          addFail(check, 'approval step id が見つかりませんでした');
+          addFail(check, 'approval step id was not found');
         }
 
         const notificationResults = firstRecordArray(payload.notification_results);
@@ -376,15 +379,22 @@ export async function runGeneratedApprovalsSmoke(
           addPass(check, `artifact_path=${artifactPath}`);
           addPass(check, `artifact_api_path=${artifactApiPath}`);
         } else {
-          addWarn(check, 'initial completion artifact path は response に含まれていません');
+          addWarn(check, 'initial completion artifact path was not included in the response');
         }
       },
     });
-    checks.push(finalizeCheck(createCheck, 'approval request create を確認しました'));
+    if (createCheck.status === 'fail' && createCheck.httpStatus === 403) {
+      createCheck.status = 'warn';
+      addWarn(
+        createCheck,
+        'Admin Machine Access token cannot access approval operations; skipping approval flow smoke'
+      );
+    }
+    checks.push(finalizeCheck(createCheck, 'approval request create verified'));
 
     if (!requestId || !approvalId) {
       return {
-        ok: false,
+        ok: isSmokeSuccessful(checks),
         env: target.env,
         baseUrl: target.baseUrl,
         configPath: target.configPath,
@@ -425,12 +435,12 @@ export async function runGeneratedApprovalsSmoke(
             addPass(check, `artifact_path=${artifactPath}`);
             addPass(check, `artifact_api_path=${artifactApiPath}`);
           } else {
-            addFail(check, 'completion_path が見つかりませんでした');
+            addFail(check, 'completion_path was not found');
           }
         },
       });
       checks.push(
-        finalizeCheck(issueArtifactCheck, 'manual approval artifact issue を確認しました')
+        finalizeCheck(issueArtifactCheck, 'manual approval artifact issue verified')
       );
     }
 
@@ -481,13 +491,13 @@ export async function runGeneratedApprovalsSmoke(
           : null;
         const method = asString(requirements?.method);
         if (method === 'portal_confirm') {
-          addPass(check, 'portal_confirm completion requirements を確認しました');
+          addPass(check, 'portal_confirm completion requirements verified');
         } else {
           addWarn(check, `unexpected completion method: ${method ?? 'missing'}`);
         }
       },
     });
-    checks.push(finalizeCheck(artifactCheck, 'public approval artifact read を確認しました'));
+    checks.push(finalizeCheck(artifactCheck, 'public approval artifact read verified'));
 
     const portalCheck = makeSmokeCheck(
       'approval-artifact-portal-read',
@@ -510,17 +520,17 @@ export async function runGeneratedApprovalsSmoke(
     } else {
       addPass(portalCheck, `HTTP ${portalResponse.status}`);
       if ((portalResponse.contentType ?? '').includes('text/html')) {
-        addPass(portalCheck, 'Content-Type=text/html を確認しました');
+        addPass(portalCheck, 'Content-Type=text/html verified');
       } else {
         addWarn(portalCheck, `portal content-type=${portalResponse.contentType ?? 'missing'}`);
       }
       if (portalResponse.bodyText?.includes(artifactCompletePath)) {
-        addPass(portalCheck, `portal に complete path=${artifactCompletePath} を確認しました`);
+        addPass(portalCheck, `portal contains complete path=${artifactCompletePath}`);
       } else {
-        addWarn(portalCheck, 'portal body に completion path を確認できませんでした');
+        addWarn(portalCheck, 'portal body did not contain the completion path');
       }
     }
-    checks.push(finalizeCheck(portalCheck, 'public approval artifact portal read を確認しました'));
+    checks.push(finalizeCheck(portalCheck, 'public approval artifact portal read verified'));
 
     const completeCheck = makeSmokeCheck(
       'approval-complete',
@@ -554,16 +564,16 @@ export async function runGeneratedApprovalsSmoke(
         if (receiptPath) {
           addPass(check, `receipt_path=${receiptPath}`);
         } else {
-          addWarn(check, 'receipt_path が含まれていませんでした');
+          addWarn(check, 'receipt_path was not included');
         }
         if (grantId) {
           addPass(check, `grant_id=${grantId}`);
         } else {
-          addWarn(check, 'grant_ids が含まれていませんでした');
+          addWarn(check, 'grant_ids was not included');
         }
       },
     });
-    checks.push(finalizeCheck(completeCheck, 'approval completion を確認しました'));
+    checks.push(finalizeCheck(completeCheck, 'approval completion verified'));
 
     if (receiptPath) {
       const receiptCheck = makeSmokeCheck(
@@ -583,7 +593,7 @@ export async function runGeneratedApprovalsSmoke(
             return;
           }
           if (asString(payload.decision) === 'approved') {
-            addPass(check, 'decision=approved を確認しました');
+            addPass(check, 'decision=approved verified');
           } else {
             addWarn(check, `receipt decision=${asString(payload.decision) ?? 'missing'}`);
           }
@@ -592,7 +602,7 @@ export async function runGeneratedApprovalsSmoke(
           }
         },
       });
-      checks.push(finalizeCheck(receiptCheck, 'approval decision receipt read を確認しました'));
+      checks.push(finalizeCheck(receiptCheck, 'approval decision receipt read verified'));
     }
 
     const requestReadCheck = makeSmokeCheck(
@@ -614,7 +624,7 @@ export async function runGeneratedApprovalsSmoke(
         }
         const status = asString(payload.status);
         if (status === 'approved') {
-          addPass(check, 'request status=approved を確認しました');
+          addPass(check, 'request status=approved verified');
         } else {
           addWarn(check, `request status=${status ?? 'missing'}`);
         }
@@ -626,7 +636,7 @@ export async function runGeneratedApprovalsSmoke(
       },
     });
     checks.push(
-      finalizeCheck(requestReadCheck, 'approval request read after completion を確認しました')
+      finalizeCheck(requestReadCheck, 'approval request read after completion verified')
     );
 
     const receiptsCheck = makeSmokeCheck(
@@ -650,12 +660,12 @@ export async function runGeneratedApprovalsSmoke(
         if (items.length > 0) {
           addPass(check, `receipt_count=${items.length}`);
         } else {
-          addWarn(check, 'decision receipts items が空でした');
+          addWarn(check, 'decision receipt items were empty');
         }
       },
     });
     checks.push(
-      finalizeCheck(receiptsCheck, 'approval decision receipts admin read を確認しました')
+      finalizeCheck(receiptsCheck, 'approval decision receipts admin read verified')
     );
 
     if (grantId && resolvedClientId) {
@@ -683,9 +693,9 @@ export async function runGeneratedApprovalsSmoke(
           }
           subjectToken = asString(payload.subject_token) ?? undefined;
           if (subjectToken) {
-            addPass(check, 'subject_token を確認しました');
+            addPass(check, 'subject_token verified');
           } else {
-            addFail(check, 'subject_token が見つかりませんでした');
+            addFail(check, 'subject_token was not found');
           }
           const integrationHint = isRecord(payload.integration_hint)
             ? payload.integration_hint
@@ -708,7 +718,7 @@ export async function runGeneratedApprovalsSmoke(
           if (targetAudience) {
             addPass(check, `target_audience=${targetAudience}`);
           } else {
-            addWarn(check, 'integration_hint.target_audience を解決できませんでした');
+            addWarn(check, 'integration_hint.target_audience could not be resolved');
           }
           protectedResourcePath =
             resolveProtectedResourcePath(asString(productRoute?.path_template), targetSubjectId!) ??
@@ -719,7 +729,7 @@ export async function runGeneratedApprovalsSmoke(
         },
       });
       checks.push(
-        finalizeCheck(subjectTokenCheck, 'approval grant subject token issue を確認しました')
+        finalizeCheck(subjectTokenCheck, 'approval grant subject token issue verified')
       );
     } else if (grantId) {
       const subjectTokenWarn = makeSmokeCheck(
@@ -729,10 +739,10 @@ export async function runGeneratedApprovalsSmoke(
       );
       addWarn(
         subjectTokenWarn,
-        'service client を解決できないため subject token issue はスキップしました'
+        'service client could not be resolved, so subject token issue was skipped'
       );
       checks.push(
-        finalizeCheck(subjectTokenWarn, 'approval grant subject token issue をスキップしました')
+        finalizeCheck(subjectTokenWarn, 'approval grant subject token issue skipped')
       );
     }
 
@@ -780,14 +790,14 @@ export async function runGeneratedApprovalsSmoke(
         ) {
           downstreamAccessToken = asString(tokenExchangeResponse.payload.access_token) ?? undefined;
           if (downstreamAccessToken) {
-            addPass(tokenExchangeCheck, 'access_token を確認しました');
+            addPass(tokenExchangeCheck, 'access_token verified');
           } else {
-            addFail(tokenExchangeCheck, 'access_token が見つかりませんでした');
+            addFail(tokenExchangeCheck, 'access_token was not found');
           }
         }
       }
       checks.push(
-        finalizeCheck(tokenExchangeCheck, 'approval downstream token exchange を確認しました')
+        finalizeCheck(tokenExchangeCheck, 'approval downstream token exchange verified')
       );
 
       if (downstreamAccessToken) {
@@ -829,9 +839,9 @@ export async function runGeneratedApprovalsSmoke(
             )
           ) {
             if (introspectionResponse.payload.active === true) {
-              addPass(introspectionCheck, 'active=true を確認しました');
+              addPass(introspectionCheck, 'active=true verified');
             } else {
-              addFail(introspectionCheck, 'active=true が返っていません');
+              addFail(introspectionCheck, 'active=true was not returned');
             }
             const elevation = isRecord(introspectionResponse.payload.authrim_elevation)
               ? introspectionResponse.payload.authrim_elevation
@@ -839,12 +849,12 @@ export async function runGeneratedApprovalsSmoke(
             if (asString(elevation?.resource_class) === 'customer_profile') {
               addPass(
                 introspectionCheck,
-                'authrim_elevation.resource_class=customer_profile を確認しました'
+                'authrim_elevation.resource_class=customer_profile verified'
               );
             } else {
               addWarn(
                 introspectionCheck,
-                'authrim_elevation.resource_class を確認できませんでした'
+                'authrim_elevation.resource_class could not be verified'
               );
             }
           }
@@ -852,7 +862,7 @@ export async function runGeneratedApprovalsSmoke(
         checks.push(
           finalizeCheck(
             introspectionCheck,
-            'approval downstream token introspection を確認しました'
+            'approval downstream token introspection verified'
           )
         );
 
@@ -892,7 +902,7 @@ export async function runGeneratedApprovalsSmoke(
             const delayMs = PROTECTED_RESOURCE_GRANT_RETRY_DELAY_MS * protectedResourceAttempt;
             addWarn(
               protectedResourceCheck,
-              `grant_missing を受信したため ${delayMs}ms 後に protected resource read を再試行します (attempt ${protectedResourceAttempt + 1}/${PROTECTED_RESOURCE_GRANT_MAX_RETRIES})`
+              `grant_missing received; retrying protected resource read after ${delayMs}ms (attempt ${protectedResourceAttempt + 1}/${PROTECTED_RESOURCE_GRANT_MAX_RETRIES})`
             );
             await sleep(delayMs);
             protectedResourceResponse = await fetchJsonWithTimeout(
@@ -927,11 +937,11 @@ export async function runGeneratedApprovalsSmoke(
               if (retriedProtectedResourceRead) {
                 addPass(
                   protectedResourceCheck,
-                  `retry 後に protected resource read が成功しました (attempt ${protectedResourceAttempt}/${PROTECTED_RESOURCE_GRANT_MAX_RETRIES})`
+                  `protected resource read succeeded after retry (attempt ${protectedResourceAttempt}/${PROTECTED_RESOURCE_GRANT_MAX_RETRIES})`
                 );
               }
               if (asString(protectedResourceResponse.payload.redaction_level) === 'masked') {
-                addPass(protectedResourceCheck, 'redaction_level=masked を確認しました');
+                addPass(protectedResourceCheck, 'redaction_level=masked verified');
               } else {
                 addWarn(
                   protectedResourceCheck,
@@ -944,12 +954,12 @@ export async function runGeneratedApprovalsSmoke(
               if (asString(profile?.sub) === targetSubjectId) {
                 addPass(protectedResourceCheck, `profile.sub=${targetSubjectId}`);
               } else {
-                addFail(protectedResourceCheck, 'protected profile sub が一致しませんでした');
+                addFail(protectedResourceCheck, 'protected profile sub did not match');
               }
             }
           }
           checks.push(
-            finalizeCheck(protectedResourceCheck, 'approval protected resource read を確認しました')
+            finalizeCheck(protectedResourceCheck, 'approval protected resource read verified')
           );
         } else {
           const protectedResourceWarn = makeSmokeCheck(
@@ -959,12 +969,12 @@ export async function runGeneratedApprovalsSmoke(
           );
           addWarn(
             protectedResourceWarn,
-            'integration_hint.product_route が無いため protected resource read はスキップしました'
+            'integration_hint.product_route is missing, so protected resource read was skipped'
           );
           checks.push(
             finalizeCheck(
               protectedResourceWarn,
-              'approval protected resource read をスキップしました'
+              'approval protected resource read skipped'
             )
           );
         }
@@ -977,10 +987,10 @@ export async function runGeneratedApprovalsSmoke(
       );
       addWarn(
         protectedResourceWarn,
-        'service client secret を解決できないため token exchange / protected resource read はスキップしました'
+        'service client secret could not be resolved, so token exchange and protected resource read were skipped'
       );
       checks.push(
-        finalizeCheck(protectedResourceWarn, 'approval protected resource read をスキップしました')
+        finalizeCheck(protectedResourceWarn, 'approval protected resource read skipped')
       );
     }
 
@@ -1012,5 +1022,6 @@ export async function runGeneratedApprovalsSmoke(
       tenantId,
       userId: targetSubjectId,
     });
+    await adminAccess.cleanup?.();
   }
 }

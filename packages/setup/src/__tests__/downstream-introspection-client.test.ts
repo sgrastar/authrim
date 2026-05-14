@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { ensureDownstreamIntrospectionClient } from '../core/downstream-introspection-client.js';
+import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
 function textResponse(body: string, status: number): Response {
   return new Response(body, {
@@ -27,7 +27,9 @@ describe('ensureDownstreamIntrospectionClient', () => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
 
-    tempDir = await mkdtemp(join(tmpdir(), 'authrim-downstream-introspection-client-'));
+    const testTempRoot = join(process.cwd(), '.tmp-tests');
+    await mkdir(testTempRoot, { recursive: true });
+    tempDir = await mkdtemp(join(testTempRoot, 'authrim-downstream-introspection-client-'));
     adminApiSecretPath = join(tempDir, 'admin_api_secret.txt');
     await writeFile(adminApiSecretPath, 'secret-token');
   });
@@ -124,6 +126,66 @@ describe('ensureDownstreamIntrospectionClient', () => {
     expect(secondCallHeaders['X-Tenant-Id']).toBe('default');
     expect(createBody.description).toBe(
       'System-managed confidential client used by Authrim for downstream grant introspection.'
+    );
+  });
+
+  it('retries setup machine token acquisition while workers.dev router is propagating', async () => {
+    const secrets = generateAllSecrets('downstream-introspection-test-key');
+    await saveKeysToDirectory(secrets, { targetDir: tempDir });
+    const progress: string[] = [];
+
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(
+          JSON.stringify({
+            error_code: 1042,
+            error_name: 'workers_dev_script_not_found',
+            detail: 'No Workers script was found for this host on workers.dev.',
+          }),
+          404
+        )
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: 'machine-admin-token',
+          token_type: 'Bearer',
+          expires_in: 600,
+          scope: 'admin:clients:*',
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            client: {
+              client_id: 'downstream-client-after-retry',
+              client_name: 'Downstream Grant Introspection',
+              client_secret: 'downstream-secret-after-retry',
+            },
+          },
+          201
+        )
+      );
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://single-ar-router.example.workers.dev',
+      adminApiSecretPath,
+      keysDir: tempDir,
+      tenantId: 'default',
+      onProgress: (message) => progress.push(message),
+      retryDelayMs: 1,
+      maxRetries: 2,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.clientId).toBe('downstream-client-after-retry');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://single-ar-router.example.workers.dev/token'
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      'https://single-ar-router.example.workers.dev/token'
     );
   });
 });

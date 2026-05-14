@@ -1060,6 +1060,24 @@ export function getHtmlTemplate(
       border: 1px solid #1e293b;
     }
 
+    .progress-log-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 0.75rem;
+    }
+
+    .progress-log-copy-btn {
+      background: #1e293b;
+      border-color: #334155;
+      color: #e2e8f0;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.75rem;
+    }
+
+    .progress-log-copy-btn:hover:not(:disabled) {
+      background: #334155;
+    }
+
     .progress-log pre {
       color: #e2e8f0;
       white-space: pre-wrap;
@@ -3518,6 +3536,11 @@ export function getHtmlTemplate(
       </div>
 
       <div class="progress-log hidden" id="provision-log">
+        <div class="progress-log-actions">
+          <button type="button" class="btn-secondary progress-log-copy-btn" id="provision-log-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
         <pre id="provision-output"></pre>
       </div>
 
@@ -3590,6 +3613,11 @@ export function getHtmlTemplate(
       </div>
 
       <div class="progress-log hidden" id="deploy-log">
+        <div class="progress-log-actions">
+          <button type="button" class="btn-secondary progress-log-copy-btn" id="deploy-log-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
         <pre id="deploy-output"></pre>
       </div>
 
@@ -3997,6 +4025,11 @@ export function getHtmlTemplate(
       </div>
 
       <div class="progress-log hidden" id="delete-log">
+        <div class="progress-log-actions">
+          <button type="button" class="btn-secondary progress-log-copy-btn" id="delete-log-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
         <pre id="delete-output"></pre>
       </div>
 
@@ -4392,10 +4425,23 @@ export function getHtmlTemplate(
       }
     }
 
+    function setupLogCopyButton(buttonId, outputId) {
+      const button = document.getElementById(buttonId);
+      const output = document.getElementById(outputId);
+      if (!button || !output) return;
+
+      button.addEventListener('click', async () => {
+        await copyTextWithFeedback(button, output.textContent || '');
+      });
+    }
+
     // Setup all log toggles
     setupLogToggle('deploy-log-toggle', 'deploy-log');
     setupLogToggle('provision-log-toggle', 'provision-log');
     setupLogToggle('delete-log-toggle', 'delete-log');
+    setupLogCopyButton('deploy-log-copy-btn', 'deploy-output');
+    setupLogCopyButton('provision-log-copy-btn', 'provision-output');
+    setupLogCopyButton('delete-log-copy-btn', 'delete-output');
 
     // Progress UI update helper
     function updateProgressUI(prefix, current, total, currentTask) {

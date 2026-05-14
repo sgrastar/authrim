@@ -235,6 +235,57 @@ describe('KeyManager Durable Object', () => {
       expect(data).toHaveProperty('kid');
       expect(data).toHaveProperty('publicJWK');
     });
+
+    it('should persist a public certificate for a key only once', async () => {
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      const rotateResponse = await keyManager.fetch(rotateRequest);
+      const rotateData = (await rotateResponse.json()) as { key: { kid: string } };
+
+      const firstCertificate = [
+        '-----BEGIN CERTIFICATE-----',
+        'MIIBtest',
+        '-----END CERTIFICATE-----',
+      ].join('\n');
+      const secondCertificate = [
+        '-----BEGIN CERTIFICATE-----',
+        'MIIBdifferent',
+        '-----END CERTIFICATE-----',
+      ].join('\n');
+
+      const firstResponse = await keyManager.fetch(
+        createRequest('/internal/certificate', 'POST', 'test-secret-token', {
+          kid: rotateData.key.kid,
+          certificatePEM: firstCertificate,
+          certificateCreatedAt: 1778745600000,
+          certificateSha256Thumbprint: 'thumbprint-1',
+        })
+      );
+      expect(firstResponse.status).toBe(200);
+      const firstData = (await firstResponse.json()) as Record<string, unknown>;
+      expect(firstData.certificatePEM).toBe(firstCertificate);
+      expect(firstData.certificateCreatedAt).toBe(1778745600000);
+      expect(firstData.certificateSha256Thumbprint).toBe('thumbprint-1');
+
+      const secondResponse = await keyManager.fetch(
+        createRequest('/internal/certificate', 'POST', 'test-secret-token', {
+          kid: rotateData.key.kid,
+          certificatePEM: secondCertificate,
+          certificateCreatedAt: 1778745700000,
+          certificateSha256Thumbprint: 'thumbprint-2',
+        })
+      );
+      expect(secondResponse.status).toBe(200);
+      const secondData = (await secondResponse.json()) as Record<string, unknown>;
+      expect(secondData.certificatePEM).toBe(firstCertificate);
+      expect(secondData.certificateCreatedAt).toBe(1778745600000);
+      expect(secondData.certificateSha256Thumbprint).toBe('thumbprint-1');
+
+      const activeResponse = await keyManager.fetch(
+        createRequest('/internal/active-with-private', 'GET', 'test-secret-token')
+      );
+      const activeData = (await activeResponse.json()) as Record<string, unknown>;
+      expect(activeData.certificatePEM).toBe(firstCertificate);
+    });
   });
 
   describe('Key Generation', () => {

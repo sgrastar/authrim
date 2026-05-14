@@ -223,6 +223,25 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
       throw new Error('XSW Protection: Reference URI must be a fragment identifier or empty');
     }
 
+    const referencedId = referenceUri?.startsWith('#') ? referenceUri.substring(1) : undefined;
+    const referencedElements = referencedId
+      ? findElementsById(doc as unknown as XMLNode, referencedId)
+      : [];
+
+    if (referencedId) {
+      if (referencedElements.length === 0) {
+        throw new Error(`XSW Protection: Element with ID "${referencedId}" not found`);
+      }
+
+      if (strictXswProtection && referencedElements.length > 1) {
+        throw new Error(
+          `XSW Protection: Multiple elements with ID "${referencedId}" detected (possible XSW attack)`
+        );
+      }
+    } else if (strictXswProtection) {
+      throw new Error('XSW Protection: Reference URI is required in strict mode');
+    }
+
     // 3. Validate expectedId if provided (XSW protection)
     if (expectedId) {
       const expectedUri = `#${expectedId}`;
@@ -235,22 +254,17 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
       // Verify the referenced element actually exists
       // Note: @xmldom/xmldom doesn't support querySelectorAll, so we use a manual search
       // Cast doc to XMLNode for compatibility with our type-safe helper
-      const referencedElements = findElementsById(doc as unknown as XMLNode, expectedId);
-      if (referencedElements.length === 0) {
+      const expectedElements = findElementsById(doc as unknown as XMLNode, expectedId);
+      if (expectedElements.length === 0) {
         throw new Error(`XSW Protection: Element with ID "${expectedId}" not found`);
       }
 
       // Strict mode: Check for multiple elements with the same ID (XSW attack indicator)
-      if (strictXswProtection && referencedElements.length > 1) {
+      if (strictXswProtection && expectedElements.length > 1) {
         throw new Error(
           `XSW Protection: Multiple elements with ID "${expectedId}" detected (possible XSW attack)`
         );
       }
-    }
-
-    // 4. Strict mode requires expectedId
-    if (strictXswProtection && !expectedId) {
-      throw new Error('XSW Protection: expectedId is required in strict mode');
     }
 
     // 5. Check signature algorithm (reject SHA-1) BEFORE verification

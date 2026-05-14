@@ -38,9 +38,19 @@ interface StoredKey {
   privatePEM: string;
   createdAt: number;
   status: KeyStatus; // 'active' | 'overlap' | 'revoked'
+  certificatePEM?: string; // Public X.509 certificate used by protocols such as SAML metadata
+  certificateCreatedAt?: number;
+  certificateSha256Thumbprint?: string;
   expiresAt?: number; // When the key expires (for overlap keys)
   revokedAt?: number; // When the key was revoked (for revoked keys)
   revokedReason?: string; // Reason for revocation (for revoked keys)
+}
+
+interface StoreCertificateRequest {
+  kid: string;
+  certificatePEM: string;
+  certificateCreatedAt?: number;
+  certificateSha256Thumbprint?: string;
 }
 
 /**
@@ -634,6 +644,9 @@ export class KeyManager extends DurableObject<Env> {
       privatePEM: rotatedKey.privatePEM,
       createdAt: rotatedKey.createdAt,
       status: rotatedKey.status,
+      certificatePEM: rotatedKey.certificatePEM,
+      certificateCreatedAt: rotatedKey.certificateCreatedAt,
+      certificateSha256Thumbprint: rotatedKey.certificateSha256Thumbprint,
       expiresAt: rotatedKey.expiresAt,
       revokedAt: rotatedKey.revokedAt,
       revokedReason: rotatedKey.revokedReason,
@@ -828,6 +841,35 @@ export class KeyManager extends DurableObject<Env> {
       value,
       createdAt: Date.now(),
     };
+  }
+
+  async storeCertificateForKey(input: StoreCertificateRequest): Promise<StoredKey> {
+    await this.initializeState();
+
+    const state = this.getState();
+    const key = state.keys.find((k) => k.kid === input.kid);
+    if (!key) {
+      throw new Error('Key not found');
+    }
+
+    if (key.certificatePEM) {
+      return key;
+    }
+
+    if (
+      !input.certificatePEM.startsWith('-----BEGIN CERTIFICATE-----') ||
+      !input.certificatePEM.includes('-----END CERTIFICATE-----') ||
+      input.certificatePEM.length > 16 * 1024
+    ) {
+      throw new Error('Invalid certificate PEM');
+    }
+
+    key.certificatePEM = input.certificatePEM;
+    key.certificateCreatedAt = input.certificateCreatedAt ?? Date.now();
+    key.certificateSha256Thumbprint = input.certificateSha256Thumbprint;
+
+    await this.saveState();
+    return key;
   }
 
   // ==========================================
@@ -1197,6 +1239,9 @@ export class KeyManager extends DurableObject<Env> {
           privatePEM: activeKey.privatePEM,
           createdAt: activeKey.createdAt,
           status: activeKey.status,
+          certificatePEM: activeKey.certificatePEM,
+          certificateCreatedAt: activeKey.certificateCreatedAt,
+          certificateSha256Thumbprint: activeKey.certificateSha256Thumbprint,
           expiresAt: activeKey.expiresAt,
           revokedAt: activeKey.revokedAt,
           revokedReason: activeKey.revokedReason,
@@ -1204,6 +1249,19 @@ export class KeyManager extends DurableObject<Env> {
 
         // Return full key data including privatePEM for internal use
         return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /internal/certificate - Store a public certificate for an existing key once
+      if (path === '/internal/certificate' && request.method === 'POST') {
+        const body = await readRequestJsonWithLimit<StoreCertificateRequest>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
+        const key = await this.storeCertificateForKey(body);
+
+        return new Response(JSON.stringify(this.sanitizeKey(key)), {
           headers: { 'Content-Type': 'application/json' },
         });
       }

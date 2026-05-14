@@ -122,6 +122,14 @@ function printResult(result: GeneratedLoadAbuseResult): void {
   process.stdout.write(`config: ${result.configPath}\n`);
   process.stdout.write(`profile: ${result.profile}\n\n`);
 
+  if (result.bootstrapChecks.length > 0) {
+    process.stdout.write(`bootstrap:\n`);
+    for (const note of result.bootstrapChecks) {
+      process.stdout.write(`  - ${note}\n`);
+    }
+    process.stdout.write(`\n`);
+  }
+
   for (const stage of result.stages) {
     process.stdout.write(`- ${stage.title}\n`);
     process.stdout.write(

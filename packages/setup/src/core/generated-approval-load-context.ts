@@ -229,14 +229,17 @@ export async function createGeneratedApprovalLoadContext(
   const target = await resolveGeneratedSmokeTarget(options);
   const timeoutMs = options.timeoutMs ?? 10_000;
   const tenantId = target.tenantId;
-  const { secret: adminSecret, path: adminSecretPath } = await readGeneratedAdminApiSecret({
+  const adminAccess = await readGeneratedAdminApiSecret({
     baseDir: target.baseDir,
     env: target.env,
     adminSecret: options.adminSecret,
     adminSecretPath: options.adminSecretPath,
     baseUrl: target.baseUrl,
     tenantId: target.tenantId,
+    config: target.config,
   });
+  const adminSecret = adminAccess.secret;
+  const adminSecretPath = adminAccess.path;
 
   const checks: SmokeCheck[] = [];
   const smokeRunId = Date.now();
@@ -672,6 +675,7 @@ export async function createGeneratedApprovalLoadContext(
       tenantId,
       userId: targetSubjectId,
     });
+    await adminAccess.cleanup?.();
     return cleanupChecks;
   };
 

@@ -182,6 +182,11 @@ describe('admin-info tenant base URL resolution', () => {
       login_ui_url: string | null;
       global_login_ui_url: string | null;
       discover_url: string | null;
+      saml: {
+        idp_metadata: string;
+        sp_metadata: string;
+        metadata: string;
+      };
       runtime_profiles: {
         registry_backend: string;
         effective: {
@@ -195,6 +200,9 @@ describe('admin-info tenant base URL resolution', () => {
     expect(body.login_ui_url).toBe('https://default.auth.example.com/login');
     expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev/login');
     expect(body.discover_url).toBe('https://nodomain-ar-login-ui.pages.dev/discover');
+    expect(body.saml.idp_metadata).toBe('https://default.auth.example.com/saml/idp/metadata');
+    expect(body.saml.sp_metadata).toBe('https://default.auth.example.com/saml/sp/metadata');
+    expect(body.saml.metadata).toBe(body.saml.sp_metadata);
     expect(body.runtime_profiles?.registry_backend).toBe('database');
     expect(body.runtime_profiles?.effective.storage.id).toBe('builtin:storage:standard');
     expect(body.runtime_profiles?.effective.audit.id).toBe('builtin:audit:standard');

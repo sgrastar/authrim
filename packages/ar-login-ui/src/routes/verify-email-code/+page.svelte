@@ -21,6 +21,9 @@
 	let email = $state('');
 	let inviteToken = $state('');
 	let authorizationChallengeId = $state('');
+	let samlRequestId = $state('');
+	let samlSpEntityId = $state('');
+	let returnTo = $state('');
 	let error = $state('');
 	let success = $state('');
 	let loading = $state(false);
@@ -83,6 +86,9 @@
 		email = $page.url.searchParams.get('email') || '';
 		inviteToken = $page.url.searchParams.get('invite_token') || '';
 		authorizationChallengeId = $page.url.searchParams.get('challenge_id') || '';
+		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
+		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
+		returnTo = $page.url.searchParams.get('return_to') || '';
 
 		// If no email, redirect to login
 		if (!email) {
@@ -168,10 +174,7 @@
 
 			// Redirect after delay. OAuth/OIDC challenges resume /authorize via the server-provided URL.
 			setTimeout(() => {
-				window.location.href =
-					verifyData?.redirect_url && isValidRedirectUrl(verifyData.redirect_url)
-						? verifyData.redirect_url
-						: '/';
+				window.location.href = buildPostAuthRedirect(verifyData?.redirect_url);
 			}, 2000);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
@@ -179,6 +182,23 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function buildPostAuthRedirect(redirectUrl?: string): string {
+		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
+			const params = new URLSearchParams({
+				saml_request_id: samlRequestId,
+				saml_sp_entity_id: samlSpEntityId,
+				return_to: 'saml_sso'
+			});
+			return `/saml/idp/sso?${params.toString()}`;
+		}
+
+		if (redirectUrl && isValidRedirectUrl(redirectUrl)) {
+			return redirectUrl;
+		}
+
+		return '/';
 	}
 
 	async function handleResend() {

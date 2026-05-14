@@ -77,6 +77,14 @@ type AdminSAMLAuthContext = Context<{
   Bindings: Env;
   Variables: { adminAuth?: AdminAuthContext };
 }>;
+interface SAMLMetadataConfigFields {
+  metadataXml?: string;
+  metadataUrl?: string;
+  metadataHash?: string;
+  metadataCriticalFields?: SAMLMetadataAnalysis['criticalFields'];
+  metadataRefreshStatus?: SAMLMetadataRefreshStatus;
+  metadataLastFetched?: number;
+}
 
 async function requireSAMLAdminPermission(
   c: AdminSAMLContext,
@@ -146,6 +154,7 @@ export async function handleListProviders(c: AdminSAMLContext): Promise<Response
  * List built-in SAML attribute presets.
  */
 export async function handleListAttributePresets(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
   const forbidden = await requireSAMLAdminPermission(
     c,
     ADMIN_PERMISSIONS.SAML_ATTRIBUTE_PRESETS_READ
@@ -154,20 +163,248 @@ export async function handleListAttributePresets(c: AdminSAMLContext): Promise<R
     return forbidden;
   }
 
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+  let customPresets: SAMLAttributePresetResponse[] = [];
+
+  try {
+    const rows = await coreAdapter.query<{
+      id: string;
+      label: string;
+      description: string | null;
+      applies_to: string;
+      profile: string;
+      stability: string;
+      application_mode: string;
+      attribute_release_policy_json: string;
+      updated_at: number;
+    }>(
+      `SELECT id, label, description, applies_to, profile, stability, application_mode,
+              attribute_release_policy_json, updated_at
+       FROM saml_attribute_presets
+       WHERE tenant_id = ? AND applies_to = 'sp_attribute_release'
+       ORDER BY created_at DESC`,
+      [tenantId]
+    );
+    customPresets = rows.map((row) => ({
+      id: row.id,
+      version: `custom:${row.updated_at}`,
+      profile: row.profile,
+      label: row.label,
+      description: row.description || '',
+      appliesTo: 'sp_attribute_release',
+      stability: row.stability,
+      applicationMode: row.application_mode,
+      isCustom: true,
+      attributeReleasePolicy: JSON.parse(row.attribute_release_policy_json),
+    }));
+  } catch (error) {
+    log.warn('Custom SAML attribute preset table unavailable', {}, error as Error);
+  }
+
   return c.json({
-    presets: SAML_BUILTIN_ATTRIBUTE_PRESETS.map((preset) => ({
-      id: preset.id,
-      version: preset.version,
-      profile: preset.profile,
-      label: preset.label,
-      description: preset.description,
-      stability: preset.stability,
-      applicationMode: preset.applicationMode,
-      attributeReleasePolicy: {
-        attributes: preset.buildRules(),
-      },
-    })),
+    presets: [...serializeBuiltinAttributePresets(), ...customPresets],
   });
+}
+
+interface SAMLMetadataPreviewRequest extends MetadataImportRequest {
+  samlProfile?: SAMLSPProfile;
+  attributePresetId?: SAMLAttributePresetId;
+}
+
+export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as SAMLMetadataPreviewRequest;
+    const resolvedMetadata = await resolveMetadataImportInput(c, body);
+    if (resolvedMetadata instanceof Response) {
+      return resolvedMetadata;
+    }
+
+    const providerType = detectSAMLMetadataProviderType(resolvedMetadata.metadataXml);
+    const config = buildConfigFromMetadata(
+      providerType,
+      resolvedMetadata.metadataXml,
+      body.samlProfile,
+      body.attributePresetId
+    );
+    const metadataAnalysis = analyzeSAMLMetadata(resolvedMetadata.metadataXml);
+
+    return c.json({
+      providerType,
+      config: {
+        ...config,
+        metadataXml: resolvedMetadata.metadataXml,
+        ...(resolvedMetadata.metadataUrl ? { metadataUrl: resolvedMetadata.metadataUrl } : {}),
+        metadataHash: metadataAnalysis.hash,
+        metadataCriticalFields: metadataAnalysis.criticalFields,
+        metadataRefreshStatus: buildSAMLMetadataRefreshStatus(undefined, metadataAnalysis),
+        metadataLastFetched: Date.now(),
+      },
+    });
+  } catch (error) {
+    if (error instanceof SAMLMetadataValidationError) {
+      log.warn('Preview metadata validation failed', {}, error);
+      return createSAMLMetadataValidationErrorResponse(c, error);
+    }
+
+    log.error('Preview metadata error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+interface SAMLAttributePresetResponse {
+  id: string;
+  version: string;
+  profile: string;
+  label: string;
+  description: string;
+  stability: string;
+  applicationMode: string;
+  appliesTo: 'sp_attribute_release';
+  isCustom?: boolean;
+  attributeReleasePolicy: {
+    attributes: SAMLAttributeReleaseRule[];
+  };
+}
+
+interface SAMLAttributePresetCreateRequest {
+  label?: string;
+  description?: string;
+  profile?: string;
+  appliesTo?: 'sp_attribute_release';
+  attributeReleasePolicy?: {
+    attributes?: SAMLAttributeReleaseRule[];
+  };
+}
+
+function serializeBuiltinAttributePresets(): SAMLAttributePresetResponse[] {
+  return SAML_BUILTIN_ATTRIBUTE_PRESETS.map((preset) => ({
+    id: preset.id,
+    version: preset.version,
+    profile: preset.profile,
+    label: preset.label,
+    description: preset.description,
+    stability: preset.stability,
+    applicationMode: preset.applicationMode,
+    appliesTo: 'sp_attribute_release',
+    isCustom: false,
+    attributeReleasePolicy: {
+      attributes: preset.buildRules(),
+    },
+  }));
+}
+
+export async function handleCreateAttributePreset(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(
+      c,
+      ADMIN_PERMISSIONS.SAML_ATTRIBUTE_PRESETS_WRITE
+    );
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as SAMLAttributePresetCreateRequest;
+    const attributes = body.attributeReleasePolicy?.attributes ?? [];
+    if (!body.label || attributes.length === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'label, attributeReleasePolicy.attributes' },
+      });
+    }
+
+    const invalidRule = attributes.find((rule) => !rule.name || !rule.source);
+    if (invalidRule) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const now = Date.now();
+    const id = `custom:${crypto.randomUUID()}`;
+    const preset: SAMLAttributePresetResponse = {
+      id,
+      version: `custom:${now}`,
+      profile: body.profile || 'custom',
+      label: body.label.trim(),
+      description: body.description?.trim() || '',
+      stability: 'custom',
+      applicationMode: 'clone_edit',
+      appliesTo: 'sp_attribute_release',
+      isCustom: true,
+      attributeReleasePolicy: {
+        attributes,
+      },
+    };
+
+    await coreAdapter.execute(
+      `INSERT INTO saml_attribute_presets (
+         id, tenant_id, label, description, applies_to, profile, stability, application_mode,
+         attribute_release_policy_json, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        tenantId,
+        preset.label,
+        preset.description,
+        preset.appliesTo,
+        preset.profile,
+        preset.stability,
+        preset.applicationMode,
+        JSON.stringify(preset.attributeReleasePolicy),
+        now,
+        now,
+      ]
+    );
+
+    return c.json({ preset }, 201);
+  } catch (error) {
+    log.error('Create SAML attribute preset error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleDeleteAttributePreset(c: AdminSAMLContext): Promise<Response> {
+  const id = c.req.param('id');
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(
+      c,
+      ADMIN_PERMISSIONS.SAML_ATTRIBUTE_PRESETS_DELETE
+    );
+    if (forbidden) {
+      return forbidden;
+    }
+
+    if (!id?.startsWith('custom:')) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const result = await coreAdapter.execute(
+      'DELETE FROM saml_attribute_presets WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
+
+    if (result.rowsAffected === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    return c.json({ success: true });
+  } catch (error) {
+    log.error('Delete SAML attribute preset error', { presetId: id }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
 }
 
 /**
@@ -184,10 +421,12 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
 
     const body = (await c.req.json()) as SAMLProviderCreateRequest;
 
+    const hasMetadataInput = Boolean(body.metadataXml || body.metadataUrl);
+
     // Validate request
-    if (!body.name || !body.providerType || !body.config) {
+    if (!body.name || !body.providerType || (!body.config && !hasMetadataInput)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'name, providerType, config' },
+        variables: { field: 'name, providerType, config or metadata' },
       });
     }
 
@@ -195,17 +434,56 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    let metadataDerivedConfig: SAMLIdPConfig | SAMLSPConfig | undefined;
+    let metadataDerivedFields: SAMLMetadataConfigFields | undefined;
+
+    if (hasMetadataInput) {
+      const resolvedMetadata = await resolveMetadataImportInput(c, body);
+      if (resolvedMetadata instanceof Response) {
+        return resolvedMetadata;
+      }
+
+      try {
+        metadataDerivedConfig = buildConfigFromMetadata(
+          body.providerType,
+          resolvedMetadata.metadataXml,
+          body.samlProfile,
+          body.attributePresetId
+        );
+      } catch (error) {
+        throw new SAMLMetadataValidationError(
+          error instanceof Error ? error.message : 'Invalid SAML metadata'
+        );
+      }
+
+      const metadataAnalysis = analyzeSAMLMetadata(resolvedMetadata.metadataXml);
+      metadataDerivedFields = {
+        metadataXml: resolvedMetadata.metadataXml,
+        ...(resolvedMetadata.metadataUrl ? { metadataUrl: resolvedMetadata.metadataUrl } : {}),
+        metadataHash: metadataAnalysis.hash,
+        metadataCriticalFields: metadataAnalysis.criticalFields,
+        metadataRefreshStatus: buildSAMLMetadataRefreshStatus(undefined, metadataAnalysis),
+        metadataLastFetched: Date.now(),
+      };
+    }
+
+    const config = {
+      ...(metadataDerivedConfig ?? {}),
+      ...(body.config ?? {}),
+      ...(metadataDerivedFields ?? {}),
+    } as SAMLIdPConfig | SAMLSPConfig;
+
     // Validate config based on type
     if (body.providerType === 'saml_idp') {
-      const config = body.config as SAMLIdPConfig;
-      if (!config.entityId || !config.ssoUrl || !config.certificate) {
+      const idpConfig = config as SAMLIdPConfig;
+      if (!idpConfig.entityId || !idpConfig.ssoUrl || !idpConfig.certificate) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
           variables: { field: 'entityId, ssoUrl, certificate' },
         });
       }
     } else {
-      const config = body.config as SAMLSPConfig;
-      if (!config.entityId || !config.acsUrl) {
+      const spConfig = config as SAMLSPConfig;
+      if (!spConfig.entityId || !spConfig.acsUrl) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
           variables: { field: 'entityId, acsUrl' },
         });
@@ -214,8 +492,8 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
 
     const normalizedConfig =
       body.providerType === 'saml_sp'
-        ? normalizeSAMLSPAttributePresetConfig(body.config as SAMLSPConfig)
-        : body.config;
+        ? normalizeSAMLSPAttributePresetConfig(config as SAMLSPConfig)
+        : config;
     const id = crypto.randomUUID();
     const now = Date.now();
 
@@ -249,6 +527,11 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       201
     );
   } catch (error) {
+    if (error instanceof SAMLMetadataValidationError) {
+      log.warn('Create provider metadata validation failed', {}, error);
+      return createSAMLMetadataValidationErrorResponse(c, error);
+    }
+
     log.error('Create provider error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -448,53 +731,36 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
 
     const body = (await c.req.json()) as MetadataImportRequest;
 
-    let metadataXml: string;
-
-    if (body.metadataXml) {
-      metadataXml = body.metadataXml;
-    } else if (body.metadataUrl) {
-      // SSRF protection: Validate URL before fetching
-      const ssrfError = validateExternalUrl(body.metadataUrl, {
-        requireHttps: true,
-        allowLocalhost: false,
-        errorType: 'invalid_request',
-        fieldName: 'metadataUrl',
-      });
-      if (ssrfError) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
-
-      try {
-        metadataXml = await safeFetchText(body.metadataUrl, {
-          timeoutMs: 10000,
-          maxResponseSize: 1024 * 1024,
-        });
-      } catch {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
-    } else {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'metadataXml or metadataUrl' },
-      });
+    const resolvedMetadata = await resolveMetadataImportInput(c, body);
+    if (resolvedMetadata instanceof Response) {
+      return resolvedMetadata;
     }
 
-    const metadataUrl = body.metadataUrl || undefined;
+    const metadataUrl = resolvedMetadata.metadataUrl;
     const existingConfig = JSON.parse(existing.config_json) as SAMLIdPConfig | SAMLSPConfig;
     const previousAnalysis = buildPreviousMetadataAnalysis(existingConfig);
-    const currentAnalysis = analyzeSAMLMetadata(metadataXml);
+    const currentAnalysis = analyzeSAMLMetadata(resolvedMetadata.metadataXml);
     const refreshStatus = buildSAMLMetadataRefreshStatus(previousAnalysis, currentAnalysis);
-    const newConfig = buildConfigFromMetadata(
-      existing.provider_type,
-      metadataXml,
-      body.samlProfile,
-      body.attributePresetId
-    );
+    let newConfig: SAMLIdPConfig | SAMLSPConfig;
+
+    try {
+      newConfig = buildConfigFromMetadata(
+        existing.provider_type,
+        resolvedMetadata.metadataXml,
+        body.samlProfile,
+        body.attributePresetId
+      );
+    } catch (error) {
+      throw new SAMLMetadataValidationError(
+        error instanceof Error ? error.message : 'Invalid SAML metadata'
+      );
+    }
 
     // Merge with existing config (preserve custom settings)
     const mergedConfig = {
       ...existingConfig,
       ...newConfig,
-      metadataXml,
+      metadataXml: resolvedMetadata.metadataXml,
       ...(metadataUrl ? { metadataUrl } : {}),
       metadataHash: currentAnalysis.hash,
       metadataCriticalFields: currentAnalysis.criticalFields,
@@ -517,7 +783,7 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
   } catch (error) {
     if (error instanceof SAMLMetadataValidationError) {
       log.warn('Import metadata validation failed', { providerId: id }, error);
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      return createSAMLMetadataValidationErrorResponse(c, error);
     }
 
     log.error('Import metadata error', { providerId: id }, error as Error);
@@ -664,7 +930,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
   } catch (error) {
     if (error instanceof SAMLMetadataValidationError) {
       log.warn('Refresh metadata validation failed', { providerId: id }, error);
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      return createSAMLMetadataValidationErrorResponse(c, error);
     }
 
     log.error('Refresh metadata error', { providerId: id }, error as Error);
@@ -823,6 +1089,47 @@ function buildConfigFromMetadata(
     : normalizeSAMLSPAttributePresetConfig(profiledConfig);
 }
 
+function detectSAMLMetadataProviderType(metadataXml: string): 'saml_idp' | 'saml_sp' {
+  const doc = parseXml(metadataXml);
+  const entityDescriptor = findElement(doc, SAML_NAMESPACES.MD, 'EntityDescriptor');
+  if (!entityDescriptor) {
+    throw new SAMLMetadataValidationError('Invalid metadata: missing EntityDescriptor');
+  }
+
+  const hasIdP = Boolean(findElement(entityDescriptor, SAML_NAMESPACES.MD, 'IDPSSODescriptor'));
+  const hasSP = Boolean(findElement(entityDescriptor, SAML_NAMESPACES.MD, 'SPSSODescriptor'));
+
+  if (hasIdP && !hasSP) {
+    return 'saml_idp';
+  }
+  if (hasSP && !hasIdP) {
+    return 'saml_sp';
+  }
+  if (hasIdP && hasSP) {
+    throw new SAMLMetadataValidationError(
+      'Metadata contains both IdP and SP descriptors. Choose the provider type manually or provide role-specific metadata.'
+    );
+  }
+
+  throw new SAMLMetadataValidationError(
+    'Invalid metadata: missing IDPSSODescriptor or SPSSODescriptor'
+  );
+}
+
+function createSAMLMetadataValidationErrorResponse(
+  c: AdminSAMLContext,
+  error: SAMLMetadataValidationError
+): Response {
+  return c.json(
+    {
+      error: 'invalid_request',
+      error_description: error.message,
+      error_code: AR_ERROR_CODES.VALIDATION_INVALID_VALUE,
+    },
+    400
+  );
+}
+
 function buildPreviousMetadataAnalysis(
   config: SAMLIdPConfig | SAMLSPConfig
 ): SAMLMetadataAnalysis | undefined {
@@ -834,6 +1141,41 @@ function buildPreviousMetadataAnalysis(
     hash: config.metadataHash,
     criticalFields: config.metadataCriticalFields,
   };
+}
+
+async function resolveMetadataImportInput(
+  c: AdminSAMLContext,
+  input: MetadataImportRequest
+): Promise<{ metadataXml: string; metadataUrl?: string } | Response> {
+  if (input.metadataXml) {
+    return { metadataXml: input.metadataXml };
+  }
+
+  if (!input.metadataUrl) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'metadataXml or metadataUrl' },
+    });
+  }
+
+  const ssrfError = validateExternalUrl(input.metadataUrl, {
+    requireHttps: true,
+    allowLocalhost: false,
+    errorType: 'invalid_request',
+    fieldName: 'metadataUrl',
+  });
+  if (ssrfError) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+  }
+
+  try {
+    const metadataXml = await safeFetchText(input.metadataUrl, {
+      timeoutMs: 10000,
+      maxResponseSize: 1024 * 1024,
+    });
+    return { metadataXml, metadataUrl: input.metadataUrl };
+  } catch {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+  }
 }
 
 async function readOptionalJson(c: Context<{ Bindings: Env }>): Promise<{ metadataUrl?: string }> {
@@ -916,6 +1258,12 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 
   const idpDescriptor = findElement(entityDescriptor, SAML_NAMESPACES.MD, 'IDPSSODescriptor');
   if (!idpDescriptor) {
+    const spDescriptor = findElement(entityDescriptor, SAML_NAMESPACES.MD, 'SPSSODescriptor');
+    if (spDescriptor) {
+      throw new Error(
+        'Metadata is for a SAML Service Provider, not an Identity Provider. Choose Service Provider or provide IdP metadata containing IDPSSODescriptor.'
+      );
+    }
     throw new Error('Invalid metadata: missing IDPSSODescriptor');
   }
 
@@ -1011,6 +1359,12 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
 
   const spDescriptor = findElement(entityDescriptor, SAML_NAMESPACES.MD, 'SPSSODescriptor');
   if (!spDescriptor) {
+    const idpDescriptor = findElement(entityDescriptor, SAML_NAMESPACES.MD, 'IDPSSODescriptor');
+    if (idpDescriptor) {
+      throw new Error(
+        'Metadata is for a SAML Identity Provider, not a Service Provider. Choose Identity Provider or provide SP metadata containing SPSSODescriptor.'
+      );
+    }
     throw new Error('Invalid metadata: missing SPSSODescriptor');
   }
 

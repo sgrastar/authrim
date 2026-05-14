@@ -2,25 +2,17 @@ import {
   addFail,
   addPass,
   addWarn,
-  createTemporaryInitialAccessToken,
-  deleteTemporarySmokeClient,
-  ensureTemporaryDcrEnabled,
   fetchJsonWithTimeout,
   finalizeCheck,
   isRecord,
   isSmokeSuccessful,
   makeSmokeCheck,
   readGeneratedAdminApiSecret,
-  registerTemporarySmokeClient,
-  revokeTemporaryInitialAccessToken,
-  restoreTemporaryDcrEnabled,
   resolveGeneratedSmokeTarget,
   resolveSmokeClientRegistrationDefaults,
+  withTenantHeader,
   type GeneratedSmokeOptions,
-  type RegisteredSmokeClient,
   type SmokeCheck,
-  type TemporaryDcrEnableState,
-  type TemporaryInitialAccessToken,
 } from './generated-smoke-common.js';
 
 export type ClientCredentialsMode = 'auto' | 'on' | 'off';
@@ -41,13 +33,31 @@ export interface GeneratedAuthFlowSmokeResult {
   checks: SmokeCheck[];
 }
 
+interface SmokeClient {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  clientName: string;
+}
+
 function validateJsonObject(check: SmokeCheck, payload: unknown, label: string): boolean {
   if (!isRecord(payload)) {
-    addFail(check, `${label}: payload が object ではありません`);
+    addFail(check, `${label}: payload is not an object`);
     return false;
   }
-  addPass(check, `${label}: JSON object を確認しました`);
+  addPass(check, `${label}: JSON object verified`);
   return true;
+}
+
+function getAdminHeaders(secret: string, tenantId?: string): Record<string, string> {
+  return withTenantHeader(
+    {
+      authorization: `Bearer ${secret}`,
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    tenantId
+  );
 }
 
 async function fetchJsonCheck(options: {
@@ -85,6 +95,13 @@ async function fetchJsonCheck(options: {
   return response;
 }
 
+function getClientFromPayload(payload: unknown): Record<string, unknown> | null {
+  if (!isRecord(payload) || !isRecord(payload.client)) {
+    return null;
+  }
+  return payload.client;
+}
+
 function isUnsupportedClientCredentialsResponse(payload: unknown): boolean {
   return (
     isRecord(payload) &&
@@ -101,128 +118,80 @@ export async function runGeneratedAuthFlowSmoke(
   const checks: SmokeCheck[] = [];
   const tenantId = target.tenantId;
   const clientRegistrationDefaults = resolveSmokeClientRegistrationDefaults(target.config);
-  const { secret: adminSecret } = await readGeneratedAdminApiSecret({
+  const adminAccess = await readGeneratedAdminApiSecret({
     baseDir: target.baseDir,
     env: target.env,
     adminSecret: options.adminSecret,
     adminSecretPath: options.adminSecretPath,
     baseUrl: target.baseUrl,
     tenantId: target.tenantId,
+    config: target.config,
   });
-
-  let temporaryClient: RegisteredSmokeClient | null = null;
-  let temporaryIat: TemporaryInitialAccessToken | null = null;
-  let temporaryDcr: TemporaryDcrEnableState | null = null;
-
-  const dcrToggleCheck = makeSmokeCheck(
-    'temporary-dcr-enable',
-    'temporary DCR enable for auth flow smoke',
-    `${target.baseUrl}/api/admin/tenants/${tenantId}/settings/dcr`
-  );
-  try {
-    temporaryDcr = await ensureTemporaryDcrEnabled({
-      baseUrl: target.baseUrl,
-      timeoutMs,
-      adminSecret,
-      tenantId,
-    });
-    addPass(
-      dcrToggleCheck,
-      temporaryDcr.changed ? 'dcr.enabled を一時的に有効化しました' : 'dcr.enabled は既に有効です'
-    );
-  } catch (error) {
-    addFail(
-      dcrToggleCheck,
-      `temporary DCR enable failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  checks.push(finalizeCheck(dcrToggleCheck, 'temporary DCR enable を確認しました'));
-
-  if (dcrToggleCheck.status === 'fail') {
-    return {
-      ok: false,
-      env: target.env,
-      baseUrl: target.baseUrl,
-      configPath: target.configPath,
-      checks,
-    };
-  }
-
-  const iatCheck = makeSmokeCheck(
-    'dcr-initial-access-token',
-    'dynamic client registration initial access token',
-    `${target.baseUrl}/api/admin/iat-tokens`
-  );
-  try {
-    temporaryIat = await createTemporaryInitialAccessToken({
-      baseUrl: target.baseUrl,
-      timeoutMs,
-      adminSecret,
-      tenantId,
-      description: 'Portability Auth Flow Smoke Temporary IAT',
-    });
-    addPass(iatCheck, `tokenHash=${temporaryIat.tokenHash}`);
-  } catch (error) {
-    addFail(
-      iatCheck,
-      `initial access token creation failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  checks.push(
-    finalizeCheck(iatCheck, 'dynamic client registration initial access token を確認しました')
-  );
-
-  const registerCheck = makeSmokeCheck(
-    'dcr-register',
-    'dynamic client registration',
-    `${target.baseUrl}/register`
-  );
+  const adminSecret = adminAccess.secret;
 
   try {
-    if (!temporaryIat) {
-      throw new Error('temporary_iat_unavailable');
+  const redirectUri =
+    options.redirectUri ?? 'https://example.invalid/authrim/generated-auth-flow/callback';
+  const clientName = `Generated Auth Flow Smoke Client ${Date.now()}`;
+  const grantTypes = clientRegistrationDefaults.supportsClientCredentials
+    ? ['client_credentials']
+    : ['authorization_code'];
+  const responseTypes = clientRegistrationDefaults.supportsClientCredentials ? [] : ['code'];
+  let temporaryClient: SmokeClient | null = null;
+
+  const clientCreateCheck = makeSmokeCheck(
+    'admin-client-create',
+    'admin client create for auth flow smoke',
+    `${target.baseUrl}/api/admin/clients`
+  );
+  const createResponse = await fetchJsonWithTimeout(
+    `${target.baseUrl}/api/admin/clients`,
+    timeoutMs,
+    {
+      method: 'POST',
+      headers: getAdminHeaders(adminSecret, tenantId),
+      body: JSON.stringify({
+        client_name: clientName,
+        description: 'Generated auth flow smoke client',
+        redirect_uris: [redirectUri],
+        grant_types: grantTypes,
+        response_types: responseTypes,
+        token_endpoint_auth_method: 'client_secret_basic',
+        client_credentials_allowed: clientRegistrationDefaults.supportsClientCredentials,
+        allowed_scopes: ['openid'],
+        default_scope: 'openid',
+        require_pkce: true,
+      }),
     }
-    temporaryClient = await registerTemporarySmokeClient({
-      baseUrl: target.baseUrl,
-      timeoutMs,
-      tenantId,
-      initialAccessToken: temporaryIat.token,
-      redirectUri: options.redirectUri,
-      grantTypes: clientRegistrationDefaults.grantTypes,
-      responseTypes: clientRegistrationDefaults.responseTypes,
-      clientCredentialsAllowed: clientRegistrationDefaults.supportsClientCredentials,
-      clientNamePrefix: 'Portability Auth Flow Smoke Client',
-    });
-    addPass(registerCheck, `client_id=${temporaryClient.clientId}`);
-    addPass(registerCheck, `registration_client_uri=${temporaryClient.registrationClientUri}`);
-  } catch (error) {
+  );
+  clientCreateCheck.httpStatus = createResponse.status;
+  if (!createResponse.ok) {
     addFail(
-      registerCheck,
-      `dynamic client registration failed: ${error instanceof Error ? error.message : String(error)}`
+      clientCreateCheck,
+      `POST /api/admin/clients failed: ${createResponse.status} ${createResponse.error ?? createResponse.bodyText ?? ''}`
     );
+  } else if (!validateJsonObject(clientCreateCheck, createResponse.payload, 'admin client create')) {
+    // The validation helper records the failure.
+  } else {
+    const client = getClientFromPayload(createResponse.payload);
+    const clientId = typeof client?.client_id === 'string' ? client.client_id : '';
+    const clientSecret = typeof client?.client_secret === 'string' ? client.client_secret : '';
+    if (!clientId || !clientSecret) {
+      addFail(clientCreateCheck, 'client_id or client_secret was not returned');
+    } else {
+      temporaryClient = {
+        clientId,
+        clientSecret,
+        redirectUri,
+        clientName,
+      };
+      addPass(clientCreateCheck, `HTTP ${createResponse.status}`);
+      addPass(clientCreateCheck, `client_id=${clientId}`);
+    }
   }
-
-  checks.push(finalizeCheck(registerCheck, 'dynamic client registration を確認しました'));
+  checks.push(finalizeCheck(clientCreateCheck, 'admin client create verified'));
 
   if (!temporaryClient) {
-    if (temporaryIat) {
-      await revokeTemporaryInitialAccessToken({
-        baseUrl: target.baseUrl,
-        timeoutMs,
-        adminSecret,
-        tokenHash: temporaryIat.tokenHash,
-        tenantId,
-      });
-    }
-    if (temporaryDcr) {
-      await restoreTemporaryDcrEnabled({
-        baseUrl: target.baseUrl,
-        timeoutMs,
-        adminSecret,
-        tenantId,
-        state: temporaryDcr,
-      });
-    }
     return {
       ok: false,
       env: target.env,
@@ -232,65 +201,54 @@ export async function runGeneratedAuthFlowSmoke(
     };
   }
 
-  const configGetCheck = makeSmokeCheck(
-    'client-config-get',
-    'client configuration GET',
-    temporaryClient.registrationClientUri
+  const clientGetCheck = makeSmokeCheck(
+    'admin-client-get',
+    'admin client GET',
+    `${target.baseUrl}/api/admin/clients/${encodeURIComponent(temporaryClient.clientId)}`
   );
   await fetchJsonCheck({
-    check: configGetCheck,
+    check: clientGetCheck,
     timeoutMs,
-    url: temporaryClient.registrationClientUri,
-    headers: {
-      authorization: `Bearer ${temporaryClient.registrationAccessToken}`,
-      accept: 'application/json',
-    },
+    url: `${target.baseUrl}/api/admin/clients/${encodeURIComponent(temporaryClient.clientId)}`,
+    headers: getAdminHeaders(adminSecret, tenantId),
     validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'client config GET response')) {
+      if (!validateJsonObject(check, payload, 'client GET response')) {
         return;
       }
-      if ((payload as Record<string, unknown>).client_id !== temporaryClient.clientId) {
-        addFail(check, `client_id expected=${temporaryClient.clientId}`);
+      const client = getClientFromPayload(payload);
+      if (client?.client_id !== temporaryClient?.clientId) {
+        addFail(check, `client_id expected=${temporaryClient?.clientId}`);
       }
     },
   });
-  checks.push(finalizeCheck(configGetCheck, 'client configuration GET を確認しました'));
+  checks.push(finalizeCheck(clientGetCheck, 'admin client GET verified'));
 
   const updatedClientName = `${temporaryClient.clientName} Updated`;
-  const configUpdateCheck = makeSmokeCheck(
-    'client-config-update',
-    'client configuration PUT',
-    temporaryClient.registrationClientUri
+  const clientUpdateCheck = makeSmokeCheck(
+    'admin-client-update',
+    'admin client PUT',
+    `${target.baseUrl}/api/admin/clients/${encodeURIComponent(temporaryClient.clientId)}`
   );
   await fetchJsonCheck({
-    check: configUpdateCheck,
+    check: clientUpdateCheck,
     timeoutMs,
-    url: temporaryClient.registrationClientUri,
+    url: `${target.baseUrl}/api/admin/clients/${encodeURIComponent(temporaryClient.clientId)}`,
     method: 'PUT',
-    headers: {
-      authorization: `Bearer ${temporaryClient.registrationAccessToken}`,
-      accept: 'application/json',
-      'content-type': 'application/json',
-    },
+    headers: getAdminHeaders(adminSecret, tenantId),
     body: JSON.stringify({
-      client_id: temporaryClient.clientId,
       client_name: updatedClientName,
-      redirect_uris: [temporaryClient.redirectUri],
-      grant_types: clientRegistrationDefaults.grantTypes,
-      response_types: clientRegistrationDefaults.responseTypes,
-      token_endpoint_auth_method: 'client_secret_basic',
-      scope: 'openid',
     }),
     validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'client config PUT response')) {
+      if (!validateJsonObject(check, payload, 'client PUT response')) {
         return;
       }
-      if ((payload as Record<string, unknown>).client_name !== updatedClientName) {
+      const client = getClientFromPayload(payload);
+      if (client?.client_name !== updatedClientName) {
         addFail(check, `client_name expected=${updatedClientName}`);
       }
     },
   });
-  checks.push(finalizeCheck(configUpdateCheck, 'client configuration PUT を確認しました'));
+  checks.push(finalizeCheck(clientUpdateCheck, 'admin client PUT verified'));
 
   if (!clientRegistrationDefaults.supportsClientCredentials) {
     const tokenCheck = makeSmokeCheck(
@@ -301,15 +259,15 @@ export async function runGeneratedAuthFlowSmoke(
     if (clientCredentialsMode === 'on') {
       addFail(
         tokenCheck,
-        'config.json の oidc.grantTypes に client_credentials が含まれていません'
+        'config.json oidc.grantTypes does not include client_credentials'
       );
     } else {
       addWarn(
         tokenCheck,
-        'config.json の oidc.grantTypes が client_credentials を許可していないため token/introspect/revoke をスキップしました'
+        'config.json oidc.grantTypes does not allow client_credentials; token/introspect/revoke checks were skipped'
       );
     }
-    checks.push(finalizeCheck(tokenCheck, 'client credentials token を確認しました'));
+    checks.push(finalizeCheck(tokenCheck, 'client credentials token verified'));
   } else if (clientCredentialsMode !== 'off') {
     const tokenCheck = makeSmokeCheck(
       'client-credentials-token',
@@ -339,7 +297,7 @@ export async function runGeneratedAuthFlowSmoke(
       ) {
         addWarn(
           tokenCheck,
-          `client_credentials が無効のため token/introspect/revoke をスキップしました: ${tokenResponse.status}`
+          `client_credentials is disabled; token/introspect/revoke checks were skipped: ${tokenResponse.status}`
         );
       } else {
         addFail(
@@ -348,15 +306,15 @@ export async function runGeneratedAuthFlowSmoke(
         );
       }
     } else if (!isRecord(tokenResponse.payload)) {
-      addFail(tokenCheck, 'token payload が object ではありません');
+      addFail(tokenCheck, 'token payload is not an object');
     } else if (typeof tokenResponse.payload.access_token !== 'string') {
-      addFail(tokenCheck, 'access_token が返ってきませんでした');
+      addFail(tokenCheck, 'access_token was not returned');
     } else {
       accessToken = tokenResponse.payload.access_token;
       addPass(tokenCheck, `HTTP ${tokenResponse.status}`);
-      addPass(tokenCheck, 'access_token を取得しました');
+      addPass(tokenCheck, 'access_token obtained');
     }
-    checks.push(finalizeCheck(tokenCheck, 'client credentials token を確認しました'));
+    checks.push(finalizeCheck(tokenCheck, 'client credentials token verified'));
 
     if (accessToken) {
       const introspectCheck = makeSmokeCheck(
@@ -384,12 +342,12 @@ export async function runGeneratedAuthFlowSmoke(
             return;
           }
           if ((payload as Record<string, unknown>).active !== true) {
-            addFail(check, 'active=true を期待しました');
+            addFail(check, 'active=true was expected');
           }
         },
       });
       checks.push(
-        finalizeCheck(introspectCheck, 'token introspection before revoke を確認しました')
+        finalizeCheck(introspectCheck, 'token introspection before revoke verified')
       );
 
       const revokeCheck = makeSmokeCheck(
@@ -413,7 +371,7 @@ export async function runGeneratedAuthFlowSmoke(
           client_secret: temporaryClient.clientSecret,
         }).toString(),
       });
-      checks.push(finalizeCheck(revokeCheck, 'token revocation を確認しました'));
+      checks.push(finalizeCheck(revokeCheck, 'token revocation verified'));
 
       const introspectAfterCheck = makeSmokeCheck(
         'token-introspect-after-revoke',
@@ -440,87 +398,37 @@ export async function runGeneratedAuthFlowSmoke(
             return;
           }
           if ((payload as Record<string, unknown>).active !== false) {
-            addFail(check, 'active=false を期待しました');
+            addFail(check, 'active=false was expected');
           }
         },
       });
       checks.push(
-        finalizeCheck(introspectAfterCheck, 'token introspection after revoke を確認しました')
+        finalizeCheck(introspectAfterCheck, 'token introspection after revoke verified')
       );
     }
   }
 
   const deleteCheck = makeSmokeCheck(
-    'client-config-delete',
-    'client configuration DELETE',
-    temporaryClient.registrationClientUri
+    'admin-client-delete',
+    'admin client DELETE',
+    `${target.baseUrl}/api/admin/clients/${encodeURIComponent(temporaryClient.clientId)}`
   );
-  const deleteResponse = await deleteTemporarySmokeClient(temporaryClient, timeoutMs);
-  deleteCheck.httpStatus = deleteResponse.status;
-  if (!deleteResponse.ok && deleteResponse.status !== 204) {
-    addFail(
-      deleteCheck,
-      `client delete failed: ${deleteResponse.status} ${deleteResponse.error ?? deleteResponse.bodyText ?? ''}`
-    );
-  } else {
-    addPass(deleteCheck, `HTTP ${deleteResponse.status || 204}`);
-  }
-  checks.push(finalizeCheck(deleteCheck, 'client configuration DELETE を確認しました'));
-
-  if (temporaryIat) {
-    const cleanupCheck = makeSmokeCheck(
-      'temporary-iat-cleanup',
-      'temporary initial access token cleanup',
-      `${target.baseUrl}/api/admin/iat-tokens/${temporaryIat.tokenHash}`
-    );
-    const cleanupResponse = await revokeTemporaryInitialAccessToken({
-      baseUrl: target.baseUrl,
-      timeoutMs,
-      adminSecret,
-      tokenHash: temporaryIat.tokenHash,
-      tenantId,
-    });
-    cleanupCheck.httpStatus = cleanupResponse.status;
-    if (!cleanupResponse.ok && cleanupResponse.status !== 404) {
-      addWarn(
-        cleanupCheck,
-        `temporary IAT cleanup failed: ${cleanupResponse.status} ${cleanupResponse.error ?? cleanupResponse.bodyText ?? ''}`
-      );
-    } else {
-      addPass(cleanupCheck, `HTTP ${cleanupResponse.status || 404}`);
-    }
-    checks.push(
-      finalizeCheck(cleanupCheck, 'temporary initial access token cleanup を確認しました')
-    );
-  }
-
-  if (temporaryDcr) {
-    const cleanupCheck = makeSmokeCheck(
-      'temporary-dcr-restore',
-      'temporary DCR restore',
-      `${target.baseUrl}/api/admin/tenants/${tenantId}/settings/dcr`
-    );
-    try {
-      const cleanupResponse = await restoreTemporaryDcrEnabled({
-        baseUrl: target.baseUrl,
-        timeoutMs,
-        adminSecret,
-        tenantId,
-        state: temporaryDcr,
-      });
-      cleanupCheck.httpStatus = cleanupResponse.status;
-      addPass(
-        cleanupCheck,
-        temporaryDcr.changed ? 'dcr.enabled を元の状態へ戻しました' : 'restore は不要でした'
-      );
-    } catch (error) {
-      addWarn(
-        cleanupCheck,
-        `temporary DCR restore failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    checks.push(finalizeCheck(cleanupCheck, 'temporary DCR restore を確認しました'));
-  }
+  await fetchJsonCheck({
+    check: deleteCheck,
+    timeoutMs,
+    url: `${target.baseUrl}/api/admin/clients/${encodeURIComponent(temporaryClient.clientId)}`,
+    method: 'DELETE',
+    headers: getAdminHeaders(adminSecret, tenantId),
+    validate: (payload, check) => {
+      if (!validateJsonObject(check, payload, 'client DELETE response')) {
+        return;
+      }
+      if ((payload as Record<string, unknown>).success !== true) {
+        addFail(check, 'success=true was expected');
+      }
+    },
+  });
+  checks.push(finalizeCheck(deleteCheck, 'admin client DELETE verified'));
 
   return {
     ok: isSmokeSuccessful(checks),
@@ -530,4 +438,7 @@ export async function runGeneratedAuthFlowSmoke(
     clientId: temporaryClient.clientId,
     checks,
   };
+  } finally {
+    await adminAccess.cleanup?.();
+  }
 }

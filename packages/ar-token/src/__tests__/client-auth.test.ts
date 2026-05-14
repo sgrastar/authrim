@@ -3324,6 +3324,53 @@ describe('Client Authentication Tests', () => {
       );
     });
 
+    it('allows Admin API machine access even when general client_credentials is disabled', async () => {
+      mockAdminMachineAccess();
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-client-credentials-disabled',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({ valid: true, client_id: 'setup-tool' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'false',
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockGetSystemSettingsCached).not.toHaveBeenCalled();
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          aud: 'authrim:admin-api',
+          sub: 'machine:amp_setup',
+          scope: 'admin:tenants.read',
+        }),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+    });
+
     it('issues Admin API machine tokens for MCP principals', async () => {
       mockAdminMachineAccess({
         principalType: 'mcp_server',

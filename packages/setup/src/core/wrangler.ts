@@ -132,7 +132,7 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   'ar-router': ['AUTHRIM_CONFIG'],
   'ar-async': ['AUTHRIM_CONFIG'],
   'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
-  'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG'],
+  'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE'],
   'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG'],
   'ar-vc': ['AUTHRIM_CONFIG'],
 };
@@ -184,8 +184,14 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-router': ['VERSION_MANAGER'],
   'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE', 'VERSION_MANAGER'],
   'ar-policy': ['PERMISSION_CHANGE_HUB', 'VERSION_MANAGER'],
-  'ar-saml': ['KEY_MANAGER', 'SAML_REQUEST_STORE', 'SESSION_STORE', 'VERSION_MANAGER'],
-  'ar-bridge': ['SESSION_STORE', 'VERSION_MANAGER'],
+  'ar-saml': [
+    'KEY_MANAGER',
+    'SAML_REQUEST_STORE',
+    'SESSION_STORE',
+    'CHALLENGE_STORE',
+    'VERSION_MANAGER',
+  ],
+  'ar-bridge': ['SESSION_STORE', 'CHALLENGE_STORE', 'VERSION_MANAGER'],
   'ar-vc': ['KEY_MANAGER', 'VERSION_MANAGER'],
 };
 
@@ -674,9 +680,12 @@ export function generateEnvVars(
     }
   }
 
-  if (component === 'ar-auth' || component === 'ar-management') {
+  if (component === 'ar-auth' || component === 'ar-management' || component === 'ar-saml') {
     vars['UI_URL'] = uiUrl;
     vars['LOGIN_UI_ENABLED'] = config.components.loginUi ? 'true' : 'false';
+  }
+
+  if (component === 'ar-auth' || component === 'ar-management') {
     vars['ADMIN_UI_ENABLED'] = config.components.adminUi ? 'true' : 'false';
     if (config.features.email?.fromAddress) {
       vars['EMAIL_FROM'] = config.features.email.fromAddress;
@@ -686,9 +695,11 @@ export function generateEnvVars(
     }
   }
 
-  if (component === 'ar-auth') {
+  if (component === 'ar-auth' || component === 'ar-saml') {
     vars['ENABLE_CONFORMANCE_MODE'] = 'false';
+  }
 
+  if (component === 'ar-auth') {
     // Cookie SameSite configuration based on origin relationship
     // If UI is served from same domain as API (via proxy), use 'Lax' (more secure)
     // If UI is on different domain, use 'None' (required for cross-origin)
@@ -789,7 +800,7 @@ export function generateEnvVars(
   // CORS allowed origins for workers that handle cross-origin requests.
   // This is the setup-side web_origin_registry -> ALLOWED_ORIGINS materialization boundary.
   // Workers.dev URLs are normalized to correct format: {name}.{subdomain}.workers.dev
-  if (['ar-auth', 'ar-management', 'ar-router'].includes(component)) {
+  if (['ar-auth', 'ar-management', 'ar-router', 'ar-saml'].includes(component)) {
     const allowedOrigins = deriveAllowedOrigins(config, workersSubdomain);
     if (allowedOrigins.length > 0) {
       vars['ALLOWED_ORIGINS'] = allowedOrigins.join(',');

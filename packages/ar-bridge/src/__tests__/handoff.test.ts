@@ -323,6 +323,34 @@ describe('handleHandoffVerify', () => {
     expect(mocks.createSessionRpc.mock.calls.at(-1)?.[3]).not.toHaveProperty('cnf');
   });
 
+  it('finalizes SAML SP cookie handoff when origin matches the artifact origin', async () => {
+    mocks.consumeChallengeRpc.mockResolvedValueOnce({
+      challenge: 'shard-session-123',
+      userId: 'user-123',
+      metadata: {
+        state: 'state-123',
+        aud: 'saml_sp_cookie_handoff',
+        created_at: Date.now(),
+        origin: 'https://rp.example.com',
+      },
+    });
+
+    const response = await handleHandoffFinalize(
+      createContext('https://issuer.example.com/handoff/finalize')
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.createSessionRpc).toHaveBeenCalledWith(
+      'rp-access-token',
+      'user-123',
+      3600,
+      expect.objectContaining({
+        token_type: 'Cookie',
+      }),
+      'tenant-123'
+    );
+  });
+
   it('uses the handoff artifact once for cookie-only finalize', async () => {
     mocks.consumeChallengeRpc
       .mockResolvedValueOnce({

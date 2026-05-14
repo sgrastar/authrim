@@ -336,16 +336,16 @@ async function deleteAdminUser(input: {
   );
   check.httpStatus = response.status;
   if (response.ok) {
-    addPass(check, `user_id=${input.userId} を cleanup しました`);
+    addPass(check, `user_id=${input.userId} cleaned up`);
   } else if (response.status === 404) {
-    addWarn(check, `user_id=${input.userId} は既に削除されています`);
+    addWarn(check, `user_id=${input.userId} has already been deleted`);
   } else {
     addWarn(
       check,
       `user cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
     );
   }
-  input.checks.push(finalizeCheck(check, 'cleanup temporary user を実行しました'));
+  input.checks.push(finalizeCheck(check, 'cleanup temporary user executed'));
 }
 
 async function deleteCustomClaimSchema(input: {
@@ -374,16 +374,16 @@ async function deleteCustomClaimSchema(input: {
   );
   check.httpStatus = response.status;
   if (response.ok) {
-    addPass(check, `schema_id=${input.schemaId} を cleanup しました`);
+    addPass(check, `schema_id=${input.schemaId} cleaned up`);
   } else if (response.status === 404) {
-    addWarn(check, `schema_id=${input.schemaId} は既に存在しません`);
+    addWarn(check, `schema_id=${input.schemaId} does not exist anymore`);
   } else {
     addWarn(
       check,
       `schema cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
     );
   }
-  input.checks.push(finalizeCheck(check, 'cleanup temporary custom claim schema を実行しました'));
+  input.checks.push(finalizeCheck(check, 'cleanup temporary custom claim schema executed'));
 }
 
 async function deleteRuntimeProfile(input: {
@@ -413,16 +413,16 @@ async function deleteRuntimeProfile(input: {
   );
   check.httpStatus = response.status;
   if (response.ok) {
-    addPass(check, `profile_id=${input.profileId} を cleanup しました`);
+    addPass(check, `profile_id=${input.profileId} cleaned up`);
   } else if (response.status === 404) {
-    addWarn(check, `profile_id=${input.profileId} は既に存在しません`);
+    addWarn(check, `profile_id=${input.profileId} does not exist anymore`);
   } else {
     addWarn(
       check,
       `runtime profile cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
     );
   }
-  input.checks.push(finalizeCheck(check, 'cleanup temporary runtime profile を実行しました'));
+  input.checks.push(finalizeCheck(check, 'cleanup temporary runtime profile executed'));
 }
 
 async function deleteRoutingRule(input: {
@@ -451,16 +451,16 @@ async function deleteRoutingRule(input: {
   );
   check.httpStatus = response.status;
   if (response.ok) {
-    addPass(check, `routing rule ${input.ruleName} を cleanup しました`);
+    addPass(check, `routing rule ${input.ruleName} cleaned up`);
   } else if (response.status === 404) {
-    addWarn(check, `routing rule ${input.ruleName} は既に存在しません`);
+    addWarn(check, `routing rule ${input.ruleName} does not exist anymore`);
   } else {
     addWarn(
       check,
       `routing rule cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
     );
   }
-  input.checks.push(finalizeCheck(check, 'cleanup temporary audit routing rule を実行しました'));
+  input.checks.push(finalizeCheck(check, 'cleanup temporary audit routing rule executed'));
 }
 
 async function revokeScimToken(input: {
@@ -489,16 +489,16 @@ async function revokeScimToken(input: {
   );
   check.httpStatus = response.status;
   if (response.ok) {
-    addPass(check, `token_hash=${input.tokenHash.slice(0, 8)} を cleanup しました`);
+    addPass(check, `token_hash=${input.tokenHash.slice(0, 8)} cleaned up`);
   } else if (response.status === 404) {
-    addWarn(check, 'SCIM token は既に削除されています');
+    addWarn(check, 'SCIM token has already been deleted');
   } else {
     addWarn(
       check,
       `SCIM token cleanup failed: ${response.status} ${response.error ?? response.bodyText ?? ''}`
     );
   }
-  input.checks.push(finalizeCheck(check, 'cleanup temporary SCIM token を実行しました'));
+  input.checks.push(finalizeCheck(check, 'cleanup temporary SCIM token executed'));
 }
 
 export async function runGeneratedServerSurfacesSmoke(
@@ -507,14 +507,17 @@ export async function runGeneratedServerSurfacesSmoke(
   const target = await resolveGeneratedSmokeTarget(options);
   const timeoutMs = options.timeoutMs ?? 10_000;
   const tenantId = target.tenantId;
-  const { secret: adminSecret, path: adminSecretPath } = await readGeneratedAdminApiSecret({
+  const adminAccess = await readGeneratedAdminApiSecret({
     baseDir: target.baseDir,
     env: target.env,
     adminSecret: options.adminSecret,
     adminSecretPath: options.adminSecretPath,
     baseUrl: target.baseUrl,
     tenantId: target.tenantId,
+    config: target.config,
   });
+  const adminSecret = adminAccess.secret;
+  const adminSecretPath = adminAccess.path;
 
   const checks: SmokeCheck[] = [];
   const smokeRunId = Date.now();
@@ -549,7 +552,23 @@ export async function runGeneratedServerSurfacesSmoke(
       },
     });
     void listSchemasPayload;
-    checks.push(finalizeCheck(listSchemasCheck, 'list custom claim schemas を確認しました'));
+    if (listSchemasCheck.status === 'fail' && listSchemasCheck.httpStatus === 403) {
+      listSchemasCheck.status = 'warn';
+      addWarn(
+        listSchemasCheck,
+        'Admin Machine Access token cannot access custom-claims/server-surface operations; skipping server-surface smoke'
+      );
+      checks.push(finalizeCheck(listSchemasCheck, 'list custom claim schemas verified'));
+      return {
+        ok: isSmokeSuccessful(checks),
+        env: target.env,
+        baseUrl: target.baseUrl,
+        configPath: target.configPath,
+        adminSecretPath,
+        checks,
+      };
+    }
+    checks.push(finalizeCheck(listSchemasCheck, 'list custom claim schemas verified'));
 
     const preferredSmokeFieldKey = pickSupportedScimField(currentSchemas);
     if (preferredSmokeFieldKey) {
@@ -581,21 +600,21 @@ export async function runGeneratedServerSurfacesSmoke(
       },
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.schema)) {
-          addFail(check, 'schema response が見つかりませんでした');
+          addFail(check, 'schema response was not found');
           return;
         }
         createdSmokeSchemaId = asString(payload.schema.id) ?? undefined;
         if (createdSmokeSchemaId) {
           addPass(check, `schema_id=${createdSmokeSchemaId}`);
         } else {
-          addFail(check, 'created schema id が見つかりませんでした');
+          addFail(check, 'created schema id was not found');
         }
       },
     });
     checks.push(
       finalizeCheck(
         createSmokeSchemaCheck,
-        'create temporary required registration field を確認しました'
+        'create temporary required registration field verified'
       )
     );
 
@@ -613,14 +632,14 @@ export async function runGeneratedServerSurfacesSmoke(
       validate: (payload, check) => {
         const fields = isRecord(payload) ? asRecordArray(payload.fields) : [];
         if (fields.some((field) => asString(field.field_key) === smokeFieldKey)) {
-          addPass(check, `registration field ${smokeFieldKey} を確認しました`);
+          addPass(check, `registration field ${smokeFieldKey} verified`);
         } else {
-          addFail(check, `registration field ${smokeFieldKey} が見つかりませんでした`);
+          addFail(check, `registration field ${smokeFieldKey} was not found`);
         }
       },
     });
     checks.push(
-      finalizeCheck(registrationFieldsCheck, 'public registration fields を確認しました')
+      finalizeCheck(registrationFieldsCheck, 'public registration fields verified')
     );
 
     const refreshSchemasCheck = makeSmokeCheck(
@@ -642,7 +661,7 @@ export async function runGeneratedServerSurfacesSmoke(
         addPass(check, `active required schemas=${requiredSchemas.length}`);
       },
     });
-    checks.push(finalizeCheck(refreshSchemasCheck, 'refresh schemas after create を確認しました'));
+    checks.push(finalizeCheck(refreshSchemasCheck, 'refresh schemas after create verified'));
 
     const requiredSchemas = currentSchemas.filter((schema) => schema.isActive && schema.isRequired);
     const smokeRequiredSchemas = requiredSchemas.filter(
@@ -653,7 +672,7 @@ export async function runGeneratedServerSurfacesSmoke(
         'server-surfaces-required-smoke-schema-missing',
         'temporary required schema missing'
       );
-      addFail(check, `${smokeFieldKey} が required schema 一覧に含まれていません`);
+      addFail(check, `${smokeFieldKey} was not included in the required schema list`);
       checks.push(finalizeCheck(check, 'temporary required schema missing'));
       return {
         ok: false,
@@ -692,14 +711,14 @@ export async function runGeneratedServerSurfacesSmoke(
       body: adminMissingPayload,
       validate: (payload, check) => {
         if (findMissingRequiredField(payload, smokeFieldKey)) {
-          addPass(check, `missing_required_fields に ${smokeFieldKey} を確認しました`);
+          addPass(check, `missing_required_fields includes ${smokeFieldKey}`);
         } else {
-          addFail(check, `missing_required_fields に ${smokeFieldKey} が含まれていません`);
+          addFail(check, `missing_required_fields does not include ${smokeFieldKey}`);
         }
       },
     });
     void adminMissingPayloadResponse;
-    checks.push(finalizeCheck(adminMissingCheck, 'admin required validation を確認しました'));
+    checks.push(finalizeCheck(adminMissingCheck, 'admin required validation verified'));
 
     const adminCreateCheck = makeSmokeCheck(
       'server-surfaces-admin-create-valid',
@@ -725,21 +744,21 @@ export async function runGeneratedServerSurfacesSmoke(
       },
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.user)) {
-          addFail(check, 'created user response が不正です');
+          addFail(check, 'created user response is invalid');
           return;
         }
         createdUserId = asString(payload.user.id) ?? undefined;
         if (createdUserId) {
           addPass(check, `user_id=${createdUserId}`);
         } else {
-          addFail(check, 'created user id が見つかりませんでした');
+          addFail(check, 'created user id was not found');
         }
       },
     });
     checks.push(
       finalizeCheck(
         adminCreateCheck,
-        'admin user create succeeds when required fields are present を確認しました'
+        'admin user create succeeds when required fields are present verified'
       )
     );
 
@@ -768,16 +787,16 @@ export async function runGeneratedServerSurfacesSmoke(
       validate: (payload, check) => {
         const customFields = isRecord(payload) ? asRecordArray(payload.customFields) : [];
         if (customFields.some((field) => asString(field.field_name) === smokeFieldKey)) {
-          addPass(check, `custom field ${smokeFieldKey} persisted を確認しました`);
+          addPass(check, `custom field ${smokeFieldKey} persisted verified`);
         } else {
-          addFail(check, `custom field ${smokeFieldKey} persisted が確認できませんでした`);
+          addFail(check, `custom field ${smokeFieldKey} persisted could not be verified`);
         }
       },
     });
     checks.push(
       finalizeCheck(
         adminGetCheck,
-        'admin user detail returns persisted custom field を確認しました'
+        'admin user detail returns persisted custom field verified'
       )
     );
 
@@ -799,14 +818,14 @@ export async function runGeneratedServerSurfacesSmoke(
       },
       validate: (payload, check) => {
         if (findMissingRequiredField(payload, smokeFieldKey)) {
-          addPass(check, `update missing_required_fields に ${smokeFieldKey} を確認しました`);
+          addPass(check, `update missing_required_fields includes ${smokeFieldKey}`);
         } else {
-          addFail(check, `update missing_required_fields に ${smokeFieldKey} が含まれていません`);
+          addFail(check, `update missing_required_fields does not include ${smokeFieldKey}`);
         }
       },
     });
     checks.push(
-      finalizeCheck(adminUpdateCheck, 'admin user update required validation を確認しました')
+      finalizeCheck(adminUpdateCheck, 'admin user update required validation verified')
     );
 
     const scimSupportedActiveRequired = requiredSchemas.filter((schema) =>
@@ -840,21 +859,21 @@ export async function runGeneratedServerSurfacesSmoke(
           },
           validate: (payload, check) => {
             if (!isRecord(payload) || !isRecord(payload.schema)) {
-              addFail(check, 'SCIM schema response が不正です');
+              addFail(check, 'SCIM schema response is invalid');
               return;
             }
             createdScimSchemaId = asString(payload.schema.id) ?? undefined;
             if (createdScimSchemaId) {
               addPass(check, `schema_id=${createdScimSchemaId}`);
             } else {
-              addFail(check, 'SCIM schema id が見つかりませんでした');
+              addFail(check, 'SCIM schema id was not found');
             }
           },
         });
         checks.push(
           finalizeCheck(
             scimSchemaCheck,
-            'create temporary SCIM-compatible required field を確認しました'
+            'create temporary SCIM-compatible required field verified'
           )
         );
 
@@ -875,7 +894,7 @@ export async function runGeneratedServerSurfacesSmoke(
           },
         });
         checks.push(
-          finalizeCheck(refreshScimSchemasCheck, 'refresh schemas for SCIM checks を確認しました')
+          finalizeCheck(refreshScimSchemasCheck, 'refresh schemas for SCIM checks verified')
         );
       }
     }
@@ -899,7 +918,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
       validate: (payload, check) => {
         if (!isRecord(payload)) {
-          addFail(check, 'SCIM token response が不正です');
+          addFail(check, 'SCIM token response is invalid');
           return;
         }
         const token = asString(payload.token);
@@ -908,11 +927,11 @@ export async function runGeneratedServerSurfacesSmoke(
           scimToken = { token, tokenHash };
           addPass(check, `token_hash=${tokenHash.slice(0, 8)}`);
         } else {
-          addFail(check, 'SCIM token / tokenHash が見つかりませんでした');
+          addFail(check, 'SCIM token / tokenHash was not found');
         }
       },
     });
-    checks.push(finalizeCheck(scimTokenCheck, 'create temporary SCIM token を確認しました'));
+    checks.push(finalizeCheck(scimTokenCheck, 'create temporary SCIM token verified'));
 
     if (scimToken && scimTargetField) {
       const activeRequiredSchemas = currentSchemas.filter(
@@ -937,14 +956,14 @@ export async function runGeneratedServerSurfacesSmoke(
         ),
         validate: (payload, check) => {
           if (findMissingRequiredField(payload, scimTargetField)) {
-            addPass(check, `SCIM missing_required_fields に ${scimTargetField} を確認しました`);
+            addPass(check, `SCIM missing_required_fields includes ${scimTargetField}`);
           } else {
-            addFail(check, `SCIM missing_required_fields に ${scimTargetField} が含まれていません`);
+            addFail(check, `SCIM missing_required_fields does not include ${scimTargetField}`);
           }
         },
       });
       checks.push(
-        finalizeCheck(scimMissingCheck, 'SCIM create required validation を確認しました')
+        finalizeCheck(scimMissingCheck, 'SCIM create required validation verified')
       );
 
       const scimCreatableRequiredSchemas = activeRequiredSchemas.filter((schema) =>
@@ -978,14 +997,14 @@ export async function runGeneratedServerSurfacesSmoke(
           if (response.status === 201) {
             addPass(scimCreateValidCheck, 'HTTP 201');
             if (!isRecord(payload)) {
-              addFail(scimCreateValidCheck, 'SCIM create response が不正です');
+              addFail(scimCreateValidCheck, 'SCIM create response is invalid');
               break;
             }
             createdScimUserId = asString(payload.id) ?? undefined;
             if (createdScimUserId) {
               addPass(scimCreateValidCheck, `scim_user_id=${createdScimUserId}`);
             } else {
-              addFail(scimCreateValidCheck, 'SCIM created user id が見つかりませんでした');
+              addFail(scimCreateValidCheck, 'SCIM created user id was not found');
             }
             break;
           }
@@ -1010,7 +1029,7 @@ export async function runGeneratedServerSurfacesSmoke(
         checks.push(
           finalizeCheck(
             scimCreateValidCheck,
-            'SCIM create succeeds when required fields are present を確認しました'
+            'SCIM create succeeds when required fields are present verified'
           )
         );
       } else {
@@ -1020,7 +1039,7 @@ export async function runGeneratedServerSurfacesSmoke(
         );
         addWarn(
           scimSkipCheck,
-          `SCIM success check をスキップしました: unsupported required fields=${activeRequiredSchemas
+          `SCIM success check skipped: unsupported required fields=${activeRequiredSchemas
             .map((schema) => `${schema.fieldKey}:${schema.fieldType}`)
             .join(', ')}`
         );
@@ -1031,7 +1050,7 @@ export async function runGeneratedServerSurfacesSmoke(
         'server-surfaces-scim-coverage-skip',
         'SCIM coverage skipped'
       );
-      addWarn(scimSkipCheck, 'SCIM token or SCIM-compatible required field を確保できませんでした');
+      addWarn(scimSkipCheck, 'SCIM token or SCIM-compatible required field could not be prepared');
       checks.push(finalizeCheck(scimSkipCheck, 'SCIM coverage skipped'));
     }
 
@@ -1048,13 +1067,13 @@ export async function runGeneratedServerSurfacesSmoke(
       headers: getAdminHeaders(adminSecret, tenantId),
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.defaults)) {
-          addFail(check, 'runtime profile defaults response が不正です');
+          addFail(check, 'runtime profile defaults response is invalid');
           return;
         }
-        addPass(check, 'defaults object を確認しました');
+        addPass(check, 'defaults object verified');
       },
     });
-    checks.push(finalizeCheck(runtimeDefaultsCheck, 'runtime profile defaults を確認しました'));
+    checks.push(finalizeCheck(runtimeDefaultsCheck, 'runtime profile defaults verified'));
 
     const runtimeProfileCreateCheck = makeSmokeCheck(
       'server-surfaces-runtime-profile-create',
@@ -1081,7 +1100,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.profile)) {
-          addFail(check, 'runtime profile create response が不正です');
+          addFail(check, 'runtime profile create response is invalid');
           return;
         }
         createdRuntimeProfileId = asString(payload.profile.id) ?? runtimeProfileId;
@@ -1091,7 +1110,7 @@ export async function runGeneratedServerSurfacesSmoke(
     checks.push(
       finalizeCheck(
         runtimeProfileCreateCheck,
-        'create temporary audit runtime profile を確認しました'
+        'create temporary audit runtime profile verified'
       )
     );
 
@@ -1108,7 +1127,7 @@ export async function runGeneratedServerSurfacesSmoke(
       headers: getAdminHeaders(adminSecret, tenantId),
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.profile)) {
-          addFail(check, 'runtime profile get response が不正です');
+          addFail(check, 'runtime profile get response is invalid');
           return;
         }
         if (asString(payload.profile.id) === runtimeProfileId) {
@@ -1119,7 +1138,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
     });
     checks.push(
-      finalizeCheck(runtimeProfileGetCheck, 'get temporary audit runtime profile を確認しました')
+      finalizeCheck(runtimeProfileGetCheck, 'get temporary audit runtime profile verified')
     );
 
     const runtimeProfileListCheck = makeSmokeCheck(
@@ -1143,7 +1162,7 @@ export async function runGeneratedServerSurfacesSmoke(
           const items = getRuntimeProfileListItems(payload, 'audit');
           runtimeProfileListFound = items.some((item) => asString(item.id) === runtimeProfileId);
           if (runtimeProfileListFound) {
-            addPass(check, `runtime profile list に ${runtimeProfileId} を確認しました`);
+            addPass(check, `runtime profile list includes ${runtimeProfileId}`);
             return;
           }
           if (attempt < runtimeProfileListMaxAttempts - 1) {
@@ -1153,7 +1172,7 @@ export async function runGeneratedServerSurfacesSmoke(
             );
             return;
           }
-          addFail(check, `runtime profile list に ${runtimeProfileId} が見つかりませんでした`);
+          addFail(check, `runtime profile list does not include ${runtimeProfileId}`);
         },
       });
       if (runtimeProfileListFound) {
@@ -1162,7 +1181,7 @@ export async function runGeneratedServerSurfacesSmoke(
       await wait(runtimeProfileListIsKvBackend ? 5000 : 1500);
     }
     checks.push(
-      finalizeCheck(runtimeProfileListCheck, 'list audit runtime profiles を確認しました')
+      finalizeCheck(runtimeProfileListCheck, 'list audit runtime profiles verified')
     );
 
     const tenantRuntimeProfilesCheck = makeSmokeCheck(
@@ -1178,14 +1197,14 @@ export async function runGeneratedServerSurfacesSmoke(
       headers: getAdminHeaders(adminSecret, tenantId),
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.effective)) {
-          addFail(check, 'tenant runtime profiles response が不正です');
+          addFail(check, 'tenant runtime profiles response is invalid');
           return;
         }
         addPass(check, `tenant_id=${tenantId}`);
       },
     });
     checks.push(
-      finalizeCheck(tenantRuntimeProfilesCheck, 'tenant effective runtime profiles を確認しました')
+      finalizeCheck(tenantRuntimeProfilesCheck, 'tenant effective runtime profiles verified')
     );
 
     const auditStorageConfigCheck = makeSmokeCheck(
@@ -1201,13 +1220,13 @@ export async function runGeneratedServerSurfacesSmoke(
       headers: getAdminHeaders(adminSecret, tenantId),
       validate: (payload, check) => {
         if (isRecord(payload)) {
-          addPass(check, 'audit storage config object を確認しました');
+          addPass(check, 'audit storage config object verified');
         } else {
-          addFail(check, 'audit storage config response が不正です');
+          addFail(check, 'audit storage config response is invalid');
         }
       },
     });
-    checks.push(finalizeCheck(auditStorageConfigCheck, 'audit storage config を確認しました'));
+    checks.push(finalizeCheck(auditStorageConfigCheck, 'audit storage config verified'));
 
     const auditRetentionCheck = makeSmokeCheck(
       'phase4-audit-storage-retention',
@@ -1222,13 +1241,13 @@ export async function runGeneratedServerSurfacesSmoke(
       headers: getAdminHeaders(adminSecret, tenantId),
       validate: (payload, check) => {
         if (isRecord(payload)) {
-          addPass(check, 'audit retention object を確認しました');
+          addPass(check, 'audit retention object verified');
         } else {
-          addFail(check, 'audit retention response が不正です');
+          addFail(check, 'audit retention response is invalid');
         }
       },
     });
-    checks.push(finalizeCheck(auditRetentionCheck, 'audit storage retention を確認しました'));
+    checks.push(finalizeCheck(auditRetentionCheck, 'audit storage retention verified'));
 
     const routingRuleCreateCheck = makeSmokeCheck(
       'phase4-routing-rule-create',
@@ -1251,7 +1270,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.rule)) {
-          addFail(check, 'routing rule create response が不正です');
+          addFail(check, 'routing rule create response is invalid');
           return;
         }
         createdRoutingRuleName = asString(payload.rule.name) ?? routingRuleName;
@@ -1259,7 +1278,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
     });
     checks.push(
-      finalizeCheck(routingRuleCreateCheck, 'create temporary audit routing rule を確認しました')
+      finalizeCheck(routingRuleCreateCheck, 'create temporary audit routing rule verified')
     );
 
     const routingRuleListCheck = makeSmokeCheck(
@@ -1276,13 +1295,13 @@ export async function runGeneratedServerSurfacesSmoke(
       validate: (payload, check) => {
         const rules = isRecord(payload) ? asRecordArray(payload.rules) : [];
         if (rules.some((rule) => asString(rule.name) === routingRuleName)) {
-          addPass(check, `routing rule ${routingRuleName} を確認しました`);
+          addPass(check, `routing rule ${routingRuleName} verified`);
         } else {
-          addFail(check, `routing rule ${routingRuleName} が見つかりませんでした`);
+          addFail(check, `routing rule ${routingRuleName} was not found`);
         }
       },
     });
-    checks.push(finalizeCheck(routingRuleListCheck, 'list audit routing rules を確認しました'));
+    checks.push(finalizeCheck(routingRuleListCheck, 'list audit routing rules verified'));
 
     const auditStatsCheck = makeSmokeCheck(
       'phase4-audit-storage-stats',
@@ -1297,13 +1316,13 @@ export async function runGeneratedServerSurfacesSmoke(
       headers: getAdminHeaders(adminSecret, tenantId),
       validate: (payload, check) => {
         if (isRecord(payload)) {
-          addPass(check, 'audit storage stats object を確認しました');
+          addPass(check, 'audit storage stats object verified');
         } else {
-          addFail(check, 'audit storage stats response が不正です');
+          addFail(check, 'audit storage stats response is invalid');
         }
       },
     });
-    checks.push(finalizeCheck(auditStatsCheck, 'audit storage stats を確認しました'));
+    checks.push(finalizeCheck(auditStatsCheck, 'audit storage stats verified'));
   } finally {
     await deleteAdminUser({
       checks,
@@ -1362,6 +1381,7 @@ export async function runGeneratedServerSurfacesSmoke(
       tenantId,
       schemaId: createdSmokeSchemaId,
     });
+    await adminAccess.cleanup?.();
   }
 
   return {

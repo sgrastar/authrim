@@ -226,6 +226,7 @@ app.use('*', async (c, next) => {
     path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||
+    path.startsWith('/saml/') ||
     // UI proxy paths - UI Workers handle their own headers
     path.startsWith('/setup') ||
     path.startsWith('/admin') ||
@@ -608,6 +609,21 @@ app.all('/api/auth/*', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+app.get('/auth/login-challenge', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/auth/consent', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/auth/consent', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 /**
  * Session endpoints - Route to OP_AUTH worker
  * - /api/sessions/status - Check session validity
@@ -789,7 +805,8 @@ app.all('/api/admin/*', async (c) => {
   // Route SAML admin endpoints to OP_SAML.
   if (
     matchesPathGroup(path, '/api/admin/saml-providers') ||
-    matchesPathGroup(path, '/api/admin/saml-attribute-presets')
+    matchesPathGroup(path, '/api/admin/saml-attribute-presets') ||
+    matchesPathGroup(path, '/api/admin/saml-metadata')
   ) {
     if (!c.env.OP_SAML) {
       return notFoundResponse();
@@ -900,6 +917,11 @@ app.all('/did/*', async (c) => {
  * - /external-idp/admin/* - Admin API for external IdP management
  */
 app.all('/auth/external/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.EXTERNAL_IDP.fetch(request);
+});
+
+app.all('/handoff/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.EXTERNAL_IDP.fetch(request);
 });

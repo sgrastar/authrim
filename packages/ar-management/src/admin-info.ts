@@ -269,6 +269,8 @@ function buildEndpoints(issuer: string, apiBaseUrl: string) {
     /** SAML 2.0 Endpoints */
     saml: {
       sso: `${issuer}/saml/idp/sso`,
+      idp_metadata: `${issuer}/saml/idp/metadata`,
+      sp_metadata: `${issuer}/saml/sp/metadata`,
       metadata: `${issuer}/saml/sp/metadata`,
       acs: `${issuer}/saml/sp/acs`,
       slo: `${issuer}/saml/sp/slo`,
