@@ -67,7 +67,9 @@
 	let loadingPresets = $state(false);
 	let importingMetadata = $state(false);
 	let metadataImported = $state(false);
+	let metadataImportedProviderType = $state<SAMLProvider['providerType'] | ''>('');
 	let metadataImportMessage = $state('');
+	let metadataImportTone = $state<'success' | 'warning'>('success');
 	let metadataImportError = $state('');
 	let lastImportedMetadataUrl = $state('');
 	let saving = $state(false);
@@ -229,6 +231,28 @@
 		}
 	}
 
+	function providerTypeLabel(type: SAMLProvider['providerType']) {
+		return type === 'saml_sp' ? 'Service Provider' : 'Identity Provider';
+	}
+
+	function chooseProviderType(nextProviderType: SAMLProvider['providerType']) {
+		if (
+			metadataImported &&
+			metadataImportedProviderType &&
+			nextProviderType !== metadataImportedProviderType
+		) {
+			metadataImportError = '';
+			metadataImportTone = 'warning';
+			metadataImportMessage =
+				metadataImportedProviderType === 'saml_idp'
+					? 'This is IdP metadata. Keep Identity Provider selected for external SAML login, or import the target SP metadata before choosing Service Provider.'
+					: 'This is SP metadata. Keep Service Provider selected for Authrim-issued assertions, or import the external IdP metadata before choosing Identity Provider.';
+			return;
+		}
+
+		providerType = nextProviderType;
+	}
+
 	function scheduleMetadataImport() {
 		if (metadataImportTimer) clearTimeout(metadataImportTimer);
 		metadataImportTimer = setTimeout(() => {
@@ -258,6 +282,7 @@
 		importingMetadata = true;
 		metadataImportError = '';
 		metadataImportMessage = '';
+		metadataImportTone = 'success';
 		error = '';
 
 		try {
@@ -270,13 +295,16 @@
 			setupMode = 'manual';
 			applyPreviewConfig(preview.config);
 			metadataImported = true;
+			metadataImportedProviderType = preview.providerType;
 			lastImportedMetadataUrl = metadataUrl.trim();
+			metadataImportTone = 'success';
 			metadataImportMessage =
 				preview.providerType === 'saml_sp'
 					? 'SP metadata imported. Authrim will act as IdP for this provider.'
 					: 'IdP metadata imported. Authrim will act as SP for this provider.';
 		} catch (err) {
 			metadataImported = false;
+			metadataImportedProviderType = '';
 			metadataImportError = err instanceof Error ? err.message : 'Failed to import SAML metadata';
 		} finally {
 			importingMetadata = false;
@@ -285,8 +313,10 @@
 
 	function handleMetadataUrlInput() {
 		metadataImported = false;
+		metadataImportedProviderType = '';
 		lastImportedMetadataUrl = '';
 		metadataImportMessage = '';
+		metadataImportTone = 'success';
 		metadataImportError = '';
 	}
 
@@ -406,7 +436,12 @@
 			{#if metadataImportError}
 				<p class="form-error">{metadataImportError}</p>
 			{:else if metadataImportMessage}
-				<p class="form-success">{metadataImportMessage}</p>
+				<p
+					class:form-success={metadataImportTone === 'success'}
+					class:form-warning={metadataImportTone === 'warning'}
+				>
+					{metadataImportMessage}
+				</p>
 			{:else}
 				<p class="form-hint">
 					SP metadata will select Service Provider. IdP metadata will select Identity Provider.
@@ -425,7 +460,7 @@
 					type="button"
 					class="template-card"
 					class:template-card-selected={providerType === 'saml_idp'}
-					onclick={() => (providerType = 'saml_idp')}
+					onclick={() => chooseProviderType('saml_idp')}
 				>
 					<div class="i-ph-identification-card h-5 w-5 template-icon"></div>
 					<div class="template-name">Identity Provider</div>
@@ -436,13 +471,19 @@
 					type="button"
 					class="template-card"
 					class:template-card-selected={providerType === 'saml_sp'}
-					onclick={() => (providerType = 'saml_sp')}
+					onclick={() => chooseProviderType('saml_sp')}
 				>
 					<div class="i-ph-app-window h-5 w-5 template-icon"></div>
 					<div class="template-name">Service Provider</div>
 					<div class="template-desc">Authrim as IdP</div>
 				</button>
 			</div>
+
+			{#if metadataImported && metadataImportedProviderType}
+				<p class="form-hint selected-metadata-role">
+					Imported metadata role: {providerTypeLabel(metadataImportedProviderType)}.
+				</p>
+			{/if}
 		</div>
 
 		<div class="panel">
@@ -792,6 +833,16 @@
 		margin: 8px 0 0;
 		color: var(--color-success, #22c55e);
 		font-size: 0.875rem;
+	}
+
+	.form-warning {
+		margin: 8px 0 0;
+		color: var(--color-warning, #b08800);
+		font-size: 0.875rem;
+	}
+
+	.selected-metadata-role {
+		margin-top: 10px;
 	}
 
 	.saml-choice-grid {

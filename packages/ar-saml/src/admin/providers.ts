@@ -1107,7 +1107,7 @@ function detectSAMLMetadataProviderType(metadataXml: string): 'saml_idp' | 'saml
   }
   if (hasIdP && hasSP) {
     throw new SAMLMetadataValidationError(
-      'Metadata contains both IdP and SP descriptors. Choose the provider type manually or provide role-specific metadata.'
+      'Metadata contains both Identity Provider and Service Provider descriptors, so Authrim cannot safely auto-select a role. Import role-specific metadata instead, or choose the provider type and configure the role manually.'
     );
   }
 
