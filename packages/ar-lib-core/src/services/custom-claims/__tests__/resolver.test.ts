@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { CustomClaimSchemaResolver, loadFeatureConfig, type CustomClaimSchema } from '../resolver';
+import {
+  CustomClaimSchemaResolver,
+  createCustomClaimSchemaResolverFromSources,
+  loadFeatureConfig,
+  type CustomClaimSchema,
+} from '../resolver';
 import { SchemaLoader } from '../schema-loader';
 import { ClaimScopeEvaluator } from '../scope-evaluator';
 import { UserCustomDataFetcher } from '../data-fetcher';
@@ -115,6 +120,58 @@ describe('CustomClaimSchemaResolver', () => {
     expect(result.claims).toEqual({ dept: 'engineering' });
     expect(result.schemas_evaluated).toBe(2);
     expect(result.schemas_matched).toBe(1);
+  });
+
+  it('can resolve schemas, non-PII data, and PII data from separate runtime sources', async () => {
+    const schemaDb = {
+      ...mockDb,
+      query: vi.fn().mockResolvedValue([
+        makeSchema({
+          id: '1',
+          field_key: 'dept',
+          include_in_id_token: 1,
+          is_pii: 0,
+        }),
+        makeSchema({
+          id: '2',
+          field_key: 'tax_id',
+          include_in_id_token: 1,
+          is_pii: 1,
+        }),
+      ]),
+    };
+    const nonPiiDb = {
+      ...mockDb,
+      query: vi.fn().mockResolvedValue([{ field_name: 'dept', field_value: 'engineering' }]),
+    };
+    const piiDb = {
+      ...mockPiiDb,
+      queryOne: vi
+        .fn()
+        .mockResolvedValue({ custom_attributes_json: JSON.stringify({ tax_id: 'TX-123' }) }),
+    };
+
+    const resolver = createCustomClaimSchemaResolverFromSources({
+      schemaDb: schemaDb as any,
+      nonPiiDb: nonPiiDb as any,
+      piiDb: piiDb as any,
+      cache: null,
+    });
+    const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');
+
+    expect(result.claims).toEqual({ dept: 'engineering', tax_id: 'TX-123' });
+    expect(schemaDb.query).toHaveBeenCalledWith(expect.stringContaining('custom_claim_schemas'), [
+      'default',
+    ]);
+    expect(nonPiiDb.query).toHaveBeenCalledWith(expect.stringContaining('user_custom_fields'), [
+      'default',
+      'user-1',
+      'dept',
+    ]);
+    expect(piiDb.queryOne).toHaveBeenCalledWith(expect.stringContaining('users_pii'), [
+      'user-1',
+      'default',
+    ]);
   });
 
   it('filters by userinfo target', async () => {

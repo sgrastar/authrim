@@ -5,7 +5,7 @@ import type {
   ApprovalTransportMethod,
   Env,
 } from '@authrim/ar-lib-core';
-import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
+import { ensureDatabaseAdapter, resolveUserStoreRuntimeSourcesFromEnv } from '@authrim/ar-lib-core';
 
 type AdminContext = Context<any, any, any>;
 
@@ -30,7 +30,10 @@ async function resolveUserContact(
   subjectId: string,
   method: 'email_otp' | 'sms_otp'
 ): Promise<string> {
-  const coreAdapter = ensureDatabaseAdapter(c.env.DB, 'approval-contact-core');
+  const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(c.env, request.tenant_id, {
+    requestPath: c.req?.path,
+  });
+  const coreAdapter = ensureDatabaseAdapter(userStoreSources.coreDb, 'approval-contact-core');
   const coreRow = await coreAdapter.queryOne<{
     pii_partition: string | null;
     email_verified: number | boolean | null;
@@ -48,7 +51,12 @@ async function resolveUserContact(
     );
   }
 
-  const piiAdapter = ensureDatabaseAdapter(c.env.DB_PII ?? c.env.DB, 'approval-contact-pii');
+  if (!userStoreSources.piiDb) {
+    throw new ApprovalTransportChannelResolutionError(
+      'Approval transport resolution requires a configured PII user store.'
+    );
+  }
+  const piiAdapter = ensureDatabaseAdapter(userStoreSources.piiDb, 'approval-contact-pii');
   const piiRow = await piiAdapter.queryOne<{
     email: string | null;
     phone_number: string | null;

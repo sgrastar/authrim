@@ -5,7 +5,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SessionStore } from '../SessionStore.ts';
 import type { Env } from '../../types/env';
-import { DEFAULT_STORAGE_PROFILE_ID } from '../../types/runtime-profile';
+import {
+  DEFAULT_STORAGE_PROFILE_ID,
+  TENANT_D1_STORAGE_PROFILE_ID,
+} from '../../types/runtime-profile';
 import { AUTH_CORE_PERSISTENCE_CONTEXT_KEY } from '../../services/auth-core-persistence-context';
 
 // Mock DurableObjectState
@@ -238,14 +241,57 @@ describe('SessionStore', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
 
-      expect(context).toEqual({
+      expect(context).toMatchObject({
         storageProfileId: DEFAULT_STORAGE_PROFILE_ID,
         coreTarget: {
           driver: 'd1',
           bindingRef: 'DB',
           role: 'core',
         },
+        transientAuth: {
+          sessionColdPersistence: 'enabled',
+          sessionClientMirror: 'async',
+          deviceCibaColdPersistence: 'enabled',
+          externalDurableMirror: 'disabled',
+        },
       });
+    });
+
+    it('disables cold session persistence when the storage profile detaches transient mirrors', async () => {
+      const d1 = createMockD1();
+      mockEnv = {
+        ...createMockEnv(),
+        DB: d1,
+        DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+      } as Env;
+      sessionStore = new SessionStore(mockState as unknown as DurableObjectState, mockEnv);
+
+      await sessionStore.createSessionRpc(
+        '0_session_tenant_d1_no_cold_persistence',
+        'user_123',
+        3600,
+        undefined,
+        'tenant-a'
+      );
+
+      let context: unknown;
+      for (let i = 0; i < 5; i++) {
+        context = await mockState.storage.get(AUTH_CORE_PERSISTENCE_CONTEXT_KEY);
+        if (context) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(context).toMatchObject({
+        storageProfileId: TENANT_D1_STORAGE_PROFILE_ID,
+        transientAuth: {
+          sessionColdPersistence: 'disabled',
+          sessionClientMirror: 'async',
+          deviceCibaColdPersistence: 'disabled',
+        },
+      });
+      expect(d1.prepare).not.toHaveBeenCalled();
     });
   });
 

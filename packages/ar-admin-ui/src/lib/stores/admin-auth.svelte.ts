@@ -13,9 +13,12 @@ import { adminAuthAPI, AuthError } from '$lib/api/admin-auth';
  */
 export interface AdminUser {
 	userId: string;
+	tenantId: string;
 	email: string;
 	name?: string;
 	roles: string[];
+	adminScope: 'platform' | 'tenant';
+	isPlatformAdmin: boolean;
 	lastLoginAt?: number | null;
 }
 
@@ -93,9 +96,12 @@ function createAdminAuthStore() {
 					state.isAuthenticated = true;
 					state.user = {
 						userId: session.user_id,
+						tenantId: session.tenant_id,
 						email: session.email || '',
 						name: session.name,
 						roles: session.roles,
+						adminScope: session.admin_scope,
+						isPlatformAdmin: session.is_platform_admin,
 						lastLoginAt: session.last_login_at
 					};
 				} else {

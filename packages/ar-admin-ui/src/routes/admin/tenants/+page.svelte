@@ -10,6 +10,7 @@
 	let tenants = $derived(tenantStore.tenants);
 	let singleTenantMode = $derived(tenantStore.singleTenantMode);
 	let singleTenantReason = $derived(tenantStore.singleTenantReason);
+	let tenantD1Pool = $derived(tenantStore.tenantD1Pool);
 	let loading = $state(!tenantStore.loaded);
 	let error = $state('');
 
@@ -70,6 +71,18 @@
 					{singleTenantReason ??
 						'API custom domain is not configured. This deployment runs in single-tenant mode.'}
 					Configure an API custom domain in setup to enable additional tenants.
+				</p>
+			</div>
+		</div>
+	{/if}
+
+	{#if tenantD1Pool?.enabled}
+		<div class="alert alert-info">
+			<i class="i-ph-database"></i>
+			<div>
+				<strong>Tenant D1 slots</strong>
+				<p>
+					Available {tenantD1Pool.available_slots ?? 0} / {tenantD1Pool.capacity ?? 0}
 				</p>
 			</div>
 		</div>

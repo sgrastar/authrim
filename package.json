@@ -53,7 +53,9 @@
     "setup:smoke-generated-auth-flow": "tsx test/environment-validation/smoke-generated-auth-flow.ts",
     "setup:smoke-generated-approvals": "tsx test/environment-validation/smoke-generated-approvals.ts",
     "setup:smoke-generated-server-surfaces": "tsx test/environment-validation/smoke-generated-server-surfaces.ts",
-    "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts"
+    "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts",
+    "setup:local-capacity": "tsx test/environment-validation/local-capacity.ts",
+    "setup:local-user-scale": "tsx test/environment-validation/local-user-scale.ts"
   },
   "workspaces": [
     "packages/*"

@@ -520,7 +520,9 @@ function normalizeImportRecord(record: Record<string, string>): ImportedUserRowI
 }
 
 async function createUserImportRuntime(env: Env, tenantId: string): Promise<UserImportRuntime> {
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'management-user-import');
+  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'management-user-import', {
+    tenantId,
+  });
   const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
   const piiAdapter = ensureDatabaseAdapter(
     customClaimSources.piiDb ?? customClaimSources.nonPiiDb,

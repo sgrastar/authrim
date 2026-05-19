@@ -484,7 +484,7 @@ const en: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Configure sharding? (for high-load environments)',
   'sharding.title': 'Sharding Settings',
-  'sharding.note': 'Note: Power of 2 recommended for shard count (8, 16, 32, 64, 128)',
+  'sharding.note': 'Note: Power of 2 recommended for shard count (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Auth Code shard count',
   'sharding.refreshTokenShards': 'Refresh Token shard count',
 
@@ -937,13 +937,15 @@ const en: Translations = {
   'web.preview.issuerUrl': 'Issuer URL:',
   'web.preview.loginUi': 'Login UI:',
   'web.preview.adminUi': 'Admin UI:',
-  'web.preview.pagesUrl': 'Login UI (Worker):',
+  'web.preview.pagesUrl': 'Login UI Origin:',
   'web.preview.tenantDiscover': 'Tenant Selection (Common Entry):',
   'web.preview.adminAccess': 'Admin UI Access:',
   'web.preview.firstTenant': '{{name}} (Primary Tenant)',
   'web.preview.otherTenants': 'Other Tenants',
   'web.preview.allTenantsShared': '(shared by all tenants)',
+  'web.preview.loginUiOriginNote': '(deployment origin; tenant login uses issuer /login)',
   'web.preview.viaApiProxy': '(proxied via same API domain)',
+  'web.preview.conflictWarningTitle': '⚠️ Configuration issue',
   'web.preview.conflictWarningMsg':
     'The {{conflictUI}} custom domain is the same as the API domain ({{baseDomain}}). Since "Remove tenant from URL" is disabled, API requests to {{baseDomain}} (/authorize, /api/auth/*, etc.) will 404 and the login flow will break.',
   'web.preview.conflictActionMsg':

@@ -474,7 +474,7 @@ const zhTW: Translations = {
   // Sharding settings
   'sharding.configurePrompt': '配置分片？（用於高負載環境）',
   'sharding.title': '分片設定',
-  'sharding.note': '注意：建議分片數量使用 2 的冪次（8、16、32、64、128）',
+  'sharding.note': '注意：建議分片數量使用 2 的冪次（4、8、16、32、64、128）',
   'sharding.authCodeShards': '授權碼分片數量',
   'sharding.refreshTokenShards': '重新整理權杖分片數量',
 
@@ -914,13 +914,15 @@ const zhTW: Translations = {
   'web.preview.issuerUrl': '發行者 URL：',
   'web.preview.loginUi': '登入 UI：',
   'web.preview.adminUi': '管理 UI：',
-  'web.preview.pagesUrl': '登入 UI (Worker)：',
+  'web.preview.pagesUrl': '登入 UI Origin：',
   'web.preview.tenantDiscover': '租戶選擇（公共入口）：',
   'web.preview.adminAccess': '管理 UI 存取位址：',
   'web.preview.firstTenant': '{{name}}（主租戶）',
   'web.preview.otherTenants': '其他租戶',
   'web.preview.allTenantsShared': '（所有租戶共用）',
+  'web.preview.loginUiOriginNote': '（部署 Origin；租戶登入使用 Issuer 的 /login）',
   'web.preview.viaApiProxy': '（透過 API 同網域代理）',
+  'web.preview.conflictWarningTitle': '⚠️ 設定問題',
   'web.preview.conflictWarningMsg':
     '{{conflictUI}} 的自訂網域與 API 相同（{{baseDomain}}），由於「從 URL 中移除租戶名稱」已停用，對 {{baseDomain}} 的 API 請求（/authorize、/api/auth/* 等）將返回 404，導致登入流程無法正常運作。',
   'web.preview.conflictActionMsg':

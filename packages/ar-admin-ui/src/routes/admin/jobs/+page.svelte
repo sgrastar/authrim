@@ -59,6 +59,16 @@
 	let importOnDuplicate = $state<'skip' | 'update' | 'error'>('skip');
 	let importValidateOnly = $state(false);
 
+	// Tenant DB Provisioning Dialog
+	let showTenantDbDialog = $state(false);
+	let creatingTenantDbRequest = $state(false);
+	let tenantDbRequestError = $state('');
+	let tenantDbSlug = $state('');
+	let tenantDbGeneration = $state('1');
+	let tenantDbActivate = $state(false);
+	let tenantDbExecutionMode = $state<'plan_only' | 'operator_cli' | 'cloudflare_api'>('plan_only');
+	let tenantDbReason = $state('');
+
 	// Job Detail Dialog
 	let showJobDetailDialog = $state(false);
 	let selectedJob = $state<Job | null>(null);
@@ -208,6 +218,20 @@
 		showCreateImportDialog = false;
 	}
 
+	function openTenantDbDialog() {
+		tenantDbSlug = '';
+		tenantDbGeneration = '1';
+		tenantDbActivate = false;
+		tenantDbExecutionMode = 'plan_only';
+		tenantDbReason = '';
+		tenantDbRequestError = '';
+		showTenantDbDialog = true;
+	}
+
+	function closeTenantDbDialog() {
+		showTenantDbDialog = false;
+	}
+
 	function handleImportFileChange(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		importFile = input.files?.[0] ?? null;
@@ -318,6 +342,33 @@
 			createImportError = e instanceof Error ? e.message : 'Failed to create import job';
 		} finally {
 			creatingImport = false;
+		}
+	}
+
+	async function handleCreateTenantDbRequest() {
+		tenantDbRequestError = '';
+		const generation = Number.parseInt(tenantDbGeneration, 10);
+		if (!Number.isInteger(generation) || generation < 1) {
+			tenantDbRequestError = 'Generation must be a positive integer';
+			return;
+		}
+
+		creatingTenantDbRequest = true;
+		try {
+			const job = await adminJobsAPI.createTenantDatabaseProvision({
+				tenant_slug: tenantDbSlug.trim() || undefined,
+				generation,
+				activate: tenantDbActivate,
+				execution_mode: tenantDbExecutionMode,
+				reason: tenantDbReason.trim() || undefined
+			});
+			jobs = [sanitizeJob(job), ...jobs];
+			closeTenantDbDialog();
+		} catch (e) {
+			tenantDbRequestError =
+				e instanceof Error ? e.message : 'Failed to create tenant database request';
+		} finally {
+			creatingTenantDbRequest = false;
 		}
 	}
 
@@ -439,6 +490,8 @@
 		if (event.key === 'Escape') {
 			if (showJobDetailDialog) {
 				closeJobDetailDialog();
+			} else if (showTenantDbDialog) {
+				closeTenantDbDialog();
 			} else if (showCreateImportDialog) {
 				closeCreateImportDialog();
 			} else if (showCreateReportDialog) {
@@ -465,6 +518,10 @@
 			</p>
 		</div>
 		<div class="page-actions">
+			<button class="btn btn-secondary" onclick={openTenantDbDialog}>
+				<i class="i-ph-database"></i>
+				Tenant DB
+			</button>
 			<button class="btn btn-secondary" onclick={openCreateImportDialog}>
 				<i class="i-ph-upload-simple"></i>
 				Import Users
@@ -530,6 +587,12 @@
 					<option value="users_bulk_update">Bulk Update</option>
 					<option value="report_generation">Report Generation</option>
 					<option value="org_bulk_members">Org Bulk Members</option>
+					<option value="tenant_delete">Tenant Deletion</option>
+					<option value="tenant_database_provision">Tenant DB Provisioning</option>
+					<option value="tenant_database_activate_batch">Tenant DB Activation</option>
+					<option value="tenant_database_export">Tenant DB Export</option>
+					<option value="tenant_database_restore_dry_run">Tenant DB Restore Dry-Run</option>
+					<option value="tenant_database_purge_backup">Tenant DB Backup Purge</option>
 				</select>
 			</div>
 			<div class="form-group form-group-action">
@@ -629,6 +692,74 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Tenant DB Provisioning Dialog -->
+<Modal
+	open={showTenantDbDialog}
+	onClose={closeTenantDbDialog}
+	title="Tenant Database Request"
+	size="md"
+>
+	{#if tenantDbRequestError}
+		<div class="alert alert-error">{tenantDbRequestError}</div>
+	{/if}
+
+	<div class="form-group">
+		<label for="tenant-db-slug" class="form-label">Tenant Slug</label>
+		<input
+			id="tenant-db-slug"
+			type="text"
+			class="form-input"
+			placeholder="example-library"
+			bind:value={tenantDbSlug}
+		/>
+	</div>
+
+	<div class="filter-row">
+		<div class="form-group">
+			<label for="tenant-db-generation" class="form-label">Generation</label>
+			<input
+				id="tenant-db-generation"
+				type="number"
+				min="1"
+				class="form-input"
+				bind:value={tenantDbGeneration}
+			/>
+		</div>
+		<div class="form-group">
+			<label for="tenant-db-execution" class="form-label">Execution</label>
+			<select id="tenant-db-execution" class="form-select" bind:value={tenantDbExecutionMode}>
+				<option value="plan_only">Plan only</option>
+				<option value="operator_cli">Operator CLI</option>
+				<option value="cloudflare_api">Cloudflare API</option>
+			</select>
+		</div>
+	</div>
+
+	<label class="checkbox-row">
+		<input type="checkbox" bind:checked={tenantDbActivate} />
+		<span>Request activation after generated bindings are deployed</span>
+	</label>
+
+	<div class="form-group">
+		<label for="tenant-db-reason" class="form-label">Reason</label>
+		<textarea
+			id="tenant-db-reason"
+			class="form-textarea"
+			rows="3"
+			bind:value={tenantDbReason}
+		></textarea>
+	</div>
+
+	{#snippet footer()}
+		<button class="btn btn-secondary" onclick={closeTenantDbDialog} disabled={creatingTenantDbRequest}
+			>Cancel</button
+		>
+		<button class="btn btn-primary" onclick={handleCreateTenantDbRequest} disabled={creatingTenantDbRequest}>
+			{creatingTenantDbRequest ? 'Creating...' : 'Create Request'}
+		</button>
+	{/snippet}
+</Modal>
 
 <!-- Create Import Dialog -->
 <Modal

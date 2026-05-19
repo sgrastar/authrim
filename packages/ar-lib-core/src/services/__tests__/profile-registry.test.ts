@@ -147,7 +147,7 @@ describe('RuntimeProfileRegistry', () => {
 });
 
 describe('profile resolution helpers', () => {
-  it('applies tenant overrides on top of environment defaults', () => {
+  it('applies tenant storage, audit, and residency overrides', () => {
     const defaults = readEnvironmentProfileDefaults({
       'infra.default_storage_profile_id': DEFAULT_STORAGE_PROFILE_ID,
       'infra.default_audit_profile_id': DEFAULT_AUDIT_PROFILE_ID,
@@ -166,6 +166,29 @@ describe('profile resolution helpers', () => {
     expect(resolved.residencyProfileId).toBe('builtin:residency:eu');
     expect(resolved.inherited).toEqual({
       storage: false,
+      audit: true,
+      residency: false,
+    });
+  });
+
+  it('uses deployment storage defaults with tenant audit and residency overrides', () => {
+    const defaults = readEnvironmentProfileDefaults({
+      'infra.default_storage_profile_id': DEFAULT_STORAGE_PROFILE_ID,
+      'infra.default_audit_profile_id': DEFAULT_AUDIT_PROFILE_ID,
+      'infra.default_residency_profile_id': DEFAULT_RESIDENCY_PROFILE_ID,
+    });
+    const overrides = readTenantProfileOverrides({
+      'tenant.audit_profile_id': '',
+      'tenant.residency_profile_id': 'builtin:residency:eu',
+    });
+
+    const resolved = resolveEffectiveProfileRefs(defaults, overrides);
+
+    expect(resolved.storageProfileId).toBe(DEFAULT_STORAGE_PROFILE_ID);
+    expect(resolved.auditProfileId).toBe(DEFAULT_AUDIT_PROFILE_ID);
+    expect(resolved.residencyProfileId).toBe('builtin:residency:eu');
+    expect(resolved.inherited).toEqual({
+      storage: true,
       audit: true,
       residency: false,
     });

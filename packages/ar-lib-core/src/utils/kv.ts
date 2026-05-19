@@ -15,7 +15,7 @@ import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
-import type { DatabaseAdapter } from '../db/adapter';
+import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
 import { createCompatibilityError, OIDCError } from './errors';
 import { getCacheTTL } from './cache-config';
@@ -27,6 +27,12 @@ import {
 } from './refresh-token-store';
 
 const log = createLogger().module('KV');
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+const PII_CACHE_PURPOSE = 'user-pii-cache';
+const PII_CACHE_ALGORITHM = 'AES-256-GCM';
+const PII_CACHE_DEFAULT_TTL_SECONDS = 5 * 60;
+const PII_CACHE_ROOT_KEY_HEX_LENGTH = 64;
 
 function requireTenantId(tenantId: string | undefined, context: string): string {
   const normalized = tenantId?.trim();
@@ -39,6 +45,32 @@ function requireTenantId(tenantId: string | undefined, context: string): string 
 export interface UserCacheSources {
   coreDb: DatabaseSource;
   piiDb?: DatabaseSource | null;
+  cacheScope?: UserCacheScope;
+  piiCacheMode?: UserPiiCacheMode;
+}
+
+export type UserPiiCacheMode = 'merged' | 'encrypted_short_ttl' | 'no_cross_request_pii';
+
+export interface UserCacheScope {
+  storageProfileId: string;
+  sourceGeneration?: string | number;
+  schemaVersion?: string | number;
+}
+
+interface EncryptedCachedUserEnvelope {
+  version: 1;
+  algorithm: typeof PII_CACHE_ALGORITHM;
+  purpose: typeof PII_CACHE_PURPOSE;
+  tenantId: string;
+  keyVersion: number;
+  keyState: 'current';
+  iv: string;
+  ciphertext: string;
+  metadata: {
+    storageProfileId?: string;
+    sourceGeneration?: string | number;
+    schemaVersion?: string | number;
+  };
 }
 
 // ===== User Cache =====
@@ -51,6 +83,7 @@ export interface UserCacheSources {
  */
 export interface CachedUser {
   id: string;
+  pii_status?: PIIStatus;
   email: string;
   email_verified: boolean;
   name: string | null;
@@ -72,6 +105,194 @@ export interface CachedUser {
   updated_at: number;
 }
 
+export function buildUserCacheKey(
+  tenantId: string,
+  userId: string,
+  scope?: UserCacheScope
+): string {
+  if (!scope) {
+    return buildKVKey('user', userId, tenantId);
+  }
+
+  const profile = encodeURIComponent(scope.storageProfileId);
+  const generation = encodeURIComponent(String(scope.sourceGeneration ?? 'default'));
+  const schema = encodeURIComponent(String(scope.schemaVersion ?? '1'));
+  return buildKVKey(`user:v2:sp:${profile}:gen:${generation}:schema:${schema}`, userId, tenantId);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = Number.parseInt(hex.slice(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function fromBase64Url(value: string): Uint8Array {
+  const padded = value
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(value.length / 4) * 4, '=');
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function getPiiCacheRootKey(env: Env): string | null {
+  const key = env.OBJECT_ENCRYPTION_ROOT_KEY?.trim();
+  if (!key) return null;
+  if (key.length !== PII_CACHE_ROOT_KEY_HEX_LENGTH || !/^[0-9a-fA-F]+$/.test(key)) {
+    throw new Error('PII cache encryption root key must be a 64-character hex string');
+  }
+  return key;
+}
+
+function getPiiCacheKeyVersion(env: Env): number {
+  return Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
+}
+
+function getPiiCacheTtl(env: Env, configuredUserCacheTtl: number): number {
+  const configuredPiiTtl =
+    Number.parseInt(env.PII_CACHE_TTL || String(PII_CACHE_DEFAULT_TTL_SECONDS), 10) ||
+    PII_CACHE_DEFAULT_TTL_SECONDS;
+  return Math.max(1, Math.min(configuredUserCacheTtl, configuredPiiTtl));
+}
+
+function buildPiiCacheAdditionalData(
+  tenantId: string,
+  userId: string,
+  cacheKey: string,
+  scope: UserCacheScope | undefined,
+  keyVersion: number
+): Uint8Array {
+  return textEncoder.encode(
+    JSON.stringify({
+      tenant_id: tenantId,
+      user_id: userId,
+      cache_key: cacheKey,
+      purpose: PII_CACHE_PURPOSE,
+      key_version: keyVersion,
+      storage_profile_id: scope?.storageProfileId ?? null,
+      source_generation: scope?.sourceGeneration ?? null,
+      schema_version: scope?.schemaVersion ?? null,
+    })
+  );
+}
+
+async function derivePiiCacheKey(
+  rootKeyHex: string,
+  tenantId: string,
+  keyVersion: number
+): Promise<CryptoKey> {
+  const material = await crypto.subtle.importKey('raw', hexToBytes(rootKeyHex), 'HKDF', false, [
+    'deriveKey',
+  ]);
+  return crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: textEncoder.encode('authrim-cache-envelope-root'),
+      info: textEncoder.encode(`${PII_CACHE_PURPOSE}:tenant:${tenantId}:v${keyVersion}`),
+    },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptCachedUser(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  cacheKey: string,
+  user: CachedUser,
+  scope: UserCacheScope | undefined
+): Promise<EncryptedCachedUserEnvelope | null> {
+  const rootKey = getPiiCacheRootKey(env);
+  if (!rootKey) return null;
+  const keyVersion = getPiiCacheKeyVersion(env);
+  const key = await derivePiiCacheKey(rootKey, tenantId, keyVersion);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv,
+      additionalData: buildPiiCacheAdditionalData(tenantId, userId, cacheKey, scope, keyVersion),
+      tagLength: 128,
+    },
+    key,
+    textEncoder.encode(JSON.stringify(user))
+  );
+  return {
+    version: 1,
+    algorithm: PII_CACHE_ALGORITHM,
+    purpose: PII_CACHE_PURPOSE,
+    tenantId,
+    keyVersion,
+    keyState: 'current',
+    iv: toBase64Url(iv),
+    ciphertext: toBase64Url(new Uint8Array(ciphertext)),
+    metadata: {
+      storageProfileId: scope?.storageProfileId,
+      sourceGeneration: scope?.sourceGeneration,
+      schemaVersion: scope?.schemaVersion,
+    },
+  };
+}
+
+async function decryptCachedUser(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  cacheKey: string,
+  cached: string,
+  scope: UserCacheScope | undefined
+): Promise<CachedUser> {
+  const envelope = JSON.parse(cached) as EncryptedCachedUserEnvelope;
+  if (
+    envelope.version !== 1 ||
+    envelope.algorithm !== PII_CACHE_ALGORITHM ||
+    envelope.purpose !== PII_CACHE_PURPOSE ||
+    envelope.tenantId !== tenantId
+  ) {
+    throw new Error('invalid_encrypted_pii_cache_envelope');
+  }
+  const rootKey = getPiiCacheRootKey(env);
+  if (!rootKey) {
+    throw new Error('pii_cache_encryption_key_not_configured');
+  }
+  const key = await derivePiiCacheKey(rootKey, tenantId, envelope.keyVersion);
+  const plaintext = await crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: fromBase64Url(envelope.iv),
+      additionalData: buildPiiCacheAdditionalData(
+        tenantId,
+        userId,
+        cacheKey,
+        scope,
+        envelope.keyVersion
+      ),
+      tagLength: 128,
+    },
+    key,
+    fromBase64Url(envelope.ciphertext)
+  );
+  return JSON.parse(textDecoder.decode(plaintext)) as CachedUser;
+}
+
 /**
  * Get user from cache or D1 (Read-Through Cache pattern)
  *
@@ -90,19 +311,26 @@ export async function getCachedUser(
   userId: string,
   sources: UserCacheSources
 ): Promise<CachedUser | null> {
+  const piiCacheMode = sources.piiCacheMode ?? 'encrypted_short_ttl';
+  if (piiCacheMode === 'no_cross_request_pii') {
+    return await getUserFromD1(tenantId, userId, sources);
+  }
+
   // If USER_CACHE is not configured, fall back to D1 directly
   if (!env.USER_CACHE) {
     return await getUserFromD1(tenantId, userId, sources);
   }
 
-  const cacheKey = buildKVKey('user', userId, tenantId);
+  const cacheKey = buildUserCacheKey(tenantId, userId, sources.cacheScope);
 
   // Step 1: Try USER_CACHE (Read-Through Cache)
   const cached = await env.USER_CACHE.get(cacheKey);
 
   if (cached) {
     try {
-      return JSON.parse(cached) as CachedUser;
+      return piiCacheMode === 'encrypted_short_ttl'
+        ? await decryptCachedUser(env, tenantId, userId, cacheKey, cached, sources.cacheScope)
+        : (JSON.parse(cached) as CachedUser);
     } catch (error) {
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
@@ -124,9 +352,25 @@ export async function getCachedUser(
   try {
     const configManager = createOAuthConfigManager(env);
     const userCacheTTL = await configManager.getUserCacheTTL();
-    await env.USER_CACHE.put(cacheKey, JSON.stringify(user), {
-      expirationTtl: userCacheTTL,
-    });
+    if (piiCacheMode === 'encrypted_short_ttl') {
+      const encrypted = await encryptCachedUser(
+        env,
+        tenantId,
+        userId,
+        cacheKey,
+        user,
+        sources.cacheScope
+      );
+      if (encrypted) {
+        await env.USER_CACHE.put(cacheKey, JSON.stringify(encrypted), {
+          expirationTtl: getPiiCacheTtl(env, userCacheTTL),
+        });
+      }
+    } else {
+      await env.USER_CACHE.put(cacheKey, JSON.stringify(user), {
+        expirationTtl: userCacheTTL,
+      });
+    }
   } catch (error) {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId (can be used for tracking)
@@ -149,11 +393,12 @@ async function getUserFromD1(
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.coreDb, 'user-cache-core');
   const coreResult = await coreAdapter.queryOne<{
     id: string;
+    pii_status: PIIStatus;
     email_verified: number;
     phone_number_verified: number;
     updated_at: number;
   }>(
-    `SELECT id, email_verified, phone_number_verified, updated_at
+    `SELECT id, pii_status, email_verified, phone_number_verified, updated_at
        FROM users_core
       WHERE id = ? AND tenant_id = ? AND is_active = 1`,
     [userId, tenantId]
@@ -240,6 +485,7 @@ async function getUserFromD1(
 
   return {
     id: coreResult.id,
+    pii_status: coreResult.pii_status,
     email,
     email_verified: coreResult.email_verified === 1,
     name: piiResult?.name ?? null,
@@ -298,6 +544,7 @@ export async function invalidateUserCache(
  */
 export interface UserCoreExistence {
   id: string;
+  pii_status?: PIIStatus;
   email_verified: boolean;
   phone_number_verified: boolean;
   updated_at: number;
@@ -329,12 +576,13 @@ export async function getCachedUserCore(
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'user-core-cache');
   const coreResult = await coreAdapter.queryOne<{
     id: string;
+    pii_status: PIIStatus;
     email_verified: number;
     phone_number_verified: number;
     updated_at: number;
     user_type: string | null;
   }>(
-    `SELECT id, email_verified, phone_number_verified, updated_at, user_type
+    `SELECT id, pii_status, email_verified, phone_number_verified, updated_at, user_type
        FROM users_core
       WHERE id = ? AND tenant_id = ? AND is_active = 1`,
     [userId, tenantId]
@@ -346,6 +594,7 @@ export async function getCachedUserCore(
 
   return {
     id: coreResult.id,
+    pii_status: coreResult.pii_status,
     email_verified: coreResult.email_verified === 1,
     phone_number_verified: coreResult.phone_number_verified === 1,
     updated_at: coreResult.updated_at,

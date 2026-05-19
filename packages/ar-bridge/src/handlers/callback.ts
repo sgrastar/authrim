@@ -764,7 +764,8 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
     try {
       const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
         env,
-        'bridge-callback-session-record'
+        'bridge-callback-session-record',
+        { tenantId: options.tenantId }
       );
       await coreAdapter.execute(
         `INSERT INTO sessions (

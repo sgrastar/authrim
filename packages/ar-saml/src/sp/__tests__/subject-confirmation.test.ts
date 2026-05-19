@@ -25,7 +25,7 @@ vi.mock('../../admin/providers', () => ({
 
 vi.mock('../../common/signature', () => ({
   verifyXmlSignature: vi.fn().mockReturnValue(true),
-  hasSignature: vi.fn().mockReturnValue(false),
+  hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
 }));
 
 // Mock structured logger
@@ -100,12 +100,18 @@ function createSAMLResponseWithSubjectConfirmation(options: {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
   xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
   ID="${id}"
   Version="2.0"
   IssueInstant="${new Date().toISOString()}"
   Destination="${destination}"
   ${inResponseTo ? `InResponseTo="${inResponseTo}"` : ''}>
   <saml:Issuer>${issuer}</saml:Issuer>
+  <ds:Signature>
+    <ds:SignedInfo>
+      <ds:Reference URI="#${id}"/>
+    </ds:SignedInfo>
+  </ds:Signature>
   <samlp:Status>
     <samlp:StatusCode Value="${statusCode}"/>
   </samlp:Status>
@@ -193,6 +199,10 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
           fetch: vi.fn().mockResolvedValue(new Response('OK', { status: 200 })),
         }),
       } as unknown as Env['SESSION_STORE'],
+      NONCE_STORE: {
+        get: vi.fn().mockResolvedValue(null),
+        put: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Env['NONCE_STORE'],
     };
   });
 
@@ -283,11 +293,17 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
   xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
   ID="_resp"
   Version="2.0"
   IssueInstant="${new Date().toISOString()}"
   Destination="https://auth.example.com/saml/sp/acs">
   <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <ds:Signature>
+    <ds:SignedInfo>
+      <ds:Reference URI="#_resp"/>
+    </ds:SignedInfo>
+  </ds:Signature>
   <samlp:Status>
     <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
   </samlp:Status>
@@ -367,9 +383,6 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       expect(res.status).toBe(302);
     });
 
-    // Note: InResponseTo matching is already implemented in acs.ts
-    // In non-strict mode, it logs a warning and continues for IdP-initiated SSO compatibility
-    // In strict mode, it rejects the request
     it('should reject when InResponseTo does not match stored request (strict mode)', async () => {
       // Enable strict mode via AUTHRIM_CONFIG KV
       mockEnv.AUTHRIM_CONFIG = {
@@ -396,8 +409,7 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should accept when InResponseTo does not match (non-strict mode for IdP-initiated SSO)', async () => {
-      // Non-strict mode: InResponseTo validation failure logs warning but continues
+    it('should reject when InResponseTo does not match stored request', async () => {
       mockEnv.AUTHRIM_CONFIG = {
         get: vi.fn().mockResolvedValue('false'),
       } as unknown as Env['AUTHRIM_CONFIG'];
@@ -416,8 +428,7 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
 
       const res = await callACS(samlResponse);
 
-      // Non-strict mode: should succeed (302 redirect)
-      expect(res.status).toBe(302);
+      expect(res.status).toBe(400);
     });
   });
 

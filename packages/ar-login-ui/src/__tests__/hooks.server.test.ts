@@ -34,4 +34,40 @@ describe('Login UI proxy hooks', () => {
 		expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_123');
 		expect(await response.json()).toEqual({ ok: true });
 	});
+
+	it('uses PUBLIC_API_BASE_URL as the server-side API backend fallback', async () => {
+		const { getConfiguredApiBackendUrl } = await import('../hooks.server');
+
+		expect(
+			getConfiguredApiBackendUrl({
+				API_BACKEND_URL: '__DISABLED__',
+				PUBLIC_API_BASE_URL: 'https://first.multi-tenant.authrim.com'
+			})
+		).toBe('https://first.multi-tenant.authrim.com');
+	});
+
+	it('sets original and forwarded host hints on proxied API requests', async () => {
+		const { buildProxyHeaders } = await import('../hooks.server');
+		const request = new Request('https://login.multi-tenant.authrim.com/api/auth/discovery', {
+			headers: {
+				'x-authrim-original-host': 'login.multi-tenant.authrim.com',
+				cookie: 'authrim_remembered_tenant=tenant'
+			}
+		});
+		const event = {
+			request,
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const headers = buildProxyHeaders(
+			event as never,
+			{ PUBLIC_API_BASE_URL: 'https://first.multi-tenant.authrim.com' },
+			'login.multi-tenant.authrim.com'
+		);
+
+		expect(headers.get('X-Authrim-Original-Host')).toBe('login.multi-tenant.authrim.com');
+		expect(headers.get('X-Authrim-Forwarded-Host')).toBe('login.multi-tenant.authrim.com');
+		expect(headers.get('X-Forwarded-Host')).toBe('login.multi-tenant.authrim.com');
+		expect(headers.get('Cookie')).toContain('authrim_remembered_tenant');
+	});
 });

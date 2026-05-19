@@ -13,6 +13,7 @@
 		type CategorySettings,
 		type CategoryMetaFull
 	} from '$lib/api/admin-settings';
+	import { getTenantProvisioningDraftUiState } from '$lib/admin/tenant-d1-ui-state';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 
 	// ==========================================================================
@@ -43,6 +44,12 @@
 	// Set default
 	let settingDefault = $state(false);
 
+	// Provisioning cleanup
+	let cleanupProvisioning = $state(false);
+	let cleanupProvisioningError = $state('');
+	let retryProvisioning = $state(false);
+	let retryProvisioningError = $state('');
+
 	// Tenant settings (login-entry category)
 	let settingsMeta = $state<CategoryMetaFull | null>(null);
 	let settings = $state<CategorySettings | null>(null);
@@ -63,6 +70,9 @@
 	let vanityPrimaryId = $state<string | null>(null);
 
 	const singleTenantMode = $derived(tenantStore.singleTenantMode);
+	const provisioningFailed = $derived(tenant?.provisioning_status === 'provisioning_failed');
+	const provisioningDraftState = $derived(getTenantProvisioningDraftUiState(tenant));
+	const tenantOperational = $derived(!!tenant?.is_active && !provisioningFailed);
 
 	// ==========================================================================
 	// Validation
@@ -131,7 +141,9 @@
 
 	onMount(async () => {
 		await loadTenant();
-		await Promise.all([loadSettings(), loadVanityDomains()]);
+		if (tenantOperational) {
+			await Promise.all([loadSettings(), loadVanityDomains()]);
+		}
 	});
 
 	// ==========================================================================
@@ -236,6 +248,39 @@
 			error = err instanceof Error ? err.message : 'Failed to set default';
 		} finally {
 			settingDefault = false;
+		}
+	}
+
+	async function handleCleanupProvisioning() {
+		if (!tenant || cleanupProvisioning) return;
+		cleanupProvisioning = true;
+		cleanupProvisioningError = '';
+		try {
+			await adminTenantsAPI.cleanupProvisioning(tenant.id);
+			tenantStore.remove(tenant.id);
+			goto('/admin/tenants');
+		} catch (err) {
+			cleanupProvisioningError =
+				err instanceof Error ? err.message : 'Failed to cleanup tenant provisioning draft';
+		} finally {
+			cleanupProvisioning = false;
+		}
+	}
+
+	async function handleRetryProvisioning() {
+		if (!tenant || retryProvisioning) return;
+		retryProvisioning = true;
+		retryProvisioningError = '';
+		try {
+			const updated = await adminTenantsAPI.retryProvisioning(tenant.id);
+			tenantStore.update(updated);
+			tenant = updated;
+			await Promise.all([loadSettings(), loadVanityDomains()]);
+		} catch (err) {
+			retryProvisioningError =
+				err instanceof Error ? err.message : 'Failed to retry tenant provisioning';
+		} finally {
+			retryProvisioning = false;
 		}
 	}
 
@@ -371,7 +416,12 @@
 					<p class="tenant-id-badge"><i class="i-ph-identification-badge"></i>{tenant.id}</p>
 				</div>
 				<div class="header-actions">
-					{#if !tenant.is_default}
+					{#if tenant.is_default}
+						<span class="default-badge">
+							<i class="i-ph-star-fill"></i>
+							Default Tenant
+						</span>
+					{:else if tenantOperational}
 						<button
 							class="btn btn-secondary"
 							onclick={handleSetDefault}
@@ -385,13 +435,8 @@
 							{/if}
 							Set as Default
 						</button>
-					{:else}
-						<span class="default-badge">
-							<i class="i-ph-star-fill"></i>
-							Default Tenant
-						</span>
 					{/if}
-					{#if !isEditing}
+					{#if !isEditing && tenantOperational}
 						<button class="btn btn-primary" onclick={startEdit}>
 							<i class="i-ph-pencil"></i>
 							Edit
@@ -402,7 +447,9 @@
 
 			<!-- Status badge -->
 			<div class="status-row">
-				{#if tenant.is_active}
+				{#if provisioningFailed}
+					<span class="badge badge-error">Provisioning Failed</span>
+				{:else if tenant.is_active}
 					<span class="badge badge-active">Active</span>
 				{:else}
 					<span class="badge badge-inactive">Inactive</span>
@@ -418,6 +465,74 @@
 				<i class="i-ph-warning-circle"></i>
 				{error}
 			</div>
+		{/if}
+
+		{#if provisioningFailed || !tenant.is_active}
+			<section class="card status-card">
+				<div class="status-card-header">
+					<i class={provisioningFailed ? 'i-ph-warning-circle' : 'i-ph-pause-circle'}></i>
+					<div>
+						<h2 class="card-title">
+							{provisioningDraftState.title}
+						</h2>
+						<p class="card-description">
+							{provisioningDraftState.description}
+						</p>
+					</div>
+				</div>
+				{#if provisioningDraftState.showActions}
+					<dl class="detail-grid compact-details">
+						<div class="detail-row">
+							<dt>Slot</dt>
+							<dd class="mono">{provisioningDraftState.slot}</dd>
+						</div>
+						<div class="detail-row">
+							<dt>Last Error</dt>
+							<dd>{provisioningDraftState.error}</dd>
+						</div>
+						{#if tenant.provisioning_updated_at}
+							<div class="detail-row">
+								<dt>Updated</dt>
+								<dd>{new Date(tenant.provisioning_updated_at * 1000).toLocaleString()}</dd>
+							</div>
+						{/if}
+					</dl>
+					{#if cleanupProvisioningError}
+						<div class="alert alert-error">{cleanupProvisioningError}</div>
+					{/if}
+					{#if retryProvisioningError}
+						<div class="alert alert-error">{retryProvisioningError}</div>
+					{/if}
+					<div class="form-actions">
+						<button
+							class="btn btn-secondary"
+							onclick={handleRetryProvisioning}
+							disabled={retryProvisioning || cleanupProvisioning}
+						>
+							{#if retryProvisioning}
+								<i class="i-ph-circle-notch animate-spin"></i>
+								Retrying
+							{:else}
+								<i class="i-ph-arrows-clockwise"></i>
+								Retry
+							{/if}
+						</button>
+						<button
+							class="btn btn-danger-outline"
+							onclick={handleCleanupProvisioning}
+							disabled={cleanupProvisioning || retryProvisioning}
+						>
+							{#if cleanupProvisioning}
+								<i class="i-ph-circle-notch animate-spin"></i>
+								Cleaning
+							{:else}
+								<i class="i-ph-trash"></i>
+								Cleanup Draft
+							{/if}
+						</button>
+					</div>
+				{/if}
+			</section>
 		{/if}
 
 		<!-- Info Card (view mode) or Edit Form -->
@@ -549,7 +664,7 @@
 			</section>
 		{/if}
 
-		{#if !singleTenantMode}
+		{#if !singleTenantMode && tenantOperational}
 			<!-- Vanity Domains -->
 			<section class="card">
 				<div class="card-header-row">
@@ -688,43 +803,45 @@
 			</section>
 		{/if}
 
-		<!-- Login Entry Settings -->
-		<section class="card">
-			<div class="card-header-row">
-				<div>
-					<h2 class="card-title">Login Entry Settings</h2>
-					<p class="card-description">
-						Discovery behavior and discovery screen customization are managed from the dedicated
-						Tenant Discovery page.
-					</p>
+		{#if tenantOperational}
+			<!-- Login Entry Settings -->
+			<section class="card">
+				<div class="card-header-row">
+					<div>
+						<h2 class="card-title">Login Entry Settings</h2>
+						<p class="card-description">
+							Discovery behavior and discovery screen customization are managed from the dedicated
+							Tenant Discovery page.
+						</p>
+					</div>
+					<a class="btn btn-secondary" href="/admin/tenant-discovery">Open Tenant Discovery</a>
 				</div>
-				<a class="btn btn-secondary" href="/admin/tenant-discovery">Open Tenant Discovery</a>
-			</div>
 
-			{#if settingsLoading}
-				<div class="loading-inline"><i class="i-ph-circle-notch animate-spin"></i> Loading...</div>
-			{:else if settingsError}
-				<div class="alert alert-error">{settingsError}</div>
-			{:else if settingsMeta && settings}
-				<div class="settings-summary">
-					<div class="setting-summary-item">
-						<span class="setting-label">Entry Mode</span>
-						<span>{String(getSettingValue('login-entry.mode'))}</span>
+				{#if settingsLoading}
+					<div class="loading-inline"><i class="i-ph-circle-notch animate-spin"></i> Loading...</div>
+				{:else if settingsError}
+					<div class="alert alert-error">{settingsError}</div>
+				{:else if settingsMeta && settings}
+					<div class="settings-summary">
+						<div class="setting-summary-item">
+							<span class="setting-label">Entry Mode</span>
+							<span>{String(getSettingValue('login-entry.mode'))}</span>
+						</div>
+						<div class="setting-summary-item">
+							<span class="setting-label">Selection Policy</span>
+							<span>{String(getSettingValue('login-entry.selection_policy'))}</span>
+						</div>
+						<div class="setting-summary-item">
+							<span class="setting-label">Discovery Methods</span>
+							<span>{String(getSettingValue('login-entry.discovery_methods'))}</span>
+						</div>
 					</div>
-					<div class="setting-summary-item">
-						<span class="setting-label">Selection Policy</span>
-						<span>{String(getSettingValue('login-entry.selection_policy'))}</span>
-					</div>
-					<div class="setting-summary-item">
-						<span class="setting-label">Discovery Methods</span>
-						<span>{String(getSettingValue('login-entry.discovery_methods'))}</span>
-					</div>
-				</div>
-			{/if}
-		</section>
+				{/if}
+			</section>
+		{/if}
 
 		<!-- Danger Zone -->
-		{#if !tenant.is_default}
+		{#if tenantOperational && !tenant.is_default}
 			<section class="card card-danger">
 				<h2 class="card-title danger-title">Danger Zone</h2>
 				{#if !showDeleteConfirm}
@@ -900,6 +1017,28 @@
 		border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
 	}
 
+	.status-card {
+		border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+	}
+
+	.status-card-header {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+	}
+
+	.status-card-header :global(i) {
+		width: 22px;
+		height: 22px;
+		color: var(--danger);
+		flex-shrink: 0;
+		margin-top: 1px;
+	}
+
+	.compact-details {
+		margin-top: 16px;
+	}
+
 	.card-title {
 		font-size: 1rem;
 		font-weight: 600;
@@ -994,6 +1133,11 @@
 	.badge-inactive {
 		background: var(--bg-subtle);
 		color: var(--text-muted);
+	}
+
+	.badge-error {
+		background: color-mix(in srgb, var(--danger) 12%, var(--bg-subtle));
+		color: var(--danger);
 	}
 
 	.badge-default {

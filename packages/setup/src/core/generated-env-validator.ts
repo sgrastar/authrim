@@ -15,12 +15,8 @@ import {
   validateWranglerConfigs,
 } from './wrangler.js';
 import { checkWranglerStatus } from './wrangler-sync.js';
-import {
-  CORE_WORKER_COMPONENTS,
-  D1_DATABASES,
-  getEnabledComponents,
-  type WorkerComponent,
-} from './naming.js';
+import { D1_DATABASES, getEnabledComponents, type WorkerComponent } from './naming.js';
+import { listD1Databases, listR2Buckets, queryD1Rows } from './cloudflare.js';
 
 type ValidationStatus = 'pass' | 'warn' | 'fail';
 
@@ -47,6 +43,7 @@ export interface GeneratedEnvValidationOptions {
   env: string;
   configPath?: string;
   packagesDir?: string;
+  liveCloudflare?: boolean;
 }
 
 interface ParsedTarget {
@@ -63,6 +60,16 @@ const PROFILE_AWARE_COMPONENTS: WorkerComponent[] = [
   'ar-discovery',
   'ar-saml',
   'ar-bridge',
+];
+
+const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
+  'ar-auth',
+  'ar-management',
+  'ar-token',
+  'ar-userinfo',
+  'ar-saml',
+  'ar-bridge',
+  'ar-vc',
 ];
 
 const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
@@ -166,6 +173,16 @@ function finishCheck(check: ValidationCheck, fallbackDetail: string): Validation
     check.details.push(fallbackDetail);
   }
   return check;
+}
+
+function isTenantD1SlotBinding(binding: string): boolean {
+  return /^TDB_SLOT_[0-9]{4}_(CORE|PII)$/.test(binding);
+}
+
+function countValue(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
+  return 0;
 }
 
 function parseWranglerVars(content: string, env: string): Record<string, string> {
@@ -627,6 +644,18 @@ async function validateDeployWranglers(
       }
     }
 
+    if (
+      config.profiles.defaults.storage === 'builtin:storage:tenant-d1' &&
+      TENANT_RUNTIME_REGISTRY_COMPONENTS.includes(component) &&
+      !parsed.kv.TENANT_RUNTIME_REGISTRY
+    ) {
+      pushDetail(
+        check,
+        'fail',
+        `${component}: TENANT_RUNTIME_REGISTRY binding is required for tenant-d1 runtime registry snapshots`
+      );
+    }
+
     const expectedHyperdrive = Object.values(config.profiles.references?.hyperdrive ?? {});
     if (component !== 'ar-router' && expectedHyperdrive.length > 0) {
       for (const binding of expectedHyperdrive) {
@@ -685,6 +714,130 @@ async function validateMasterWranglers(
   }
 
   return finishCheck(check, 'master wrangler config is synchronized with package deploy copies');
+}
+
+async function validateLiveCloudflareD1(lock: AuthrimLock): Promise<ValidationCheck> {
+  const check = makeCheck('live-cloudflare-d1', 'Cloudflare D1 databases in lock.json exist');
+
+  try {
+    const cloudflareDatabases = await listD1Databases();
+    const byName = new Map(cloudflareDatabases.map((database) => [database.name, database.uuid]));
+
+    for (const [binding, database] of Object.entries(lock.d1)) {
+      const cloudflareId = byName.get(database.name);
+      if (!cloudflareId) {
+        pushDetail(check, 'fail', `${binding}: ${database.name} is missing in Cloudflare D1`);
+        continue;
+      }
+      if (cloudflareId !== database.id) {
+        pushDetail(
+          check,
+          'fail',
+          `${binding}: ${database.name} id mismatch lock=${database.id} cloudflare=${cloudflareId}`
+        );
+        continue;
+      }
+      pushDetail(check, 'pass', `${binding}: ${database.name} (${database.id})`);
+    }
+  } catch (error) {
+    pushDetail(
+      check,
+      'fail',
+      `Cloudflare D1 list failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  return finishCheck(check, 'All lock.json D1 databases exist in Cloudflare');
+}
+
+async function validateLiveCloudflareR2(lock: AuthrimLock): Promise<ValidationCheck> {
+  const check = makeCheck('live-cloudflare-r2', 'Cloudflare R2 buckets in lock.json exist');
+  const recordedBuckets = Object.entries(lock.r2 ?? {});
+
+  if (recordedBuckets.length === 0) {
+    pushDetail(check, 'pass', 'No R2 buckets are recorded in lock.json');
+    return finishCheck(check, 'No R2 buckets are recorded in lock.json');
+  }
+
+  try {
+    const cloudflareBuckets = await listR2Buckets({ throwOnError: true });
+    const names = new Set(cloudflareBuckets.map((bucket) => bucket.name));
+
+    for (const [binding, bucket] of recordedBuckets) {
+      if (!names.has(bucket.name)) {
+        pushDetail(check, 'fail', `${binding}: ${bucket.name} is missing in Cloudflare R2`);
+        continue;
+      }
+      pushDetail(check, 'pass', `${binding}: ${bucket.name}`);
+    }
+  } catch (error) {
+    pushDetail(
+      check,
+      'fail',
+      `Cloudflare R2 list failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  return finishCheck(check, 'All lock.json R2 buckets exist in Cloudflare');
+}
+
+async function validateLiveTenantD1Slots(
+  config: AuthrimConfig,
+  lock: AuthrimLock
+): Promise<ValidationCheck> {
+  const check = makeCheck(
+    'live-tenant-d1-slots',
+    'Tenant D1 preallocated slots are present in generated resources and DB_ADMIN'
+  );
+
+  if (config.profiles.defaults.storage !== 'builtin:storage:tenant-d1') {
+    pushDetail(check, 'pass', 'Tenant D1 storage profile is not active');
+    return finishCheck(check, 'Tenant D1 storage profile is not active');
+  }
+
+  const expectedSlots = config.tenantD1?.preallocatedSlots ?? 3;
+  const tenantD1Bindings = Object.keys(lock.d1).filter(isTenantD1SlotBinding);
+  const expectedBindings = expectedSlots * 2;
+  if (tenantD1Bindings.length !== expectedBindings) {
+    pushDetail(
+      check,
+      'fail',
+      `tenant D1 binding count expected=${expectedBindings} actual=${tenantD1Bindings.length}`
+    );
+  } else {
+    pushDetail(check, 'pass', `tenant D1 bindings: ${tenantD1Bindings.length}/${expectedBindings}`);
+  }
+
+  const adminDb = lock.d1.DB_ADMIN;
+  if (!adminDb?.name) {
+    pushDetail(check, 'fail', 'DB_ADMIN is missing from lock.json');
+    return finishCheck(check, 'DB_ADMIN is required for tenant D1 slot validation');
+  }
+
+  try {
+    const rows = await queryD1Rows<{ count: number | string }>(
+      adminDb.name,
+      'SELECT COUNT(*) AS count FROM tenant_database_slots;'
+    );
+    const actualSlots = countValue(rows[0]?.count);
+    if (actualSlots !== expectedSlots) {
+      pushDetail(
+        check,
+        'fail',
+        `tenant_database_slots count expected=${expectedSlots} actual=${actualSlots}`
+      );
+    } else {
+      pushDetail(check, 'pass', `tenant_database_slots count: ${actualSlots}/${expectedSlots}`);
+    }
+  } catch (error) {
+    pushDetail(
+      check,
+      'fail',
+      `tenant_database_slots query failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  return finishCheck(check, 'Tenant D1 slot resources and DB_ADMIN metadata are consistent');
 }
 
 export async function validateGeneratedEnvironment(
@@ -761,6 +914,14 @@ export async function validateGeneratedEnvironment(
     await validateDeployWranglers(baseDir, options.env, config, lock, packagesDir),
     await validateMasterWranglers(baseDir, options.env, envPaths, packagesDir),
   ];
+
+  if (options.liveCloudflare) {
+    checks.push(
+      await validateLiveCloudflareD1(lock),
+      await validateLiveCloudflareR2(lock),
+      await validateLiveTenantD1Slots(config, lock)
+    );
+  }
 
   return {
     ok: checks.every((check) => check.status !== 'fail'),

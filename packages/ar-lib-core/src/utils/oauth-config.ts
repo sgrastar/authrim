@@ -15,7 +15,7 @@
  * - REFRESH_TOKEN_EXPIRY: Refresh token TTL in seconds (default: 7776000 = 90 days)
  * - REFRESH_TOKEN_ROTATION_ENABLED: Enable refresh token rotation (default: true)
  * - MAX_CODES_PER_USER: Max auth codes per user for DDoS protection (default: 100)
- * - CODE_SHARDS: Number of auth code DO shards (default: 64)
+ * - CODE_SHARDS: Number of auth code DO shards (default: 4)
  * - USER_CACHE_TTL: User cache TTL in seconds (default: 3600 = 1 hour)
  * - CONSENT_CACHE_TTL: Consent cache TTL in seconds (default: 86400 = 24 hours)
  */
@@ -88,7 +88,7 @@ export const DEFAULT_CONFIG: OAuthConfig = {
   REFRESH_TOKEN_EXPIRY: 7776000, // 90 days (industry standard)
   REFRESH_TOKEN_ROTATION_ENABLED: true, // Security best practice
   MAX_CODES_PER_USER: 100, // DDoS protection
-  CODE_SHARDS: 64, // Default shard count
+  CODE_SHARDS: 4, // Default shard count
   STATE_REQUIRED: false, // Default false for backwards compatibility (enable for CSRF protection)
   USERINFO_REQUIRE_OPENID_SCOPE: true, // Default true for OIDC compliance (set false for OAuth 2.0 compatibility)
   USER_CACHE_TTL: 3600, // 1 hour (includes PII, balance between performance and freshness)

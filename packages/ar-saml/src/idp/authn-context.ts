@@ -101,22 +101,25 @@ function resolveDefaultAuthnContextClassRef(options: SAMLAuthnContextResolutionO
   }
 
   const amr = options.session?.amr ?? [];
-  if (amr.includes('passkey') || options.session?.acr === AUTHN_CONTEXT.AUTHRIM_PHISHING_RESISTANT) {
+  if (
+    amr.includes('passkey') ||
+    options.session?.acr === AUTHN_CONTEXT.AUTHRIM_PHISHING_RESISTANT
+  ) {
     return options.spConfig.passkeyAuthnContextClassRef || AUTHN_CONTEXT.AUTHRIM_PHISHING_RESISTANT;
   }
 
   return options.session?.acr || configuredDefault;
 }
 
-function getSupportedAuthnContextClassRefs(
-  options: SAMLAuthnContextResolutionOptions
-): string[] {
+function getSupportedAuthnContextClassRefs(options: SAMLAuthnContextResolutionOptions): string[] {
   return Array.from(
-    new Set([
-      ...SUPPORTED_IDP_AUTHN_CONTEXT_CLASS_REFS,
-      options.spConfig?.defaultAuthnContextClassRef,
-      options.spConfig?.passkeyAuthnContextClassRef,
-    ].filter(isString))
+    new Set(
+      [
+        ...SUPPORTED_IDP_AUTHN_CONTEXT_CLASS_REFS,
+        options.spConfig?.defaultAuthnContextClassRef,
+        options.spConfig?.passkeyAuthnContextClassRef,
+      ].filter(isString)
+    )
   );
 }
 

@@ -18,6 +18,9 @@ const requiredKeys = [
   'web.form.multiTenantExampleDefaultOmitted',
   'web.form.multiTenantExampleDefaultIncluded',
   'web.form.multiTenantExampleOther',
+  'web.preview.conflictWarningTitle',
+  'web.preview.conflictWarningMsg',
+  'web.preview.conflictActionMsg',
 ] as const;
 
 const locales = {

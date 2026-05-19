@@ -113,6 +113,11 @@ describe('generateAllSecrets', () => {
     expect(secrets.adminUiBffMachineKeyPair).toBeDefined();
     expect(secrets.adminUiBffMachineKeyPair.keyId).toBe('test-key-admin-ui-bff');
     expect(secrets.adminUiBffMachineKeyPair.publicKeyJwk.alg).toBe('ES256');
+    expect(secrets.tenantRuntimeRegistryKeyPair).toBeDefined();
+    expect(secrets.tenantRuntimeRegistryKeyPair.keyId).toBe('test-key-tenant-runtime-registry');
+    expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.kty).toBe('OKP');
+    expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.crv).toBe('Ed25519');
+    expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.alg).toBe('EdDSA');
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.versionManagerSecret).toBeDefined();
@@ -192,6 +197,11 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_ui_bff_public.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'))).toBe(
+      true
+    );
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'))).toBe(true);
   });
 
   it('should save keys to internal directory when keysBaseDir is not provided', async () => {
@@ -280,13 +290,18 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(6);
+    expect(result.createdFiles).toHaveLength(9);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_ui_bff_public.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'))).toBe(
+      true
+    );
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'))).toBe(true);
 
     const setupJwk = JSON.parse(
       readFileSync(join(keysDir, 'setup_machine_public.jwk.json'), 'utf-8')
@@ -294,10 +309,26 @@ describe('ensureSupplementalKeyFiles', () => {
     const adminUiBffJwk = JSON.parse(
       readFileSync(join(keysDir, 'admin_ui_bff_public.jwk.json'), 'utf-8')
     );
+    const tenantRuntimeRegistryJwks = JSON.parse(
+      readFileSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'), 'utf-8')
+    );
+    const tenantRuntimeRegistryKeyId = readFileSync(
+      join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
+      'utf-8'
+    );
     expect(setupJwk.kid).toBe('legacy-key-setup');
     expect(setupJwk.alg).toBe('ES256');
     expect(adminUiBffJwk.kid).toBe('legacy-key-admin-ui-bff');
     expect(adminUiBffJwk.alg).toBe('ES256');
+    expect(tenantRuntimeRegistryKeyId).toBe('legacy-key-tenant-runtime-registry');
+    expect(tenantRuntimeRegistryJwks.keys[0]).toEqual(
+      expect.objectContaining({
+        kid: 'legacy-key-tenant-runtime-registry',
+        kty: 'OKP',
+        crv: 'Ed25519',
+        alg: 'EdDSA',
+      })
+    );
 
     const secondResult = await ensureSupplementalKeyFiles(keysDir);
     expect(secondResult.createdFiles).toHaveLength(0);
@@ -310,6 +341,16 @@ describe('ensureSupplementalKeyFiles', () => {
 
     await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
       /Incomplete machine key pair/
+    );
+  });
+
+  it('rejects partial tenant runtime registry key sets', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    writeFileSync(join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'), '{}');
+
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      /Incomplete tenant runtime registry key set/
     );
   });
 });

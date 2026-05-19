@@ -165,9 +165,22 @@ describe('Audit Storage Configuration API', () => {
       expect(body.operational_policy.cleanup.mode).toBe('primary_delete_by_retention');
       expect(body.operational_policy.retry.archiveDelivery).toBe('queue_retry_until_dlq');
       expect(body.operational_policy.backpressure.mode).toBe('queue_fanout');
+      expect(body.operational_policy.eventFailurePolicy.mode).toBe('event_class');
+      expect(body.operational_policy.eventFailurePolicy.failOpenCategories).toContain('login');
+      expect(body.operational_policy.eventFailurePolicy.failClosedCategories).toContain(
+        'storage_profile'
+      );
       expect(body.operational_policy.queue.binding).toBe('AUDIT_QUEUE');
       expect(body.operational_policy.queue.retryLimit).toBe(5);
       expect(body.operational_policy.queue.archiveBackupStatus).toBe('configured');
+      expect(body.operational_policy.queue.dlqBehavior).toBe('cloudflare_managed');
+      expect(body.operational_policy.health).toMatchObject({
+        primaryTargetConfigured: true,
+        archiveTargetConfigured: true,
+        queueConfigured: true,
+        queueArchiveConfigured: true,
+        healthCheckMode: 'configuration_only',
+      });
       expect(body.queue.audit_queue.status).toBe('configured');
     });
 

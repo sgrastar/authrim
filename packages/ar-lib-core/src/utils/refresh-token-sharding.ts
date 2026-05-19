@@ -80,7 +80,7 @@ export interface RefreshTokenShardConfig {
 // =============================================================================
 
 /** Default shard count for production */
-export const DEFAULT_REFRESH_TOKEN_SHARD_COUNT = 16;
+export const DEFAULT_REFRESH_TOKEN_SHARD_COUNT = 4;
 
 /** Default shard count for load testing */
 export const LOAD_TEST_SHARD_COUNT = 32;

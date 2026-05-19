@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { adminTenantsAPI } from '$lib/api/admin-tenants';
+	import { getTenantD1CreateUiState } from '$lib/admin/tenant-d1-ui-state';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 
 	// ==========================================================================
@@ -15,6 +17,15 @@
 	let createError = $state('');
 	let idValidationError = $state('');
 	let tenantCodeValidationError = $state('');
+	let creatingStep = $state('');
+
+	const provisioningSteps = ['reserve', 'seed', 'registry', 'snapshot', 'smoke', 'activate'];
+	let tenantD1Pool = $derived(tenantStore.tenantD1Pool);
+	let tenantD1CreateState = $derived(getTenantD1CreateUiState(tenantD1Pool));
+
+	onMount(async () => {
+		await tenantStore.reload();
+	});
 
 	// ==========================================================================
 	// Validation
@@ -53,20 +64,32 @@
 
 		creating = true;
 		createError = '';
+		creatingStep = 'reserve';
+		let stepTimer: number | undefined;
 
 		try {
+			stepTimer = window.setInterval(() => {
+				const currentIndex = Math.max(0, provisioningSteps.indexOf(creatingStep));
+				creatingStep = provisioningSteps[Math.min(currentIndex + 1, provisioningSteps.length - 1)];
+			}, 1800);
 			const created = await adminTenantsAPI.create({
 				id: newId,
 				tenant_code: newTenantCode.trim() || undefined,
 				name: newName.trim(),
 				description: newDescription.trim() || undefined
 			});
+			window.clearInterval(stepTimer);
+			creatingStep = 'activate';
 			tenantStore.add(created);
 			goto(`/admin/tenants/${encodeURIComponent(created.id)}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create tenant';
 		} finally {
+			if (stepTimer !== undefined) {
+				window.clearInterval(stepTimer);
+			}
 			creating = false;
+			creatingStep = '';
 		}
 	}
 </script>
@@ -89,10 +112,41 @@
 	</div>
 
 	<div class="card">
+		{#if tenantD1CreateState.showPool}
+			<div class="alert alert-info">
+				<i class="i-ph-database"></i>
+				<div>
+					<strong>Tenant D1 slots</strong>
+					<p>{tenantD1CreateState.summary}</p>
+				</div>
+			</div>
+		{/if}
+
+		{#if tenantD1CreateState.exhausted}
+			<div class="alert alert-error">
+				<i class="i-ph-warning-circle"></i>
+				<div>
+					<strong>{tenantD1CreateState.exhaustedTitle}</strong>
+					<p>{tenantD1CreateState.exhaustedMessage}</p>
+				</div>
+			</div>
+		{/if}
+
 		{#if createError}
 			<div class="alert alert-error">
 				<i class="i-ph-warning-circle"></i>
 				{createError}
+			</div>
+		{/if}
+
+		{#if creating}
+			<div class="provisioning-steps">
+				{#each provisioningSteps as step}
+					<div class:active={step === creatingStep} class:done={provisioningSteps.indexOf(step) < provisioningSteps.indexOf(creatingStep)}>
+						<i class={step === creatingStep ? 'i-ph-circle-notch animate-spin' : 'i-ph-check-circle'}></i>
+						<span>{step}</span>
+					</div>
+				{/each}
 			</div>
 		{/if}
 
@@ -171,7 +225,10 @@
 			<button
 				class="btn btn-primary"
 				onclick={handleCreate}
-				disabled={creating || !!idValidationError || !!tenantCodeValidationError}
+				disabled={creating ||
+					tenantD1CreateState.exhausted ||
+					!!idValidationError ||
+					!!tenantCodeValidationError}
 			>
 				{#if creating}
 					<i class="i-ph-circle-notch animate-spin"></i>
@@ -335,6 +392,48 @@
 		border: 1px solid var(--danger-border);
 	}
 
+	.alert-info {
+		background: var(--info-subtle, var(--bg-subtle));
+		color: var(--text-primary);
+		border: 1px solid var(--border);
+	}
+
+	.alert p {
+		margin: 2px 0 0;
+		color: var(--text-secondary);
+	}
+
+	.provisioning-steps {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 8px;
+		margin-bottom: 16px;
+	}
+
+	.provisioning-steps > div {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+		padding: 8px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		color: var(--text-muted);
+		font-size: 0.75rem;
+	}
+
+	.provisioning-steps > div.active,
+	.provisioning-steps > div.done {
+		color: var(--text-primary);
+		border-color: var(--primary);
+	}
+
+	.provisioning-steps :global(i) {
+		width: 14px;
+		height: 14px;
+		flex-shrink: 0;
+	}
+
 	.btn {
 		display: inline-flex;
 		align-items: center;
@@ -382,6 +481,10 @@
 	@media (max-width: 640px) {
 		.form-grid {
 			grid-template-columns: 1fr;
+		}
+
+		.provisioning-steps {
+			grid-template-columns: 1fr 1fr;
 		}
 	}
 </style>

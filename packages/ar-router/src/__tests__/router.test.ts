@@ -808,6 +808,42 @@ describe('Router Worker', () => {
       expect(forwardedRequest.headers.get('Authorization')).toBe('Bearer test-token');
     });
 
+    it('should forward original host hints to service bindings', async () => {
+      const req = new Request('https://first.multi-tenant.authrim.com/token', {
+        method: 'POST',
+        body: 'grant_type=client_credentials',
+      });
+      await app.fetch(req, mockEnv);
+
+      const forwardedRequest = mockEnv.OP_TOKEN.fetch.mock.calls[0][0];
+      expect(forwardedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+      expect(forwardedRequest.headers.get('X-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+    });
+
+    it('should overwrite spoofed forwarded host hints at the router boundary', async () => {
+      const req = new Request('https://first.multi-tenant.authrim.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Forwarded-Host': 'attacker.example.com',
+          'X-Forwarded-Host': 'attacker.example.com',
+        },
+        body: 'grant_type=client_credentials',
+      });
+      await app.fetch(req, mockEnv);
+
+      const forwardedRequest = mockEnv.OP_TOKEN.fetch.mock.calls[0][0];
+      expect(forwardedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+      expect(forwardedRequest.headers.get('X-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+    });
+
     it('should allow POST from tenant subdomain origin in multi-tenant mode', async () => {
       const mtEnv = {
         ...mockEnv,
@@ -963,6 +999,104 @@ describe('Router Worker', () => {
       const proxiedRequest = fetchMock.mock.calls[0]?.[0];
       expect(proxiedRequest).toBeInstanceOf(Request);
       expect((proxiedRequest as Request).redirect).toBe('manual');
+    });
+
+    it('should proxy login UI through service binding when configured', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithLoginUi = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://first.example.com/login?client_id=test');
+      const res = await app.fetch(req, envWithLoginUi);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(new URL(proxiedRequest.url).pathname).toBe('/login');
+      expect(new URL(proxiedRequest.url).search).toBe('?client_id=test');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
+    });
+
+    it('should proxy tenant root requests to Login UI when configured', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithLoginUi = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://first.example.com/');
+      const res = await app.fetch(req, envWithLoginUi);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(new URL(proxiedRequest.url).pathname).toBe('/');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
+    });
+
+    it('should proxy admin UI through service binding when configured', async () => {
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithAdminUi = {
+        ...mockEnv,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://admin.example.com/admin/info');
+      const res = await app.fetch(req, envWithAdminUi);
+
+      expect(res.status).toBe(200);
+      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const proxiedRequest = adminUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).origin).toBe(
+        'https://phase9-ar-admin-ui.example.workers.dev'
+      );
+      expect(new URL(proxiedRequest.url).pathname).toBe('/admin/info');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('admin.example.com');
+    });
+
+    it('should keep admin root requests on Admin UI when both UI proxies are configured', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithUis = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        ADMIN_UI_URL: 'https://admin.example.com',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://admin.example.com/');
+      const res = await app.fetch(req, envWithUis);
+
+      expect(res.status).toBe(200);
+      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+
+      const proxiedRequest = adminUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).pathname).toBe('/');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('admin.example.com');
     });
   });
 });

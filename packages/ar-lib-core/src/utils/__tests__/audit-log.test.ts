@@ -21,6 +21,19 @@ const mockUnifiedAuditService = vi.hoisted(() => ({
 }));
 
 const mockCreateAuditService = vi.hoisted(() => vi.fn(() => mockUnifiedAuditService));
+const mockResolveTenantRuntimeProfilesFromEnv = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    auditProfile: {
+      id: 'builtin:audit:standard',
+      kind: 'audit',
+      builtin: true,
+      label: 'Standard Audit',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: null,
+      sinks: [],
+    },
+  })
+);
 
 vi.mock('../logger', () => ({
   createLogger: () => mockLogger,
@@ -36,17 +49,7 @@ vi.mock('../../services/audit', async () => {
 });
 
 vi.mock('../../services/runtime-profile-resolver', () => ({
-  resolveTenantRuntimeProfilesFromEnv: vi.fn().mockResolvedValue({
-    auditProfile: {
-      id: 'builtin:audit:standard',
-      kind: 'audit',
-      builtin: true,
-      label: 'Standard Audit',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: null,
-      sinks: [],
-    },
-  }),
+  resolveTenantRuntimeProfilesFromEnv: mockResolveTenantRuntimeProfilesFromEnv,
 }));
 
 import { createAuditLog, createAuditLogFromContext } from '../audit-log';
@@ -131,6 +134,17 @@ describe('createAuditLog', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'builtin:audit:standard',
+        kind: 'audit',
+        builtin: true,
+        label: 'Standard Audit',
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+        archive: null,
+        sinks: [],
+      },
+    });
     mockEnv = createMockEnv();
   });
 
@@ -214,7 +228,7 @@ describe('createAuditLog', () => {
       createAuditLog(mockEnv, {
         tenantId: 'default',
         userId: 'user-123',
-        action: 'test.action',
+        action: 'login.success',
         resource: 'test',
         resourceId: 'id-1',
         ipAddress: '127.0.0.1',
@@ -227,8 +241,45 @@ describe('createAuditLog', () => {
     expect(mockLogger.warn).toHaveBeenCalledWith(
       'Failed to mirror audit log to unified audit service',
       expect.objectContaining({
-        action: 'test.action',
+        action: 'login.success',
         tenantId: 'default',
+      })
+    );
+  });
+
+  it('should skip legacy D1 audit_log when the resolved audit profile has no D1 primary', async () => {
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'builtin:audit:archive-only-logpush',
+        kind: 'audit',
+        builtin: true,
+        label: 'Archive Only + Logpush',
+        primary: null,
+        archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+        sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+      },
+    });
+
+    await createAuditLog(mockEnv, {
+      tenantId: 'default',
+      userId: 'user-123',
+      action: 'login.success',
+      resource: 'auth',
+      resourceId: 'session-1',
+      ipAddress: '127.0.0.1',
+      userAgent: 'Test',
+      metadata: '{}',
+      severity: 'info',
+    });
+
+    expect(mockEnv.DB.prepare).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_log')
+    );
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({
+        eventType: 'login.success',
+        eventCategory: 'auth',
       })
     );
   });
@@ -278,7 +329,7 @@ describe('createAuditLog', () => {
   });
 
   describe('Error Handling (Non-blocking)', () => {
-    it('should not throw when DB write fails', async () => {
+    it('should not throw when fail-open DB write fails', async () => {
       const failingEnv = createMockEnv({ shouldFail: true });
 
       // Should not throw
@@ -286,7 +337,7 @@ describe('createAuditLog', () => {
         createAuditLog(failingEnv, {
           tenantId: 'default',
           userId: 'user-123',
-          action: 'test.action',
+          action: 'login.success',
           resource: 'test',
           resourceId: 'id-1',
           ipAddress: '127.0.0.1',
@@ -310,7 +361,7 @@ describe('createAuditLog', () => {
       const auditData = {
         tenantId: 'default',
         userId: 'user-123',
-        action: 'important.action',
+        action: 'login.success',
         resource: 'critical-resource',
         resourceId: 'id-xyz',
         ipAddress: '192.168.1.100',
@@ -336,6 +387,24 @@ describe('createAuditLog', () => {
           (call[1] && typeof call[1] === 'object' && (call[1] as { userId?: string }).userId)
       );
       expect(hasAuditDataCall).toBe(false);
+    });
+
+    it('should throw when a fail-closed DB write fails', async () => {
+      const failingEnv = createMockEnv({ shouldFail: true });
+
+      await expect(
+        createAuditLog(failingEnv, {
+          tenantId: 'default',
+          userId: 'admin-123',
+          action: 'signing_keys.rotate.emergency',
+          resource: 'signing_keys',
+          resourceId: 'key-1',
+          ipAddress: '127.0.0.1',
+          userAgent: 'Test',
+          metadata: '{}',
+          severity: 'critical',
+        })
+      ).rejects.toThrow('audit_log_write_failed');
     });
   });
 });
@@ -425,7 +494,7 @@ describe('createAuditLogFromContext', () => {
       }),
     } as unknown as Context<{ Bindings: Env }>;
 
-    await createAuditLogFromContext(mockContext, 'test.action', 'resource', 'id-1', {}, 'info');
+    await createAuditLogFromContext(mockContext, 'login.success', 'resource', 'id-1', {}, 'info');
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     // Should use first IP from X-Forwarded-For
@@ -458,7 +527,7 @@ describe('createAuditLogFromContext', () => {
       }),
     } as unknown as Context<{ Bindings: Env }>;
 
-    await createAuditLogFromContext(mockContext, 'test.action', 'resource', 'id-1', {}, 'info');
+    await createAuditLogFromContext(mockContext, 'login.success', 'resource', 'id-1', {}, 'info');
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
@@ -562,12 +631,12 @@ describe('createAuditLogFromContext', () => {
       get: vi.fn(() => undefined), // No adminAuth
     } as unknown as Context<{ Bindings: Env }>;
 
-    await createAuditLogFromContext(mockContext, 'test.action', 'resource', 'id-1', {}, 'info');
+    await createAuditLogFromContext(mockContext, 'login.success', 'resource', 'id-1', {}, 'info');
 
     // Should log error and not call DB
     expect(mockLogger.error).toHaveBeenCalledWith(
       'Cannot create audit log: adminAuth context not found',
-      { action: 'test.action', resource: 'resource', resourceId: 'id-1' }
+      { action: 'login.success', resource: 'resource', resourceId: 'id-1' }
     );
     expect(mockEnv.DB.prepare).not.toHaveBeenCalled();
   });

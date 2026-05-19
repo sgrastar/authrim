@@ -56,8 +56,9 @@ const DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION =
   'System-managed confidential client used by Authrim for downstream grant introspection.';
 const CLIENT_ID_FILE = 'downstream_grant_introspection_client_id.txt';
 const CLIENT_SECRET_FILE = 'downstream_grant_introspection_client_secret.txt';
-const DOWNSTREAM_INTROSPECTION_CLIENT_MAX_RETRIES = 8;
+const DOWNSTREAM_INTROSPECTION_CLIENT_MAX_RETRIES = 24;
 const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_BASE_DELAY_MS = 2000;
+const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS = 15000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -74,6 +75,11 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
     normalized.includes('fetch failed') ||
     normalized.includes('workers_dev_script_not_found') ||
     normalized.includes('error 1042') ||
+    normalized.includes('error 1016') ||
+    normalized.includes('origin dns') ||
+    normalized.includes('dns error') ||
+    normalized.includes('admin_machine_token_failed:530') ||
+    normalized.includes('(530)') ||
     normalized.includes('no workers script was found') ||
     normalized.includes('timed out') ||
     normalized.includes('timeout') ||
@@ -81,11 +87,38 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
     normalized.includes('bad gateway') ||
     normalized.includes('service unavailable') ||
     normalized.includes('gateway timeout') ||
+    normalized.includes('admin_machine_token_failed:404') ||
+    normalized.includes('tenant not found') ||
     normalized.includes('connection reset') ||
     normalized.includes('econnreset') ||
     normalized.includes('enotfound') ||
-    normalized.includes('eai_again')
+    normalized.includes('eai_again') ||
+    normalized.includes('network connection lost')
   );
+}
+
+function describeOperationError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  const cause = (error as Error & { cause?: unknown }).cause;
+  if (cause && typeof cause === 'object') {
+    const record = cause as Record<string, unknown>;
+    const details = [
+      typeof record.code === 'string' ? record.code : undefined,
+      typeof record.syscall === 'string' ? record.syscall : undefined,
+      typeof record.hostname === 'string' ? record.hostname : undefined,
+      cause instanceof Error ? cause.message : undefined,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    if (details) {
+      return `${error.message}: ${details}`;
+    }
+  }
+
+  return error.message;
 }
 
 function getClientIdPath(keysDir: string): string {
@@ -106,6 +139,7 @@ function buildAdminHeaders(adminBearerToken: string, tenantId?: string): Record<
     Authorization: `Bearer ${adminBearerToken}`,
     Accept: 'application/json',
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache',
     ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
   };
 }
@@ -405,7 +439,7 @@ export async function ensureDownstreamIntrospectionClient(
           rotatedSecret: false,
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = describeOperationError(error);
         const shouldRetry =
           attempt < maxRetries && isRetryableDownstreamIntrospectionError(message);
 
@@ -416,9 +450,13 @@ export async function ensureDownstreamIntrospectionClient(
           };
         }
 
-        const delayMs = Math.min(retryDelayMs * attempt, 10000);
+        adminBearerToken = null;
+        const delayMs = Math.min(
+          retryDelayMs * attempt,
+          DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS
+        );
         onProgress?.(
-          `Downstream introspection client request hit a temporary router readiness error. Retrying in ${Math.ceil(delayMs / 1000)}s...`
+          `Downstream introspection client request hit a temporary router readiness error (${message}). Retrying in ${Math.ceil(delayMs / 1000)}s...`
         );
         await sleep(delayMs);
       }

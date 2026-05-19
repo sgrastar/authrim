@@ -52,12 +52,11 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const issuerUrl = buildIssuerUrl(env, tenantId);
 
-    // Determine return URL with UI config fallback
-    let returnUrl = c.req.query('return_url');
-    if (!returnUrl) {
-      const uiConfig = await getUIConfig(env);
-      returnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${issuerUrl}/`;
-    }
+    // Determine return URL with UI config fallback. Only local Authrim/Login UI origins are accepted.
+    const requestedReturnUrl = c.req.query('return_url');
+    const uiConfig = await getUIConfig(env);
+    const defaultReturnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${issuerUrl}/`;
+    const returnUrl = resolveSafeReturnUrl(env, tenantId, requestedReturnUrl) ?? defaultReturnUrl;
 
     if (!idpId) {
       // Return list of available IdPs if no IdP specified
@@ -71,23 +70,60 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const outboundIdpConfig = withSPInitiatedSsoEndpoint(idpConfig);
+
     // Generate AuthnRequest
-    const authnRequestXml = buildAuthnRequest(issuerUrl, idpConfig);
+    const authnRequestXml = buildAuthnRequest(issuerUrl, outboundIdpConfig);
 
     // Store request in SAMLRequestStore for later validation
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
-    await storeAuthnRequest(env, tenantId, requestId, issuerUrl, idpConfig.entityId, returnUrl);
+    if (!requestId) {
+      throw new Error('Generated SAML AuthnRequest is missing ID');
+    }
+    await storeAuthnRequest(env, tenantId, requestId, issuerUrl, outboundIdpConfig.entityId, returnUrl);
+
+    // RelayState is limited by the SAML bindings; use the opaque request ID, not the return URL.
+    const relayState = requestId;
 
     // Redirect to IdP based on preferred binding
-    if (idpConfig.allowedBindings.includes('redirect')) {
-      return await redirectToIdP(c, env, idpConfig, authnRequestXml, returnUrl);
+    if (outboundIdpConfig.allowedBindings.includes('redirect')) {
+      return await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState);
     } else {
-      return postToIdP(c, idpConfig, authnRequestXml, returnUrl);
+      return postToIdP(c, outboundIdpConfig, authnRequestXml, relayState);
     }
   } catch (error) {
     log.error('SP Login Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+function deriveRedirectSsoUrl(ssoUrl: string): string | null {
+  try {
+    const url = new URL(ssoUrl);
+    if (!/\/POST\/SSO\/?$/iu.test(url.pathname)) {
+      return null;
+    }
+    url.pathname = url.pathname.replace(/\/POST\/SSO\/?$/iu, '/Redirect/SSO');
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function withSPInitiatedSsoEndpoint(idpConfig: SAMLIdPConfig): SAMLIdPConfig {
+  if (!idpConfig.allowedBindings.includes('redirect')) {
+    return idpConfig;
+  }
+
+  const redirectSsoUrl = deriveRedirectSsoUrl(idpConfig.ssoUrl);
+  if (!redirectSsoUrl) {
+    return idpConfig;
+  }
+
+  return {
+    ...idpConfig,
+    ssoUrl: redirectSsoUrl,
+  };
 }
 
 /**
@@ -290,4 +326,46 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function resolveSafeReturnUrl(
+  env: Env,
+  tenantId: string,
+  value: string | undefined
+): string | null {
+  if (!value) {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return null;
+  }
+
+  const allowedOrigins = new Set(
+    [
+      getUrlOrigin(buildIssuerUrl(env, tenantId)),
+      getUrlOrigin((env as unknown as Record<string, unknown>).UI_URL),
+    ].filter((origin): origin is string => Boolean(origin))
+  );
+
+  return allowedOrigins.has(url.origin) ? url.toString() : null;
+}
+
+function getUrlOrigin(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
 }

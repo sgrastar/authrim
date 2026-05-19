@@ -87,7 +87,7 @@ describe('createDefaultConfig', () => {
     expect(config.components.api).toBe(true);
     expect(config.components.loginUi).toBe(true);
     expect(config.components.adminUi).toBe(true);
-    expect(config.profiles.defaults.storage).toBe('builtin:storage:standard');
+    expect(config.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
     expect(config.profiles.registry.backend).toBe('kv');
   });
 
@@ -133,7 +133,7 @@ describe('parseConfig', () => {
     expect(config.profiles.registry.backend).toBe('database');
   });
 
-  it('should accept built-in single-db and eu-pii storage profile IDs', () => {
+  it('should accept built-in shared, tenant, single-db, and eu-pii storage profile IDs', () => {
     const rawConfig = {
       version: '1.0.0',
       createdAt: new Date().toISOString(),
@@ -160,9 +160,74 @@ describe('parseConfig', () => {
     const config = parseConfig(rawConfig);
     expect(config.profiles.defaults.storage).toBe('builtin:storage:single-db');
 
+    rawConfig.profiles.defaults.storage = 'builtin:storage:shared-d1';
+    const sharedConfig = parseConfig(rawConfig);
+    expect(sharedConfig.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
+
+    rawConfig.profiles.defaults.storage = 'builtin:storage:tenant-d1';
+    const tenantConfig = parseConfig(rawConfig);
+    expect(tenantConfig.profiles.defaults.storage).toBe('builtin:storage:tenant-d1');
+
     rawConfig.profiles.defaults.storage = 'builtin:storage:eu-pii-split';
     const euConfig = parseConfig(rawConfig);
     expect(euConfig.profiles.defaults.storage).toBe('builtin:storage:eu-pii-split');
+  });
+
+  it('should default tenant D1 preallocated slots to 3', () => {
+    const config = parseConfig({
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      environment: { prefix: 'dev' },
+      tenant: { name: 'test-tenant' },
+      components: { api: true },
+      profile: 'basic-op',
+      oidc: {},
+      sharding: {},
+      features: {},
+      keys: {},
+    });
+
+    expect(config.tenantD1.preallocatedSlots).toBe(3);
+  });
+
+  it('should constrain tenant D1 preallocated slots to 1 through 500', () => {
+    const baseConfig = {
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      environment: { prefix: 'dev' },
+      tenant: { name: 'test-tenant' },
+      components: { api: true },
+      profile: 'basic-op',
+      oidc: {},
+      sharding: {},
+      features: {},
+      keys: {},
+    };
+
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        tenantD1: { preallocatedSlots: 1 },
+      }).success
+    ).toBe(true);
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        tenantD1: { preallocatedSlots: 500 },
+      }).success
+    ).toBe(true);
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        tenantD1: { preallocatedSlots: 0 },
+      }).success
+    ).toBe(false);
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        tenantD1: { preallocatedSlots: 501 },
+      }).success
+    ).toBe(false);
   });
 
   it('should accept Hyperdrive reference catalog entries for external storage defaults', () => {

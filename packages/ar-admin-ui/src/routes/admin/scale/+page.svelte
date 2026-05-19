@@ -63,7 +63,7 @@
 		// { key: 'me', label: 'ME (Middle East)' }
 	];
 
-	const DEFAULT_REGIONS = ['apac', 'enam', 'weur'];
+	const DEFAULT_REGIONS = ['apac', 'enam', 'weur', 'wnam'];
 
 	// Future: Scale profile presets for quick configuration
 	// type ScaleProfile = 'dev' | 'prod' | 'enterprise';
@@ -97,16 +97,16 @@
 
 	// Edit state
 	let selectedRegions = $state<string[]>([...DEFAULT_REGIONS]);
-	let regionDistribution = $state<RegionDistribution>({ apac: 33, enam: 34, weur: 33 });
+	let regionDistribution = $state<RegionDistribution>({ apac: 25, enam: 25, weur: 25, wnam: 25 });
 
 	let scaleState = $state<ScaleState>({
-		unifiedScale: 8,
+		unifiedScale: 4,
 		clientBasedCoeff: 0.5
 	});
 
 	// Initial values for diff comparison
 	let initialScaleState = $state<ScaleState>({
-		unifiedScale: 8,
+		unifiedScale: 4,
 		clientBasedCoeff: 0.5
 	});
 
@@ -251,7 +251,7 @@
 				}
 				// If no valid region config from server, keep initial default values
 			}
-			// Else: keep initial default values (selectedRegions = DEFAULT_REGIONS, regionDistribution = { apac: 33, enam: 34, weur: 33 })
+			// Else: keep initial default values (selectedRegions = DEFAULT_REGIONS, regionDistribution = 25% each)
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load configuration';
 		} finally {

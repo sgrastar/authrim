@@ -6,6 +6,7 @@
 		type CategorySettings
 	} from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
+	import { getTenantInfo } from '$lib/api/admin-info';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
@@ -71,6 +72,7 @@
 	let commonEntryBehaviorSettings = $state<CategorySettings | null>(null);
 	let commonEntrySettings = $state<CategorySettings | null>(null);
 	let tenantUiSettings = $state<CategorySettings | null>(null);
+	let commonDiscoverUrl = $state<string | null>(null);
 
 	let behaviorForm = $state<LoginEntryForm | null>(null);
 	let commonEntryBehaviorForm = $state<LoginEntryForm | null>(null);
@@ -106,6 +108,7 @@
 	const canEditPlatform = $derived(
 		settingsContext.getPermissionForScope('platform', adminAuth.user?.roles ?? []) === 'edit'
 	);
+	const commonDiscoverDisplay = $derived(commonDiscoverUrl || 'the shared /discover URL');
 
 	const hasBehaviorChanges = $derived(
 		initialBehaviorValues ? JSON.stringify(buildBehaviorValues(behaviorForm)) !== JSON.stringify(initialBehaviorValues) : false
@@ -370,11 +373,13 @@
 
 		try {
 			const tenantId = settingsContext.resolveTenantId(currentTenantId);
-			const [loginEntryResult, tenantUiResult, tenantLoginUiResult] = await Promise.all([
+			const [loginEntryResult, tenantUiResult, tenantLoginUiResult, tenantInfoResult] = await Promise.all([
 				scopedSettingsAPI.getSettingsForScope(LOGIN_ENTRY_CATEGORY, { level: 'tenant', tenantId }),
 				scopedSettingsAPI.getSettingsForScope(DISCOVERY_UI_CATEGORY, { level: 'tenant', tenantId }),
-				scopedSettingsAPI.getSettingsForScope(LOGIN_UI_CATEGORY, { level: 'tenant', tenantId })
+				scopedSettingsAPI.getSettingsForScope(LOGIN_UI_CATEGORY, { level: 'tenant', tenantId }),
+				getTenantInfo(tenantId).catch(() => null)
 			]);
+			commonDiscoverUrl = tenantInfoResult?.discover_url ?? null;
 
 			loginEntrySettings = loginEntryResult;
 			tenantUiSettings = tenantUiResult;
@@ -632,8 +637,8 @@
 			<section class="panel">
 				<div class="section-header">
 					<div>
-						<h2>Common Entry Discovery Behavior</h2>
-						<p>Controls the shared tenant chooser used at <code>https://multi-tenant.authrim.com/discover</code>.</p>
+						<h2>Common Entry Login Behavior</h2>
+						<p>Controls the shared entry page before a tenant is selected. Current URL: <code>{commonDiscoverDisplay}</code>.</p>
 					</div>
 				</div>
 
@@ -856,11 +861,11 @@
 			<section class="panel">
 				<div class="section-header">
 					<div>
-						<h2>{singleTenantMode ? 'Discovery Behavior' : 'Tenant Override Discovery Behavior'}</h2>
+						<h2>{singleTenantMode ? 'Discovery Behavior' : 'Tenant Entry Override'}</h2>
 						<p>
 							{singleTenantMode
 								? 'Controls how this tenant is resolved before login.'
-								: `Controls tenant-specific discovery behavior for ${currentTenantName}. This does not affect the shared chooser at multi-tenant.authrim.com.`}
+								: `Controls direct entry behavior for ${currentTenantName}. This does not change the shared entry page at ${commonDiscoverDisplay}.`}
 						</p>
 					</div>
 				<a class="subtle-link" href={`/admin/tenants/${currentTenantId}`}>Open Tenant Details</a>
@@ -1065,7 +1070,7 @@
 				<div class="section-header">
 					<div>
 						<h2>Common Entry Screen Content</h2>
-						<p>Text, branding, and theme used by the shared chooser at <code>https://multi-tenant.authrim.com/discover</code>.</p>
+						<p>Text, branding, and theme used by the shared entry page at <code>{commonDiscoverDisplay}</code>.</p>
 					</div>
 				</div>
 

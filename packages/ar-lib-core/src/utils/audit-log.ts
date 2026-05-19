@@ -21,6 +21,7 @@ import {
   buildAuditStorageConfigFromProfile,
   createExternalAuditStorageAdapter,
   createAuditService,
+  resolveAuditEventFailureBehavior,
   resolveAuditPersistenceSourcesFromEnv,
   resolveLegacyAuditLogAdapterFromEnv,
   type EventCategory,
@@ -38,6 +39,17 @@ const log = createLogger().module('AUDIT_LOG');
 const unifiedAuditServiceCache = new WeakMap<object, IAuditService>();
 const KV_KEY_ROUTING_RULES = 'audit_routing_rules';
 
+export class AuditLogDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly action: string,
+    readonly tenantId: string
+  ) {
+    super(message);
+    this.name = 'AuditLogDeliveryError';
+  }
+}
+
 function requireAuditTenantId(tenantId: string | undefined, action: string): string | null {
   const normalized = tenantId?.trim();
   if (!normalized) {
@@ -45,6 +57,10 @@ function requireAuditTenantId(tenantId: string | undefined, action: string): str
     return null;
   }
   return normalized;
+}
+
+function isFailClosedAuditAction(action: string): boolean {
+  return resolveAuditEventFailureBehavior(action).behavior === 'fail_closed_or_strong_retry';
 }
 
 export interface LegacyAuditLogWriteInput {
@@ -193,6 +209,39 @@ function parseLegacyMetadata(metadata: string): Record<string, unknown> {
   }
 
   return { raw_metadata: metadata };
+}
+
+async function resolveLegacyAuditLogPolicy(
+  env: Env,
+  tenantId: string,
+  action: string
+): Promise<{
+  writeLegacyD1: boolean;
+  backpressureMode: NonNullable<AuditProfile['backpressure']>['mode'];
+}> {
+  try {
+    const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
+    const primary = resolved.auditProfile.primary;
+
+    if (!primary) {
+      return {
+        writeLegacyD1: false,
+        backpressureMode: resolved.auditProfile.backpressure?.mode ?? 'event_class',
+      };
+    }
+
+    return {
+      writeLegacyD1: primary.type === 'd1',
+      backpressureMode: resolved.auditProfile.backpressure?.mode ?? 'event_class',
+    };
+  } catch (error) {
+    log.warn('Failed to resolve audit profile for legacy audit write; keeping D1 write enabled', {
+      action,
+      tenantId,
+    });
+    log.error('Audit profile resolution failed', {}, error as Error);
+    return { writeLegacyD1: true, backpressureMode: 'event_class' };
+  }
 }
 
 function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefined {
@@ -350,6 +399,9 @@ async function mirrorLegacyAuditLogToUnifiedService(
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
+    if (isFailClosedAuditAction(entry.action)) {
+      throw new AuditLogDeliveryError('audit_log_tenant_id_required', entry.action, 'unknown');
+    }
     return;
   }
   const metadata = parseLegacyMetadata(entry.metadata);
@@ -415,30 +467,59 @@ export async function createAuditLog(
   const id = generateSecureRandomString(16);
   // Use seconds (not milliseconds) for consistency with other audit log writers
   const createdAt = Math.floor(Date.now() / 1000);
+  let failureBehavior: ReturnType<typeof resolveAuditEventFailureBehavior>['behavior'] =
+    'fail_closed_or_strong_retry';
+  let legacyD1WasPrimary = true;
 
   try {
-    log.info('createAuditLog: Starting INSERT', { id, action: entry.action, tenantId, createdAt });
+    const legacyPolicy = await resolveLegacyAuditLogPolicy(env, tenantId, entry.action);
+    legacyD1WasPrimary = legacyPolicy.writeLegacyD1;
+    const classification = resolveAuditEventFailureBehavior(
+      entry.action,
+      legacyPolicy.backpressureMode
+    );
+    failureBehavior = classification.behavior;
 
-    const coreAdapter: DatabaseAdapter = resolveLegacyAuditLogAdapterFromEnv(env);
-    await writeLegacyAuditLog(coreAdapter, {
-      id,
-      tenantId,
-      userId: entry.userId,
-      action: entry.action,
-      resource: entry.resource,
-      resourceId: entry.resourceId,
-      ipAddress: entry.ipAddress,
-      userAgent: entry.userAgent,
-      metadata: entry.metadata,
-      severity: entry.severity,
-      createdAt,
-    });
+    if (!legacyPolicy.writeLegacyD1) {
+      log.debug('Skipping legacy D1 audit_log write for non-D1 audit profile', {
+        action: entry.action,
+        tenantId,
+        auditCategory: classification.category,
+        auditFailureBehavior: classification.behavior,
+      });
+    } else {
+      log.info('createAuditLog: Starting INSERT', {
+        id,
+        action: entry.action,
+        tenantId,
+        createdAt,
+        auditCategory: classification.category,
+        auditFailureBehavior: classification.behavior,
+      });
 
-    log.info('createAuditLog: INSERT completed successfully', { id, action: entry.action });
+      const coreAdapter: DatabaseAdapter = resolveLegacyAuditLogAdapterFromEnv(env);
+      await writeLegacyAuditLog(coreAdapter, {
+        id,
+        tenantId,
+        userId: entry.userId,
+        action: entry.action,
+        resource: entry.resource,
+        resourceId: entry.resourceId,
+        ipAddress: entry.ipAddress,
+        userAgent: entry.userAgent,
+        metadata: entry.metadata,
+        severity: entry.severity,
+        createdAt,
+      });
+
+      log.info('createAuditLog: INSERT completed successfully', { id, action: entry.action });
+    }
   } catch (error) {
-    // Non-blocking: log error but don't fail the main operation
     // PII Protection: Don't log entry details (may contain PII in metadata)
     log.error('Failed to create audit log', {}, error as Error);
+    if (failureBehavior === 'fail_closed_or_strong_retry') {
+      throw new AuditLogDeliveryError('audit_log_write_failed', entry.action, tenantId);
+    }
   }
 
   try {
@@ -449,6 +530,9 @@ export async function createAuditLog(
       tenantId,
     });
     log.error('Unified audit mirror failed', {}, error as Error);
+    if (failureBehavior === 'fail_closed_or_strong_retry' && !legacyD1WasPrimary) {
+      throw new AuditLogDeliveryError('audit_log_unified_mirror_failed', entry.action, tenantId);
+    }
   }
 
   // Log critical operations to console for immediate visibility
@@ -498,6 +582,9 @@ export async function createAuditLogFromContext(
       resource,
       resourceId,
     });
+    if (isFailClosedAuditAction(action)) {
+      throw new AuditLogDeliveryError('audit_log_admin_auth_required', action, 'unknown');
+    }
     return;
   }
 
@@ -507,6 +594,9 @@ export async function createAuditLogFromContext(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tenantId = requireAuditTenantId((c as any).get('tenantId') as string | undefined, action);
   if (!tenantId) {
+    if (isFailClosedAuditAction(action)) {
+      throw new AuditLogDeliveryError('audit_log_tenant_id_required', action, 'unknown');
+    }
     return;
   }
 

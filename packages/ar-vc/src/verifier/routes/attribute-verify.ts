@@ -263,7 +263,9 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Link verification to user and store attributes
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core');
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core', {
+      tenantId: vpRequest.tenantId,
+    });
     const verificationRepo = new AttributeVerificationRepository(adapter);
     const attributeRepo = new UserVerifiedAttributeRepository(adapter);
 
@@ -328,7 +330,9 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
       return c.json({ error: 'invalid_token', error_description: 'Invalid access token' }, 401);
     }
 
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core');
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-verifier-core', {
+      tenantId: userInfo.tenantId,
+    });
     const attributeRepo = new UserVerifiedAttributeRepository(adapter);
     const attributes = await getUserVerifiedAttributes(
       attributeRepo,

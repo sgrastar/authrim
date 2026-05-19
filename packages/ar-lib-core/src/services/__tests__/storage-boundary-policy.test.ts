@@ -65,6 +65,34 @@ describe('storage-boundary-policy', () => {
         d1Default: true,
         nonD1OptionRequired: true,
       },
+      {
+        slice: 'passkeys',
+        boundaryClass: 'auth_core',
+        tenantOverrideAllowed: false,
+        d1Default: true,
+        nonD1OptionRequired: false,
+      },
+      {
+        slice: 'linked_identities',
+        boundaryClass: 'pii',
+        tenantOverrideAllowed: true,
+        d1Default: true,
+        nonD1OptionRequired: true,
+      },
+      {
+        slice: 'consent',
+        boundaryClass: 'auth_core',
+        tenantOverrideAllowed: false,
+        d1Default: true,
+        nonD1OptionRequired: false,
+      },
+      {
+        slice: 'authorization',
+        boundaryClass: 'authorization',
+        tenantOverrideAllowed: false,
+        d1Default: true,
+        nonD1OptionRequired: false,
+      },
     ]);
   });
 
@@ -90,6 +118,33 @@ describe('storage-boundary-policy', () => {
     });
 
     expect(validateTenantStorageProfileOverride(defaultProfile, candidateProfile)).toBeNull();
+  });
+
+  it('rejects tenant overrides that move protected passkey or authorization slices', () => {
+    const defaultProfile = createStorageProfile('default', {
+      users_core: {
+        driver: 'd1',
+        bindingRef: 'DB',
+        role: 'core',
+      },
+      passkeys: {
+        driver: 'd1',
+        bindingRef: 'DB',
+        role: 'core',
+      },
+    });
+    const candidateProfile = createStorageProfile('tenant-custom', {
+      passkeys: {
+        driver: 'postgres',
+        connectionRef: 'tenant-passkeys',
+        role: 'core',
+      },
+    });
+
+    expect(validateTenantStorageProfileOverride(defaultProfile, candidateProfile)).toEqual({
+      code: 'tenant_protected_storage_slice_override_not_allowed',
+      message: expect.stringContaining('protected passkeys storage'),
+    });
   });
 
   it('rejects tenant overrides that change the auth core slice target', () => {

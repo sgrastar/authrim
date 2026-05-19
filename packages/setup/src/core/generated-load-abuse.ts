@@ -176,6 +176,27 @@ function extractRetryAfterSeconds(payload: unknown): number | undefined {
     : undefined;
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryRateLimitedRequest(
+  request: () => Promise<StageRequestResult>,
+  maxAttempts = 3
+): Promise<StageRequestResult> {
+  let result = await request();
+  let attempt = 1;
+  while (!result.ok && result.status === 429 && (result.retryAfterSeconds ?? 0) > 0) {
+    if (attempt >= maxAttempts) {
+      break;
+    }
+    await sleep((result.retryAfterSeconds ?? 1) * 1000 + 1000);
+    result = await request();
+    attempt += 1;
+  }
+  return result;
+}
+
 function encodeBasicAuth(clientId: string, clientSecret: string): string {
   return Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 }
@@ -348,32 +369,34 @@ function getProfileStages(
       concurrency: stageConfig.tokenExchange.concurrency,
       iterationsPerWorker: stageConfig.tokenExchange.iterations,
       request: async () => {
-        const response = await fetchJsonWithTimeout(`${baseUrl}/token`, 10_000, {
-          method: 'POST',
-          headers: {
-            authorization: basicAuthHeader,
-            accept: 'application/json',
-            'content-type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-            subject_token: context.subjectToken,
-            subject_token_type: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
-            requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-            audience: 'svc://op-userinfo/customer-profile',
-          }).toString(),
+        return retryRateLimitedRequest(async () => {
+          const response = await fetchJsonWithTimeout(`${baseUrl}/token`, 10_000, {
+            method: 'POST',
+            headers: {
+              authorization: basicAuthHeader,
+              accept: 'application/json',
+              'content-type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+              subject_token: context.subjectToken,
+              subject_token_type: ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
+              requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+              audience: 'svc://op-userinfo/customer-profile',
+            }).toString(),
+          });
+          const hasToken =
+            isRecord(response.payload) && typeof response.payload.access_token === 'string';
+          return {
+            ok: response.ok && response.status === 200 && hasToken,
+            status: response.status,
+            retryAfterSeconds: extractRetryAfterSeconds(response.payload),
+            failureSample:
+              response.ok && hasToken
+                ? undefined
+                : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
+          };
         });
-        const hasToken =
-          isRecord(response.payload) && typeof response.payload.access_token === 'string';
-        return {
-          ok: response.ok && response.status === 200 && hasToken,
-          status: response.status,
-          retryAfterSeconds: extractRetryAfterSeconds(response.payload),
-          failureSample:
-            response.ok && hasToken
-              ? undefined
-              : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
-        };
       },
     },
     {
@@ -382,28 +405,30 @@ function getProfileStages(
       concurrency: stageConfig.introspect.concurrency,
       iterationsPerWorker: stageConfig.introspect.iterations,
       request: async () => {
-        const response = await fetchJsonWithTimeout(`${baseUrl}/introspect`, 10_000, {
-          method: 'POST',
-          headers: {
-            authorization: basicAuthHeader,
-            accept: 'application/json',
-            'content-type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            token: context.downstreamAccessToken,
-            token_type_hint: 'access_token',
-          }).toString(),
+        return retryRateLimitedRequest(async () => {
+          const response = await fetchJsonWithTimeout(`${baseUrl}/introspect`, 10_000, {
+            method: 'POST',
+            headers: {
+              authorization: basicAuthHeader,
+              accept: 'application/json',
+              'content-type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              token: context.downstreamAccessToken,
+              token_type_hint: 'access_token',
+            }).toString(),
+          });
+          const active = isRecord(response.payload) && response.payload.active === true;
+          return {
+            ok: response.ok && response.status === 200 && active,
+            status: response.status,
+            retryAfterSeconds: extractRetryAfterSeconds(response.payload),
+            failureSample:
+              response.ok && active
+                ? undefined
+                : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
+          };
         });
-        const active = isRecord(response.payload) && response.payload.active === true;
-        return {
-          ok: response.ok && response.status === 200 && active,
-          status: response.status,
-          retryAfterSeconds: extractRetryAfterSeconds(response.payload),
-          failureSample:
-            response.ok && active
-              ? undefined
-              : `${response.status} ${response.error ?? response.bodyText ?? ''}`,
-        };
       },
     },
     {

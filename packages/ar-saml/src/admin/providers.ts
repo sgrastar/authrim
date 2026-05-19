@@ -26,6 +26,11 @@ import type {
   SAMLMetadataRequestedAttribute,
   SAMLMetadataRefreshStatus,
   SAMLAttributePresetId,
+  SAMLFederationTrustProfile,
+  SAMLMetadataBatchCreateResult,
+  SAMLMetadataBatchStatusResponse,
+  SAMLMetadataEntityListResponse,
+  SAMLMetadataVerificationSummary,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
@@ -33,6 +38,7 @@ import {
   safeFetchText,
   createAuthContextFromHono,
   resolveAuthCorePersistenceAdapterFromEnv,
+  requireDedicatedAdminDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -53,6 +59,7 @@ import {
   applySAMLAttributePresetToSPConfig,
   normalizeSAMLSPAttributePresetConfig,
 } from '../idp/attribute-presets';
+import { SAMLMetadataValidationError } from './errors';
 import { applySAMLSPProfileDefaults } from './profile-defaults';
 import {
   analyzeSAMLMetadata,
@@ -60,17 +67,21 @@ import {
   type SAMLMetadataAnalysis,
 } from './metadata-refresh';
 import {
+  AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
+  SINGLE_METADATA_FETCH_LIMIT_BYTES,
+  extractEntityDescriptorXml,
+  fingerprintCertificateSha256,
+  getLogoUrl,
+  isAggregateMetadata,
+  parseAggregateMetadata,
+  resolveAggregateSignaturePolicy,
+  verifyAggregateMetadataSignature,
+} from './aggregate-metadata';
+import {
   promoteSAMLNextSigningCertificate,
   publishSAMLNextSigningCertificate,
   retireSAMLBackupSigningCertificate,
 } from './signing-rollover';
-
-export class SAMLMetadataValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SAMLMetadataValidationError';
-  }
-}
 
 type AdminSAMLContext = Context<{ Bindings: Env }>;
 type AdminSAMLAuthContext = Context<{
@@ -212,6 +223,23 @@ interface SAMLMetadataPreviewRequest extends MetadataImportRequest {
   attributePresetId?: SAMLAttributePresetId;
 }
 
+interface SAMLFederationTrustProfileRequest {
+  name?: string;
+  description?: string;
+  metadataUrlPatterns?: string[];
+  certificates?: Array<{ id?: string; name?: string; certificate: string }>;
+  policy?: 'strict' | 'warn' | 'disabled';
+  enabled?: boolean;
+}
+
+interface SAMLMetadataBatchCreateRequest {
+  entityIds?: string[];
+  providerType?: 'saml_idp' | 'saml_sp';
+  samlProfile?: SAMLSPProfile;
+  attributePresetId?: SAMLAttributePresetId;
+  enabled?: boolean;
+}
+
 export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Response> {
   const log = getLogger(c).module('SAML');
 
@@ -222,21 +250,61 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
     }
 
     const body = (await c.req.json()) as SAMLMetadataPreviewRequest;
-    const resolvedMetadata = await resolveMetadataImportInput(c, body);
+    const resolvedMetadata = await resolveMetadataImportInput(c, body, {
+      maxResponseSize: AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
+    });
     if (resolvedMetadata instanceof Response) {
       return resolvedMetadata;
     }
 
-    const providerType = detectSAMLMetadataProviderType(resolvedMetadata.metadataXml);
-    const config = buildConfigFromMetadata(
-      providerType,
-      resolvedMetadata.metadataXml,
-      body.samlProfile,
-      body.attributePresetId
-    );
+    if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
+      const tenantId = resolveSAMLTenantIdFromContext(c);
+      const aggregate = parseAggregateMetadata(resolvedMetadata.metadataXml);
+      const policy = resolveAggregateSignaturePolicy(c.env);
+      const trustProfiles = await listFederationTrustProfiles(c.env, tenantId);
+      const verification = verifyAggregateMetadataSignature(
+        resolvedMetadata.metadataXml,
+        resolvedMetadata.metadataUrl,
+        trustProfiles,
+        policy
+      );
+      const previewId = crypto.randomUUID();
+      const preview = await storeAggregatePreview(c.env, {
+        previewId,
+        tenantId,
+        metadataXml: resolvedMetadata.metadataXml,
+        metadataUrl: resolvedMetadata.metadataUrl,
+        entities: aggregate.entities,
+        verification,
+      });
+
+      return c.json({
+        kind: 'aggregate',
+        previewId,
+        metadataUrl: resolvedMetadata.metadataUrl,
+        entityCount: aggregate.entities.length,
+        expiresAt: preview.expiresAt,
+        verification,
+      });
+    }
+
+    let providerType: 'saml_idp' | 'saml_sp';
+    let config: SAMLIdPConfig | SAMLSPConfig;
+    try {
+      providerType = detectSAMLMetadataProviderType(resolvedMetadata.metadataXml);
+      config = buildConfigFromMetadata(
+        providerType,
+        resolvedMetadata.metadataXml,
+        body.samlProfile,
+        body.attributePresetId
+      );
+    } catch (error) {
+      throw toSAMLMetadataValidationError(error);
+    }
     const metadataAnalysis = analyzeSAMLMetadata(resolvedMetadata.metadataXml);
 
     return c.json({
+      kind: 'single',
       providerType,
       config: {
         ...config,
@@ -438,9 +506,16 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     let metadataDerivedFields: SAMLMetadataConfigFields | undefined;
 
     if (hasMetadataInput) {
-      const resolvedMetadata = await resolveMetadataImportInput(c, body);
+      const resolvedMetadata = await resolveMetadataImportInput(c, body, {
+        maxResponseSize: SINGLE_METADATA_FETCH_LIMIT_BYTES,
+      });
       if (resolvedMetadata instanceof Response) {
         return resolvedMetadata;
+      }
+      if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
+        throw new SAMLMetadataValidationError(
+          'Aggregate metadata must be previewed first and imported by selecting EntityDescriptor entries.'
+        );
       }
 
       try {
@@ -731,9 +806,16 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
 
     const body = (await c.req.json()) as MetadataImportRequest;
 
-    const resolvedMetadata = await resolveMetadataImportInput(c, body);
+    const resolvedMetadata = await resolveMetadataImportInput(c, body, {
+      maxResponseSize: SINGLE_METADATA_FETCH_LIMIT_BYTES,
+    });
     if (resolvedMetadata instanceof Response) {
       return resolvedMetadata;
+    }
+    if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
+      throw new SAMLMetadataValidationError(
+        'Aggregate metadata must be previewed first and imported by selecting EntityDescriptor entries.'
+      );
     }
 
     const metadataUrl = resolvedMetadata.metadataUrl;
@@ -846,14 +928,45 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    let metadataXml: string;
+    let fetchedMetadataXml: string;
     try {
-      metadataXml = await safeFetchText(metadataUrl, {
+      fetchedMetadataXml = await safeFetchText(metadataUrl, {
         timeoutMs: 10000,
-        maxResponseSize: 1024 * 1024,
+        maxResponseSize: existingConfig.aggregateImport
+          ? AGGREGATE_METADATA_FETCH_LIMIT_BYTES
+          : SINGLE_METADATA_FETCH_LIMIT_BYTES,
       });
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    let metadataXml = fetchedMetadataXml;
+    let aggregateImport = existingConfig.aggregateImport;
+    if (metadataIsAggregateOrThrow(fetchedMetadataXml)) {
+      if (!aggregateImport?.aggregateEntityId) {
+        throw new SAMLMetadataValidationError(
+          'Aggregate metadata refresh requires an aggregate import entity snapshot.'
+        );
+      }
+      const policy = resolveAggregateSignaturePolicy(c.env);
+      const trustProfiles = await listFederationTrustProfiles(c.env, tenantId);
+      const verification = verifyAggregateMetadataSignature(
+        fetchedMetadataXml,
+        metadataUrl,
+        trustProfiles,
+        policy
+      );
+      metadataXml = extractEntityDescriptorXml(
+        fetchedMetadataXml,
+        aggregateImport.aggregateEntityId
+      );
+      aggregateImport = {
+        ...aggregateImport,
+        aggregateSourceUrl: metadataUrl,
+        federationTrustProfileId:
+          verification.trustProfileId ?? aggregateImport.federationTrustProfileId,
+        verification,
+      };
     }
 
     const previousAnalysis = buildPreviousMetadataAnalysis(existingConfig);
@@ -870,6 +983,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
         metadataCriticalFields: currentAnalysis.criticalFields,
         metadataRefreshStatus: refreshStatus,
         metadataLastFetched: now,
+        ...(aggregateImport ? { aggregateImport } : {}),
       };
 
       await coreAdapter.execute(
@@ -907,6 +1021,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       metadataCriticalFields: currentAnalysis.criticalFields,
       metadataRefreshStatus: refreshStatus,
       metadataLastFetched: now,
+      ...(aggregateImport ? { aggregateImport } : {}),
     };
 
     await coreAdapter.execute(
@@ -934,6 +1049,192 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     }
 
     log.error('Refresh metadata error', { providerId: id }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleListFederationTrustProfiles(c: AdminSAMLContext): Promise<Response> {
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_LIST);
+    if (forbidden) return forbidden;
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    return c.json({ profiles: await listFederationTrustProfiles(c.env, tenantId) });
+  } catch (error) {
+    getLogger(c)
+      .module('SAML')
+      .error('List federation trust profiles error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleCreateFederationTrustProfile(c: AdminSAMLContext): Promise<Response> {
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
+    if (forbidden) return forbidden;
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const profile = await buildTrustProfileFromRequest(
+      tenantId,
+      (await c.req.json()) as SAMLFederationTrustProfileRequest
+    );
+    await upsertFederationTrustProfile(c.env, profile);
+    return c.json(profile, 201);
+  } catch (error) {
+    if (error instanceof SAMLMetadataValidationError) {
+      return createSAMLMetadataValidationErrorResponse(c, error);
+    }
+    getLogger(c)
+      .module('SAML')
+      .error('Create federation trust profile error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleUpdateFederationTrustProfile(c: AdminSAMLContext): Promise<Response> {
+  const id = c.req.param('id');
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
+    if (forbidden) return forbidden;
+    if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const existing = await getFederationTrustProfile(c.env, tenantId, id);
+    if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const profile = await buildTrustProfileFromRequest(
+      tenantId,
+      (await c.req.json()) as SAMLFederationTrustProfileRequest,
+      existing
+    );
+    await upsertFederationTrustProfile(c.env, profile);
+    return c.json(profile);
+  } catch (error) {
+    if (error instanceof SAMLMetadataValidationError) {
+      return createSAMLMetadataValidationErrorResponse(c, error);
+    }
+    getLogger(c)
+      .module('SAML')
+      .error('Update federation trust profile error', { id }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleDeleteFederationTrustProfile(c: AdminSAMLContext): Promise<Response> {
+  const id = c.req.param('id');
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
+    if (forbidden) return forbidden;
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'saml-federation-trust');
+    await adapter.execute(
+      'DELETE FROM saml_federation_trust_profiles WHERE tenant_id = ? AND id = ?',
+      [tenantId, id]
+    );
+    return c.json({ success: true });
+  } catch (error) {
+    getLogger(c)
+      .module('SAML')
+      .error('Delete federation trust profile error', { id }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleListAggregatePreviewEntities(c: AdminSAMLContext): Promise<Response> {
+  const previewId = c.req.param('previewId');
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
+    if (forbidden) return forbidden;
+    if (!previewId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const preview = await getAggregatePreview(c.env, previewId);
+    if (!preview || preview.tenantId !== tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const params = new URLSearchParams();
+    if (c.req.query('query')) params.set('query', c.req.query('query')!);
+    for (const keyword of c.req.queries('keyword') ?? []) {
+      if (keyword.trim()) params.append('keyword', keyword.trim());
+    }
+    params.set('offset', c.req.query('offset') || '0');
+    params.set('limit', c.req.query('limit') || '50');
+    const response = await aggregateStoreFetch(
+      c.env,
+      `/preview/${encodeURIComponent(previewId)}/entities?${params.toString()}`,
+      { method: 'GET' }
+    );
+    if (!response.ok) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    return c.json((await response.json()) as SAMLMetadataEntityListResponse);
+  } catch (error) {
+    getLogger(c)
+      .module('SAML')
+      .error('List aggregate preview entities error', { previewId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Promise<Response> {
+  const previewId = c.req.param('previewId');
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
+    if (forbidden) return forbidden;
+    if (!previewId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const body = (await c.req.json()) as SAMLMetadataBatchCreateRequest;
+    const entityIds = Array.from(
+      new Set((body.entityIds ?? []).map((id) => id.trim()).filter(Boolean))
+    );
+    if (entityIds.length === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'entityIds' },
+      });
+    }
+
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const preview = await getAggregatePreview(c.env, previewId);
+    if (!preview || preview.tenantId !== tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const batchId = crypto.randomUUID();
+    const status = await startAggregateBatch(c.env, batchId, tenantId, entityIds.length);
+    c.executionCtx.waitUntil(
+      processAggregateBatchCreate(c.env, {
+        tenantId,
+        previewId,
+        batchId,
+        entityIds,
+        providerType: body.providerType,
+        samlProfile: body.samlProfile,
+        attributePresetId: body.attributePresetId,
+        enabled: body.enabled !== false,
+      })
+    );
+    return c.json(status, 202);
+  } catch (error) {
+    getLogger(c)
+      .module('SAML')
+      .error('Start aggregate batch create error', { previewId }, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleGetAggregateBatchStatus(c: AdminSAMLContext): Promise<Response> {
+  const batchId = c.req.param('batchId');
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_LIST);
+    if (forbidden) return forbidden;
+    if (!batchId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const response = await aggregateStoreFetch(c.env, `/batch/${encodeURIComponent(batchId)}`, {
+      method: 'GET',
+    });
+    if (!response.ok) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const status = (await response.json()) as SAMLMetadataBatchStatusResponse;
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    if (status.tenantId !== tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    return c.json(status);
+  } catch (error) {
+    getLogger(c)
+      .module('SAML')
+      .error('Get aggregate batch status error', { batchId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -1130,6 +1431,23 @@ function createSAMLMetadataValidationErrorResponse(
   );
 }
 
+function metadataIsAggregateOrThrow(metadataXml: string): boolean {
+  try {
+    return isAggregateMetadata(metadataXml);
+  } catch (error) {
+    throw toSAMLMetadataValidationError(error);
+  }
+}
+
+function toSAMLMetadataValidationError(error: unknown): SAMLMetadataValidationError {
+  if (error instanceof SAMLMetadataValidationError) {
+    return error;
+  }
+  return new SAMLMetadataValidationError(
+    error instanceof Error ? error.message : 'Invalid SAML metadata'
+  );
+}
+
 function buildPreviousMetadataAnalysis(
   config: SAMLIdPConfig | SAMLSPConfig
 ): SAMLMetadataAnalysis | undefined {
@@ -1145,7 +1463,8 @@ function buildPreviousMetadataAnalysis(
 
 async function resolveMetadataImportInput(
   c: AdminSAMLContext,
-  input: MetadataImportRequest
+  input: MetadataImportRequest,
+  options: { maxResponseSize?: number } = {}
 ): Promise<{ metadataXml: string; metadataUrl?: string } | Response> {
   if (input.metadataXml) {
     return { metadataXml: input.metadataXml };
@@ -1170,7 +1489,7 @@ async function resolveMetadataImportInput(
   try {
     const metadataXml = await safeFetchText(input.metadataUrl, {
       timeoutMs: 10000,
-      maxResponseSize: 1024 * 1024,
+      maxResponseSize: options.maxResponseSize ?? SINGLE_METADATA_FETCH_LIMIT_BYTES,
     });
     return { metadataXml, metadataUrl: input.metadataUrl };
   } catch {
@@ -1234,6 +1553,369 @@ function getRequestIp(c: Context<{ Bindings: Env }>): string {
   );
 }
 
+async function buildTrustProfileFromRequest(
+  tenantId: string,
+  body: SAMLFederationTrustProfileRequest,
+  existing?: SAMLFederationTrustProfile
+): Promise<SAMLFederationTrustProfile> {
+  const now = Date.now();
+  const certificates = await Promise.all(
+    (body.certificates ?? existing?.certificates ?? []).map(async (certificate) => ({
+      id: certificate.id || crypto.randomUUID(),
+      name: certificate.name,
+      certificate: certificate.certificate,
+      fingerprintSha256:
+        'fingerprintSha256' in certificate && typeof certificate.fingerprintSha256 === 'string'
+          ? certificate.fingerprintSha256
+          : await fingerprintCertificateSha256(certificate.certificate),
+      createdAt:
+        'createdAt' in certificate && typeof certificate.createdAt === 'number'
+          ? certificate.createdAt
+          : now,
+    }))
+  );
+
+  if (!body.name && !existing?.name) {
+    throw new SAMLMetadataValidationError('Federation trust profile name is required');
+  }
+  if ((body.metadataUrlPatterns ?? existing?.metadataUrlPatterns ?? []).length === 0) {
+    throw new SAMLMetadataValidationError('At least one metadata URL pattern is required');
+  }
+  if (certificates.length === 0) {
+    throw new SAMLMetadataValidationError('At least one trust certificate is required');
+  }
+
+  return {
+    id: existing?.id ?? crypto.randomUUID(),
+    tenantId,
+    name: body.name ?? existing!.name,
+    description: body.description ?? existing?.description,
+    metadataUrlPatterns: body.metadataUrlPatterns ?? existing!.metadataUrlPatterns,
+    certificates,
+    policy: body.policy ?? existing?.policy,
+    enabled: body.enabled ?? existing?.enabled ?? true,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
+async function listFederationTrustProfiles(
+  env: Env,
+  tenantId: string
+): Promise<SAMLFederationTrustProfile[]> {
+  const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
+  const rows = await adapter.query<{
+    id: string;
+    tenant_id: string;
+    name: string;
+    description: string | null;
+    metadata_url_patterns_json: string;
+    certificates_json: string;
+    policy: string | null;
+    enabled: number;
+    created_at: number;
+    updated_at: number;
+  }>(
+    `SELECT id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
+            policy, enabled, created_at, updated_at
+       FROM saml_federation_trust_profiles
+       WHERE tenant_id = ?
+       ORDER BY name ASC`,
+    [tenantId]
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    tenantId: row.tenant_id,
+    name: row.name,
+    description: row.description ?? undefined,
+    metadataUrlPatterns: JSON.parse(row.metadata_url_patterns_json),
+    certificates: JSON.parse(row.certificates_json),
+    policy:
+      row.policy === 'strict' || row.policy === 'warn' || row.policy === 'disabled'
+        ? row.policy
+        : undefined,
+    enabled: row.enabled === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+async function getFederationTrustProfile(
+  env: Env,
+  tenantId: string,
+  id: string
+): Promise<SAMLFederationTrustProfile | null> {
+  return (
+    (await listFederationTrustProfiles(env, tenantId)).find((profile) => profile.id === id) ?? null
+  );
+}
+
+async function upsertFederationTrustProfile(
+  env: Env,
+  profile: SAMLFederationTrustProfile
+): Promise<void> {
+  const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
+  await adapter.execute(
+    `INSERT INTO saml_federation_trust_profiles
+       (id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
+        policy, enabled, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       description = excluded.description,
+       metadata_url_patterns_json = excluded.metadata_url_patterns_json,
+       certificates_json = excluded.certificates_json,
+       policy = excluded.policy,
+       enabled = excluded.enabled,
+       updated_at = excluded.updated_at`,
+    [
+      profile.id,
+      profile.tenantId,
+      profile.name,
+      profile.description ?? null,
+      JSON.stringify(profile.metadataUrlPatterns),
+      JSON.stringify(profile.certificates),
+      profile.policy ?? null,
+      profile.enabled ? 1 : 0,
+      profile.createdAt,
+      profile.updatedAt,
+    ]
+  );
+}
+
+async function storeAggregatePreview(
+  env: Env,
+  input: {
+    previewId: string;
+    tenantId: string;
+    metadataXml: string;
+    metadataUrl?: string;
+    entities: unknown[];
+    verification: SAMLMetadataVerificationSummary;
+  }
+): Promise<{ expiresAt: number }> {
+  const response = await aggregateStoreFetch(env, '/preview', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to store aggregate preview');
+  }
+  return (await response.json()) as { expiresAt: number };
+}
+
+async function getAggregatePreview(
+  env: Env,
+  previewId: string
+): Promise<{
+  tenantId: string;
+  metadataXml: string;
+  metadataUrl?: string;
+  verification: SAMLMetadataVerificationSummary;
+} | null> {
+  const response = await aggregateStoreFetch(env, `/preview/${encodeURIComponent(previewId)}`, {
+    method: 'GET',
+  });
+  return response.ok
+    ? ((await response.json()) as {
+        tenantId: string;
+        metadataXml: string;
+        metadataUrl?: string;
+        verification: SAMLMetadataVerificationSummary;
+      })
+    : null;
+}
+
+async function startAggregateBatch(
+  env: Env,
+  batchId: string,
+  tenantId: string,
+  total: number
+): Promise<SAMLMetadataBatchStatusResponse> {
+  const response = await aggregateStoreFetch(env, '/batch', {
+    method: 'POST',
+    body: JSON.stringify({ batchId, tenantId, total }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to start aggregate batch');
+  }
+  return (await response.json()) as SAMLMetadataBatchStatusResponse;
+}
+
+async function recordAggregateBatchResult(
+  env: Env,
+  batchId: string,
+  result: SAMLMetadataBatchCreateResult
+): Promise<void> {
+  await aggregateStoreFetch(env, `/batch/${encodeURIComponent(batchId)}/result`, {
+    method: 'POST',
+    body: JSON.stringify(result),
+  });
+}
+
+async function completeAggregateBatch(env: Env, batchId: string): Promise<void> {
+  await aggregateStoreFetch(env, `/batch/${encodeURIComponent(batchId)}/complete`, {
+    method: 'POST',
+  });
+}
+
+async function failAggregateBatch(env: Env, batchId: string, error: string): Promise<void> {
+  await aggregateStoreFetch(env, `/batch/${encodeURIComponent(batchId)}/fail`, {
+    method: 'POST',
+    body: JSON.stringify({ error }),
+  });
+}
+
+async function processAggregateBatchCreate(
+  env: Env,
+  input: {
+    tenantId: string;
+    previewId: string;
+    batchId: string;
+    entityIds: string[];
+    providerType?: 'saml_idp' | 'saml_sp';
+    samlProfile?: SAMLSPProfile;
+    attributePresetId?: SAMLAttributePresetId;
+    enabled: boolean;
+  }
+): Promise<void> {
+  try {
+    const preview = await getAggregatePreview(env, input.previewId);
+    if (!preview || preview.tenantId !== input.tenantId) {
+      throw new Error('Aggregate preview not found');
+    }
+    const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'core', {
+      tenantId: input.tenantId,
+    });
+    const existingProviders = await coreAdapter.query<{
+      provider_type: string;
+      config_json: string;
+    }>(
+      `SELECT provider_type, config_json
+       FROM identity_providers
+       WHERE tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [input.tenantId]
+    );
+    const existingEntityKeys = new Set(
+      existingProviders
+        .map((row) => {
+          try {
+            const config = JSON.parse(row.config_json) as SAMLIdPConfig | SAMLSPConfig;
+            return config.entityId ? `${row.provider_type}:${config.entityId}` : null;
+          } catch {
+            return null;
+          }
+        })
+        .filter((key): key is string => Boolean(key))
+    );
+
+    for (const entityId of input.entityIds) {
+      try {
+        const metadataXml = extractEntityDescriptorXml(preview.metadataXml, entityId);
+        const providerType = input.providerType ?? detectSAMLMetadataProviderType(metadataXml);
+        if (providerType !== 'saml_idp' && providerType !== 'saml_sp') {
+          throw new Error('Unsupported SAML metadata role');
+        }
+        const entityKey = `${providerType}:${entityId}`;
+        if (existingEntityKeys.has(entityKey)) {
+          throw new Error(`Provider already exists for entityID: ${entityId}`);
+        }
+        const config = buildConfigFromMetadata(
+          providerType,
+          metadataXml,
+          input.samlProfile,
+          input.attributePresetId
+        );
+        const metadataAnalysis = analyzeSAMLMetadata(metadataXml);
+        const now = Date.now();
+        const providerId = crypto.randomUUID();
+        const normalizedConfig = {
+          ...config,
+          metadataXml,
+          metadataUrl: preview.metadataUrl,
+          metadataHash: metadataAnalysis.hash,
+          metadataCriticalFields: metadataAnalysis.criticalFields,
+          metadataRefreshStatus: buildSAMLMetadataRefreshStatus(undefined, metadataAnalysis),
+          metadataLastFetched: now,
+          aggregateImport: {
+            aggregateSourceUrl: preview.metadataUrl,
+            aggregateEntityId: entityId,
+            federationTrustProfileId: preview.verification.trustProfileId,
+            verification: preview.verification,
+            importedAt: now,
+          },
+        } as SAMLIdPConfig | SAMLSPConfig;
+        const name = buildProviderNameFromEntity(entityId, providerType);
+        await coreAdapter.execute(
+          `INSERT INTO identity_providers
+             (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            providerId,
+            input.tenantId,
+            name,
+            providerType,
+            JSON.stringify(normalizedConfig),
+            input.enabled ? 1 : 0,
+            now,
+            now,
+          ]
+        );
+        await recordAggregateBatchResult(env, input.batchId, {
+          entityId,
+          success: true,
+          providerId,
+          providerType,
+          name,
+        });
+        existingEntityKeys.add(entityKey);
+      } catch (error) {
+        await recordAggregateBatchResult(env, input.batchId, {
+          entityId,
+          success: false,
+          error: error instanceof Error ? error.message : 'Import failed',
+        });
+      }
+    }
+
+    await completeAggregateBatch(env, input.batchId);
+  } catch (error) {
+    await failAggregateBatch(
+      env,
+      input.batchId,
+      error instanceof Error ? error.message : 'Batch failed'
+    );
+  }
+}
+
+async function aggregateStoreFetch(env: Env, path: string, init: RequestInit): Promise<Response> {
+  if (!env.SAML_AGGREGATE_METADATA_STORE) {
+    throw new Error('SAML_AGGREGATE_METADATA_STORE binding is not configured');
+  }
+  const id = env.SAML_AGGREGATE_METADATA_STORE.idFromName('global');
+  const stub = env.SAML_AGGREGATE_METADATA_STORE.get(id);
+  return await stub.fetch(`https://saml-aggregate-metadata.local${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+}
+
+function buildProviderNameFromEntity(
+  entityId: string,
+  providerType: 'saml_idp' | 'saml_sp'
+): string {
+  try {
+    const url = new URL(entityId);
+    return `${url.hostname} ${providerType === 'saml_sp' ? 'SP' : 'IdP'}`;
+  } catch {
+    return `${entityId} ${providerType === 'saml_sp' ? 'SP' : 'IdP'}`;
+  }
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -1267,9 +1949,11 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
     throw new Error('Invalid metadata: missing IDPSSODescriptor');
   }
 
-  // Get SSO URL (prefer HTTP-POST)
+  // Get SSO URL. SP-initiated login signs AuthnRequest with HTTP-Redirect,
+  // so prefer the Redirect endpoint when metadata publishes both bindings.
   const ssoServices = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'SingleSignOnService');
-  let ssoUrl = '';
+  let postSsoUrl = '';
+  let redirectSsoUrl = '';
   const allowedBindings: SAMLIdPConfig['allowedBindings'] = [];
 
   for (const sso of ssoServices) {
@@ -1277,14 +1961,15 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
     const location = getAttribute(sso, 'Location');
 
     if (binding === BINDING_URIS.HTTP_POST) {
-      ssoUrl = ssoUrl || location || '';
+      postSsoUrl = postSsoUrl || location || '';
       allowedBindings.push('post');
     } else if (binding === BINDING_URIS.HTTP_REDIRECT) {
-      ssoUrl = ssoUrl || location || '';
+      redirectSsoUrl = redirectSsoUrl || location || '';
       allowedBindings.push('redirect');
     }
   }
 
+  const ssoUrl = redirectSsoUrl || postSsoUrl;
   if (!ssoUrl) {
     throw new Error('Invalid metadata: no supported SSO binding found');
   }
@@ -1295,9 +1980,12 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 
   for (const slo of sloServices) {
     const binding = getAttribute(slo, 'Binding');
-    if (binding === BINDING_URIS.HTTP_POST || binding === BINDING_URIS.HTTP_REDIRECT) {
+    if (binding === BINDING_URIS.HTTP_REDIRECT) {
       sloUrl = getAttribute(slo, 'Location') || undefined;
       break;
+    }
+    if (binding === BINDING_URIS.HTTP_POST) {
+      sloUrl = sloUrl || getAttribute(slo, 'Location') || undefined;
     }
   }
 
@@ -1330,6 +2018,7 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 
   return {
     entityId,
+    logoUrl: getLogoUrl(entityDescriptor),
     ssoUrl,
     sloUrl,
     certificate,

@@ -1,13 +1,27 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import { WORKER_COMPONENTS } from '../core/naming.js';
 import { buildResourceIdsFromLock, generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { validateGeneratedEnvironment } from '../core/generated-env-validator.js';
+
+const listD1DatabasesMock = vi.hoisted(() => vi.fn());
+const listR2BucketsMock = vi.hoisted(() => vi.fn());
+const queryD1RowsMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../core/cloudflare.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/cloudflare.js')>();
+  return {
+    ...actual,
+    listD1Databases: listD1DatabasesMock,
+    listR2Buckets: listR2BucketsMock,
+    queryD1Rows: queryD1RowsMock,
+  };
+});
 
 const tempDirs: string[] = [];
 
@@ -19,7 +33,12 @@ async function createFixtureRoot() {
 
 async function writeGeneratedEnvironment(
   root: string,
-  options?: { externalStorageDefault?: boolean; withHyperdriveReferences?: boolean }
+  options?: {
+    externalStorageDefault?: boolean;
+    tenantD1StorageDefault?: boolean;
+    withTenantD1Slots?: boolean;
+    withHyperdriveReferences?: boolean;
+  }
 ) {
   const env = 'portable';
   const config = createDefaultConfig(env);
@@ -30,6 +49,9 @@ async function writeGeneratedEnvironment(
   };
   if (options?.externalStorageDefault) {
     config.profiles.defaults.storage = 'builtin:storage:external-postgres';
+  }
+  if (options?.tenantD1StorageDefault) {
+    config.profiles.defaults.storage = 'builtin:storage:tenant-d1';
   }
   if (options?.withHyperdriveReferences) {
     config.profiles.references.hyperdrive = {
@@ -50,12 +72,32 @@ async function writeGeneratedEnvironment(
   await mkdir(envPaths.root, { recursive: true });
   await mkdir(envPaths.wrangler, { recursive: true });
 
+  const d1 = [
+    { binding: 'DB', name: `${env}-authrim-core-db`, id: 'db-core-id' },
+    { binding: 'DB_PII', name: `${env}-authrim-pii-db`, id: 'db-pii-id' },
+    { binding: 'DB_ADMIN', name: `${env}-authrim-admin-db`, id: 'db-admin-id' },
+  ];
+
+  if (options?.withTenantD1Slots) {
+    for (let slotNumber = 1; slotNumber <= 3; slotNumber += 1) {
+      const slot = String(slotNumber).padStart(4, '0');
+      d1.push(
+        {
+          binding: `TDB_SLOT_${slot}_CORE`,
+          name: `authrim-${env}-tdb-slot-${slot}-core`,
+          id: `slot-${slot}-core-id`,
+        },
+        {
+          binding: `TDB_SLOT_${slot}_PII`,
+          name: `authrim-${env}-tdb-slot-${slot}-pii`,
+          id: `slot-${slot}-pii-id`,
+        }
+      );
+    }
+  }
+
   const lock = createLockFile(env, {
-    d1: [
-      { binding: 'DB', name: `${env}-authrim-core-db`, id: 'db-core-id' },
-      { binding: 'DB_PII', name: `${env}-authrim-pii-db`, id: 'db-pii-id' },
-      { binding: 'DB_ADMIN', name: `${env}-authrim-admin-db`, id: 'db-admin-id' },
-    ],
+    d1,
     kv: [
       { binding: 'CLIENTS_CACHE', name: `${env.toUpperCase()}-CLIENTS_CACHE`, id: 'kv-clients' },
       {
@@ -67,6 +109,11 @@ async function writeGeneratedEnvironment(
       { binding: 'REBAC_CACHE', name: `${env.toUpperCase()}-REBAC_CACHE`, id: 'kv-rebac' },
       { binding: 'USER_CACHE', name: `${env.toUpperCase()}-USER_CACHE`, id: 'kv-user' },
       { binding: 'AUTHRIM_CONFIG', name: `${env.toUpperCase()}-AUTHRIM_CONFIG`, id: 'kv-config' },
+      {
+        binding: 'TENANT_RUNTIME_REGISTRY',
+        name: `${env.toUpperCase()}-TENANT_RUNTIME_REGISTRY`,
+        id: 'kv-tenant-runtime-registry',
+      },
       { binding: 'STATE_STORE', name: `${env.toUpperCase()}-STATE_STORE`, id: 'kv-state' },
       { binding: 'CONSENT_CACHE', name: `${env.toUpperCase()}-CONSENT_CACHE`, id: 'kv-consent' },
     ],
@@ -98,6 +145,12 @@ async function writeGeneratedEnvironment(
 }
 
 describe('validateGeneratedEnvironment', () => {
+  beforeEach(() => {
+    listD1DatabasesMock.mockReset();
+    listR2BucketsMock.mockReset();
+    queryD1RowsMock.mockReset();
+  });
+
   afterEach(async () => {
     await Promise.all(
       tempDirs.splice(0).map(async (dir) => {
@@ -132,6 +185,17 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
+  it('passes tenant-d1 generated environment with runtime registry KV bindings', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
+      tenantD1StorageDefault: true,
+    });
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+
+    expect(result.ok).toBe(true);
+    expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
+  });
+
   it('passes when the active external storage default is backed by configured Hyperdrive references', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
       externalStorageDefault: true,
@@ -142,5 +206,82 @@ describe('validateGeneratedEnvironment', () => {
 
     expect(result.ok).toBe(true);
     expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
+  });
+
+  it('passes live Cloudflare validation when lock D1 and R2 resources exist', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    listD1DatabasesMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
+      { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
+      { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+    ]);
+    listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-import-artifacts` },
+      { name: `${env}-export-artifacts` },
+      { name: `${env}-sensitive-details` },
+    ]);
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
+
+    expect(result.ok).toBe(true);
+    expect(result.checks.find((check) => check.id === 'live-cloudflare-d1')?.status).toBe('pass');
+    expect(result.checks.find((check) => check.id === 'live-cloudflare-r2')?.status).toBe('pass');
+    expect(queryD1RowsMock).not.toHaveBeenCalled();
+  });
+
+  it('fails live Cloudflare validation when a recorded R2 bucket is missing', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    listD1DatabasesMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
+      { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
+      { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+    ]);
+    listR2BucketsMock.mockResolvedValueOnce([{ name: `${env}-import-artifacts` }]);
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
+    const r2Check = result.checks.find((check) => check.id === 'live-cloudflare-r2');
+
+    expect(result.ok).toBe(false);
+    expect(r2Check?.status).toBe('fail');
+    expect(r2Check?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining(`${env}-export-artifacts is missing`)])
+    );
+  });
+
+  it('checks live tenant D1 slot count against DB_ADMIN for tenant-d1 environments', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
+      tenantD1StorageDefault: true,
+      withTenantD1Slots: true,
+    });
+    listD1DatabasesMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
+      { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
+      { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+      { name: `authrim-${env}-tdb-slot-0001-core`, uuid: 'slot-0001-core-id' },
+      { name: `authrim-${env}-tdb-slot-0001-pii`, uuid: 'slot-0001-pii-id' },
+      { name: `authrim-${env}-tdb-slot-0002-core`, uuid: 'slot-0002-core-id' },
+      { name: `authrim-${env}-tdb-slot-0002-pii`, uuid: 'slot-0002-pii-id' },
+      { name: `authrim-${env}-tdb-slot-0003-core`, uuid: 'slot-0003-core-id' },
+      { name: `authrim-${env}-tdb-slot-0003-pii`, uuid: 'slot-0003-pii-id' },
+    ]);
+    listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-import-artifacts` },
+      { name: `${env}-export-artifacts` },
+      { name: `${env}-sensitive-details` },
+    ]);
+    queryD1RowsMock.mockResolvedValueOnce([{ count: 3 }]);
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
+    const slotCheck = result.checks.find((check) => check.id === 'live-tenant-d1-slots');
+
+    expect(result.ok).toBe(true);
+    expect(slotCheck?.status).toBe('pass');
+    expect(slotCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('tenant_database_slots count: 3/3')])
+    );
+    expect(queryD1RowsMock).toHaveBeenCalledWith(
+      `${env}-authrim-admin-db`,
+      'SELECT COUNT(*) AS count FROM tenant_database_slots;'
+    );
   });
 });

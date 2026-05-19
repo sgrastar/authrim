@@ -32,7 +32,7 @@
 	let editingIndex = $state<number | null>(null);
 	let formError = $state('');
 
-	const currentTenantId = $derived(settingsContext.tenantId || 'default');
+	const currentTenantId = $derived(settingsContext.tenantId);
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
 	const hasChanges = $derived(JSON.stringify(providers) !== initialProvidersJson);
 

@@ -62,6 +62,7 @@ export interface SAMLAttributeReleaseRule {
 export interface SAMLProviderConfig {
 	description?: string;
 	providerName?: string;
+	logoUrl?: string;
 	entityId?: string;
 	metadataUrl?: string;
 	metadataXml?: string;
@@ -96,6 +97,13 @@ export interface SAMLProviderConfig {
 	signAssertions?: boolean;
 	signResponses?: boolean;
 	allowedBindings?: string[];
+	aggregateImport?: {
+		aggregateSourceUrl?: string;
+		aggregateEntityId: string;
+		federationTrustProfileId?: string;
+		verification: SAMLMetadataVerificationSummary;
+		importedAt: number;
+	};
 }
 
 export interface SAMLProvider {
@@ -157,11 +165,109 @@ export interface ImportSAMLMetadataRequest {
 	attributePresetId?: string;
 }
 
-export interface PreviewSAMLMetadataRequest extends ImportSAMLMetadataRequest {}
+export type PreviewSAMLMetadataRequest = ImportSAMLMetadataRequest;
 
 export interface PreviewSAMLMetadataResponse {
+	kind?: 'single';
 	providerType: SAMLProvider['providerType'];
 	config: SAMLProviderConfig;
+}
+
+export interface SAMLMetadataVerificationSummary {
+	status: 'verified' | 'unverified' | 'skipped' | 'failed';
+	policy: 'strict' | 'warn' | 'disabled';
+	trustProfileId?: string;
+	trustProfileName?: string;
+	certificateFingerprintSha256?: string;
+	signedElementId?: string;
+	verifiedAt?: number;
+	warnings?: string[];
+	error?: string;
+}
+
+export interface SAMLMetadataEntitySummary {
+	entityId: string;
+	role: 'saml_idp' | 'saml_sp' | 'ambiguous' | 'unknown';
+	displayName?: string;
+	acsUrl?: string;
+	ssoUrl?: string;
+	sloUrl?: string;
+	certificateCount: number;
+	validUntil?: string;
+	keywords?: string[];
+	logoUrl?: string;
+}
+
+export interface SAMLMetadataKeywordFacet {
+	category: string;
+	label: string;
+	values: Array<{
+		keyword: string;
+		label: string;
+		count: number;
+	}>;
+}
+
+export interface SAMLMetadataAggregatePreviewResponse {
+	kind: 'aggregate';
+	previewId: string;
+	metadataUrl?: string;
+	entityCount: number;
+	expiresAt: number;
+	verification: SAMLMetadataVerificationSummary;
+}
+
+export type PreviewSAMLMetadataResult =
+	| PreviewSAMLMetadataResponse
+	| SAMLMetadataAggregatePreviewResponse;
+
+export interface SAMLFederationTrustProfile {
+	id: string;
+	tenantId: string;
+	name: string;
+	description?: string;
+	metadataUrlPatterns: string[];
+	certificates: Array<{
+		id: string;
+		name?: string;
+		certificate: string;
+		fingerprintSha256: string;
+		createdAt: number;
+	}>;
+	policy?: 'strict' | 'warn' | 'disabled';
+	enabled: boolean;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface SAMLFederationTrustProfileRequest {
+	name: string;
+	description?: string;
+	metadataUrlPatterns: string[];
+	certificates: Array<{ name?: string; certificate: string }>;
+	policy?: 'strict' | 'warn' | 'disabled';
+	enabled?: boolean;
+}
+
+export interface SAMLMetadataBatchStatus {
+	batchId: string;
+	tenantId: string;
+	status: 'pending' | 'running' | 'completed' | 'failed';
+	total: number;
+	processed: number;
+	succeeded: number;
+	failed: number;
+	startedAt: number;
+	completedAt?: number;
+	results: Array<{
+		entityId: string;
+		success: boolean;
+		providerId?: string;
+		providerType?: SAMLProvider['providerType'];
+		name?: string;
+		error?: string;
+	}>;
+	error?: string;
 }
 
 async function handleAPIError(response: Response, fallbackMessage: string): Promise<Error> {
@@ -287,7 +393,7 @@ export const adminSAMLAPI = {
 		return (await response.json()) as { success: boolean };
 	},
 
-	async previewMetadata(request: PreviewSAMLMetadataRequest): Promise<PreviewSAMLMetadataResponse> {
+	async previewMetadata(request: PreviewSAMLMetadataRequest): Promise<PreviewSAMLMetadataResult> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-metadata/preview`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -298,7 +404,137 @@ export const adminSAMLAPI = {
 			throw await handleAPIError(response, 'Failed to import SAML metadata');
 		}
 
-		return (await response.json()) as PreviewSAMLMetadataResponse;
+		return (await response.json()) as PreviewSAMLMetadataResult;
+	},
+
+	async listAggregatePreviewEntities(
+		previewId: string,
+		options: { query?: string; keywords?: string[]; offset?: number; limit?: number } = {}
+	): Promise<{
+		previewId: string;
+		total: number;
+		offset: number;
+		limit: number;
+		entities: SAMLMetadataEntitySummary[];
+		keywordFacets?: SAMLMetadataKeywordFacet[];
+	}> {
+		const params = new URLSearchParams();
+		if (options.query) params.set('query', options.query);
+		for (const keyword of options.keywords ?? []) {
+			params.append('keyword', keyword);
+		}
+		params.set('offset', String(options.offset ?? 0));
+		params.set('limit', String(options.limit ?? 50));
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/previews/${encodeURIComponent(previewId)}/entities?${params.toString()}`,
+			{ method: 'GET' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list aggregate metadata entities');
+		}
+
+		return await response.json();
+	},
+
+	async startAggregateBatchCreate(
+		previewId: string,
+		request: {
+			entityIds: string[];
+			providerType?: SAMLProvider['providerType'];
+			samlProfile?: string;
+			attributePresetId?: string;
+			enabled?: boolean;
+		}
+	): Promise<SAMLMetadataBatchStatus> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/previews/${encodeURIComponent(previewId)}/batch-create`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to start aggregate metadata import');
+		}
+
+		return await response.json();
+	},
+
+	async getAggregateBatchStatus(batchId: string): Promise<SAMLMetadataBatchStatus> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/batches/${encodeURIComponent(batchId)}`,
+			{ method: 'GET' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to get aggregate import status');
+		}
+
+		return await response.json();
+	},
+
+	async listFederationTrustProfiles(): Promise<{ profiles: SAMLFederationTrustProfile[] }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-federation-trust-profiles`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list federation trust profiles');
+		}
+
+		return await response.json();
+	},
+
+	async createFederationTrustProfile(
+		request: SAMLFederationTrustProfileRequest
+	): Promise<SAMLFederationTrustProfile> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-federation-trust-profiles`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to create federation trust profile');
+		}
+
+		return await response.json();
+	},
+
+	async updateFederationTrustProfile(
+		id: string,
+		request: SAMLFederationTrustProfileRequest
+	): Promise<SAMLFederationTrustProfile> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-federation-trust-profiles/${encodeURIComponent(id)}`,
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update federation trust profile');
+		}
+
+		return await response.json();
+	},
+
+	async deleteFederationTrustProfile(id: string): Promise<{ success: boolean }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-federation-trust-profiles/${encodeURIComponent(id)}`,
+			{ method: 'DELETE' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to delete federation trust profile');
+		}
+
+		return await response.json();
 	},
 
 	async importMetadata(

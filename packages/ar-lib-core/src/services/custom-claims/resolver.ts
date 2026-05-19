@@ -69,6 +69,14 @@ export interface CustomClaimsFeatureConfig {
   maxClaimsPerTarget: number;
 }
 
+export interface CustomClaimSchemaResolverSources {
+  schemaDb: DatabaseSource;
+  nonPiiDb: DatabaseSource;
+  piiDb: DatabaseSource | null;
+  cache: KVNamespace | null;
+  featureConfig?: CustomClaimsFeatureConfig;
+}
+
 // =============================================================================
 // Feature Config
 // =============================================================================
@@ -257,12 +265,24 @@ export function createCustomClaimSchemaResolver(
   cache: KVNamespace | null,
   featureConfig?: CustomClaimsFeatureConfig
 ): CustomClaimSchemaResolver {
+  return createCustomClaimSchemaResolverFromSources({
+    schemaDb: db,
+    nonPiiDb: db,
+    piiDb: dbPii,
+    cache,
+    featureConfig,
+  });
+}
+
+export function createCustomClaimSchemaResolverFromSources(
+  sources: CustomClaimSchemaResolverSources
+): CustomClaimSchemaResolver {
   return new CustomClaimSchemaResolver({
-    schemaLoader: new SchemaLoader(db, cache),
+    schemaLoader: new SchemaLoader(sources.schemaDb, sources.cache),
     scopeEvaluator: new ClaimScopeEvaluator(),
-    dataFetcher: new UserCustomDataFetcher(db, dbPii),
+    dataFetcher: new UserCustomDataFetcher(sources.nonPiiDb, sources.piiDb),
     valueCaster: new ClaimValueCaster(),
     nameResolver: new ClaimNameResolver(),
-    maxClaimsPerTarget: featureConfig?.maxClaimsPerTarget,
+    maxClaimsPerTarget: sources.featureConfig?.maxClaimsPerTarget,
   });
 }

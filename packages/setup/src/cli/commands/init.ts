@@ -62,8 +62,14 @@ import {
 } from '../../core/source.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
 import { buildUrlsConfig, getUiWorkersDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
+import { uiCustomDomainRequiresOwnRoute } from '../../core/ui-deployment.js';
 import { generateRandomTenantId, isValidTenantId } from '../../core/tenant-id.js';
+import {
+  DEFAULT_TENANT_D1_PREALLOCATED_SLOTS,
+  MAX_TENANT_D1_PREALLOCATED_SLOTS,
+} from '../../core/tenant-database.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
+import { isValidCustomDomain, validateSetupDomainInputs } from '../../web/domain-form-state.js';
 
 // =============================================================================
 // Zone Check Helper
@@ -111,6 +117,41 @@ async function saveCloudflareCustomHostnameToken(env: string, token: string | nu
   await writeFile(tokenPath, token);
   await import('node:fs/promises').then((fs) => fs.chmod(tokenPath, 0o600));
   console.log(chalk.gray('☁️  Cloudflare Custom Hostnames token staged for Worker secret upload.'));
+}
+
+function formatSetupDomainValidationIssue(issue: { message: string; suggestion?: string }): string {
+  return issue.suggestion ? `${issue.message} Suggested host: ${issue.suggestion}` : issue.message;
+}
+
+function validateCliApiDomainInput(value: string, tenantName = 'default'): true | string {
+  if (!value) return true;
+  if (!isValidCustomDomain(value)) {
+    return t('tenant.baseDomainValidation');
+  }
+  const issue = validateSetupDomainInputs({
+    apiDomain: value,
+    tenantName,
+  }).find((candidate) => candidate.field === 'apiDomain');
+  return issue ? formatSetupDomainValidationIssue(issue) : true;
+}
+
+function validateCliUiDomainInput(
+  value: string,
+  field: 'loginUiDomain' | 'adminUiDomain',
+  apiDomain: string | null | undefined,
+  tenantName = 'default'
+): true | string {
+  if (!value) return true;
+  if (!isValidCustomDomain(value)) {
+    return t('domain.customValidation');
+  }
+  const issue = validateSetupDomainInputs({
+    apiDomain: apiDomain || '',
+    loginUiDomain: field === 'loginUiDomain' ? value : undefined,
+    adminUiDomain: field === 'adminUiDomain' ? value : undefined,
+    tenantName,
+  }).find((candidate) => candidate.field === field);
+  return issue ? formatSetupDomainValidationIssue(issue) : true;
 }
 
 async function showCliCapabilitySummaryOnce(options?: {
@@ -191,6 +232,66 @@ async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig
     // Unexpected error - don't block setup
     console.log(chalk.yellow(`  ⚠ ${t('domain.zoneCheckFailed')}`));
     console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
+  }
+}
+
+async function checkUiCustomDomainZoneIfNeeded(params: {
+  label: string;
+  domain: string | null | undefined;
+  apiDomain: string | null | undefined;
+  baseDomain?: string | null;
+  multiTenant?: boolean;
+}): Promise<boolean> {
+  const domain = params.domain?.trim();
+  if (
+    !domain ||
+    !uiCustomDomainRequiresOwnRoute({
+      uiDomain: domain,
+      apiDomain: params.apiDomain,
+      baseDomain: params.baseDomain,
+      multiTenant: params.multiTenant,
+    })
+  ) {
+    return true;
+  }
+
+  const spinner = ora(t('domain.checkingZone', { domain })).start();
+
+  try {
+    const result = await checkZoneExists(domain);
+    spinner.stop();
+    const zoneName = extractZoneName(domain);
+
+    if (result.found && result.zone) {
+      console.log(
+        chalk.green(
+          `  ✓ ${params.label}: ${t('domain.zoneFound', {
+            zone: result.zone.name,
+            status: result.zone.status,
+          })}`
+        )
+      );
+      return true;
+    }
+
+    console.log(chalk.yellow(`  ⚠ ${params.label} custom domain requires its own Worker route.`));
+    printCliZoneDiagnostic(result, { domain, zoneName });
+
+    if (result.diagnostic?.code === 'zone_not_found') {
+      console.log('');
+      const ok = await confirm({
+        message: `${params.label}: ${t('domain.continueWithoutZone')}`,
+        default: false,
+      });
+      return ok;
+    }
+
+    return true;
+  } catch {
+    spinner.stop();
+    console.log(chalk.yellow(`  ⚠ ${params.label}: ${t('domain.zoneCheckFailed')}`));
+    console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
+    return true;
   }
 }
 
@@ -1247,6 +1348,89 @@ async function runLoadConfig(): Promise<boolean> {
 // Quick Setup
 // =============================================================================
 
+const SETUP_STORAGE_PROFILE_CHOICES = [
+  {
+    value: 'builtin:storage:shared-d1',
+    name: 'Shared D1 - small/default deployment',
+    description: 'One deployment-wide core D1 and PII D1. Lowest setup cost.',
+  },
+  {
+    value: 'builtin:storage:tenant-d1',
+    name: 'Tenant D1 - one core/PII D1 pair per tenant',
+    description: 'Requires tenant-db provisioning before tenant activation.',
+  },
+] as const;
+
+type SetupStorageProfileId = (typeof SETUP_STORAGE_PROFILE_CHOICES)[number]['value'];
+
+function normalizeSetupStorageProfileId(value: string | undefined): SetupStorageProfileId {
+  return value === 'builtin:storage:tenant-d1'
+    ? 'builtin:storage:tenant-d1'
+    : 'builtin:storage:shared-d1';
+}
+
+async function promptStorageDeploymentProfile(
+  current?: string,
+  options: { allowCustom?: boolean } = {}
+): Promise<string> {
+  const selected = await select({
+    message: 'Storage deployment profile',
+    choices: [
+      ...SETUP_STORAGE_PROFILE_CHOICES,
+      ...(options.allowCustom
+        ? [
+            {
+              value: '__custom__',
+              name: 'Custom profile ID',
+              description: 'Use an existing seeded/custom runtime storage profile.',
+            },
+          ]
+        : []),
+    ],
+    default: normalizeSetupStorageProfileId(current),
+  });
+
+  if (selected === '__custom__') {
+    return input({
+      message: 'Default storage profile ID',
+      default: current || 'builtin:storage:shared-d1',
+      validate: (value) => {
+        if (!value.trim()) return 'Profile ID is required';
+        return true;
+      },
+    });
+  }
+
+  if (selected === 'builtin:storage:tenant-d1') {
+    console.log(
+      chalk.yellow(
+        '  tenant-d1 pre-creates tenant D1 slots during setup. Increase capacity later with tenant-db-pool-expand.'
+      )
+    );
+  }
+
+  return selected;
+}
+
+async function promptTenantD1PreallocatedSlots(current?: number): Promise<number> {
+  const value = await input({
+    message: 'Preallocated tenant D1 slots',
+    default: String(current ?? DEFAULT_TENANT_D1_PREALLOCATED_SLOTS),
+    validate: (inputValue) => {
+      const parsed = Number.parseInt(inputValue, 10);
+      if (
+        !Number.isInteger(parsed) ||
+        parsed < 1 ||
+        parsed > MAX_TENANT_D1_PREALLOCATED_SLOTS
+      ) {
+        return `Enter a number from 1 to ${MAX_TENANT_D1_PREALLOCATED_SLOTS}`;
+      }
+      return true;
+    },
+  });
+  return Number.parseInt(value, 10);
+}
+
 async function runQuickSetup(options: InitOptions): Promise<void> {
   console.log('');
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
@@ -1333,11 +1517,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     apiDomain = await input({
       message: t('domain.apiDomain'),
       validate: (value) => {
-        if (!value) return true; // Allow empty for workers.dev fallback
-        if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
-          return t('domain.customValidation');
-        }
-        return true;
+        return validateCliApiDomainInput(value);
       },
     });
 
@@ -1356,13 +1536,49 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     loginUiDomain = await input({
       message: t('domain.loginUiDomain'),
       default: '',
+      validate: (value) => validateCliUiDomainInput(value, 'loginUiDomain', apiDomain),
     });
 
     adminUiDomain = await input({
       message: t('domain.adminUiDomain'),
       default: '',
+      validate: (value) => validateCliUiDomainInput(value, 'adminUiDomain', apiDomain),
     });
+
+    if (loginUiDomain || adminUiDomain) {
+      console.log('');
+      if (
+        !(await checkUiCustomDomainZoneIfNeeded({
+          label: 'Login UI',
+          domain: loginUiDomain,
+          apiDomain,
+          multiTenant: false,
+        }))
+      ) {
+        loginUiDomain = null;
+      }
+      if (
+        !(await checkUiCustomDomainZoneIfNeeded({
+          label: 'Admin UI',
+          domain: adminUiDomain,
+          apiDomain,
+          multiTenant: false,
+        }))
+      ) {
+        adminUiDomain = null;
+      }
+      console.log('');
+    }
   }
+
+  // Storage deployment profile
+  console.log('');
+  console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
+  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:shared-d1');
+  const tenantD1PreallocatedSlots =
+    storageProfileId === 'builtin:storage:tenant-d1'
+      ? await promptTenantD1PreallocatedSlots()
+      : DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
 
   // Database Configuration
   console.log('');
@@ -1501,6 +1717,10 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
 
   // Create configuration
   const config = createDefaultConfig(envPrefix);
+  config.profiles.defaults.storage = storageProfileId;
+  config.tenantD1 = {
+    preallocatedSlots: tenantD1PreallocatedSlots,
+  };
   config.database = {
     core: parseDbLocation(coreDbLocation),
     pii: parseDbLocation(piiDbLocation),
@@ -1533,6 +1753,10 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   console.log(chalk.bold('Infrastructure:'));
   console.log(`  Environment:   ${chalk.cyan(envPrefix)}`);
   console.log(`  Worker Prefix: ${chalk.cyan(envPrefix + '-ar-*')}`);
+  console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
+  if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
+    console.log(`  Tenant D1:     ${chalk.cyan(`${config.tenantD1.preallocatedSlots} slots`)}`);
+  }
   console.log('');
   console.log(chalk.bold('URLs (Single-tenant):'));
   console.log(`  Issuer URL:    ${chalk.cyan(config.urls.api.custom || config.urls.api.auto)}`);
@@ -1729,11 +1953,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   baseDomain = await input({
     message: t('tenant.baseDomainPrompt'),
     validate: (value) => {
-      if (!value) return true;
-      if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
-        return t('tenant.baseDomainValidation');
-      }
-      return true;
+      return validateCliApiDomainInput(value, tenantName);
     },
   });
 
@@ -1861,12 +2081,41 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     loginUiDomain = await input({
       message: t('tenant.loginUiDomain'),
       default: '',
+      validate: (value) => validateCliUiDomainInput(value, 'loginUiDomain', baseDomain, tenantName),
     });
 
     adminUiDomain = await input({
       message: t('tenant.adminUiDomain'),
       default: '',
+      validate: (value) => validateCliUiDomainInput(value, 'adminUiDomain', baseDomain, tenantName),
     });
+
+    if (loginUiDomain || adminUiDomain) {
+      console.log('');
+      if (
+        !(await checkUiCustomDomainZoneIfNeeded({
+          label: 'Login UI',
+          domain: loginUiDomain,
+          apiDomain,
+          baseDomain,
+          multiTenant: !!baseDomain,
+        }))
+      ) {
+        loginUiDomain = null;
+      }
+      if (
+        !(await checkUiCustomDomainZoneIfNeeded({
+          label: 'Admin UI',
+          domain: adminUiDomain,
+          apiDomain,
+          baseDomain,
+          multiTenant: !!baseDomain,
+        }))
+      ) {
+        adminUiDomain = null;
+      }
+      console.log('');
+    }
   }
 
   // Step 5: Optional components
@@ -2047,10 +2296,10 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     default: false,
   });
 
-  let authCodeShards = 64;
-  let refreshTokenShards = 8;
-  let sessionShards = 32;
-  let challengeShards = 16;
+  let authCodeShards = 4;
+  let refreshTokenShards = 4;
+  let sessionShards = 4;
+  let challengeShards = 4;
 
   if (configureSharding) {
     console.log('');
@@ -2060,7 +2309,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
     const authCodeShardsStr = await input({
       message: t('sharding.authCodeShards'),
-      default: '64',
+      default: '4',
       validate: (value) => {
         const num = parseInt(value, 10);
         if (isNaN(num) || num <= 0) return t('oidc.positiveInteger');
@@ -2071,7 +2320,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
     const refreshTokenShardsStr = await input({
       message: t('sharding.refreshTokenShards'),
-      default: '8',
+      default: '4',
       validate: (value) => {
         const num = parseInt(value, 10);
         if (isNaN(num) || num <= 0) return t('oidc.positiveInteger');
@@ -2081,7 +2330,17 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     refreshTokenShards = parseInt(refreshTokenShardsStr, 10);
   }
 
-  // Step 9: Database Configuration
+  // Step 9: Storage Deployment Profile
+  console.log('');
+  console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
+  console.log('');
+  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:shared-d1');
+  const tenantD1PreallocatedSlots =
+    storageProfileId === 'builtin:storage:tenant-d1'
+      ? await promptTenantD1PreallocatedSlots()
+      : DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
+
+  // Step 10: Database Configuration
   console.log('');
   console.log(chalk.blue('━━━ ' + t('db.title') + ' ━━━'));
   console.log(chalk.yellow('⚠️  ' + t('db.regionWarning')));
@@ -2175,6 +2434,10 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   // Create configuration
   const config = createDefaultConfig(envPrefix);
   config.profile = profile as 'basic-op' | 'fapi-rw' | 'fapi2-security';
+  config.profiles.defaults.storage = storageProfileId;
+  config.tenantD1 = {
+    preallocatedSlots: tenantD1PreallocatedSlots,
+  };
   config.database = {
     core: parseDbLocationNormal(coreDbLocation),
     pii: parseDbLocationNormal(piiDbLocation),
@@ -2329,6 +2592,10 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(`  Refresh Token: ${chalk.cyan(refreshTokenShards)} shards`);
   console.log('');
   console.log(chalk.bold('Database:'));
+  console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
+  if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
+    console.log(`  Tenant D1:     ${chalk.cyan(`${config.tenantD1.preallocatedSlots} slots`)}`);
+  }
   const coreDbDisplay =
     coreDbLocation === 'eu'
       ? 'EU Jurisdiction'
@@ -3011,11 +3278,7 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
     message: 'API (issuer) domain (leave empty for workers.dev)',
     default: stripProtocol(config.urls.api?.custom),
     validate: (value) => {
-      if (!value) return true;
-      if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
-        return 'Please enter a valid domain';
-      }
-      return true;
+      return validateCliApiDomainInput(value, config.tenant?.name || 'default');
     },
   });
 
@@ -3034,18 +3297,53 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
   const loginUiDomain = await input({
     message: 'Login UI domain (leave empty for workers.dev)',
     default: stripProtocol(config.urls.loginUi?.custom),
+    validate: (value) =>
+      validateCliUiDomainInput(value, 'loginUiDomain', apiDomain, config.tenant?.name || 'default'),
   });
 
   const adminUiDomain = await input({
     message: 'Admin UI domain (leave empty for workers.dev)',
     default: stripProtocol(config.urls.adminUi?.custom),
+    validate: (value) =>
+      validateCliUiDomainInput(value, 'adminUiDomain', apiDomain, config.tenant?.name || 'default'),
   });
+
+  let checkedLoginUiDomain: string | null = loginUiDomain || null;
+  let checkedAdminUiDomain: string | null = adminUiDomain || null;
+  if (checkedLoginUiDomain || checkedAdminUiDomain) {
+    console.log('');
+    const multiTenant = config.tenant?.multiTenant === true && !!apiDomain;
+    const baseDomain = multiTenant ? apiDomain : config.tenant?.baseDomain;
+    if (
+      !(await checkUiCustomDomainZoneIfNeeded({
+        label: 'Login UI',
+        domain: checkedLoginUiDomain,
+        apiDomain,
+        baseDomain,
+        multiTenant,
+      }))
+    ) {
+      checkedLoginUiDomain = null;
+    }
+    if (
+      !(await checkUiCustomDomainZoneIfNeeded({
+        label: 'Admin UI',
+        domain: checkedAdminUiDomain,
+        apiDomain,
+        baseDomain,
+        multiTenant,
+      }))
+    ) {
+      checkedAdminUiDomain = null;
+    }
+    console.log('');
+  }
 
   config.urls = buildUrlsConfig({
     env,
     apiDomain,
-    loginUiDomain,
-    adminUiDomain,
+    loginUiDomain: checkedLoginUiDomain,
+    adminUiDomain: checkedAdminUiDomain,
     zoneId: updateDomainConfig.zoneId,
     customDomainBinding: updateDomainConfig.customDomainBinding,
     workersSubdomain,
@@ -3365,7 +3663,7 @@ async function configureRequiredHyperdriveReferences(
 async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   console.log(chalk.bold('\nCurrent Runtime Profile Settings:'));
   console.log(
-    `  Default Storage Profile: ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:standard')}`
+    `  Default Storage Profile: ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:shared-d1')}`
   );
   console.log(
     `  Default Audit Profile: ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
@@ -3380,14 +3678,23 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   );
   console.log('');
 
-  const defaultStorageProfileId = await input({
-    message: 'Default storage profile ID',
-    default: config.profiles.defaults.storage || 'builtin:storage:standard',
-    validate: (value) => {
-      if (!value.trim()) return 'Profile ID is required';
-      return true;
-    },
-  });
+  const defaultStorageProfileId = await promptStorageDeploymentProfile(
+    config.profiles.defaults.storage || 'builtin:storage:shared-d1',
+    {
+      allowCustom: true,
+    }
+  );
+
+  if (defaultStorageProfileId === 'builtin:storage:tenant-d1') {
+    console.log(
+      chalk.yellow(
+        '  Existing tenants need tenant-db registry rows and runtime D1 bindings before this profile is usable.'
+      )
+    );
+    config.tenantD1 = {
+      preallocatedSlots: await promptTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots),
+    };
+  }
 
   const defaultAuditProfileId = await input({
     message: 'Default audit profile ID',
@@ -3634,7 +3941,7 @@ async function editSharding(config: AuthrimConfig): Promise<boolean> {
   console.log(`  Auth Code Shards:    ${chalk.cyan(config.sharding.authCodeShards)}`);
   console.log(`  Refresh Token Shards: ${chalk.cyan(config.sharding.refreshTokenShards)}`);
   console.log('');
-  console.log(chalk.gray('  Note: Power of 2 recommended for shard count (8, 16, 32, 64, 128)'));
+  console.log(chalk.gray('  Note: Power of 2 recommended for shard count (4, 8, 16, 32, 64, 128)'));
   console.log('');
 
   const authCodeShards = await input({

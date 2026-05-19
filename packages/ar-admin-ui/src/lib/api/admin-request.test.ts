@@ -2,11 +2,13 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAdminHeaders } from './admin-request';
+import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 describe('buildAdminHeaders', () => {
 	beforeEach(() => {
 		localStorage.clear();
 		sessionStorage.clear();
+		settingsContext.reset();
 		vi.restoreAllMocks();
 	});
 
@@ -20,10 +22,19 @@ describe('buildAdminHeaders', () => {
 		expect(headers.get('X-Session-Id')).toBeNull();
 	});
 
-	it('falls back to the settings context tenant getter before the store has loaded tenants', () => {
+	it('prefers the live tenant context over a stale persisted selection', async () => {
+		await settingsContext.setTenantId('fresh');
+		sessionStorage.setItem('settings_tenant_id', 'stale');
+
 		const headers = buildAdminHeaders();
 
-		expect(headers.get('X-Tenant-Id')).toBe('default');
+		expect(headers.get('X-Tenant-Id')).toBe('fresh');
+	});
+
+	it('omits X-Tenant-Id before any tenant context is available', () => {
+		const headers = buildAdminHeaders();
+
+		expect(headers.get('X-Tenant-Id')).toBeNull();
 	});
 
 	it('omits X-Tenant-Id when skipTenantHeader is enabled', () => {

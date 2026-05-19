@@ -36,6 +36,7 @@ export const NAMEID_FORMATS = {
   PERSISTENT: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
   TRANSIENT: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
   UNSPECIFIED: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+  SHIBBOLETH: 'urn:mace:shibboleth:1.0:nameIdentifier',
 } as const;
 
 /**

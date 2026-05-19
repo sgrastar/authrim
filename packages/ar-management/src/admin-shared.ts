@@ -3,6 +3,7 @@ import {
   type DatabaseAdapter,
   getTenantIdFromContext,
   getLogger,
+  createLogger,
   AdminAuditLogRepository,
   type AdminAuthContext,
   requireAdminDatabaseAdapter,
@@ -449,13 +450,6 @@ export function scheduleAdminAuditLog(
  * admin module until all handlers are fully moved to structured logger calls.
  */
 export function logSanitizedError(context: string, error: unknown): void {
-  const { createLogger } = require('@authrim/ar-lib-core') as {
-    createLogger: () => {
-      module: (name: string) => {
-        error: (msg: string, ctx: Record<string, unknown>, err?: Error) => void;
-      };
-    };
-  };
   const log = createLogger().module('ADMIN');
   if (error instanceof Error) {
     log.error(context, { type: error.name }, error);

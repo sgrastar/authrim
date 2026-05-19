@@ -51,13 +51,13 @@ export async function configHandler(c: Context<{ Bindings: Env }>) {
           resolved: codeShards,
           kv: kvCodeShards,
           env: c.env.AUTHRIM_CODE_SHARDS || null,
-          default: 64,
+          default: 4,
         },
         session: {
           resolved: sessionShards,
           kv: kvSessionShards,
           env: c.env.AUTHRIM_SESSION_SHARDS || null,
-          default: 32,
+          default: 4,
         },
       },
       bindings: {

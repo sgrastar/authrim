@@ -113,6 +113,7 @@ describe('checkZoneExists', () => {
 
   it('returns not_logged_in when Cloudflare auth is missing', async () => {
     execaMock.mockResolvedValueOnce({
+      exitCode: 0,
       stdout: 'Not logged in. Run `wrangler login`.',
       stderr: '',
     } as Awaited<ReturnType<typeof execa>>);
@@ -125,6 +126,7 @@ describe('checkZoneExists', () => {
 
   it('returns token_unavailable when login exists but no API token can be read', async () => {
     execaMock.mockResolvedValueOnce({
+      exitCode: 0,
       stdout: 'You are logged in with an OAuth token, associated with the email test@example.com.',
       stderr: '',
     } as Awaited<ReturnType<typeof execa>>);

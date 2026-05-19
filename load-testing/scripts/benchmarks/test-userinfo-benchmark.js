@@ -38,6 +38,8 @@ const validationErrors = new Counter('validation_errors');
 const BASE_URL = __ENV.BASE_URL || '';
 const PRESET = __ENV.PRESET || 'rps500';
 const TOKEN_PATH = __ENV.TOKEN_PATH || '../seeds/access_tokens.json';
+const STORAGE_PROFILE = __ENV.STORAGE_PROFILE || 'unspecified';
+const DATASET_USER_COUNT = __ENV.DATASET_USER_COUNT || 'unspecified';
 // For K6 Cloud: URL to fetch seed data from R2
 const TOKEN_URL = __ENV.TOKEN_URL || '';
 
@@ -153,6 +155,11 @@ export const options = {
       preAllocatedVUs: selectedPreset.preAllocatedVUs,
       maxVUs: selectedPreset.maxVUs,
       stages: selectedPreset.stages,
+      tags: {
+        test_id: TEST_ID,
+        storage_profile: STORAGE_PROFILE,
+        dataset_user_count: DATASET_USER_COUNT,
+      },
     },
   },
   thresholds: selectedPreset.thresholds,
@@ -187,6 +194,8 @@ export function setup() {
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
+  console.log(`🗄️  Storage profile: ${STORAGE_PROFILE}`);
+  console.log(`👥 Dataset users: ${DATASET_USER_COUNT}`);
   console.log("");
 
   let tokens = [];
@@ -229,6 +238,8 @@ export function setup() {
     tokens: useRemoteData ? tokens : null,
     tokenCount: tokens.length,
     preset: PRESET,
+    storageProfile: STORAGE_PROFILE,
+    datasetUserCount: DATASET_USER_COUNT,
     baseUrl: BASE_URL,
   };
 }

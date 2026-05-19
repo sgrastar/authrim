@@ -485,7 +485,7 @@ const id: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Konfigurasikan sharding? (untuk environment beban tinggi)',
   'sharding.title': 'Pengaturan Sharding',
-  'sharding.note': 'Catatan: Disarankan pangkat 2 untuk jumlah shard (8, 16, 32, 64, 128)',
+  'sharding.note': 'Catatan: Disarankan pangkat 2 untuk jumlah shard (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Jumlah shard Auth Code',
   'sharding.refreshTokenShards': 'Jumlah shard Refresh Token',
 
@@ -939,13 +939,15 @@ const id: Translations = {
   'web.preview.issuerUrl': 'URL Issuer:',
   'web.preview.loginUi': 'UI Login:',
   'web.preview.adminUi': 'UI Admin:',
-  'web.preview.pagesUrl': 'UI Login (Worker):',
+  'web.preview.pagesUrl': 'Origin UI Login:',
   'web.preview.tenantDiscover': 'Pilihan Tenant (Pintu Masuk Umum):',
   'web.preview.adminAccess': 'Akses UI Admin:',
   'web.preview.firstTenant': '{{name}} (Tenant Utama)',
   'web.preview.otherTenants': 'Tenant Lainnya',
   'web.preview.allTenantsShared': '(dibagi oleh semua tenant)',
+  'web.preview.loginUiOriginNote': '(origin deployment; login tenant memakai issuer /login)',
   'web.preview.viaApiProxy': '(diproksikan melalui domain API yang sama)',
+  'web.preview.conflictWarningTitle': '⚠️ Masalah konfigurasi',
   'web.preview.conflictWarningMsg':
     'Domain kustom {{conflictUI}} sama dengan domain API ({{baseDomain}}). Karena "Hapus tenant dari URL" dinonaktifkan, permintaan API ke {{baseDomain}} (/authorize, /api/auth/*, dll.) akan mengembalikan 404 dan alur login tidak akan berfungsi.',
   'web.preview.conflictActionMsg':

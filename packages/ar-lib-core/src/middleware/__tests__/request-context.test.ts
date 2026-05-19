@@ -63,6 +63,10 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.post('/device_authorization', (c) => {
+    const tenantId = getTenantIdFromContext(c);
+    return c.json({ tenantId });
+  });
   app.get('/api/admin/platform/tenant-domain-mappings', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
@@ -84,7 +88,22 @@ function buildApp(env: TestEnv, requireTenant = true) {
   app.get('/api/admin/tenants', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
+  app.get('/api/admin/tenants/:tenantId/info', (c) => {
+    return c.json({
+      tenantId: getTenantIdFromContext(c),
+      hasRuntimeUserStoreSources: Boolean(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c as any).get('runtimeUserStoreSources')
+      ),
+    });
+  });
   app.get('/api/admin/users', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/jobs/users/bulk-update', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/jobs/tenant-databases/provision', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
   app.get('/api/admin/tenants/:tenantId/settings/oauth', (c) => {
@@ -312,6 +331,120 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(logoutRes.status).toBe(200);
     });
 
+    it('does not treat the configured Admin UI host as a tenant subdomain', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        ADMIN_UI_URL: `https://admin.${BASE_DOMAIN}`,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const sessionRes = await app.request(
+        makeRequest(`admin.${BASE_DOMAIN}`, '/api/admin/me/session'),
+        undefined,
+        env as Env
+      );
+      const tenantsRes = await app.request(
+        makeRequest(`admin.${BASE_DOMAIN}`, '/api/admin/tenants'),
+        undefined,
+        env as Env
+      );
+
+      expect(sessionRes.status).toBe(200);
+      await expect(sessionRes.json()).resolves.toEqual({ tenantId: 'first' });
+      expect(tenantsRes.status).toBe(200);
+      await expect(tenantsRes.json()).resolves.toEqual({ tenantId: 'first' });
+      expect(db.prepare).not.toHaveBeenCalled();
+    });
+
+    it('keeps tenant inventory admin requests on the control-plane database', async () => {
+      const db = createMockDB({ tenantRow: { id: 'first' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:first': null,
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        PRIMARY_TENANT_ID: 'first',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(BASE_DOMAIN, '/api/admin/tenants/first/info'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        tenantId: 'first',
+        hasRuntimeUserStoreSources: false,
+      });
+    });
+
+    it('uses X-Tenant-Id for tenant-scoped admin requests from the Admin UI host', async () => {
+      const db = createMockDB({ tenantRow: { id: 'first' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:first': null,
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        ADMIN_UI_URL: `https://admin.${BASE_DOMAIN}`,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        new Request(`https://admin.${BASE_DOMAIN}/api/admin/jobs/tenant-databases/provision`, {
+          method: 'POST',
+          headers: { Host: `admin.${BASE_DOMAIN}`, 'X-Tenant-Id': 'first' },
+        }),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
+    });
+
+    it('does not treat the configured Login UI host as a tenant subdomain', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        UI_URL: `https://login.${BASE_DOMAIN}`,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`login.${BASE_DOMAIN}`, '/api/auth/discovery'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
+      expect(db.prepare).not.toHaveBeenCalled();
+    });
+
     it('allows global admin settings endpoints from a non-tenant admin host without X-Tenant-Id', async () => {
       const db = createMockDB({ tenantRow: null });
       const kv = createMockKV({ cachedValue: null });
@@ -384,6 +517,204 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
 
       expect(res.status).toBe(200);
+    });
+
+    it('returns a PII-free 409 when tenant database runtime source resolution fails', async () => {
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:sample': null,
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+
+      expect(res.status).toBe(409);
+      const body = await res.json<{
+        error: string;
+        storage_profile: string;
+        route: string;
+        tenant_id: string;
+        email?: string;
+      }>();
+      expect(body).toMatchObject({
+        error: 'missing_binding',
+        storage_profile: 'builtin:storage:tenant-d1',
+        route: '/test',
+        tenant_id: 'sample',
+      });
+      expect(body.email).toBeUndefined();
+    });
+
+    it('returns a PII-free 409 when tenant storage profile uses an unsupported resolver', async () => {
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const badStorageProfile = {
+        id: 'custom:storage:unsupported-tenant-resolver',
+        kind: 'storage',
+        label: 'Unsupported Tenant Resolver',
+        scope: 'deployment',
+        deploymentProfile: 'tenant-d1',
+        slices: {
+          users_core: {
+            driver: 'd1',
+            resolverRef: 'unsupported-registry',
+            role: 'tenant_core',
+          },
+          users_pii: {
+            driver: 'd1',
+            resolverRef: 'unsupported-registry',
+            role: 'tenant_pii',
+          },
+        },
+      };
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:sample': null,
+          'profile-registry:storage:custom:storage:unsupported-tenant-resolver':
+            JSON.stringify(badStorageProfile),
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'custom:storage:unsupported-tenant-resolver',
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+
+      expect(res.status).toBe(409);
+      const body = await res.json<{
+        error: string;
+        storage_profile: string;
+        route: string;
+        tenant_id: string;
+        email?: string;
+      }>();
+      expect(body).toMatchObject({
+        error: 'unsupported_storage_profile',
+        storage_profile: 'custom:storage:unsupported-tenant-resolver',
+        route: '/test',
+        tenant_id: 'sample',
+      });
+      expect(body.email).toBeUndefined();
+    });
+
+    it('returns a PII-free 409 for tenant-d1 protocol routes that are not routed yet', async () => {
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:sample': null,
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`sample.${BASE_DOMAIN}`, '/device_authorization'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(409);
+      const body = await res.json<{
+        error: string;
+        storage_profile: string;
+        route: string;
+        tenant_id: string;
+        email?: string;
+      }>();
+      expect(body).toMatchObject({
+        error: 'unsupported_storage_profile',
+        storage_profile: 'builtin:storage:tenant-d1',
+        route: '/device_authorization',
+        tenant_id: 'sample',
+      });
+      expect(body.email).toBeUndefined();
+    });
+
+    it('returns a PII-free 409 for tenant-d1 admin-critical job routes that are not routed yet', async () => {
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:sample': null,
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest('admin.pages.dev', '/api/admin/jobs/users/bulk-update', {
+          'X-Tenant-Id': 'sample',
+        }),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(409);
+      const body = await res.json<{
+        error: string;
+        storage_profile: string;
+        route: string;
+        tenant_id: string;
+        email?: string;
+      }>();
+      expect(body).toMatchObject({
+        error: 'unsupported_storage_profile',
+        storage_profile: 'builtin:storage:tenant-d1',
+        route: '/api/admin/jobs/users/bulk-update',
+        tenant_id: 'sample',
+      });
+      expect(body.email).toBeUndefined();
+    });
+
+    it('allows tenant database provisioning control-plane job routes before tenant DB bindings exist', async () => {
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:sample': null,
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+
+      const request = makeRequest('admin.pages.dev', '/api/admin/jobs/tenant-databases/provision', {
+        'X-Tenant-Id': 'sample',
+      });
+      const res = await app.request(
+        new Request(request.url, {
+          method: 'POST',
+          headers: request.headers,
+        }),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'sample' });
     });
 
     it('allows platform admin requests without X-Tenant-Id', async () => {

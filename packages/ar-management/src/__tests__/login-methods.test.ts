@@ -276,7 +276,13 @@ describe('Login Methods API', () => {
 
     it('should include enabled SAML IdP providers as external login providers', async () => {
       mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
-        query: vi.fn(async () => [{ id: 'saml-idp-1', name: 'Campus SAML' }]),
+        query: vi.fn(async () => [
+          {
+            id: 'saml-idp-1',
+            name: 'Campus SAML',
+            config_json: JSON.stringify({ logoUrl: 'https://campus.example/logo.png' }),
+          },
+        ]),
       });
       const { app, mockEnv } = createTestApp();
 
@@ -290,6 +296,7 @@ describe('Login Methods API', () => {
           name: 'Campus SAML',
           type: 'saml',
           startMode: 'saml_sp',
+          iconUrl: 'https://campus.example/logo.png',
           startUrl: '/saml/sp/login?idp=saml-idp-1',
         })
       );

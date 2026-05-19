@@ -25,6 +25,8 @@ import {
   generateRegionAwareJti,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  getRuntimeUserStoreSourcesFromHonoContext,
+  registerSessionClientInStore,
   getTenantIdFromContext,
   getDefaultTenantId,
   getPARRequestStoreByUri,
@@ -3441,6 +3443,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const user = await getCachedUser(c.env, tenantId, sub, {
           coreDb: piiCtx.coreAdapter,
           piiDb: piiCtx.defaultPiiAdapter,
+          cacheScope: piiCtx.userCacheScope,
+          piiCacheMode: piiCtx.piiCacheMode,
         });
 
         const userData: Record<string, unknown> = {
@@ -3499,14 +3503,63 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sidPrefix: sessionId.substring(0, 25),
         clientIdPrefix: validClientId.substring(0, 25),
       });
-      const result = await authCtx.repositories.sessionClient.createOrUpdate({
+      const mirrorMode =
+        getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.transientAuth
+          ?.sessionClientMirror ?? 'async';
+
+      const registrationInput = {
         session_id: sessionId,
         client_id: validClientId,
-      });
-      log.debug('Successfully registered session-client', {
-        action: 'session_client_registered',
-        resultId: result.id,
-      });
+      };
+      const storeRegistrationPromise = registerSessionClientInStore(
+        c.env,
+        tenantId,
+        registrationInput
+      )
+        .then((result) => {
+          if (!result) {
+            return;
+          }
+          log.debug('Successfully registered session-client in DO', {
+            action: 'session_client_registered',
+            resultId: result.id,
+          });
+        })
+        .catch((error) => {
+          log.error(
+            'Failed to register session-client in DO for implicit/hybrid logout',
+            { action: 'session_client_register' },
+            error as Error
+          );
+        });
+      const mirrorPromise =
+        mirrorMode === 'disabled'
+          ? Promise.resolve()
+          : authCtx.repositories.sessionClient
+              .createOrUpdate(registrationInput)
+              .then((result) => {
+                log.debug('Successfully mirrored session-client', {
+                  action: 'session_client_registered',
+                  resultId: result.id,
+                });
+              })
+              .catch((error) => {
+                // Log error but don't fail the authorization - logout tracking is non-critical
+                log.error(
+                  'Failed to mirror session-client for implicit/hybrid logout',
+                  { action: 'session_client_register' },
+                  error as Error
+                );
+              });
+      const registrationPromise = Promise.all([storeRegistrationPromise, mirrorPromise]).then(
+        () => undefined
+      );
+
+      if (mirrorMode === 'sync') {
+        await registrationPromise;
+      } else {
+        c.executionCtx?.waitUntil(registrationPromise);
+      }
     } catch (error) {
       // Log error but don't fail the authorization - logout tracking is non-critical
       log.error(

@@ -55,9 +55,32 @@ export function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+function normalizeNonWorkersDevOrigin(urlOrDomain: string | null | undefined): string | null {
+  const withScheme = ensureHttps(urlOrDomain);
+  if (!withScheme) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(withScheme);
+    if (parsed.hostname === 'workers.dev' || parsed.hostname.endsWith('.workers.dev')) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 export interface ResolveEnvironmentUrlOptions {
   env: string;
   workersSubdomain?: string | null;
+}
+
+export type ApiBaseUrlCandidatePurpose = 'operational' | 'tenant-scoped-admin';
+
+export interface ResolveApiBaseUrlCandidatesOptions extends ResolveEnvironmentUrlOptions {
+  purpose?: ApiBaseUrlCandidatePurpose;
 }
 
 export interface DomainRoutingConflict {
@@ -138,6 +161,62 @@ export function resolveIssuerUrl(
   return getWorkersDevUrl(`${options.env}-ar-router`, options.workersSubdomain);
 }
 
+/**
+ * Resolve the most stable public API origin for setup-time management calls.
+ *
+ * In multi-tenant mode the canonical issuer may be `{tenant}.{baseDomain}`.
+ * Immediately after deploy, that tenant hostname can lag wildcard/custom-domain
+ * propagation even when the base API domain is already routed. Admin bootstrap
+ * requests carry `X-Tenant-Id`, so using the base API origin avoids unnecessary
+ * dependence on the tenant hostname during post-deploy setup.
+ */
+export function resolveOperationalApiBaseUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
+  const baseDomain = config?.tenant?.baseDomain?.trim();
+  if (isMultiTenantConfigured(config) && baseDomain) {
+    return `https://${baseDomain}`;
+  }
+
+  const apiUrl = config?.urls?.api?.custom || config?.urls?.api?.auto;
+  if (apiUrl) {
+    return stripTrailingSlash(apiUrl);
+  }
+
+  return getWorkersDevUrl(`${options.env}-ar-router`, options.workersSubdomain);
+}
+
+export function resolveApiBaseUrlCandidates(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveApiBaseUrlCandidatesOptions
+): string[] {
+  const purpose = options.purpose ?? 'operational';
+  const issuerUrl = resolveIssuerUrl(config, options);
+  const operationalUrl = resolveOperationalApiBaseUrl(config, options);
+  const customUrl = config?.urls?.api?.custom
+    ? stripTrailingSlash(config.urls.api.custom)
+    : undefined;
+  const workersDevUrl =
+    !customUrl && config?.urls?.api?.auto
+      ? normalizeWorkersDevUrl(config.urls.api.auto, options.workersSubdomain)
+      : undefined;
+  const candidates =
+    purpose === 'tenant-scoped-admin'
+      ? [issuerUrl, operationalUrl, customUrl, workersDevUrl]
+      : [operationalUrl, issuerUrl, customUrl, workersDevUrl];
+  const seen = new Set<string>();
+  return candidates
+    .map((candidate) => normalizeWorkersDevUrl(candidate, options.workersSubdomain))
+    .filter((candidate): candidate is string => {
+      if (!candidate || seen.has(candidate)) {
+        return false;
+      }
+      seen.add(candidate);
+      return true;
+    });
+}
+
 export function resolveSharedLoginUiBaseUrl(
   config: Partial<AuthrimConfig> | null | undefined,
   options: ResolveEnvironmentUrlOptions
@@ -182,6 +261,18 @@ export function resolveTenantDiscoverUrl(
 ): string | null {
   if (!isMultiTenantConfigured(config)) {
     return null;
+  }
+
+  if (config?.urls?.loginUi?.sameAsApi !== true) {
+    const loginUiOrigin = normalizeNonWorkersDevOrigin(config?.urls?.loginUi?.custom);
+    if (loginUiOrigin) {
+      return `${loginUiOrigin}/discover`;
+    }
+  }
+
+  const baseDomain = config?.tenant?.baseDomain?.trim();
+  if (baseDomain) {
+    return `https://${baseDomain}/discover`;
   }
 
   return `${resolveSharedLoginUiBaseUrl(config, options)}/discover`;

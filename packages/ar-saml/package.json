@@ -9,7 +9,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-saml: lint skipped (uses root eslint config)'",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "test:property": "vitest run -c vitest.property.config.ts",
     "clean": "rm -rf dist"
   },

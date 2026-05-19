@@ -118,6 +118,7 @@ export const load: PageServerLoad = async (event) => {
 	if (
 		!config.single_tenant_mode &&
 		!config.is_common_entry_host &&
+		config.config.mode !== 'tenant_only' &&
 		config.config.require_common_discovery_before_login &&
 		config.common_discover_url
 	) {

@@ -493,9 +493,11 @@ async function fetchSAMLLoginProviders(
   tenantId: string
 ): Promise<ExternalLoginProvider[]> {
   try {
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'login-methods-saml');
-    const rows = await adapter.query<{ id: string; name: string }>(
-      `SELECT id, name
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'login-methods-saml', {
+      tenantId,
+    });
+    const rows = await adapter.query<{ id: string; name: string; config_json: string }>(
+      `SELECT id, name, config_json
        FROM identity_providers
        WHERE tenant_id = ? AND provider_type = 'saml_idp' AND enabled = 1
        ORDER BY name ASC
@@ -510,10 +512,20 @@ async function fetchSAMLLoginProviders(
         name: truncateString(row.name),
         type: 'saml',
         startMode: 'saml_sp',
+        iconUrl: getSAMLProviderLogoUrl(row.config_json),
         startUrl: buildSAMLSPLoginStartUrl(row.id),
       }));
   } catch {
     return [];
+  }
+}
+
+function getSAMLProviderLogoUrl(configJson: string): string | undefined {
+  try {
+    const config = JSON.parse(configJson) as { logoUrl?: string };
+    return isValidHttpsUrl(config.logoUrl) ? config.logoUrl : undefined;
+  } catch {
+    return undefined;
   }
 }
 

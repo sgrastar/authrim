@@ -486,7 +486,7 @@ const ru: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Настроить шардинг? (для высоконагруженных окружений)',
   'sharding.title': 'Настройки шардинга',
-  'sharding.note': 'Примечание: рекомендуется степень 2 для количества шардов (8, 16, 32, 64, 128)',
+  'sharding.note': 'Примечание: рекомендуется степень 2 для количества шардов (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Количество шардов кода авторизации',
   'sharding.refreshTokenShards': 'Количество шардов токена обновления',
 
@@ -942,13 +942,15 @@ const ru: Translations = {
   'web.preview.issuerUrl': 'URL издателя:',
   'web.preview.loginUi': 'UI для входа:',
   'web.preview.adminUi': 'Панель администратора:',
-  'web.preview.pagesUrl': 'UI для входа (Worker):',
+  'web.preview.pagesUrl': 'Origin UI для входа:',
   'web.preview.tenantDiscover': 'Выбор тенанта (общий вход):',
   'web.preview.adminAccess': 'Доступ к панели администратора:',
   'web.preview.firstTenant': '{{name}} (основной тенант)',
   'web.preview.otherTenants': 'Другие тенанты',
   'web.preview.allTenantsShared': '(общий для всех тенантов)',
+  'web.preview.loginUiOriginNote': '(origin развертывания; вход тенанта использует /login issuer)',
   'web.preview.viaApiProxy': '(проксируется через тот же домен API)',
+  'web.preview.conflictWarningTitle': '⚠️ Проблема конфигурации',
   'web.preview.conflictWarningMsg':
     'Пользовательский домен {{conflictUI}} совпадает с доменом API ({{baseDomain}}). Поскольку "Удалить тенант из URL" отключено, API-запросы к {{baseDomain}} (/authorize, /api/auth/*, и т.д.) будут возвращать 404 и процесс входа не будет работать.',
   'web.preview.conflictActionMsg':

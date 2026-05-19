@@ -1,15 +1,58 @@
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { resolveAuthCorePersistenceAdapterFromEnv } from '@authrim/ar-lib-core';
+import type {
+  DatabaseAdapter,
+  Env,
+  ObjectClass,
+  ObjectRepresentation,
+  TenantDatabaseRole,
+} from '@authrim/ar-lib-core';
+import {
+  buildTenantDatabaseBindingPlan,
+  decryptObjectArtifact,
+  ensureDatabaseAdapter,
+  evaluateTenantDatabaseBindingCapacity,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveUserStoreRuntimeSourcesFromEnv,
+  tombstoneObjectCatalogEntryForTenant,
+} from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
 type AdminJobResultDelivery = 'auto' | 'inline' | 'artifact';
+type TenantDatabaseProvisionExecutionMode = 'plan_only' | 'operator_cli' | 'cloudflare_api';
+type TenantBackupKmsProvider = 'deployment_master_secret_hkdf' | 'external_kms_customer_managed';
+type TenantDatabaseExportFormat = 'jsonl_per_table' | 'sqlite_d1_dump' | 'parquet';
+type TenantDatabaseRestoreDryRunValidationMode =
+  | 'manifest_checksum'
+  | 'temporary_database_schema_import';
 
 const INLINE_RESULT_MAX_BYTES = 32 * 1024;
 const DEFAULT_JOB_MAX_ATTEMPTS = 3;
 const DEFAULT_JOB_BATCH_SIZE = 500;
 const MAX_JOB_BATCH_SIZE = 1000;
 const RETRY_BACKOFF_SECONDS = [60, 300, 900] as const;
+const TENANT_D1_BINDING_WARNING_THRESHOLD = 3000;
+const TENANT_D1_BINDING_HARD_LIMIT = 5000;
+const TENANT_D1_ROLES: TenantDatabaseRole[] = ['tenant_core', 'tenant_pii'];
+const TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES = 256 * 1024;
+const DEFAULT_TENANT_BACKUP_RETENTION_DAYS = 30;
+const MAX_TENANT_BACKUP_RETENTION_DAYS = 3650;
+const TENANT_DATABASE_RESTORE_DRY_RUN_CONFIRMATION = 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN';
+const TENANT_DATABASE_BACKUP_PURGE_CONFIRMATION = 'PURGE_TENANT_DATABASE_BACKUP';
+const TENANT_BACKUP_TABLE_ROW_LIMIT = 50_000;
+const TENANT_BACKUP_CORE_TABLES = [
+  'users_core',
+  'sessions',
+  'passkeys',
+  'roles',
+  'user_roles',
+  'session_clients',
+] as const;
+const TENANT_BACKUP_PII_TABLES = [
+  'users_pii',
+  'subject_identifiers',
+  'linked_identities',
+  'pii_audit_log',
+] as const;
 
 export interface AdminJobRow {
   id: string;
@@ -43,6 +86,10 @@ type AdminJobProcessor = (
 ) => Promise<AdminJobProcessorResult>;
 
 const GENERIC_ADMIN_JOB_TYPES = [
+  'tenant-database/provision',
+  'tenant-database/export',
+  'tenant-database/restore-dry-run',
+  'tenant-database/purge-backup',
   'users/bulk-update',
   'reports/generate',
   'organizations/bulk-members',
@@ -159,6 +206,195 @@ export interface OrganizationBulkMembersConfig {
   result_delivery?: AdminJobResultDelivery;
 }
 
+export interface TenantDatabaseProvisionConfig {
+  tenant_id?: string;
+  tenant_slug?: string;
+  generation?: number;
+  activate?: boolean;
+  execution_mode?: TenantDatabaseProvisionExecutionMode;
+  reason?: string;
+}
+
+export interface TenantDatabaseExportConfig {
+  policy?: 'deletion_before_purge' | 'manual' | 'scheduled_periodic';
+  consistency?: 'maintenance_read_only' | 'best_effort_online';
+  export_format?: TenantDatabaseExportFormat;
+  tables?: {
+    core?: string[];
+    pii?: string[];
+  };
+  retention_days?: number;
+  result_delivery?: AdminJobResultDelivery;
+  reason?: string;
+}
+
+export interface TenantDatabaseRestoreDryRunConfig {
+  manifest_object_catalog_id?: string;
+  manifest_public_artifact_id?: string;
+  validation_mode?: TenantDatabaseRestoreDryRunValidationMode;
+  actor_roles?: string[];
+  break_glass_confirmation?: string;
+  result_delivery?: AdminJobResultDelivery;
+  reason?: string;
+}
+
+export interface TenantDatabasePurgeBackupConfig {
+  source_export_job_id?: string;
+  manifest_object_catalog_id?: string;
+  manifest_public_artifact_id?: string;
+  table_object_catalog_ids?: string[];
+  actor_roles?: string[];
+  break_glass_confirmation?: string;
+  retention_days?: number;
+  completed_at?: number | string;
+  result_delivery?: AdminJobResultDelivery;
+  reason?: string;
+}
+
+interface TenantDatabaseProvisionResourcePlan {
+  role: TenantDatabaseRole;
+  database_name: string;
+  binding_ref: string;
+  worker_shard: string;
+  generation: number;
+  database_id: string | null;
+}
+
+interface CloudflareApiResponse<T> {
+  success?: boolean;
+  result?: T;
+  errors?: Array<{ message?: string }>;
+}
+
+interface CloudflareD1CreateResult {
+  uuid?: string | null;
+  id?: string | null;
+  name?: string | null;
+}
+
+interface CloudflareD1ListResult {
+  uuid?: string | null;
+  id?: string | null;
+  name?: string | null;
+}
+
+interface CloudflarePaginatedResponse<T> extends CloudflareApiResponse<T[]> {
+  result_info?: {
+    page?: number;
+    total_pages?: number;
+  };
+}
+
+interface CloudflareWorkerBinding {
+  name?: string;
+  type?: string;
+  database_id?: string;
+  id?: string;
+  [key: string]: unknown;
+}
+
+interface CloudflareWorkerSettings {
+  bindings?: CloudflareWorkerBinding[];
+  [key: string]: unknown;
+}
+
+interface TenantDatabaseProvisionProgress {
+  stage?: string;
+  resources?: TenantDatabaseProvisionResourcePlan[];
+  cloudflare_api?: {
+    d1_databases_created?: number;
+    worker_scripts_validated?: Array<{
+      script_name: string;
+      binding_conflicts: string[];
+      existing_binding_count: number;
+      projected_binding_count: number;
+      capacity_state: string;
+    }>;
+    worker_scripts_patched?: Array<{ script_name: string; patched_binding_count: number }>;
+  };
+}
+
+interface TenantBackupManifestTableArtifact {
+  plane: 'core' | 'pii';
+  table: string;
+  row_count: number;
+  plaintext_bytes: number;
+  plaintext_sha256: string;
+  object_catalog_id: string;
+  public_artifact_id: string;
+  object_key: string;
+  chunked: boolean;
+  chunk_count: number;
+}
+
+interface TenantBackupManifest {
+  version: number;
+  tenant_id: string;
+  job_id: string;
+  profile: string;
+  schema_version: string;
+  export_format: 'jsonl_per_table';
+  consistency: 'maintenance_read_only' | 'best_effort_online';
+  policy: NonNullable<TenantDatabaseExportConfig['policy']>;
+  started_at: string;
+  completed_at: string;
+  retention_days: number;
+  restore_order: Array<{ plane: 'core' | 'pii'; table: string }>;
+  tables: TenantBackupManifestTableArtifact[];
+  checksums: {
+    whole_export_sha256: string;
+  };
+  encryption: {
+    envelope: string;
+    plane: 'EXPORT_ARTIFACTS';
+    key_version: number;
+    kms: string;
+    key_scope: string;
+    key_derivation?: string;
+    external_kms_extension_point?: boolean;
+    raw_keys_stored: boolean;
+  };
+}
+
+interface TenantBackupEncryptionMaterial {
+  rootKeyHex: string;
+  metadata: {
+    envelope: 'application-level';
+    kms: TenantBackupKmsProvider;
+    key_scope: 'tenant_backup';
+    key_derivation: string;
+    raw_keys_stored: false;
+    external_kms_extension_point: boolean;
+  };
+}
+
+interface TenantDatabaseExportJobResult {
+  summary?: {
+    retention_days?: number;
+  };
+  manifest?: {
+    object_catalog_id?: string;
+    public_artifact_id?: string;
+  };
+  table_artifacts?: Array<{
+    object_catalog_id?: string;
+  }>;
+}
+
+interface TenantBackupCatalogObjectRow {
+  catalog_id: string;
+  public_artifact_id: string;
+  tenant_id: string;
+  object_class: ObjectClass;
+  representation: ObjectRepresentation;
+  object_kind: 'single' | 'manifest' | 'chunk';
+  object_index: number;
+  bucket_binding: 'EXPORT_ARTIFACTS';
+  object_key: string;
+  key_version: number;
+  checksum_sha256: string | null;
+}
+
 function normalizeResultDelivery(value: unknown): AdminJobResultDelivery {
   if (value === undefined || value === null) return 'auto';
   if (value === 'auto' || value === 'inline' || value === 'artifact') return value;
@@ -177,6 +413,478 @@ function parseJsonProgress<T>(job: AdminJobRow): T | null {
   } catch {
     return null;
   }
+}
+
+async function sha256Hex(content: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+async function deriveTenantBackupRootKeyHex(
+  deploymentRootKeyHex: string,
+  tenantId: string,
+  keyVersion: number
+): Promise<string> {
+  if (!/^[0-9a-fA-F]{64}$/u.test(deploymentRootKeyHex)) {
+    throw new Error('OBJECT_ENCRYPTION_ROOT_KEY must be 64 hex characters');
+  }
+  const rootBytes = new Uint8Array(
+    deploymentRootKeyHex.match(/.{1,2}/gu)?.map((byte) => Number.parseInt(byte, 16)) ?? []
+  );
+  const material = await crypto.subtle.importKey('raw', rootBytes, 'HKDF', false, ['deriveBits']);
+  const derived = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode('authrim-tenant-backup-root'),
+      info: new TextEncoder().encode(`tenant:${tenantId}:backup:v${keyVersion}`),
+    },
+    material,
+    256
+  );
+  return Array.from(new Uint8Array(derived))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function getTenantBackupKmsProvider(env: Env): TenantBackupKmsProvider {
+  const configured = (env as unknown as { TENANT_BACKUP_KMS_PROVIDER?: string })
+    .TENANT_BACKUP_KMS_PROVIDER;
+  if (!configured || configured === 'deployment_master_secret_hkdf') {
+    return 'deployment_master_secret_hkdf';
+  }
+  if (configured === 'external_kms_customer_managed') {
+    return 'external_kms_customer_managed';
+  }
+  throw new Error(`Unsupported tenant backup KMS provider: ${configured}`);
+}
+
+async function resolveTenantBackupEncryptionMaterial(
+  env: Env,
+  tenantId: string,
+  keyVersion: number
+): Promise<TenantBackupEncryptionMaterial> {
+  const provider = getTenantBackupKmsProvider(env);
+  if (provider === 'external_kms_customer_managed') {
+    throw new Error('tenant_backup_external_kms_customer_managed_not_implemented');
+  }
+  if (!env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    throw new Error('OBJECT_ENCRYPTION_ROOT_KEY is required for tenant database backup encryption');
+  }
+  return {
+    rootKeyHex: await deriveTenantBackupRootKeyHex(
+      env.OBJECT_ENCRYPTION_ROOT_KEY,
+      tenantId,
+      keyVersion
+    ),
+    metadata: {
+      envelope: 'application-level',
+      kms: provider,
+      key_scope: 'tenant_backup',
+      key_derivation: 'HKDF-SHA-256 tenant backup root',
+      raw_keys_stored: false,
+      external_kms_extension_point: true,
+    },
+  };
+}
+
+function normalizeTenantDatabaseProvisionExecutionMode(
+  value: unknown
+): TenantDatabaseProvisionExecutionMode {
+  if (value === undefined || value === null) return 'plan_only';
+  if (value === 'plan_only' || value === 'operator_cli' || value === 'cloudflare_api') {
+    return value;
+  }
+  throw new Error('Invalid tenant database provisioning execution_mode');
+}
+
+function getTenantDatabaseProvisionEnvironment(env: Env): string {
+  const deploymentEnv = env as Env & {
+    DEPLOY_ENV?: string;
+    ENVIRONMENT?: string;
+    NODE_ENV?: string;
+  };
+  return deploymentEnv.DEPLOY_ENV || deploymentEnv.ENVIRONMENT || deploymentEnv.NODE_ENV || 'prod';
+}
+
+function countCurrentTenantD1Bindings(env: Env): number {
+  return Object.keys(env as unknown as Record<string, unknown>).filter((key) =>
+    /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/u.test(key)
+  ).length;
+}
+
+function parseWorkerScriptNames(env: Env): string[] {
+  return (env.TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS ?? '')
+    .split(',')
+    .map((script) => script.trim())
+    .filter(Boolean);
+}
+
+function getCloudflareAccountId(env: Env): string | null {
+  return env.CLOUDFLARE_ACCOUNT_ID || env.CF_ACCOUNT_ID || null;
+}
+
+function getCloudflareApiToken(env: Env): string | null {
+  return env.CLOUDFLARE_D1_API_TOKEN || env.CLOUDFLARE_API_TOKEN || null;
+}
+
+function getCloudflareWorkersApiToken(env: Env): string | null {
+  return env.CLOUDFLARE_WORKERS_API_TOKEN || env.CLOUDFLARE_API_TOKEN || null;
+}
+
+function buildTenantDatabaseProvisionResources(
+  env: Env,
+  job: AdminJobRow,
+  config: TenantDatabaseProvisionConfig
+): TenantDatabaseProvisionResourcePlan[] {
+  const environment = getTenantDatabaseProvisionEnvironment(env);
+  const generation = config.generation ?? 1;
+  return TENANT_D1_ROLES.map((role) => {
+    const plan = buildTenantDatabaseBindingPlan({
+      environment,
+      tenantId: job.tenant_id,
+      tenantSlug: config.tenant_slug,
+      role,
+    });
+    return {
+      role,
+      database_name: plan.databaseName,
+      binding_ref: plan.bindingRef,
+      worker_shard: plan.workerShard,
+      generation,
+      database_id: null,
+    };
+  });
+}
+
+function escapeCliArg(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function buildTenantDatabaseProvisionCommand(
+  env: Env,
+  job: AdminJobRow,
+  config: TenantDatabaseProvisionConfig
+): string {
+  const args = [
+    'pnpm',
+    '--filter',
+    '@authrim/setup',
+    'exec',
+    'authrim-setup',
+    'tenant-db',
+    '--tenant-id',
+    escapeCliArg(job.tenant_id),
+    '--generation',
+    String(config.generation ?? 1),
+    '--env',
+    escapeCliArg(getTenantDatabaseProvisionEnvironment(env)),
+    '--yes',
+  ];
+  if (config.tenant_slug) {
+    args.push('--tenant-slug', escapeCliArg(config.tenant_slug));
+  }
+  if (config.activate) {
+    args.push('--activate');
+  }
+  return args.join(' ');
+}
+
+function buildWranglerD1BindingSnippet(resources: TenantDatabaseProvisionResourcePlan[]): string {
+  return resources
+    .map((resource) =>
+      `
+[[d1_databases]]
+binding = "${resource.binding_ref}"
+database_name = "${resource.database_name}"
+database_id = "${resource.database_id ?? '<created-by-provisioning>'}"
+`.trim()
+    )
+    .join('\n\n');
+}
+
+function buildBindingImpact(env: Env, resources: TenantDatabaseProvisionResourcePlan[]) {
+  const currentBindings = countCurrentTenantD1Bindings(env);
+  const generatedBindingRefs = resources.map((resource) => resource.binding_ref);
+  const envBindings = new Set(Object.keys(env as unknown as Record<string, unknown>));
+  const conflicts = generatedBindingRefs.filter((binding) => envBindings.has(binding));
+  const uniqueBindings = new Set(generatedBindingRefs);
+  if (uniqueBindings.size !== generatedBindingRefs.length) {
+    conflicts.push(
+      ...generatedBindingRefs.filter(
+        (binding, index) => generatedBindingRefs.indexOf(binding) !== index
+      )
+    );
+  }
+  return {
+    current_bindings: currentBindings,
+    added_bindings: resources.length,
+    generated_bindings: generatedBindingRefs,
+    binding_conflicts: Array.from(new Set(conflicts)).sort(),
+    capacity: evaluateTenantDatabaseBindingCapacity({
+      currentBindings,
+      tenantsToAdd: 1,
+      rolesPerTenant: resources.length,
+      warningThreshold: TENANT_D1_BINDING_WARNING_THRESHOLD,
+      hardLimit: TENANT_D1_BINDING_HARD_LIMIT,
+    }),
+  };
+}
+
+function mergeProvisionResourcesWithProgress(
+  planned: TenantDatabaseProvisionResourcePlan[],
+  progress: TenantDatabaseProvisionProgress | null
+): TenantDatabaseProvisionResourcePlan[] {
+  const progressResources = new Map(
+    (progress?.resources ?? []).map((resource) => [resource.role, resource])
+  );
+  return planned.map((resource) => ({
+    ...resource,
+    database_id: progressResources.get(resource.role)?.database_id ?? resource.database_id,
+  }));
+}
+
+async function persistTenantDatabaseProvisionProgress(
+  adapter: DatabaseAdapter,
+  job: AdminJobRow,
+  progress: TenantDatabaseProvisionProgress
+): Promise<void> {
+  await adapter.execute(
+    'UPDATE admin_jobs SET progress = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+    [JSON.stringify(progress), Math.floor(Date.now() / 1000), job.id, job.tenant_id]
+  );
+}
+
+async function readCloudflareJson<T>(response: Response): Promise<CloudflareApiResponse<T>> {
+  const text = await response.text();
+  if (text.length > TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES) {
+    throw new Error('cloudflare_response_too_large');
+  }
+  return JSON.parse(text || '{}') as CloudflareApiResponse<T>;
+}
+
+function getCloudflareApiError<T>(body: CloudflareApiResponse<T>, fallback: string): string {
+  const message = body.errors
+    ?.map((error) => error.message)
+    .filter(Boolean)
+    .join('; ');
+  return message || fallback;
+}
+
+async function findCloudflareD1DatabaseByName(
+  env: Env,
+  databaseName: string
+): Promise<string | null> {
+  const accountId = getCloudflareAccountId(env);
+  const token = getCloudflareApiToken(env);
+  if (!accountId || !token) {
+    throw new Error('Cloudflare account ID and D1 API token are required for cloudflare_api mode');
+  }
+
+  for (let page = 1; page <= 20; page += 1) {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100&page=${page}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    const body = (await readCloudflareJson<CloudflareD1ListResult[]>(
+      response
+    )) as CloudflarePaginatedResponse<CloudflareD1ListResult>;
+    if (!response.ok || !body.success || !Array.isArray(body.result)) {
+      throw new Error(getCloudflareApiError(body, `cloudflare_d1_list_failed:${response.status}`));
+    }
+    const existing = body.result.find((database) => database.name === databaseName);
+    const databaseId = existing?.uuid ?? existing?.id;
+    if (databaseId) {
+      return databaseId;
+    }
+    if (page >= (body.result_info?.total_pages ?? page)) {
+      break;
+    }
+  }
+  return null;
+}
+
+async function createCloudflareD1Database(
+  env: Env,
+  resource: TenantDatabaseProvisionResourcePlan
+): Promise<string> {
+  const existingDatabaseId = await findCloudflareD1DatabaseByName(env, resource.database_name);
+  if (existingDatabaseId) {
+    return existingDatabaseId;
+  }
+  const accountId = getCloudflareAccountId(env);
+  const token = getCloudflareApiToken(env);
+  if (!accountId || !token) {
+    throw new Error('Cloudflare account ID and D1 API token are required for cloudflare_api mode');
+  }
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: resource.database_name }),
+    }
+  );
+  const body = await readCloudflareJson<CloudflareD1CreateResult>(response);
+  if (!response.ok || !body.success || !body.result) {
+    throw new Error(getCloudflareApiError(body, `cloudflare_d1_create_failed:${response.status}`));
+  }
+  const databaseId = body.result.uuid ?? body.result.id;
+  if (!databaseId) {
+    throw new Error('cloudflare_d1_create_missing_database_id');
+  }
+  return databaseId;
+}
+
+async function getCloudflareWorkerSettings(
+  env: Env,
+  scriptName: string
+): Promise<CloudflareWorkerSettings> {
+  const accountId = getCloudflareAccountId(env);
+  const token = getCloudflareWorkersApiToken(env);
+  if (!accountId || !token) {
+    throw new Error(
+      'Cloudflare account ID and Workers API token are required for cloudflare_api mode'
+    );
+  }
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${encodeURIComponent(
+      scriptName
+    )}/settings`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+  const body = await readCloudflareJson<CloudflareWorkerSettings>(response);
+  if (!response.ok || !body.success || !body.result) {
+    throw new Error(
+      getCloudflareApiError(body, `cloudflare_worker_settings_get_failed:${response.status}`)
+    );
+  }
+  return body.result;
+}
+
+async function patchCloudflareWorkerD1Bindings(
+  env: Env,
+  scriptName: string,
+  resources: TenantDatabaseProvisionResourcePlan[]
+): Promise<number> {
+  const settings = await getCloudflareWorkerSettings(env, scriptName);
+  const existingBindings = settings.bindings ?? [];
+  const resourceBindings = resources.map((resource) => ({
+    type: 'd1',
+    name: resource.binding_ref,
+    database_id: resource.database_id ?? '',
+  }));
+  if (resourceBindings.some((binding) => !binding.database_id)) {
+    throw new Error('tenant_d1_worker_binding_missing_database_id');
+  }
+  const resourceBindingNames = new Set(resourceBindings.map((binding) => binding.name));
+  for (const binding of resourceBindings) {
+    const existing = existingBindings.find((candidate) => candidate.name === binding.name);
+    if (existing && (existing.type !== 'd1' || existing.database_id !== binding.database_id)) {
+      throw new Error(`tenant_d1_worker_binding_conflict:${scriptName}:${binding.name}`);
+    }
+  }
+  const nextBindings = [
+    ...existingBindings.filter((binding) => !resourceBindingNames.has(binding.name ?? '')),
+    ...resourceBindings,
+  ];
+  const accountId = getCloudflareAccountId(env);
+  const token = getCloudflareWorkersApiToken(env);
+  if (!accountId || !token) {
+    throw new Error(
+      'Cloudflare account ID and Workers API token are required for cloudflare_api mode'
+    );
+  }
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${encodeURIComponent(
+      scriptName
+    )}/settings`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ bindings: nextBindings }),
+    }
+  );
+  const body = await readCloudflareJson<CloudflareWorkerSettings>(response);
+  if (!response.ok || !body.success) {
+    throw new Error(
+      getCloudflareApiError(body, `cloudflare_worker_settings_patch_failed:${response.status}`)
+    );
+  }
+  return resourceBindings.length;
+}
+
+async function validateCloudflareWorkerBindingImpact(
+  env: Env,
+  scriptNames: string[],
+  resources: TenantDatabaseProvisionResourcePlan[]
+): Promise<
+  Array<{
+    script_name: string;
+    binding_conflicts: string[];
+    existing_binding_count: number;
+    projected_binding_count: number;
+    capacity_state: string;
+  }>
+> {
+  const validations = [];
+  for (const scriptName of scriptNames) {
+    const settings = await getCloudflareWorkerSettings(env, scriptName);
+    const bindings = settings.bindings ?? [];
+    const existingNames = new Set(bindings.map((binding) => binding.name).filter(Boolean));
+    const addedBindingCount = resources.filter(
+      (resource) => !existingNames.has(resource.binding_ref)
+    ).length;
+    const projectedBindingCount = bindings.length + addedBindingCount;
+    const conflicts = resources
+      .filter((resource) =>
+        bindings.some(
+          (binding) =>
+            binding.name === resource.binding_ref &&
+            (binding.type !== 'd1' ||
+              !resource.database_id ||
+              binding.database_id !== resource.database_id)
+        )
+      )
+      .map((resource) => resource.binding_ref);
+    validations.push({
+      script_name: scriptName,
+      binding_conflicts: conflicts,
+      existing_binding_count: bindings.length,
+      projected_binding_count: projectedBindingCount,
+      capacity_state:
+        projectedBindingCount >= TENANT_D1_BINDING_HARD_LIMIT
+          ? 'exceeds_limit'
+          : projectedBindingCount >= TENANT_D1_BINDING_WARNING_THRESHOLD
+            ? 'warning'
+            : 'ok',
+    });
+  }
+  return validations;
 }
 
 function buildUserFilterWhere(
@@ -232,6 +940,852 @@ export async function countBulkUserUpdateTargets(
     filter.params
   );
   return row?.count ?? 0;
+}
+
+async function processTenantDatabaseProvisionJob(
+  env: Env,
+  adapter: DatabaseAdapter,
+  job: AdminJobRow
+): Promise<AdminJobProcessorResult> {
+  const config = parseJsonConfig<TenantDatabaseProvisionConfig>(job);
+  const executionMode = normalizeTenantDatabaseProvisionExecutionMode(config.execution_mode);
+  const previousProgress = parseJsonProgress<TenantDatabaseProvisionProgress>(job);
+  const resources = mergeProvisionResourcesWithProgress(
+    buildTenantDatabaseProvisionResources(env, job, config),
+    previousProgress
+  );
+  const impact = buildBindingImpact(env, resources);
+  const workerScripts = parseWorkerScriptNames(env);
+
+  if (impact.binding_conflicts.length > 0) {
+    throw new Error(`tenant_d1_binding_conflict:${impact.binding_conflicts.join(',')}`);
+  }
+  if (impact.capacity.state === 'exceeds_limit') {
+    throw new Error(`tenant_d1_binding_capacity_exceeded:${impact.capacity.projectedBindings}`);
+  }
+
+  const result: Record<string, unknown> = {
+    summary: {
+      total: resources.length,
+      processed: resources.length,
+      succeeded: resources.length,
+      failed: 0,
+      execution_mode: executionMode,
+    },
+    tenant_database_provisioning: {
+      tenant_id: job.tenant_id,
+      tenant_slug: config.tenant_slug ?? null,
+      generation: config.generation ?? 1,
+      activate: config.activate ?? false,
+      reason: config.reason ?? null,
+      resources,
+      impact,
+      generated_config: {
+        wrangler_toml: buildWranglerD1BindingSnippet(resources),
+      },
+      operator_cli: {
+        command: buildTenantDatabaseProvisionCommand(env, job, config),
+      },
+      required_cloudflare_permissions: [
+        'D1 Write',
+        'Workers Scripts Read',
+        'Workers Scripts Write',
+      ],
+    },
+  };
+
+  if (executionMode === 'cloudflare_api') {
+    const preflightValidations =
+      workerScripts.length > 0
+        ? await validateCloudflareWorkerBindingImpact(env, workerScripts, resources)
+        : [];
+    const preflightConflictingScripts = preflightValidations.filter(
+      (validation) => validation.binding_conflicts.length > 0
+    );
+    if (preflightConflictingScripts.length > 0) {
+      throw new Error(
+        `tenant_d1_worker_binding_conflict:${preflightConflictingScripts
+          .map(
+            (validation) => `${validation.script_name}:${validation.binding_conflicts.join(',')}`
+          )
+          .join(';')}`
+      );
+    }
+    const overCapacityScripts = preflightValidations.filter(
+      (validation) => validation.capacity_state === 'exceeds_limit'
+    );
+    if (overCapacityScripts.length > 0) {
+      throw new Error(
+        `tenant_d1_worker_binding_capacity_exceeded:${overCapacityScripts
+          .map((validation) => `${validation.script_name}:${validation.projected_binding_count}`)
+          .join(';')}`
+      );
+    }
+
+    for (const resource of resources) {
+      if (!resource.database_id) {
+        resource.database_id = await createCloudflareD1Database(env, resource);
+        await persistTenantDatabaseProvisionProgress(adapter, job, {
+          stage: 'cloudflare_api_d1_created',
+          resources,
+          cloudflare_api: {
+            worker_scripts_validated: preflightValidations,
+          },
+        });
+      }
+    }
+
+    const previousPatchedScripts =
+      previousProgress?.cloudflare_api?.worker_scripts_patched?.map(
+        (script) => script.script_name
+      ) ?? [];
+    const patchedScriptSet = new Set(previousPatchedScripts);
+    const patchedScripts = [...(previousProgress?.cloudflare_api?.worker_scripts_patched ?? [])];
+    for (const scriptName of workerScripts) {
+      if (patchedScriptSet.has(scriptName)) {
+        continue;
+      }
+      const patchedBindingCount = await patchCloudflareWorkerD1Bindings(env, scriptName, resources);
+      patchedScripts.push({ script_name: scriptName, patched_binding_count: patchedBindingCount });
+      await persistTenantDatabaseProvisionProgress(adapter, job, {
+        stage: 'cloudflare_api_worker_bindings_patched',
+        resources,
+        cloudflare_api: {
+          d1_databases_created: resources.filter((resource) => resource.database_id).length,
+          worker_scripts_validated: preflightValidations,
+          worker_scripts_patched: patchedScripts,
+        },
+      });
+    }
+    result.tenant_database_provisioning = {
+      ...(result.tenant_database_provisioning as Record<string, unknown>),
+      resources,
+      generated_config: {
+        wrangler_toml: buildWranglerD1BindingSnippet(resources),
+      },
+      cloudflare_api: {
+        d1_databases_created: resources.length,
+        worker_scripts_validated: preflightValidations,
+        worker_scripts_patched: patchedScripts,
+        worker_deployment_skipped_reason:
+          workerScripts.length === 0
+            ? 'TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS is not configured'
+            : null,
+      },
+    };
+
+    return {
+      status: 'processing',
+      progress: {
+        total: resources.length,
+        processed: resources.length,
+        succeeded: resources.length,
+        failed: 0,
+        skipped: 0,
+        stage: 'cloudflare_api_deployed_pending_migrations_registry_and_snapshots',
+        resources,
+        cloudflare_api: {
+          d1_databases_created: resources.filter((resource) => resource.database_id).length,
+          worker_scripts_validated: preflightValidations,
+          worker_scripts_patched: patchedScripts,
+          worker_deployment_skipped_reason:
+            workerScripts.length === 0
+              ? 'TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS is not configured'
+              : null,
+        },
+        next_required_steps: [
+          'Run tenant D1 migrations for the created databases.',
+          'Write signed tenant_database_registry rows and active pointers when activation is requested.',
+          'Publish signed tenant runtime registry snapshots before runtime cutover.',
+        ],
+      },
+      nextRunAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+    };
+  }
+
+  return {
+    status: 'completed',
+    progress: {
+      total: resources.length,
+      processed: resources.length,
+      succeeded: resources.length,
+      failed: 0,
+      skipped: executionMode === 'plan_only' || executionMode === 'operator_cli' ? 1 : 0,
+      stage: 'deployment_plan_generated',
+    },
+    result,
+  };
+}
+
+function normalizeTenantDatabaseExportPolicy(
+  value: unknown
+): NonNullable<TenantDatabaseExportConfig['policy']> {
+  if (value === undefined || value === null) return 'manual';
+  if (value === 'deletion_before_purge' || value === 'manual' || value === 'scheduled_periodic') {
+    return value;
+  }
+  throw new Error('Invalid tenant database export policy');
+}
+
+function normalizeTenantDatabaseExportConsistency(
+  value: unknown,
+  policy: NonNullable<TenantDatabaseExportConfig['policy']>
+): NonNullable<TenantDatabaseExportConfig['consistency']> {
+  if (value === 'maintenance_read_only' || value === 'best_effort_online') return value;
+  return policy === 'scheduled_periodic' ? 'best_effort_online' : 'maintenance_read_only';
+}
+
+function normalizeTenantDatabaseExportFormat(value: unknown): TenantDatabaseExportFormat {
+  if (value === undefined || value === null || value === 'jsonl_per_table') {
+    return 'jsonl_per_table';
+  }
+  if (value === 'sqlite_d1_dump' || value === 'parquet') {
+    throw new Error(`tenant_database_export_format_not_implemented:${value}`);
+  }
+  throw new Error('Invalid tenant database export_format');
+}
+
+function normalizeTenantDatabaseRestoreDryRunValidationMode(
+  value: unknown
+): TenantDatabaseRestoreDryRunValidationMode {
+  if (value === undefined || value === null || value === 'manifest_checksum') {
+    return 'manifest_checksum';
+  }
+  if (value === 'temporary_database_schema_import') {
+    throw new Error('tenant_database_restore_dry_run_temp_database_import_not_implemented');
+  }
+  throw new Error('Invalid tenant database restore dry-run validation_mode');
+}
+
+function normalizeTenantBackupRetentionDays(configValue: unknown, env: Env): number {
+  const envValue = (env as unknown as { TENANT_BACKUP_RETENTION_DAYS?: string | number })
+    .TENANT_BACKUP_RETENTION_DAYS;
+  const value = configValue ?? envValue ?? DEFAULT_TENANT_BACKUP_RETENTION_DAYS;
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TENANT_BACKUP_RETENTION_DAYS) {
+    throw new Error(
+      `Invalid tenant backup retention_days; expected 1-${MAX_TENANT_BACKUP_RETENTION_DAYS}`
+    );
+  }
+  return parsed;
+}
+
+function assertTenantDatabaseRestoreDryRunApproval(
+  config: TenantDatabaseRestoreDryRunConfig
+): void {
+  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes('system_admin')) {
+    throw new Error('tenant_database_restore_dry_run_requires_system_admin');
+  }
+  if (config.break_glass_confirmation !== TENANT_DATABASE_RESTORE_DRY_RUN_CONFIRMATION) {
+    throw new Error('tenant_database_restore_dry_run_requires_break_glass_confirmation');
+  }
+  if (!config.reason?.trim()) {
+    throw new Error('tenant_database_restore_dry_run_requires_reason');
+  }
+}
+
+function assertTenantDatabaseBackupPurgeApproval(config: TenantDatabasePurgeBackupConfig): void {
+  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes('system_admin')) {
+    throw new Error('tenant_database_backup_purge_requires_system_admin');
+  }
+  if (config.break_glass_confirmation !== TENANT_DATABASE_BACKUP_PURGE_CONFIRMATION) {
+    throw new Error('tenant_database_backup_purge_requires_break_glass_confirmation');
+  }
+  if (!config.reason?.trim()) {
+    throw new Error('tenant_database_backup_purge_requires_reason');
+  }
+}
+
+function normalizeTenantBackupCompletedAt(value: unknown): number {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsedMs = Date.parse(value);
+    if (Number.isFinite(parsedMs)) {
+      return Math.floor(parsedMs / 1000);
+    }
+  }
+  throw new Error('tenant_database_backup_purge_requires_completed_at');
+}
+
+function assertTenantBackupRetentionElapsed(completedAt: number, retentionDays: number): void {
+  const eligibleAt = completedAt + retentionDays * 24 * 60 * 60;
+  const nowTs = Math.floor(Date.now() / 1000);
+  if (nowTs < eligibleAt) {
+    throw new Error(`tenant_database_backup_purge_retention_not_elapsed:${eligibleAt}`);
+  }
+}
+
+function parseTenantDatabaseExportJobResult(value: string | null): TenantDatabaseExportJobResult {
+  if (!value) {
+    throw new Error('tenant_database_backup_purge_source_export_missing_result');
+  }
+  const parsed = JSON.parse(value) as TenantDatabaseExportJobResult;
+  if (!parsed.manifest?.object_catalog_id || !Array.isArray(parsed.table_artifacts)) {
+    throw new Error('tenant_database_backup_purge_source_export_invalid_result');
+  }
+  return parsed;
+}
+
+function normalizeTenantBackupTables(
+  requested: string[] | undefined,
+  allowed: readonly string[]
+): string[] {
+  if (!requested || requested.length === 0) return [...allowed];
+  const allowedSet = new Set(allowed);
+  const normalized = Array.from(new Set(requested.map((table) => table.trim()).filter(Boolean)));
+  for (const table of normalized) {
+    if (!allowedSet.has(table)) {
+      throw new Error(`Unsupported tenant backup table: ${table}`);
+    }
+  }
+  return normalized;
+}
+
+function buildTenantTableObjectKey(job: AdminJobRow, plane: 'core' | 'pii', table: string): string {
+  return `exports/${job.tenant_id}/tenant-backup/${job.id}/${plane}/${table}.jsonl`;
+}
+
+async function exportTenantTableToArtifact(input: {
+  adapter: DatabaseAdapter;
+  artifactAdapter: DatabaseAdapter;
+  bucket: R2Bucket;
+  rootKeyHex: string;
+  keyVersion: number;
+  job: AdminJobRow;
+  plane: 'core' | 'pii';
+  table: string;
+}): Promise<{
+  plane: 'core' | 'pii';
+  table: string;
+  row_count: number;
+  plaintext_bytes: number;
+  plaintext_sha256: string;
+  object_catalog_id: string;
+  public_artifact_id: string;
+  object_key: string;
+  chunked: boolean;
+  chunk_count: number;
+}> {
+  const rows = await input.adapter.query<Record<string, unknown>>(
+    `SELECT * FROM ${input.table} WHERE tenant_id = ? LIMIT ?`,
+    [input.job.tenant_id, TENANT_BACKUP_TABLE_ROW_LIMIT + 1]
+  );
+  if (rows.length > TENANT_BACKUP_TABLE_ROW_LIMIT) {
+    throw new Error(
+      `tenant_backup_table_row_limit_exceeded:${input.plane}:${input.table}:${TENANT_BACKUP_TABLE_ROW_LIMIT}`
+    );
+  }
+  const content = rows.map((row) => JSON.stringify(row)).join('\n');
+  const objectKey = buildTenantTableObjectKey(input.job, input.plane, input.table);
+  const artifact = await materializeEncryptedObjectArtifact(input.artifactAdapter, input.bucket, {
+    tenantId: input.job.tenant_id,
+    objectClass: 'dr_bundle',
+    representation: 'ndjson_projection',
+    objectKeyBase: objectKey,
+    content,
+    contentType: 'application/x-ndjson',
+    rootKeyHex: input.rootKeyHex,
+    keyVersion: input.keyVersion,
+  });
+  return {
+    plane: input.plane,
+    table: input.table,
+    row_count: rows.length,
+    plaintext_bytes: utf8ByteLength(content),
+    plaintext_sha256: await sha256Hex(content),
+    object_catalog_id: artifact.catalogId,
+    public_artifact_id: artifact.publicArtifactId,
+    object_key: artifact.primaryObjectKey,
+    chunked: artifact.chunked,
+    chunk_count: artifact.chunkCount,
+  };
+}
+
+function isTenantBackupCatalogObjectRow(value: {
+  object_class: string;
+  representation: string;
+  object_kind: string;
+  bucket_binding: string;
+}): value is TenantBackupCatalogObjectRow {
+  return (
+    value.object_class === 'dr_bundle' &&
+    (value.representation === 'canonical_json' || value.representation === 'ndjson_projection') &&
+    (value.object_kind === 'single' ||
+      value.object_kind === 'manifest' ||
+      value.object_kind === 'chunk') &&
+    value.bucket_binding === 'EXPORT_ARTIFACTS'
+  );
+}
+
+async function listTenantBackupCatalogObjects(input: {
+  adapter: DatabaseAdapter;
+  tenantId: string;
+  catalogId?: string;
+  publicArtifactId?: string;
+  representation: ObjectRepresentation;
+}): Promise<TenantBackupCatalogObjectRow[]> {
+  if (!input.catalogId && !input.publicArtifactId) {
+    throw new Error('tenant_backup_restore_dry_run_requires_manifest_artifact_id');
+  }
+  const identifierColumn = input.catalogId ? 'oc.id' : 'oc.public_artifact_id';
+  const identifierValue = input.catalogId ?? input.publicArtifactId;
+  const rows = await input.adapter.query<{
+    catalog_id: string;
+    public_artifact_id: string;
+    tenant_id: string;
+    object_class: string;
+    representation: string;
+    object_kind: string;
+    object_index: number;
+    bucket_binding: string;
+    object_key: string;
+    key_version: number;
+    checksum_sha256: string | null;
+  }>(
+    `SELECT
+       oc.id AS catalog_id,
+       oc.public_artifact_id,
+       oc.tenant_id,
+       oc.object_class,
+       oco.representation,
+       oco.object_kind,
+       oco.object_index,
+       oco.bucket_binding,
+       oco.object_key,
+       oco.key_version,
+       oco.checksum_sha256
+     FROM object_catalog oc
+     INNER JOIN object_catalog_objects oco ON oco.catalog_id = oc.id
+     WHERE oc.tenant_id = ?
+       AND ${identifierColumn} = ?
+       AND oc.deleted_at IS NULL
+       AND oco.deleted_at IS NULL
+       AND oco.representation = ?
+     ORDER BY oco.object_index ASC`,
+    [input.tenantId, identifierValue, input.representation]
+  );
+  const normalized = rows.filter(isTenantBackupCatalogObjectRow);
+  if (normalized.length !== rows.length || normalized.length === 0) {
+    throw new Error('tenant_backup_restore_dry_run_artifact_not_found_or_invalid');
+  }
+  return normalized;
+}
+
+async function readR2ObjectText(bucket: R2Bucket, objectKey: string): Promise<string> {
+  const object = await bucket.get(objectKey);
+  if (!object) {
+    throw new Error(`tenant_backup_restore_dry_run_missing_object:${objectKey}`);
+  }
+  return object.text();
+}
+
+async function loadTenantBackupArtifactContent(input: {
+  adapter: DatabaseAdapter;
+  bucket: R2Bucket;
+  env: Env;
+  tenantId: string;
+  catalogId?: string;
+  publicArtifactId?: string;
+  representation: ObjectRepresentation;
+}): Promise<{ content: string; catalogId: string; publicArtifactId: string }> {
+  const rows = await listTenantBackupCatalogObjects(input);
+  const payloadRows = rows.filter((row) => row.object_kind !== 'manifest');
+  if (payloadRows.length === 0) {
+    throw new Error('tenant_backup_restore_dry_run_no_payload_objects');
+  }
+
+  const chunks: string[] = [];
+  for (const row of payloadRows) {
+    const rawPayload = await readR2ObjectText(input.bucket, row.object_key);
+    if (row.checksum_sha256 && (await sha256Hex(rawPayload)) !== row.checksum_sha256) {
+      throw new Error(`tenant_backup_restore_dry_run_envelope_checksum_mismatch:${row.object_key}`);
+    }
+    const envelope = JSON.parse(rawPayload) as Parameters<typeof decryptObjectArtifact>[0];
+    const encryptionMaterial = await resolveTenantBackupEncryptionMaterial(
+      input.env,
+      input.tenantId,
+      row.key_version
+    );
+    chunks.push(
+      await decryptObjectArtifact(envelope, {
+        rootKeyHex: encryptionMaterial.rootKeyHex,
+        context: {
+          tenantId: input.tenantId,
+          objectKey: row.object_key,
+          objectClass: row.object_class,
+        },
+      })
+    );
+  }
+
+  const first = rows[0];
+  return {
+    content: chunks.join(''),
+    catalogId: first.catalog_id,
+    publicArtifactId: first.public_artifact_id,
+  };
+}
+
+function parseTenantBackupManifest(content: string, tenantId: string): TenantBackupManifest {
+  const parsed = JSON.parse(content) as Partial<TenantBackupManifest>;
+  if (
+    parsed.version !== 1 ||
+    parsed.tenant_id !== tenantId ||
+    parsed.export_format !== 'jsonl_per_table' ||
+    !Array.isArray(parsed.tables) ||
+    !parsed.checksums?.whole_export_sha256 ||
+    parsed.encryption?.plane !== 'EXPORT_ARTIFACTS' ||
+    typeof parsed.encryption.key_version !== 'number'
+  ) {
+    throw new Error('tenant_backup_restore_dry_run_invalid_manifest');
+  }
+  return parsed as TenantBackupManifest;
+}
+
+function countJsonlRows(content: string): number {
+  if (content.length === 0) return 0;
+  return content.split('\n').length;
+}
+
+async function processTenantDatabaseExportJob(
+  env: Env,
+  adapter: DatabaseAdapter,
+  job: AdminJobRow
+): Promise<AdminJobProcessorResult> {
+  if (!env.EXPORT_ARTIFACTS) {
+    throw new Error('EXPORT_ARTIFACTS binding is required for tenant database export');
+  }
+
+  const config = parseJsonConfig<TenantDatabaseExportConfig>(job);
+  normalizeResultDelivery(config.result_delivery);
+  const policy = normalizeTenantDatabaseExportPolicy(config.policy);
+  const consistency = normalizeTenantDatabaseExportConsistency(config.consistency, policy);
+  const exportFormat = normalizeTenantDatabaseExportFormat(config.export_format);
+  const retentionDays = normalizeTenantBackupRetentionDays(config.retention_days, env);
+  const coreTables = normalizeTenantBackupTables(config.tables?.core, TENANT_BACKUP_CORE_TABLES);
+  const piiTables = normalizeTenantBackupTables(config.tables?.pii, TENANT_BACKUP_PII_TABLES);
+  const runtimeSources = await resolveUserStoreRuntimeSourcesFromEnv(env, job.tenant_id, {
+    requestPath: '/internal/admin-jobs/tenant-database/export',
+  });
+  const coreAdapter = ensureDatabaseAdapter(runtimeSources.coreDb, 'core');
+  const piiAdapter = runtimeSources.piiDb
+    ? ensureDatabaseAdapter(runtimeSources.piiDb, 'pii')
+    : coreAdapter;
+  const keyVersion = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
+  const encryptionMaterial = await resolveTenantBackupEncryptionMaterial(
+    env,
+    job.tenant_id,
+    keyVersion
+  );
+  const startedAt = new Date().toISOString();
+  const tableArtifacts = [];
+
+  for (const table of coreTables) {
+    tableArtifacts.push(
+      await exportTenantTableToArtifact({
+        adapter: coreAdapter,
+        artifactAdapter: adapter,
+        bucket: env.EXPORT_ARTIFACTS,
+        rootKeyHex: encryptionMaterial.rootKeyHex,
+        keyVersion,
+        job,
+        plane: 'core',
+        table,
+      })
+    );
+  }
+  for (const table of piiTables) {
+    tableArtifacts.push(
+      await exportTenantTableToArtifact({
+        adapter: piiAdapter,
+        artifactAdapter: adapter,
+        bucket: env.EXPORT_ARTIFACTS,
+        rootKeyHex: encryptionMaterial.rootKeyHex,
+        keyVersion,
+        job,
+        plane: 'pii',
+        table,
+      })
+    );
+  }
+
+  const manifest = {
+    version: 1,
+    tenant_id: job.tenant_id,
+    job_id: job.id,
+    profile: runtimeSources.storageProfile.id,
+    schema_version: runtimeSources.userCacheScope.schemaVersion,
+    export_format: 'jsonl_per_table',
+    consistency,
+    policy,
+    started_at: startedAt,
+    completed_at: new Date().toISOString(),
+    retention_days: retentionDays,
+    restore_order: tableArtifacts.map((artifact) => ({
+      plane: artifact.plane,
+      table: artifact.table,
+    })),
+    tables: tableArtifacts,
+    checksums: {
+      whole_export_sha256: await sha256Hex(
+        tableArtifacts.map((artifact) => artifact.plaintext_sha256).join('\n')
+      ),
+    },
+    encryption: {
+      ...encryptionMaterial.metadata,
+      plane: 'EXPORT_ARTIFACTS',
+      key_version: keyVersion,
+    },
+  };
+  const manifestContent = JSON.stringify(manifest, null, 2);
+  const manifestArtifact = await materializeEncryptedObjectArtifact(adapter, env.EXPORT_ARTIFACTS, {
+    tenantId: job.tenant_id,
+    objectClass: 'dr_bundle',
+    representation: 'canonical_json',
+    objectKeyBase: `exports/${job.tenant_id}/tenant-backup/${job.id}/manifest.json`,
+    content: manifestContent,
+    contentType: 'application/json',
+    rootKeyHex: encryptionMaterial.rootKeyHex,
+    keyVersion,
+  });
+
+  return {
+    status: 'completed',
+    progress: {
+      total: tableArtifacts.length,
+      processed: tableArtifacts.length,
+      succeeded: tableArtifacts.length,
+      failed: 0,
+      stage: 'completed',
+    },
+    result: {
+      summary: {
+        total_tables: tableArtifacts.length,
+        total_rows: tableArtifacts.reduce((sum, artifact) => sum + artifact.row_count, 0),
+        policy,
+        consistency,
+        export_format: exportFormat,
+        retention_days: retentionDays,
+      },
+      manifest: {
+        object_catalog_id: manifestArtifact.catalogId,
+        public_artifact_id: manifestArtifact.publicArtifactId,
+        object_key: manifestArtifact.primaryObjectKey,
+        checksum_sha256: await sha256Hex(manifestContent),
+        encryption: {
+          ...encryptionMaterial.metadata,
+          plane: 'EXPORT_ARTIFACTS',
+          key_version: keyVersion,
+        },
+      },
+      table_artifacts: tableArtifacts,
+    },
+  };
+}
+
+async function processTenantDatabaseRestoreDryRunJob(
+  env: Env,
+  adapter: DatabaseAdapter,
+  job: AdminJobRow
+): Promise<AdminJobProcessorResult> {
+  if (!env.EXPORT_ARTIFACTS) {
+    throw new Error('EXPORT_ARTIFACTS binding is required for tenant database restore dry-run');
+  }
+
+  const config = parseJsonConfig<TenantDatabaseRestoreDryRunConfig>(job);
+  normalizeResultDelivery(config.result_delivery);
+  const validationMode = normalizeTenantDatabaseRestoreDryRunValidationMode(config.validation_mode);
+  assertTenantDatabaseRestoreDryRunApproval(config);
+  const manifestArtifact = await loadTenantBackupArtifactContent({
+    adapter,
+    bucket: env.EXPORT_ARTIFACTS,
+    tenantId: job.tenant_id,
+    catalogId: config.manifest_object_catalog_id,
+    publicArtifactId: config.manifest_public_artifact_id,
+    representation: 'canonical_json',
+    env,
+  });
+  const manifest = parseTenantBackupManifest(manifestArtifact.content, job.tenant_id);
+
+  const expectedWholeChecksum = await sha256Hex(
+    manifest.tables.map((artifact) => artifact.plaintext_sha256).join('\n')
+  );
+  if (expectedWholeChecksum !== manifest.checksums.whole_export_sha256) {
+    throw new Error('tenant_backup_restore_dry_run_whole_checksum_mismatch');
+  }
+
+  const validations = [];
+  for (const table of manifest.tables) {
+    const tableArtifact = await loadTenantBackupArtifactContent({
+      adapter,
+      bucket: env.EXPORT_ARTIFACTS,
+      tenantId: job.tenant_id,
+      catalogId: table.object_catalog_id,
+      representation: 'ndjson_projection',
+      env,
+    });
+    const actualChecksum = await sha256Hex(tableArtifact.content);
+    const actualBytes = utf8ByteLength(tableArtifact.content);
+    const actualRows = countJsonlRows(tableArtifact.content);
+    if (actualChecksum !== table.plaintext_sha256) {
+      throw new Error(
+        `tenant_backup_restore_dry_run_table_checksum_mismatch:${table.plane}:${table.table}`
+      );
+    }
+    if (actualBytes !== table.plaintext_bytes) {
+      throw new Error(
+        `tenant_backup_restore_dry_run_table_byte_count_mismatch:${table.plane}:${table.table}`
+      );
+    }
+    if (actualRows !== table.row_count) {
+      throw new Error(
+        `tenant_backup_restore_dry_run_table_row_count_mismatch:${table.plane}:${table.table}`
+      );
+    }
+    validations.push({
+      plane: table.plane,
+      table: table.table,
+      row_count: actualRows,
+      plaintext_bytes: actualBytes,
+      checksum_sha256: actualChecksum,
+      object_catalog_id: tableArtifact.catalogId,
+      status: 'valid',
+    });
+  }
+
+  return {
+    status: 'completed',
+    progress: {
+      total: validations.length,
+      processed: validations.length,
+      succeeded: validations.length,
+      failed: 0,
+      stage: 'dry_run_completed',
+    },
+    result: {
+      summary: {
+        dry_run: true,
+        validation_mode: validationMode,
+        manifest_valid: true,
+        total_tables: validations.length,
+        total_rows: validations.reduce((sum, validation) => sum + validation.row_count, 0),
+        import_performed: false,
+      },
+      manifest: {
+        object_catalog_id: manifestArtifact.catalogId,
+        public_artifact_id: manifestArtifact.publicArtifactId,
+        source_job_id: manifest.job_id,
+        profile: manifest.profile,
+        schema_version: manifest.schema_version,
+        consistency: manifest.consistency,
+        policy: manifest.policy,
+        whole_export_sha256: manifest.checksums.whole_export_sha256,
+        encryption: manifest.encryption,
+      },
+      table_validations: validations,
+    },
+  };
+}
+
+async function processTenantDatabasePurgeBackupJob(
+  _env: Env,
+  adapter: DatabaseAdapter,
+  job: AdminJobRow
+): Promise<AdminJobProcessorResult> {
+  const config = parseJsonConfig<TenantDatabasePurgeBackupConfig>(job);
+  normalizeResultDelivery(config.result_delivery);
+  assertTenantDatabaseBackupPurgeApproval(config);
+
+  let completedAt = config.completed_at;
+  let retentionDaysSource: unknown = config.retention_days;
+  let manifestCatalogId = config.manifest_object_catalog_id;
+  let manifestPublicArtifactId = config.manifest_public_artifact_id;
+  let tableCatalogIds = Array.from(
+    new Set((config.table_object_catalog_ids ?? []).filter((id) => id.trim().length > 0))
+  );
+
+  if (config.source_export_job_id) {
+    const sourceExport = await adapter.queryOne<{
+      id: string;
+      result: string | null;
+      completed_at: number | null;
+    }>(
+      `SELECT id, result, completed_at
+         FROM admin_jobs
+        WHERE id = ?
+          AND tenant_id = ?
+          AND job_type = 'tenant-database/export'
+          AND status = 'completed'`,
+      [config.source_export_job_id, job.tenant_id]
+    );
+    if (!sourceExport) {
+      throw new Error(
+        `tenant_database_backup_purge_source_export_not_found:${config.source_export_job_id}`
+      );
+    }
+
+    const sourceResult = parseTenantDatabaseExportJobResult(sourceExport.result);
+    completedAt = completedAt ?? sourceExport.completed_at ?? undefined;
+    retentionDaysSource = retentionDaysSource ?? sourceResult.summary?.retention_days;
+    manifestCatalogId = manifestCatalogId ?? sourceResult.manifest?.object_catalog_id;
+    manifestPublicArtifactId =
+      manifestPublicArtifactId ?? sourceResult.manifest?.public_artifact_id;
+    const sourceTableArtifacts = sourceResult.table_artifacts ?? [];
+    tableCatalogIds = Array.from(
+      new Set([
+        ...tableCatalogIds,
+        ...sourceTableArtifacts
+          .map((artifact) => artifact.object_catalog_id)
+          .filter((id): id is string => typeof id === 'string' && id.trim().length > 0),
+      ])
+    );
+  }
+
+  const retentionDays = normalizeTenantBackupRetentionDays(retentionDaysSource, _env);
+  const normalizedCompletedAt = normalizeTenantBackupCompletedAt(completedAt);
+  assertTenantBackupRetentionElapsed(normalizedCompletedAt, retentionDays);
+
+  const catalogIds = Array.from(
+    new Set([manifestCatalogId, ...tableCatalogIds].filter((id): id is string => !!id))
+  );
+  if (catalogIds.length === 0 && !manifestPublicArtifactId) {
+    throw new Error('tenant_database_backup_purge_requires_artifact_reference');
+  }
+  if (!manifestCatalogId && manifestPublicArtifactId) {
+    throw new Error('tenant_database_backup_purge_requires_catalog_id_for_purge');
+  }
+
+  const deletedAt = Date.now();
+  for (const catalogId of catalogIds) {
+    await tombstoneObjectCatalogEntryForTenant(adapter, job.tenant_id, catalogId, deletedAt);
+  }
+
+  return {
+    status: 'completed',
+    progress: {
+      total: catalogIds.length,
+      processed: catalogIds.length,
+      succeeded: catalogIds.length,
+      failed: 0,
+      stage: 'tombstoned',
+    },
+    result: {
+      summary: {
+        tombstoned_catalogs: catalogIds.length,
+        source_export_job_id: config.source_export_job_id ?? null,
+        retention_days: retentionDays,
+        completed_at: normalizedCompletedAt,
+        physical_purge_deferred_to_object_artifact_cleanup: true,
+      },
+      manifest: {
+        object_catalog_id: manifestCatalogId ?? null,
+        public_artifact_id: manifestPublicArtifactId ?? null,
+      },
+      table_object_catalog_ids: tableCatalogIds,
+    },
+  };
 }
 
 async function processBulkUserUpdateJob(
@@ -543,6 +2097,10 @@ async function processOrganizationBulkMembersJob(
 }
 
 const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
+  'tenant-database/provision': processTenantDatabaseProvisionJob,
+  'tenant-database/export': processTenantDatabaseExportJob,
+  'tenant-database/restore-dry-run': processTenantDatabaseRestoreDryRunJob,
+  'tenant-database/purge-backup': processTenantDatabasePurgeBackupJob,
   'users/bulk-update': processBulkUserUpdateJob,
   'reports/generate': processReportGenerateJob,
   'organizations/bulk-members': processOrganizationBulkMembersJob,

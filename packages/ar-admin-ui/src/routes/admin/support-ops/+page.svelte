@@ -389,7 +389,7 @@
 		</div>
 		<div class="tenant-chip">
 			<i class="i-ph-buildings"></i>
-			<span>{settingsContext.tenantId || 'default'}</span>
+			<span>{settingsContext.tenantId}</span>
 		</div>
 	</header>
 

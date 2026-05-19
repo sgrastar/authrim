@@ -16,8 +16,7 @@ function resolveTenantId(tenantId?: string): string {
 	const resolved =
 		tenantId?.trim() ||
 		settingsContext.tenantId ||
-		settingsContext.availableTenants[0]?.id ||
-		'default';
+		settingsContext.availableTenants[0]?.id;
 
 	if (!resolved) {
 		throw new Error('Tenant ID is required');

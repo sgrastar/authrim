@@ -49,6 +49,13 @@ function createMockAdapter(name: string): DatabaseAdapter {
 }
 
 describe('auth-core-persistence-context', () => {
+  const sharedD1TransientAuth = {
+    sessionColdPersistence: 'enabled',
+    sessionClientMirror: 'async',
+    deviceCibaColdPersistence: 'enabled',
+    externalDurableMirror: 'disabled',
+  };
+
   it('resolves the auth core target from the environment default storage profile', async () => {
     const db = { prepare: vi.fn(), batch: vi.fn() } as unknown as D1Database;
     const env = {
@@ -61,13 +68,14 @@ describe('auth-core-persistence-context', () => {
     const context = await resolveAuthCorePersistenceContextFromEnv(env);
     const source = resolveAuthCorePersistenceSourceFromContext(env, context);
 
-    expect(context).toEqual({
+    expect(context).toMatchObject({
       storageProfileId: DEFAULT_STORAGE_PROFILE_ID,
       coreTarget: {
         driver: 'd1',
         bindingRef: 'DB',
         role: 'core',
       },
+      transientAuth: sharedD1TransientAuth,
     });
     expect(source).toBe(db);
   });
@@ -101,12 +109,18 @@ describe('auth-core-persistence-context', () => {
     const context = await resolveAuthCorePersistenceContextFromEnv(env);
     const source = resolveAuthCorePersistenceSourceFromContext(env, context);
 
-    expect(context).toEqual({
+    expect(context).toMatchObject({
       storageProfileId: 'custom-auth-core',
       coreTarget: {
         driver: 'postgres',
         bindingRef: 'EXTRA_CORE_DB',
         role: 'core',
+      },
+      transientAuth: {
+        sessionColdPersistence: 'enabled',
+        sessionClientMirror: 'sync',
+        deviceCibaColdPersistence: 'enabled',
+        externalDurableMirror: 'disabled',
       },
     });
     expect(source).toBe(extraCore);
@@ -165,13 +179,14 @@ describe('auth-core-persistence-context', () => {
     const second = getCachedAuthCorePersistenceContextFromEnv(env);
 
     expect(first).toBe(second);
-    await expect(first).resolves.toEqual({
+    await expect(first).resolves.toMatchObject({
       storageProfileId: DEFAULT_STORAGE_PROFILE_ID,
       coreTarget: {
         driver: 'd1',
         bindingRef: 'DB',
         role: 'core',
       },
+      transientAuth: sharedD1TransientAuth,
     });
   });
 });

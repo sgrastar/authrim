@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { computeApiDomainUiState, isValidCustomDomain } from '../web/domain-form-state.js';
+import {
+  computeApiDomainUiState,
+  isValidCustomDomain,
+  validateSetupDomainInputs,
+} from '../web/domain-form-state.js';
 
 describe('computeApiDomainUiState', () => {
   it('treats workers.dev mode as single-tenant with no custom-domain-only controls', () => {
@@ -118,7 +122,98 @@ describe('computeApiDomainUiState', () => {
 describe('isValidCustomDomain', () => {
   it('accepts ordinary hostnames and rejects incomplete values', () => {
     expect(isValidCustomDomain('test.authrim.com')).toBe(true);
+    expect(isValidCustomDomain('TEST.authrim.com')).toBe(true);
     expect(isValidCustomDomain('localhost')).toBe(false);
     expect(isValidCustomDomain('')).toBe(false);
+    expect(isValidCustomDomain('foo..example.com')).toBe(false);
+    expect(isValidCustomDomain('foo-.example.com')).toBe(false);
+    expect(isValidCustomDomain('-foo.example.com')).toBe(false);
+    expect(isValidCustomDomain('foo.example.c')).toBe(false);
+    expect(isValidCustomDomain('xn--bcher-kva.example.com')).toBe(false);
+    expect(isValidCustomDomain('authrim.xn--p1ai')).toBe(false);
+  });
+});
+
+describe('validateSetupDomainInputs', () => {
+  it('allows a one-label deployment base domain such as multi-tenant.authrim.com', () => {
+    expect(
+      validateSetupDomainInputs({
+        apiDomain: 'multi-tenant.authrim.com',
+        loginUiDomain: 'login.multi-tenant.authrim.com',
+        adminUiDomain: 'admin.multi-tenant.authrim.com',
+      })
+    ).toEqual([]);
+  });
+
+  it('allows UI domains outside the API base domain when they are one-label hosts', () => {
+    expect(
+      validateSetupDomainInputs({
+        apiDomain: 'multi-tenant.authrim.com',
+        loginUiDomain: 'login.authrim.com',
+        adminUiDomain: 'admin.authrim.com',
+      })
+    ).toEqual([]);
+  });
+
+  it('rejects a base domain that already includes a tenant label', () => {
+    const issues = validateSetupDomainInputs({
+      apiDomain: 'first.multi-tenant.authrim.com',
+      tenantName: 'first',
+    });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        field: 'apiDomain',
+        suggestion: 'multi-tenant.authrim.com',
+      }),
+    ]);
+  });
+
+  it('rejects two-label UI hosts under the base domain and suggests a hyphenated host', () => {
+    const issues = validateSetupDomainInputs({
+      apiDomain: 'subdomain.example.com',
+      loginUiDomain: 'login.tenantName.subdomain.example.com',
+      adminUiDomain: 'admin.tenantName.subdomain.example.com',
+    });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        field: 'loginUiDomain',
+        suggestion: 'login-tenantname.subdomain.example.com',
+      }),
+      expect.objectContaining({
+        field: 'adminUiDomain',
+        suggestion: 'admin-tenantname.subdomain.example.com',
+      }),
+    ]);
+  });
+
+  it('rejects two-label UI hosts under a multi-label base domain', () => {
+    const issues = validateSetupDomainInputs({
+      apiDomain: 'multi-tenant.authrim.com',
+      loginUiDomain: 'login.first.multi-tenant.authrim.com',
+      adminUiDomain: 'admin.first.multi-tenant.authrim.com',
+    });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        field: 'loginUiDomain',
+        suggestion: 'login-first.multi-tenant.authrim.com',
+      }),
+      expect.objectContaining({
+        field: 'adminUiDomain',
+        suggestion: 'admin-first.multi-tenant.authrim.com',
+      }),
+    ]);
+  });
+
+  it('allows hyphenated one-label tenant UI hosts', () => {
+    expect(
+      validateSetupDomainInputs({
+        apiDomain: 'subdomain.example.com',
+        loginUiDomain: 'login-tenantName.subdomain.example.com',
+        adminUiDomain: 'admin-tenantName.subdomain.example.com',
+      })
+    ).toEqual([]);
   });
 });

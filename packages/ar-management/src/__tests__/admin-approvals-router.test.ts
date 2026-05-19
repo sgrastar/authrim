@@ -113,6 +113,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     ensureDatabaseAdapter: vi.fn(() => mockAdapter),
+    resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async () => ({
+      storageProfile: {
+        id: 'builtin:storage:shared-d1',
+        kind: 'storage',
+        label: 'Shared D1',
+        deploymentProfile: 'shared-d1',
+        slices: {},
+      },
+      coreDb: mockAdapter,
+      piiDb: mockAdapter,
+      userCacheScope: {
+        storageProfileId: 'builtin:storage:shared-d1',
+        sourceGeneration: 'core:0:pii:0',
+        schemaVersion: 'core:1:pii:1',
+      },
+      piiCacheMode: 'merged',
+    })),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getTenantSettings: mockGetTenantSettings,
     ApprovalRequestRepository: vi.fn(function MockApprovalRequestRepository() {

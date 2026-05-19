@@ -25,6 +25,13 @@ import { configCommand } from './cli/commands/config.js';
 import { deleteCommand } from './cli/commands/delete.js';
 import { infoCommand } from './cli/commands/info.js';
 import { migrateCommand, migrateStatusCommand } from './cli/commands/migrate.js';
+import { tenantDatabaseCommand } from './cli/commands/tenant-db.js';
+import { tenantDatabasePoolExpandCommand } from './cli/commands/tenant-db-pool-expand.js';
+import { tenantDatabasePoolStatusCommand } from './cli/commands/tenant-db-pool-status.js';
+import { tenantDatabaseSlotResetCommand } from './cli/commands/tenant-db-slot-reset.js';
+import { tenantDatabaseMigrateAllCommand } from './cli/commands/tenant-db-migrate-all.js';
+import { r2ProvisionCommand } from './cli/commands/r2-provision.js';
+import { resolveIssuerUrl } from './core/url-config.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
@@ -83,6 +90,7 @@ program
   .option('--skip-build', 'Skip building packages')
   .option('--skip-ui', 'Skip UI deployment to Cloudflare Workers')
   .option('--skip-migrations', 'Skip D1 database migrations')
+  .option('--keys-dir <path>', 'Keys directory')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
 
@@ -95,6 +103,66 @@ program
   .option('--skip-build', 'Skip building packages')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(updateCommand);
+
+program
+  .command('tenant-db')
+  .description('Create tenant-d1 core and PII databases for one tenant')
+  .requiredOption('--tenant-id <id>', 'Tenant ID')
+  .option('--tenant-slug <slug>', 'Tenant slug used for generated names and bindings')
+  .option('--generation <n>', 'Tenant database generation to create for retry/recreation', '1')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--activate', 'Also move tenant database active pointers to the created generation')
+  .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabaseCommand);
+
+program
+  .command('tenant-db-migrate-all')
+  .description('Run migrations for generated tenant-d1 databases from the lock file')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--role <roles>', 'Comma-separated roles: tenant_core,tenant_pii')
+  .option('--binding <bindings>', 'Comma-separated generated TDB_* bindings to migrate')
+  .option('--concurrency <n>', 'Fixed broad migration concurrency', '2')
+  .option('--canary-binding <bindings>', 'Comma-separated TDB_* bindings to run first')
+  .option('--canary-count <n>', 'Automatically select the first N targets as canaries', '0')
+  .option('--skip-failed', 'Continue remaining tenant migrations after a target fails')
+  .option('--dry-run', 'Show migration targets without running migrations')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabaseMigrateAllCommand);
+
+program
+  .command('tenant-db-pool-expand')
+  .description('Add preallocated tenant-d1 slots to an existing environment and redeploy workers')
+  .requiredOption('--add-slots <n>', 'Number of tenant slots to add')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--dry-run', 'Show what would change without updating config or deploying')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabasePoolExpandCommand);
+
+program
+  .command('tenant-db-pool-status')
+  .description('Show preallocated tenant-d1 slot capacity and availability')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--json', 'Print machine-readable JSON')
+  .action(tenantDatabasePoolStatusCommand);
+
+program
+  .command('tenant-db-slot-reset')
+  .description('Reset a failed/unavailable preallocated tenant-d1 slot and mark it available')
+  .requiredOption('--slot <n>', 'Slot number to reset, for example 1 or 0001')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--dry-run', 'Show what would be reset without changing D1 or slot state')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabaseSlotResetCommand);
+
+program
+  .command('r2-provision')
+  .description('Create dedicated R2 buckets for an existing environment and deploy bindings')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
+  .option('--skip-deploy', 'Create buckets and update config/lock without deploying workers')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(r2ProvisionCommand);
 
 program
   .command('upgrade')
@@ -211,9 +279,7 @@ program
         }
 
         // Get API base URL
-        const cfgUrls = (cfg as { urls?: { api?: { custom?: string; auto?: string } } })?.urls;
-        const apiBaseUrl =
-          cfgUrls?.api?.custom || cfgUrls?.api?.auto || `https://${env}-ar-router.workers.dev`;
+        const apiBaseUrl = resolveIssuerUrl(cfg, { env });
 
         let loginUiClientId: string | undefined;
         if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
@@ -250,9 +316,8 @@ program
             process.exit(1);
           }
 
-          const { ensureSetupMachineAccessInD1, cleanupSetupMachineAccessInD1 } = await import(
-            './core/cloudflare.js'
-          );
+          const { ensureSetupMachineAccessInD1, cleanupSetupMachineAccessInD1 } =
+            await import('./core/cloudflare.js');
           const setupMachineResult = await ensureSetupMachineAccessInD1(
             env,
             cfg as AuthrimConfig,
@@ -315,6 +380,9 @@ program
             apiBaseUrl: uiSettings.apiBaseUrl,
             runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
             uiEnvConfig: uiSettings.uiEnv,
+            serviceBindingName: uiSettings.serviceBindingName,
+            workersDev: uiSettings.workersDev,
+            routes: uiSettings.routes,
             onProgress: (msg) => {
               deploySpinner.text = msg;
             },

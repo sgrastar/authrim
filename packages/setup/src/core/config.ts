@@ -297,6 +297,14 @@ export const DatabaseConfigSchema = z.object({
   pii: DatabaseLocationSchema.default({}),
 });
 
+export const TenantD1ConfigSchema = z.object({
+  /**
+   * Number of tenant D1 slots to pre-create during initial setup.
+   * Each slot creates one core D1 and one PII D1.
+   */
+  preallocatedSlots: z.number().int().min(1).max(500).default(3),
+});
+
 // =============================================================================
 // Runtime Profile Configuration
 // =============================================================================
@@ -312,12 +320,15 @@ export const ProfileDefaultsConfigSchema = z.object({
    * Environment default storage profile ID.
    *
    * Common built-ins:
-   * - builtin:storage:standard
+   * - builtin:storage:shared-d1
+   * - builtin:storage:tenant-d1
+   * - builtin:storage:external-durable
+   * - builtin:storage:standard (legacy alias)
    * - builtin:storage:single-db
    * - builtin:storage:eu-pii-split
    * - builtin:storage:external-postgres
    */
-  storage: ProfileIdSchema.default('builtin:storage:standard'),
+  storage: ProfileIdSchema.default('builtin:storage:shared-d1'),
   /** Environment default audit profile ID */
   audit: ProfileIdSchema.default('builtin:audit:standard'),
   /** Environment default residency profile ID */
@@ -363,6 +374,14 @@ const StorageProfileSeedSchema = z.object({
   description: z.string().min(1).optional(),
   version: RuntimeProfileVersionSchema,
   metadata: RuntimeProfileMetadataSchema,
+  transientAuth: z
+    .object({
+      sessionColdPersistence: z.enum(['enabled', 'disabled']),
+      sessionClientMirror: z.enum(['sync', 'async', 'disabled']),
+      deviceCibaColdPersistence: z.enum(['enabled', 'disabled']),
+      externalDurableMirror: z.enum(['disabled', 'future']),
+    })
+    .optional(),
   residencyProfileId: ProfileIdSchema.optional(),
   slices: z
     .object({
@@ -419,7 +438,7 @@ const HttpAuditTargetSeedSchema = z
     message: 'HTTP audit targets require url or urlRef',
   });
 
-const AuditTargetSeedSchema = z.union([
+const _AuditTargetSeedSchema = z.union([
   DatabaseAuditTargetSeedSchema,
   z.object({
     type: z.literal('r2'),
@@ -445,6 +464,14 @@ const AuditRetentionSeedSchema = z.object({
   minimumRetentionDays: z.number().int().positive().nullable().optional(),
   primaryDays: z.number().int().positive().nullable().optional(),
   archiveDays: z.number().int().positive().nullable().optional(),
+});
+
+const AuditBackpressureSeedSchema = z.object({
+  mode: z.enum(['event_class', 'fail_closed_all']),
+  allowTenantOverride: z.boolean().optional(),
+  eventCategoryOverrides: z
+    .record(z.string(), z.enum(['inherit', 'fail_open', 'fail_closed']))
+    .optional(),
 });
 
 const AuditProfileSeedSchema = z.object({
@@ -484,6 +511,7 @@ const AuditProfileSeedSchema = z.object({
   retention: AuditRetentionSeedSchema.optional(),
   archiveFailureMode: z.enum(['best_effort', 'gate_cleanup']).optional(),
   sinkFailureMode: z.enum(['best_effort', 'retry_until_ttl']).optional(),
+  backpressure: AuditBackpressureSeedSchema.optional(),
 });
 
 const ResidencyProfileSeedSchema = z.object({
@@ -590,6 +618,9 @@ export const AuthrimConfigSchema = z.object({
 
   /** Database configuration (D1 location/jurisdiction) */
   database: DatabaseConfigSchema.default({}),
+
+  /** Tenant D1 preallocated pool configuration */
+  tenantD1: TenantD1ConfigSchema.default({}),
 
   /** Runtime profile defaults and registry backend selection */
   profiles: ProfilesConfigSchema.default({}),

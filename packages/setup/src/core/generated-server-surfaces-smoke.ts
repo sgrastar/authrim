@@ -612,10 +612,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
     });
     checks.push(
-      finalizeCheck(
-        createSmokeSchemaCheck,
-        'create temporary required registration field verified'
-      )
+      finalizeCheck(createSmokeSchemaCheck, 'create temporary required registration field verified')
     );
 
     const registrationFieldsCheck = makeSmokeCheck(
@@ -638,9 +635,7 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(
-      finalizeCheck(registrationFieldsCheck, 'public registration fields verified')
-    );
+    checks.push(finalizeCheck(registrationFieldsCheck, 'public registration fields verified'));
 
     const refreshSchemasCheck = makeSmokeCheck(
       'server-surfaces-custom-claims-refresh',
@@ -794,10 +789,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
     });
     checks.push(
-      finalizeCheck(
-        adminGetCheck,
-        'admin user detail returns persisted custom field verified'
-      )
+      finalizeCheck(adminGetCheck, 'admin user detail returns persisted custom field verified')
     );
 
     const adminUpdateCheck = makeSmokeCheck(
@@ -824,9 +816,7 @@ export async function runGeneratedServerSurfacesSmoke(
         }
       },
     });
-    checks.push(
-      finalizeCheck(adminUpdateCheck, 'admin user update required validation verified')
-    );
+    checks.push(finalizeCheck(adminUpdateCheck, 'admin user update required validation verified'));
 
     const scimSupportedActiveRequired = requiredSchemas.filter((schema) =>
       SCIM_SUPPORTED_REQUIRED_KEYS.includes(
@@ -871,10 +861,7 @@ export async function runGeneratedServerSurfacesSmoke(
           },
         });
         checks.push(
-          finalizeCheck(
-            scimSchemaCheck,
-            'create temporary SCIM-compatible required field verified'
-          )
+          finalizeCheck(scimSchemaCheck, 'create temporary SCIM-compatible required field verified')
         );
 
         const refreshScimSchemasCheck = makeSmokeCheck(
@@ -962,9 +949,7 @@ export async function runGeneratedServerSurfacesSmoke(
           }
         },
       });
-      checks.push(
-        finalizeCheck(scimMissingCheck, 'SCIM create required validation verified')
-      );
+      checks.push(finalizeCheck(scimMissingCheck, 'SCIM create required validation verified'));
 
       const scimCreatableRequiredSchemas = activeRequiredSchemas.filter((schema) =>
         SCIM_SUPPORTED_REQUIRED_KEYS.includes(
@@ -1108,10 +1093,7 @@ export async function runGeneratedServerSurfacesSmoke(
       },
     });
     checks.push(
-      finalizeCheck(
-        runtimeProfileCreateCheck,
-        'create temporary audit runtime profile verified'
-      )
+      finalizeCheck(runtimeProfileCreateCheck, 'create temporary audit runtime profile verified')
     );
 
     const runtimeProfileGetCheck = makeSmokeCheck(
@@ -1180,9 +1162,7 @@ export async function runGeneratedServerSurfacesSmoke(
       }
       await wait(runtimeProfileListIsKvBackend ? 5000 : 1500);
     }
-    checks.push(
-      finalizeCheck(runtimeProfileListCheck, 'list audit runtime profiles verified')
-    );
+    checks.push(finalizeCheck(runtimeProfileListCheck, 'list audit runtime profiles verified'));
 
     const tenantRuntimeProfilesCheck = makeSmokeCheck(
       'server-surfaces-tenant-runtime-profiles',

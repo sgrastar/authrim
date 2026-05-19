@@ -16,7 +16,7 @@
  * Storage Strategy:
  * - Durable Storage as primary (for atomic operations)
  * - In-memory cache for hot data (active device codes)
- * - D1 for persistence, recovery, and audit trail
+ * - Profile-controlled D1 persistence, recovery, and audit trail
  * - Dual mapping: device_code → metadata, user_code → device_code
  */
 
@@ -871,6 +871,10 @@ export class DeviceCodeStore {
 
   private async initializeDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
+    if (context.transientAuth?.deviceCibaColdPersistence === 'disabled') {
+      return null;
+    }
+
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
     if (!this.tenantId) {
       throw new Error('Device code persistence requires tenant context');

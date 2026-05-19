@@ -45,6 +45,12 @@ describe('hono-context runtime user store sources', () => {
             },
             coreDb: coreAdapter,
             piiDb: null,
+            userCacheScope: {
+              storageProfileId: 'tenant-a-storage',
+              sourceGeneration: 'core:1:pii:0',
+              schemaVersion: 'core:1:pii:1',
+            },
+            piiCacheMode: 'no_cross_request_pii',
           };
         }
         return undefined;
@@ -55,6 +61,8 @@ describe('hono-context runtime user store sources', () => {
 
     expect(authCtx.tenantId).toBe('tenant-a');
     expect(authCtx.coreAdapter).toBe(coreAdapter);
+    expect(authCtx.userCacheScope?.storageProfileId).toBe('tenant-a-storage');
+    expect(authCtx.piiCacheMode).toBe('no_cross_request_pii');
   });
 
   it('rejects auth context creation when tenant context is missing', () => {
@@ -83,6 +91,7 @@ describe('hono-context runtime user store sources', () => {
             },
             coreDb: coreAdapter,
             piiDb: null,
+            policyDb: null,
           };
         }
         return undefined;
@@ -92,6 +101,34 @@ describe('hono-context runtime user store sources', () => {
     expect(resolveOptionalCoreAdapterFromHono(c, 'refresh-token-sharding-config')).toBe(
       coreAdapter
     );
+  });
+
+  it('resolves policy adapters from the pre-resolved policy source', () => {
+    const coreAdapter = createMockAdapter('core-profiled');
+    const policyAdapter = createMockAdapter('policy-profiled');
+    const c = {
+      env: {},
+      get(key: string) {
+        if (key === 'runtimeUserStoreSources') {
+          return {
+            storageProfile: {
+              id: 'tenant-a-storage',
+              kind: 'storage',
+              label: 'Tenant A Storage',
+              slices: {},
+            },
+            coreDb: coreAdapter,
+            piiDb: null,
+            policyDb: policyAdapter,
+          };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof resolveOptionalCoreAdapterFromHono>[0];
+
+    expect(resolveOptionalCoreAdapterFromHono(c, 'policy')).toBe(policyAdapter);
+    expect(resolveOptionalCoreAdapterFromHono(c, 'rebac')).toBe(policyAdapter);
+    expect(resolveOptionalCoreAdapterFromHono(c, 'core')).toBe(coreAdapter);
   });
 
   it('returns null when no optional core adapter source is available', () => {
@@ -121,6 +158,12 @@ describe('hono-context runtime user store sources', () => {
             },
             coreDb: sharedAdapter,
             piiDb: sharedAdapter,
+            userCacheScope: {
+              storageProfileId: 'builtin:storage:single-db',
+              sourceGeneration: 'core:0:pii:0',
+              schemaVersion: 'core:1:pii:1',
+            },
+            piiCacheMode: 'merged',
           };
         }
         return undefined;
@@ -131,6 +174,8 @@ describe('hono-context runtime user store sources', () => {
 
     expect(piiCtx.coreAdapter).toBe(sharedAdapter);
     expect(piiCtx.defaultPiiAdapter).toBe(sharedAdapter);
+    expect(piiCtx.userCacheScope?.storageProfileId).toBe('builtin:storage:single-db');
+    expect(piiCtx.piiCacheMode).toBe('merged');
     expect(hasPIIDatabase(c)).toBe(true);
   });
 

@@ -21,7 +21,6 @@ import {
   AR_ERROR_CODES,
   validateAllowedOrigins,
   createAuditLogFromContext,
-  scheduleAuditLogFromContext,
   getLogger,
   // Crypto utilities
   hashClientSecret,
@@ -2918,8 +2917,7 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
 
     log.info('Revoked consent', { action: 'consent_revoke', userId, clientId });
 
-    // Write audit logs (non-blocking)
-    scheduleAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
+    await createAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
       client_id: clientId,
       scopes: previousScopes,
     });

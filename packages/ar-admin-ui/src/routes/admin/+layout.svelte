@@ -508,7 +508,7 @@
 	/* Main Content */
 	.main-content {
 		flex: 1;
-		margin-left: calc(var(--nav-width-collapsed) + 48px);
+		margin-left: calc(var(--nav-width-expanded) + 48px);
 		min-height: 100vh;
 		display: flex;
 		flex-direction: column;
@@ -537,7 +537,7 @@
 	/* Responsive */
 	@media (max-width: 1024px) {
 		.main-content {
-			margin-left: calc(var(--nav-width-collapsed) + 32px);
+			margin-left: calc(var(--nav-width-expanded) + 32px);
 			padding: 20px;
 		}
 	}

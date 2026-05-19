@@ -71,6 +71,9 @@ export interface KeyFilePaths {
   versionManagerSecret: string;
   adminApiSecret: string;
   keyManagerSecret: string;
+  tenantRuntimeRegistrySigningPrivateJwk: string;
+  tenantRuntimeRegistryVerifyingPublicJwks: string;
+  tenantRuntimeRegistrySigningKeyId: string;
   setupToken: string;
   metadata: string;
   emailFrom: string;
@@ -213,6 +216,15 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
     versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
     adminApiSecret: join(keysDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(keysDir, 'key_manager_secret.txt'),
+    tenantRuntimeRegistrySigningPrivateJwk: join(
+      keysDir,
+      'tenant_runtime_registry_signing_private.jwk.json'
+    ),
+    tenantRuntimeRegistryVerifyingPublicJwks: join(
+      keysDir,
+      'tenant_runtime_registry_verify.jwks.json'
+    ),
+    tenantRuntimeRegistrySigningKeyId: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
     setupToken: join(keysDir, 'setup_token.txt'),
     metadata: join(keysDir, 'metadata.json'),
     emailFrom: join(keysDir, 'email_from.txt'),

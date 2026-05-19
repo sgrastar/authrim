@@ -260,6 +260,8 @@ async function loadProtectedCustomerProfileFromEnv(input: {
   const cachedUser = await getCachedUser(input.c.env, input.tenantId, input.userId, {
     coreDb: piiCtx.coreAdapter,
     piiDb: piiCtx.defaultPiiAdapter,
+    cacheScope: piiCtx.userCacheScope,
+    piiCacheMode: piiCtx.piiCacheMode,
   });
   if (!cachedUser) {
     return null;

@@ -168,6 +168,22 @@ GET /authorize?response_type=code&client_id=xxx&redirect_uri=xxx&scope=openid&pr
 | 3,500 |         1,565,263 |         0 | 178.94 | 190.19 |   690.62 | 1,380.58 |  1,515.72 |
 | 4,000 |         1,796,556 |     1,223 | 172.92 | 182.15 |   190.99 |   441.97 |  2,317.21 |
 
+### 5.5 D1 Database Metrics
+
+| RPS | Read Queries | Write Queries | Reporting Status |
+| --: | -----------: | ------------: | ---------------- |
+| 500 |          N/A |           N/A | Not captured     |
+| 1,000 |        N/A |           N/A | Not captured     |
+| 1,500 |        N/A |           N/A | Not captured     |
+| 2,000 |        N/A |           N/A | Not captured     |
+| 2,500 |        N/A |           N/A | Not captured     |
+| 3,000 |        N/A |           N/A | Not captured     |
+| 3,500 |        N/A |           N/A | Not captured     |
+| 4,000 |        N/A |           N/A | Not captured     |
+
+> **Reporting gap**: The December 11 silent-auth run did not archive D1 read/write counters.
+> Future storage-profile comparisons must include D1 query/write counters for every run.
+
 ---
 
 ## 6. Conclusion

@@ -135,6 +135,39 @@ describe('common-entry routing', () => {
 		});
 	});
 
+	it('redirects tenant-host root to /login when entry mode is tenant_only', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				config: {
+					tenant_id: 'first',
+					mode: 'tenant_only',
+					discovery_methods: ['tenant_code', 'tenant_slug'],
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: false,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		);
+
+		await expect(
+			rootLoad({
+				cookies: createCookies(),
+				fetch,
+				request: new Request('https://first.multi-tenant.authrim.com/'),
+				url: new URL('https://first.multi-tenant.authrim.com/')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: '/login'
+		});
+	});
+
 	it('allows a tenant-host login challenge only when it resolves for the current tenant', async () => {
 		const fetch = vi
 			.fn()
@@ -224,6 +257,36 @@ describe('common-entry routing', () => {
 			location:
 				'https://multi-tenant.authrim.com/discover?expected_tenant_id=first&return_to=https%3A%2F%2Ffirst.multi-tenant.authrim.com%2Flogin'
 		});
+	});
+
+	it('allows tenant-host /login when entry mode is tenant_only', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				config: {
+					tenant_id: 'first',
+					mode: 'tenant_only',
+					discovery_methods: ['tenant_code', 'tenant_slug'],
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: false,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		);
+
+		const result = await loginLoad({
+			cookies: createCookies(),
+			fetch,
+			request: new Request('https://first.multi-tenant.authrim.com/login'),
+			url: new URL('https://first.multi-tenant.authrim.com/login')
+		} as never);
+
+		expect(result).toEqual({});
 	});
 
 	it('accepts a valid discovery grant on tenant-host /login and strips it from the URL', async () => {
@@ -504,5 +567,63 @@ describe('common-entry routing', () => {
 				}
 			}
 		});
+	});
+
+	it('continues common-entry tenant_only discovery grants to the tenant login URL', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					config: {
+						tenant_id: 'default',
+						mode: 'tenant_only',
+						discovery_methods: ['tenant_code', 'tenant_slug'],
+						selection_policy: 'select_if_multiple',
+						allow_manual_tenant_entry: true,
+						remember_last_tenant: true,
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true,
+						redirect_tenant_discover_to_common_entry: true
+					},
+					single_tenant_mode: false,
+					is_common_entry_host: true,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					grant: 'grant-token',
+					login_url: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
+				})
+			);
+
+		await expect(
+			discoverLoad({
+				fetch,
+				cookies: createCookies(),
+				request: new Request(
+					'https://multi-tenant.authrim.com/discover?expected_tenant_id=first&return_to=https%3A%2F%2Ffirst.multi-tenant.authrim.com%2Flogin'
+				),
+				url: new URL(
+					'https://multi-tenant.authrim.com/discover?expected_tenant_id=first&return_to=https%3A%2F%2Ffirst.multi-tenant.authrim.com%2Flogin'
+				)
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
+		});
+
+		expect(fetch).toHaveBeenNthCalledWith(
+			2,
+			'/api/auth/discovery/grant',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					tenant_id: 'first',
+					expected_tenant_id: 'first',
+					return_to: 'https://first.multi-tenant.authrim.com/login'
+				})
+			})
+		);
 	});
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import vm from 'node:vm';
 import en from '../i18n/locales/en.js';
 import { SUPPORTED_LOCALES } from '../i18n/types.js';
 import { getHtmlTemplate } from '../web/ui.js';
@@ -48,6 +49,63 @@ describe('getHtmlTemplate', () => {
     );
   });
 
+  it('embeds browser-safe domain helpers without dev-transform helpers', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('function isValidCustomDomain(domain)');
+    expect(html).toContain('function validateSetupDomainInputs(input)');
+    expect(html).toContain('function computeApiDomainUiState(input)');
+    expect(html).not.toContain('__name');
+  });
+
+  it('emits syntactically valid inline browser scripts', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(
+      (match) => match[1]
+    );
+
+    expect(scripts.length).toBeGreaterThan(0);
+    scripts.forEach((script, index) => {
+      expect(() => new vm.Script(script, { filename: `setup-inline-${index}.js` })).not.toThrow();
+    });
+  });
+
+  it('renders multi-tenant preview labels and access paths consistently', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('Login UI Origin:');
+    expect(html).toContain('preview-component-badge');
+    expect(html).toContain('grid-template-columns: var(--preview-label-width) minmax(0, 1fr)');
+    expect(html).toContain('data-i18n="web.preview.conflictWarningTitle"');
+    expect(html).toContain('⚠️ Configuration issue');
+    expect(html).toContain("setPreviewValue(");
+    expect(html).toContain("'https://' + loginUiBase,");
+    expect(html).toContain("'https://' + (loginDomain || baseDomain) + '/discover'");
+    expect(html).toContain("'/admin/info");
+    expect(html).not.toContain('id="preview-workers"');
+    expect(html).not.toContain('Login UI (Worker):');
+    expect(html).not.toContain('id="section-mode"');
+    expect(html).not.toContain('id="mode-quick"');
+  });
+
   it('renders the keys saved panel with dark-mode styles and a copy button', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -85,6 +143,22 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("setupLogCopyButton('delete-log-copy-btn', 'delete-output')");
   });
 
+  it('uses monotonic phase-based deployment progress instead of log-count percentages', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('function createDeployProgressTracker()');
+    expect(html).toContain("setProgress(68, 'Verifying Worker deployments...')");
+    expect(html).toContain("Deploying API Workers (' + completed + '/' + expectedWorkers + ')");
+    expect(html).not.toContain("Processing... ' + completedCount + ' steps completed");
+    expect(html).not.toContain('totalComponents = Math.max');
+  });
+
   it('renders prerequisite capability list styles and client-side renderer', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -117,6 +191,11 @@ describe('getHtmlTemplate', () => {
     );
 
     expect(html).toContain('class="domain-check-status"');
+    expect(html).toContain('id="login-domain-zone-status"');
+    expect(html).toContain('id="admin-domain-zone-status"');
+    expect(html).toContain('function uiDomainRequiresOwnRoute(domain)');
+    expect(html).toContain("checkUiCustomDomainZone('login'");
+    expect(html).toContain("checkUiCustomDomainZone('admin'");
     expect(html).toContain('createZoneDiagnosticAlert');
     expect(html).toContain('createZoneActionButton');
     expect(html).toContain('Open Cloudflare Dashboard');

@@ -6,7 +6,7 @@ const MAX_ADMIN_API_RESPONSE_BYTES = 2 * 1024 * 1024;
 function getPersistedTenantId(): string | null {
 	if (typeof sessionStorage !== 'undefined') {
 		const tenantId = sessionStorage.getItem('settings_tenant_id')?.trim();
-		return tenantId || null;
+		return tenantId && tenantId !== 'default' ? tenantId : null;
 	}
 	return null;
 }
@@ -14,9 +14,9 @@ function getPersistedTenantId(): string | null {
 function resolveTenantId(candidate?: string): string | null {
 	const resolved =
 		candidate?.trim() ||
-		getPersistedTenantId() ||
 		settingsContext.tenantId?.trim() ||
 		settingsContext.availableTenants[0]?.id ||
+		getPersistedTenantId() ||
 		'';
 
 	return resolved || null;

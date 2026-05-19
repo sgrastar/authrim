@@ -1,9 +1,11 @@
 export {
   CustomClaimSchemaResolver,
   createCustomClaimSchemaResolver,
+  createCustomClaimSchemaResolverFromSources,
   loadFeatureConfig,
   type ClaimTarget,
   type CustomClaimSchema,
+  type CustomClaimSchemaResolverSources,
   type ResolvedCustomClaims,
   type CustomClaimsFeatureConfig,
 } from './resolver';

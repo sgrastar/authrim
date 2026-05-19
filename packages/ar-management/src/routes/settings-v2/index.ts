@@ -130,7 +130,8 @@ async function getClientTenantId(
 
     const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
       env,
-      'settings-v2-client-tenant'
+      'settings-v2-client-tenant',
+      { tenantId }
     );
     const result = await adapter.queryOne<{ tenant_id: string }>(
       'SELECT tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
@@ -303,6 +304,10 @@ async function validateTenantRuntimeProfilePatch(
       error: 'internal_error',
       message: `Default storage profile "${defaults.storageProfileId}" not found`,
     };
+  }
+
+  if (candidateProfile.id === defaultProfile.id) {
+    return { ok: true };
   }
 
   const violation = validateTenantStorageProfileOverride(defaultProfile, candidateProfile);

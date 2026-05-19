@@ -257,6 +257,8 @@ import {
   adminJobsImportUploadHandler,
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
+  adminJobsTenantDatabaseProvisionHandler,
+  adminJobsTenantDatabaseActivateBatchHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
   adminJobTypesHandler,
@@ -298,6 +300,7 @@ import {
   adminRuntimeProfileGetHandler,
   adminRuntimeProfileListHandler,
   adminRuntimeProfileUpsertHandler,
+  adminTenantRuntimeRegistryEmergencyPurgeHandler,
   adminTenantRuntimeProfilesHandler,
 } from './runtime-profiles';
 import {
@@ -307,6 +310,8 @@ import {
   adminTenantUpdateHandler,
   adminTenantDeleteHandler,
   adminTenantSetDefaultHandler,
+  adminTenantProvisioningCleanupHandler,
+  adminTenantProvisioningRetryHandler,
 } from './admin-tenants';
 import {
   listTenantDomainMappingsHandler,
@@ -1204,8 +1209,15 @@ app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
 app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
+app.post('/api/admin/tenants/:id/provisioning/retry', adminTenantProvisioningRetryHandler);
+app.post('/api/admin/tenants/:id/provisioning/cleanup', adminTenantProvisioningCleanupHandler);
 app.get('/api/admin/tenants/:id/info', adminTenantInfoHandler);
 app.get('/api/admin/tenants/:id/runtime-profiles', adminTenantRuntimeProfilesHandler);
+app.post(
+  '/api/admin/tenants/:id/runtime-registry/emergency-purge',
+  requireSystemAdmin(),
+  adminTenantRuntimeRegistryEmergencyPurgeHandler
+);
 app.get('/api/admin/tenants/:id', adminTenantGetHandler);
 app.patch('/api/admin/tenants/:id', adminTenantUpdateHandler);
 app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
@@ -2283,6 +2295,11 @@ app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHand
 app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadHandler);
 app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
 app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
+app.post('/api/admin/jobs/tenant-databases/provision', adminJobsTenantDatabaseProvisionHandler);
+app.post(
+  '/api/admin/jobs/tenant-databases/activate-batch',
+  adminJobsTenantDatabaseActivateBatchHandler
+);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints

@@ -348,7 +348,7 @@ describe('Settings API v2', () => {
         expect(body.code).toBe('tenant_auth_core_override_not_allowed');
       });
 
-      it('allows tenant storage profile overrides that keep the auth core plane unchanged', async () => {
+      it('allows tenant storage profile overrides when the auth core plane is compatible', async () => {
         const allowedProfile = makeStorageProfile('tenant-pii-storage', {
           users_pii: {
             driver: 'postgres',
@@ -394,8 +394,13 @@ describe('Settings API v2', () => {
         );
 
         expect(patchRes.status).toBe(200);
-        const body = (await patchRes.json()) as SettingsPatchResult;
-        expect(body.applied).toContain('tenant.storage_profile_id');
+        const verifyRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await verifyRes.json()) as SettingsGetResult;
+        expect(body.values['tenant.storage_profile_id']).toBe('tenant-pii-storage');
       });
 
       it('should return 409 on version conflict', async () => {

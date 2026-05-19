@@ -74,6 +74,18 @@ export { AuditService, createAuditService } from './audit-service';
 
 export type { AuditServiceDependencies } from './audit-service';
 export {
+  AUDIT_FAIL_CLOSED_CATEGORIES,
+  AUDIT_FAIL_OPEN_CATEGORIES,
+  classifyAuditEvent,
+  resolveAuditEventFailureBehavior,
+} from './event-classification';
+export type {
+  AuditEventBackpressureMode,
+  AuditEventClassification,
+  AuditEventFailureBehavior,
+  AuditEventFailureCategory,
+} from './event-classification';
+export {
   resolveAuditPersistenceSourcesFromEnv,
   resolveAuditPersistenceAdapterFromEnv,
   resolveLegacyAuditLogAdapterFromEnv,

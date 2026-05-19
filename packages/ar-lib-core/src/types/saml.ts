@@ -18,6 +18,7 @@ export const NameIDFormats = {
   PERSISTENT: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
   TRANSIENT: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
   UNSPECIFIED: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+  SHIBBOLETH: 'urn:mace:shibboleth:1.0:nameIdentifier',
   X509_SUBJECT: 'urn:oasis:names:tc:SAML:1.1:nameid-format:X509SubjectName',
   WINDOWS_DQN: 'urn:oasis:names:tc:SAML:1.1:nameid-format:WindowsDomainQualifiedName',
   KERBEROS: 'urn:oasis:names:tc:SAML:2.0:nameid-format:kerberos',
@@ -263,6 +264,50 @@ export interface SAMLMetadataRefreshStatus {
   diff: SAMLMetadataDiffSummary;
 }
 
+export type SAMLMetadataVerificationPolicy = 'strict' | 'warn' | 'disabled';
+export type SAMLMetadataVerificationStatus = 'verified' | 'unverified' | 'skipped' | 'failed';
+
+export interface SAMLFederationTrustCertificate {
+  id: string;
+  name?: string;
+  certificate: string;
+  fingerprintSha256: string;
+  createdAt: number;
+}
+
+export interface SAMLFederationTrustProfile {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string;
+  metadataUrlPatterns: string[];
+  certificates: SAMLFederationTrustCertificate[];
+  policy?: SAMLMetadataVerificationPolicy;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SAMLMetadataVerificationSummary {
+  status: SAMLMetadataVerificationStatus;
+  policy: SAMLMetadataVerificationPolicy;
+  trustProfileId?: string;
+  trustProfileName?: string;
+  certificateFingerprintSha256?: string;
+  signedElementId?: string;
+  verifiedAt?: number;
+  warnings?: string[];
+  error?: string;
+}
+
+export interface SAMLMetadataAggregateImportSnapshot {
+  aggregateSourceUrl?: string;
+  aggregateEntityId: string;
+  federationTrustProfileId?: string;
+  verification: SAMLMetadataVerificationSummary;
+  importedAt: number;
+}
+
 export interface SAMLErrorResponseOverride {
   /** SAML policy failure kind, for example required_attribute_missing */
   failureKind: string;
@@ -486,6 +531,8 @@ export interface SAMLSPConfig {
   metadataRefreshStatus?: SAMLMetadataRefreshStatus;
   /** Metadata last fetched timestamp */
   metadataLastFetched?: number;
+  /** Aggregate metadata import/verification snapshot when imported from federation metadata */
+  aggregateImport?: SAMLMetadataAggregateImportSnapshot;
 }
 
 export interface SAMLAssertionConsumerService {
@@ -504,6 +551,8 @@ export interface SAMLIdPConfig {
   description?: string;
   /** SP display name sent as AuthnRequest ProviderName when Authrim acts as SP */
   providerName?: string;
+  /** Logo URL from IdP metadata UIInfo, shown on Login UI provider buttons */
+  logoUrl?: string;
   /** IdP Entity ID */
   entityId: string;
   /** SSO URL */
@@ -543,6 +592,8 @@ export interface SAMLIdPConfig {
   metadataRefreshStatus?: SAMLMetadataRefreshStatus;
   /** Metadata last fetched timestamp */
   metadataLastFetched?: number;
+  /** Aggregate metadata import/verification snapshot when imported from federation metadata */
+  aggregateImport?: SAMLMetadataAggregateImportSnapshot;
 }
 
 // ============================================================================
@@ -720,4 +771,79 @@ export interface MetadataImportRequest {
   samlProfile?: SAMLSPProfile;
   /** Optional built-in attribute preset to clone into the SP release policy */
   attributePresetId?: SAMLAttributePresetId;
+}
+
+export type SAMLMetadataPreviewKind = 'single' | 'aggregate';
+export type SAMLMetadataEntityRole = 'saml_idp' | 'saml_sp' | 'ambiguous' | 'unknown';
+
+export interface SAMLMetadataEntitySummary {
+  entityId: string;
+  role: SAMLMetadataEntityRole;
+  displayName?: string;
+  acsUrl?: string;
+  ssoUrl?: string;
+  sloUrl?: string;
+  certificateCount: number;
+  validUntil?: string;
+  keywords?: string[];
+  logoUrl?: string;
+}
+
+export interface SAMLMetadataKeywordFacetValue {
+  keyword: string;
+  label: string;
+  count: number;
+}
+
+export interface SAMLMetadataKeywordFacet {
+  category: string;
+  label: string;
+  values: SAMLMetadataKeywordFacetValue[];
+}
+
+export interface SAMLMetadataAggregatePreviewResponse {
+  kind: 'aggregate';
+  previewId: string;
+  metadataUrl?: string;
+  entityCount: number;
+  expiresAt: number;
+  verification: SAMLMetadataVerificationSummary;
+}
+
+export interface SAMLMetadataSinglePreviewResponse {
+  kind: 'single';
+  providerType: 'saml_idp' | 'saml_sp';
+  config: SAMLIdPConfig | SAMLSPConfig;
+}
+
+export interface SAMLMetadataEntityListResponse {
+  previewId: string;
+  total: number;
+  offset: number;
+  limit: number;
+  entities: SAMLMetadataEntitySummary[];
+  keywordFacets?: SAMLMetadataKeywordFacet[];
+}
+
+export interface SAMLMetadataBatchCreateResult {
+  entityId: string;
+  success: boolean;
+  providerId?: string;
+  providerType?: 'saml_idp' | 'saml_sp';
+  name?: string;
+  error?: string;
+}
+
+export interface SAMLMetadataBatchStatusResponse {
+  batchId: string;
+  tenantId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  startedAt: number;
+  completedAt?: number;
+  results: SAMLMetadataBatchCreateResult[];
+  error?: string;
 }

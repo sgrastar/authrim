@@ -122,6 +122,32 @@ describe('SP login tenant signing boundary', () => {
     expect(mockSignRedirectBinding).toHaveBeenCalled();
   });
 
+  it('uses the Redirect SSO endpoint when a Shibboleth POST endpoint is configured with redirect enabled', async () => {
+    mockGetIdPConfig.mockResolvedValue({
+      entityId: 'https://test-idp1.gakunin.nii.ac.jp/idp/shibboleth',
+      ssoUrl: 'https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/POST/SSO',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:mace:shibboleth:1.0:nameIdentifier',
+      attributeMapping: {},
+      allowedBindings: ['post', 'redirect'],
+      signingKeyPolicy: {
+        active: {
+          slot: 'active',
+          keyRef: 'tenant:tenant-a:saml:sp:signing',
+        },
+      },
+    });
+
+    const { context, redirect } = createLoginContext(mockEnv, 'tenant-a');
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(302);
+    expect(redirect).toHaveBeenCalledWith(
+      'https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/Redirect/SSO?SAMLRequest=request&RelayState=state&SigAlg=alg&Signature=sig'
+    );
+    expect(mockSignRedirectBinding).toHaveBeenCalled();
+  });
+
   it('adds ProviderName to AuthnRequest for IdP display', async () => {
     mockGetIdPConfig.mockResolvedValue({
       providerName: 'Authrim Test SP',

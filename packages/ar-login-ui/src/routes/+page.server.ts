@@ -30,6 +30,14 @@ export const load: PageServerLoad = async (event) => {
 		throw redirect(303, '/discover');
 	}
 
+	if (
+		!config.single_tenant_mode &&
+		!config.is_common_entry_host &&
+		config.config.mode === 'tenant_only'
+	) {
+		throw redirect(303, '/login');
+	}
+
 	return {};
 };
 

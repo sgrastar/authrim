@@ -303,6 +303,54 @@ describe('SAML metadata interoperability fixtures', () => {
     expect(config.allowedBindings).toEqual(['post', 'redirect']);
   });
 
+  it('prefers Redirect SSO and SLO endpoints when IdP metadata publishes both POST and Redirect', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+  xmlns:mdui="urn:oasis:names:tc:SAML:metadata:ui"
+  entityID="https://test-idp1.gakunin.nii.ac.jp/idp/shibboleth">
+  <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:Extensions>
+      <mdui:UIInfo>
+        <mdui:Logo xml:lang="en" width="64" height="64">https://test-idp1.gakunin.nii.ac.jp/logo.png</mdui:Logo>
+      </mdui:UIInfo>
+    </md:Extensions>
+    <md:KeyDescriptor use="signing">
+      <ds:KeyInfo>
+        <ds:X509Data>
+          <ds:X509Certificate>IDPCERT</ds:X509Certificate>
+        </ds:X509Data>
+      </ds:KeyInfo>
+    </md:KeyDescriptor>
+    <md:NameIDFormat>urn:mace:shibboleth:1.0:nameIdentifier</md:NameIDFormat>
+    <md:SingleSignOnService
+      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+      Location="https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/POST/SSO" />
+    <md:SingleSignOnService
+      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+      Location="https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/Redirect/SSO" />
+    <md:SingleLogoutService
+      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+      Location="https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/POST/SLO" />
+    <md:SingleLogoutService
+      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+      Location="https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/Redirect/SLO" />
+  </md:IDPSSODescriptor>
+</md:EntityDescriptor>`;
+
+    const config = parseIdPMetadata(xml);
+
+    expect(config.ssoUrl).toBe(
+      'https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/Redirect/SSO'
+    );
+    expect(config.sloUrl).toBe(
+      'https://test-idp1.gakunin.nii.ac.jp/idp/profile/SAML2/Redirect/SLO'
+    );
+    expect(config.nameIdFormat).toBe('urn:mace:shibboleth:1.0:nameIdentifier');
+    expect(config.allowedBindings).toEqual(['post', 'redirect']);
+    expect(config.logoUrl).toBe('https://test-idp1.gakunin.nii.ac.jp/logo.png');
+  });
+
   it('explains when SP metadata is imported as IdP metadata', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"

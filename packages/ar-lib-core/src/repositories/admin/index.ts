@@ -21,6 +21,24 @@ export {
   type AdminLoginAttemptCreateInput,
   type AdminLoginAttemptFilterOptions,
 } from './admin-login-attempt';
+export {
+  InternalNotificationEventRepository,
+  type InternalNotificationEventCategory,
+  type InternalNotificationEventInput,
+  type InternalNotificationEventRow,
+  type InternalNotificationEventSeverity,
+  type InternalNotificationEventStatus,
+} from './internal-notification-event';
+export {
+  TenantDiscoveryIndexRepository,
+  selectTenantDiscoveryPrimaryCandidate,
+  type TenantDiscoveryCandidateSet,
+  type TenantDiscoveryIndexInput,
+  type TenantDiscoveryIndexKind,
+  type TenantDiscoveryIndexRow,
+  type TenantDiscoveryIndexStatus,
+  type TenantDiscoverySelectionPolicy,
+} from './tenant-discovery-index';
 
 // Admin ABAC (Attribute-Based Access Control)
 export {
@@ -84,6 +102,29 @@ export {
   type AdminDatabaseConnectionWithCredential,
   type DatabaseConnectionProvider,
 } from './admin-database-connection';
+export {
+  TenantDatabaseRegistryRepository,
+  type TenantDatabaseActivePointer,
+  type TenantDatabaseActivePointerInput,
+  type TenantDatabaseActivePointerStatus,
+  type TenantDatabaseD1FileSizeStatus,
+  type TenantDatabaseProvider,
+  type TenantDatabaseRegistryInput,
+  type TenantDatabaseRegistryKey,
+  type TenantDatabaseRegistryRow,
+  type TenantDatabaseRole,
+  type TenantDatabaseStatsRow,
+  type TenantDatabaseStatsSummary,
+  type TenantDatabaseStatsWarningState,
+  type TenantDatabaseStatus,
+  type TenantRuntimeCacheGenerationInput,
+  type TenantRuntimeCacheGenerationRow,
+  type TenantRuntimeCacheNamespace,
+  type TenantRuntimeRegistrySnapshotInput,
+  type TenantRuntimeRegistrySnapshotRow,
+  type TenantRuntimeRegistrySnapshotScope,
+  type TenantRuntimeRegistrySnapshotStatus,
+} from './tenant-database-registry';
 export {
   AdminMachineAccessRepository,
   type AdminMachineActorRef,

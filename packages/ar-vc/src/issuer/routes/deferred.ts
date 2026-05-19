@@ -67,7 +67,9 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Look up deferred credential using repository
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core');
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core', {
+      tenantId: tokenResult.tenantId,
+    });
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
 
     const result = await issuedCredentialRepo.findDeferredByIdAndUser(

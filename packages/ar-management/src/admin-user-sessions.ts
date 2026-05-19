@@ -10,7 +10,7 @@ import {
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
-  scheduleAuditLogFromContext,
+  createAuditLogFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
@@ -585,7 +585,7 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
       revokedCount: dbRevokedCount,
     });
 
-    scheduleAuditLogFromContext(c, 'user.sessions_revoked', 'user', userId, {
+    await createAuditLogFromContext(c, 'user.sessions_revoked', 'user', userId, {
       revoked_count: dbRevokedCount,
     });
     scheduleAdminAuditLog(c, 'user.sessions_revoked', userId, 'success', {

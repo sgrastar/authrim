@@ -22,6 +22,8 @@ export const ADMIN_UI_BFF_PRIVATE_KEY_FILE = 'admin_ui_bff_private.pem';
 export const ADMIN_UI_BFF_PUBLIC_JWK_FILE = 'admin_ui_bff_public.jwk.json';
 export const ADMIN_UI_BFF_SCOPES = ['admin-ui:proxy'] as const;
 
+const ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS = 4;
+
 export const SETUP_MACHINE_DEFAULT_SCOPES = [
   'admin:clients:*',
   'admin:settings:*',
@@ -78,6 +80,21 @@ function safeAdminUiBffCredentialIdFromKid(kid: string): string {
 
 function base64UrlJson(value: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function parseRetryAfterSeconds(body: string): number | null {
+  try {
+    const parsed = JSON.parse(body) as { retry_after?: unknown };
+    return typeof parsed.retry_after === 'number' && parsed.retry_after > 0
+      ? parsed.retry_after
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildPermissionValuesSql(principalId: string, permissions: readonly string[]): string {
@@ -164,12 +181,7 @@ async function unlinkIfExists(path: string): Promise<void> {
   try {
     await unlink(path);
   } catch (error) {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      error.code === 'ENOENT'
-    ) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
       return;
     }
     throw error;
@@ -270,57 +282,70 @@ export async function requestAdminMachineAccessToken(
   const tokenEndpoint = `${baseUrl}/token`;
   const clientId = options.clientId ?? SETUP_MACHINE_CLIENT_ID;
   const scopes = options.scopes ?? SETUP_MACHINE_DEFAULT_SCOPES;
-  const assertion = await createSetupMachineClientAssertion({
-    tokenEndpoint,
-    keysDir: options.keysDir,
-    clientId,
-  });
+  for (let attempt = 1; attempt <= ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS; attempt += 1) {
+    const assertion = await createSetupMachineClientAssertion({
+      tokenEndpoint,
+      keysDir: options.keysDir,
+      clientId,
+    });
 
-  const form = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: clientId,
-    client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-    client_assertion: assertion,
-    audience: ADMIN_MACHINE_AUDIENCE,
-    scope: scopes.join(' '),
-  });
+    const form = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      client_assertion: assertion,
+      audience: ADMIN_MACHINE_AUDIENCE,
+      scope: scopes.join(' '),
+    });
 
-  const response = await fetchWithTimeout(
-    tokenEndpoint,
-    {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        ...(options.tenantId ? { 'X-Tenant-Id': options.tenantId } : {}),
+    const response = await fetchWithTimeout(
+      tokenEndpoint,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(options.tenantId ? { 'X-Tenant-Id': options.tenantId } : {}),
+        },
+        body: form.toString(),
       },
-      body: form.toString(),
-    },
-    options.timeoutMs
-  );
+      options.timeoutMs
+    );
 
-  if (!response.ok) {
-    const body = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
-    throw new Error(`admin_machine_token_failed:${response.status}:${body}`);
+    if (!response.ok) {
+      const body = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
+      const retryAfterSeconds = parseRetryAfterSeconds(body);
+      if (
+        response.status === 429 &&
+        retryAfterSeconds &&
+        attempt < ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS
+      ) {
+        await sleep(retryAfterSeconds * 1000 + 1000);
+        continue;
+      }
+      throw new Error(`admin_machine_token_failed:${response.status}:${body}`);
+    }
+
+    const data = await readResponseJsonWithLimit<{
+      access_token?: string;
+      token_type?: string;
+      expires_in?: number;
+      scope?: string;
+    }>(response);
+
+    if (!data.access_token || data.token_type !== 'Bearer') {
+      throw new Error('admin_machine_token_response_invalid');
+    }
+
+    return {
+      accessToken: data.access_token,
+      tokenType: 'Bearer',
+      expiresIn: typeof data.expires_in === 'number' ? data.expires_in : 0,
+      scope: typeof data.scope === 'string' ? data.scope : '',
+    };
   }
 
-  const data = await readResponseJsonWithLimit<{
-    access_token?: string;
-    token_type?: string;
-    expires_in?: number;
-    scope?: string;
-  }>(response);
-
-  if (!data.access_token || data.token_type !== 'Bearer') {
-    throw new Error('admin_machine_token_response_invalid');
-  }
-
-  return {
-    accessToken: data.access_token,
-    tokenType: 'Bearer',
-    expiresIn: typeof data.expires_in === 'number' ? data.expires_in : 0,
-    scope: typeof data.scope === 'string' ? data.scope : '',
-  };
+  throw new Error('admin_machine_token_retry_exhausted');
 }
 
 export async function buildAdminMachineHeaders(

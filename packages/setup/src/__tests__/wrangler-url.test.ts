@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateEnvVars, deriveAllowedOrigins } from '../core/wrangler.js';
 import type { AuthrimConfig } from '../core/config.js';
+import type { WorkerComponent } from '../core/naming.js';
 import { classifyUiApiSite } from '../core/site-classifier.js';
 import {
   SCENARIOS,
@@ -126,9 +127,7 @@ describe('generateEnvVars - ar-management', () => {
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
     expect(vars['UI_URL']).toBe(expectedUiUrl);
-    expect(vars['LOGIN_UI_ENABLED']).toBe(
-      (config.components?.loginUi ?? true) ? 'true' : 'false'
-    );
+    expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
     expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
     expect(vars['SAML_ENABLED']).toBe((config.components?.saml ?? false) ? 'true' : 'false');
     expect(vars['ASYNC_ENABLED']).toBe((config.components?.async ?? false) ? 'true' : 'false');
@@ -260,13 +259,14 @@ describe('generateEnvVars - ar-router', () => {
 
     // UI proxy flags — always present on ar-router
     const adminSameAsApi = scenario.config.adminUiSameAsApi;
+    const adminProxyEnabled = adminSameAsApi || !!scenario.config.baseDomain;
     const loginProxyEnabled = scenario.config.loginUiSameAsApi || !!scenario.config.baseDomain;
 
-    expect(vars['ENABLE_ADMIN_UI_PROXY']).toBe(adminSameAsApi ? 'true' : 'false');
+    expect(vars['ENABLE_ADMIN_UI_PROXY']).toBe(adminProxyEnabled ? 'true' : 'false');
     expect(vars['ENABLE_LOGIN_UI_PROXY']).toBe(loginProxyEnabled ? 'true' : 'false');
 
-    // AR_ADMIN_UI_URL is set only when adminSameAsApi=true
-    if (adminSameAsApi) {
+    // AR_ADMIN_UI_URL is set when ar-router owns Admin UI paths.
+    if (adminProxyEnabled) {
       const adminUiWorkerUrl = scenario.config.adminUiAuto ?? scenario.config.adminUiCustom;
       expect(vars['AR_ADMIN_UI_URL']).toBe(adminUiWorkerUrl ?? undefined);
     } else {
@@ -425,6 +425,42 @@ describe('ISSUER_URL consistency with runtime issuer', () => {
 });
 
 describe('generateEnvVars - explicit tenant mode toggles', () => {
+  it('passes tenant resolution variables to every request-context worker', () => {
+    const config = buildAuthrimConfig(
+      SCENARIOS.find((scenario) => scenario.config.baseDomain) ?? SCENARIOS[0]
+    ) as AuthrimConfig;
+    config.tenant = {
+      name: 'first',
+      displayName: 'First Tenant',
+      multiTenant: true,
+      baseDomain: 'multi-tenant.authrim.com',
+      primaryTenant: 'first',
+      nakedDomain: false,
+      userIdFormat: 'nanoid',
+    };
+
+    const tenantAwareComponents: WorkerComponent[] = [
+      'ar-discovery',
+      'ar-auth',
+      'ar-token',
+      'ar-userinfo',
+      'ar-management',
+      'ar-router',
+      'ar-async',
+      'ar-policy',
+      'ar-saml',
+      'ar-bridge',
+      'ar-vc',
+    ];
+
+    for (const component of tenantAwareComponents) {
+      const vars = generateEnvVars(component, config, WORKERS_SUBDOMAIN);
+      expect(vars['DEFAULT_TENANT_ID']).toBe('first');
+      expect(vars['BASE_DOMAIN']).toBe('multi-tenant.authrim.com');
+      expect(vars['PRIMARY_TENANT_ID']).toBe('first');
+    }
+  });
+
   it('does not enable naked-domain issuer mode just because PRIMARY_TENANT_ID is set', () => {
     const config = {
       version: '1.0.0',

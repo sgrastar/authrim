@@ -7,6 +7,7 @@
 		type RuntimeProfileRecord,
 		type RuntimeProfileReferenceManagementPolicy,
 		type RuntimeProfileReferenceStatusEntry,
+		type StorageProfileCapabilityStatus,
 		type StorageProfileListPolicy,
 		type StorageProfileTenantOverridePolicy,
 		type StorageSliceBoundaryPolicy
@@ -63,11 +64,16 @@
 	const boundaryClassLabels: Record<StorageSliceBoundaryPolicy['boundaryClass'], string> = {
 		auth_core: 'Auth Core Plane',
 		pii: 'PII Plane',
-		custom_extension: 'Custom / Extension Plane'
+		custom_extension: 'Custom / Extension Plane',
+		authorization: 'Authorization Plane'
 	};
 
 	function getStorageTenantPolicy(profileId: string): StorageProfileTenantOverridePolicy | null {
 		return storagePolicy?.tenantOverrideEligibility?.[profileId] ?? null;
+	}
+
+	function getStorageCapabilityStatus(profileId: string): StorageProfileCapabilityStatus | null {
+		return storagePolicy?.capabilityStatus?.[profileId] ?? null;
 	}
 
 	function getStorageProfileSlices(profile: RuntimeProfileRecord): string[] {
@@ -98,8 +104,76 @@
 		return 'Auth core plane differs from the environment default';
 	}
 
+	function formatCapabilityReadiness(status: StorageProfileCapabilityStatus | null): string {
+		if (!status) {
+			return 'Capability status unknown';
+		}
+		if (status.mvpReady) {
+			return 'MVP ready';
+		}
+		return `${status.unsupportedCount} unsupported / ${status.partialCount} partial`;
+	}
+
 	function formatPolicyBadge(value: boolean): string {
 		return value ? 'Allowed' : 'Blocked';
+	}
+
+	function formatTenantDatabaseStatsAvailability(): string {
+		const status = storagePolicy?.tenantDatabaseStatsStatus;
+		if (!status) {
+			return 'Unknown';
+		}
+		if (status.available) {
+			return status.attentionRequired ? 'Attention required' : 'Healthy';
+		}
+		return status.unavailableReason === 'db_admin_not_configured'
+			? 'Control DB unavailable'
+			: 'Stats unavailable';
+	}
+
+	function getTenantDatabaseStatsSummaryItems(): Array<{ label: string; value: number }> {
+		const summary = storagePolicy?.tenantDatabaseStatsStatus?.summary;
+		if (!summary) {
+			return [];
+		}
+		return [
+			{ label: 'Active core DBs', value: summary.active_tenant_core_databases },
+			{ label: 'Stats rows', value: summary.stats_rows },
+			{ label: 'Missing stats', value: summary.missing_stats_count },
+			{ label: 'Stale stats', value: summary.stale_stats_count },
+			{ label: 'Warnings', value: summary.warning_count },
+			{ label: 'Strong warnings', value: summary.strong_warning_count },
+			{ label: 'Stale file size', value: summary.stale_file_size_count },
+			{ label: 'Unavailable file size', value: summary.unavailable_file_size_count }
+		];
+	}
+
+	function formatRuntimeRegistrySecurityStatus(): string {
+		const status = storagePolicy?.runtimeRegistrySecurityNotifications;
+		if (!status) {
+			return 'Unknown';
+		}
+		if (status.available) {
+			return status.attentionRequired ? 'Attention required' : 'Healthy';
+		}
+		return status.unavailableReason === 'db_admin_not_configured'
+			? 'Control DB unavailable'
+			: 'Alerts unavailable';
+	}
+
+	function getRuntimeRegistrySecurityItems(): Array<{ label: string; value: number | string }> {
+		const summary = storagePolicy?.runtimeRegistrySecurityNotifications?.summary;
+		if (!summary) {
+			return [];
+		}
+		return [
+			{ label: 'Pending', value: summary.pending_count },
+			{ label: 'Failed', value: summary.failed_count },
+			{ label: 'Dead letter', value: summary.dead_letter_count },
+			{ label: 'Critical', value: summary.critical_count },
+			{ label: 'High', value: summary.high_count },
+			{ label: 'Latest', value: summary.latest_created_at ?? 'None' }
+		];
 	}
 
 	function getActivationStatus(
@@ -461,6 +535,74 @@
 					</div>
 				</div>
 
+				<div class="status-panel">
+					<div class="status-header">
+						<h3>Tenant DB Stats</h3>
+						<span
+							class="badge"
+							class:badge-primary={storagePolicy?.tenantDatabaseStatsStatus?.available &&
+								!storagePolicy?.tenantDatabaseStatsStatus?.attentionRequired}
+							class:badge-warning={storagePolicy?.tenantDatabaseStatsStatus?.available &&
+								storagePolicy?.tenantDatabaseStatsStatus?.attentionRequired}
+							class:badge-muted={!storagePolicy?.tenantDatabaseStatsStatus?.available}
+						>
+							{formatTenantDatabaseStatsAvailability()}
+						</span>
+					</div>
+					{#if storagePolicy?.tenantDatabaseStatsStatus?.available}
+						<div class="stats-grid">
+							{#each getTenantDatabaseStatsSummaryItems() as item (item.label)}
+								<div>
+									<div class="summary-label">{item.label}</div>
+									<div class="summary-value">{item.value}</div>
+								</div>
+							{/each}
+						</div>
+						<div class="helper-text">
+							Stale threshold: {storagePolicy.tenantDatabaseStatsStatus.staleAfterHours} hours.
+							Cutoff: {storagePolicy.tenantDatabaseStatsStatus.cutoffIso}.
+						</div>
+					{:else if storagePolicy?.tenantDatabaseStatsStatus?.unavailableReason}
+						<p class="helper-text">
+							{storagePolicy.tenantDatabaseStatsStatus.unavailableReason}
+						</p>
+					{:else}
+						<p class="helper-text">Tenant DB stats have not been loaded.</p>
+					{/if}
+				</div>
+
+				<div class="status-panel">
+					<div class="status-header">
+						<h3>Storage Registry Alerts</h3>
+						<span
+							class="badge"
+							class:badge-primary={storagePolicy?.runtimeRegistrySecurityNotifications?.available &&
+								!storagePolicy?.runtimeRegistrySecurityNotifications?.attentionRequired}
+							class:badge-warning={storagePolicy?.runtimeRegistrySecurityNotifications?.available &&
+								storagePolicy?.runtimeRegistrySecurityNotifications?.attentionRequired}
+							class:badge-muted={!storagePolicy?.runtimeRegistrySecurityNotifications?.available}
+						>
+							{formatRuntimeRegistrySecurityStatus()}
+						</span>
+					</div>
+					{#if storagePolicy?.runtimeRegistrySecurityNotifications?.available}
+						<div class="stats-grid">
+							{#each getRuntimeRegistrySecurityItems() as item (item.label)}
+								<div>
+									<div class="summary-label">{item.label}</div>
+									<div class="summary-value compact">{item.value}</div>
+								</div>
+							{/each}
+						</div>
+					{:else if storagePolicy?.runtimeRegistrySecurityNotifications?.unavailableReason}
+						<p class="helper-text">
+							{storagePolicy.runtimeRegistrySecurityNotifications.unavailableReason}
+						</p>
+					{:else}
+						<p class="helper-text">Storage registry alerts have not been loaded.</p>
+					{/if}
+				</div>
+
 				<div class="policy-grid">
 					{#if storagePolicy}
 							{#each Object.values(storagePolicy.slicePolicies) as policy (policy.slice)}
@@ -499,6 +641,7 @@
 				<div class="profile-list">
 					{#each storageProfiles as profile (profile.id)}
 						{@const tenantPolicy = getStorageTenantPolicy(profile.id)}
+						{@const capabilityStatus = getStorageCapabilityStatus(profile.id)}
 						{@const activation = getActivationStatus(storageActivationStatus, profile.id)}
 						<button class="profile-item profile-item-static" disabled>
 							<div class="profile-title-row">
@@ -524,9 +667,26 @@
 								>
 									Activation: {activationLabel(activation)}
 								</span>
+								<span
+									class="badge"
+									class:badge-primary={capabilityStatus?.mvpReady}
+									class:badge-warning={capabilityStatus && !capabilityStatus.mvpReady}
+									class:badge-muted={!capabilityStatus}
+								>
+									{formatCapabilityReadiness(capabilityStatus)}
+								</span>
 							</div>
 							<div class="profile-id">{profile.id}</div>
 							<div class="helper-text">{formatStorageProfileSummary(profile)}</div>
+							{#if capabilityStatus && !capabilityStatus.mvpReady}
+								<div class="reference-status-list">
+									{#each capabilityStatus.capabilities.filter((item) => item.state === 'unsupported' || item.state === 'partial').slice(0, 3) as item (item.id)}
+										<div class="helper-text warning-text">
+											{item.label}: {item.state}
+										</div>
+									{/each}
+								</div>
+							{/if}
 							{#if activation?.blockingReasons?.length}
 								<div class="helper-text warning-text">
 									{activation.blockingReasons[0]}
@@ -1374,6 +1534,10 @@
 		word-break: break-word;
 	}
 
+	.summary-value.compact {
+		font-size: 0.9rem;
+	}
+
 	.chip-row {
 		display: flex;
 		flex-wrap: wrap;
@@ -1383,6 +1547,12 @@
 	.policy-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 12px;
+	}
+
+	.stats-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 		gap: 12px;
 	}
 

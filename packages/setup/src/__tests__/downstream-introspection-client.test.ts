@@ -188,4 +188,51 @@ describe('ensureDownstreamIntrospectionClient', () => {
       'https://single-ar-router.example.workers.dev/token'
     );
   });
+
+  it('retries setup machine token acquisition while tenant routes are propagating', async () => {
+    const secrets = generateAllSecrets('downstream-introspection-test-key');
+    await saveKeysToDirectory(secrets, { targetDir: tempDir });
+    const progress: string[] = [];
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ error: 'not_found', error_description: 'Tenant not found' }, 404)
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: 'machine-admin-token',
+          token_type: 'Bearer',
+          expires_in: 600,
+          scope: 'admin:clients:*',
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            client: {
+              client_id: 'downstream-client-after-tenant-retry',
+              client_name: 'Downstream Grant Introspection',
+              client_secret: 'downstream-secret-after-tenant-retry',
+            },
+          },
+          201
+        )
+      );
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://first.multi-tenant.authrim.com',
+      adminApiSecretPath,
+      keysDir: tempDir,
+      tenantId: 'first',
+      onProgress: (message) => progress.push(message),
+      retryDelayMs: 1,
+      maxRetries: 2,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.clientId).toBe('downstream-client-after-tenant-retry');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
+  });
 });

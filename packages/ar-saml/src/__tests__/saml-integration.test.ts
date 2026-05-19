@@ -63,7 +63,7 @@ vi.mock('../admin/providers', () => ({
 
 vi.mock('../common/signature', () => ({
   verifyXmlSignature: vi.fn(),
-  hasSignature: vi.fn().mockReturnValue(false), // Default: no signature
+  hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
   signXml: vi.fn((xml: string) => xml), // Pass through
 }));
 
@@ -144,6 +144,8 @@ function createMockSAMLResponse(
     inResponseTo?: string;
     authnContextClassRef?: string;
     attributes?: Array<{ name: string; value: string; friendlyName?: string }>;
+    signatureReferenceUri?: string;
+    includeUnsignedReferenceToResponse?: boolean;
   } = {}
 ): string {
   const {
@@ -157,7 +159,13 @@ function createMockSAMLResponse(
     inResponseTo = undefined,
     authnContextClassRef = 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
     attributes = [],
+    signatureReferenceUri = undefined,
+    includeUnsignedReferenceToResponse = false,
   } = options;
+  const uniqueId = `${Date.now()}_${crypto.randomUUID().replace(/-/g, '')}`;
+  const responseId = `_${uniqueId}`;
+  const assertionId = `_assertion_${uniqueId}`;
+  const signatureReference = signatureReferenceUri ?? `#${responseId}`;
 
   // SubjectConfirmation NotOnOrAfter for bearer assertion (same as Conditions NotOnOrAfter)
   const subjectConfirmationNotOnOrAfter = notOnOrAfter;
@@ -165,16 +173,23 @@ function createMockSAMLResponse(
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
   xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
-  ID="_${Date.now()}"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+  ID="${responseId}"
   Version="2.0"
   IssueInstant="${new Date().toISOString()}"
   Destination="${destination}"
   ${inResponseTo ? `InResponseTo="${inResponseTo}"` : ''}>
   <saml:Issuer>${issuer}</saml:Issuer>
+  <ds:Signature>
+    <ds:SignedInfo>
+      <ds:Reference URI="${signatureReference}"/>
+    </ds:SignedInfo>
+  </ds:Signature>
+  ${includeUnsignedReferenceToResponse ? `<ds:Reference URI="#${responseId}"/>` : ''}
   <samlp:Status>
     <samlp:StatusCode Value="${statusCode}"/>
   </samlp:Status>
-  <saml:Assertion ID="_assertion_${Date.now()}" Version="2.0" IssueInstant="${new Date().toISOString()}">
+  <saml:Assertion ID="${assertionId}" Version="2.0" IssueInstant="${new Date().toISOString()}">
     <saml:Issuer>${issuer}</saml:Issuer>
     <saml:Subject>
       <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${nameId}</saml:NameID>
@@ -281,6 +296,7 @@ describe('SAML Integration', () => {
   let mockEnv: Partial<Env>;
   let mockUsers: Map<string, any>;
   let mockChallengeStore: Map<string, any>;
+  let mockNonceStore: Map<string, string>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -315,6 +331,7 @@ describe('SAML Integration', () => {
       });
     mockUsers = new Map();
     mockChallengeStore = new Map();
+    mockNonceStore = new Map();
 
     // Seed test user
     mockUsers.set('user-001', {
@@ -408,6 +425,13 @@ describe('SAML Integration', () => {
             mockChallengeStore.set(request.id, request);
             return Promise.resolve({ success: true });
           }),
+        }),
+      } as any,
+      NONCE_STORE: {
+        get: vi.fn((key: string) => Promise.resolve(mockNonceStore.get(key) ?? null)),
+        put: vi.fn((key: string, value: string) => {
+          mockNonceStore.set(key, value);
+          return Promise.resolve();
         }),
       } as any,
     };
@@ -745,11 +769,11 @@ describe('SAML Integration', () => {
       // Use direct handler call to ensure mocks are properly applied
       const res = await callACSDirectly(
         createMockSAMLResponse(),
-        'https://app.example.com/dashboard'
+        'https://auth.example.com/dashboard'
       );
 
       expect(res.status).toBe(302);
-      expect(res.headers.get('Location')).toBe('https://app.example.com/dashboard');
+      expect(res.headers.get('Location')).toBe('https://auth.example.com/dashboard');
       expect(res.headers.get('Set-Cookie')).toContain('authrim_session=');
       expect(mockSessionStoreFetch).toHaveBeenCalledWith(
         'https://session-store/session',
@@ -758,6 +782,19 @@ describe('SAML Integration', () => {
           body: expect.stringContaining('"tenantId":"default"'),
         })
       );
+    });
+
+    it('should reject when verified signature references do not cover the processed Response or Assertion', async () => {
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          signatureReferenceUri: '#_signed-but-not-processed',
+          includeUnsignedReferenceToResponse: true,
+        }),
+        'https://auth.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockSessionStoreFetch).not.toHaveBeenCalled();
     });
 
     it('should reject a SAML Response when AuthnContext is not allowed by IdP policy', async () => {
@@ -1325,7 +1362,7 @@ describe('SAML Integration', () => {
 
   describe('RelayState Handling', () => {
     it('should preserve RelayState in ACS redirect', async () => {
-      const relayState = 'https://app.example.com/original-page?param=value';
+      const relayState = 'https://auth.example.com/original-page?param=value';
 
       // Use direct handler call to ensure mocks are properly applied
       const res = await callACSDirectly(createMockSAMLResponse(), relayState);

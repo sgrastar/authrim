@@ -150,8 +150,14 @@ describe('migration seed SQL portability', () => {
 
   it('keeps Admin role assignment scope normalization independent from timestamp columns', () => {
     const migrationFiles = [
-      new URL('../../../../migrations/admin/016_admin_role_assignment_scope_normalization.sql', import.meta.url),
-      new URL('../../migrations/admin/016_admin_role_assignment_scope_normalization.sql', import.meta.url),
+      new URL(
+        '../../../../migrations/admin/016_admin_role_assignment_scope_normalization.sql',
+        import.meta.url
+      ),
+      new URL(
+        '../../migrations/admin/016_admin_role_assignment_scope_normalization.sql',
+        import.meta.url
+      ),
     ];
 
     for (const fileUrl of migrationFiles) {

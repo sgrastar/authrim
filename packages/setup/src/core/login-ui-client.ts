@@ -78,10 +78,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getRetryDelayMs(attempt: number): number {
-  return Math.min(LOGIN_UI_CLIENT_RETRY_BASE_DELAY_MS * attempt, 10000);
-}
-
 function isRetryableLoginUiClientError(error?: string | null): boolean {
   const normalized = String(error || '')
     .trim()

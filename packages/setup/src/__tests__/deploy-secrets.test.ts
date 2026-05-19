@@ -42,6 +42,7 @@ describe('getSecretTargetWorkers', () => {
       'ar-token',
       'ar-userinfo',
       'ar-management',
+      'ar-bridge',
     ]);
   });
 
@@ -90,6 +91,23 @@ describe('SECRET_UPLOAD_PLAN', () => {
   it('does not upload Admin API root bearer material to SAML or bridge workers', () => {
     expect(getSecretNamesForWorker('ar-saml')).toContain('KEY_MANAGER_SECRET');
     expect(getSecretNamesForWorker('ar-saml')).not.toContain('ADMIN_API_SECRET');
-    expect(getSecretNamesForWorker('ar-bridge')).toEqual([]);
+    expect(getSecretNamesForWorker('ar-bridge')).toEqual([
+      'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
+    ]);
+  });
+
+  it('keeps runtime registry private signing material limited to management', () => {
+    expect(getSecretNamesForWorker('ar-management')).toContain(
+      'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK'
+    );
+    expect(getSecretNamesForWorker('ar-auth')).not.toContain(
+      'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK'
+    );
+    expect(getSecretNamesForWorker('ar-token')).not.toContain(
+      'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK'
+    );
+    expect(getSecretNamesForWorker('ar-auth')).toContain(
+      'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS'
+    );
   });
 });

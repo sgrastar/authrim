@@ -18,6 +18,7 @@ import {
 } from './naming.js';
 import { getSecretNamesForWorker } from './secrets.js';
 import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
+import { isTenantDatabaseBinding } from './tenant-database.js';
 
 // =============================================================================
 // Types
@@ -112,6 +113,32 @@ function shouldAttachConfiguredHyperdriveBindings(component: WorkerComponent): b
   return component !== 'ar-router';
 }
 
+function collectD1DatabaseBindings(
+  component: WorkerComponent,
+  resourceIds: ResourceIds
+): Array<{ binding: string; database_name: string; database_id: string }> {
+  if (component === 'ar-router' || component === 'ar-async') {
+    return [];
+  }
+
+  const builtins = D1_DATABASES.map((db) => ({
+    binding: db.binding,
+    database_name: resourceIds.d1[db.binding]?.name || '',
+    database_id: resourceIds.d1[db.binding]?.id || '',
+  })).filter((db) => db.database_id);
+
+  const tenantDatabases = Object.entries(resourceIds.d1)
+    .filter(([binding]) => isTenantDatabaseBinding(binding))
+    .map(([binding, resource]) => ({
+      binding,
+      database_name: resource.name,
+      database_id: resource.id,
+    }))
+    .sort((left, right) => left.binding.localeCompare(right.binding));
+
+  return [...builtins, ...tenantDatabases];
+}
+
 // =============================================================================
 // Component-specific KV Requirements
 // =============================================================================
@@ -119,22 +146,37 @@ function shouldAttachConfiguredHyperdriveBindings(component: WorkerComponent): b
 const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   'ar-lib-core': ['AUTHRIM_CONFIG'],
   'ar-discovery': ['AUTHRIM_CONFIG'],
-  'ar-auth': ['CLIENTS_CACHE', 'SETTINGS', 'USER_CACHE', 'CONSENT_CACHE', 'AUTHRIM_CONFIG'],
-  'ar-token': ['CLIENTS_CACHE', 'SETTINGS', 'USER_CACHE', 'REBAC_CACHE', 'AUTHRIM_CONFIG'],
-  'ar-userinfo': ['CLIENTS_CACHE', 'USER_CACHE', 'AUTHRIM_CONFIG'],
+  'ar-auth': [
+    'CLIENTS_CACHE',
+    'SETTINGS',
+    'USER_CACHE',
+    'CONSENT_CACHE',
+    'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
+  ],
+  'ar-token': [
+    'CLIENTS_CACHE',
+    'SETTINGS',
+    'USER_CACHE',
+    'REBAC_CACHE',
+    'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
+  ],
+  'ar-userinfo': ['CLIENTS_CACHE', 'USER_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-management': [
     'CLIENTS_CACHE',
     'SETTINGS',
     'USER_CACHE',
     'INITIAL_ACCESS_TOKENS',
     'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
   ],
   'ar-router': ['AUTHRIM_CONFIG'],
   'ar-async': ['AUTHRIM_CONFIG'],
   'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
-  'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE'],
-  'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG'],
-  'ar-vc': ['AUTHRIM_CONFIG'],
+  'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-vc': ['AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
 };
 
 // =============================================================================
@@ -187,6 +229,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-saml': [
     'KEY_MANAGER',
     'SAML_REQUEST_STORE',
+    'SAML_AGGREGATE_METADATA_STORE',
     'SESSION_STORE',
     'CHALLENGE_STORE',
     'VERSION_MANAGER',
@@ -246,6 +289,19 @@ export function normalizeWorkersDevUrl(url: string, workersSubdomain?: string): 
     return parsed.origin;
   } catch {
     return url;
+  }
+}
+
+function normalizeHostnameCandidate(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    return new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`).hostname.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
   }
 }
 
@@ -372,6 +428,12 @@ export function generateWranglerConfig(
     };
   }
 
+  if (component === 'ar-management') {
+    wranglerConfig.triggers = {
+      crons: ['0 */6 * * *'],
+    };
+  }
+
   // KV Namespaces
   const kvBindings = COMPONENT_KV_BINDINGS[component];
   if (kvBindings.length > 0) {
@@ -383,13 +445,10 @@ export function generateWranglerConfig(
       }));
   }
 
-  // D1 Databases (most components need both)
-  if (component !== 'ar-router' && component !== 'ar-async') {
-    wranglerConfig.d1_databases = D1_DATABASES.map((db) => ({
-      binding: db.binding,
-      database_name: resourceIds.d1[db.binding]?.name || '',
-      database_id: resourceIds.d1[db.binding]?.id || '',
-    })).filter((db) => db.database_id);
+  // D1 Databases (most components need shared D1; tenant-d1 adds generated TDB_* bindings)
+  const d1Databases = collectD1DatabaseBindings(component, resourceIds);
+  if (d1Databases.length > 0) {
+    wranglerConfig.d1_databases = d1Databases;
   }
 
   const hyperdriveBindings = collectConfiguredHyperdriveBindings(config);
@@ -528,6 +587,12 @@ export function generateWranglerConfig(
     if (config.components.vc) {
       services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
     }
+    if (config.components.loginUi) {
+      services.push({ binding: 'LOGIN_UI_WORKER', service: `${env}-ar-login-ui` });
+    }
+    if (config.components.adminUi) {
+      services.push({ binding: 'ADMIN_UI_WORKER', service: `${env}-ar-admin-ui` });
+    }
 
     wranglerConfig.services = services;
 
@@ -535,7 +600,10 @@ export function generateWranglerConfig(
     if (config.urls?.api?.custom) {
       try {
         const customUrl = new URL(config.urls.api.custom);
-        const hostname = customUrl.hostname;
+        const hostname =
+          multiTenantEnabled && config.tenant?.baseDomain
+            ? normalizeHostnameCandidate(config.tenant.baseDomain) || customUrl.hostname
+            : customUrl.hostname;
         const zoneName = extractZoneName(hostname);
         if (config.urls?.api?.customDomainBinding) {
           // In multi-tenant mode, the naked domain can use a custom domain binding, but
@@ -543,6 +611,7 @@ export function generateWranglerConfig(
           if (multiTenantEnabled) {
             wranglerConfig.routes = [
               { pattern: hostname, custom_domain: true },
+              { pattern: `*.${hostname}`, zone_name: zoneName },
               { pattern: `*.${hostname}/*`, zone_name: zoneName },
             ];
           } else {
@@ -554,6 +623,7 @@ export function generateWranglerConfig(
           // Route: Pattern-based routing via DNS zone.
           wranglerConfig.routes = [{ pattern: `${hostname}/*`, zone_name: zoneName }];
           if (multiTenantEnabled) {
+            wranglerConfig.routes.push({ pattern: `*.${hostname}`, zone_name: zoneName });
             wranglerConfig.routes.push({ pattern: `*.${hostname}/*`, zone_name: zoneName });
           }
         }
@@ -622,7 +692,7 @@ export function generateEnvVars(
       );
   const adminUiApiMode = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
   const profileDefaults = config.profiles?.defaults ?? {
-    storage: 'builtin:storage:standard',
+    storage: 'builtin:storage:shared-d1',
     audit: 'builtin:audit:standard',
     residency: 'builtin:residency:default',
   };
@@ -652,12 +722,21 @@ export function generateEnvVars(
   // Tenant configuration
   // Multi-tenant mode is always enabled when BASE_DOMAIN is set.
   // Domain pattern: {tenant}.{baseDomain}
-  if (
-    component === 'ar-auth' ||
-    component === 'ar-management' ||
-    component === 'ar-router' ||
-    component === 'ar-discovery'
-  ) {
+  const tenantAwareComponents: WorkerComponent[] = [
+    'ar-discovery',
+    'ar-auth',
+    'ar-token',
+    'ar-userinfo',
+    'ar-management',
+    'ar-router',
+    'ar-async',
+    'ar-policy',
+    'ar-saml',
+    'ar-bridge',
+    'ar-vc',
+  ];
+
+  if (tenantAwareComponents.includes(component)) {
     vars['DEFAULT_TENANT_ID'] = config.tenant?.name || 'default';
 
     // User ID format (nanoid or uuid)
@@ -771,12 +850,19 @@ export function generateEnvVars(
   // ar-router: UI proxy configuration
   // In multi-tenant mode, the login UI must also be reachable on issuer/tenant hosts so
   // tenant-specific /login, /discover, and /signup URLs stay canonical and host-bound.
+  // Admin UI custom domains inside the multi-tenant base domain are also handled here because
+  // the router owns the wildcard route for tenant hosts.
   if (component === 'ar-router') {
     const adminSameAsApi = config.urls?.adminUi?.sameAsApi === true;
-    vars['ENABLE_ADMIN_UI_PROXY'] = adminSameAsApi ? 'true' : 'false';
-    if (adminSameAsApi) {
+    const adminProxyEnabled = adminSameAsApi || multiTenantEnabled;
+    vars['ENABLE_ADMIN_UI_PROXY'] = adminProxyEnabled ? 'true' : 'false';
+    const adminUiPublicUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto;
+    if (adminUiPublicUrl) {
+      vars['ADMIN_UI_URL'] = adminUiPublicUrl;
+    }
+    if (adminProxyEnabled) {
       const adminUiWorkerUrl = normalizeWorkersDevUrl(
-        config.urls?.adminUi?.auto || config.urls?.adminUi?.custom || '',
+        config.urls?.adminUi?.auto || adminUiPublicUrl || '',
         workersSubdomain
       );
       if (adminUiWorkerUrl) {
@@ -852,6 +938,14 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
     {
       tag: 'v8',
       new_sqlite_classes: ['FlowStateStore'],
+    },
+    {
+      tag: 'v9',
+      new_sqlite_classes: ['SessionClientStore'],
+    },
+    {
+      tag: 'v10',
+      new_sqlite_classes: ['SAMLAggregateMetadataStore'],
     },
   ];
 }
@@ -1502,6 +1596,8 @@ export interface UiWorkersWranglerOptions {
   component: 'ar-login-ui' | 'ar-admin-ui';
   env: string;
   needsProxy: boolean;
+  workersDev?: boolean;
+  routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
   vars?: Record<string, string | undefined>;
 }
 
@@ -1512,13 +1608,14 @@ export interface UiWorkersWranglerOptions {
  * can reach ar-router via Service Binding (no workers.dev needed, ITP-safe).
  */
 export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOptions): string {
-  const { component, env, needsProxy, vars = {} } = options;
+  const { component, env, needsProxy, workersDev = true, routes = [], vars = {} } = options;
   const workerName = `${env}-ar-router`;
   const uiWorkerName = `${env}-${component}`;
 
   const lines = [
     `# Auto-generated by @authrim/setup - do not edit manually`,
     `name = "${uiWorkerName}"`,
+    `workers_dev = ${workersDev}`,
     `compatibility_date = "2024-01-01"`,
     `compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]`,
     `main = ".svelte-kit/cloudflare/_worker.js"`,
@@ -1536,6 +1633,19 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
     lines.push(``, `[vars]`);
     for (const [key, value] of definedVars) {
       lines.push(`${key} = ${JSON.stringify(value)}`);
+    }
+  }
+
+  if (routes.length > 0) {
+    for (const route of routes) {
+      lines.push(``, `[[routes]]`);
+      lines.push(`pattern = ${JSON.stringify(route.pattern)}`);
+      if (route.zone_name) {
+        lines.push(`zone_name = ${JSON.stringify(route.zone_name)}`);
+      }
+      if (route.custom_domain) {
+        lines.push(`custom_domain = true`);
+      }
     }
   }
 

@@ -8,35 +8,6 @@
 	}
 
 	let { mobileOpen = false, onMobileClose, children }: Props = $props();
-
-	// Navigation expansion state
-	let isExpanded = $state(false);
-	let closeTimeout: ReturnType<typeof setTimeout> | null = null;
-
-	// Handle mouse enter - expand immediately
-	function handleMouseEnter() {
-		if (closeTimeout) {
-			clearTimeout(closeTimeout);
-			closeTimeout = null;
-		}
-		isExpanded = true;
-	}
-
-	// Handle mouse leave - delay before collapsing
-	function handleMouseLeave() {
-		closeTimeout = setTimeout(() => {
-			isExpanded = false;
-		}, 500); // 0.5 second delay
-	}
-
-	// Cleanup on destroy
-	$effect(() => {
-		return () => {
-			if (closeTimeout) {
-				clearTimeout(closeTimeout);
-			}
-		};
-	});
 </script>
 
 <!-- Mobile overlay -->
@@ -45,11 +16,8 @@
 {/if}
 
 <nav
-	class="nav-floating"
-	class:expanded={isExpanded}
+	class="nav-floating expanded"
 	class:open={mobileOpen}
-	onmouseenter={handleMouseEnter}
-	onmouseleave={handleMouseLeave}
 	aria-label="Main navigation"
 >
 	<!-- Header with logo -->
@@ -80,19 +48,14 @@
 		top: 24px;
 		left: 24px;
 		bottom: 24px;
-		width: var(--nav-width-collapsed);
+		width: var(--nav-width-expanded);
 		background: var(--bg-nav);
 		border-radius: var(--radius-xl);
 		display: flex;
 		flex-direction: column;
 		z-index: var(--z-nav);
-		transition: width var(--transition-base);
 		overflow: hidden;
 		box-shadow: var(--shadow-lg);
-	}
-
-	.nav-floating.expanded {
-		width: var(--nav-width-expanded);
 	}
 
 	/* === Nav Header === */

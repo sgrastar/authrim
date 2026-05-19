@@ -24,7 +24,7 @@ vi.mock('../../admin/providers', () => ({
 
 vi.mock('../../common/signature', () => ({
   verifyXmlSignature: vi.fn().mockReturnValue(true),
-  hasSignature: vi.fn().mockReturnValue(false),
+  hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
 }));
 
 // Mock structured logger
@@ -103,11 +103,17 @@ function createSAMLResponseWithConditions(options: {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
   xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
   ID="${id}"
   Version="2.0"
   IssueInstant="${new Date().toISOString()}"
   Destination="${destination}">
   <saml:Issuer>${issuer}</saml:Issuer>
+  <ds:Signature>
+    <ds:SignedInfo>
+      <ds:Reference URI="#${id}"/>
+    </ds:SignedInfo>
+  </ds:Signature>
   <samlp:Status>
     <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
   </samlp:Status>
@@ -357,27 +363,23 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
 
       const res = await callACS(samlResponse);
 
-      // Empty audience list means no restriction, should still work
-      // according to current implementation
-      expect(res.status).toBe(302);
+      expect(res.status).toBeGreaterThanOrEqual(400);
     });
   });
 
-  describe('OneTimeUse Condition', () => {
-    it('should track and reject reused assertions with OneTimeUse', async () => {
-      // SECURITY: OneTimeUse condition requires tracking assertion IDs
-      // to prevent replay attacks
+  describe('Bearer Assertion Replay Tracking', () => {
+    it('should track and reject reused bearer assertions', async () => {
+      // SAML Web Browser SSO requires replay tracking for bearer assertion IDs.
       // Use a fixed assertion ID so both calls use the same assertion
       const samlResponse = createSAMLResponseWithConditions({
         assertionId: '_assertion_onetimeuse_test',
-        includeOneTimeUse: true,
       });
 
       // First use should succeed
       const res1 = await callACS(samlResponse);
       expect(res1.status).toBe(302);
 
-      // Second use of same assertion should fail (OneTimeUse violation)
+      // Second use of same assertion should fail.
       const res2 = await callACS(samlResponse);
       expect(res2.status).toBe(400);
     });
@@ -393,15 +395,13 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
       expect(res.status).toBe(302);
     });
 
-    it('should allow different assertions with OneTimeUse', async () => {
+    it('should allow different bearer assertions', async () => {
       // Two different assertion IDs should both succeed
       const samlResponse1 = createSAMLResponseWithConditions({
         assertionId: '_assertion_unique_1',
-        includeOneTimeUse: true,
       });
       const samlResponse2 = createSAMLResponseWithConditions({
         assertionId: '_assertion_unique_2',
-        includeOneTimeUse: true,
       });
 
       const res1 = await callACS(samlResponse1);
@@ -411,13 +411,12 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
       expect(res2.status).toBe(302);
     });
 
-    it('should scope OneTimeUse replay tracking by tenant and IdP issuer', async () => {
+    it('should scope bearer replay tracking by tenant and IdP issuer', async () => {
       const assertionId = '_assertion_scoped_onetimeuse';
       const issuer = 'https://idp.example.com';
       const samlResponse = createSAMLResponseWithConditions({
         assertionId,
         issuer,
-        includeOneTimeUse: true,
       });
 
       const res1 = await callACS(samlResponse, { tenantId: 'tenant-a' });
@@ -471,16 +470,14 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
   });
 
   describe('Conditions Element Presence', () => {
-    it('should accept assertion without Conditions element', async () => {
-      // SAML spec allows omitting Conditions, but it's recommended
+    it('should reject assertion without Conditions element', async () => {
       const samlResponse = createSAMLResponseWithConditions({
         includeConditions: false,
       });
 
       const res = await callACS(samlResponse);
 
-      // Current implementation allows assertions without Conditions
-      expect(res.status).toBe(302);
+      expect(res.status).toBeGreaterThanOrEqual(400);
     });
 
     it('should accept Conditions without NotBefore', async () => {
