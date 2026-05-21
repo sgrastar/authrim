@@ -4,8 +4,10 @@ import {
   ensureDatabaseAdapter,
   evaluateTenantDatabaseStatsWarning,
   InternalNotificationEventRepository,
+  readResponseTextWithLimit,
   resolveTenantDatabaseStatsPolicy,
   resolveTenantDatabaseSourceFromRegistry,
+  safeFetch,
   TenantDatabaseRegistryRepository,
   type Env,
   type TenantDatabaseD1FileSizeStatus,
@@ -138,14 +140,6 @@ function getCloudflareD1ApiToken(env: Env): string | null {
   return env.CLOUDFLARE_D1_API_TOKEN || env.CLOUDFLARE_API_TOKEN || null;
 }
 
-async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
-  const text = await response.text();
-  if (text.length > maxBytes) {
-    throw new Error('cloudflare_d1_response_too_large');
-  }
-  return text;
-}
-
 export async function fetchCloudflareD1DatabaseFileSize(
   env: Env,
   databaseId: string,
@@ -161,10 +155,11 @@ export async function fetchCloudflareD1DatabaseFileSize(
     };
   }
 
-  const response = await fetch(
+  const response = await safeFetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}`,
     {
       method: 'GET',
+      maxResponseSize: D1_DATABASE_DETAILS_RESPONSE_LIMIT_BYTES,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',

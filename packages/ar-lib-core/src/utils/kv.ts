@@ -20,6 +20,7 @@ import { createLogger } from './logger';
 import { createCompatibilityError, OIDCError } from './errors';
 import { getCacheTTL } from './cache-config';
 import { getDefaultTenantId } from './issuer';
+import { readResponseTextWithLimit } from './url-security';
 import {
   storeRefreshToken as storeRefreshTokenCanonical,
   getRefreshToken as getRefreshTokenCanonical,
@@ -33,6 +34,7 @@ const PII_CACHE_PURPOSE = 'user-pii-cache';
 const PII_CACHE_ALGORITHM = 'AES-256-GCM';
 const PII_CACHE_DEFAULT_TTL_SECONDS = 5 * 60;
 const PII_CACHE_ROOT_KEY_HEX_LENGTH = 64;
+const TOKEN_REVOCATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
 function requireTenantId(tenantId: string | undefined, context: string): string {
   const normalized = tenantId?.trim();
@@ -1335,7 +1337,10 @@ export async function revokeToken(
   });
 
   if (!response.ok) {
-    const error = await response.text();
+    const error = await readResponseTextWithLimit(
+      response,
+      TOKEN_REVOCATION_ERROR_BODY_MAX_BYTES
+    );
     throw new Error(`Failed to revoke token: ${error}`);
   }
 }

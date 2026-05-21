@@ -32,4 +32,16 @@ describe('SAML POST binding body limits', () => {
       'SAML POST body exceeds maximum size'
     );
   });
+
+  it('rejects unsupported POST binding content types before parsing form data', async () => {
+    const request = new Request('https://auth.example.test/saml/sp/acs', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: 'SAMLResponse=response',
+    });
+
+    await expect(parsePostBindingFormDataWithLimit(request)).rejects.toThrow(
+      'SAML POST binding requires application/x-www-form-urlencoded'
+    );
+  });
 });

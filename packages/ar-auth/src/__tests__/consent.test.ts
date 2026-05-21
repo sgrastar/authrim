@@ -145,6 +145,13 @@ function createMockContext(options: {
       },
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    html: vi.fn(
+      (body: string, status = 200) =>
+        new Response(body, {
+          status,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        })
+    ),
     redirect: vi.fn(
       (url: string, status: number) => new Response(null, { status, headers: { Location: url } })
     ),
@@ -221,6 +228,47 @@ describe('Consent Handlers', () => {
         }),
         400
       );
+    });
+
+    it('drops unsafe client metadata URLs from the HTML consent fallback', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'unsafe-consent-challenge',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          client_id: 'test-client',
+          scope: 'openid profile',
+        },
+      });
+
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'test-client',
+          client_name: '<img src=x onerror=alert(1)>',
+          logo_uri: 'javascript:alert(1)',
+          client_uri: 'https://example.com',
+          policy_uri: 'javascript:alert(1)',
+          tos_uri: 'data:text/html,<script>alert(1)</script>',
+          is_trusted: 0,
+        },
+      });
+
+      const c = createMockContext({
+        query: { challenge_id: 'unsafe-consent-challenge' },
+        headers: { accept: 'text/html' },
+        challengeStore,
+        db: mockDB,
+      });
+
+      const response = await consentGetHandler(c);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+      expect(html).not.toContain('javascript:alert');
+      expect(html).not.toContain('data:text/html');
+      expect(html).not.toContain('<img src="javascript:');
+      expect(html).not.toContain('href="javascript:');
     });
 
     it('should return client and scope information', async () => {

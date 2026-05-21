@@ -32,6 +32,7 @@ import {
   type ObjectCatalogListResult,
   type ObjectCatalogPhysicalRecord,
   type ObjectRepresentation,
+  readR2ObjectTextWithLimit,
 } from '@authrim/ar-lib-core';
 import {
   loadCatalogObjectArtifact,
@@ -247,6 +248,7 @@ const ALLOWED_FILTER_FIELDS = ['status', 'job_type'];
  */
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const ADMIN_JOB_RESULT_FALLBACK_OBJECT_MAX_BYTES = 10 * 1024 * 1024;
 const USER_IMPORT_ALLOWED_CONTENT_TYPES = new Set([
   'text/csv',
   'application/csv',
@@ -381,7 +383,7 @@ async function loadJobResultArtifact(
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   return {
-    content: await object.text(),
+    content: await readR2ObjectTextWithLimit(object, ADMIN_JOB_RESULT_FALLBACK_OBJECT_MAX_BYTES),
     contentType: headers.get('Content-Type') || 'application/json',
   };
 }
@@ -1073,6 +1075,8 @@ export async function adminJobResultDownloadHandler(c: Context<{ Bindings: Env }
       'Content-Disposition',
       `attachment; filename="${buildJobResultArtifactFilename(row.job_type, jobId, requestedFormat ?? 'json')}"`
     );
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('Cache-Control', 'no-store');
     return new Response(artifact.content, {
       status: 200,
       headers,
@@ -1246,6 +1250,8 @@ export async function adminJobResultArtifactDownloadHandler(c: Context<{ Binding
       'Content-Disposition',
       `attachment; filename="${buildJobResultArtifactFilename(row.job_type, row.id, requestedFormat)}"`
     );
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('Cache-Control', 'no-store');
     return new Response(artifact.content, {
       status: 200,
       headers,
@@ -1320,6 +1326,8 @@ export async function adminJobResultArtifactChunkHandler(c: Context<{ Bindings: 
       'Content-Disposition',
       `attachment; filename="${buildJobResultArtifactFilename(row.job_type, row.id, requestedFormat)}"`
     );
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('Cache-Control', 'no-store');
     return new Response(artifact.content, {
       status: 200,
       headers,

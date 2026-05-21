@@ -885,12 +885,100 @@ adminRolesRouter.get('/permissions/list', async (c) => {
       description: 'Create or rotate storage destination credentials',
     },
     {
+      key: ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_HEALTH_CHECK,
+      description: 'Run storage destination health checks',
+    },
+    {
       key: ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_TEST,
       description: 'Test storage destination connectivity',
     },
     {
       key: ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_USAGE_READ,
       description: 'View storage destination usage by features',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ,
+      description: 'View logging routing and delivery overview',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_PLATFORM_DEFAULTS_READ,
+      description: 'View platform logging defaults and fallback policy',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_PLATFORM_DEFAULTS_UPDATE,
+      description: 'Update platform logging defaults and fallback policy',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_TENANT_OVERRIDES_READ,
+      description: 'View tenant logging overrides',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_TENANT_OVERRIDES_UPDATE,
+      description: 'Update eligible tenant logging overrides',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_CRITICAL_UPDATE,
+      description: 'Update critical logging destinations and fallback behavior',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_DELIVERY_EVENTS_READ,
+      description: 'View logging delivery, retry, fallback, and DLQ events',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_DELIVERY_RETRY,
+      description: 'Create logging delivery retry message jobs',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_DLQ_REPLAY,
+      description: 'Replay logging DLQ items back to the delivery queue',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_DLQ_DELETE,
+      description: 'Mark logging DLQ items as deleted without deleting replay payloads',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_DLQ_PURGE,
+      description: 'Purge logging DLQ replay payloads and metadata status',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_SNAPSHOTS_PUBLISH,
+      description: 'Publish runtime logging policy snapshots',
+    },
+    {
+      key: ADMIN_PERMISSIONS.LOGGING_ROLLBACK,
+      description: 'Rollback logging policy changes',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_OVERVIEW_READ,
+      description: 'View admin logging overview',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_COVERAGE_READ,
+      description: 'View admin audit coverage status',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_COVERAGE_UPDATE,
+      description: 'Update admin audit coverage registry state',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_READ,
+      description: 'Preview admin logging catalog repair findings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN,
+      description: 'Run safe automatic admin logging catalog repairs',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ,
+      description: 'View admin logging sensitive detail policy',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_UPDATE,
+      description: 'Update admin logging sensitive detail policy',
+    },
+    {
+      key: ADMIN_PERMISSIONS.ADMIN_LOGGING_CRITICAL_UPDATE,
+      description: 'Update critical admin logging behavior',
     },
     {
       key: ADMIN_PERMISSIONS.DIAGNOSTIC_LOGGING_DESTINATION_SELECT,

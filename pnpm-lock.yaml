@@ -224,6 +224,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
+      '@authrim/ar-lib-logging':
+        specifier: workspace:*
+        version: link:../ar-lib-logging
       '@authrim/ar-lib-plugin':
         specifier: workspace:*
         version: link:../ar-lib-plugin
@@ -311,6 +314,9 @@ importers:
 
   packages/ar-lib-core:
     dependencies:
+      '@authrim/ar-lib-logging':
+        specifier: workspace:*
+        version: link:../ar-lib-logging
       hono:
         specifier: 4.12.18
         version: 4.12.18
@@ -339,6 +345,21 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  packages/ar-lib-logging:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20251121.0
+        version: 4.20260120.0
+      '@types/node':
+        specifier: ^20.19.25
+        version: 20.19.30
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.13
+        version: 4.0.15(@types/debug@4.1.12)(@types/node@20.19.30)(@vitest/ui@4.0.15)(happy-dom@20.0.10)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.94.0)(terser@5.44.1)(tsx@4.20.6)(yaml@2.8.1)
 
   packages/ar-lib-plugin:
     dependencies:

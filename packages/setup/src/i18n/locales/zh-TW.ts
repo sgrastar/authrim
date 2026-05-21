@@ -1,6 +1,6 @@
 /**
  * Traditional Chinese Translations for Authrim Setup Tool
- * 繁體中文翻譯（台灣用語）
+ * Traditional Chinese translations (Taiwan terminology)
  */
 
 import type { Translations } from '../types.js';

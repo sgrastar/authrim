@@ -84,23 +84,23 @@
 	// Consent config
 	let consentTypes = $state<string[]>(['terms']);
 
-	// セキュリティ対策: XSS 防止（High 8）
+	// Security mitigation: XSS prevention (High 8)
 	/**
-	 * ユーザー入力値をサニタイズ
-	 * - HTML タグの除去
-	 * - 長さ制限（最大 500 文字）
-	 * - スクリプト実行可能な文字列のエスケープ
+	 * Sanitize user input values
+	 * - Remove HTML tags
+	 * - Length limit (maximum 500 characters)
+	 * - Escape strings that could execute scripts
 	 */
 	function sanitizeInput(value: string, maxLength = 500): string {
 		if (!value) return '';
 
-		// 1. 長さ制限（DoS 攻撃対策）
+		// 1. Length limit (DoS mitigation)
 		let sanitized = value.slice(0, maxLength);
 
-		// 2. HTML タグの除去（XSS 対策）
+		// 2. Remove HTML tags (XSS mitigation)
 		sanitized = sanitized.replace(/<[^>]*>/g, '');
 
-		// 3. 危険な文字のエスケープ（追加の XSS 対策）
+		// 3. Escape dangerous characters (additional XSS mitigation)
 		sanitized = sanitized
 			.replace(/&/g, '&amp;')
 			.replace(/</g, '&lt;')

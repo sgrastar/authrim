@@ -20,6 +20,8 @@ import { NodeType, isElementNode } from './types';
 // Helper Functions
 // =============================================================================
 
+const XML_ID_REFERENCE_PATTERN = /^#[A-Za-z_][A-Za-z0-9_.:-]*$/;
+
 /**
  * Find all elements with a specific ID attribute
  *
@@ -87,6 +89,8 @@ export interface VerifyOptions {
   strictXswProtection?: boolean;
   /** Allow deprecated SHA-1 XML Signature. Only use for explicit legacy SP opt-in. */
   allowSha1SignatureAlgorithm?: boolean;
+  /** Allow deprecated SHA-1 DigestMethod. Only use for explicit legacy SP opt-in. */
+  allowSha1DigestAlgorithm?: boolean;
 }
 
 /**
@@ -127,6 +131,7 @@ export function signXml(xml: string, options: SignOptions): string {
     signatureLocation = 'prepend',
     includeKeyInfo = true,
   } = options;
+  const referenceXPath = resolveSignatureReferenceXPath(referenceUri);
 
   const sig = new SignedXml({
     privateKey,
@@ -136,7 +141,7 @@ export function signXml(xml: string, options: SignOptions): string {
 
   // Add reference to the element to sign
   sig.addReference({
-    xpath: referenceUri.startsWith('#') ? `//*[@ID='${referenceUri.substring(1)}']` : referenceUri,
+    xpath: referenceXPath,
     digestAlgorithm: DIGEST_ALGORITHMS.SHA256,
     transforms: [
       'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
@@ -153,14 +158,24 @@ export function signXml(xml: string, options: SignOptions): string {
   // Compute signature
   sig.computeSignature(xml, {
     location: {
-      reference: referenceUri.startsWith('#')
-        ? `//*[@ID='${referenceUri.substring(1)}']`
-        : referenceUri,
+      reference: referenceXPath,
       action: signatureLocation === 'prepend' ? 'prepend' : 'append',
     },
   });
 
   return sig.getSignedXml();
+}
+
+function resolveSignatureReferenceXPath(referenceUri: string): string {
+  if (!referenceUri.startsWith('#')) {
+    return referenceUri;
+  }
+
+  if (!XML_ID_REFERENCE_PATTERN.test(referenceUri)) {
+    throw new Error('Invalid XML signature reference URI');
+  }
+
+  return `//*[@ID='${referenceUri.substring(1)}']`;
 }
 
 /**
@@ -185,6 +200,7 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
     expectedId,
     strictXswProtection = false,
     allowSha1SignatureAlgorithm = false,
+    allowSha1DigestAlgorithm = false,
   } = options;
 
   const doc = parseXml(xml);
@@ -214,41 +230,74 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
       throw new Error('No Reference found in signature');
     }
 
-    // 2. XSW Attack Protection: Validate Reference URI format
-    const referenceUri = references[0].getAttribute('URI');
-
-    // Reference URI must be a fragment identifier (starts with #) or empty
-    // External URIs (http://, file://, etc.) are rejected to prevent SSRF attacks
-    if (referenceUri && !referenceUri.startsWith('#') && referenceUri !== '') {
-      throw new Error('XSW Protection: Reference URI must be a fragment identifier or empty');
+    if (strictXswProtection && references.length !== 1) {
+      throw new Error(
+        'XSW Protection: Signature must contain exactly one Reference in strict mode'
+      );
     }
 
-    const referencedId = referenceUri?.startsWith('#') ? referenceUri.substring(1) : undefined;
-    const referencedElements = referencedId
-      ? findElementsById(doc as unknown as XMLNode, referencedId)
-      : [];
-
-    if (referencedId) {
-      if (referencedElements.length === 0) {
-        throw new Error(`XSW Protection: Element with ID "${referencedId}" not found`);
+    // 2. XSW Attack Protection: Validate every Reference before cryptographic verification.
+    const referenceUris: string[] = [];
+    for (let referenceIndex = 0; referenceIndex < references.length; referenceIndex++) {
+      const reference = references[referenceIndex];
+      if (!reference) {
+        continue;
       }
 
-      if (strictXswProtection && referencedElements.length > 1) {
-        throw new Error(
-          `XSW Protection: Multiple elements with ID "${referencedId}" detected (possible XSW attack)`
-        );
+      const referenceUri = reference.getAttribute('URI') ?? '';
+      referenceUris.push(referenceUri);
+
+      // Reference URI must be a fragment identifier (starts with #) or empty.
+      // External URIs (http://, file://, etc.) are rejected to prevent SSRF attacks.
+      if (referenceUri && !referenceUri.startsWith('#')) {
+        throw new Error('XSW Protection: Reference URI must be a fragment identifier or empty');
       }
-    } else if (strictXswProtection) {
-      throw new Error('XSW Protection: Reference URI is required in strict mode');
+
+      const referencedId = referenceUri.startsWith('#') ? referenceUri.substring(1) : undefined;
+      if (referencedId === '') {
+        throw new Error('XSW Protection: Reference URI fragment must not be empty');
+      }
+
+      const referencedElements = referencedId
+        ? findElementsById(doc as unknown as XMLNode, referencedId)
+        : [];
+
+      if (referencedId) {
+        if (referencedElements.length === 0) {
+          throw new Error(`XSW Protection: Element with ID "${referencedId}" not found`);
+        }
+
+        if (strictXswProtection && referencedElements.length > 1) {
+          throw new Error(
+            `XSW Protection: Multiple elements with ID "${referencedId}" detected (possible XSW attack)`
+          );
+        }
+      } else if (strictXswProtection) {
+        throw new Error('XSW Protection: Reference URI is required in strict mode');
+      }
+
+      const digestMethod = reference.getElementsByTagNameNS(
+        'http://www.w3.org/2000/09/xmldsig#',
+        'DigestMethod'
+      )[0];
+      const digestAlgorithm = digestMethod?.getAttribute('Algorithm');
+      if (digestAlgorithm === DIGEST_ALGORITHMS.SHA1 && !allowSha1DigestAlgorithm) {
+        throw new Error('SHA-1 digest algorithm is not allowed');
+      }
+      if (
+        digestAlgorithm &&
+        digestAlgorithm !== DIGEST_ALGORITHMS.SHA256 &&
+        !(allowSha1DigestAlgorithm && digestAlgorithm === DIGEST_ALGORITHMS.SHA1)
+      ) {
+        throw new Error(`Unsupported digest algorithm: ${digestAlgorithm}`);
+      }
     }
 
     // 3. Validate expectedId if provided (XSW protection)
     if (expectedId) {
       const expectedUri = `#${expectedId}`;
-      if (referenceUri !== expectedUri && referenceUri !== '') {
-        throw new Error(
-          `XSW Protection: Reference URI "${referenceUri}" does not match expected "#${expectedId}"`
-        );
+      if (!referenceUris.includes(expectedUri)) {
+        throw new Error(`XSW Protection: Reference URI does not match expected "#${expectedId}"`);
       }
 
       // Verify the referenced element actually exists

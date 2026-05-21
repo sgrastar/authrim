@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   AUTHRIM_DIR,
   findAuthrimBaseDir,
+  findKeysDirectory,
   getEnvironmentPaths,
   type EnvironmentPaths,
 } from './paths.js';
@@ -43,6 +44,7 @@ export interface GeneratedEnvValidationOptions {
   env: string;
   configPath?: string;
   packagesDir?: string;
+  keysBaseDir?: string;
   liveCloudflare?: boolean;
 }
 
@@ -73,6 +75,47 @@ const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
 ];
 
 const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
+
+const LOGGING_R2_BINDINGS = [
+  'DIAGNOSTIC_LOGS',
+  'EXPORT_ARTIFACTS',
+  'SENSITIVE_DETAILS',
+] as const;
+
+const MANAGEMENT_R2_BINDINGS = [
+  'IMPORT_ARTIFACTS',
+  'EXPORT_ARTIFACTS',
+  'SENSITIVE_DETAILS',
+] as const;
+
+const LOGGING_QUEUE_BINDINGS = [
+  'AUDIT_QUEUE',
+  'LOGGING_DELIVERY_CRITICAL_QUEUE',
+  'LOGGING_DELIVERY_QUEUE',
+  'LOGGING_DELIVERY_BULK_QUEUE',
+] as const;
+
+const AUDIT_QUEUE_PRODUCER_COMPONENTS: WorkerComponent[] = ['ar-auth', 'ar-token'];
+
+const LOGGING_DELIVERY_PRODUCER_COMPONENTS: WorkerComponent[] = [
+  'ar-auth',
+  'ar-management',
+  'ar-token',
+  'ar-userinfo',
+  'ar-async',
+  'ar-saml',
+  'ar-bridge',
+  'ar-vc',
+];
+
+const DIAGNOSTIC_R2_COMPONENTS: WorkerComponent[] = [
+  'ar-auth',
+  'ar-token',
+  'ar-async',
+  'ar-saml',
+  'ar-vc',
+  'ar-management',
+];
 
 function normalizeHyperdriveRefCandidates(ref: string): string[] {
   const normalized = ref
@@ -183,6 +226,52 @@ function countValue(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
   return 0;
+}
+
+function resolveKeysDirectory(
+  baseDir: string,
+  env: string,
+  envPaths: EnvironmentPaths,
+  config: AuthrimConfig,
+  keysBaseDir?: string
+): string {
+  const configuredPath = config.keys?.secretsPath?.trim();
+  if (configuredPath) {
+    return isAbsolute(configuredPath)
+      ? configuredPath
+      : resolve(envPaths.root, configuredPath);
+  }
+
+  const found = findKeysDirectory({ env, sourceDir: baseDir, keysBaseDir });
+  return found?.path ?? envPaths.keys;
+}
+
+async function inspectSecretFile(
+  check: ValidationCheck,
+  path: string,
+  label: string,
+  validate: (value: string) => boolean
+): Promise<void> {
+  if (!existsSync(path)) {
+    pushDetail(check, 'fail', `${label}: ${path} is missing`);
+    return;
+  }
+
+  const value = (await readFile(path, 'utf-8')).trim();
+  if (!validate(value)) {
+    pushDetail(check, 'fail', `${label}: ${path} has an invalid format`);
+    return;
+  }
+
+  pushDetail(check, 'pass', `${label}: present`);
+}
+
+function isHexRootKey(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
+}
+
+function isBase64UrlSecret(value: string): boolean {
+  return value.length >= 32 && /^[A-Za-z0-9_-]+$/.test(value);
 }
 
 function parseWranglerVars(content: string, env: string): Record<string, string> {
@@ -535,6 +624,104 @@ function validateRequiredD1Bindings(lock: AuthrimLock): ValidationCheck {
   return finishCheck(check, 'All required D1 bindings are present in lock.json');
 }
 
+function validateLoggingR2Bindings(config: AuthrimConfig, lock: AuthrimLock): ValidationCheck {
+  const check = makeCheck(
+    'logging-r2-bindings',
+    'lock.json has R2 buckets required by generated logging defaults'
+  );
+
+  if (config.features.r2?.enabled === false) {
+    pushDetail(
+      check,
+      'warn',
+      'features.r2.enabled=false; generated logging defaults cannot use R2 chunk/archive buckets'
+    );
+    return finishCheck(check, 'R2 is disabled');
+  }
+
+  for (const binding of LOGGING_R2_BINDINGS) {
+    const bucket = lock.r2?.[binding];
+    if (bucket?.name) {
+      pushDetail(check, 'pass', `${binding}: ${bucket.name}`);
+      continue;
+    }
+    pushDetail(check, 'fail', `${binding} is missing from lock.json`);
+  }
+
+  return finishCheck(check, 'All logging R2 buckets are present in lock.json');
+}
+
+function validateLoggingQueueBindings(config: AuthrimConfig, lock: AuthrimLock): ValidationCheck {
+  const check = makeCheck(
+    'logging-queue-bindings',
+    'lock.json has queues required by generated logging delivery'
+  );
+
+  if (config.features.queue?.enabled !== true) {
+    pushDetail(
+      check,
+      'warn',
+      'features.queue.enabled is not true; generated logging delivery retry/DLQ queues are disabled'
+    );
+    return finishCheck(check, 'Cloudflare Queues are disabled');
+  }
+
+  for (const binding of LOGGING_QUEUE_BINDINGS) {
+    const queue = lock.queues?.[binding];
+    if (queue?.name) {
+      pushDetail(check, 'pass', `${binding}: ${queue.name}`);
+      continue;
+    }
+    pushDetail(check, 'fail', `${binding} is missing from lock.json`);
+  }
+
+  return finishCheck(check, 'All logging queue bindings are present in lock.json');
+}
+
+function expectedLockQueueName(lock: AuthrimLock, binding: (typeof LOGGING_QUEUE_BINDINGS)[number]) {
+  return lock.queues?.[binding]?.name ?? null;
+}
+
+async function validateLoggingSecretMaterial(
+  baseDir: string,
+  env: string,
+  envPaths: EnvironmentPaths,
+  config: AuthrimConfig,
+  keysBaseDir?: string
+): Promise<ValidationCheck> {
+  const check = makeCheck(
+    'logging-secret-material',
+    'generated keys include logging and object encryption secrets'
+  );
+  const keysDir = resolveKeysDirectory(baseDir, env, envPaths, config, keysBaseDir);
+
+  if (!existsSync(keysDir)) {
+    pushDetail(check, 'fail', `keys directory is missing: ${keysDir}`);
+    return finishCheck(check, 'generated keys include logging and object encryption secrets');
+  }
+
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'logging_cursor_hmac_secret.txt'),
+    'LOGGING_CURSOR_HMAC_SECRET',
+    isBase64UrlSecret
+  );
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'object_encryption_root_key.txt'),
+    'OBJECT_ENCRYPTION_ROOT_KEY',
+    isHexRootKey
+  );
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'version_manager_secret.txt'),
+    'VERSION_MANAGER_SECRET',
+    isBase64UrlSecret
+  );
+
+  return finishCheck(check, 'generated keys include logging and object encryption secrets');
+}
+
 async function validateDeployWranglers(
   baseDir: string,
   env: string,
@@ -598,36 +785,85 @@ async function validateDeployWranglers(
       }
     }
 
-    const expectedImportArtifacts = lock.r2?.IMPORT_ARTIFACTS?.name;
-    if (component === 'ar-management' && expectedImportArtifacts) {
-      if (parsed.r2.IMPORT_ARTIFACTS !== expectedImportArtifacts) {
+    const expectedDiagnosticLogs = lock.r2?.DIAGNOSTIC_LOGS?.name;
+    if (expectedDiagnosticLogs && DIAGNOSTIC_R2_COMPONENTS.includes(component)) {
+      if (parsed.r2.DIAGNOSTIC_LOGS !== expectedDiagnosticLogs) {
         pushDetail(
           check,
           'fail',
-          `${component}: IMPORT_ARTIFACTS expected=${expectedImportArtifacts} actual=${parsed.r2.IMPORT_ARTIFACTS ?? '(missing)'}`
+          `${component}: DIAGNOSTIC_LOGS expected=${expectedDiagnosticLogs} actual=${parsed.r2.DIAGNOSTIC_LOGS ?? '(missing)'}`
         );
       }
     }
 
-    const expectedExportArtifacts = lock.r2?.EXPORT_ARTIFACTS?.name;
-    if (component === 'ar-management' && expectedExportArtifacts) {
-      if (parsed.r2.EXPORT_ARTIFACTS !== expectedExportArtifacts) {
-        pushDetail(
-          check,
-          'fail',
-          `${component}: EXPORT_ARTIFACTS expected=${expectedExportArtifacts} actual=${parsed.r2.EXPORT_ARTIFACTS ?? '(missing)'}`
-        );
+    if (component === 'ar-management') {
+      for (const binding of MANAGEMENT_R2_BINDINGS) {
+        const expectedBucket = lock.r2?.[binding]?.name;
+        if (expectedBucket && parsed.r2[binding] !== expectedBucket) {
+          pushDetail(
+            check,
+            'fail',
+            `${component}: ${binding} expected=${expectedBucket} actual=${parsed.r2[binding] ?? '(missing)'}`
+          );
+        }
       }
     }
 
-    const expectedSensitiveDetails = lock.r2?.SENSITIVE_DETAILS?.name;
-    if (component === 'ar-management' && expectedSensitiveDetails) {
-      if (parsed.r2.SENSITIVE_DETAILS !== expectedSensitiveDetails) {
-        pushDetail(
-          check,
-          'fail',
-          `${component}: SENSITIVE_DETAILS expected=${expectedSensitiveDetails} actual=${parsed.r2.SENSITIVE_DETAILS ?? '(missing)'}`
-        );
+    if (config.features.queue?.enabled === true) {
+      if (AUDIT_QUEUE_PRODUCER_COMPONENTS.includes(component)) {
+        const expectedQueue = expectedLockQueueName(lock, 'AUDIT_QUEUE');
+        if (expectedQueue && parsed.queueProducers.AUDIT_QUEUE !== expectedQueue) {
+          pushDetail(
+            check,
+            'fail',
+            `${component}: AUDIT_QUEUE producer expected=${expectedQueue} actual=${parsed.queueProducers.AUDIT_QUEUE ?? '(missing)'}`
+          );
+        }
+      }
+
+      if (LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component)) {
+        for (const binding of LOGGING_QUEUE_BINDINGS.filter(
+          (candidate) => candidate !== 'AUDIT_QUEUE'
+        )) {
+          const expectedQueue = expectedLockQueueName(lock, binding);
+          if (expectedQueue && parsed.queueProducers[binding] !== expectedQueue) {
+            pushDetail(
+              check,
+              'fail',
+              `${component}: ${binding} producer expected=${expectedQueue} actual=${parsed.queueProducers[binding] ?? '(missing)'}`
+            );
+          }
+        }
+      }
+
+      if (component === 'ar-management') {
+        for (const binding of LOGGING_QUEUE_BINDINGS) {
+          const expectedQueue = expectedLockQueueName(lock, binding);
+          if (expectedQueue && !parsed.queueConsumers.includes(expectedQueue)) {
+            pushDetail(
+              check,
+              'fail',
+              `${component}: ${binding} consumer expected=${expectedQueue} actual=(missing)`
+            );
+          }
+        }
+        const vars = parseWranglerVars(content, env);
+        const expectedDeliveryQueueNames = LOGGING_QUEUE_BINDINGS.filter(
+          (binding) => binding !== 'AUDIT_QUEUE'
+        )
+          .map((binding) => expectedLockQueueName(lock, binding))
+          .filter((value): value is string => !!value)
+          .join(',');
+        if (
+          expectedDeliveryQueueNames &&
+          vars.LOGGING_DELIVERY_QUEUE_NAMES !== expectedDeliveryQueueNames
+        ) {
+          pushDetail(
+            check,
+            'fail',
+            `${component}: LOGGING_DELIVERY_QUEUE_NAMES expected=${expectedDeliveryQueueNames} actual=${vars.LOGGING_DELIVERY_QUEUE_NAMES ?? '(missing)'}`
+          );
+        }
       }
     }
 
@@ -908,9 +1144,18 @@ export async function validateGeneratedEnvironment(
     finishCheck(configCheck, 'config.json is readable'),
     finishCheck(lockCheck, 'lock.json is readable'),
     validateRequiredD1Bindings(lock),
+    validateLoggingR2Bindings(config, lock),
+    validateLoggingQueueBindings(config, lock),
     validateDefaultProfileReferences(config),
     validateActiveProfileCompatibility(config),
     inspectNonDefaultProfiles(config),
+    await validateLoggingSecretMaterial(
+      baseDir,
+      options.env,
+      envPaths,
+      config,
+      options.keysBaseDir
+    ),
     await validateDeployWranglers(baseDir, options.env, config, lock, packagesDir),
     await validateMasterWranglers(baseDir, options.env, envPaths, packagesDir),
   ];

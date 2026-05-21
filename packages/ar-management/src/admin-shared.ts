@@ -9,14 +9,16 @@ import {
   requireAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core';
-import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
 import {
-  createObjectCatalogEntry,
+  loadChunkedSensitiveDetailJson,
+  storeChunkedSensitiveDetailJson,
+} from '@authrim/ar-lib-core/services/sensitive-detail-chunk-store';
+import {
   generatePublicArtifactId,
   getObjectCatalogObjectRecordByPublicArtifactId,
   type ObjectClass,
 } from '@authrim/ar-lib-core/services/object-catalog';
-import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
+import { createLoggingTenantKeyResolverFromSource } from './logging-tenant-key';
 
 export interface ImageTypeInfo {
   mimeType: string;
@@ -125,7 +127,6 @@ function getAdminAdapter(c: Context<any, any, any>): DatabaseAdapter {
   return requireAdminDatabaseAdapter(c.env, 'admin-shared');
 }
 
-const ENCRYPTED_OBJECT_CONTENT_TYPE = 'application/vnd.authrim.object-envelope+json';
 const ADMIN_AUDIT_DETAIL_CONTENT_TYPE = 'application/json';
 const DEFAULT_OBJECT_KEY_VERSION = 1;
 
@@ -216,18 +217,6 @@ function getObjectEncryptionKeyVersion(env: Env): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_OBJECT_KEY_VERSION;
 }
 
-function buildAdminAuditDetailObjectKey(
-  tenantId: string,
-  auditLogId: string,
-  createdAt: number
-): string {
-  const createdAtDate = new Date(createdAt);
-  const year = createdAtDate.getUTCFullYear();
-  const month = String(createdAtDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(createdAtDate.getUTCDate()).padStart(2, '0');
-  return `admin-audit/${tenantId}/${year}/${month}/${day}/${auditLogId}.json`;
-}
-
 async function storeAdminAuditDetail(
   c: Context<any, any, any>,
   adminAdapter: DatabaseAdapter,
@@ -241,46 +230,27 @@ async function storeAdminAuditDetail(
   }
 
   const objectClass: ObjectClass = 'admin_audit_detail';
-  const objectKey = buildAdminAuditDetailObjectKey(tenantId, auditLogId, createdAt);
   const keyVersion = getObjectEncryptionKeyVersion(c.env);
-  const encrypted = await encryptObjectArtifact(JSON.stringify(detail), {
+  const tenantKeyResolver = createLoggingTenantKeyResolverFromSource(
+    c.env.DB,
+    'admin-audit-detail-tenant-key'
+  );
+  const { catalogId } = await storeChunkedSensitiveDetailJson({
+    adapter: adminAdapter,
+    bucket: c.env.SENSITIVE_DETAILS,
     rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-    plane: 'SENSITIVE_DETAILS',
-    keyVersion,
-    contentType: ADMIN_AUDIT_DETAIL_CONTENT_TYPE,
-    context: {
-      tenantId,
-      objectKey,
-      objectClass,
-    },
-  });
-  const body = JSON.stringify(encrypted);
-  const bodyBytes = new TextEncoder().encode(body);
-  const checksumBuffer = await crypto.subtle.digest('SHA-256', bodyBytes);
-  const checksumSha256 = Array.from(new Uint8Array(checksumBuffer))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-
-  await c.env.SENSITIVE_DETAILS.put(objectKey, body, {
-    httpMetadata: { contentType: ENCRYPTED_OBJECT_CONTENT_TYPE },
-  });
-
-  const { catalogId } = await createObjectCatalogEntry(adminAdapter, {
     tenantId,
     objectClass,
-    publicArtifactId: generatePublicArtifactId(),
+    payload: detail,
+    contentType: ADMIN_AUDIT_DETAIL_CONTENT_TYPE,
     createdAt,
-    objects: [
-      {
-        representation: 'canonical_json',
-        objectKind: 'single',
-        bucketBinding: 'SENSITIVE_DETAILS',
-        objectKey,
-        keyVersion,
-        checksumSha256,
-        totalBytes: bodyBytes.byteLength,
-      },
-    ],
+    keyVersion,
+    tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
+    ...(tenantKeyResolver ? ({ tenantKeyResolver } as Record<string, unknown>) : {}),
+    surface: 'admin_audit',
+    queueBindings: c.env as unknown as Record<string, unknown>,
+    indexDbBinding: 'DB_ADMIN',
+    publicArtifactId: generatePublicArtifactId(),
   });
 
   return catalogId;
@@ -314,19 +284,16 @@ export async function loadAdminAuditDetail(
     : null;
 
   const effectiveCatalogId = resolvedCatalogId ?? fallbackCatalogId;
-  const loaded = effectiveCatalogId
-    ? await loadCatalogObjectJson<Partial<AdminAuditDetailPayload>>(adminAdapter, c.env, {
+  const parsed = effectiveCatalogId
+    ? await loadChunkedSensitiveDetailJson<Partial<AdminAuditDetailPayload>>(adminAdapter, c.env, {
         tenantId,
         objectCatalogId: effectiveCatalogId,
         expectedClass: 'admin_audit_detail',
-        expectedBucketBinding: 'SENSITIVE_DETAILS',
-        allowPlaintextFallback: false,
       })
     : null;
-  if (!loaded) {
+  if (!parsed) {
     return null;
   }
-  const parsed = loaded.value;
 
   return {
     before:
@@ -356,7 +323,7 @@ export async function writeAdminAuditLog(
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
   }
-): Promise<void> {
+): Promise<string | null> {
   try {
     const adminAdapter = getAdminAdapter(c);
     const auditRepo = new AdminAuditLogRepository(adminAdapter);
@@ -421,9 +388,11 @@ export async function writeAdminAuditLog(
       metadata: detailObjectCatalogId ? inlineAuditMetadata : (detailPayload.metadata ?? undefined),
       detail_object_catalog_id: detailObjectCatalogId ?? undefined,
     });
+    return auditLogId;
   } catch (error) {
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to create admin audit log', { action: input.action }, error as Error);
+    return null;
   }
 }
 

@@ -21,7 +21,7 @@ import {
   usesNakedDomainIssuer,
   getLogger,
 } from '@authrim/ar-lib-core';
-import { generateSAMLId } from '../common/xml-utils';
+import { base64Encode, generateSAMLId } from '../common/xml-utils';
 import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
@@ -120,7 +120,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     );
 
     // Return auto-submit form
-    return sendSAMLResponse(c, spConfig, responseXml);
+    return sendSAMLResponse(spConfig, responseXml);
   } catch (error) {
     log.error('IdP-Initiated SSO Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -274,12 +274,11 @@ async function generateIdPInitiatedResponse(
  * Send SAML Response via auto-submit form
  */
 function sendSAMLResponse(
-  c: Context<{ Bindings: Env }>,
   spConfig: SAMLSPConfig,
   responseXml: string,
   relayState?: string
 ): Response {
-  const encodedResponse = btoa(responseXml);
+  const encodedResponse = base64Encode(responseXml);
   const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
   if (relayState) {
     fields.push({ name: 'RelayState', value: relayState });

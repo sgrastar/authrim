@@ -65,7 +65,7 @@ import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
 import type { PublicJWK, JWKS } from '@authrim/ar-lib-core';
 import { isSigningJWK, isEncryptionJWK } from '@authrim/ar-lib-core';
-import { safeFetchJson } from '@authrim/ar-lib-core';
+import { safeFetch, safeFetchJson } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
 import {
   generateSecureRandomString,
@@ -102,6 +102,7 @@ import { getRequestIssuer } from './issuer';
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
 const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
+const HTTPS_REQUEST_URI_MAX_REDIRECTS = 5;
 
 function clampHandoffArtifactTtlSeconds(value: number): number {
   return Math.min(
@@ -139,6 +140,10 @@ function resolveHandoffArtifactTtlSeconds(
       (c.env as unknown as Record<string, unknown>).HANDOFF_ARTIFACT_TTL_SECONDS
     ) ?? DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS
   );
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 // ===== Key Caching for Performance Optimization =====
@@ -711,48 +716,79 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       try {
-        // Create AbortController for timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        let fetchUrl = request_uri;
+        let requestObjectResponse: Response | null = null;
 
-        // Fetch the Request Object from the URL with security controls
-        // Allow redirects but validate final URL (OIDF Conformance Suite uses redirects)
-        const requestObjectResponse = await fetch(request_uri, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/oauth-authz-req+jwt, application/jwt',
-          },
-          signal: controller.signal,
-          redirect: 'follow', // Follow redirects (OIDF uses 302)
-        });
+        for (let redirectCount = 0; redirectCount <= HTTPS_REQUEST_URI_MAX_REDIRECTS; redirectCount++) {
+          requestObjectResponse = await safeFetch(fetchUrl, {
+            method: 'GET',
+            headers: {
+              Accept: 'application/oauth-authz-req+jwt, application/jwt',
+            },
+            timeoutMs,
+            maxResponseSize: maxSizeBytes,
+            redirect: 'manual',
+          });
 
-        clearTimeout(timeoutId);
+          if (!isRedirectStatus(requestObjectResponse.status)) {
+            break;
+          }
 
-        // Security: Validate redirected URL domain is still in allowed list
-        if (requestObjectResponse.url && requestObjectResponse.url !== request_uri) {
+          if (redirectCount === HTTPS_REQUEST_URI_MAX_REDIRECTS) {
+            return c.json(
+              {
+                error: 'invalid_request_uri',
+                error_description: 'request_uri exceeded maximum redirect depth',
+              },
+              400
+            );
+          }
+
+          const location = requestObjectResponse.headers.get('location');
+          if (!location) {
+            return c.json(
+              {
+                error: 'invalid_request_uri',
+                error_description: 'request_uri redirect response is missing Location header',
+              },
+              400
+            );
+          }
+
           try {
-            const finalUrl = new URL(requestObjectResponse.url);
+            const finalUrl = new URL(location, fetchUrl);
             const finalDomain = finalUrl.hostname.toLowerCase();
-            if (allowedDomains.length > 0) {
-              const isFinalDomainAllowed = allowedDomains.some(
+            if (finalUrl.protocol !== 'https:') {
+              return c.json(
+                {
+                  error: 'invalid_request_uri',
+                  error_description: 'request_uri redirect target must use HTTPS',
+                },
+                400
+              );
+            }
+
+            const isFinalDomainAllowed =
+              allowedDomains.length === 0 ||
+              allowedDomains.some(
                 (allowed) => finalDomain === allowed || finalDomain.endsWith('.' + allowed)
               );
-              if (!isFinalDomainAllowed) {
-                log.warn('SSRF prevention: Rejected redirect to disallowed domain', {
-                  action: 'ssrf_block',
-                  domain: finalDomain,
-                  allowedDomains: allowedDomains.join(', '),
-                });
-                return c.json(
-                  {
-                    error: 'invalid_request_uri',
-                    error_description: 'Redirected request_uri domain is not in the allowed list',
-                  },
-                  400
-                );
-              }
+            if (!isFinalDomainAllowed) {
+              log.warn('SSRF prevention: Rejected redirect to disallowed domain', {
+                action: 'ssrf_block',
+                domain: finalDomain,
+                allowedDomains: allowedDomains.join(', '),
+              });
+              return c.json(
+                {
+                  error: 'invalid_request_uri',
+                  error_description: 'Redirected request_uri domain is not in the allowed list',
+                },
+                400
+              );
             }
-            // Also check if redirected to internal URL
+
+            // Validate before issuing the next request, not after following it.
             if (isInternalUrl(finalUrl)) {
               log.warn('SSRF prevention: Blocked redirect to internal address', {
                 action: 'ssrf_block',
@@ -766,9 +802,27 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 400
               );
             }
+
+            fetchUrl = finalUrl.toString();
           } catch {
-            // URL parsing failed - should not happen for valid redirect
+            return c.json(
+              {
+                error: 'invalid_request_uri',
+                error_description: 'request_uri redirect target is invalid',
+              },
+              400
+            );
           }
+        }
+
+        if (!requestObjectResponse) {
+          return c.json(
+            {
+              error: 'invalid_request_uri',
+              error_description: 'Failed to fetch request object from request_uri',
+            },
+            400
+          );
         }
 
         if (!requestObjectResponse.ok) {
@@ -847,9 +901,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         const isTimeout = errorMessage.includes('abort') || errorMessage.includes('timeout');
+        const isTooLarge = errorMessage.includes('Response size exceeds limit');
         log.error(
           'Failed to fetch request_uri',
-          { action: 'request_uri_fetch', isTimeout },
+          { action: 'request_uri_fetch', isTimeout, isTooLarge },
           error as Error
         );
         return c.json(
@@ -857,6 +912,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             error: 'invalid_request_uri',
             error_description: isTimeout
               ? `Request timed out after ${timeoutMs}ms`
+              : isTooLarge
+                ? `Response too large: exceeds limit of ${maxSizeBytes} bytes`
               : 'Failed to fetch request object from request_uri',
           },
           400
@@ -2753,7 +2810,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         clientId: validClientId,
         error: error instanceof Error ? error.message : String(error),
       });
-      consentRequired = true; // Fail-safe: require consent
+      consentRequired = true; // fail-safe: require consent
     }
 
     // Debug: Log consent decision factors
@@ -3971,9 +4028,19 @@ function createFormPostResponse(
 </body>
 </html>`;
 
-  // Set CSP header with nonce to allow inline script and style
+  const redirectOrigin = new URL(redirectUri).origin;
+
+  // Set CSP header with nonce to allow inline script/style and restrict form submission.
   return c.html(html, 200, {
-    'Content-Security-Policy': `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}';`,
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': [
+      "default-src 'none'",
+      `script-src 'nonce-${nonce}'`,
+      `style-src 'nonce-${nonce}'`,
+      `form-action ${redirectOrigin}`,
+      "base-uri 'none'",
+    ].join('; '),
+    'X-Content-Type-Options': 'nosniff',
   });
 }
 
@@ -4143,6 +4210,18 @@ function escapeHtml(unsafe: string): string {
     .replace(/'/g, '&#039;');
 }
 
+function safeHttpsDisplayUrl(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Handle login screen (TEST/STUB ONLY)
  * GET/POST /flow/login
@@ -4227,18 +4306,22 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       log.warn('Failed to fetch challenge data for client info', { action: 'challenge_fetch' });
     }
 
+    const safeLogoUri = safeHttpsDisplayUrl(logoUri);
+    const safePolicyUri = safeHttpsDisplayUrl(policyUri);
+    const safeTosUri = safeHttpsDisplayUrl(tosUri);
+
     // Build client info section HTML
     const clientInfoHtml =
-      logoUri || clientName
+      safeLogoUri || clientName
         ? `
     <div class="client-info">
-      ${logoUri ? `<img src="${escapeHtml(logoUri)}" alt="${escapeHtml(clientName || 'Client')} logo" class="client-logo" onerror="this.style.display='none'">` : ''}
+      ${safeLogoUri ? `<img src="${escapeHtml(safeLogoUri)}" alt="${escapeHtml(clientName || 'Client')} logo" class="client-logo" onerror="this.style.display='none'">` : ''}
       ${clientName ? `<p class="client-name">Signing in to <strong>${escapeHtml(clientName)}</strong></p>` : ''}
       ${
-        policyUri || tosUri
+        safePolicyUri || safeTosUri
           ? `<div class="client-links">
-        ${policyUri ? `<a href="${escapeHtml(policyUri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a>` : ''}
-        ${tosUri ? `<a href="${escapeHtml(tosUri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a>` : ''}
+        ${safePolicyUri ? `<a href="${escapeHtml(safePolicyUri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a>` : ''}
+        ${safeTosUri ? `<a href="${escapeHtml(safeTosUri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a>` : ''}
       </div>`
           : ''
       }

@@ -192,6 +192,17 @@ function createTenantRow(
   };
 }
 
+function createTenantRowFromInsertParams(params: unknown[]): TenantRow {
+  return createTenantRow(String(params[0]), {
+    tenant_code: String(params[1]),
+    name: String(params[3]),
+    description: params[4] as string | null,
+    is_active: Number(params[5]),
+    created_at: Number(params[7]),
+    updated_at: Number(params[8]),
+  });
+}
+
 function createContext(
   body: Record<string, unknown>,
   envOverrides: Partial<Env> = {},
@@ -390,14 +401,7 @@ describe('tenant D1 pool tenant management', () => {
         return null;
       }
       if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        controlTenant = createTenantRow(String(params[0]), {
-          tenant_code: String(params[1]),
-          name: String(params[2]),
-          description: params[3] as string | null,
-          is_active: Number(params[4]),
-          created_at: Number(params[6]),
-          updated_at: Number(params[7]),
-        });
+        controlTenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
       if (op === 'execute' && sql.includes('UPDATE tenants SET is_active = 1')) {
@@ -419,14 +423,7 @@ describe('tenant D1 pool tenant management', () => {
 
     const tenantAdapter = createAdapter((sql, params, op) => {
       if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        tenantDbRow = createTenantRow(String(params[0]), {
-          tenant_code: String(params[1]),
-          name: String(params[2]),
-          description: params[3] as string | null,
-          is_active: Number(params[4]),
-          created_at: Number(params[6]),
-          updated_at: Number(params[7]),
-        });
+        tenantDbRow = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
       if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {
@@ -502,14 +499,7 @@ describe('tenant D1 pool tenant management', () => {
         return null;
       }
       if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        controlTenant = createTenantRow(String(params[0]), {
-          tenant_code: String(params[1]),
-          name: String(params[2]),
-          description: params[3] as string | null,
-          is_active: Number(params[4]),
-          created_at: Number(params[6]),
-          updated_at: Number(params[7]),
-        });
+        controlTenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
       if (op === 'execute' && sql.includes('UPDATE tenants SET is_active = 0')) {
@@ -533,14 +523,7 @@ describe('tenant D1 pool tenant management', () => {
       'second',
       createAdapter((sql, params, op) => {
         if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-          tenantDbRow = createTenantRow(String(params[0]), {
-            tenant_code: String(params[1]),
-            name: String(params[2]),
-            description: params[3] as string | null,
-            is_active: Number(params[4]),
-            created_at: Number(params[6]),
-            updated_at: Number(params[7]),
-          });
+          tenantDbRow = createTenantRowFromInsertParams(params);
           return { rowsAffected: 1 };
         }
         if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {
@@ -750,14 +733,7 @@ describe('tenant D1 pool tenant management', () => {
         return controlTenant;
       }
       if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        controlTenant = createTenantRow(String(params[0]), {
-          tenant_code: String(params[1]),
-          name: String(params[2]),
-          description: params[3] as string | null,
-          is_active: Number(params[4]),
-          created_at: Number(params[6]),
-          updated_at: Number(params[7]),
-        });
+        controlTenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
       if (op === 'execute' && sql.includes('UPDATE tenants SET is_active = 1')) {
@@ -777,14 +753,7 @@ describe('tenant D1 pool tenant management', () => {
       'second',
       createAdapter((sql, params, op) => {
         if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-          tenantDbRow = createTenantRow(String(params[0]), {
-            tenant_code: String(params[1]),
-            name: String(params[2]),
-            description: params[3] as string | null,
-            is_active: Number(params[4]),
-            created_at: Number(params[6]),
-            updated_at: Number(params[7]),
-          });
+          tenantDbRow = createTenantRowFromInsertParams(params);
           return { rowsAffected: 1 };
         }
         if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {

@@ -10,6 +10,7 @@ import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
+import { readdirSync, statSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
@@ -36,6 +37,12 @@ const __dirname = dirname(__filename);
 const PACKAGE_MIGRATIONS_DIR = pathJoin(__dirname, '..', '..', 'migrations');
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
+const QUEUE_PROVISIONING_DEFINITIONS = [
+  { binding: 'AUDIT_QUEUE', nameSuffix: 'audit-queue' },
+  { binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE', nameSuffix: 'logging-delivery-critical-queue' },
+  { binding: 'LOGGING_DELIVERY_QUEUE', nameSuffix: 'logging-delivery-queue' },
+  { binding: 'LOGGING_DELIVERY_BULK_QUEUE', nameSuffix: 'logging-delivery-bulk-queue' },
+] as const;
 
 // =============================================================================
 // Types
@@ -1929,6 +1936,32 @@ WHERE NOT EXISTS (
 
 const FRESH_SCHEMA_MIGRATION_FILE = '000_fresh_schema.sql';
 
+export function listD1MigrationSqlFiles(migrationsDir: string): string[] {
+  const files: string[] = [];
+
+  function walk(relativeDir: string): void {
+    const absoluteDir = relativeDir ? pathJoin(migrationsDir, relativeDir) : migrationsDir;
+    for (const entry of readdirSync(absoluteDir).sort()) {
+      if (entry.startsWith('.')) {
+        continue;
+      }
+      const relativePath = relativeDir ? `${relativeDir}/${entry}` : entry;
+      const absolutePath = pathJoin(migrationsDir, relativePath);
+      const stat = statSync(absolutePath);
+      if (stat.isDirectory()) {
+        walk(relativePath);
+        continue;
+      }
+      if (stat.isFile() && entry.endsWith('.sql')) {
+        files.push(relativePath);
+      }
+    }
+  }
+
+  walk('');
+  return files.sort();
+}
+
 async function recordMigration(dbName: string, filename: string): Promise<void> {
   const sql = buildRecordMigrationSql(filename);
   try {
@@ -1949,7 +1982,7 @@ export async function runD1Migrations(
   migrationsDir: string,
   onProgress?: (message: string) => void
 ): Promise<{ success: boolean; appliedCount: number; skippedCount: number; error?: string }> {
-  const { existsSync, readdirSync } = await import('node:fs');
+  const { existsSync } = await import('node:fs');
   const { join } = await import('node:path');
 
   if (!existsSync(migrationsDir)) {
@@ -1961,10 +1994,7 @@ export async function runD1Migrations(
     };
   }
 
-  // Get all SQL files sorted by name (001_, 002_, etc.)
-  const sqlFiles = readdirSync(migrationsDir)
-    .filter((f) => f.endsWith('.sql') && !f.startsWith('.'))
-    .sort();
+  const sqlFiles = listD1MigrationSqlFiles(migrationsDir);
 
   if (sqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
@@ -2047,6 +2077,7 @@ UPDATE tenants
 SET id = ${tenantIdSql},
     tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
+    tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     is_active = 1,
     updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = 'default'
@@ -2055,10 +2086,10 @@ WHERE id = 'default'
   AND (SELECT COUNT(*) FROM tenants) = 1;
 
 INSERT INTO tenants (
-  id, tenant_code, name, description, is_active, is_default,
+  id, tenant_code, tenant_key, name, description, is_active, is_default,
   default_tenant_guard, created_at, updated_at
 )
-SELECT ${tenantIdSql}, ${tenantCodeSql}, ${displayNameSql}, NULL, 1,
+SELECT ${tenantIdSql}, ${tenantCodeSql}, 't_' || lower(hex(randomblob(18))), ${displayNameSql}, NULL, 1,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
        ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
@@ -2067,6 +2098,7 @@ WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
 UPDATE tenants
 SET tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
+    tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     is_active = 1,
     updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = ${tenantIdSql};
@@ -3197,19 +3229,21 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
   // Provision Queues (optional)
   if (options.createQueues) {
     onProgress('📨 Queues');
-    const queueName = getQueueName(env, 'audit-queue');
-    onProgress(`  ⏳ Creating: ${queueName}...`);
+    for (const definition of QUEUE_PROVISIONING_DEFINITIONS) {
+      const queueName = getQueueName(env, definition.nameSuffix);
+      onProgress(`  ⏳ Creating: ${queueName}...`);
 
-    try {
-      const result = await createQueue(queueName);
-      resources.queues.push({
-        binding: 'AUDIT_QUEUE',
-        name: result.name,
-        id: result.id,
-      });
-      onProgress(`  ✅ ${queueName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${queueName} - ${sanitizeError(error)}`);
+      try {
+        const result = await createQueue(queueName);
+        resources.queues.push({
+          binding: definition.binding,
+          name: result.name,
+          id: result.id,
+        });
+        onProgress(`  ✅ ${queueName} created`);
+      } catch (error) {
+        onProgress(`  ⚠️ Skipped: ${queueName} - ${sanitizeError(error)}`);
+      }
     }
     onProgress('');
   }
@@ -3287,7 +3321,8 @@ const AUTHRIM_PATTERNS = {
   d1: /^(?:([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db|authrim-([a-z][a-z0-9-]*)-(?:tdb-slot-[0-9]{4}-(?:core|pii)|[a-z0-9-]+-(?:core|pii)))$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
-  queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
+  queue:
+    /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
   r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,

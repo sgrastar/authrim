@@ -37,6 +37,7 @@ import {
   publishTenantRuntimeRegistrySnapshot,
   usesNakedDomainIssuer,
 } from '@authrim/ar-lib-core';
+import { createOpaqueTenantKey } from './logging-tenant-key';
 
 /**
  * Invalidate the tenant existence KV cache for a given tenant.
@@ -1059,12 +1060,13 @@ async function upsertTenantRow(
     nowTs: number;
   }
 ): Promise<void> {
+  const tenantKey = createOpaqueTenantKey();
   await adapter.execute(
     `INSERT INTO tenants (
-       id, tenant_code, name, description, is_active, is_default,
+       id, tenant_code, tenant_key, name, description, is_active, is_default,
        default_tenant_guard, created_at, updated_at
      )
-     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        tenant_code = excluded.tenant_code,
        name = excluded.name,
@@ -1074,6 +1076,7 @@ async function upsertTenantRow(
     [
       input.id,
       input.tenantCode,
+      tenantKey,
       input.name,
       input.description,
       input.isActive ? 1 : 0,
@@ -1425,13 +1428,23 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const tenantKey = createOpaqueTenantKey();
     await adapter.execute(
       `INSERT INTO tenants (
-         id, tenant_code, name, description, is_active, is_default,
+         id, tenant_code, tenant_key, name, description, is_active, is_default,
          default_tenant_guard, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)`,
-      [id, tenantCode, name, description ?? null, getDefaultTenantGuard(false), nowTs, nowTs]
+       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+      [
+        id,
+        tenantCode,
+        tenantKey,
+        name,
+        description ?? null,
+        getDefaultTenantGuard(false),
+        nowTs,
+        nowTs,
+      ]
     );
 
     const created = await adapter.queryOne<TenantRow>(

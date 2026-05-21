@@ -1,7 +1,7 @@
 /**
- * ConditionEvaluator - ユニットテスト
+ * ConditionEvaluator - unit tests
  *
- * 各オペレーターの動作確認、AND/OR評価、ネスト条件の評価をテスト
+ * Test each operator, AND/OR evaluation, and nested condition evaluation
  */
 
 import { describe, it, expect } from 'vitest';
@@ -158,6 +158,15 @@ describe('evaluateSingle - String Operators', () => {
       value: 'notfound',
     };
     expect(evaluateSingle(condition, mockContext)).toBe(true);
+  });
+
+  it('should fail closed for notContains when the value is missing', () => {
+    const condition: FlowCondition = {
+      key: 'user.missing',
+      operator: 'notContains',
+      value: 'admin',
+    };
+    expect(evaluateSingle(condition, mockContext)).toBe(false);
   });
 
   it('should evaluate startsWith operator', () => {
@@ -386,7 +395,7 @@ describe('evaluateGroup - AND Logic', () => {
       logic: 'and',
       conditions: [],
     };
-    // セキュリティ対策（High 7）: 空の条件グループはfalse（Fail-safe）
+    // Security mitigation (High 7): empty condition groups return false (fail-safe)
     expect(evaluateGroup(group, mockContext, 0)).toBe(false);
   });
 });
@@ -421,7 +430,7 @@ describe('evaluateGroup - OR Logic', () => {
       logic: 'or',
       conditions: [],
     };
-    // セキュリティ対策（High 7）: 空の条件グループはfalse（Fail-safe）
+    // Security mitigation (High 7): empty condition groups return false (fail-safe)
     expect(evaluateGroup(group, mockContext, 0)).toBe(false);
   });
 });
@@ -528,7 +537,7 @@ describe('Edge Cases', () => {
 });
 
 // =============================================================================
-// Security Tests - Critical/High/Medium脆弱性対策
+// Security Tests - Critical/High/Medium-severity vulnerability mitigations
 // =============================================================================
 
 describe('Security - Prototype Pollution (Critical 1)', () => {
@@ -658,7 +667,7 @@ describe('Security - Array Type Safety (Medium 11)', () => {
     const condition: FlowCondition = {
       key: 'user.status',
       operator: 'in',
-      value: 'active' as unknown as string[], // 型を偽装
+      value: 'active' as unknown as string[], // Spoof the type
     };
     expect(evaluateSingle(condition, mockContext)).toBe(false);
   });
@@ -667,10 +676,10 @@ describe('Security - Array Type Safety (Medium 11)', () => {
     const condition: FlowCondition = {
       key: 'user.status',
       operator: 'notIn',
-      value: 'disabled' as unknown as string[], // 型を偽装
+      value: 'disabled' as unknown as string[], // Spoof the type
     };
-    // notInの場合は非配列の場合trueを返す（安全側）
-    expect(evaluateSingle(condition, mockContext)).toBe(true);
+    // Fail closed for malformed conditions.
+    expect(evaluateSingle(condition, mockContext)).toBe(false);
   });
 });
 
@@ -716,13 +725,13 @@ describe('Security - DoS Protection', () => {
 
 describe('Security - Recursion Limit', () => {
   it('should reject deeply nested condition groups', () => {
-    // 最大再帰深さ = 10
+    // maximum recursion depth = 10
     let deeplyNested: ConditionGroup = {
       logic: 'and',
       conditions: [{ key: 'user.verifiedEmail', operator: 'isTrue' }],
     };
 
-    // 11層のネストを作成
+    // Create 11 levels of nesting
     for (let i = 0; i < 11; i++) {
       deeplyNested = {
         logic: 'and',
@@ -730,7 +739,7 @@ describe('Security - Recursion Limit', () => {
       };
     }
 
-    // 最大深さを超えるため false を返すべき
+    // Should return false because it exceeds the maximum depth
     expect(evaluate(deeplyNested, mockContext)).toBe(false);
   });
 });

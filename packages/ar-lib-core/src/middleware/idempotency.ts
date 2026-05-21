@@ -28,8 +28,12 @@ import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from '../utils/logger';
 import { createPhase1ErrorDetails } from '../errors/details';
+import { readRequestTextWithLimit } from '../utils/body-limits';
+import { readResponseTextWithLimit } from '../utils/url-security';
 
 const log = createLogger().module('IDEMPOTENCY');
+const IDEMPOTENCY_REQUEST_BODY_MAX_BYTES = 1024 * 1024;
+const IDEMPOTENCY_RESPONSE_BODY_MAX_BYTES = 1024 * 1024;
 
 /**
  * Idempotency key entry stored in database
@@ -243,8 +247,18 @@ export function idempotencyMiddleware(
     const resourceId = extractResourceId(path);
     const normalizedPath = normalizePath(path);
 
-    // Read request body
-    const bodyText = await c.req.text();
+    let bodyText: string;
+    try {
+      bodyText = await readRequestTextWithLimit(c.req.raw, IDEMPOTENCY_REQUEST_BODY_MAX_BYTES);
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Request body exceeds idempotency size limit',
+        },
+        413
+      );
+    }
     const bodyHash = await hashBody(bodyText);
 
     // Generate composite key ID
@@ -329,7 +343,10 @@ export function idempotencyMiddleware(
 
       // Clone the response to read the body
       const clonedResponse = response.clone();
-      const responseBody = await clonedResponse.text();
+      const responseBody = await readResponseTextWithLimit(
+        clonedResponse,
+        IDEMPOTENCY_RESPONSE_BODY_MAX_BYTES
+      );
       const responseStatus = clonedResponse.status;
 
       // Sanitize response to remove PII

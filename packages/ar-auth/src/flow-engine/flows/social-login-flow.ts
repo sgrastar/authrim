@@ -1,11 +1,11 @@
 /**
  * Social Login Flow with Decision Node (4-way branching)
  *
- * このフローは、ソーシャルログイン結果に基づいて4つの分岐を実装します：
- * 1. UID一致 → ログイン成功
- * 2. UID不一致 + メール一致 → アカウント紐付け確認
- * 3. 新規ユーザー → 新規登録フロー
- * 4. エラー → エラー画面
+ * This flow implements four branches based on the social login result:
+ * 1. UID match → login success
+ * 2. UID mismatch + email match → account-link confirmation
+ * 3. new user → registration flow
+ * 4. error → error screen
  *
  * @see /private/docs/flow-engine-decision-guide.md
  */

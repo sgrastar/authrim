@@ -15,6 +15,7 @@
   "dependencies": {
     "@authrim/ar-auth": "workspace:^",
     "@authrim/ar-lib-core": "workspace:*",
+    "@authrim/ar-lib-logging": "workspace:*",
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
     "@authrim/ar-lib-scim": "workspace:*",

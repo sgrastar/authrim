@@ -8,6 +8,7 @@ export interface SAMLPostBindingResponseOptions {
   actionUrl: string;
   fields: SAMLPostBindingField[];
   buttonText: string;
+  additionalHeaders?: Record<string, string>;
 }
 
 export function buildSAMLPostBindingResponse(options: SAMLPostBindingResponseOptions): Response {
@@ -48,16 +49,19 @@ export function buildSAMLPostBindingResponse(options: SAMLPostBindingResponseOpt
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy': [
         "default-src 'none'",
         `script-src 'nonce-${nonce}'`,
-        "style-src 'unsafe-inline'",
+        "style-src 'none'",
         "img-src 'none'",
         "connect-src 'none'",
         `form-action ${formActionOrigin}`,
         "base-uri 'none'",
         "frame-ancestors 'none'",
       ].join('; '),
+      ...(options.additionalHeaders ?? {}),
     },
   });
 }

@@ -102,6 +102,7 @@ export {
 export {
   processAuditQueue,
   processDLQQueue,
+  processLoggingDeliveryQueue,
   cleanupExpiredTenantEventLogs,
   cleanupExpiredGlobalEventLogs,
   cleanupExpiredTenantPIILogs,

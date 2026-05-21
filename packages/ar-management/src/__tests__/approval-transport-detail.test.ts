@@ -123,6 +123,7 @@ describe('approval-transport-detail helpers', () => {
     const state = {
       logical: [] as Array<Record<string, unknown>>,
       physical: [] as Array<Record<string, unknown>>,
+      chunkIndex: [] as Array<Record<string, unknown>>,
     };
     const adapter = {
       execute: vi.fn(async (sql: string, params: unknown[]) => {
@@ -157,17 +158,51 @@ describe('approval-transport-detail helpers', () => {
         }
         if (sql.includes('UPDATE object_catalog_objects')) {
           const row = state.physical.find(
-            (item) =>
-              item.catalog_id === params[5] &&
-              item.representation === params[8] &&
-              item.object_index === params[9]
+            (item) => item.catalog_id === params[4] && item.representation === 'canonical_json'
           );
           if (row) {
-            row.bucket_binding = params[0] ?? row.bucket_binding;
-            row.object_key = params[1] ?? row.object_key;
-            row.key_version = params[2];
-            row.checksum_sha256 = params[3];
-            row.total_bytes = params[4];
+            row.object_kind = 'chunk';
+            row.bucket_binding = 'SENSITIVE_DETAILS';
+            row.object_key = params[0] ?? row.object_key;
+            row.key_version = params[1];
+            row.checksum_sha256 = params[2];
+            row.total_bytes = params[3];
+          }
+          return { rowsAffected: row ? 1 : 0 };
+        }
+        if (sql.includes('INSERT INTO sensitive_detail_chunk_index')) {
+          state.chunkIndex.push({
+            catalog_id: params[0],
+            tenant_id: params[1],
+            object_class: params[2],
+            bucket_binding: params[3],
+            object_key: params[4],
+            content_encoding: params[5],
+            line_number: params[6],
+            byte_offset: params[7],
+            byte_length: params[8],
+            key_version: params[9],
+            checksum_sha256: params[10],
+            created_at: params[11],
+            deleted_at: params[12],
+          });
+          return { rowsAffected: 1 };
+        }
+        if (sql.includes('UPDATE sensitive_detail_chunk_index')) {
+          const row = state.chunkIndex.find((item) => item.catalog_id === params[11]);
+          if (row) {
+            row.tenant_id = params[0];
+            row.object_class = params[1];
+            row.bucket_binding = 'SENSITIVE_DETAILS';
+            row.object_key = params[2];
+            row.content_encoding = params[3];
+            row.line_number = params[4];
+            row.byte_offset = params[5];
+            row.byte_length = params[6];
+            row.key_version = params[7];
+            row.checksum_sha256 = params[8];
+            row.created_at = params[9];
+            row.deleted_at = null;
           }
           return { rowsAffected: row ? 1 : 0 };
         }
@@ -183,6 +218,36 @@ describe('approval-transport-detail helpers', () => {
         return { rowsAffected: 1 };
       }),
       queryOne: vi.fn(async (sql: string, params: unknown[]) => {
+        if (sql.includes('FROM object_catalog') && !sql.includes('object_catalog oc')) {
+          const row = state.logical.find(
+            (item) =>
+              item.id === params[0] &&
+              item.tenant_id === params[1] &&
+              item.object_class === params[2] &&
+              item.deleted_at === null
+          );
+          return row
+            ? {
+                id: row.id,
+                public_artifact_id: row.public_artifact_id,
+                created_at: row.created_at,
+              }
+            : null;
+        }
+        if (sql.includes('FROM sensitive_detail_chunk_index sdci')) {
+          const row = state.chunkIndex.find(
+            (item) =>
+              item.catalog_id === params[0] &&
+              item.tenant_id === params[1] &&
+              item.object_class === params[2] &&
+              item.deleted_at === null
+          );
+          return row ?? null;
+        }
+        if (sql.includes('FROM sensitive_detail_chunk_index')) {
+          const row = state.chunkIndex.find((item) => item.catalog_id === params[0]);
+          return row ? { catalog_id: row.catalog_id } : null;
+        }
         if (!sql.includes('FROM object_catalog oc')) {
           return null;
         }
@@ -253,6 +318,8 @@ describe('approval-transport-detail helpers', () => {
     expect(requestWithDetail.detail_object_catalog_id).toMatch(/[0-9a-f-]{36}/);
     expect(state.logical).toHaveLength(1);
     expect(state.physical).toHaveLength(1);
+    expect(state.physical[0]?.object_kind).toBe('chunk');
+    expect(state.chunkIndex).toHaveLength(1);
     expect(objectStore.store.size).toBe(1);
 
     const loadedInitial = await loadApprovalTransportDetail(c as any, adapter, requestWithDetail);
@@ -322,6 +389,9 @@ describe('approval-transport-detail helpers', () => {
     );
     expect(state.logical).toHaveLength(1);
     expect(state.physical).toHaveLength(1);
+    expect(state.physical[0]?.object_kind).toBe('chunk');
+    expect(state.chunkIndex).toHaveLength(1);
+    expect(objectStore.store.size).toBe(1);
 
     const loadedUpdated = await loadApprovalTransportDetail(c as any, adapter, updatedRequest);
     expect(loadedUpdated?.events).toHaveLength(2);

@@ -596,9 +596,40 @@ export const ADMIN_PERMISSIONS = {
   STORAGE_DESTINATIONS_UPDATE: 'admin:storage_destinations:update',
   STORAGE_DESTINATIONS_DELETE: 'admin:storage_destinations:delete',
   STORAGE_DESTINATIONS_CREDENTIALS_WRITE: 'admin:storage_destinations:credentials:write',
+  STORAGE_DESTINATIONS_HEALTH_CHECK: 'admin:storage_destinations:health:check',
   STORAGE_DESTINATIONS_TEST: 'admin:storage_destinations:test',
   STORAGE_DESTINATIONS_USAGE_READ: 'admin:storage_destinations:usage:read',
   STORAGE_DESTINATIONS_ALL: 'admin:storage_destinations:*',
+
+  // Logging control plane
+  LOGGING_OVERVIEW_READ: 'admin:logging:overview:read',
+  LOGGING_PLATFORM_DEFAULTS_READ: 'admin:logging:platform_defaults:read',
+  LOGGING_PLATFORM_DEFAULTS_UPDATE: 'admin:logging:platform_defaults:update',
+  LOGGING_TENANT_OVERRIDES_READ: 'admin:logging:tenant_overrides:read',
+  LOGGING_TENANT_OVERRIDES_UPDATE: 'admin:logging:tenant_overrides:update',
+  LOGGING_CRITICAL_UPDATE: 'admin:logging:critical:update',
+  LOGGING_DELIVERY_EVENTS_READ: 'admin:logging:delivery_events:read',
+  LOGGING_DELIVERY_RETRY: 'admin:logging:delivery:retry',
+  LOGGING_EXPORT_CREATE: 'admin:logging:exports:create',
+  LOGGING_SENSITIVE_DETAIL_EXPORT: 'admin:logging:sensitive_detail:export',
+  LOGGING_DLQ_REPLAY: 'admin:logging:dlq:replay',
+  LOGGING_DLQ_DELETE: 'admin:logging:dlq:delete',
+  LOGGING_DLQ_PURGE: 'admin:logging:dlq:purge',
+  LOGGING_SNAPSHOTS_PUBLISH: 'admin:logging:snapshots:publish',
+  LOGGING_ROLLBACK: 'admin:logging:rollback',
+  LOGGING_ALL: 'admin:logging:*',
+
+  // Admin logging control plane
+  ADMIN_LOGGING_OVERVIEW_READ: 'admin:admin_logging:overview:read',
+  ADMIN_LOGGING_COVERAGE_READ: 'admin:admin_logging:coverage:read',
+  ADMIN_LOGGING_COVERAGE_UPDATE: 'admin:admin_logging:coverage:update',
+  ADMIN_LOGGING_REPAIR_READ: 'admin:admin_logging:repair:read',
+  ADMIN_LOGGING_REPAIR_RUN: 'admin:admin_logging:repair:run',
+  ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ: 'admin:admin_logging:sensitive_detail_policy:read',
+  ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_UPDATE:
+    'admin:admin_logging:sensitive_detail_policy:update',
+  ADMIN_LOGGING_CRITICAL_UPDATE: 'admin:admin_logging:critical:update',
+  ADMIN_LOGGING_ALL: 'admin:admin_logging:*',
 
   // Feature storage destination selection
   DIAGNOSTIC_LOGGING_DESTINATION_SELECT: 'admin:diagnostic_logging:destination:select',

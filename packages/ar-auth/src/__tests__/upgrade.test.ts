@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { upgradeCompleteHandler, upgradeStatusHandler } from '../upgrade';
+import { upgradeCompleteHandler, upgradeHandler, upgradeStatusHandler } from '../upgrade';
 
 const hoistedMocks = vi.hoisted(() => {
   const mockLog = {
@@ -27,7 +27,12 @@ const hoistedMocks = vi.hoisted(() => {
     },
     mockUserCoreRepository: {
       findById: vi.fn(),
+      createUser: vi.fn(),
       updateUser: vi.fn(),
+      updatePIIStatus: vi.fn(),
+    },
+    mockUserPIIRepository: {
+      createPII: vi.fn(),
     },
     mockSyncUserLifecycleState: vi.fn(),
     mockLoadClientContractCached: vi.fn(),
@@ -42,6 +47,7 @@ const hoistedMocks = vi.hoisted(() => {
 const mockSessionStore = hoistedMocks.mockSessionStore;
 const mockDatabaseAdapter = hoistedMocks.mockDatabaseAdapter;
 const mockUserCoreRepository = hoistedMocks.mockUserCoreRepository;
+const mockUserPIIRepository = hoistedMocks.mockUserPIIRepository;
 const mockSyncUserLifecycleState = hoistedMocks.mockSyncUserLifecycleState;
 const mockLoadClientContractCached = hoistedMocks.mockLoadClientContractCached;
 const mockGetCookie = hoistedMocks.mockGetCookie;
@@ -72,6 +78,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
       coreAdapter: hoistedMocks.mockDatabaseAdapter,
       repositories: {
         userCore: hoistedMocks.mockUserCoreRepository,
+      },
+    }),
+    createPIIContextFromHono: vi.fn().mockReturnValue({
+      piiRepositories: {
+        userPII: hoistedMocks.mockUserPIIRepository,
       },
     }),
     generateId: vi.fn().mockReturnValue('generated-id'),
@@ -132,6 +143,7 @@ describe('Upgrade Handlers', () => {
       missingRequiredFields: [],
     });
     mockDatabaseAdapter.query.mockResolvedValue([]);
+    mockDatabaseAdapter.execute.mockResolvedValue({ success: true });
     mockLogger.module.mockReturnValue(mockLog);
 
     // Default mock for valid anonymous session
@@ -149,6 +161,9 @@ describe('Upgrade Handlers', () => {
       user_type: 'anonymous',
       tenant_id: 'default',
     });
+    mockUserCoreRepository.createUser.mockResolvedValue(undefined);
+    mockUserCoreRepository.updatePIIStatus.mockResolvedValue(undefined);
+    mockUserPIIRepository.createPII.mockResolvedValue(undefined);
   });
 
   describe('upgradeHandler (POST /api/auth/upgrade)', () => {
@@ -214,6 +229,73 @@ describe('Upgrade Handlers', () => {
     });
 
     describe('Response Format', () => {
+      it('returns email upgrade instructions for an eligible anonymous session', async () => {
+        mockLoadClientContractCached.mockResolvedValueOnce({
+          anonymousAuth: {
+            enabled: true,
+            preserveSubOnUpgrade: true,
+            allowedUpgradeMethods: ['email', 'passkey'],
+          },
+        });
+
+        const c = createMockContext({
+          method: 'POST',
+          body: { method: 'email' },
+        });
+
+        const response = await upgradeHandler(c);
+        const body = (await response.json()) as {
+          success: boolean;
+          user_id: string;
+          upgrade_token: string;
+          instructions: {
+            method: string;
+            endpoint: string;
+            next_step: string;
+          };
+        };
+
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+          success: true,
+          user_id: 'anon-user-123',
+          upgrade_token: 'generated-id',
+          instructions: {
+            method: 'email',
+            endpoint: '/api/auth/email-codes/send',
+          },
+        });
+        expect(body.instructions.next_step).toContain('/api/auth/upgrade/complete');
+        expect(mockLoadClientContractCached).toHaveBeenCalledWith(
+          c,
+          c.env.AUTHRIM_CONFIG,
+          c.env,
+          'default',
+          'client-123'
+        );
+      });
+
+      it('rejects upgrade methods that are not allowed by the client contract', async () => {
+        mockLoadClientContractCached.mockResolvedValueOnce({
+          anonymousAuth: {
+            enabled: true,
+            preserveSubOnUpgrade: true,
+            allowedUpgradeMethods: ['email'],
+          },
+        });
+
+        const c = createMockContext({
+          method: 'POST',
+          body: { method: 'passkey' },
+        });
+
+        const response = await upgradeHandler(c);
+        const body = (await response.json()) as { error: string };
+
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(body.error).toBeDefined();
+      });
+
       it('should return upgrade_token for tracking', () => {
         const response = {
           success: true,
@@ -485,6 +567,131 @@ describe('Upgrade Handlers', () => {
     });
 
     describe('Handler execution', () => {
+      it('uses verified email session data when completing an email upgrade with preserved sub', async () => {
+        mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+          userId: 'anon-user-123',
+          data: {
+            is_anonymous: true,
+            upgrade_eligible: true,
+            client_id: 'client-123',
+            verified_email: 'Verified@Example.com',
+            verified_email_at: Date.now(),
+            verified_email_user_id: 'otp-user-456',
+            upgrade_nonce: 'nonce-123',
+          },
+        });
+        const c = createMockContext({
+          method: 'POST',
+          dbPii: {},
+          body: {
+            method: 'email',
+            name: 'Verified User',
+            email: 'attacker@example.com',
+          },
+        });
+
+        const response = await upgradeCompleteHandler(c);
+        const body = (await response.json()) as {
+          success: boolean;
+          user_id: string;
+          preserve_sub: boolean;
+          method: string;
+        };
+
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+          success: true,
+          user_id: 'anon-user-123',
+          preserve_sub: true,
+          method: 'email',
+        });
+        expect(mockSessionStore.updateSessionDataRpc).toHaveBeenNthCalledWith(1, 'session-123', {
+          upgrade_nonce: undefined,
+        });
+        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
+          expect.stringContaining("UPDATE users_core SET"),
+          expect.arrayContaining(['email', 'Verified@Example.com', 'anon-user-123', 'default'])
+        );
+        expect(mockUserPIIRepository.createPII).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 'anon-user-123',
+            email: 'verified@example.com',
+            name: 'Verified User',
+            preferred_username: 'Verified',
+          })
+        );
+        expect(mockUserCoreRepository.updatePIIStatus).toHaveBeenCalledWith(
+          'anon-user-123',
+          'active'
+        );
+        expect(mockSessionStore.updateSessionDataRpc).toHaveBeenLastCalledWith(
+          'session-123',
+          expect.objectContaining({
+            verified_email: undefined,
+            verified_email_at: undefined,
+            verified_email_user_id: undefined,
+            upgrade_nonce: undefined,
+          })
+        );
+      });
+
+      it('creates a new subject and updates the session user when preserve_sub=false', async () => {
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            method: 'social',
+            preserve_sub: false,
+            provider_id: 'google',
+          },
+        });
+
+        const response = await upgradeCompleteHandler(c);
+        const body = (await response.json()) as {
+          success: boolean;
+          user_id: string;
+          previous_user_id: string;
+          preserve_sub: boolean;
+          method: string;
+        };
+
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+          success: true,
+          user_id: 'generated-id',
+          previous_user_id: 'anon-user-123',
+          preserve_sub: false,
+          method: 'social',
+        });
+        expect(mockUserCoreRepository.createUser).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 'generated-id',
+            tenant_id: 'default',
+            user_type: 'end_user',
+            pii_status: 'none',
+          })
+        );
+        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
+          'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
+          expect.arrayContaining(['anon-user-123', 'default'])
+        );
+        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
+          expect.stringContaining('INSERT INTO user_upgrades'),
+          expect.arrayContaining([
+            'generated-id',
+            'default',
+            'anon-user-123',
+            'generated-id',
+            'social',
+            'google',
+            0,
+          ])
+        );
+        expect(mockSessionStore.updateSessionUserIdRpc).toHaveBeenCalledWith(
+          'session-123',
+          'generated-id'
+        );
+      });
+
       it('should expose profile completion hints when required claims remain missing', async () => {
         mockSyncUserLifecycleState.mockResolvedValueOnce({
           lifecycleState: 'incomplete',

@@ -141,8 +141,11 @@
 
 		{#if creating}
 			<div class="provisioning-steps">
-				{#each provisioningSteps as step}
-					<div class:active={step === creatingStep} class:done={provisioningSteps.indexOf(step) < provisioningSteps.indexOf(creatingStep)}>
+				{#each provisioningSteps as step (step)}
+					<div
+						class:active={step === creatingStep}
+						class:done={provisioningSteps.indexOf(step) < provisioningSteps.indexOf(creatingStep)}
+					>
 						<i class={step === creatingStep ? 'i-ph-circle-notch animate-spin' : 'i-ph-check-circle'}></i>
 						<span>{step}</span>
 					</div>

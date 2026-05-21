@@ -99,7 +99,11 @@ export const adminStorageDestinationsAPI = {
 				body: JSON.stringify(input)
 			}
 		);
-		return parseResponse<StorageDestination>(response, 'Failed to create storage destination');
+		const body = await parseResponse<{ item: StorageDestination; audit_id?: string | null }>(
+			response,
+			'Failed to create storage destination'
+		);
+		return body.item;
 	},
 
 	async update(id: string, input: StorageDestinationUpdate) {
@@ -111,7 +115,11 @@ export const adminStorageDestinationsAPI = {
 				body: JSON.stringify(input)
 			}
 		);
-		return parseResponse<StorageDestination>(response, 'Failed to update storage destination');
+		const body = await parseResponse<{ item: StorageDestination; audit_id?: string | null }>(
+			response,
+			'Failed to update storage destination'
+		);
+		return body.item;
 	},
 
 	async updateCredential(id: string, credential: unknown, grantId?: string) {
@@ -122,7 +130,11 @@ export const adminStorageDestinationsAPI = {
 			includeJsonContentType: true,
 			body: JSON.stringify({ credential })
 		});
-		return parseResponse<StorageDestination>(response, 'Failed to update storage credential');
+		const body = await parseResponse<{ item: StorageDestination; audit_id?: string | null }>(
+			response,
+			'Failed to update storage credential'
+		);
+		return body.item;
 	},
 
 	async listUsage(id: string) {
@@ -147,7 +159,11 @@ export const adminStorageDestinationsAPI = {
 				body: JSON.stringify(input)
 			}
 		);
-		return parseResponse<StorageDestinationUsage>(response, 'Failed to record destination usage');
+		const body = await parseResponse<{
+			item: StorageDestinationUsage;
+			audit_id?: string | null;
+		}>(response, 'Failed to record destination usage');
+		return body.item;
 	},
 
 	async test(id: string) {
@@ -155,16 +171,24 @@ export const adminStorageDestinationsAPI = {
 			`${API_BASE_URL}/api/admin/storage-destinations/${encodeURIComponent(id)}/test`,
 			{ method: 'POST' }
 		);
-		return parseResponse<{ status: string; message: string }>(
+		const body = await parseResponse<{
+			result: { status: string; message: string };
+			audit_id?: string | null;
+		}>(
 			response,
 			'Failed to test storage destination'
 		);
+		return body.result;
 	},
 
 	async delete(id: string, grantId?: string) {
 		const path = `${API_BASE_URL}/api/admin/storage-destinations/${encodeURIComponent(id)}`;
 		const url = grantId ? `${path}?grant_id=${encodeURIComponent(grantId)}` : path;
 		const response = await adminFetch(url, { method: 'DELETE' });
-		return parseResponse<{ success: boolean }>(response, 'Failed to delete storage destination');
+		const body = await parseResponse<{ result: { success: boolean }; audit_id?: string | null }>(
+			response,
+			'Failed to delete storage destination'
+		);
+		return body.result;
 	}
 };

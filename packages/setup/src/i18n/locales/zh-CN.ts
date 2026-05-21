@@ -1,6 +1,6 @@
 /**
  * Chinese (Simplified) Translations for Authrim Setup Tool
- * 简体中文翻译
+ * Simplified Chinese translations
  */
 
 import type { Translations } from '../types.js';

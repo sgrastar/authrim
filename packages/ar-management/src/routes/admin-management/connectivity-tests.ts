@@ -8,6 +8,7 @@ import {
   decryptValue,
   MysqlAdapter,
   PostgresAdapter,
+  safeFetch,
   validateUrlForSSRF,
 } from '@authrim/ar-lib-core';
 
@@ -213,7 +214,22 @@ async function testS3Destination(
   const prefix =
     getConfigString(destination.config, ['prefix', 'path_prefix', 'pathPrefix']) || 'authrim';
   const key = `${prefix.replace(/^\/+|\/+$/g, '')}/connectivity-test/${destination.id}-${Date.now()}.txt`;
-  const url = new URL(endpoint);
+  const validation = validateUrlForSSRF(endpoint);
+  if (!validation.valid || !validation.parsedUrl) {
+    return finish(start, {
+      status: 'error',
+      provider: destination.provider,
+      message: validation.error || 'S3 endpoint URL is not allowed.',
+    });
+  }
+  if (validation.parsedUrl.protocol !== 'https:') {
+    return finish(start, {
+      status: 'error',
+      provider: destination.provider,
+      message: 'S3 endpoint URL must use HTTPS.',
+    });
+  }
+  const url = validation.parsedUrl;
   const pathPrefix = url.pathname.replace(/^\/+|\/+$/g, '');
   url.pathname = `/${[pathPrefix, key].filter(Boolean).map(encodeS3PathPart).join('/')}`;
 
@@ -287,7 +303,13 @@ async function testCustomHttpDestination(
     });
   }
 
-  const response = await fetch(validation.parsedUrl.toString(), { method: 'HEAD' });
+  const response = await safeFetch(validation.parsedUrl.toString(), {
+    method: 'HEAD',
+    redirect: 'manual',
+    requireHttps: false,
+    timeoutMs: 5000,
+    maxResponseSize: 0,
+  });
   return finish(start, {
     status: response.ok ? 'ok' : 'error',
     provider: destination.provider,
@@ -343,10 +365,13 @@ async function signedS3Fetch(url: URL, input: S3SignInput): Promise<Response> {
   const signature = await hmacHex(signingKey, stringToSign);
   headers.authorization = `AWS4-HMAC-SHA256 Credential=${input.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaderNames.join(';')}, Signature=${signature}`;
 
-  return fetch(url.toString(), {
+  return safeFetch(url.toString(), {
     method: input.method,
     headers,
     body: input.method === 'PUT' ? body : undefined,
+    redirect: 'manual',
+    timeoutMs: 10000,
+    maxResponseSize: 64 * 1024,
   });
 }
 

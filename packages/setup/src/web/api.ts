@@ -1535,6 +1535,10 @@ export function createApiRoutes(): Hono {
             },
             { file: join(keysDir, 'version_manager_secret.txt'), name: 'VERSION_MANAGER_SECRET' },
             {
+              file: join(keysDir, 'logging_cursor_hmac_secret.txt'),
+              name: 'LOGGING_CURSOR_HMAC_SECRET',
+            },
+            {
               file: join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'),
               name: 'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
             },
@@ -2479,9 +2483,7 @@ export function createApiRoutes(): Hono {
               ORDER BY slot_number ASC;`
           ),
         ]);
-        const summary = Object.fromEntries(
-          counts.map((row) => [row.state, countValue(row.count)])
-        );
+        const summary = Object.fromEntries(counts.map((row) => [row.state, countValue(row.count)]));
         const capacity = Object.values(summary).reduce((total, count) => total + count, 0);
 
         return c.json({
@@ -2629,7 +2631,10 @@ export function createApiRoutes(): Hono {
         const baseDir = findAuthrimBaseDir(process.cwd());
         const envPaths = getEnvironmentPaths({ baseDir, env });
         if (!existsSync(envPaths.config)) {
-          return c.json({ success: false, error: `Config file not found: ${envPaths.config}` }, 404);
+          return c.json(
+            { success: false, error: `Config file not found: ${envPaths.config}` },
+            404
+          );
         }
 
         const { lock, path: lockPath } = await loadLockFileAuto(baseDir, env);

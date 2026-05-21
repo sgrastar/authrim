@@ -6,6 +6,10 @@ vi.mock(
   async () => await import('../../object-artifact-crypto.ts')
 );
 
+import {
+  createRuntimeLoggingPolicySnapshot,
+  publishRuntimeLoggingPolicySnapshot,
+} from '@authrim/ar-lib-logging/policies';
 import { getOperationalLog, storeOperationalLog } from '../operational-logs.ts';
 
 interface StoredObject {
@@ -46,6 +50,13 @@ function createMockBucket(initial: Record<string, StoredObject> = {}) {
           return null;
         }
         return {
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(object.body);
+              controller.close();
+            },
+          }),
+          size: object.body.byteLength,
           text: async () => new TextDecoder().decode(object.body),
           writeHttpMetadata(headers: Headers) {
             if (object.contentType) {
@@ -63,6 +74,7 @@ describe('operational-logs', () => {
     operationalLogs: [] as Array<Record<string, unknown>>,
     objectCatalog: [] as Array<Record<string, unknown>>,
     objectCatalogObjects: [] as Array<Record<string, unknown>>,
+    sensitiveDetailChunkIndex: [] as Array<Record<string, unknown>>,
   };
 
   const adapter = {
@@ -96,6 +108,22 @@ describe('operational-logs', () => {
         });
         return { rowsAffected: 1 };
       }
+      if (sql.includes('INSERT INTO sensitive_detail_chunk_index')) {
+        dbState.sensitiveDetailChunkIndex.push({
+          catalog_id: params[0],
+          tenant_id: params[1],
+          object_class: params[2],
+          bucket_binding: params[3],
+          object_key: params[4],
+          content_encoding: params[5],
+          line_number: params[6],
+          key_version: params[7],
+          checksum_sha256: params[8],
+          created_at: params[9],
+          deleted_at: params[10],
+        });
+        return { rowsAffected: 1 };
+      }
       if (sql.includes('INSERT INTO operational_logs')) {
         dbState.operationalLogs.push({
           id: params[0],
@@ -122,6 +150,17 @@ describe('operational-logs', () => {
           dbState.operationalLogs.find(
             (row) =>
               row.id === params[0] && row.tenant_id === params[1] && Number(row.expires_at) > now
+          ) ?? null
+        );
+      }
+      if (sql.includes('FROM sensitive_detail_chunk_index')) {
+        return (
+          dbState.sensitiveDetailChunkIndex.find(
+            (row) =>
+              row.catalog_id === params[0] &&
+              row.tenant_id === params[1] &&
+              row.object_class === params[2] &&
+              row.deleted_at === null
           ) ?? null
         );
       }
@@ -163,6 +202,16 @@ describe('operational-logs', () => {
       return null;
     }),
     query: vi.fn(async () => []),
+    batch: vi.fn(async (statements: Array<{ sql: string; params?: unknown[] }>) => {
+      for (const statement of statements) {
+        await adapter.execute(statement.sql, statement.params ?? []);
+      }
+      return statements.map(() => ({ rowsAffected: 1, success: true }));
+    }),
+    transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(adapter)),
+    isHealthy: vi.fn(async () => ({ healthy: true, latencyMs: 0, type: 'mock' })),
+    getType: vi.fn(() => 'mock'),
+    close: vi.fn(async () => {}),
   };
 
   const objectRootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -173,10 +222,12 @@ describe('operational-logs', () => {
     dbState.operationalLogs.length = 0;
     dbState.objectCatalog.length = 0;
     dbState.objectCatalogObjects.length = 0;
+    dbState.sensitiveDetailChunkIndex.length = 0;
   });
 
   it('externalizes reason_detail into SENSITIVE_DETAILS when object storage is configured', async () => {
     const objectStore = createMockBucket();
+    const queue = { send: vi.fn().mockResolvedValue(undefined) };
 
     const logId = await storeOperationalLog(
       adapter as any,
@@ -186,6 +237,9 @@ describe('operational-logs', () => {
           bucket: objectStore.bucket,
           rootKeyHex: objectRootKey,
           keyVersion: 4,
+          queueBindings: {
+            LOGGING_DELIVERY_CRITICAL_QUEUE: queue,
+          },
         },
       },
       {
@@ -202,29 +256,20 @@ describe('operational-logs', () => {
 
     expect(logId).toBeTruthy();
     expect(dbState.objectCatalog).toHaveLength(1);
-    expect(dbState.objectCatalogObjects).toHaveLength(1);
+    expect(dbState.objectCatalogObjects).toHaveLength(0);
+    expect(dbState.sensitiveDetailChunkIndex).toHaveLength(0);
+    expect(queue.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload_type: 'chunk_write',
+        plane: 'sensitive_detail',
+        records: [expect.objectContaining({ tenant_id: 'tenant-a' })],
+      })
+    );
 
     const row = dbState.operationalLogs[0];
     expect(row.reason_detail_encrypted).toBeNull();
     expect(row.encryption_key_version).toBe(0);
     expect(typeof row.detail_object_catalog_id).toBe('string');
-
-    const loaded = await getOperationalLog(
-      adapter as any,
-      {
-        inlineEncryptionKey: piiKey,
-        objectStorage: {
-          bucket: objectStore.bucket,
-          rootKeyHex: objectRootKey,
-          keyVersion: 4,
-        },
-      },
-      'tenant-a',
-      logId
-    );
-
-    expect(loaded?.reason_detail).toBe('Investigation detail');
-    expect(loaded?.detail_object_catalog_id).toEqual(row.detail_object_catalog_id);
   });
 
   it('falls back to inline encrypted storage when object storage is unavailable', async () => {
@@ -245,5 +290,120 @@ describe('operational-logs', () => {
     const loaded = await getOperationalLog(adapter as any, piiKey, 'tenant-a', logId);
     expect(loaded?.reason_detail).toBe('Inline detail');
     expect(loaded?.detail_object_catalog_id).toBeNull();
+  });
+
+  it('emits metadata-only operational runtime archive records when configured', async () => {
+    const objectStore = createMockBucket();
+    const kvValues = new Map<string, string>();
+    const kv = {
+      get: vi.fn(async (key: string) => kvValues.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => {
+        kvValues.set(key, value);
+      }),
+    } as unknown as KVNamespace;
+    const queue = { send: vi.fn(async () => {}) };
+    const snapshot = await createRuntimeLoggingPolicySnapshot({
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      version: 1,
+      snapshotId: 'snap_operational_archive',
+      synchronizedAt: 1_700_000_000_000,
+      sourceUpdatedAt: 1_700_000_000_000,
+      policies: {
+        assignments: [
+          {
+            id: 'lpa_operational_archive',
+            tenant_id: 'tenant-a',
+            log_type: 'operational',
+            plane: 'archive',
+            destination_id: 'dest_operational_archive',
+            enabled: 1,
+            managed_by: 'tenant',
+            lane: 'default',
+            version: 1,
+          },
+        ],
+        fallbacks: [],
+        destinations: [
+          {
+            id: 'dest_operational_archive',
+            scope_type: 'shared',
+            scope_id: null,
+            destination_kind: 'object_storage',
+            provider: 'r2',
+            name: 'operational-archive',
+            display_name: 'Operational Archive',
+            lifecycle_status: 'active',
+            health_status: 'healthy',
+            provider_config: JSON.stringify({
+              bindingRef: 'DIAGNOSTIC_LOGS',
+              prefix: 'operational-runtime',
+            }),
+            allowed_tenant_ids: JSON.stringify([]),
+            allowed_log_types: JSON.stringify(['operational']),
+            allowed_planes: JSON.stringify(['archive']),
+            region: null,
+            critical_allowed: 0,
+            default_fallback_eligible: 1,
+            retention_days: 30,
+            encryption_mode: 'platform_managed',
+          },
+        ],
+      },
+    });
+    await publishRuntimeLoggingPolicySnapshot({
+      snapshot,
+      kv,
+      objectStore: objectStore.bucket,
+      now: 1_700_000_000_000,
+    });
+
+    const logId = await storeOperationalLog(
+      adapter as any,
+      {
+        inlineEncryptionKey: piiKey,
+        runtimeLogging: {
+          env: {
+            DB_ADMIN: adapter as never,
+            AUTHRIM_CONFIG: kv,
+            DIAGNOSTIC_LOGS: objectStore.bucket,
+            LOGGING_DELIVERY_QUEUE: queue as never,
+          },
+          tenantKeyResolver: async () => 't_operational_runtime',
+        },
+      },
+      {
+        tenantId: 'tenant-a',
+        subjectType: 'user',
+        subjectId: 'user-3',
+        actorId: 'admin-3',
+        action: 'user.activate',
+        reasonDetail: 'Runtime detail must stay out of archive metadata',
+        requestId: 'req-3',
+      }
+    );
+
+    const runtimeObjectKey = [...objectStore.store.keys()].find((key) =>
+      key.includes('operational-runtime/')
+    );
+    expect(logId).toBeTruthy();
+    expect(runtimeObjectKey).toBeTruthy();
+    expect(runtimeObjectKey).toContain('/t_operational_runtime/');
+    expect(runtimeObjectKey).not.toContain('/tenant-a/');
+    expect(queue.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload_type: 'delivery_fanout',
+        destination_id: 'dest_operational_archive',
+        log_type: 'operational',
+        plane: 'archive',
+      })
+    );
+    expect(adapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO logging_delivery_events'),
+      expect.any(Array)
+    );
+    expect(JSON.stringify(adapter.execute.mock.calls)).not.toContain(
+      'Runtime detail must stay out of archive metadata'
+    );
   });
 });

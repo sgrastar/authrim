@@ -15,7 +15,7 @@ import {
   getAttribute,
   getTextContent,
 } from '../common/xml-utils';
-import { SAML_NAMESPACES, SIGNATURE_ALGORITHMS } from '../common/constants';
+import { DIGEST_ALGORITHMS, SAML_NAMESPACES, SIGNATURE_ALGORITHMS } from '../common/constants';
 import type { SignedXmlWithErrors } from '../common/types';
 import { SAMLMetadataValidationError } from './errors';
 
@@ -404,6 +404,11 @@ function verifyRootAggregateSignature(xml: string, rootId: string, certificateOr
   )[0];
   if (signatureMethod?.getAttribute('Algorithm') === SIGNATURE_ALGORITHMS.RSA_SHA1) {
     throw new Error('SHA-1 signature algorithm is not allowed');
+  }
+
+  const digestMethod = references[0]?.getElementsByTagNameNS(SAML_NAMESPACES.DS, 'DigestMethod')[0];
+  if (digestMethod?.getAttribute('Algorithm') === DIGEST_ALGORITHMS.SHA1) {
+    throw new Error('SHA-1 digest algorithm is not allowed');
   }
 
   const signature = new SignedXml();

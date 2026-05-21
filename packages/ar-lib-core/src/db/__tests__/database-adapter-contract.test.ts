@@ -30,6 +30,23 @@ async function exerciseDurableAdapterContract(adapter: DatabaseAdapter, expected
   });
 
   await expect(
+    adapter.transaction(async (tx) => {
+      const user = await tx.queryOne<{ id: string }>(
+        'SELECT id FROM users_core WHERE tenant_id = ? AND id = ?',
+        ['tenant-1', 'user-1']
+      );
+      const update = await tx.execute(
+        'UPDATE users_core SET updated_at = ? WHERE tenant_id = ? AND id = ?',
+        [2, 'tenant-1', user?.id]
+      );
+      return { userId: user?.id, rowsAffected: update.rowsAffected };
+    })
+  ).resolves.toEqual({
+    userId: 'user-1',
+    rowsAffected: 1,
+  });
+
+  await expect(
     adapter.batch([
       {
         sql: 'INSERT INTO users_core (id, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?)',

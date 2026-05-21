@@ -1,8 +1,8 @@
 /**
- * human-basic Login Flow - ビルトイン定義
+ * human-basic Login Flow - built-in definition
  *
- * Admin UIなしでも動作するビルトインFlow。
- * Start → Identifier → AuthMethod → Complete の最小構成。
+ * Works without Admin UIbuilt-in flow.
+ * Start → Identifier → AuthMethod → Complete minimal structure.
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -16,8 +16,8 @@ import type { GraphDefinition } from '../types';
 /**
  * human-basic Login Flow
  *
- * 基本的なログインフロー（Passkey / Email Code）
- * ヘッドレス運用（Admin UIなし）でも動作する。
+ * Basic login flow (Passkey / Email Code)
+ * Works in headless operation without Admin UI.
  */
 export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
   id: 'human-basic-login',
@@ -40,7 +40,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       },
     },
 
-    // Identifier Node (Email入力)
+    // Identifier Node (Emailinput)
     {
       id: 'identifier',
       type: 'identifier',
@@ -69,7 +69,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       },
     },
 
-    // Auth Method Node (認証方法選択)
+    // Auth Method Node (authentication method selection)
     {
       id: 'auth_method',
       type: 'auth_method',
@@ -78,7 +78,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
         label: 'Authenticate',
         intent: 'authenticate_user',
         capabilities: [
-          // Passkey認証（優先）
+          // Passkey authentication (prefer)
           {
             type: 'verify_possession',
             idSuffix: 'passkey',
@@ -91,7 +91,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
               },
             },
           },
-          // Email Code認証（フォールバック）
+          // Email Code authentication (fallback)
           {
             type: 'collect_secret',
             idSuffix: 'email_code',
@@ -111,7 +111,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       },
     },
 
-    // Complete Node (フロー完了)
+    // Complete Node (flow completion)
     {
       id: 'complete',
       type: 'end',
@@ -130,7 +130,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       },
     },
 
-    // Error Node (エラー処理)
+    // Error Node (error handling)
     {
       id: 'error',
       type: 'error',
@@ -164,7 +164,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       type: 'success',
     },
 
-    // Identifier → AuthMethod (成功時)
+    // Identifier → AuthMethod (on success)
     {
       id: 'e_identifier_auth',
       source: 'identifier',
@@ -172,7 +172,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       type: 'success',
     },
 
-    // Identifier → Error (エラー時)
+    // Identifier → Error (on error)
     {
       id: 'e_identifier_error',
       source: 'identifier',
@@ -180,7 +180,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       type: 'error',
     },
 
-    // AuthMethod → Complete (成功時)
+    // AuthMethod → Complete (on success)
     {
       id: 'e_auth_complete',
       source: 'auth_method',
@@ -188,7 +188,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       type: 'success',
     },
 
-    // AuthMethod → Error (エラー時)
+    // AuthMethod → Error (on error)
     {
       id: 'e_auth_error',
       source: 'auth_method',
@@ -196,7 +196,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
       type: 'error',
     },
 
-    // Error → Identifier (リトライ)
+    // Error → Identifier (retry)
     {
       id: 'e_error_retry',
       source: 'error',
@@ -224,22 +224,22 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
 // =============================================================================
 
 /**
- * ビルトインFlowのマップ
- * Admin UIなしでも使用可能
+ * Map of built-in flows
+ * Usable without Admin UI
  */
 export const BUILTIN_FLOWS: Record<string, GraphDefinition> = {
   'human-basic-login': HUMAN_BASIC_LOGIN_FLOW,
 };
 
 /**
- * ビルトインFlowを取得
+ * Get a built-in flow
  */
 export function getBuiltinFlow(flowId: string): GraphDefinition | undefined {
   return BUILTIN_FLOWS[flowId];
 }
 
 /**
- * すべてのビルトインFlow IDを取得
+ * Get all built-in flow IDs
  */
 export function getBuiltinFlowIds(): string[] {
   return Object.keys(BUILTIN_FLOWS);

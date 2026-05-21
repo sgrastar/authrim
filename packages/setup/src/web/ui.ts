@@ -2572,6 +2572,32 @@ export function getHtmlTemplate(
       return text;
     }
 
+    function appendTranslatedRichText(parent, key, params = {}) {
+      const template = _translations[key] || key;
+      const parts = template.split(/(<strong>|<\\/strong>|\\{\\{[a-zA-Z0-9_]+\\}\\})/g);
+      const stack = [parent];
+
+      for (const part of parts) {
+        if (!part) continue;
+        if (part === '<strong>') {
+          const strong = document.createElement('strong');
+          stack[stack.length - 1].appendChild(strong);
+          stack.push(strong);
+          continue;
+        }
+        if (part === '</strong>') {
+          if (stack.length > 1) stack.pop();
+          continue;
+        }
+
+        const placeholderMatch = part.match(/^\\{\\{([a-zA-Z0-9_]+)\\}\\}$/);
+        const text = placeholderMatch
+          ? String(params[placeholderMatch[1]] ?? '')
+          : part;
+        stack[stack.length - 1].appendChild(document.createTextNode(text));
+      }
+    }
+
 ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function getApiDomainUiCopy() {
@@ -3540,7 +3566,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div class="infra-section" id="config-preview">
         <h4>📋 <span data-i18n="web.section.configPreview">Configuration Preview</span></h4>
 
-        <!-- 共通行 (常時表示) -->
+        <!-- Common row (always visible) -->
         <div class="infra-item">
           <span class="infra-label" data-i18n="web.preview.components">Components:</span>
           <span class="infra-value preview-component-list" id="preview-components">
@@ -3550,15 +3576,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           </span>
         </div>
 
-        <!-- シングルテナント用 Issuer 行 (multi-tenant=off 時のみ表示) -->
+        <!-- Single-tenant Issuer row (shown only when multi-tenant=off) -->
         <div class="infra-item" id="preview-issuer-row">
           <span class="infra-label" data-i18n="web.preview.issuerUrl">Issuer URL:</span>
           <span class="infra-value" id="preview-issuer">https://{tenant}.{base-domain}</span>
         </div>
 
-        <!-- マルチテナント拡張プレビュー (multi-tenant=on 時のみ表示) -->
+        <!-- Multi-tenant expansion preview (shown only when multi-tenant=on) -->
         <div id="preview-multi-tenant-section" style="display:none;">
-          <!-- テナント別カード (JS で描画) -->
+          <!-- Tenant cards (rendered by JS) -->
           <div id="preview-mt-rows" aria-live="polite"></div>
 
           <!-- Login UI deployment origin -->
@@ -3567,19 +3593,19 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.workers.dev</span>
           </div>
 
-          <!-- テナント選択 共通入り口 -->
+          <!-- Tenant selection common entry -->
           <div class="infra-item" id="preview-tenant-discover-row" style="margin-top: 0.25rem;">
             <span class="infra-label" data-i18n="web.preview.tenantDiscover">Tenant Selection (Common Entry):</span>
             <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.workers.dev/discover</span>
           </div>
 
-          <!-- Admin UI アクセス先 -->
+          <!-- Admin UI access target -->
           <div class="infra-item" id="preview-admin-access-row">
             <span class="infra-label" data-i18n="web.preview.adminAccess">Admin UI Access:</span>
             <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.workers.dev/admin</span>
           </div>
 
-          <!-- 無効設定の警告 (条件に合致した時のみ表示) -->
+          <!-- Invalid-configuration warning (shown only when the condition matches) -->
           <div id="preview-config-warning" class="hint-box error-hint" style="display:none; margin-top:0.75rem;" role="alert">
             <strong id="preview-warning-title" data-i18n="web.preview.conflictWarningTitle">⚠️ Configuration issue</strong>
             <div id="preview-warning-message" style="margin-top: 0.25rem;"></div>
@@ -3587,7 +3613,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           </div>
         </div>
 
-        <!-- シングルテナント用 Login UI / Admin UI 行 (multi-tenant=off 時のみ表示) -->
+        <!-- Single-tenant Login UI / Admin UI row (shown only when multi-tenant=off) -->
         <div class="infra-item" id="preview-login-row">
           <span class="infra-label" data-i18n="web.preview.loginUi">Login UI:</span>
           <span class="infra-value" id="preview-login">{env}-ar-login-ui.workers.dev</span>
@@ -6186,26 +6212,26 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         adminApiModeRow.style.display = 'none';
       }
 
-      // === マルチテナント拡張プレビュー ===
+      // === Multi-tenant expansion preview ===
       const previewMtSection = document.getElementById('preview-multi-tenant-section');
       const previewIssuerRow = document.getElementById('preview-issuer-row');
       const previewLoginRow  = document.getElementById('preview-login-row');
       const previewAdminRow  = document.getElementById('preview-admin-row');
 
       if (multiTenantEnabled && baseDomain) {
-        // シングルテナント用行を非表示にしてマルチテナントセクションを表示
+        // Hide single-tenant rows and show the multi-tenant section
         previewIssuerRow.style.display = 'none';
         previewLoginRow.style.display  = 'none';
         previewAdminRow.style.display  = 'none';
         previewMtSection.style.display = '';
 
-        // 最初のテナントのベースURL
+        // Base URL of the first tenant
         const firstBase = nakedDomain
           ? 'https://' + baseDomain
           : 'https://' + tenantName + '.' + baseDomain;
         const otherBase = 'https://{tenantName}.' + baseDomain;
 
-        // テナントカードを描画 (createElement + textContent で XSS を防ぐ)
+        // Render tenant cards (prevent XSS with createElement + textContent)
         const mtRowsContainer = document.getElementById('preview-mt-rows');
         mtRowsContainer.textContent = '';
 
@@ -6262,7 +6288,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           tenantDiscoverRow.style.display = 'none';
         }
 
-        // Admin UI アクセス先
+        // Admin UI access target
         const adminAccessRow = document.getElementById('preview-admin-access-row');
         const adminAccessEl  = document.getElementById('preview-admin-access');
         if (adminUiEnabled) {
@@ -6279,8 +6305,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           adminAccessRow.style.display = 'none';
         }
 
-        // 無効設定の検出と警告表示
-        // sameAsApi かつ nakedDomain=false → naked domainへのAPIコールが404になる
+        // Detect invalid settings and show a warning
+        // sameAsApi with nakedDomain=false makes API calls to the naked domain return 404
         const loginSameAsApi = loginDomain !== '' && loginDomain === baseDomain;
         const adminSameAsApi2 = adminDomain !== '' && adminDomain === baseDomain;
         const hasConflict = (loginSameAsApi || adminSameAsApi2) && !nakedDomain;
@@ -6298,7 +6324,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
 
       } else {
-        // シングルテナントモード: 既存の行を表示
+        // Single-tenant mode: show existing rows
         previewIssuerRow.style.display = '';
         previewLoginRow.style.display  = '';
         previewAdminRow.style.display  = '';
@@ -7490,16 +7516,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         openLink.setAttribute('data-i18n', 'web.complete.openSetup');
         openDiv.appendChild(openLink);
 
-        // Warning hint (uses innerHTML for <strong> tags — not updated on language change)
+        // Warning hint with limited rich text from trusted translations.
         const hintDiv = document.createElement('div');
         hintDiv.className = 'hint-box';
         hintDiv.style.marginTop = '0.75rem';
-        const warningTemplate = t('web.complete.urlWarning', { date: expiresText });
-        // warningTemplate may contain <strong> tags — parse safely
         const warningPrefix = document.createTextNode('⚠️ ');
         hintDiv.appendChild(warningPrefix);
         const warningSpan = document.createElement('span');
-        warningSpan.innerHTML = warningTemplate; // safe: value from our own translation strings only
+        appendTranslatedRichText(warningSpan, 'web.complete.urlWarning', { date: expiresText });
         hintDiv.appendChild(warningSpan);
 
         adminSetupSection.appendChild(headerDiv);

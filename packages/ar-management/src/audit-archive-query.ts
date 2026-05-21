@@ -2,8 +2,12 @@ import type { AuditProfile, Env, EventLogEntry } from '@authrim/ar-lib-core';
 import {
   createR2AuditAdapter,
   extractAuditEntryFromCanonicalPayload,
+  readR2ObjectTextWithLimit,
   resolveTenantRuntimeProfilesFromEnv,
 } from '@authrim/ar-lib-core';
+import { createLoggingTenantKeyResolverFromSource } from './logging-tenant-key';
+
+const AUDIT_ARCHIVE_OBJECT_READ_MAX_BYTES = 10 * 1024 * 1024;
 
 export type AuditArchiveQueryStatus = 'supported' | 'not_supported' | 'pending_runtime_support';
 
@@ -51,6 +55,10 @@ function getR2BucketBinding(env: Env, bucketRef: string): R2Bucket | null {
   return binding as R2Bucket;
 }
 
+function normalizeArchivePrefix(prefix: string | undefined): string {
+  return (prefix ?? 'audit').replace(/^\/+|\/+$/g, '') || 'audit';
+}
+
 export function getAuditArchiveQuerySupportForProfile(
   env: Env,
   auditProfile: AuditProfile
@@ -83,7 +91,11 @@ export function getAuditArchiveQuerySupportForProfile(
     };
   }
 
-  const prefix = auditProfile.archive.prefix ?? 'audit';
+  const prefix = normalizeArchivePrefix(auditProfile.archive.prefix);
+  const tenantKeyResolver = createLoggingTenantKeyResolverFromSource(
+    env.DB,
+    'audit-archive-query-tenant-key'
+  );
   return {
     supported: true,
     status: 'supported',
@@ -93,6 +105,7 @@ export function getAuditArchiveQuerySupportForProfile(
         id: `archive:${auditProfile.archive.bucketRef}`,
         pathPrefix: prefix,
         format: 'json',
+        ...(tenantKeyResolver ? ({ tenantKeyResolver } as Record<string, unknown>) : {}),
       }),
       bucket,
       prefix,
@@ -152,6 +165,77 @@ function matchesArchiveResourceFilter(
   return true;
 }
 
+function matchesArchiveListFilters(entry: EventLogEntry, options: AuditArchiveListOptions): boolean {
+  if (options.startTime !== undefined && entry.createdAt < options.startTime) {
+    return false;
+  }
+  if (options.endTime !== undefined && entry.createdAt >= options.endTime) {
+    return false;
+  }
+  if (options.eventType && entry.eventType !== options.eventType) {
+    return false;
+  }
+  if (
+    options.anonymizedUserId &&
+    'anonymizedUserId' in entry &&
+    entry.anonymizedUserId !== options.anonymizedUserId
+  ) {
+    return false;
+  }
+  return matchesArchiveResourceFilter(entry, options.resourceType, options.resourceId);
+}
+
+function parseArchiveEventLogEntries(text: string): EventLogEntry[] {
+  const lines = text.trim().split('\n').filter(Boolean);
+  const payloads = lines.length > 1 ? lines : [text];
+  const entries: EventLogEntry[] = [];
+
+  for (const payload of payloads) {
+    const entry = parseArchiveEventLogEntry(payload);
+    if (entry) {
+      entries.push(entry);
+    }
+  }
+
+  return entries;
+}
+
+async function scanRawTenantArchivePath(
+  context: AuditArchiveQueryContext,
+  options: AuditArchiveListOptions
+): Promise<EventLogEntry[]> {
+  const prefix = `${context.prefix.replace(/\/$/, '')}/event/${options.tenantId}/`;
+  const entries: EventLogEntry[] = [];
+  let cursor: string | undefined;
+
+  for (;;) {
+    const listed = await context.bucket.list({
+      prefix,
+      cursor,
+      limit: 1000,
+    });
+
+    for (const object of listed.objects) {
+      const candidate = await context.bucket.get(object.key);
+      if (!candidate) {
+        continue;
+      }
+      entries.push(
+        ...parseArchiveEventLogEntries(
+          await readR2ObjectTextWithLimit(candidate, AUDIT_ARCHIVE_OBJECT_READ_MAX_BYTES)
+        )
+      );
+    }
+
+    if (!listed.truncated || !listed.cursor) {
+      break;
+    }
+    cursor = listed.cursor;
+  }
+
+  return entries;
+}
+
 export async function listArchiveAuditEvents(
   context: AuditArchiveQueryContext,
   options: AuditArchiveListOptions
@@ -169,10 +253,17 @@ export async function listArchiveAuditEvents(
     sortOrder: 'desc',
   });
 
-  const filtered = (result.eventEntries ?? [])
-    .filter((entry) =>
-      matchesArchiveResourceFilter(entry, options.resourceType, options.resourceId)
-    )
+  const rawTenantEntries = await scanRawTenantArchivePath(context, options);
+  const byId = new Map<string, EventLogEntry>();
+
+  for (const entry of [...(result.eventEntries ?? []), ...rawTenantEntries]) {
+    if (!matchesArchiveListFilters(entry, options)) {
+      continue;
+    }
+    byId.set(entry.id, entry);
+  }
+
+  const filtered = Array.from(byId.values())
     .sort((left, right) => right.createdAt - left.createdAt);
 
   const offset = (options.page - 1) * options.limit;
@@ -220,7 +311,9 @@ export async function getArchiveAuditEventById(
       if (!candidate) {
         continue;
       }
-      const entry = parseArchiveEventLogEntry(await candidate.text());
+      const entry = parseArchiveEventLogEntry(
+        await readR2ObjectTextWithLimit(candidate, AUDIT_ARCHIVE_OBJECT_READ_MAX_BYTES)
+      );
       if (entry?.id === entryId) {
         return entry;
       }

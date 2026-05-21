@@ -118,8 +118,10 @@ export interface SendWebhookParams {
   webhookUri: string;
   /** JSON payload string */
   payload: string;
-  /** HMAC-SHA256 signature (hex) */
-  signature: string;
+  /** HMAC-SHA256 secret used for Authrim v1 canonical signing */
+  secret?: string;
+  /** Legacy body-only HMAC-SHA256 signature (hex) */
+  signature?: string;
   /** Request timeout in milliseconds */
   timeoutMs: number;
 }
@@ -138,6 +140,7 @@ export async function sendLogoutWebhook(
   const result = await sendWebhook({
     url: params.webhookUri,
     payload: params.payload,
+    secret: params.secret,
     signature: params.signature,
     timeoutMs: params.timeoutMs,
   });
@@ -399,14 +402,11 @@ export function createLogoutWebhookOrchestrator(kv: KVNamespace): LogoutWebhookO
 
               const payloadString = JSON.stringify(payload);
 
-              // Generate signature
-              const signature = await generateWebhookSignature(payloadString, secret);
-
               // Send the webhook
               const sendResult = await sendLogoutWebhook({
                 webhookUri: client.logout_webhook_uri,
                 payload: payloadString,
-                signature,
+                secret,
                 timeoutMs: config.request_timeout_ms,
               });
 

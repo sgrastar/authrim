@@ -18,6 +18,7 @@
  */
 
 import type { KVNamespace } from '@cloudflare/workers-types';
+import { signHttpSinkPayload } from '@authrim/ar-lib-logging/delivery';
 import { createLogger } from '../utils/logger';
 import { validateWebhookUrl } from '../utils/ssrf-protection';
 import { readResponseTextPreview, safeFetch } from '../utils/url-security';
@@ -60,8 +61,10 @@ export interface SendWebhookParams {
   url: string;
   /** JSON payload string */
   payload: string;
-  /** HMAC-SHA256 signature (hex) */
-  signature: string;
+  /** HMAC-SHA256 secret used for Authrim v1 canonical signing */
+  secret?: string;
+  /** Legacy body-only HMAC-SHA256 signature (hex) */
+  signature?: string;
   /** Request timeout in milliseconds */
   timeoutMs: number;
   /** Optional webhook ID for tracking */
@@ -212,7 +215,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
  */
 export async function sendWebhook(params: SendWebhookParams): Promise<WebhookSendResult> {
   const timestamp = Math.floor(Date.now() / 1000);
-  const deliveryId = crypto.randomUUID();
+  const deliveryId = params.webhookId ?? crypto.randomUUID();
   const urlValidation = validateWebhookUrl(params.url);
 
   if (!urlValidation.valid) {
@@ -227,13 +230,25 @@ export async function sendWebhook(params: SendWebhookParams): Promise<WebhookSen
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'X-Authrim-Signature-256': `sha256=${params.signature}`,
+      ...params.customHeaders,
       'X-Authrim-Timestamp': timestamp.toString(),
       'X-Authrim-Delivery': deliveryId,
       'Cache-Control': 'no-store',
       'User-Agent': 'Authrim-Webhook/1.0',
-      ...params.customHeaders,
     };
+    if (params.secret) {
+      const url = new URL(params.url);
+      const signature = await signHttpSinkPayload({
+        method: 'POST',
+        path: `${url.pathname}${url.search}`,
+        body: params.payload,
+        secret: params.secret,
+        deliveryId,
+      });
+      Object.assign(headers, signature.headers);
+    } else if (params.signature) {
+      headers['X-Authrim-Signature-256'] = `sha256=${params.signature}`;
+    }
 
     const response = await safeFetch(params.url, {
       method: 'POST',
@@ -574,12 +589,11 @@ export async function sendWebhookBatch(
 
         try {
           const payloadString = JSON.stringify(webhook.payload);
-          const signature = await generateWebhookSignature(payloadString, webhook.secret);
 
           const result = await sendWebhook({
             url: webhook.url,
             payload: payloadString,
-            signature,
+            secret: webhook.secret,
             timeoutMs: webhook.timeoutMs ?? 30000,
             webhookId: webhook.webhookId,
             customHeaders: webhook.customHeaders,

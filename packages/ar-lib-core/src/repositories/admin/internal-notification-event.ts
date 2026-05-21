@@ -4,11 +4,23 @@ export type InternalNotificationEventCategory =
   | 'storage_registry_security'
   | 'storage_registry_health'
   | 'tenant_database_stats'
-  | 'tenant_database_health';
+  | 'tenant_database_health'
+  | 'logging_destination_health'
+  | 'logging_delivery_failure'
+  | 'logging_fallback_used'
+  | 'logging_dlq_backlog'
+  | 'logging_quota_warning'
+  | 'logging_repair_job_status'
+  | 'notification_delivery_failure';
 
 export type InternalNotificationEventSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
-export type InternalNotificationDeliveryProvider = 'internal_event' | 'webhook' | 'email';
+export type InternalNotificationDeliveryProvider =
+  | 'internal_event'
+  | 'webhook'
+  | 'email'
+  | 'slack'
+  | 'custom';
 export type InternalNotificationFailurePolicy =
   | 'best_effort'
   | 'retry_until_dead_letter'
@@ -78,6 +90,22 @@ export function normalizeInternalNotificationRoutingPolicy(
   };
 }
 
+export function resolveLoggingNotificationRoutingPolicy(input: {
+  severity: InternalNotificationEventSeverity;
+  externalNotificationEligible?: boolean;
+}): InternalNotificationRoutingPolicy {
+  if (input.externalNotificationEligible) {
+    return {
+      providers: ['internal_event', 'webhook', 'email'],
+      failurePolicy: 'retry_until_dead_letter',
+      policyScope: 'deployment',
+      allowProviderSuppression: true,
+    };
+  }
+
+  return normalizeInternalNotificationRoutingPolicy(null);
+}
+
 export class InternalNotificationEventRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
 
@@ -94,8 +122,18 @@ export class InternalNotificationEventRepository {
         }
       : input.payload;
 
+    if (deduplicationKey) {
+      const existing = await this.adapter.queryOne<InternalNotificationEventRow>(
+        'SELECT * FROM internal_notification_events WHERE deduplication_key = ?',
+        [deduplicationKey]
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
     await this.adapter.execute(
-      `INSERT OR IGNORE INTO internal_notification_events (
+      `INSERT INTO internal_notification_events (
         id, tenant_id, category, event_type, severity, status, deduplication_key,
         payload_json, attempts, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, 0, ?, ?)`,

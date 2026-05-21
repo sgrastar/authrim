@@ -25,24 +25,34 @@ function createD1Binding() {
 }
 
 function createAdminAdapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
+  let notificationLookupCount = 0;
   return {
     query: vi.fn().mockResolvedValue([]),
-    queryOne: vi.fn().mockResolvedValue({
-      id: 'event-1',
-      tenant_id: 'tenant-a',
-      category: 'storage_registry_security',
-      event_type: 'tenant_runtime_registry_snapshot.verification_failed',
-      severity: 'critical',
-      status: 'pending',
-      deduplication_key:
-        'tenant_runtime_registry_snapshot:unsigned_snapshot:tenant-a:edge-a:8:no_key',
-      payload_json: '{}',
-      attempts: 0,
-      last_error: null,
-      next_attempt_at: null,
-      created_at: '2026-05-16T00:00:00.000Z',
-      updated_at: '2026-05-16T00:00:00.000Z',
-      delivered_at: null,
+    queryOne: vi.fn().mockImplementation((sql: string) => {
+      if (sql.includes('internal_notification_events')) {
+        notificationLookupCount += 1;
+        if (notificationLookupCount === 1) {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve({
+          id: 'event-1',
+          tenant_id: 'tenant-a',
+          category: 'storage_registry_security',
+          event_type: 'tenant_runtime_registry_snapshot.verification_failed',
+          severity: 'critical',
+          status: 'pending',
+          deduplication_key:
+            'tenant_runtime_registry_snapshot:unsigned_snapshot:tenant-a:edge-a:8:no_key',
+          payload_json: '{}',
+          attempts: 0,
+          last_error: null,
+          next_attempt_at: null,
+          created_at: '2026-05-16T00:00:00.000Z',
+          updated_at: '2026-05-16T00:00:00.000Z',
+          delivered_at: null,
+        });
+      }
+      return Promise.resolve(null);
     }),
     execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
     transaction: vi.fn(async (fn: (tx: TransactionContext) => Promise<unknown>) =>
@@ -500,7 +510,7 @@ describe('tenant-database-resolver', () => {
       ])
     );
     expect(adminAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT OR IGNORE INTO internal_notification_events'),
+      expect.stringContaining('INSERT INTO internal_notification_events'),
       expect.arrayContaining([
         'tenant-a',
         'storage_registry_security',
@@ -711,7 +721,7 @@ describe('tenant-database-resolver', () => {
       'missing_binding'
     );
     expect(missingBindingAdmin.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT OR IGNORE INTO internal_notification_events'),
+      expect.stringContaining('INSERT INTO internal_notification_events'),
       expect.arrayContaining([
         'tenant-a',
         'storage_registry_health',
@@ -741,7 +751,7 @@ describe('tenant-database-resolver', () => {
       'schema_version_too_old'
     );
     expect(schemaGateAdmin.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT OR IGNORE INTO internal_notification_events'),
+      expect.stringContaining('INSERT INTO internal_notification_events'),
       expect.arrayContaining([
         'tenant-a',
         'storage_registry_health',

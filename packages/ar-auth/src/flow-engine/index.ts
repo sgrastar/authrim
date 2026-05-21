@@ -1,7 +1,7 @@
 /**
- * Flow Engine - エクスポート
+ * Flow Engine - exports
  *
- * Track C: Flow Engine / UIContract の統一エントリーポイント
+ * Track C: Flow Engine / UIContract unified entry point
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -11,7 +11,7 @@
 // =============================================================================
 
 export type {
-  // Layer 1: GraphDefinition (編集用)
+  // Layer 1: GraphDefinition (for editing)
   GraphDefinition,
   GraphNode,
   GraphNodeData,
@@ -22,14 +22,14 @@ export type {
   EdgeCondition,
   GraphMetadata,
   CapabilityTemplate,
-  // Layer 2: CompiledPlan (実行用)
+  // Layer 2: CompiledPlan (for execution)
   CompiledPlan,
   CompiledNode,
   CompiledTransition,
   CompiledCondition,
   EvaluationContext,
   ResolvedCapability,
-  // Layer 3: RuntimeState (DO保存用)
+  // Layer 3: RuntimeState (for DO storage)
   RuntimeState,
   OAuthFlowParams,
   RuntimeStateSnapshot,

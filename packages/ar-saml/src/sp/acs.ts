@@ -35,13 +35,7 @@ import {
   createAuditLog,
 } from '@authrim/ar-lib-core';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
-import {
-  parseXml,
-  findElement,
-  findElements,
-  getAttribute,
-  getTextContent,
-} from '../common/xml-utils';
+import { parseXml, getAttribute, getTextContent } from '../common/xml-utils';
 import {
   decodePostBindingMessage,
   parsePostBindingFormDataWithLimit,
@@ -469,11 +463,14 @@ function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedRespons
     SAML_NAMESPACES.SAML2P,
     'StatusCode'
   );
-  const statusCode = getAttribute(statusCodeElement!, 'Value');
+  if (!statusCodeElement) {
+    throw new Error('Invalid SAML Response: missing StatusCode element');
+  }
+  const statusCode = getAttribute(statusCodeElement, 'Value');
 
   if (statusCode !== STATUS_CODES.SUCCESS) {
     const statusMessage = getTextContent(
-      findElement(statusElement, SAML_NAMESPACES.SAML2P, 'StatusMessage')
+      findDirectChildElement(statusElement, SAML_NAMESPACES.SAML2P, 'StatusMessage')
     );
     throw new Error(
       `SAML authentication failed: ${statusCode} - ${statusMessage || 'Unknown error'}`
@@ -530,7 +527,7 @@ function parseAssertion(
     throw new Error('Invalid Assertion: missing Subject');
   }
 
-  const nameIdElement = findElement(subjectElement, SAML_NAMESPACES.SAML2, 'NameID');
+  const nameIdElement = findDirectChildElement(subjectElement, SAML_NAMESPACES.SAML2, 'NameID');
   if (!nameIdElement) {
     throw new Error('Invalid Assertion: missing NameID');
   }
@@ -580,8 +577,15 @@ function parseAssertion(
       }
     }
 
-    // Get Audience
-    const audienceElements = findElements(conditionsElement, SAML_NAMESPACES.SAML2, 'Audience');
+    // Get Audience from direct AudienceRestriction children.
+    const audienceRestrictionElements = findDirectChildElements(
+      conditionsElement,
+      SAML_NAMESPACES.SAML2,
+      'AudienceRestriction'
+    );
+    const audienceElements = audienceRestrictionElements.flatMap((audienceRestriction) =>
+      findDirectChildElements(audienceRestriction, SAML_NAMESPACES.SAML2, 'Audience')
+    );
     const audiences = audienceElements.map((el) => getTextContent(el) || '').filter(Boolean);
 
     // Validate audience
@@ -592,11 +596,15 @@ function parseAssertion(
     }
 
     // Check OneTimeUse condition (SAML 2.0 Core 2.5.1.5)
-    const oneTimeUseElement = findElement(conditionsElement, SAML_NAMESPACES.SAML2, 'OneTimeUse');
+    const oneTimeUseElement = findDirectChildElement(
+      conditionsElement,
+      SAML_NAMESPACES.SAML2,
+      'OneTimeUse'
+    );
     const oneTimeUse = oneTimeUseElement !== null;
 
     // Check ProxyRestriction condition (SAML 2.0 Core 2.5.1.6)
-    const proxyRestrictionElement = findElement(
+    const proxyRestrictionElement = findDirectChildElement(
       conditionsElement,
       SAML_NAMESPACES.SAML2,
       'ProxyRestriction'
@@ -627,16 +635,14 @@ function parseAssertion(
   let authnStatement: SAMLAssertion['authnStatement'];
 
   if (authnStatementElement) {
-    const authnContextElement = findElement(
+    const authnContextElement = findDirectChildElement(
       authnStatementElement,
       SAML_NAMESPACES.SAML2,
       'AuthnContext'
     );
-    const authnContextClassRefElement = findElement(
-      authnContextElement!,
-      SAML_NAMESPACES.SAML2,
-      'AuthnContextClassRef'
-    );
+    const authnContextClassRefElement = authnContextElement
+      ? findDirectChildElement(authnContextElement, SAML_NAMESPACES.SAML2, 'AuthnContextClassRef')
+      : null;
 
     authnStatement = {
       authnInstant: getAttribute(authnStatementElement, 'AuthnInstant') || '',
@@ -649,7 +655,7 @@ function parseAssertion(
   }
 
   // Parse Attributes
-  const attributeStatementElement = findElement(
+  const attributeStatementElement = findDirectChildElement(
     assertionElement,
     SAML_NAMESPACES.SAML2,
     'AttributeStatement'
@@ -657,7 +663,7 @@ function parseAssertion(
   const attributeStatement: SAMLAssertion['attributeStatement'] = [];
 
   if (attributeStatementElement) {
-    const attributeElements = findElements(
+    const attributeElements = findDirectChildElements(
       attributeStatementElement,
       SAML_NAMESPACES.SAML2,
       'Attribute'
@@ -668,7 +674,11 @@ function parseAssertion(
       const nameFormat = getAttribute(attrEl, 'NameFormat') || undefined;
       const friendlyName = getAttribute(attrEl, 'FriendlyName') || undefined;
 
-      const valueElements = findElements(attrEl, SAML_NAMESPACES.SAML2, 'AttributeValue');
+      const valueElements = findDirectChildElements(
+        attrEl,
+        SAML_NAMESPACES.SAML2,
+        'AttributeValue'
+      );
       const values = valueElements.map((el) => getTextContent(el) || '').filter(Boolean);
 
       attributeStatement.push({ name, nameFormat, friendlyName, values });
@@ -718,7 +728,7 @@ function validateSubjectConfirmation(
   expectedInResponseTo?: string
 ): ParsedSAMLAssertion['subjectConfirmationData'] {
   // Find SubjectConfirmation element
-  const subjectConfirmationElement = findElement(
+  const subjectConfirmationElement = findDirectChildElement(
     subjectElement,
     SAML_NAMESPACES.SAML2,
     'SubjectConfirmation'
@@ -747,7 +757,7 @@ function validateSubjectConfirmation(
   }
 
   // For bearer method, SubjectConfirmationData is required
-  const subjectConfirmationDataElement = findElement(
+  const subjectConfirmationDataElement = findDirectChildElement(
     subjectConfirmationElement,
     SAML_NAMESPACES.SAML2,
     'SubjectConfirmationData'

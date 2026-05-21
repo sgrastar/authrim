@@ -561,6 +561,18 @@ id = "kv-id"
       kv: {},
       queues: {
         AUDIT_QUEUE: { id: 'queue-audit', name: 'queuephase4-audit' },
+        LOGGING_DELIVERY_CRITICAL_QUEUE: {
+          id: 'queue-logging-critical',
+          name: 'queuephase4-logging-critical',
+        },
+        LOGGING_DELIVERY_QUEUE: {
+          id: 'queue-logging-default',
+          name: 'queuephase4-logging-default',
+        },
+        LOGGING_DELIVERY_BULK_QUEUE: {
+          id: 'queue-logging-bulk',
+          name: 'queuephase4-logging-bulk',
+        },
       },
       r2: {
         DIAGNOSTIC_LOGS: { name: 'queuephase4-logs' },
@@ -569,15 +581,52 @@ id = "kv-id"
 
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
+    const userinfoConfig = generateWranglerConfig('ar-userinfo', config, resourceIds);
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
 
     expect(authConfig.queues?.producers).toEqual([
       { queue: 'queuephase4-audit', binding: 'AUDIT_QUEUE' },
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
     ]);
     expect(tokenConfig.queues?.producers).toEqual([
       { queue: 'queuephase4-audit', binding: 'AUDIT_QUEUE' },
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
     ]);
-    expect(managementConfig.queues?.consumers).toEqual([{ queue: 'queuephase4-audit' }]);
+    expect(userinfoConfig.queues?.producers).toEqual([
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
+    ]);
+    expect(managementConfig.queues?.producers).toEqual([
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
+    ]);
+    expect(managementConfig.queues?.consumers).toEqual([
+      { queue: 'queuephase4-audit' },
+      { queue: 'queuephase4-logging-critical' },
+      { queue: 'queuephase4-logging-default' },
+      { queue: 'queuephase4-logging-bulk' },
+    ]);
+    expect(managementConfig.vars.LOGGING_DELIVERY_QUEUE_NAMES).toBe(
+      'queuephase4-logging-critical,queuephase4-logging-default,queuephase4-logging-bulk'
+    );
   });
 
   it('serializes queue consumers in wrangler.toml output', () => {

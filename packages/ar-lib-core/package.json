@@ -53,11 +53,13 @@
     "lint": "echo 'Shared package: lint skipped'",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:property": "vitest run -c vitest.property.config.ts",
     "test:all": "vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@authrim/ar-lib-logging": "workspace:*",
     "hono": "4.12.12",
     "jose": "^6.1.2",
     "mysql2": "^3.15.3",

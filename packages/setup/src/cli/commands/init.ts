@@ -3501,12 +3501,12 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   console.log('');
 
   const queueEnabled = await confirm({
-    message: 'Enable Cloudflare Queues? (for audit logs)',
+    message: 'Enable Cloudflare Queues? (for audit logs and logging delivery)',
     default: config.features.queue?.enabled || false,
   });
 
   const r2Enabled = await confirm({
-    message: 'Enable Cloudflare R2? (for avatars)',
+    message: 'Enable Cloudflare R2? (for avatars and logging artifacts)',
     default: config.features.r2?.enabled || false,
   });
 

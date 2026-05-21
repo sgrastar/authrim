@@ -47,7 +47,7 @@ export interface SdkCompatibilityVariables {
  * - Checks SDK version from request header
  * - Adds warning headers for outdated/deprecated/unsupported SDKs
  * - Never blocks requests (warn-only design)
- * - Fail-safe: If KV is unavailable, no warnings are added
+ * - fail-safe: If KV is unavailable, no warnings are added
  *
  * @returns Hono middleware handler
  */

@@ -82,4 +82,41 @@ describe('FlowRegistry', () => {
       'human-basic',
     ]);
   });
+
+  it('returns the built-in login flow when no custom flow is configured', async () => {
+    const registry = new FlowRegistry();
+    const result = await registry.getFlow('login', 'tenant-1', 'client-1');
+
+    expect(result?.id).toBe('human-basic-login');
+    expect(registry.getBuiltinFlowIds()).toEqual(['human-basic-login']);
+  });
+
+  it('falls back to a legacy KV custom flow when no database or built-in flow exists', async () => {
+    const kvFlow = createGraphDefinition('kv-authorization-flow');
+    const kv = {
+      get: vi.fn().mockResolvedValue(kvFlow),
+    } as unknown as KVNamespace;
+
+    const registry = new FlowRegistry({ kv });
+    const result = await registry.getFlow('authorization', 'tenant-1');
+
+    expect(result).toEqual(kvFlow);
+    expect(kv.get).toHaveBeenCalledWith('flow:tenant-1:authorization', 'json');
+  });
+
+  it('ignores malformed database rows and falls through to null when no fallback exists', async () => {
+    const adapter = createMockAdapter();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(adapter.query).mockResolvedValueOnce([{ graph_definition: '{not-json' }]);
+
+    const registry = new FlowRegistry({ db: adapter });
+    const result = await registry.getFlow('logout', 'tenant-1');
+
+    expect(result).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to get flow from database')
+    );
+
+    consoleError.mockRestore();
+  });
 });

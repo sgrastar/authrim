@@ -23,6 +23,7 @@ export {
 } from './admin-login-attempt';
 export {
   InternalNotificationEventRepository,
+  resolveLoggingNotificationRoutingPolicy,
   type InternalNotificationEventCategory,
   type InternalNotificationEventInput,
   type InternalNotificationEventRow,
@@ -102,6 +103,18 @@ export {
   type AdminDatabaseConnectionWithCredential,
   type DatabaseConnectionProvider,
 } from './admin-database-connection';
+export {
+  AdminLoggingControlRepository,
+  type AdminAuditCoverageStatusRowInput,
+  type AdminLoggingCriticalDestinationRow,
+  type AdminLoggingCriticalPolicyRow,
+  type AdminLoggingCriticalPolicyState,
+  type AdminLoggingPolicyAssignmentViewRow,
+  type AdminLoggingSensitiveDetailPolicyRow,
+  type AdminLoggingSensitiveDetailPolicyState,
+  type LoggingKeyVersionStatusRow,
+  type SensitiveDetailIndexSummaryRow,
+} from './admin-logging-control';
 export {
   TenantDatabaseRegistryRepository,
   type TenantDatabaseActivePointer,

@@ -131,7 +131,7 @@
 		font-weight: 300;
 		color: var(--text-primary);
 		letter-spacing: 0.3em;
-		margin: 0 0 10px 0.3em; /* letter-spacing分だけ右にオフセット */
+		margin: 0 0 10px 0.3em; /* Offset to the right by the letter-spacing amount */
 		line-height: 1.2;
 	}
 

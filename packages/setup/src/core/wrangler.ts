@@ -90,6 +90,35 @@ export interface WranglerConfig {
   }>;
 }
 
+const LOGGING_DELIVERY_QUEUE_DEFINITIONS = [
+  {
+    binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+    resourceKey: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+    fallbackName: (env: string) => `${env}-logging-delivery-critical-queue`,
+  },
+  {
+    binding: 'LOGGING_DELIVERY_QUEUE',
+    resourceKey: 'LOGGING_DELIVERY_QUEUE',
+    fallbackName: (env: string) => `${env}-logging-delivery-queue`,
+  },
+  {
+    binding: 'LOGGING_DELIVERY_BULK_QUEUE',
+    resourceKey: 'LOGGING_DELIVERY_BULK_QUEUE',
+    fallbackName: (env: string) => `${env}-logging-delivery-bulk-queue`,
+  },
+] as const;
+
+const LOGGING_DELIVERY_PRODUCER_COMPONENTS: readonly WorkerComponent[] = [
+  'ar-auth',
+  'ar-management',
+  'ar-token',
+  'ar-userinfo',
+  'ar-async',
+  'ar-saml',
+  'ar-bridge',
+  'ar-vc',
+];
+
 function collectConfiguredHyperdriveBindings(
   config: AuthrimConfig
 ): Array<{ binding: string; id: string }> {
@@ -533,23 +562,55 @@ export function generateWranglerConfig(
 
   // Queues (optional)
   if (config.features.queue?.enabled && resourceIds.queues) {
+    const producers: Array<{ queue: string; binding: string }> = [];
+    const consumers: Array<{
+      queue: string;
+      max_batch_size?: number;
+      max_batch_timeout?: number;
+      max_retries?: number;
+      dead_letter_queue?: string;
+    }> = [];
+
     if (component === 'ar-auth' || component === 'ar-token') {
+      producers.push({
+        queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
+        binding: 'AUDIT_QUEUE',
+      });
+    }
+
+    if (LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component)) {
+      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
+        producers.push({
+          queue:
+            resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
+          binding: definition.binding,
+        });
+      }
+    }
+
+    if (component === 'ar-management') {
+      consumers.push({
+        queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
+      });
+      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
+        consumers.push({
+          queue:
+            resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
+        });
+      }
+    }
+
+    if (producers.length > 0 || consumers.length > 0) {
       wranglerConfig.queues = {
-        producers: [
-          {
-            queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
-            binding: 'AUDIT_QUEUE',
-          },
-        ],
+        ...(producers.length > 0 ? { producers } : {}),
+        ...(consumers.length > 0 ? { consumers } : {}),
       };
-    } else if (component === 'ar-management') {
-      wranglerConfig.queues = {
-        consumers: [
-          {
-            queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
-          },
-        ],
-      };
+      if (component === 'ar-management') {
+        wranglerConfig.vars.LOGGING_DELIVERY_QUEUE_NAMES = LOGGING_DELIVERY_QUEUE_DEFINITIONS.map(
+          (definition) =>
+            resourceIds.queues?.[definition.resourceKey]?.name ?? definition.fallbackName(env)
+        ).join(',');
+      }
     }
   }
 
@@ -1444,7 +1505,7 @@ export interface WranglerValidationResult {
   valid: boolean;
   mismatches: Array<{
     component: string;
-    type: 'kv' | 'd1' | 'r2';
+    type: 'kv' | 'd1' | 'r2' | 'queue';
     binding: string;
     expected: string;
     actual: string;
@@ -1462,12 +1523,16 @@ export function parseWranglerToml(
   d1: Record<string, string>;
   hyperdrive: Record<string, string>;
   r2: Record<string, string>;
+  queueProducers: Record<string, string>;
+  queueConsumers: string[];
 } {
   const result = {
     kv: {} as Record<string, string>,
     d1: {} as Record<string, string>,
     hyperdrive: {} as Record<string, string>,
     r2: {} as Record<string, string>,
+    queueProducers: {} as Record<string, string>,
+    queueConsumers: [] as string[],
   };
   const escapedEnv = escapeRegExp(env);
 
@@ -1507,6 +1572,24 @@ export function parseWranglerToml(
   let r2Match;
   while ((r2Match = r2Regex.exec(content)) !== null) {
     result.r2[r2Match[1]] = r2Match[2];
+  }
+
+  const queueProducerRegex = new RegExp(
+    `\\[\\[env\\.${escapedEnv}\\.queues\\.producers\\]\\]\\s*\\nqueue\\s*=\\s*"([^"]+)"\\s*\\nbinding\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let queueProducerMatch;
+  while ((queueProducerMatch = queueProducerRegex.exec(content)) !== null) {
+    result.queueProducers[queueProducerMatch[2]] = queueProducerMatch[1];
+  }
+
+  const queueConsumerRegex = new RegExp(
+    `\\[\\[env\\.${escapedEnv}\\.queues\\.consumers\\]\\]\\s*\\nqueue\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let queueConsumerMatch;
+  while ((queueConsumerMatch = queueConsumerRegex.exec(content)) !== null) {
+    result.queueConsumers.push(queueConsumerMatch[1]);
   }
 
   return result;
@@ -1580,6 +1663,20 @@ export async function validateWranglerConfigs(
           binding,
           expected,
           actual: bucketName,
+        });
+      }
+    }
+
+    for (const [binding, queueName] of Object.entries(parsed.queueProducers)) {
+      const expected = lockResourceIds.queues?.[binding]?.name;
+      if (expected && queueName !== expected) {
+        result.valid = false;
+        result.mismatches.push({
+          component,
+          type: 'queue',
+          binding,
+          expected,
+          actual: queueName,
         });
       }
     }

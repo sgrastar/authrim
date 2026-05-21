@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
+import type { D1Database } from '@cloudflare/workers-types';
 import type {
   Env,
   SettingsGetResult,
@@ -59,10 +60,26 @@ function makeStorageProfile(id: string, slices: StorageProfile['slices']): Stora
   };
 }
 
+function createMockDB(): D1Database {
+  return {
+    prepare: vi.fn().mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      run: vi.fn().mockResolvedValue({ success: true }),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      first: vi.fn().mockResolvedValue(null),
+    }),
+    batch: vi.fn(),
+    dump: vi.fn(),
+    exec: vi.fn(),
+  } as unknown as D1Database;
+}
+
 // Create test app with settings-v2 routes
 function createTestApp(
   options: {
     kv?: KVNamespace;
+    db?: D1Database;
+    tenantId?: string;
     env?: Record<string, string>;
     adminAuth?: {
       userId: string;
@@ -83,6 +100,7 @@ function createTestApp(
         roles: string[];
         org_id?: string;
       };
+      tenantId?: string;
     };
   }>();
 
@@ -96,6 +114,7 @@ function createTestApp(
         roles: ['system_admin'], // system_admin has access to all settings
       }
     );
+    c.set('tenantId', options.tenantId ?? 'default');
     await next();
   });
 
@@ -108,6 +127,7 @@ function createTestApp(
   const mockEnv = {
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockKV,
+    DB: options.db ?? createMockDB(),
     BASE_DOMAIN: 'example.com', // enable multi-tenant mode so ensureSupportedTenantId passes
     ...options.env,
   } as unknown as Env;

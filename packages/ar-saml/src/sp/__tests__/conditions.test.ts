@@ -365,6 +365,19 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
 
       expect(res.status).toBeGreaterThanOrEqual(400);
     });
+
+    it('should reject Audience nested outside a direct AudienceRestriction child', async () => {
+      const samlResponse = createSAMLResponseWithConditions({
+        audiences: ['https://auth.example.com/saml/sp'],
+      });
+      const xml = atob(samlResponse)
+        .replace('<saml:AudienceRestriction>', '<wrapper><saml:AudienceRestriction>')
+        .replace('</saml:AudienceRestriction>', '</saml:AudienceRestriction></wrapper>');
+
+      const res = await callACS(btoa(xml));
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    });
   });
 
   describe('Bearer Assertion Replay Tracking', () => {

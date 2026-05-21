@@ -30,10 +30,12 @@ import {
   generateSAMLId,
   nowAsDateTime,
   base64Encode,
+  base64EncodeBytes,
 } from '../common/xml-utils';
 import { signRedirectBinding } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
+import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 
 type SAMLIdPConfigWithSPInitiationPolicy = SAMLIdPConfig & {
   providerName?: string;
@@ -80,7 +82,14 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     if (!requestId) {
       throw new Error('Generated SAML AuthnRequest is missing ID');
     }
-    await storeAuthnRequest(env, tenantId, requestId, issuerUrl, outboundIdpConfig.entityId, returnUrl);
+    await storeAuthnRequest(
+      env,
+      tenantId,
+      requestId,
+      issuerUrl,
+      outboundIdpConfig.entityId,
+      returnUrl
+    );
 
     // RelayState is limited by the SAML bindings; use the opaque request ID, not the return URL.
     const relayState = requestId;
@@ -89,7 +98,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     if (outboundIdpConfig.allowedBindings.includes('redirect')) {
       return await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState);
     } else {
-      return postToIdP(c, outboundIdpConfig, authnRequestXml, relayState);
+      return postToIdP(outboundIdpConfig, authnRequestXml, relayState);
     }
   } catch (error) {
     log.error('SP Login Error', {}, error as Error);
@@ -214,7 +223,7 @@ async function redirectToIdP(
 ): Promise<Response> {
   // Deflate and Base64 encode the request
   const deflated = pako.deflateRaw(authnRequestXml);
-  const base64Encoded = base64Encode(String.fromCharCode(...deflated));
+  const base64Encoded = base64EncodeBytes(deflated);
 
   const tenantId = resolveSAMLTenantIdFromContext(c);
   const { privateKeyPem } = await getSAMLSigningMaterial(env, {
@@ -235,43 +244,18 @@ async function redirectToIdP(
 /**
  * POST to IdP using HTTP-POST binding
  */
-function postToIdP(
-  c: Context<{ Bindings: Env }>,
-  idpConfig: SAMLIdPConfig,
-  authnRequestXml: string,
-  returnUrl: string
-): Response {
+function postToIdP(idpConfig: SAMLIdPConfig, authnRequestXml: string, returnUrl: string): Response {
   // Base64 encode the request (no deflate for POST binding)
   const base64Encoded = base64Encode(authnRequestXml);
 
-  // Build auto-submit form
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Redirecting to Identity Provider...</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(idpConfig.ssoUrl)}">
-    <input type="hidden" name="SAMLRequest" value="${escapeHtml(base64Encoded)}" />
-    <input type="hidden" name="RelayState" value="${escapeHtml(returnUrl)}" />
-    <noscript>
-      <button type="submit">Continue to Identity Provider</button>
-    </noscript>
-  </form>
-</body>
-</html>
-`;
-
-  return new Response(html, {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-    },
+  return buildSAMLPostBindingResponse({
+    title: 'SAML SSO - Redirecting...',
+    actionUrl: idpConfig.ssoUrl,
+    fields: [
+      { name: 'SAMLRequest', value: base64Encoded },
+      { name: 'RelayState', value: returnUrl },
+    ],
+    buttonText: 'Continue to Identity Provider',
   });
 }
 

@@ -15,15 +15,15 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import { encryptValue, decryptValue } from '../../utils/pii-encryption';
 import { createLogger } from '../../utils/logger';
+import type { ObjectClass } from '../object-catalog';
 import {
-  createObjectCatalogEntry,
-  getObjectCatalogObjectRecord,
-  type ObjectClass,
-} from '../object-catalog';
-import { decryptObjectArtifact, encryptObjectArtifact } from '../object-artifact-crypto';
+  loadChunkedSensitiveDetailJson,
+  storeChunkedSensitiveDetailJson,
+} from '../sensitive-detail-chunk-store';
+import { emitRuntimeLogRecords, type RuntimeLogEmitterEnv } from '../logging-runtime-emitter';
+import type { TenantKeyResolver } from './tenant-key';
 
 const log = createLogger().module('OPERATIONAL_LOGS');
-const ENCRYPTED_OBJECT_CONTENT_TYPE = 'application/vnd.authrim.object-envelope+json';
 const OPERATIONAL_LOG_CONTENT_TYPE = 'application/json';
 const DEFAULT_OBJECT_KEY_VERSION = 1;
 
@@ -63,11 +63,20 @@ export interface OperationalLogObjectStorageOptions {
   bucket: R2Bucket;
   rootKeyHex: string;
   keyVersion?: number;
+  tenantKeySalt?: string;
+  tenantKeyResolver?: TenantKeyResolver;
+  queueBindings?: Record<string, unknown>;
+  indexDbBinding?: 'DB' | 'DB_ADMIN' | 'LOGGING_INDEX_DB';
 }
 
 export interface OperationalLogStorageOptions {
   inlineEncryptionKey?: string;
   objectStorage?: OperationalLogObjectStorageOptions;
+  runtimeLogging?: {
+    env: RuntimeLogEmitterEnv;
+    tenantKeyResolver?: TenantKeyResolver;
+    failOpen?: boolean;
+  };
 }
 
 function resolveStorageOptions(
@@ -76,27 +85,6 @@ function resolveStorageOptions(
   return typeof encryptionKeyOrOptions === 'string'
     ? { inlineEncryptionKey: encryptionKeyOrOptions }
     : encryptionKeyOrOptions;
-}
-
-function buildOperationalLogObjectKey(
-  tenantId: string,
-  subjectType: string,
-  subjectId: string,
-  logId: string,
-  createdAtSeconds: number
-): string {
-  const date = new Date(createdAtSeconds * 1000);
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
-  return `operational-logs/${tenantId}/${subjectType}/${subjectId}/${year}/${month}/${day}/${logId}.json`;
-}
-
-async function sha256Hex(content: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 /**
@@ -128,52 +116,26 @@ export async function storeOperationalLog(
 
   if (options.objectStorage) {
     const objectClass: ObjectClass = 'operational_log_detail';
-    const objectKey = buildOperationalLogObjectKey(
-      params.tenantId,
-      params.subjectType,
-      params.subjectId,
-      id,
-      now
-    );
     const keyVersion = options.objectStorage.keyVersion ?? DEFAULT_OBJECT_KEY_VERSION;
-    const encryptedObject = await encryptObjectArtifact(
-      JSON.stringify({
-        reason_detail: params.reasonDetail,
-      }),
-      {
-        rootKeyHex: options.objectStorage.rootKeyHex,
-        plane: 'SENSITIVE_DETAILS',
-        keyVersion,
-        contentType: OPERATIONAL_LOG_CONTENT_TYPE,
-        context: {
-          tenantId: params.tenantId,
-          objectKey,
-          objectClass,
-        },
-      }
-    );
-    const envelopeJson = JSON.stringify(encryptedObject);
-    const checksum = await sha256Hex(envelopeJson);
-    await options.objectStorage.bucket.put(objectKey, envelopeJson, {
-      httpMetadata: { contentType: ENCRYPTED_OBJECT_CONTENT_TYPE },
-    });
-    const catalog = await createObjectCatalogEntry(adapter, {
+    const chunk = await storeChunkedSensitiveDetailJson({
+      adapter,
+      bucket: options.objectStorage.bucket,
+      rootKeyHex: options.objectStorage.rootKeyHex,
       tenantId: params.tenantId,
       objectClass,
+      payload: {
+        reason_detail: params.reasonDetail,
+      },
+      contentType: OPERATIONAL_LOG_CONTENT_TYPE,
       createdAt: now * 1000,
-      objects: [
-        {
-          representation: 'canonical_json',
-          objectKind: 'single',
-          bucketBinding: 'SENSITIVE_DETAILS',
-          objectKey,
-          keyVersion,
-          checksumSha256: checksum,
-          totalBytes: new TextEncoder().encode(envelopeJson).byteLength,
-        },
-      ],
+      keyVersion,
+      tenantKeySalt: options.objectStorage.tenantKeySalt,
+      tenantKeyResolver: options.objectStorage.tenantKeyResolver,
+      surface: 'operational',
+      queueBindings: options.objectStorage.queueBindings,
+      indexDbBinding: options.objectStorage.indexDbBinding ?? 'LOGGING_INDEX_DB',
     });
-    detailObjectCatalogId = catalog.catalogId;
+    detailObjectCatalogId = chunk.catalogId;
     encryptionKeyVersion = 0;
   } else if (options.inlineEncryptionKey) {
     const encrypted = await encryptValue(
@@ -207,6 +169,56 @@ export async function storeOperationalLog(
       expiresAt,
     ]
   );
+
+  if (options.runtimeLogging) {
+    try {
+      await emitRuntimeLogRecords({
+        env: {
+          ...options.runtimeLogging.env,
+          DB_ADMIN: options.runtimeLogging.env.DB_ADMIN ?? adapter,
+          LOGGING_INDEX_DB: adapter,
+        },
+        tenantId: params.tenantId,
+        logType: 'operational',
+        surface: 'operational_log',
+        tenantKeyResolver: options.runtimeLogging.tenantKeyResolver,
+        records: [
+          {
+            id,
+            eventAt: now * 1000,
+            payload: {
+              id,
+              tenant_id: params.tenantId,
+              subject_type: params.subjectType,
+              subject_id: params.subjectId,
+              actor_id: params.actorId,
+              action: params.action,
+              request_id: params.requestId ?? null,
+              detail_object_catalog_id: detailObjectCatalogId,
+              created_at: now,
+              expires_at: expiresAt,
+            },
+            indexedFields: {
+              surface: 'operational_log',
+              eventType: params.action,
+              severity: 'info',
+              status: 'stored',
+            },
+          },
+        ],
+      });
+    } catch (error) {
+      if (options.runtimeLogging.failOpen === false) {
+        throw error;
+      }
+      log.warn('Failed to emit operational log runtime record', {
+        id,
+        action: params.action,
+        subjectType: params.subjectType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   log.debug('Stored operational log', {
     id,
@@ -252,36 +264,21 @@ export async function getOperationalLog(
 
   let reasonDetail = '';
   if (entry.detail_object_catalog_id && options.objectStorage) {
-    const record = await getObjectCatalogObjectRecord(
+    const parsed = await loadChunkedSensitiveDetailJson<{ reason_detail?: string }>(
       adapter,
-      tenantId,
-      entry.detail_object_catalog_id,
-      'canonical_json',
-      0
-    );
-    if (
-      !record ||
-      record.logical.tenantId !== tenantId ||
-      record.physical.bucketBinding !== 'SENSITIVE_DETAILS'
-    ) {
-      return null;
-    }
-    const object = await options.objectStorage.bucket.get(record.physical.objectKey);
-    if (!object) {
-      return null;
-    }
-    const encryptedObject = JSON.parse(await object.text()) as Parameters<
-      typeof decryptObjectArtifact
-    >[0];
-    const plaintext = await decryptObjectArtifact(encryptedObject, {
-      rootKeyHex: options.objectStorage.rootKeyHex,
-      context: {
-        tenantId,
-        objectKey: record.physical.objectKey,
-        objectClass: 'operational_log_detail',
+      {
+        SENSITIVE_DETAILS: options.objectStorage.bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: options.objectStorage.rootKeyHex,
       },
-    });
-    const parsed = JSON.parse(plaintext) as { reason_detail?: string };
+      {
+        tenantId,
+        objectCatalogId: entry.detail_object_catalog_id,
+        expectedClass: 'operational_log_detail',
+      }
+    );
+    if (!parsed) {
+      return null;
+    }
     reasonDetail = parsed.reason_detail ?? '';
   } else {
     if (!entry.reason_detail_encrypted || !options.inlineEncryptionKey) {

@@ -24,6 +24,8 @@ describe('admin-role-templates', () => {
       (template) => template.key === 'support_readonly'
     );
     expect(support?.permissions).toContain(ADMIN_PERMISSIONS.ADMIN_AUDIT_READ);
+    expect(support?.permissions).toContain(ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ);
+    expect(support?.permissions).toContain(ADMIN_PERMISSIONS.ADMIN_LOGGING_OVERVIEW_READ);
     expect(support?.permissions).not.toContain(ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ);
     expect(support?.permissions).not.toContain(ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ);
   });
@@ -33,6 +35,9 @@ describe('admin-role-templates', () => {
       (template) => template.key === 'technical_investigator'
     );
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ);
+    expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.ADMIN_LOGGING_COVERAGE_READ);
+    expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.LOGGING_EXPORT_CREATE);
+    expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.LOGGING_SENSITIVE_DETAIL_EXPORT);
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ);
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.JOBS_ARTIFACT_READ);
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.OPERATIONAL_LOGS_DETAIL_READ);
@@ -49,10 +54,13 @@ describe('admin-role-templates', () => {
     );
 
     expect(viewer?.permissions).toContain(ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_READ);
+    expect(viewer?.permissions).toContain(ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ);
     expect(viewer?.permissions).not.toContain(
       ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE
     );
     expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.LOGGING_PLATFORM_DEFAULTS_UPDATE);
+    expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.LOGGING_SNAPSHOTS_PUBLISH);
     expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.DIAGNOSTIC_LOGGING_DESTINATION_SELECT);
     expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.JOBS_DESTINATION_SELECT);
     expect(admin?.permissions).toContain(ADMIN_PERMISSIONS.DR_BACKUP_DESTINATION_SELECT);

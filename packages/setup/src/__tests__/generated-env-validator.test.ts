@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
+import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import { WORKER_COMPONENTS } from '../core/naming.js';
@@ -26,7 +26,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
 const tempDirs: string[] = [];
 
 async function createFixtureRoot() {
-  const root = await mkdtemp(join(tmpdir(), 'authrim-generated-env-'));
+  const root = await mkdtemp(join(process.cwd(), '.test-generated-env-'));
   tempDirs.push(root);
   return root;
 }
@@ -38,10 +38,15 @@ async function writeGeneratedEnvironment(
     tenantD1StorageDefault?: boolean;
     withTenantD1Slots?: boolean;
     withHyperdriveReferences?: boolean;
+    queueEnabled?: boolean;
+    withLoggingQueues?: boolean;
   }
 ) {
   const env = 'portable';
   const config = createDefaultConfig(env);
+  config.keys.storageType = 'internal';
+  config.keys.secretsPath = './keys/';
+  config.features.queue = { enabled: options?.queueEnabled === true };
   config.urls = {
     api: { custom: null, auto: 'https://portable-ar-router.workers.dev' },
     loginUi: { custom: null, auto: 'https://portable-ar-login-ui.workers.dev', sameAsApi: false },
@@ -96,6 +101,27 @@ async function writeGeneratedEnvironment(
     }
   }
 
+  const queues = options?.withLoggingQueues
+    ? [
+        { binding: 'AUDIT_QUEUE', name: `${env}-audit-queue`, id: 'queue-audit' },
+        {
+          binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+          name: `${env}-logging-delivery-critical-queue`,
+          id: 'queue-logging-critical',
+        },
+        {
+          binding: 'LOGGING_DELIVERY_QUEUE',
+          name: `${env}-logging-delivery-queue`,
+          id: 'queue-logging-default',
+        },
+        {
+          binding: 'LOGGING_DELIVERY_BULK_QUEUE',
+          name: `${env}-logging-delivery-bulk-queue`,
+          id: 'queue-logging-bulk',
+        },
+      ]
+    : [];
+
   const lock = createLockFile(env, {
     d1,
     kv: [
@@ -117,14 +143,17 @@ async function writeGeneratedEnvironment(
       { binding: 'STATE_STORE', name: `${env.toUpperCase()}-STATE_STORE`, id: 'kv-state' },
       { binding: 'CONSENT_CACHE', name: `${env.toUpperCase()}-CONSENT_CACHE`, id: 'kv-consent' },
     ],
-    queues: [],
+    queues,
     r2: [
+      { binding: 'AVATARS', name: `${env}-authrim-avatars` },
+      { binding: 'DIAGNOSTIC_LOGS', name: `${env}-diagnostic-logs` },
       { binding: 'IMPORT_ARTIFACTS', name: `${env}-import-artifacts` },
       { binding: 'EXPORT_ARTIFACTS', name: `${env}-export-artifacts` },
       { binding: 'SENSITIVE_DETAILS', name: `${env}-sensitive-details` },
     ],
   });
 
+  await saveKeysToDirectory(generateAllSecrets(`${env}-test-key`), { baseDir: root, env });
   await writeFile(envPaths.config, JSON.stringify(config, null, 2), 'utf-8');
   await writeFile(envPaths.lock, JSON.stringify(lock, null, 2), 'utf-8');
 
@@ -168,6 +197,72 @@ describe('validateGeneratedEnvironment', () => {
 
     expect(result.ok).toBe(true);
     expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
+  });
+
+  it('passes a queue-enabled environment with logging delivery queues', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
+      queueEnabled: true,
+      withLoggingQueues: true,
+    });
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const queueCheck = result.checks.find((check) => check.id === 'logging-queue-bindings');
+
+    expect(result.ok).toBe(true);
+    expect(queueCheck?.status).toBe('pass');
+    expect(queueCheck?.details).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('LOGGING_DELIVERY_CRITICAL_QUEUE'),
+        expect.stringContaining('LOGGING_DELIVERY_QUEUE'),
+        expect.stringContaining('LOGGING_DELIVERY_BULK_QUEUE'),
+      ])
+    );
+  });
+
+  it('fails a queue-enabled environment missing logging delivery queues', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
+      queueEnabled: true,
+    });
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const queueCheck = result.checks.find((check) => check.id === 'logging-queue-bindings');
+
+    expect(result.ok).toBe(false);
+    expect(queueCheck?.status).toBe('fail');
+    expect(queueCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('LOGGING_DELIVERY_QUEUE is missing')])
+    );
+  });
+
+  it('fails when generated logging cursor key material is missing', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    await unlink(join(root, '.authrim', env, 'keys', 'logging_cursor_hmac_secret.txt'));
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const secretCheck = result.checks.find((check) => check.id === 'logging-secret-material');
+
+    expect(result.ok).toBe(false);
+    expect(secretCheck?.status).toBe('fail');
+    expect(secretCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('LOGGING_CURSOR_HMAC_SECRET')])
+    );
+  });
+
+  it('fails when generated logging R2 buckets are missing from lock.json', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.r2.DIAGNOSTIC_LOGS;
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`, 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const r2Check = result.checks.find((check) => check.id === 'logging-r2-bindings');
+
+    expect(result.ok).toBe(false);
+    expect(r2Check?.status).toBe('fail');
+    expect(r2Check?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('DIAGNOSTIC_LOGS is missing')])
+    );
   });
 
   it('fails when the active storage default requires unsupported external primary bindings', async () => {
@@ -216,6 +311,8 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-avatars` },
+      { name: `${env}-diagnostic-logs` },
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
@@ -265,6 +362,8 @@ describe('validateGeneratedEnvironment', () => {
       { name: `authrim-${env}-tdb-slot-0003-pii`, uuid: 'slot-0003-pii-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-avatars` },
+      { name: `${env}-diagnostic-logs` },
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },

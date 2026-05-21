@@ -937,6 +937,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         const responseHeaders = new Headers({
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
+          'Content-Security-Policy':
+            "default-src 'none'; frame-src https:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+          'X-Content-Type-Options': 'nosniff',
         });
         // Clear both cookies - need append() for multiple Set-Cookie headers
         responseHeaders.append(

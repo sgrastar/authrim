@@ -92,26 +92,31 @@ export interface StorageProfile extends RuntimeProfileBase {
 export type AuditTarget =
   | {
       type: 'd1' | 'postgres' | 'mysql';
+      destinationId?: string;
       bindingRef?: string;
       connectionRef?: string;
       dataset?: string;
     }
   | {
       type: 'r2';
+      destinationId?: string;
       bucketRef: string;
       prefix?: string;
     }
   | {
       type: 'logpush';
+      destinationId?: string;
       destinationRef: string;
       dataset?: string;
     }
   | {
       type: 'firehose';
+      destinationId?: string;
       streamRef: string;
     }
   | {
       type: 'http';
+      destinationId?: string;
       url?: string;
       urlRef?: string;
       authTokenRef?: string;

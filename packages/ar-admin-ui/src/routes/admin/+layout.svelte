@@ -13,6 +13,7 @@
 	import type { Snippet } from 'svelte';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { adminLoggingControlAPI } from '$lib/api/admin-logging-control';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -26,6 +27,8 @@
 	let mobileMenuOpen = $state(false);
 	let adminContextReady = $state(false);
 	let adminContextPromise: Promise<void> | null = null;
+	let loggingAlertCount = $state(0);
+	let notificationAlertCount = $state(0);
 
 	// Close mobile menu on navigation
 	$effect(() => {
@@ -73,7 +76,11 @@
 	const navTenant = {
 		authentication: [
 			{ path: '/admin/external-idp', label: 'External IdP', icon: 'i-ph-globe' },
-			{ path: '/admin/external-token-refresh', label: 'Token Refresh', icon: 'i-ph-arrows-clockwise' },
+			{
+				path: '/admin/external-token-refresh',
+				label: 'Token Refresh',
+				icon: 'i-ph-arrows-clockwise'
+			},
 			{ path: '/admin/saml', label: 'SAML', icon: 'i-ph-arrows-left-right' },
 			{ path: '/admin/consents', label: 'Consents', icon: 'i-ph-handshake' },
 			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' },
@@ -109,6 +116,12 @@
 		operations: [
 			{ path: '/admin/scale', label: 'Scale', icon: 'i-ph-chart-bar' },
 			{ path: '/admin/storage-destinations', label: 'Storage Destinations', icon: 'i-ph-archive' },
+			{
+				path: '/admin/logging-policies',
+				label: 'Logging Policies',
+				icon: 'i-ph-list-magnifying-glass'
+			},
+			{ path: '/admin/notifications', label: 'Notification Center', icon: 'i-ph-bell' },
 			{ path: '/admin/database-connections', label: 'Database Connections', icon: 'i-ph-database' },
 			{ path: '/admin/dr-backup', label: 'DR Backup', icon: 'i-ph-cloud-arrow-up' },
 			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' },
@@ -131,6 +144,7 @@
 		adminOthers: [
 			{ path: '/admin/machine-access', label: 'Machine Access', icon: 'i-ph-robot' },
 			{ path: '/admin/ip-allowlist', label: 'IP Allowlist', icon: 'i-ph-shield-check' },
+			{ path: '/admin/admin-logging', label: 'Admin Logging', icon: 'i-ph-activity' },
 			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' },
 			{ path: '/admin/operational-logs', label: 'Operational Logs', icon: 'i-ph-scroll' }
 		]
@@ -224,6 +238,7 @@
 		}
 
 		await ensureAdminContextReady();
+		await loadLoggingAlertBadge();
 	});
 
 	$effect(() => {
@@ -280,6 +295,11 @@
 		'/admin/security',
 		'/admin/compliance',
 		'/admin/scale',
+		'/admin/storage-destinations',
+		'/admin/logging-policies',
+		'/admin/notifications',
+		'/admin/admin-logging',
+		'/admin/database-connections',
 		'/admin/jobs',
 		'/admin/admins',
 		'/admin/admin-access-control',
@@ -301,6 +321,37 @@
 
 	function toggleMobileMenu() {
 		mobileMenuOpen = !mobileMenuOpen;
+	}
+
+	function navBadgeFor(path: string): string | number | undefined {
+		const count =
+			path === '/admin/logging-policies'
+				? loggingAlertCount
+				: path === '/admin/notifications'
+					? notificationAlertCount
+					: 0;
+		if (count <= 0) {
+			return undefined;
+		}
+		return count > 99 ? '99+' : count;
+	}
+
+	async function loadLoggingAlertBadge() {
+		try {
+			const response = await adminLoggingControlAPI.listNotifications({ limit: 1 });
+			loggingAlertCount = response.total;
+		} catch {
+			loggingAlertCount = 0;
+		}
+		try {
+			const response = await adminLoggingControlAPI.listNotificationCenter({
+				status: 'unresolved',
+				limit: 1
+			});
+			notificationAlertCount = response.total;
+		} catch {
+			notificationAlertCount = 0;
+		}
 	}
 </script>
 
@@ -447,6 +498,7 @@
 						icon={item.icon}
 						label={item.label}
 						active={isActive(item.path)}
+						badge={navBadgeFor(item.path)}
 					/>
 				{/each}
 

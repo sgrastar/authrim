@@ -5,6 +5,12 @@ import { getApprovalDecisionReceipt } from '../approval-completion-receipt';
 import { renderApprovalDecisionReceiptPage } from '../approval-decision-receipt-page';
 
 export const approvalReceiptsRouter = new Hono<{ Bindings: Env }>();
+const APPROVAL_RECEIPT_PORTAL_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
 
 approvalReceiptsRouter.get('/:receiptId', async (c) => {
   try {
@@ -42,6 +48,8 @@ approvalReceiptsRouter.get('/:receiptId/portal', async (c) => {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
+        'Content-Security-Policy': APPROVAL_RECEIPT_PORTAL_CSP,
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch {

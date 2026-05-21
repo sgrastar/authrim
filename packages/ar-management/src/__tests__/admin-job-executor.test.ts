@@ -7,6 +7,7 @@ const {
   mockTenantPiiAdapter,
   mockResolveAuthCorePersistenceAdapterFromEnv,
   mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockEmitRuntimeLogRecords,
 } = vi.hoisted(() => {
   const adapter = {
     query: vi.fn(),
@@ -31,6 +32,9 @@ const {
     mockTenantCoreAdapter: tenantCoreAdapter,
     mockTenantPiiAdapter: tenantPiiAdapter,
     mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue(adapter),
+    mockEmitRuntimeLogRecords: vi
+      .fn()
+      .mockResolvedValue({ tenantKey: 'tk_test', targetResults: [] }),
     mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn().mockResolvedValue({
       storageProfile: { id: 'builtin:storage:shared-d1' },
       coreDb: tenantCoreAdapter,
@@ -52,6 +56,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
     resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    emitRuntimeLogRecords: mockEmitRuntimeLogRecords,
   };
 });
 
@@ -131,6 +136,8 @@ describe('generic admin job executor', () => {
     mockAdapter.queryOne.mockReset();
     mockAdapter.execute.mockReset();
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockEmitRuntimeLogRecords.mockReset();
+    mockEmitRuntimeLogRecords.mockResolvedValue({ tenantKey: 'tk_test', targetResults: [] });
     mockTenantCoreAdapter.query.mockReset();
     mockTenantPiiAdapter.query.mockReset();
     mockTenantCoreAdapter.query.mockResolvedValue([]);
@@ -194,6 +201,38 @@ describe('generic admin job executor', () => {
         },
       },
     });
+    expect(mockEmitRuntimeLogRecords).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        logType: 'job',
+        surface: 'admin_job',
+        records: [
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              job_id: 'job-tenant-db',
+              job_type: 'tenant-database/provision',
+              status: 'processing',
+            }),
+          }),
+        ],
+      })
+    );
+    expect(mockEmitRuntimeLogRecords).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        logType: 'job',
+        surface: 'admin_job',
+        records: [
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              job_id: 'job-tenant-db',
+              job_type: 'tenant-database/provision',
+              status: 'completed',
+            }),
+          }),
+        ],
+      })
+    );
   });
 
   it('executes tenant database provisioning through Cloudflare API when requested', async () => {

@@ -117,6 +117,13 @@ describe('XML Utilities', () => {
       expect(decoded).toBe(original);
     });
 
+    it('should encode and decode UTF-8 base64 text', () => {
+      const original = '<saml:NameID>renée@example.jp</saml:NameID>';
+      const encoded = base64Encode(original);
+      const decoded = base64Decode(encoded);
+      expect(decoded).toBe(original);
+    });
+
     it('should encode and decode base64url', () => {
       const original = 'Test with special chars: +/=';
       const encoded = base64UrlEncode(original);

@@ -2,6 +2,14 @@
 
 最終更新: 2026-04-24
 
+> Status: Superseded for new implementation planning.
+>
+> This document describes the previous audit profile / `authrim.audit.v1` routing model.
+> For new logging and storage implementation, use
+> `private/docs/operations/logging-storage-specification-2026-05-19.md` and
+> `private/docs/operations/logging-storage-api-spec-2026-05-19.md` as the canonical
+> documents. This file remains as historical context until it is rewritten or removed.
+
 ## 目的
 
 audit log を小規模と大規模の両方に対応できるモデルへ広げる。

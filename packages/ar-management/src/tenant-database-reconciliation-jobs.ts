@@ -1,7 +1,9 @@
 import {
   ensureDatabaseAdapter,
   InternalNotificationEventRepository,
+  readResponseTextWithLimit,
   reconcileTenantDatabaseDerivedBindings,
+  safeFetch,
   TenantDatabaseRegistryRepository,
   type Env,
   type TenantDatabaseReconciliationFinding,
@@ -61,14 +63,6 @@ function getCloudflareD1ApiToken(env: Env): string | null {
   return env.CLOUDFLARE_D1_API_TOKEN || env.CLOUDFLARE_API_TOKEN || null;
 }
 
-async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
-  const text = await response.text();
-  if (text.length > maxBytes) {
-    throw new Error('cloudflare_d1_list_response_too_large');
-  }
-  return text;
-}
-
 export async function fetchCloudflareD1DatabaseIds(env: Env): Promise<Set<string> | null> {
   const accountId = getCloudflareAccountId(env);
   const token = getCloudflareD1ApiToken(env);
@@ -78,10 +72,11 @@ export async function fetchCloudflareD1DatabaseIds(env: Env): Promise<Set<string
 
   const ids = new Set<string>();
   for (let page = 1; page <= D1_LIST_PAGE_LIMIT; page += 1) {
-    const response = await fetch(
+    const response = await safeFetch(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100&page=${page}`,
       {
         method: 'GET',
+        maxResponseSize: D1_LIST_RESPONSE_LIMIT_BYTES,
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',

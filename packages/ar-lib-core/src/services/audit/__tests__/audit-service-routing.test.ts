@@ -5,6 +5,8 @@ import type { AuditProfile } from '../../../types/runtime-profile';
 import type { IAuditStorageAdapter } from '../storage';
 import type { DatabaseAdapter } from '../../../db';
 
+const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
 function createMockD1(firstResults: unknown[] = [null]): D1Database {
   const firstQueue = [...firstResults];
   const statement = {
@@ -374,5 +376,79 @@ describe('AuditService routing', () => {
       expect.stringContaining('INSERT INTO event_log'),
       expect.any(Array)
     );
+  });
+
+  it('uses registry tenant keys for chunked event detail evacuation', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'audit-d1-primary',
+      kind: 'audit',
+      label: 'D1 Primary',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: null,
+      sinks: [],
+      archiveFailureMode: 'best_effort',
+      sinkFailureMode: 'best_effort',
+    };
+    const service = new AuditService({
+      coreSource,
+      piiSource,
+      r2Bucket,
+      sensitiveDetailBucket: r2Bucket,
+      objectEncryptionRootKey: OBJECT_ROOT_KEY,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+      tenantKeyResolver: vi.fn().mockResolvedValue('t_registry_direct'),
+    });
+
+    await service.logEvent('tenant-a', {
+      eventType: 'auth.login',
+      eventCategory: 'auth',
+      result: 'success',
+      details: {
+        payload: 'x'.repeat(3000),
+      },
+    });
+
+    expect(r2Bucket.put).toHaveBeenCalledOnce();
+    const objectKey = (r2Bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(objectKey).toContain('sensitive-detail/v1/t_registry_direct/sensitive_detail/audit/');
+    expect(objectKey).not.toContain('tenant-a');
+  });
+
+  it('uses registry tenant keys for chunked PII value evacuation', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'audit-d1-primary',
+      kind: 'audit',
+      label: 'D1 Primary',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'pii_log' },
+      archive: null,
+      sinks: [],
+      archiveFailureMode: 'best_effort',
+      sinkFailureMode: 'best_effort',
+    };
+    const service = new AuditService({
+      coreSource,
+      piiSource,
+      r2Bucket,
+      sensitiveDetailBucket: r2Bucket,
+      objectEncryptionRootKey: OBJECT_ROOT_KEY,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+      tenantKeyResolver: vi.fn().mockResolvedValue('t_registry_pii'),
+    });
+
+    await service.logPIIChange('tenant-a', {
+      userId: 'user-1',
+      anonymizedUserId: 'anon-1',
+      changeType: 'update',
+      affectedFields: ['profile'],
+      newValues: {
+        profile: 'x'.repeat(6000),
+      },
+      actorType: 'admin',
+    });
+
+    expect(r2Bucket.put).toHaveBeenCalledOnce();
+    const objectKey = (r2Bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(objectKey).toContain('sensitive-detail/v1/t_registry_pii/sensitive_detail/pii/');
+    expect(objectKey).not.toContain('tenant-a');
   });
 });

@@ -98,10 +98,10 @@
 		const dateTime = new Date(`${date}T${time}:00`);
 		if (isNaN(dateTime.getTime())) return null;
 
-		// UTC表示
+		// UTC display
 		const utcStr = dateTime.toISOString().replace('T', ' ').substring(0, 19);
 
-		// ローカルタイムゾーン表示
+		// Local time zone display
 		const localStr = dateTime
 			.toLocaleString('ja-JP', {
 				year: 'numeric',

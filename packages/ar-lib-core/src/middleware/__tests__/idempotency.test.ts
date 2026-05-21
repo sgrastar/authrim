@@ -135,9 +135,9 @@ describe('idempotency middleware', () => {
     expect(mockAdapter.execute).not.toHaveBeenCalled();
   });
 
-  it('rejects the same key with a different body as an idempotency conflict', async () => {
-    mockAdapter.queryOne.mockResolvedValue({
-      id: 'idempotency-key-001',
+	it('rejects the same key with a different body as an idempotency conflict', async () => {
+		mockAdapter.queryOne.mockResolvedValue({
+			id: 'idempotency-key-001',
       body_hash: 'different-body-hash',
       response_status: 201,
       response_body: JSON.stringify({ ok: true }),
@@ -162,7 +162,31 @@ describe('idempotency middleware', () => {
     expect(res.status).toBe(409);
     expect(payload.error).toBe('idempotency_conflict');
     expect(payload.error_details?.code).toBe('idempotency_conflict');
-    expect(payload.error_details?.retryable).toBe(false);
-    expect(mockAdapter.execute).not.toHaveBeenCalled();
-  });
+		expect(payload.error_details?.retryable).toBe(false);
+		expect(mockAdapter.execute).not.toHaveBeenCalled();
+	});
+
+	it('rejects oversized idempotent request bodies before database work', async () => {
+		const body = 'x'.repeat(1024 * 1024 + 1);
+
+		const res = await createApp(requiredIdempotencyMiddleware()).request(
+			'/protected',
+			{
+				method: 'POST',
+				headers: {
+					'Idempotency-Key': 'idem-key-001',
+					'Content-Type': 'text/plain',
+				},
+				body,
+			},
+			mockEnv
+		);
+		const payload = (await res.json()) as { error: string; error_description: string };
+
+		expect(res.status).toBe(413);
+		expect(payload.error).toBe('invalid_request');
+		expect(payload.error_description).toContain('size limit');
+		expect(mockAdapter.queryOne).not.toHaveBeenCalled();
+		expect(mockAdapter.execute).not.toHaveBeenCalled();
+	});
 });

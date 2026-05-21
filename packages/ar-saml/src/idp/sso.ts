@@ -27,10 +27,11 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
-  findElement,
+  findDirectChildElement,
   getAttribute,
   getTextContent,
   generateSAMLId,
+  base64Encode,
 } from '../common/xml-utils';
 import {
   decodePostBindingMessage,
@@ -582,9 +583,13 @@ function getRawQueryParam(search: string, name: string): string | undefined {
  */
 function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
   const doc = parseXml(xml);
-  const authnRequestElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'AuthnRequest');
+  const authnRequestElement = doc.documentElement;
 
-  if (!authnRequestElement) {
+  if (
+    !authnRequestElement ||
+    authnRequestElement.namespaceURI !== SAML_NAMESPACES.SAML2P ||
+    authnRequestElement.localName !== 'AuthnRequest'
+  ) {
     throw new Error('Invalid AuthnRequest: missing AuthnRequest element');
   }
 
@@ -607,7 +612,11 @@ function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
   }
 
   // Parse Issuer
-  const issuerElement = findElement(authnRequestElement, SAML_NAMESPACES.SAML2, 'Issuer');
+  const issuerElement = findDirectChildElement(
+    authnRequestElement,
+    SAML_NAMESPACES.SAML2,
+    'Issuer'
+  );
   const issuer = getTextContent(issuerElement);
 
   if (!issuer) {
@@ -616,7 +625,7 @@ function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
 
   // Parse NameIDPolicy (optional)
   let nameIdPolicy: SAMLAuthnRequest['nameIdPolicy'] | undefined;
-  const nameIdPolicyElement = findElement(
+  const nameIdPolicyElement = findDirectChildElement(
     authnRequestElement,
     SAML_NAMESPACES.SAML2P,
     'NameIDPolicy'
@@ -942,7 +951,7 @@ function sendSAMLResponse(
   relayState?: string
 ): Response {
   // Encode response as Base64
-  const encodedResponse = btoa(responseXml);
+  const encodedResponse = base64Encode(responseXml);
   const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
   if (relayState) {
     fields.push({ name: 'RelayState', value: relayState });

@@ -506,13 +506,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       );
     }
 
-    // 11. SSO判定: デフォルトはSSO有効（ハンドオフフロー）
-    const enableSso = authState.enableSso !== false; // デフォルト: true
+    // 11. SSO decision: SSO is enabled by default (handoff flow)
+    const enableSso = authState.enableSso !== false; // Default: true
 
     if (enableSso) {
-      // SSO有効: ハンドオフフロー
+      // SSO enabled: handoff flow
 
-      // 11a. ユーザー検証（セッション作成前に実施）
+      // 11a. User verification (performed before session creation)
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       const userCore = await authCtx.repositories.userCore.findById(result.userId);
@@ -521,7 +521,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
       }
 
-      // 11b. セッション作成（SSOセッション）
+      // 11b. Create session (SSO session)
       const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
       const sessionTTL = 24 * 60 * 60; // 24 hours
 
@@ -540,7 +540,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         tenantId
       );
 
-      // セッションCookie設定
+      // Set session cookie
       const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
       const isSecure = issuerUrl.startsWith('https://');
 
@@ -552,7 +552,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         maxAge: sessionTTL,
       });
 
-      // 11c. ハンドオフトークン生成
+      // 11c. handoff tokengenerate
       const handoffToken = crypto.randomUUID();
       const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken, tenantId);
 
@@ -561,17 +561,17 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         tenantId,
         type: 'handoff',
         userId: result.userId,
-        challenge: sessionId, // sessionIdを格納
-        ttl: 30, // 30秒（リダイレクト+JS実行で十分）
+        challenge: sessionId, // Store sessionId
+        ttl: 30, // 30 seconds (enough for redirect + JS execution)
         metadata: {
           client_id: clientId,
           state: authState.state,
-          aud: 'handoff', // トークン再利用事故防止
+          aud: 'handoff', // prevent accidental token reuse
           created_at: Date.now(),
         },
       });
 
-      // 11d. RPへリダイレクト（ハンドオフトークン付き + Referrer対策）
+      // 11d. Redirect to the RP (with handoff token + Referrer mitigation)
       const redirectUrl = new URL(authState.redirectUri);
       redirectUrl.searchParams.set('handoff_token', handoffToken);
       redirectUrl.searchParams.set('state', authState.state);
@@ -580,12 +580,12 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         status: 302,
         headers: {
           Location: redirectUrl.toString(),
-          'Referrer-Policy': 'no-referrer', // ブラウザ履歴・リファラ漏洩対策
-          'Cache-Control': 'no-store', // キャッシュ防止
+          'Referrer-Policy': 'no-referrer', // Mitigate browser-history and referrer leakage
+          'Cache-Control': 'no-store', // Prevent caching
         },
       });
     } else {
-      // SSO無効: 従来のDirect Auth フロー（authCodeを返す）
+      // SSO disabled: legacy Direct Auth flow (returns authCode)
       const authCode = await generateAuthCode(c.env, tenantId, result.userId, codeChallenge, {
         method: 'external_idp',
         provider: provider.id,

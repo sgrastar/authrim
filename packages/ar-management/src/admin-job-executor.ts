@@ -9,12 +9,17 @@ import {
   buildTenantDatabaseBindingPlan,
   decryptObjectArtifact,
   ensureDatabaseAdapter,
+  emitRuntimeLogRecords,
   evaluateTenantDatabaseBindingCapacity,
+  readResponseTextWithLimit,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
+  readR2ObjectTextWithLimit,
+  safeFetch,
   tombstoneObjectCatalogEntryForTenant,
 } from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
+import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
 type AdminJobResultDelivery = 'auto' | 'inline' | 'artifact';
@@ -39,6 +44,7 @@ const MAX_TENANT_BACKUP_RETENTION_DAYS = 3650;
 const TENANT_DATABASE_RESTORE_DRY_RUN_CONFIRMATION = 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN';
 const TENANT_DATABASE_BACKUP_PURGE_CONFIRMATION = 'PURGE_TENANT_DATABASE_BACKUP';
 const TENANT_BACKUP_TABLE_ROW_LIMIT = 50_000;
+const TENANT_BACKUP_ARTIFACT_OBJECT_MAX_BYTES = 40 * 1024 * 1024;
 const TENANT_BACKUP_CORE_TABLES = [
   'users_core',
   'sessions',
@@ -84,6 +90,70 @@ type AdminJobProcessor = (
   adapter: DatabaseAdapter,
   job: AdminJobRow
 ) => Promise<AdminJobProcessorResult>;
+
+async function emitAdminJobRuntimeLog(
+  env: Env,
+  adapter: DatabaseAdapter,
+  logger: AdminJobLogger,
+  input: {
+    job: AdminJobRow;
+    status: AdminJobStatus | 'failed' | 'retrying';
+    eventAt: number;
+    attemptCount?: number | null;
+    nextRunAt?: number | null;
+    completedAt?: number | null;
+    objectCatalogId?: string | null;
+    errorClass?: string | null;
+  }
+): Promise<void> {
+  try {
+    await emitRuntimeLogRecords({
+      env: {
+        ...env,
+        DB_ADMIN: env.DB_ADMIN ?? adapter,
+        LOGGING_INDEX_DB: adapter,
+      },
+      tenantId: input.job.tenant_id,
+      logType: 'job',
+      surface: 'admin_job',
+      tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
+      records: [
+        {
+          id: `${input.job.id}:${input.status}:${input.eventAt}:${crypto.randomUUID()}`,
+          eventAt: input.eventAt,
+          payload: {
+            job_id: input.job.id,
+            job_type: input.job.job_type,
+            status: input.status,
+            attempt_count: input.attemptCount ?? input.job.attempt_count ?? null,
+            max_attempts: input.job.max_attempts ?? null,
+            next_run_at: input.nextRunAt ?? null,
+            completed_at: input.completedAt ?? null,
+            object_catalog_id: input.objectCatalogId ?? null,
+            error_class: input.errorClass ?? null,
+          },
+          indexedFields: {
+            surface: 'admin_job',
+            jobType: input.job.job_type,
+            status: input.status,
+            attempt: input.attemptCount ?? input.job.attempt_count ?? null,
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    logger.error(
+      'Failed to emit admin job runtime log',
+      {
+        job_id: input.job.id,
+        tenant_id: input.job.tenant_id,
+        job_type: input.job.job_type,
+        status: input.status,
+      },
+      error as Error
+    );
+  }
+}
 
 const GENERIC_ADMIN_JOB_TYPES = [
   'tenant-database/provision',
@@ -662,10 +732,7 @@ async function persistTenantDatabaseProvisionProgress(
 }
 
 async function readCloudflareJson<T>(response: Response): Promise<CloudflareApiResponse<T>> {
-  const text = await response.text();
-  if (text.length > TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES) {
-    throw new Error('cloudflare_response_too_large');
-  }
+  const text = await readResponseTextWithLimit(response, TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES);
   return JSON.parse(text || '{}') as CloudflareApiResponse<T>;
 }
 
@@ -688,10 +755,11 @@ async function findCloudflareD1DatabaseByName(
   }
 
   for (let page = 1; page <= 20; page += 1) {
-    const response = await fetch(
+    const response = await safeFetch(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100&page=${page}`,
       {
         method: 'GET',
+        maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -729,10 +797,11 @@ async function createCloudflareD1Database(
   if (!accountId || !token) {
     throw new Error('Cloudflare account ID and D1 API token are required for cloudflare_api mode');
   }
-  const response = await fetch(
+  const response = await safeFetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`,
     {
       method: 'POST',
+      maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -762,12 +831,13 @@ async function getCloudflareWorkerSettings(
       'Cloudflare account ID and Workers API token are required for cloudflare_api mode'
     );
   }
-  const response = await fetch(
+  const response = await safeFetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${encodeURIComponent(
       scriptName
     )}/settings`,
     {
       method: 'GET',
+      maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -816,12 +886,13 @@ async function patchCloudflareWorkerD1Bindings(
       'Cloudflare account ID and Workers API token are required for cloudflare_api mode'
     );
   }
-  const response = await fetch(
+  const response = await safeFetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${encodeURIComponent(
       scriptName
     )}/settings`,
     {
       method: 'PATCH',
+      maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -1243,8 +1314,19 @@ function normalizeTenantBackupTables(
   return normalized;
 }
 
+function safeObjectKeySegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._=-]+/g, '_').slice(0, 160) || 'unknown';
+}
+
 function buildTenantTableObjectKey(job: AdminJobRow, plane: 'core' | 'pii', table: string): string {
-  return `exports/${job.tenant_id}/tenant-backup/${job.id}/${plane}/${table}.jsonl`;
+  return [
+    'exports',
+    safeObjectKeySegment(job.tenant_id),
+    'tenant-backup',
+    safeObjectKeySegment(job.id),
+    safeObjectKeySegment(plane),
+    `${safeObjectKeySegment(table)}.jsonl`,
+  ].join('/');
 }
 
 async function exportTenantTableToArtifact(input: {
@@ -1378,7 +1460,7 @@ async function readR2ObjectText(bucket: R2Bucket, objectKey: string): Promise<st
   if (!object) {
     throw new Error(`tenant_backup_restore_dry_run_missing_object:${objectKey}`);
   }
-  return object.text();
+  return readR2ObjectTextWithLimit(object, TENANT_BACKUP_ARTIFACT_OBJECT_MAX_BYTES);
 }
 
 async function loadTenantBackupArtifactContent(input: {
@@ -1905,7 +1987,16 @@ function toCsv(rows: Array<Record<string, unknown>>): string {
   if (rows.length === 0) return '';
   const headers = Object.keys(rows[0] ?? {});
   const escape = (value: unknown) => {
-    const text = value === null || value === undefined ? '' : String(value);
+    const rawText = value === null || value === undefined ? '' : String(value);
+    const trimmed = rawText.trimStart();
+    const text =
+      trimmed.startsWith('=') ||
+      trimmed.startsWith('+') ||
+      trimmed.startsWith('@') ||
+      /^-\D/.test(trimmed) ||
+      /^[\t\r]/.test(rawText)
+        ? `'${rawText}`
+        : rawText;
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   return [
@@ -2113,7 +2204,14 @@ function getJobResultDelivery(job: AdminJobRow): AdminJobResultDelivery {
 
 function buildGenericJobResultKey(job: AdminJobRow): string {
   const safeJobType = job.job_type.replace(/[^a-zA-Z0-9._-]+/g, '-');
-  return `exports/${job.tenant_id}/admin-jobs/${safeJobType}/${job.id}/result.json`;
+  return [
+    'exports',
+    safeObjectKeySegment(job.tenant_id),
+    'admin-jobs',
+    safeObjectKeySegment(safeJobType),
+    safeObjectKeySegment(job.id),
+    'result.json',
+  ].join('/');
 }
 
 async function finalizeGenericJobResult(
@@ -2269,6 +2367,12 @@ export async function processPendingGenericAdminJobs(
       [startedTs, startedTs, job.id, job.tenant_id, startedTs, startedTs, staleCutoffTs]
     );
     if (transition.rowsAffected === 0) continue;
+    await emitAdminJobRuntimeLog(env, adapter, logger, {
+      job,
+      status: 'processing',
+      eventAt: startedTs * 1000,
+      attemptCount: getAttemptCount(job),
+    });
 
     try {
       const result = await processor(env, adapter, job);
@@ -2290,6 +2394,13 @@ export async function processPendingGenericAdminJobs(
           job_id: job.id,
           tenant_id: job.tenant_id,
           job_type: job.job_type,
+        });
+        await emitAdminJobRuntimeLog(env, adapter, logger, {
+          job,
+          status: 'processing',
+          eventAt: continuationTs * 1000,
+          attemptCount: getAttemptCount(job),
+          nextRunAt: result.nextRunAt ?? continuationTs,
         });
         continue;
       }
@@ -2319,6 +2430,14 @@ export async function processPendingGenericAdminJobs(
         tenant_id: job.tenant_id,
         job_type: job.job_type,
         status: result.status,
+      });
+      await emitAdminJobRuntimeLog(env, adapter, logger, {
+        job,
+        status: result.status,
+        eventAt: completedTs * 1000,
+        attemptCount: getAttemptCount(job),
+        completedAt: completedTs,
+        objectCatalogId: finalized.objectCatalogId,
       });
     } catch (error) {
       const failedTs = Math.floor(Date.now() / 1000);
@@ -2366,6 +2485,15 @@ export async function processPendingGenericAdminJobs(
         },
         error as Error
       );
+      await emitAdminJobRuntimeLog(env, adapter, logger, {
+        job,
+        status: exhausted ? 'failed' : 'retrying',
+        eventAt: failedTs * 1000,
+        attemptCount: nextAttemptCount,
+        nextRunAt,
+        completedAt: exhausted ? failedTs : null,
+        errorClass: error instanceof Error ? error.name : 'Error',
+      });
     }
   }
 }

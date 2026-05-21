@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Env } from '../../types/env';
 import type { Context } from 'hono';
+import {
+  createRuntimeLoggingPolicySnapshot,
+  publishRuntimeLoggingPolicySnapshot,
+} from '@authrim/ar-lib-logging/policies';
 
 // Mock logger - hoisted before other imports
 const mockLogger = vi.hoisted(() => ({
@@ -282,6 +286,348 @@ describe('createAuditLog', () => {
         eventCategory: 'auth',
       })
     );
+  });
+
+  it('uses cached runtime logging policy snapshots for audit fanout routing', async () => {
+    const tenantId = 'tenant-snapshot-routing';
+    const kvValues = new Map<string, string>();
+    const objectValues = new Map<string, string>();
+    const configKv = {
+      get: vi.fn(async (key: string) => kvValues.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => {
+        kvValues.set(key, value);
+      }),
+    } as unknown as KVNamespace;
+    const snapshotBucket = {
+      put: vi.fn(async (key: string, value: string) => {
+        objectValues.set(key, value);
+      }),
+      get: vi.fn(async (key: string) =>
+        objectValues.has(key)
+          ? {
+              text: vi.fn(async () => objectValues.get(key) ?? ''),
+            }
+          : null
+      ),
+    } as unknown as R2Bucket;
+    const snapshot = await createRuntimeLoggingPolicySnapshot({
+      scopeType: 'tenant',
+      scopeId: tenantId,
+      version: 1,
+      snapshotId: 'snap_test_audit_fanout',
+      synchronizedAt: 1_700_000_000_000,
+      sourceUpdatedAt: 1_700_000_000_000,
+      policies: {
+        assignments: [
+          {
+            id: 'lpa_archive',
+            tenant_id: null,
+            log_type: 'audit',
+            plane: 'archive',
+            destination_id: 'dest_archive',
+            enabled: 1,
+            managed_by: 'platform',
+            lane: 'critical',
+            version: 1,
+          },
+          {
+            id: 'lpa_sink',
+            tenant_id: null,
+            log_type: 'audit',
+            plane: 'external_sink',
+            destination_id: 'dest_http',
+            enabled: 1,
+            managed_by: 'platform',
+            lane: 'critical',
+            version: 1,
+          },
+        ],
+        fallbacks: [],
+        destinations: [
+          {
+            id: 'dest_archive',
+            scope_type: 'shared',
+            scope_id: null,
+            destination_kind: 'object_storage',
+            provider: 'r2',
+            name: 'archive',
+            display_name: 'Archive',
+            lifecycle_status: 'active',
+            health_status: 'healthy',
+            provider_config: JSON.stringify({
+              bindingRef: 'DIAGNOSTIC_LOGS',
+              prefix: 'audit-chunks',
+            }),
+            allowed_tenant_ids: JSON.stringify([]),
+            allowed_log_types: JSON.stringify(['audit']),
+            allowed_planes: JSON.stringify(['archive']),
+            region: null,
+            critical_allowed: 1,
+            default_fallback_eligible: 1,
+            retention_days: 30,
+            encryption_mode: 'platform_managed',
+          },
+          {
+            id: 'dest_http',
+            scope_type: 'shared',
+            scope_id: null,
+            destination_kind: 'http_sink',
+            provider: 'http',
+            name: 'collector',
+            display_name: 'Collector',
+            lifecycle_status: 'active',
+            health_status: 'healthy',
+            provider_config: JSON.stringify({
+              url: 'https://collector.example/logs',
+              headers: { 'X-Authrim-Route': 'snapshot' },
+            }),
+            allowed_tenant_ids: JSON.stringify([]),
+            allowed_log_types: JSON.stringify(['audit']),
+            allowed_planes: JSON.stringify(['external_sink']),
+            region: null,
+            critical_allowed: 1,
+            default_fallback_eligible: 0,
+            retention_days: 30,
+            encryption_mode: 'platform_managed',
+          },
+        ],
+      },
+    });
+    await publishRuntimeLoggingPolicySnapshot({
+      snapshot,
+      kv: configKv,
+      objectStore: snapshotBucket,
+      now: 1_700_000_000_000,
+    });
+    vi.mocked(configKv.get).mockClear();
+    vi.mocked(snapshotBucket.get).mockClear();
+
+    const env = {
+      ...mockEnv,
+      AUTHRIM_CONFIG: configKv,
+      DIAGNOSTIC_LOGS: snapshotBucket,
+    };
+
+    await createAuditLog(env, {
+      tenantId,
+      userId: 'user-123',
+      action: 'login.success',
+      resource: 'auth',
+      resourceId: 'session-1',
+      ipAddress: '127.0.0.1',
+      userAgent: 'Test',
+      metadata: '{}',
+      severity: 'info',
+    });
+
+    const deps = mockCreateAuditService.mock.calls.at(-1)?.[0] as {
+      resolveDeliveryPlan: (input: {
+        tenantId: string;
+        logType: 'event' | 'pii';
+        auditProfile: {
+          id: string;
+          kind: 'audit';
+          label: string;
+          primary: { type: 'd1'; bindingRef: string; dataset: string };
+          archive: null;
+          sinks: [];
+        };
+      }) => Promise<{
+        archives: Array<{
+          type: string;
+          destinationId?: string;
+          bucketRef?: string;
+          prefix?: string;
+        }>;
+        sinks: Array<{
+          type: string;
+          destinationId?: string;
+          url?: string;
+          headers?: Record<string, string>;
+        }>;
+        matchedRuleNames?: string[];
+      }>;
+    };
+    const input = {
+      tenantId,
+      logType: 'event' as const,
+      auditProfile: {
+        id: 'builtin:audit:standard',
+        kind: 'audit' as const,
+        label: 'Standard Audit',
+        primary: { type: 'd1' as const, bindingRef: 'DB', dataset: 'event_log' },
+        archive: null,
+        sinks: [],
+      },
+    };
+    const firstPlan = await deps.resolveDeliveryPlan(input);
+    const secondPlan = await deps.resolveDeliveryPlan(input);
+
+    expect(firstPlan.archives[0]).toMatchObject({
+      type: 'r2',
+      destinationId: 'dest_archive',
+      bucketRef: 'DIAGNOSTIC_LOGS',
+      prefix: 'audit-chunks',
+    });
+    expect(firstPlan.sinks[0]).toMatchObject({
+      type: 'http',
+      destinationId: 'dest_http',
+      url: 'https://collector.example/logs',
+      headers: { 'X-Authrim-Route': 'snapshot' },
+    });
+    expect(firstPlan.matchedRuleNames).toEqual(['logging_policy_snapshot']);
+    expect(secondPlan).toEqual(firstPlan);
+    expect(configKv.get).toHaveBeenCalledTimes(1);
+    expect(snapshotBucket.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the platform runtime logging policy snapshot when tenant snapshot is absent', async () => {
+    const tenantId = 'tenant-platform-fallback-routing';
+    const kvValues = new Map<string, string>();
+    const objectValues = new Map<string, string>();
+    const configKv = {
+      get: vi.fn(async (key: string) => kvValues.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => {
+        kvValues.set(key, value);
+      }),
+    } as unknown as KVNamespace;
+    const snapshotBucket = {
+      put: vi.fn(async (key: string, value: string) => {
+        objectValues.set(key, value);
+      }),
+      get: vi.fn(async (key: string) =>
+        objectValues.has(key)
+          ? {
+              text: vi.fn(async () => objectValues.get(key) ?? ''),
+            }
+          : null
+      ),
+    } as unknown as R2Bucket;
+    const snapshot = await createRuntimeLoggingPolicySnapshot({
+      scopeType: 'platform',
+      scopeId: 'global',
+      version: 1,
+      snapshotId: 'snap_test_platform_audit_fallback',
+      synchronizedAt: 1_700_000_000_000,
+      sourceUpdatedAt: 1_700_000_000_000,
+      policies: {
+        assignments: [
+          {
+            id: 'lpa_platform_archive',
+            tenant_id: null,
+            log_type: 'audit',
+            plane: 'archive',
+            destination_id: 'dest_platform_archive',
+            enabled: 1,
+            managed_by: 'platform',
+            lane: 'critical',
+            version: 1,
+          },
+        ],
+        fallbacks: [],
+        destinations: [
+          {
+            id: 'dest_platform_archive',
+            scope_type: 'platform',
+            scope_id: 'global',
+            destination_kind: 'object_storage',
+            provider: 'r2',
+            name: 'platform-archive',
+            display_name: 'Platform Archive',
+            lifecycle_status: 'active',
+            health_status: 'healthy',
+            provider_config: JSON.stringify({
+              bindingRef: 'DIAGNOSTIC_LOGS',
+              prefix: 'platform-audit-chunks',
+            }),
+            allowed_tenant_ids: JSON.stringify([]),
+            allowed_log_types: JSON.stringify(['audit']),
+            allowed_planes: JSON.stringify(['archive']),
+            region: null,
+            critical_allowed: 1,
+            default_fallback_eligible: 1,
+            retention_days: 30,
+            encryption_mode: 'platform_managed',
+          },
+        ],
+      },
+    });
+    await publishRuntimeLoggingPolicySnapshot({
+      snapshot,
+      kv: configKv,
+      objectStore: snapshotBucket,
+      now: 1_700_000_000_000,
+    });
+    vi.mocked(configKv.get).mockClear();
+    vi.mocked(snapshotBucket.get).mockClear();
+
+    const env = {
+      ...mockEnv,
+      AUTHRIM_CONFIG: configKv,
+      DIAGNOSTIC_LOGS: snapshotBucket,
+    };
+
+    await createAuditLog(env, {
+      tenantId,
+      userId: 'user-123',
+      action: 'login.success',
+      resource: 'auth',
+      resourceId: 'session-1',
+      ipAddress: '127.0.0.1',
+      userAgent: 'Test',
+      metadata: '{}',
+      severity: 'info',
+    });
+
+    const deps = mockCreateAuditService.mock.calls.at(-1)?.[0] as {
+      resolveDeliveryPlan: (input: {
+        tenantId: string;
+        logType: 'event' | 'pii';
+        auditProfile: {
+          id: string;
+          kind: 'audit';
+          label: string;
+          primary: { type: 'd1'; bindingRef: string; dataset: string };
+          archive: null;
+          sinks: [];
+        };
+      }) => Promise<{
+        archives: Array<{
+          type: string;
+          destinationId?: string;
+          bucketRef?: string;
+          prefix?: string;
+        }>;
+        sinks: Array<{ type: string; destinationId?: string }>;
+        matchedRuleNames?: string[];
+      }>;
+    };
+    const input = {
+      tenantId,
+      logType: 'event' as const,
+      auditProfile: {
+        id: 'builtin:audit:standard',
+        kind: 'audit' as const,
+        label: 'Standard Audit',
+        primary: { type: 'd1' as const, bindingRef: 'DB', dataset: 'event_log' },
+        archive: null,
+        sinks: [],
+      },
+    };
+    const plan = await deps.resolveDeliveryPlan(input);
+    const cachedPlan = await deps.resolveDeliveryPlan(input);
+
+    expect(plan.archives[0]).toMatchObject({
+      type: 'r2',
+      destinationId: 'dest_platform_archive',
+      bucketRef: 'DIAGNOSTIC_LOGS',
+      prefix: 'platform-audit-chunks',
+    });
+    expect(plan.sinks).toEqual([]);
+    expect(plan.matchedRuleNames).toEqual(['logging_policy_snapshot']);
+    expect(cachedPlan).toEqual(plan);
+    expect(configKv.get).toHaveBeenCalledTimes(2);
+    expect(snapshotBucket.get).toHaveBeenCalledTimes(1);
   });
 
   it('should log critical operations to console (PII-safe)', async () => {

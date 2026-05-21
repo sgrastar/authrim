@@ -1,8 +1,8 @@
 /**
- * FlowExecutor - 統合テスト
+ * FlowExecutor - integration tests
  *
- * determineNextNode メソッドの動作を検証
- * Decision/Switch分岐のテスト、後方互換性のテスト
+ * Validate determineNextNode behavior
+ * Tests for Decision/Switch branching and backward compatibility
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -14,10 +14,10 @@ import type {
   SwitchNodeConfig,
 } from './types.js';
 
-// FlowExecutorの一部メソッドをテストするため、プライベートメソッドにアクセス可能なテスト用クラスを作成
+// Create a test class that can access private methods to test selected FlowExecutor methods
 class FlowExecutorTestHelper {
   /**
-   * Decision/Switchノードの評価（テスト用にpublicメソッドとして公開）
+   * Evaluate Decision/Switch nodes (exposed as public methods for tests)
    */
   evaluateDecisionNode(
     node: CompiledNode,
@@ -36,7 +36,7 @@ class FlowExecutorTestHelper {
   }
 
   /**
-   * Decisionブランチを評価
+   * Evaluate Decision branches
    */
   private evaluateDecisionBranches(
     node: CompiledNode,
@@ -50,7 +50,7 @@ class FlowExecutorTestHelper {
 
     const transitions = plan.transitions.get(node.id) || [];
 
-    // priority順に条件を評価
+    // Evaluate conditions in priority order
     for (const branch of config.branches) {
       const matches = this.evaluateCondition(branch.condition, context);
 
@@ -62,7 +62,7 @@ class FlowExecutorTestHelper {
       }
     }
 
-    // デフォルト分岐
+    // Default branch
     if (config.defaultBranch) {
       const defaultTransition = transitions.find((t) => t.sourceHandle === config.defaultBranch);
       if (defaultTransition) {
@@ -74,7 +74,7 @@ class FlowExecutorTestHelper {
   }
 
   /**
-   * Switchケースを評価
+   * Evaluate Switch case
    */
   private evaluateSwitchCases(
     node: CompiledNode,
@@ -86,14 +86,14 @@ class FlowExecutorTestHelper {
       return null;
     }
 
-    // Prototype Pollution対策用の危険なキー
+    // Dangerous keys for prototype pollution mitigation
     const DANGEROUS_KEYS = ['__proto__', 'constructor', 'prototype'];
 
-    // switchKeyの値を取得
+    // Get the switchKey value
     const keyParts = config.switchKey.split('.');
     let value: unknown = context;
     for (const part of keyParts) {
-      // Prototype Pollution対策: 危険なキーを拒否
+      // Prototype pollution mitigation: Reject dangerous keys
       if (DANGEROUS_KEYS.includes(part)) {
         console.error(
           `[Security] Dangerous key detected in switchKey: "${part}" (full key: "${config.switchKey}")`
@@ -107,7 +107,7 @@ class FlowExecutorTestHelper {
         break;
       }
 
-      // Prototype Pollution対策: hasOwnPropertyでプロトタイプチェーンを遡らない
+      // Prototype pollution mitigation: Use hasOwnProperty to avoid walking the prototype chain
       if (!Object.prototype.hasOwnProperty.call(value, part)) {
         value = undefined;
         break;
@@ -118,7 +118,7 @@ class FlowExecutorTestHelper {
 
     const transitions = plan.transitions.get(node.id) || [];
 
-    // 各caseと値を比較
+    // Compare each case with the value
     for (const caseItem of config.cases) {
       if (caseItem.values.includes(value as string | number | boolean)) {
         const transition = transitions.find((t) => t.sourceHandle === caseItem.id);
@@ -128,7 +128,7 @@ class FlowExecutorTestHelper {
       }
     }
 
-    // デフォルトcase
+    // Default case
     if (config.defaultCase) {
       const defaultTransition = transitions.find((t) => t.sourceHandle === config.defaultCase);
       if (defaultTransition) {
@@ -140,10 +140,10 @@ class FlowExecutorTestHelper {
   }
 
   /**
-   * 条件評価（簡易実装）
+   * Condition evaluation (simple implementation)
    */
   private evaluateCondition(condition: unknown, context: FlowRuntimeContext): boolean {
-    // 実際の evaluate 関数を使う代わりに、簡易実装
+    // Instead of using the real evaluate function, simple implementation
     const cond = condition as { key: string; operator: string; value: unknown };
 
     const keyParts = cond.key.split('.');
@@ -377,7 +377,7 @@ describe('FlowExecutor - Decision Node', () => {
   it('should use default branch when no conditions match', () => {
     const context: FlowRuntimeContext = {
       risk: {
-        // score が存在しないケース
+        // Case where score does not exist
       },
     };
 
@@ -388,8 +388,8 @@ describe('FlowExecutor - Decision Node', () => {
   });
 
   it('should prioritize first matching branch', () => {
-    // risk.score = 80 の場合、medium と high の両方にマッチするが、
-    // priority 1 の high_risk が先に評価されるべき
+    // When risk.score = 80, both medium and high match, but,
+    // priority 1 high_risk should be evaluated first
     const context: FlowRuntimeContext = {
       risk: {
         score: 80,
@@ -399,7 +399,7 @@ describe('FlowExecutor - Decision Node', () => {
     const decisionNode = mockDecisionPlan.nodes.get('decision_1')!;
     const result = helper.evaluateDecisionNode(decisionNode, mockDecisionPlan, context);
 
-    // priority 1 (high_risk) が選択される
+    // priority 1 (high_risk) is selected
     expect(result).toBe('high_risk_action');
   });
 });
@@ -453,7 +453,7 @@ describe('FlowExecutor - Switch Node', () => {
   it('should handle missing key', () => {
     const context: FlowRuntimeContext = {
       request: {
-        // country が存在しない
+        // country does not exist
       },
     };
 
@@ -465,7 +465,7 @@ describe('FlowExecutor - Switch Node', () => {
 });
 
 // =============================================================================
-// Security Tests - Critical/High/Medium脆弱性対策
+// Security Tests - Critical/High/Medium-severity vulnerability mitigations
 // =============================================================================
 
 // =============================================================================
@@ -474,22 +474,22 @@ describe('FlowExecutor - Switch Node', () => {
 
 describe('Security - Session Validation (Critical 4)', () => {
   /**
-   * FlowExecutor.submitCapability のセッション検証テスト
+   * Session validation tests for FlowExecutor.submitCapability
    *
-   * テスト観点:
-   * - tenantIdミスマッチ: リクエストのtenantIdとセッションのtenantIdが異なる場合はエラー
-   * - clientIdミスマッチ: リクエストのclientIdとセッションのclientIdが異なる場合はエラー
-   * - 正常ケース: 両方一致する場合は処理続行
+   * Test cases:
+   * - tenantIdmismatch: error when request tenantId and session tenantId differ
+   * - clientIdmismatch: error when request clientId and session clientId differ
+   * - Success case: Continue when both match
    */
 
-  // FlowExecutorを直接モックするのではなく、検証ロジックをユニットテスト
+  // Unit-test the verification logic instead of mocking FlowExecutor directly
   function validateSession(
     requestTenantId: string | undefined,
     requestClientId: string | undefined,
     sessionTenantId: string,
     sessionClientId: string
   ): { valid: boolean; errorCode?: string; errorMessage?: string } {
-    // tenantId検証
+    // tenantIdverification
     if (requestTenantId && sessionTenantId !== requestTenantId) {
       return {
         valid: false,
@@ -498,7 +498,7 @@ describe('Security - Session Validation (Critical 4)', () => {
       };
     }
 
-    // clientId検証
+    // clientIdverification
     if (requestClientId && sessionClientId !== requestClientId) {
       return {
         valid: false,
@@ -512,10 +512,10 @@ describe('Security - Session Validation (Critical 4)', () => {
 
   it('should reject when tenantId mismatches', () => {
     const result = validateSession(
-      'tenant-attacker', // リクエストのtenantId（攻撃者）
-      'client-1', // リクエストのclientId
-      'tenant-victim', // セッションのtenantId（被害者）
-      'client-1' // セッションのclientId
+      'tenant-attacker', // request tenantId (attacker)
+      'client-1', // request clientId
+      'tenant-victim', // session tenantId (victim)
+      'client-1' // session clientId
     );
 
     expect(result.valid).toBe(false);
@@ -525,10 +525,10 @@ describe('Security - Session Validation (Critical 4)', () => {
 
   it('should reject when clientId mismatches', () => {
     const result = validateSession(
-      'tenant-1', // リクエストのtenantId
-      'client-attacker', // リクエストのclientId（攻撃者）
-      'tenant-1', // セッションのtenantId
-      'client-victim' // セッションのclientId（被害者）
+      'tenant-1', // request tenantId
+      'client-attacker', // request clientId (attacker)
+      'tenant-1', // session tenantId
+      'client-victim' // session clientId (victim)
     );
 
     expect(result.valid).toBe(false);
@@ -538,10 +538,10 @@ describe('Security - Session Validation (Critical 4)', () => {
 
   it('should allow when both tenantId and clientId match', () => {
     const result = validateSession(
-      'tenant-1', // リクエストのtenantId
-      'client-1', // リクエストのclientId
-      'tenant-1', // セッションのtenantId（一致）
-      'client-1' // セッションのclientId（一致）
+      'tenant-1', // request tenantId
+      'client-1', // request clientId
+      'tenant-1', // session tenantId (match)
+      'client-1' // session clientId (match)
     );
 
     expect(result.valid).toBe(true);
@@ -550,10 +550,10 @@ describe('Security - Session Validation (Critical 4)', () => {
 
   it('should allow when tenantId is not provided (optional check)', () => {
     const result = validateSession(
-      undefined, // tenantIdなし（チェックスキップ）
-      'client-1', // リクエストのclientId
-      'tenant-any', // セッションのtenantId（何でもOK）
-      'client-1' // セッションのclientId
+      undefined, // no tenantId (check skipped)
+      'client-1', // request clientId
+      'tenant-any', // session tenantId (any value is acceptable)
+      'client-1' // session clientId
     );
 
     expect(result.valid).toBe(true);
@@ -561,10 +561,10 @@ describe('Security - Session Validation (Critical 4)', () => {
 
   it('should allow when clientId is not provided (optional check)', () => {
     const result = validateSession(
-      'tenant-1', // リクエストのtenantId
-      undefined, // clientIdなし（チェックスキップ）
-      'tenant-1', // セッションのtenantId
-      'client-any' // セッションのclientId（何でもOK）
+      'tenant-1', // request tenantId
+      undefined, // no clientId (check skipped)
+      'tenant-1', // session tenantId
+      'client-any' // session clientId (any value is acceptable)
     );
 
     expect(result.valid).toBe(true);
@@ -579,7 +579,7 @@ describe('Security - Session Validation (Critical 4)', () => {
     );
 
     expect(result.valid).toBe(false);
-    // tenantIdが先にチェックされるのでtenantエラーが返る
+    // tenantId is checked first, so a tenant error is returned
     expect(result.errorCode).toBe('invalid_session');
     expect(result.errorMessage).toBe('Session tenant mismatch');
   });
@@ -606,7 +606,7 @@ describe('Security - Prototype Pollution in Switch (Critical 1)', () => {
             nextOnSuccess: null,
             nextOnError: null,
             decisionConfig: {
-              switchKey: 'request.__proto__.country', // 悪意のあるキー
+              switchKey: 'request.__proto__.country', // malicious key
               cases: [
                 {
                   id: 'case_us',
@@ -647,7 +647,7 @@ describe('Security - Prototype Pollution in Switch (Critical 1)', () => {
     const maliciousNode = maliciousPlan.nodes.get('switch_malicious')!;
     const result = helper.evaluateDecisionNode(maliciousNode, maliciousPlan, context);
 
-    // Prototype Pollution対策により、悪意のあるキーはundefinedとなり、default caseが選択される
+    // Prototype pollution mitigation makes the malicious key undefined, so the default case is selected
     expect(result).toBe('other_action');
   });
 
@@ -665,7 +665,7 @@ describe('Security - Prototype Pollution in Switch (Critical 1)', () => {
             nextOnSuccess: null,
             nextOnError: null,
             decisionConfig: {
-              switchKey: 'request.constructor.name', // 悪意のあるキー
+              switchKey: 'request.constructor.name', // malicious key
               cases: [
                 {
                   id: 'case_object',
@@ -706,7 +706,7 @@ describe('Security - Prototype Pollution in Switch (Critical 1)', () => {
     const maliciousNode = maliciousPlan.nodes.get('switch_malicious')!;
     const result = helper.evaluateDecisionNode(maliciousNode, maliciousPlan, context);
 
-    // Prototype Pollution対策により、constructorキーは拒否される
+    // Prototype pollution mitigation rejects constructor keys
     expect(result).toBe('other_action');
   });
 });

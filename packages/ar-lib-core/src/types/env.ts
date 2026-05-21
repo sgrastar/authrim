@@ -54,6 +54,7 @@ export interface Env {
   DB: D1Database; // Core DB (non-PII data: users_core, sessions, passkeys, clients, roles)
   DB_PII: D1Database; // PII DB (personal information: users_pii, linked_identities, subject_identifiers)
   DB_ADMIN: D1Database; // Admin DB (admin_users, admin_roles, admin_sessions, admin_audit_log, admin_ip_allowlist)
+  LOGGING_INDEX_DB?: D1Database; // Optional tenant-local hot chunk index DB binding
 
   // R2 Buckets
   AVATARS: R2Bucket;
@@ -197,6 +198,7 @@ export interface Env {
   // Object Artifact Encryption
   OBJECT_ENCRYPTION_ROOT_KEY?: string; // 32-byte hex string (64 characters) for object plane envelope encryption
   OBJECT_ENCRYPTION_KEY_VERSION?: string; // Key version for object plane encryption (default: 1)
+  LOGGING_TENANT_KEY_SALT?: string; // Optional salt while logging tenant_key is derived before registry-backed keys
   PII_CACHE_MODE?: string; // merged, encrypted_short_ttl, or no_cross_request_pii
   PII_CACHE_TTL?: string; // Encrypted PII cache TTL in seconds (default: 300)
 
@@ -300,6 +302,7 @@ export interface Env {
   OTP_HMAC_SECRET?: string; // Email OTP HMAC secret for code hashing
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
   KEY_MANAGER_SECRET?: string; // Scoped secret for KeyManager Durable Object access
+  LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
   VERSION_MANAGER_SECRET?: string; // Scoped secret for VersionManager Durable Object access
   TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK?: string; // Ed25519 private JWK for control/management snapshot publishing only
   TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID?: string; // Key ID for runtime registry snapshot signatures
@@ -367,5 +370,9 @@ export interface Env {
   // ============================================================
   CHECK_CACHE_KV?: KVNamespace; // Cache for permission check results
   AUDIT_QUEUE?: Queue; // Cloudflare Queue for async audit log processing
+  LOGGING_DELIVERY_CRITICAL_QUEUE?: Queue; // High-priority logging delivery queue
+  LOGGING_DELIVERY_QUEUE?: Queue; // Default logging delivery queue
+  LOGGING_DELIVERY_BULK_QUEUE?: Queue; // Bulk logging delivery queue
+  LOGGING_DELIVERY_QUEUE_NAMES?: string; // Comma-separated generated queue names for routing
   AUDIT_ARCHIVE?: R2Bucket; // R2 bucket for audit log archive and DLQ backup
 }

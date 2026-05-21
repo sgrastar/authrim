@@ -12,6 +12,7 @@ const {
   mockRefreshTenantDatabaseReconciliation,
   mockRefreshTenantRuntimeRegistrySnapshots,
   mockProcessPendingTenantDiscoveryReindexJobs,
+  mockProcessLoggingStorageMaintenanceJobs,
   mockProcessPendingGenericAdminJobs,
 } = vi.hoisted(() => ({
   mockProcessPendingTenantDeletionJobs: vi.fn(),
@@ -25,6 +26,7 @@ const {
   mockRefreshTenantDatabaseReconciliation: vi.fn(),
   mockRefreshTenantRuntimeRegistrySnapshots: vi.fn(),
   mockProcessPendingTenantDiscoveryReindexJobs: vi.fn(),
+  mockProcessLoggingStorageMaintenanceJobs: vi.fn(),
   mockProcessPendingGenericAdminJobs: vi.fn(),
 }));
 
@@ -67,6 +69,10 @@ vi.mock('../tenant-discovery-reindex-jobs', () => ({
   processPendingTenantDiscoveryReindexJobs: mockProcessPendingTenantDiscoveryReindexJobs,
 }));
 
+vi.mock('../logging-storage-maintenance-jobs', () => ({
+  processLoggingStorageMaintenanceJobs: mockProcessLoggingStorageMaintenanceJobs,
+}));
+
 vi.mock('../admin-job-executor', () => ({
   processPendingGenericAdminJobs: mockProcessPendingGenericAdminJobs,
 }));
@@ -94,6 +100,7 @@ describe('scheduled admin job queues', () => {
     mockRefreshTenantDatabaseReconciliation.mockResolvedValue(undefined);
     mockRefreshTenantRuntimeRegistrySnapshots.mockResolvedValue(undefined);
     mockProcessPendingTenantDiscoveryReindexJobs.mockResolvedValue(undefined);
+    mockProcessLoggingStorageMaintenanceJobs.mockResolvedValue(undefined);
     mockProcessPendingGenericAdminJobs.mockResolvedValue(undefined);
   });
 
@@ -111,6 +118,7 @@ describe('scheduled admin job queues', () => {
     expect(mockRefreshTenantDatabaseReconciliation).toHaveBeenCalledWith(env, log);
     expect(mockRefreshTenantRuntimeRegistrySnapshots).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingTenantDiscoveryReindexJobs).toHaveBeenCalledWith(env, log);
+    expect(mockProcessLoggingStorageMaintenanceJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingGenericAdminJobs).toHaveBeenCalledWith(env, log);
   });
 
@@ -129,6 +137,7 @@ describe('scheduled admin job queues', () => {
     expect(mockRefreshTenantDatabaseReconciliation).toHaveBeenCalledWith(env, log);
     expect(mockRefreshTenantRuntimeRegistrySnapshots).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingTenantDiscoveryReindexJobs).toHaveBeenCalledWith(env, log);
+    expect(mockProcessLoggingStorageMaintenanceJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingGenericAdminJobs).toHaveBeenCalledWith(env, log);
     expect(log.error).toHaveBeenCalledWith('User import job processing failed', {}, failure);
   });

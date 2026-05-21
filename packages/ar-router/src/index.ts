@@ -336,7 +336,7 @@ app.use('*', async (c, next) => {
       }
     } catch {
       // KV read error - continue with env fallback
-      // Fail-safe: don't block requests due to KV issues
+      // fail-safe: don't block requests due to KV issues
     }
   }
 

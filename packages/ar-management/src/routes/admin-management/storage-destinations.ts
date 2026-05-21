@@ -10,6 +10,7 @@ import type {
 import {
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
+  type AdminStorageDestination,
   AdminStorageDestinationRepository,
   createErrorResponse,
   encryptValue,
@@ -17,9 +18,21 @@ import {
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import {
+  validateDestinationProviderConfig,
+  type DestinationProvider,
+} from '@authrim/ar-lib-logging/destinations';
 import { requireAdminPermissionOrElevationGrant } from '../../admin-elevation-access';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { testStorageDestinationConnectivity } from './connectivity-tests';
+import {
+  adminActionEnvelope,
+  adminDetailEnvelope,
+  adminListEnvelope,
+  adminMutationEnvelope,
+  createAdminFieldErrorResponse,
+  fieldError,
+} from './response-helpers';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -30,6 +43,8 @@ const STORAGE_DESTINATION_PROVIDERS = new Set<StorageDestinationProvider>([
   'custom',
 ]);
 const STORAGE_DESTINATION_STATUSES = new Set<AdminResourceStatus>(['active', 'disabled']);
+const STORAGE_DESTINATION_SECRET_KEY_PATTERN =
+  /(?:authorization|cookie|token|secret|password|passphrase|credential|private[_-]?key|api[_-]?key|client[_-]?secret|signature|hmac|access[_-]?key)/i;
 
 export const storageDestinationsRouter = new Hono<{
   Bindings: Env;
@@ -56,11 +71,92 @@ function hasPlatformAuthority(authContext: AdminAuthContext): boolean {
   );
 }
 
+function sanitizeStorageDestinationForAuth(
+  authContext: AdminAuthContext,
+  destination: AdminStorageDestination
+): AdminStorageDestination {
+  if (hasPlatformAuthority(authContext)) {
+    return destination;
+  }
+  return {
+    ...destination,
+    config: {},
+    credential_key_version: null,
+    credential_updated_at: null,
+    credential_updated_by: null,
+  };
+}
+
+function sanitizeStorageDestinationsForAuth(
+  authContext: AdminAuthContext,
+  destinations: AdminStorageDestination[]
+): AdminStorageDestination[] {
+  return destinations.map((destination) =>
+    sanitizeStorageDestinationForAuth(authContext, destination)
+  );
+}
+
 function parseConfig(config: unknown): Record<string, unknown> {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     return {};
   }
   return config as Record<string, unknown>;
+}
+
+function validateStorageDestinationConfig(
+  provider: StorageDestinationProvider,
+  config: Record<string, unknown>
+): { valid: true } | { valid: false; fields: ReturnType<typeof fieldError>[] } {
+  const result = validateDestinationProviderConfig(provider as DestinationProvider, config);
+  const fields = result.errors.map((error) =>
+    fieldError(`config.${error.field}`, error.message, `Config field ${error.field} is required.`)
+  );
+  const forbiddenPath = findForbiddenStorageDestinationConfigPath(config);
+  if (forbiddenPath) {
+    fields.push(
+      fieldError(
+        `config.${forbiddenPath}`,
+        'secret_not_allowed',
+        'Storage destination config must reference credentials, not include secret values.'
+      )
+    );
+  }
+  return fields.length === 0 ? { valid: true } : { valid: false, fields };
+}
+
+function findForbiddenStorageDestinationConfigPath(
+  config: Record<string, unknown>,
+  path: string[] = []
+): string | null {
+  for (const [key, value] of Object.entries(config)) {
+    const nextPath = [...path, key];
+    if (STORAGE_DESTINATION_SECRET_KEY_PATTERN.test(key)) {
+      return nextPath.join('.');
+    }
+    if (Array.isArray(value)) {
+      for (const [index, item] of value.entries()) {
+        if (item && typeof item === 'object') {
+          const nested = findForbiddenStorageDestinationConfigPath(
+            item as Record<string, unknown>,
+            [...nextPath, String(index)]
+          );
+          if (nested) {
+            return nested;
+          }
+        }
+      }
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const nested = findForbiddenStorageDestinationConfigPath(
+        value as Record<string, unknown>,
+        nextPath
+      );
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+  return null;
 }
 
 async function getScope(
@@ -114,8 +210,8 @@ async function createAuditLog(
   resourceId: string,
   result: 'success' | 'failure',
   metadata?: Record<string, unknown>
-): Promise<void> {
-  await writeAdminAuditLog(c, {
+): Promise<string | null> {
+  return writeAdminAuditLog(c, {
     action,
     resourceType: 'admin_storage_destination',
     resourceId,
@@ -140,6 +236,13 @@ async function requireHighRiskApproval(
   return resolution instanceof Response ? resolution : null;
 }
 
+async function requirePlatformMutationAuthority(c: AdminContext): Promise<Response | null> {
+  if (hasPlatformAuthority(getAuth(c))) {
+    return null;
+  }
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+}
+
 storageDestinationsRouter.get('/', async (c) => {
   const authContext = getAuth(c);
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_LIST)) {
@@ -154,7 +257,7 @@ storageDestinationsRouter.get('/', async (c) => {
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
     const items = await repo.listByScope(scope.scopeType, scope.scopeId);
-    return c.json({ items, total: items.length });
+    return c.json(adminListEnvelope(sanitizeStorageDestinationsForAuth(authContext, items)));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -169,7 +272,7 @@ storageDestinationsRouter.get('/usable', async (c) => {
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
     const items = await repo.listUsableForTenant(getTenantIdFromContext(c));
-    return c.json({ items, total: items.length });
+    return c.json(adminListEnvelope(sanitizeStorageDestinationsForAuth(authContext, items)));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -180,11 +283,15 @@ storageDestinationsRouter.post('/', async (c) => {
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   }
-
-  const scope = await getScope(c);
-  if (scope instanceof Response) {
-    return scope;
+  const platformError = await requirePlatformMutationAuthority(c);
+  if (platformError) {
+    return platformError;
   }
+
+  const scope: { scopeType: AdminResourceScopeType; scopeId: string } = {
+    scopeType: 'platform',
+    scopeId: 'platform',
+  };
 
   try {
     const body = await c.req.json<{
@@ -202,6 +309,11 @@ storageDestinationsRouter.post('/', async (c) => {
     }
     if (body.status !== undefined && !STORAGE_DESTINATION_STATUSES.has(body.status)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+    const config = parseConfig(body.config);
+    const configValidation = validateStorageDestinationConfig(body.provider, config);
+    if (!configValidation.valid) {
+      return createAdminFieldErrorResponse(c, configValidation.fields);
     }
 
     let credential: { encrypted: string; keyVersion: number } | null = null;
@@ -230,7 +342,7 @@ storageDestinationsRouter.post('/', async (c) => {
       display_name: body.display_name?.trim() || body.name.trim(),
       description: body.description ?? null,
       provider: body.provider,
-      config: parseConfig(body.config),
+      config,
       credential_encrypted: credential?.encrypted ?? null,
       credential_key_version: credential?.keyVersion ?? null,
       credential_updated_by: credential ? authContext.userId : null,
@@ -238,13 +350,13 @@ storageDestinationsRouter.post('/', async (c) => {
       created_by: authContext.userId,
     });
 
-    await createAuditLog(c, 'storage_destination.create', created.id, 'success', {
+    const auditId = await createAuditLog(c, 'storage_destination.create', created.id, 'success', {
       scope_type: created.scope_type,
       scope_id: created.scope_id,
       provider: created.provider,
       credential_set: !!credential,
     });
-    return c.json(created, 201);
+    return c.json(adminMutationEnvelope(created, { auditId }), 201);
   } catch {
     await createAuditLog(c, 'storage_destination.create', 'unknown', 'failure');
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -269,7 +381,7 @@ storageDestinationsRouter.get('/:id', async (c) => {
     if (destination.scope_type === 'tenant' && destination.scope_id !== getTenantIdFromContext(c)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-    return c.json(destination);
+    return c.json(adminDetailEnvelope(sanitizeStorageDestinationForAuth(authContext, destination)));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -279,6 +391,10 @@ storageDestinationsRouter.patch('/:id', async (c) => {
   const authContext = getAuth(c);
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platformError = await requirePlatformMutationAuthority(c);
+  if (platformError) {
+    return platformError;
   }
 
   try {
@@ -303,11 +419,18 @@ storageDestinationsRouter.patch('/:id', async (c) => {
     if (body.status !== undefined && !STORAGE_DESTINATION_STATUSES.has(body.status)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
+    const config = body.config === undefined ? undefined : parseConfig(body.config);
+    if (config !== undefined) {
+      const configValidation = validateStorageDestinationConfig(existing.provider, config);
+      if (!configValidation.valid) {
+        return createAdminFieldErrorResponse(c, configValidation.fields);
+      }
+    }
 
     const updated = await repo.updateDestination(existing.id, {
       display_name: body.display_name,
       description: body.description,
-      config: body.config === undefined ? undefined : parseConfig(body.config),
+      config,
       status: body.status,
       updated_by: authContext.userId,
     });
@@ -315,8 +438,8 @@ storageDestinationsRouter.patch('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await createAuditLog(c, 'storage_destination.update', updated.id, 'success');
-    return c.json(updated);
+    const auditId = await createAuditLog(c, 'storage_destination.update', updated.id, 'success');
+    return c.json(adminMutationEnvelope(updated, { auditId }));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -326,6 +449,10 @@ storageDestinationsRouter.put('/:id/credentials', async (c) => {
   const authContext = getAuth(c);
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platformError = await requirePlatformMutationAuthority(c);
+  if (platformError) {
+    return platformError;
   }
 
   try {
@@ -376,8 +503,13 @@ storageDestinationsRouter.put('/:id/credentials', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await createAuditLog(c, 'storage_destination.credential.update', updated.id, 'success');
-    return c.json(updated);
+    const auditId = await createAuditLog(
+      c,
+      'storage_destination.credential.update',
+      updated.id,
+      'success'
+    );
+    return c.json(adminMutationEnvelope(updated, { auditId }));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -402,7 +534,7 @@ storageDestinationsRouter.get('/:id/usage', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
     const items = await repo.listUsage(destination.id);
-    return c.json({ items, total: items.length });
+    return c.json(adminListEnvelope(items));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -410,8 +542,12 @@ storageDestinationsRouter.get('/:id/usage', async (c) => {
 
 storageDestinationsRouter.post('/:id/usage', async (c) => {
   const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_USAGE_READ)) {
+  if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platformError = await requirePlatformMutationAuthority(c);
+  if (platformError) {
+    return platformError;
   }
 
   try {
@@ -446,7 +582,7 @@ storageDestinationsRouter.post('/:id/usage', async (c) => {
       metadata: parseConfig(body.metadata),
       created_by: authContext.userId,
     });
-    return c.json(usage, 201);
+    return c.json(adminMutationEnvelope(usage), 201);
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -456,6 +592,10 @@ storageDestinationsRouter.post('/:id/test', async (c) => {
   const authContext = getAuth(c);
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_TEST)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platformError = await requirePlatformMutationAuthority(c);
+  if (platformError) {
+    return platformError;
   }
 
   try {
@@ -471,7 +611,7 @@ storageDestinationsRouter.post('/:id/test', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
     const result = await testStorageDestinationConnectivity(c.env, destination);
-    await createAuditLog(
+    const auditId = await createAuditLog(
       c,
       'storage_destination.test',
       destination.id,
@@ -482,7 +622,7 @@ storageDestinationsRouter.post('/:id/test', async (c) => {
         message: result.message,
       }
     );
-    return c.json(result, result.status === 'error' ? 400 : 200);
+    return c.json(adminActionEnvelope(result, { auditId }), result.status === 'error' ? 400 : 200);
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -492,6 +632,10 @@ storageDestinationsRouter.delete('/:id', async (c) => {
   const authContext = getAuth(c);
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_DELETE)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platformError = await requirePlatformMutationAuthority(c);
+  if (platformError) {
+    return platformError;
   }
 
   try {
@@ -521,12 +665,12 @@ storageDestinationsRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await createAuditLog(c, 'storage_destination.delete', existing.id, 'success', {
+    const auditId = await createAuditLog(c, 'storage_destination.delete', existing.id, 'success', {
       scope_type: existing.scope_type,
       scope_id: existing.scope_id,
       provider: existing.provider,
     });
-    return c.json({ success: true });
+    return c.json(adminActionEnvelope({ success: true }, { auditId }));
   } catch (error) {
     if (error instanceof Error && error.message === 'storage_destination_in_use') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);

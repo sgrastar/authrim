@@ -99,6 +99,7 @@ export async function validateSAMLLogoutRequestSignature(
           ...(shouldAllowSha1XmlSignature(input.spConfig)
             ? { allowSha1SignatureAlgorithm: true }
             : {}),
+          ...(shouldAllowSha1XmlDigest(input.spConfig) ? { allowSha1DigestAlgorithm: true } : {}),
         })
       ) {
         return;
@@ -248,6 +249,13 @@ function shouldAllowSha1XmlSignature(spConfig: SAMLSPConfig): boolean {
   return (
     spConfig.authnRequestLegacyAlgorithmPolicy === 'explicit_opt_in' &&
     (spConfig.acceptedAuthnRequestSignatureAlgorithms ?? []).includes(SIGNATURE_ALGORITHMS.RSA_SHA1)
+  );
+}
+
+function shouldAllowSha1XmlDigest(spConfig: SAMLSPConfig): boolean {
+  return (
+    spConfig.authnRequestLegacyAlgorithmPolicy === 'explicit_opt_in' &&
+    (spConfig.acceptedAuthnRequestDigestAlgorithms ?? []).includes(DIGEST_ALGORITHMS.SHA1)
   );
 }
 

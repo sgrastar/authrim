@@ -1,6 +1,6 @@
 import type { SAMLSPConfig } from '@authrim/ar-lib-core';
 import { SAML_NAMESPACES } from '../common/constants';
-import { findElement, getAttribute, parseXml } from '../common/xml-utils';
+import { findDirectChildElement, getAttribute, parseXml } from '../common/xml-utils';
 import { signXml, type SignOptions } from '../common/signature';
 
 export interface SAMLSigningMaterial {
@@ -78,8 +78,12 @@ export function applySAMLErrorResponseSigningPolicy(
 
 export function extractSAMLResponseIds(xml: string): { responseId: string; assertionId?: string } {
   const doc = parseXml(xml);
-  const responseElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
-  if (!responseElement) {
+  const responseElement = doc.documentElement;
+  if (
+    !responseElement ||
+    responseElement.namespaceURI !== SAML_NAMESPACES.SAML2P ||
+    responseElement.localName !== 'Response'
+  ) {
     throw new Error('Cannot sign SAML Response: missing Response element');
   }
 
@@ -88,7 +92,11 @@ export function extractSAMLResponseIds(xml: string): { responseId: string; asser
     throw new Error('Cannot sign SAML Response: missing Response ID');
   }
 
-  const assertionElement = findElement(responseElement, SAML_NAMESPACES.SAML2, 'Assertion');
+  const assertionElement = findDirectChildElement(
+    responseElement,
+    SAML_NAMESPACES.SAML2,
+    'Assertion'
+  );
   const assertionId = assertionElement
     ? getAttribute(assertionElement, 'ID') || undefined
     : undefined;
@@ -101,8 +109,12 @@ export function extractSAMLProtocolMessageId(
   localName: 'LogoutRequest' | 'LogoutResponse'
 ): string {
   const doc = parseXml(xml);
-  const element = findElement(doc, SAML_NAMESPACES.SAML2P, localName);
-  if (!element) {
+  const element = doc.documentElement;
+  if (
+    !element ||
+    element.namespaceURI !== SAML_NAMESPACES.SAML2P ||
+    element.localName !== localName
+  ) {
     throw new Error(`Cannot sign SAML ${localName}: missing ${localName} element`);
   }
 

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -102,6 +103,30 @@ export const approvalArtifactsRouter = new Hono<{
   Bindings: Env;
   Variables: { adminAuth?: AdminAuthContext };
 }>();
+const APPROVAL_ARTIFACT_BODY_MAX_BYTES = 100 * 1024;
+const APPROVAL_ARTIFACT_PORTAL_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+approvalArtifactsRouter.use('*', (c, next) =>
+  bodyLimit({
+    maxSize: APPROVAL_ARTIFACT_BODY_MAX_BYTES,
+    onError: (ctx) =>
+      ctx.json(
+        {
+          error: 'payload_too_large',
+          error_description: 'Request body exceeds maximum allowed size',
+        },
+        413
+      ),
+  })(c, next)
+);
 
 type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 
@@ -849,6 +874,8 @@ approvalArtifactsRouter.get('/:artifactId/ciba/device', async (c) => {
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
+          'Content-Security-Policy': APPROVAL_ARTIFACT_PORTAL_CSP,
+          'X-Content-Type-Options': 'nosniff',
         },
       }
     );
@@ -1082,6 +1109,8 @@ approvalArtifactsRouter.get('/:artifactId/portal', async (c) => {
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
+          'Content-Security-Policy': APPROVAL_ARTIFACT_PORTAL_CSP,
+          'X-Content-Type-Options': 'nosniff',
         },
       }
     );

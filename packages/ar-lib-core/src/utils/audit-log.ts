@@ -34,10 +34,35 @@ import {
 } from '../services/audit';
 import { resolveTenantRuntimeProfilesFromEnv } from '../services/runtime-profile-resolver';
 import type { AuditProfile, AuditTarget } from '../types/runtime-profile';
+import {
+  RuntimeLoggingPolicySnapshotMemoryCache,
+  loadPublishedRuntimeLoggingPolicySnapshot,
+  resolveLoggingPolicy,
+  type LoggingFallbackPolicy,
+  type LoggingPolicyAssignment,
+  type LoggingPolicyLane,
+  type LoggingPolicyScopeType,
+  type ResolvedLoggingPolicy,
+} from '@authrim/ar-lib-logging/policies';
+import type { LoggingDestination } from '@authrim/ar-lib-logging/destinations';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging';
 
 const log = createLogger().module('AUDIT_LOG');
 const unifiedAuditServiceCache = new WeakMap<object, IAuditService>();
 const KV_KEY_ROUTING_RULES = 'audit_routing_rules';
+const RUNTIME_LOGGING_POLICY_CACHE_TTL_MS = 60_000;
+const runtimeLoggingPolicySnapshotCache =
+  new RuntimeLoggingPolicySnapshotMemoryCache<RuntimeLoggingPolicySnapshotPayload>({
+    ttlMs: RUNTIME_LOGGING_POLICY_CACHE_TTL_MS,
+    maxEntries: 256,
+  });
+let runtimeLoggingPolicySnapshotCacheNamespaceCounter = 0;
+const runtimeLoggingPolicySnapshotCacheNamespaces = new WeakMap<object, string>();
+const runtimeLoggingPolicySnapshotMissCache = new WeakMap<object, Map<string, number>>();
+const auditRoutingRulesCache = new WeakMap<
+  KVNamespace,
+  { rules: AuditStorageRoutingRule[]; expiresAt: number }
+>();
 
 export class AuditLogDeliveryError extends Error {
   constructor(
@@ -118,6 +143,10 @@ function getUnifiedAuditService(env: Env): IAuditService {
     coreSource: sources.coreSource,
     piiSource: sources.piiSource,
     r2Bucket: env.DIAGNOSTIC_LOGS ?? createNoopAuditBucket(),
+    sensitiveDetailBucket: env.SENSITIVE_DETAILS,
+    objectEncryptionRootKey: env.OBJECT_ENCRYPTION_ROOT_KEY,
+    objectEncryptionKeyVersion:
+      Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
     auditQueue: env.AUDIT_QUEUE,
     configKv: env.AUTHRIM_CONFIG,
     logger: log.module('UNIFIED-MIRROR'),
@@ -312,6 +341,473 @@ function pushUniqueTarget(
   targets.push(target);
 }
 
+interface RuntimeLoggingPolicySnapshotPayload {
+  assignments: unknown[];
+  fallbacks: unknown[];
+  destinations: unknown[];
+}
+
+function snapshotObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function snapshotString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function snapshotNumber(value: unknown, fallback: number): number {
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function snapshotBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value === 1;
+  }
+  if (typeof value === 'string') {
+    if (value === 'true' || value === '1') {
+      return true;
+    }
+    if (value === 'false' || value === '0') {
+      return false;
+    }
+  }
+  return fallback;
+}
+
+function parseSnapshotJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return {};
+  }
+  try {
+    return snapshotObject(JSON.parse(value));
+  } catch {
+    return {};
+  }
+}
+
+function parseSnapshotStringArray(value: unknown): string[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value || '[]') : value;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) {
+    return undefined;
+  }
+  const strings = parsed.filter((item): item is string => typeof item === 'string' && !!item);
+  return strings.length > 0 ? strings : undefined;
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
+}
+
+function readSnapshotLogType(value: unknown): LogType | null {
+  return typeof value === 'string' && ['audit', 'pii'].includes(value) ? (value as LogType) : null;
+}
+
+function readSnapshotLogPlane(value: unknown): LogPlane | null {
+  return typeof value === 'string' && ['archive', 'external_sink'].includes(value)
+    ? (value as LogPlane)
+    : null;
+}
+
+function readSnapshotScopeType(value: unknown): LoggingPolicyScopeType {
+  return value === 'tenant' ? 'tenant' : 'platform';
+}
+
+function readSnapshotLane(value: unknown, fallback: LoggingPolicyLane): LoggingPolicyLane {
+  return value === 'critical' || value === 'default' || value === 'bulk' ? value : fallback;
+}
+
+function mapSnapshotAssignment(row: unknown): LoggingPolicyAssignment | null {
+  const raw = snapshotObject(row);
+  const logType = readSnapshotLogType(raw.log_type);
+  const plane = readSnapshotLogPlane(raw.plane);
+  const destinationId = snapshotString(raw.destination_id);
+  if (!logType || !plane || !destinationId) {
+    return null;
+  }
+  const tenantId = snapshotString(raw.tenant_id);
+  return {
+    id: snapshotString(raw.id) ?? `${tenantId ?? 'platform'}:${logType}:${plane}`,
+    tenantId,
+    logType,
+    plane,
+    destinationId,
+    enabled: snapshotBoolean(raw.enabled, true),
+    managedBy: readSnapshotScopeType(raw.managed_by),
+    lane: readSnapshotLane(raw.lane, plane === 'archive' ? 'critical' : 'default'),
+    version: snapshotNumber(raw.version, 1),
+  };
+}
+
+function mapSnapshotFallback(row: unknown): LoggingFallbackPolicy | null {
+  const raw = snapshotObject(row);
+  const logType = readSnapshotLogType(raw.log_type);
+  const plane = readSnapshotLogPlane(raw.plane);
+  if (!logType || !plane) {
+    return null;
+  }
+  return {
+    id: snapshotString(raw.id) ?? `${raw.scope_type ?? 'platform'}:${raw.scope_id ?? 'global'}`,
+    scopeType: readSnapshotScopeType(raw.scope_type),
+    scopeId: snapshotString(raw.scope_id) ?? 'global',
+    logType,
+    plane,
+    fallbackDestinationId: snapshotString(raw.fallback_destination_id),
+    failureMode:
+      raw.failure_mode === 'retry_then_platform_default' ||
+      raw.failure_mode === 'retry_then_dlq' ||
+      raw.failure_mode === 'drop_non_critical'
+        ? raw.failure_mode
+        : 'platform_default',
+    version: snapshotNumber(raw.version, 1),
+  };
+}
+
+function mapSnapshotDestination(row: unknown): LoggingDestination | null {
+  const raw = snapshotObject(row);
+  const id = snapshotString(raw.id);
+  const provider = snapshotString(raw.provider) as LoggingDestination['provider'] | null;
+  const destinationKind = snapshotString(raw.destination_kind) as
+    | LoggingDestination['destinationKind']
+    | null;
+  if (!id || !provider || !destinationKind) {
+    return null;
+  }
+  return {
+    id,
+    scopeType:
+      raw.scope_type === 'tenant' || raw.scope_type === 'shared' ? raw.scope_type : 'platform',
+    scopeId: snapshotString(raw.scope_id),
+    destinationKind,
+    provider,
+    name: snapshotString(raw.name) ?? id,
+    displayName: snapshotString(raw.display_name) ?? snapshotString(raw.name) ?? id,
+    lifecycleStatus: raw.lifecycle_status === 'disabled' ? 'disabled' : 'active',
+    healthStatus:
+      raw.health_status === 'healthy' ||
+      raw.health_status === 'configured' ||
+      raw.health_status === 'degraded' ||
+      raw.health_status === 'failing' ||
+      raw.health_status === 'unreachable'
+        ? raw.health_status
+        : 'unknown',
+    providerConfig: parseSnapshotJsonObject(raw.provider_config),
+    capabilityPolicy: {
+      allowedTenantIds: parseSnapshotStringArray(raw.allowed_tenant_ids),
+      allowedLogTypes: parseSnapshotStringArray(raw.allowed_log_types),
+      allowedPlanes: parseSnapshotStringArray(raw.allowed_planes),
+      region: snapshotString(raw.region),
+      criticalAllowed: snapshotBoolean(raw.critical_allowed, false),
+      defaultFallbackEligible: snapshotBoolean(raw.default_fallback_eligible, false),
+      retentionDays:
+        raw.retention_days === null || raw.retention_days === undefined
+          ? null
+          : snapshotNumber(raw.retention_days, 0),
+      encryptionMode:
+        raw.encryption_mode === 'external_managed' || raw.encryption_mode === 'none'
+          ? raw.encryption_mode
+          : 'platform_managed',
+    },
+  };
+}
+
+interface AuditTargetPolicyMetadata {
+  selectedDestinationId: string | null;
+  effectiveDestinationId: string | null;
+  fallbackDestinationId: string | null;
+  fallbackUsed: boolean;
+  fallbackReason: string | null;
+  failureMode: string | null;
+  policySource: string | null;
+  policyWarnings: string[];
+}
+
+function findSelectedSnapshotDestinationId(input: {
+  assignments: LoggingPolicyAssignment[];
+  tenantId: string;
+  logType: LogType;
+  plane: LogPlane;
+}): string | null {
+  const tenantAssignment = input.assignments.find(
+    (assignment) =>
+      assignment.enabled &&
+      assignment.tenantId === input.tenantId &&
+      assignment.logType === input.logType &&
+      assignment.plane === input.plane
+  );
+  if (tenantAssignment) {
+    return tenantAssignment.destinationId;
+  }
+
+  return (
+    input.assignments.find(
+      (assignment) =>
+        assignment.enabled &&
+        assignment.tenantId === null &&
+        assignment.logType === input.logType &&
+        assignment.plane === input.plane
+    )?.destinationId ?? null
+  );
+}
+
+function auditTargetPolicyMetadata(input: {
+  selectedDestinationId: string | null;
+  resolved: ResolvedLoggingPolicy;
+}): AuditTargetPolicyMetadata {
+  const effectiveDestinationId = input.resolved.destinationId ?? input.resolved.fallbackDestinationId;
+  const fallbackUsed =
+    !!input.resolved.fallbackDestinationId &&
+    input.resolved.fallbackDestinationId === effectiveDestinationId &&
+    input.selectedDestinationId !== input.resolved.fallbackDestinationId;
+  return {
+    selectedDestinationId: input.selectedDestinationId,
+    effectiveDestinationId,
+    fallbackDestinationId: fallbackUsed ? input.resolved.fallbackDestinationId : null,
+    fallbackUsed,
+    fallbackReason: fallbackUsed
+      ? input.resolved.warnings.includes('destination_unusable')
+        ? 'destination_unusable'
+        : 'no_primary_destination'
+      : null,
+    failureMode: input.resolved.failureMode,
+    policySource: input.resolved.source,
+    policyWarnings: input.resolved.warnings,
+  };
+}
+
+function withAuditTargetPolicyMetadata(
+  target: AuditTarget,
+  metadata: AuditTargetPolicyMetadata
+): AuditTarget {
+  return {
+    ...target,
+    loggingPolicy: metadata,
+  } as unknown as AuditTarget;
+}
+
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  const raw = snapshotObject(value);
+  const entries = Object.entries(raw).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string'
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function targetFromLoggingDestination(
+  destination: LoggingDestination,
+  plane: LogPlane
+): AuditTarget | null {
+  const config = destination.providerConfig;
+  if (destination.provider === 'r2') {
+    return {
+      type: 'r2',
+      destinationId: destination.id,
+      bucketRef:
+        snapshotString(config.bindingRef) ??
+        snapshotString(config.bucketRef) ??
+        (plane === 'archive' ? 'DIAGNOSTIC_LOGS' : 'SENSITIVE_DETAILS'),
+      prefix: snapshotString(config.prefix) ?? undefined,
+    };
+  }
+  if (destination.provider === 'http') {
+    const url = snapshotString(config.url);
+    const urlRef = snapshotString(config.urlRef);
+    if (!url && !urlRef) {
+      return null;
+    }
+    return {
+      type: 'http',
+      destinationId: destination.id,
+      url: url ?? undefined,
+      urlRef: urlRef ?? undefined,
+      method: 'POST',
+      headers: stringRecord(config.headers),
+      format: 'json',
+    };
+  }
+  if (destination.provider === 'logpush') {
+    const destinationRef =
+      snapshotString(config.destinationRef) ?? snapshotString(config.destinationConf);
+    if (!destinationRef) {
+      return null;
+    }
+    return {
+      type: 'logpush',
+      destinationId: destination.id,
+      destinationRef,
+      dataset: snapshotString(config.dataset) ?? undefined,
+    };
+  }
+  if (destination.provider === 'firehose') {
+    const streamRef = snapshotString(config.streamRef) ?? snapshotString(config.streamArn);
+    return streamRef ? { type: 'firehose', destinationId: destination.id, streamRef } : null;
+  }
+  return null;
+}
+
+function getRuntimeLoggingPolicySnapshotCacheNamespace(configKv: KVNamespace): string {
+  const cacheKey = configKv as unknown as object;
+  const cached = runtimeLoggingPolicySnapshotCacheNamespaces.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const namespace = `kv${++runtimeLoggingPolicySnapshotCacheNamespaceCounter}`;
+  runtimeLoggingPolicySnapshotCacheNamespaces.set(cacheKey, namespace);
+  return namespace;
+}
+
+function getRuntimeLoggingPolicySnapshotMisses(configKv: KVNamespace): Map<string, number> {
+  const cacheKey = configKv as unknown as object;
+  const cached = runtimeLoggingPolicySnapshotMissCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const misses = new Map<string, number>();
+  runtimeLoggingPolicySnapshotMissCache.set(cacheKey, misses);
+  return misses;
+}
+
+async function loadRuntimeLoggingPolicySnapshot(
+  env: Env,
+  tenantId: string
+): Promise<RuntimeLoggingPolicySnapshotPayload | null> {
+  if (!env.AUTHRIM_CONFIG) {
+    return null;
+  }
+  const configKv = env.AUTHRIM_CONFIG;
+  const cacheNamespace = getRuntimeLoggingPolicySnapshotCacheNamespace(configKv);
+  const misses = getRuntimeLoggingPolicySnapshotMisses(configKv);
+  const loadSnapshot = async (scopeType: LoggingPolicyScopeType, scopeId: string) => {
+    const now = Date.now();
+    const cacheScopeId = `${cacheNamespace}:${scopeId}`;
+    const missKey = `${scopeType}:${cacheScopeId}`;
+    const missExpiresAt = misses.get(missKey);
+    if (missExpiresAt && missExpiresAt > now) {
+      return null;
+    }
+    if (missExpiresAt) {
+      misses.delete(missKey);
+    }
+    const snapshot = await runtimeLoggingPolicySnapshotCache.getOrLoad({
+      scopeType,
+      scopeId: cacheScopeId,
+      now,
+      loader: () =>
+        loadPublishedRuntimeLoggingPolicySnapshot<RuntimeLoggingPolicySnapshotPayload>({
+          scopeType,
+          scopeId,
+          kv: configKv,
+          objectStore: env.DIAGNOSTIC_LOGS,
+        }),
+    });
+    if (snapshot) {
+      misses.delete(missKey);
+    } else {
+      misses.set(missKey, now + RUNTIME_LOGGING_POLICY_CACHE_TTL_MS);
+    }
+    return snapshot;
+  };
+  const tenantSnapshot = await loadSnapshot('tenant', tenantId);
+  const snapshot = tenantSnapshot ?? (await loadSnapshot('platform', 'global'));
+  return snapshot?.policies ?? null;
+}
+
+async function resolveSnapshotAuditDeliveryPlanFromEnv(
+  env: Env,
+  input: {
+    tenantId: string;
+    logType: 'event' | 'pii';
+    eventCategory?: EventCategory;
+    clientId?: string;
+    auditProfile: AuditProfile;
+  }
+) {
+  const policies = await loadRuntimeLoggingPolicySnapshot(env, input.tenantId);
+  if (!policies) {
+    return null;
+  }
+
+  const logType: LogType = input.logType === 'pii' ? 'pii' : 'audit';
+  const assignments = policies.assignments.map(mapSnapshotAssignment).filter(isPresent);
+  const fallbacks = policies.fallbacks.map(mapSnapshotFallback).filter(isPresent);
+  const destinations = policies.destinations.map(mapSnapshotDestination).filter(isPresent);
+  const resolveTarget = (plane: LogPlane): AuditTarget | null => {
+    const selectedDestinationId = findSelectedSnapshotDestinationId({
+      assignments,
+      tenantId: input.tenantId,
+      logType,
+      plane,
+    });
+    const resolved = resolveLoggingPolicy({
+      tenantId: input.tenantId,
+      logType,
+      plane,
+      assignments,
+      fallbackPolicies: fallbacks,
+      destinations,
+    });
+    const destinationId = resolved.destinationId ?? resolved.fallbackDestinationId;
+    const destination = destinations.find((item) => item.id === destinationId);
+    const target = destination ? targetFromLoggingDestination(destination, plane) : null;
+    return target
+      ? withAuditTargetPolicyMetadata(
+          target,
+          auditTargetPolicyMetadata({
+            selectedDestinationId,
+            resolved,
+          })
+        )
+      : null;
+  };
+  const archive = resolveTarget('archive');
+  const sink = resolveTarget('external_sink');
+  if (!archive && !sink) {
+    return null;
+  }
+
+  return {
+    auditProfileId: input.auditProfile.id,
+    primary: input.auditProfile.primary ?? null,
+    archives: archive ? [archive] : [],
+    sinks: sink ? [sink] : [],
+    retentionDays:
+      input.logType === 'event'
+        ? input.auditProfile.retention?.eventLogRetentionDays
+        : input.auditProfile.retention?.piiLogRetentionDays,
+    archiveFailureMode: input.auditProfile.archiveFailureMode,
+    sinkFailureMode: input.auditProfile.sinkFailureMode,
+    matchedRuleNames: ['logging_policy_snapshot'],
+  };
+}
+
+async function getCachedAuditRoutingRules(kv: KVNamespace): Promise<AuditStorageRoutingRule[]> {
+  const now = Date.now();
+  const cached = auditRoutingRulesCache.get(kv);
+  if (cached && cached.expiresAt > now) {
+    return cached.rules;
+  }
+  const routingValue = await kv.get(KV_KEY_ROUTING_RULES);
+  const rules = parseStoredAuditRoutingRules(routingValue);
+  auditRoutingRulesCache.set(kv, {
+    rules,
+    expiresAt: now + RUNTIME_LOGGING_POLICY_CACHE_TTL_MS,
+  });
+  return rules;
+}
+
 async function resolveAuditDeliveryPlanFromEnv(
   env: Env,
   input: {
@@ -322,6 +818,11 @@ async function resolveAuditDeliveryPlanFromEnv(
     auditProfile: AuditProfile;
   }
 ) {
+  const snapshotPlan = await resolveSnapshotAuditDeliveryPlanFromEnv(env, input);
+  if (snapshotPlan) {
+    return snapshotPlan;
+  }
+
   if (!env.AUTHRIM_CONFIG) {
     return null;
   }
@@ -329,8 +830,7 @@ async function resolveAuditDeliveryPlanFromEnv(
   let routingRules: AuditStorageRoutingRule[] = [];
 
   try {
-    const routingValue = await env.AUTHRIM_CONFIG.get(KV_KEY_ROUTING_RULES);
-    routingRules = parseStoredAuditRoutingRules(routingValue);
+    routingRules = await getCachedAuditRoutingRules(env.AUTHRIM_CONFIG);
   } catch {
     return null;
   }

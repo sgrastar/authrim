@@ -10,16 +10,15 @@ import type {
   DatabaseAdapter,
   Env,
 } from '@authrim/ar-lib-core';
-import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
 import {
-  createObjectCatalogEntry,
-  getObjectCatalogObjectRecord,
   type ObjectClass,
-  updateObjectCatalogObject,
 } from '@authrim/ar-lib-core/services/object-catalog';
-import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
+import {
+  loadChunkedSensitiveDetailJson,
+  storeImmediateChunkedSensitiveDetailJson,
+} from '@authrim/ar-lib-core/services/sensitive-detail-chunk-store';
+import { createLoggingTenantKeyResolverFromSource } from './logging-tenant-key';
 
-const ENCRYPTED_OBJECT_CONTENT_TYPE = 'application/vnd.authrim.object-envelope+json';
 const APPROVAL_TRANSPORT_DETAIL_CONTENT_TYPE = 'application/json';
 const DEFAULT_OBJECT_KEY_VERSION = 1;
 
@@ -131,18 +130,6 @@ function getObjectEncryptionKeyVersion(env: Env): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_OBJECT_KEY_VERSION;
 }
 
-function buildApprovalTransportObjectKey(
-  tenantId: string,
-  publicRequestId: string,
-  createdAt: number
-): string {
-  const createdAtDate = new Date(createdAt);
-  const year = createdAtDate.getUTCFullYear();
-  const month = String(createdAtDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(createdAtDate.getUTCDate()).padStart(2, '0');
-  return `approval-transport/${tenantId}/${year}/${month}/${day}/${publicRequestId}.json`;
-}
-
 function createEmptyEvidence(request: ApprovalRequest): ApprovalTransportEvidence {
   return {
     version: 1,
@@ -184,76 +171,34 @@ async function persistApprovalTransportDetail(
 
   const objectClass: ObjectClass = 'approval_transport_detail';
   const keyVersion = getObjectEncryptionKeyVersion(c.env);
-  const objectKey = buildApprovalTransportObjectKey(
-    request.tenant_id,
-    request.public_request_id,
-    request.created_at
+  const tenantKeyResolver = createLoggingTenantKeyResolverFromSource(
+    c.env.DB,
+    'approval-transport-detail-tenant-key'
   );
-  const encrypted = await encryptObjectArtifact(JSON.stringify(detail), {
+  const stored = await storeImmediateChunkedSensitiveDetailJson({
+    adapter,
+    bucket: c.env.SENSITIVE_DETAILS,
     rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-    plane: 'SENSITIVE_DETAILS',
-    keyVersion,
-    contentType: APPROVAL_TRANSPORT_DETAIL_CONTENT_TYPE,
-    context: {
-      tenantId: request.tenant_id,
-      objectKey,
-      objectClass,
-    },
-  });
-  const body = JSON.stringify(encrypted);
-  const bodyBytes = new TextEncoder().encode(body);
-  const checksumBuffer = await crypto.subtle.digest('SHA-256', bodyBytes);
-  const checksumSha256 = Array.from(new Uint8Array(checksumBuffer))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-
-  await c.env.SENSITIVE_DETAILS.put(objectKey, body, {
-    httpMetadata: { contentType: ENCRYPTED_OBJECT_CONTENT_TYPE },
-  });
-
-  if (request.detail_object_catalog_id) {
-    const existing = await getObjectCatalogObjectRecord(
-      adapter,
-      request.tenant_id,
-      request.detail_object_catalog_id,
-      'canonical_json',
-      0
-    );
-    if (existing && existing.logical.tenantId === request.tenant_id) {
-      await updateObjectCatalogObject(adapter, {
-        tenantId: request.tenant_id,
-        catalogId: request.detail_object_catalog_id,
-        representation: 'canonical_json',
-        objectIndex: 0,
-        bucketBinding: 'SENSITIVE_DETAILS',
-        objectKey,
-        keyVersion,
-        checksumSha256,
-        totalBytes: bodyBytes.byteLength,
-      });
-      return request;
-    }
-  }
-
-  const { catalogId } = await createObjectCatalogEntry(adapter, {
     tenantId: request.tenant_id,
     objectClass,
-    createdAt: request.created_at,
-    objects: [
-      {
-        representation: 'canonical_json',
-        objectKind: 'single',
-        bucketBinding: 'SENSITIVE_DETAILS',
-        objectKey,
-        keyVersion,
-        checksumSha256,
-        totalBytes: bodyBytes.byteLength,
-      },
-    ],
+    payload: detail,
+    contentType: APPROVAL_TRANSPORT_DETAIL_CONTENT_TYPE,
+    createdAt: Date.now(),
+    keyVersion,
+    tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
+    ...(tenantKeyResolver ? ({ tenantKeyResolver } as Record<string, unknown>) : {}),
+    surface: 'approval_transport',
+    logType: 'admin_audit',
+    catalogId: request.detail_object_catalog_id,
+    publicArtifactId: request.detail_object_catalog_id ? undefined : request.public_request_id,
   });
 
+  if (request.detail_object_catalog_id === stored.catalogId) {
+    return request;
+  }
   return (
-    (await requestRepo.updateApprovalRequestDetailObjectCatalogId(request.id, catalogId)) ?? request
+    (await requestRepo.updateApprovalRequestDetailObjectCatalogId(request.id, stored.catalogId)) ??
+    request
   );
 }
 
@@ -266,14 +211,11 @@ export async function loadApprovalTransportDetail(
     return null;
   }
 
-  const loaded = await loadCatalogObjectJson<ApprovalTransportEvidence>(adapter, c.env, {
+  return loadChunkedSensitiveDetailJson<ApprovalTransportEvidence>(adapter, c.env, {
     tenantId: request.tenant_id,
     objectCatalogId: request.detail_object_catalog_id,
     expectedClass: 'approval_transport_detail',
-    expectedBucketBinding: 'SENSITIVE_DETAILS',
-    allowPlaintextFallback: false,
   });
-  return loaded?.value ?? null;
 }
 
 export async function appendApprovalTransportEvent(

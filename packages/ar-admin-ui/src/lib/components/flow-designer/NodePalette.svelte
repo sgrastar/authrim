@@ -23,7 +23,7 @@
 
 	// V1 Node Types - organized by 11 categories
 	const nodeTypes: NodeTypeInfo[] = [
-		// === 1. Control Nodes (制御系) ===
+		// === 1. Control Nodes (control nodes) ===
 		{
 			type: 'start',
 			label: 'Start',
@@ -49,7 +49,7 @@
 			category: 'control'
 		},
 
-		// === 2. State/Check Nodes (状態判定系) ===
+		// === 2. State/Check Nodes (state/check nodes) ===
 		{
 			type: 'check_session',
 			label: 'Condition',
@@ -104,7 +104,7 @@
 			options: ['low', 'medium', 'high']
 		},
 
-		// === 3. Selection/UI Nodes (選択・入力系) ===
+		// === 3. Selection/UI Nodes (selection/input nodes) ===
 		{
 			type: 'auth_method_select',
 			label: 'Auth Select',
@@ -167,7 +167,7 @@
 			options: ['CAPTCHA', 'Security Question']
 		},
 
-		// === 4. Authentication Nodes (認証実行系) ===
+		// === 4. Authentication Nodes (authentication execution nodes) ===
 		{
 			type: 'login',
 			label: 'Login',
@@ -195,7 +195,7 @@
 			category: 'auth'
 		},
 
-		// === 5. Consent/Profile Nodes (同意・プロフィール) ===
+		// === 5. Consent/Profile Nodes (consent/profile nodes) ===
 		{
 			type: 'consent',
 			label: 'Consent',
@@ -222,7 +222,7 @@
 			category: 'consent'
 		},
 
-		// === 6. Resolve Nodes (解決系) ===
+		// === 6. Resolve Nodes (resolve nodes) ===
 		{
 			type: 'resolve_tenant',
 			label: 'Resolve Tenant',

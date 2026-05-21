@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
+import { bodyLimit } from 'hono/body-limit';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   rateLimitMiddleware,
@@ -83,12 +84,35 @@ import {
 import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
+const AUTH_REQUEST_BODY_MAX_BYTES = 100 * 1024;
 
 // Middleware
 app.use('*', logger());
 app.use('*', requestContextMiddleware());
+app.use('*', (c, next) =>
+  bodyLimit({
+    maxSize: AUTH_REQUEST_BODY_MAX_BYTES,
+    onError: (ctx) =>
+      ctx.json(
+        {
+          error: 'payload_too_large',
+          error_description: 'Request body exceeds maximum allowed size',
+        },
+        413
+      ),
+  })(c, next)
+);
 app.use(
   '*',
   diagnosticLoggingMiddleware({
@@ -615,9 +639,9 @@ app.get('/logout-error', async (c) => {
 <body>
   <div class="container">
     <div class="icon">⚠</div>
-    <h1>${errorInfo.title}</h1>
-    <p>${errorInfo.description}</p>
-    <div class="error-code">Error: ${error}</div>
+    <h1>${escapeHtml(errorInfo.title)}</h1>
+    <p>${escapeHtml(errorInfo.description)}</p>
+    <div class="error-code">Error: ${escapeHtml(error)}</div>
     <div class="footer">Powered by Authrim</div>
   </div>
 </body>

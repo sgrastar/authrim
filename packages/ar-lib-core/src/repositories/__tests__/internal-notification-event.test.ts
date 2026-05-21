@@ -3,6 +3,7 @@ import type { DatabaseAdapter, TransactionContext } from '../../db/adapter';
 import {
   InternalNotificationEventRepository,
   normalizeInternalNotificationRoutingPolicy,
+  resolveLoggingNotificationRoutingPolicy,
 } from '../admin/internal-notification-event';
 
 function createAdapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
@@ -44,10 +45,28 @@ function createAdapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapte
 
 describe('InternalNotificationEventRepository', () => {
   it('enqueues deduplicated internal notification events', async () => {
-    const adapter = createAdapter();
+    const row = {
+      id: 'event-1',
+      tenant_id: 'tenant-a',
+      category: 'storage_registry_security',
+      event_type: 'tenant_runtime_registry_snapshot.verification_failed',
+      severity: 'critical',
+      status: 'pending',
+      deduplication_key: 'dedup-key',
+      payload_json: '{}',
+      attempts: 0,
+      last_error: null,
+      next_attempt_at: null,
+      created_at: '2026-05-16T00:00:00.000Z',
+      updated_at: '2026-05-16T00:00:00.000Z',
+      delivered_at: null,
+    };
+    const adapter = createAdapter({
+      queryOne: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(row),
+    });
     const repository = new InternalNotificationEventRepository(adapter);
 
-    const row = await repository.enqueue({
+    const enqueued = await repository.enqueue({
       tenantId: 'tenant-a',
       category: 'storage_registry_security',
       eventType: 'tenant_runtime_registry_snapshot.verification_failed',
@@ -57,9 +76,9 @@ describe('InternalNotificationEventRepository', () => {
       now: new Date('2026-05-16T00:00:00.000Z'),
     });
 
-    expect(row.id).toBe('event-1');
+    expect(enqueued.id).toBe('event-1');
     expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT OR IGNORE INTO internal_notification_events'),
+      expect.stringContaining('INSERT INTO internal_notification_events'),
       expect.arrayContaining([
         'tenant-a',
         'storage_registry_security',
@@ -120,6 +139,30 @@ describe('InternalNotificationEventRepository', () => {
 
   it('defaults notification routing to fail-open internal events', () => {
     expect(normalizeInternalNotificationRoutingPolicy(null)).toEqual({
+      providers: ['internal_event'],
+      failurePolicy: 'best_effort',
+      policyScope: 'deployment',
+      allowProviderSuppression: false,
+    });
+  });
+
+  it('routes critical logging notifications to internal and external providers', () => {
+    expect(
+      resolveLoggingNotificationRoutingPolicy({
+        severity: 'critical',
+        externalNotificationEligible: true,
+      })
+    ).toEqual({
+      providers: ['internal_event', 'webhook', 'email'],
+      failurePolicy: 'retry_until_dead_letter',
+      policyScope: 'deployment',
+      allowProviderSuppression: true,
+    });
+    expect(
+      resolveLoggingNotificationRoutingPolicy({
+        severity: 'critical',
+      })
+    ).toEqual({
       providers: ['internal_event'],
       failurePolicy: 'best_effort',
       policyScope: 'deployment',

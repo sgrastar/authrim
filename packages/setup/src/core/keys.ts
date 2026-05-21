@@ -74,6 +74,7 @@ export interface KeyMetadata {
     rpTokenEncryptionKey?: string;
     objectEncryptionRootKey?: string;
     versionManagerSecret?: string;
+    loggingCursorHmacSecret?: string;
     setupMachinePrivateKey?: string;
     setupMachinePublicKey?: string;
     adminUiBffPrivateKey?: string;
@@ -103,6 +104,8 @@ export interface GeneratedSecrets {
   objectEncryptionRootKey: string;
   /** Scoped VersionManager Durable Object secret */
   versionManagerSecret: string;
+  /** HMAC secret for opaque logging Admin API cursors */
+  loggingCursorHmacSecret: string;
   /** Admin API secret */
   adminApiSecret: string;
   /** Key Manager secret */
@@ -284,6 +287,7 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
     rpTokenEncryptionKey: generateHexSecret(32), // 256-bit key
     objectEncryptionRootKey: generateHexSecret(32), // 256-bit key
     versionManagerSecret: generateBase64Secret(32), // 256-bit secret
+    loggingCursorHmacSecret: generateBase64Secret(32), // 256-bit secret
     adminApiSecret: generateBase64Secret(32), // 256-bit secret
     keyManagerSecret: generateBase64Secret(32), // 256-bit secret
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
@@ -502,6 +506,7 @@ export async function saveKeysToDirectory(
     rpTokenEncryptionKey: join(targetDir, 'rp_token_encryption_key.txt'),
     objectEncryptionRootKey: join(targetDir, 'object_encryption_root_key.txt'),
     versionManagerSecret: join(targetDir, 'version_manager_secret.txt'),
+    loggingCursorHmacSecret: join(targetDir, 'logging_cursor_hmac_secret.txt'),
     adminApiSecret: join(targetDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(targetDir, 'key_manager_secret.txt'),
     setupToken: join(targetDir, 'setup_token.txt'),
@@ -542,6 +547,8 @@ export async function saveKeysToDirectory(
   await chmod(paths.objectEncryptionRootKey, SENSITIVE_FILE_MODE);
   await writeFile(paths.versionManagerSecret, secrets.versionManagerSecret, 'utf-8');
   await chmod(paths.versionManagerSecret, SENSITIVE_FILE_MODE);
+  await writeFile(paths.loggingCursorHmacSecret, secrets.loggingCursorHmacSecret, 'utf-8');
+  await chmod(paths.loggingCursorHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.adminApiSecret, secrets.adminApiSecret, 'utf-8');
   await chmod(paths.adminApiSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.keyManagerSecret, secrets.keyManagerSecret, 'utf-8');
@@ -604,6 +611,7 @@ export async function saveKeysToDirectory(
       rpTokenEncryptionKey: paths.rpTokenEncryptionKey,
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       versionManagerSecret: paths.versionManagerSecret,
+      loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
       adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
@@ -717,6 +725,7 @@ export async function ensureSupplementalKeyFiles(
   const paths = {
     objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
     versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
+    loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
     adminUiBffPrivateKey: join(keysDir, 'admin_ui_bff_private.pem'),
@@ -740,6 +749,11 @@ export async function ensureSupplementalKeyFiles(
   if (!existsSync(paths.versionManagerSecret)) {
     await writeSensitiveFile(paths.versionManagerSecret, generateBase64Secret(32));
     createdFiles.push(paths.versionManagerSecret);
+  }
+
+  if (!existsSync(paths.loggingCursorHmacSecret)) {
+    await writeSensitiveFile(paths.loggingCursorHmacSecret, generateBase64Secret(32));
+    createdFiles.push(paths.loggingCursorHmacSecret);
   }
 
   await writeMissingMachineKeyPair(
@@ -789,6 +803,7 @@ export async function ensureSupplementalKeyFiles(
     await updateMetadataWithSupplementalFiles(keysDir, {
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       versionManagerSecret: paths.versionManagerSecret,
+      loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
       adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
@@ -960,6 +975,10 @@ export function generateWranglerSecretCommands(
 
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'version_manager_secret.txt')})" | wrangler secret put VERSION_MANAGER_SECRET${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'logging_cursor_hmac_secret.txt')})" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET${envFlag}`
   );
 
   // Admin API secret

@@ -240,19 +240,19 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       expiresAt: getStateExpiresAt(),
     });
 
-    // 9. Silent Auth処理 (prompt=none) + Session Token Handoff SSO (handoff=true)
-    // OIDC Core 3.1.2.1: prompt=none時、認証済みの場合は成功、未認証の場合はerror=login_requiredを返す
-    // ⚠️ 注意: prompt は複数値可能（スペース区切り）、例: "none login"
-    // 📝 handoff=true: SDK → External IdP Start直接呼び出し（サードパーティクッキーブロック対応）
-    //    - Top-level navigationでセッション確認
-    //    - Handoff tokenを返してRP callbackにリダイレクト
-    //    - 既存のprompt=noneフローと同じロジック（後方互換性維持）
+    // 9. Silent Auth handling (prompt=none) + Session Token Handoff SSO (handoff=true)
+    // OIDC Core 3.1.2.1: when prompt=none, authenticated users succeed and unauthenticated users return error=login_required
+    // ⚠️ Note: prompt can contain multiple values (space-separated), example: "none login"
+    // 📝 handoff=true: SDK → direct External IdP Start call (third-party cookie blocking support)
+    //    - Check the session via top-level navigation
+    //    - Return a handoff token and redirect to the RP callback
+    //    - Same logic as the existing prompt=none flow (maintain backward compatibility)
     const promptValues = (prompt ?? '').split(' ').filter(Boolean);
     const isSilentAuth = promptValues.includes('none');
 
     if (isSilentAuth) {
-      // OIDC仕様: prompt=none は他のprompt値と同時指定不可
-      // 例: "none login" は矛盾（ユーザー操作禁止 vs 強制ログイン）
+      // OIDC spec: prompt=none cannot be combined with other prompt values
+      // example: "none login" conflicts (no user interaction vs forced login)
       if (promptValues.length > 1) {
         log.warn('Silent Auth: prompt=none with other values', { allPrompts: prompt });
         const errorRedirectUrl = new URL(redirectUri);
@@ -274,7 +274,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
 
       log.info('Silent Auth: prompt=none detected', { sessionId });
 
-      // PKCE必須チェック（AuthrimはすべてのcodeでPKCE必須）
+      // PKCE requirement check (Authrim requires PKCE for all codes)
       if (!codeChallenge) {
         log.error('Silent Auth: Missing code_challenge', { clientId });
         const errorRedirectUrl = new URL(redirectUri);
@@ -291,7 +291,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         });
       }
 
-      // SSO設定チェック
+      // Check SSO settings
       // Priority: Client KV > Tenant KV > Client ENV > Tenant ENV > Default (provider.enableSso)
       let ssoEnabled = provider.enableSso !== false; // Default from provider config
 
@@ -359,7 +359,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       }
 
       if (!ssoEnabled) {
-        // SSO無効 → login_required
+        // SSO disabled → login_required
         log.info('Silent Auth: SSO disabled', { clientId, tenantId: tenantIdResolved });
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'login_required');
@@ -377,9 +377,9 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         });
       }
 
-      // セッション存在チェック
+      // Check whether the session exists
       if (!sessionId) {
-        // セッションなし → error=login_required
+        // No session → error=login_required
         log.info('Silent Auth: No active session', { clientId });
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'login_required');
@@ -395,12 +395,12 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         });
       }
 
-      // セッション有効性チェック
+      // Check session validity
       const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantIdResolved);
       const session: Session | null = await sessionStore.getSessionRpc(sessionId);
 
       if (!session) {
-        // セッション無効 → error=login_required
+        // Invalid session → error=login_required
         log.info('Silent Auth: Session expired or invalid', { sessionId });
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'login_required');
@@ -416,15 +416,15 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         });
       }
 
-      // ⚠️ CRITICAL: state を消費（リプレイ攻撃対策）
-      // Silent Auth成功時もstateの二重使用を防ぐため、consumed_atをマーク
-      // 📝 タイミング: セッション検証後、トークン発行前
-      //   - 失敗パスではstate未消費（再試行可能）
-      //   - 成功パスでは発行前に消費（handoff/code発行失敗はほぼゼロ）
+      // ⚠️ CRITICAL: Consume state (replay attack mitigation)
+      // Mark consumed_at even on Silent Auth success to prevent state reuse
+      // 📝 Timing: after session validation and before token issuance
+      //   - failure paths leave state unconsumed (retryable)
+      //   - success paths consume it before issuance (handoff/codeissuance failure is near zero)
       const consumedAuthState = await consumeAuthState(c.env, state);
       if (!consumedAuthState) {
-        // state消費失敗（すでに使用済み or 期限切れ or 競合）
-        // 📝 error=invalid_request: state問題を示唆（vs login_required=未ログイン）
+        // State consumption failed (already used, expired, or conflicted)
+        // 📝 error=invalid_request: indicates a state issue (vs login_required=not logged in)
         log.info('Silent Auth: State already consumed or expired', { state });
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'invalid_request');
@@ -440,16 +440,16 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         });
       }
 
-      // セッション有効 → ハンドオフトークン or コード発行
+      // Valid session → handoff token or code issuance
       // TypeScript type narrowing: session is guaranteed non-null after the check above
       const validSession: Session = session;
       log.info('Silent Auth: Issuing token', { sessionId, userId: validSession.userId });
 
-      // SSO有効時のみハンドオフトークン発行（enableSso=falseならコード発行）
+      // Issue a handoff token only when SSO is enabled (issue a code when enableSso=false)
       const enableSso = provider.enableSso !== false;
 
       if (enableSso) {
-        // ハンドオフトークン生成（callback.tsのパターンを再利用）
+        // handoff tokengenerate (reuse the callback.ts pattern)
         const handoffToken = crypto.randomUUID();
         const handoffStore = await getChallengeStoreByChallengeId(
           c.env,
@@ -463,7 +463,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           type: 'handoff',
           userId: validSession.userId,
           challenge: sessionId,
-          ttl: 30, // 30秒
+          ttl: 30, // 30 seconds
           metadata: {
             client_id: clientId,
             state,
@@ -472,7 +472,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           },
         });
 
-        // RPへリダイレクト（ハンドオフトークン付き）
+        // Redirect to the RP (with handoff token)
         const successRedirectUrl = new URL(redirectUri);
         successRedirectUrl.searchParams.set('handoff_token', handoffToken);
         successRedirectUrl.searchParams.set('state', state);
@@ -486,8 +486,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           },
         });
       } else {
-        // SSO無効時：authorization code発行
-        // codeChallenge は上でチェック済みなので安全に使用可能
+        // When SSO is disabled: issue an authorization code
+        // codeChallenge was checked above and is safe to use
         const authCode = await generateAuthCode(
           c.env,
           tenantId,

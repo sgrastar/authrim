@@ -16,6 +16,22 @@ import {
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
 
+const AVATAR_CONTENT_TYPES: Record<string, string> = {
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+function resolveAvatarContentType(filename: string): string | null {
+  if (!/^[A-Za-z0-9._-]+\.(?:gif|jpe?g|png|webp)$/u.test(filename)) {
+    return null;
+  }
+  const extension = filename.split('.').pop()?.toLowerCase();
+  return extension ? (AVATAR_CONTENT_TYPES[extension] ?? null) : null;
+}
+
 /**
  * Serve avatar image from R2
  * GET /avatars/:filename
@@ -23,6 +39,11 @@ import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './adm
 export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
   try {
     const filename = c.req.param('filename')!;
+    const contentType = resolveAvatarContentType(filename);
+    if (!contentType) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
     const filePath = `avatars/${filename}`;
 
     const object = await c.env.AVATARS.get(filePath);
@@ -33,8 +54,10 @@ export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
 
     const headers = new Headers();
     object.writeHttpMetadata(headers);
+    headers.set('content-type', contentType);
     headers.set('etag', object.httpEtag);
     headers.set('cache-control', 'public, max-age=31536000, immutable');
+    headers.set('x-content-type-options', 'nosniff');
 
     return new Response(object.body, {
       headers,
@@ -137,7 +160,7 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
 
     await c.env.AVATARS.put(filePath, arrayBuffer, {
       httpMetadata: {
-        contentType: file.type,
+        contentType: detectedType.mimeType,
       },
     });
 

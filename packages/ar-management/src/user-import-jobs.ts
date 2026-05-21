@@ -58,7 +58,12 @@ async function readR2ObjectTextWithLimit(object: R2ObjectBody, maxBytes: number)
     throw new Error(`Object exceeds maximum size: ${object.size} > ${maxBytes} bytes`);
   }
   if (!object.body) {
-    return object.text();
+    const text = await object.text();
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    if (byteLength > maxBytes) {
+      throw new Error(`Object exceeds maximum size: ${byteLength} > ${maxBytes} bytes`);
+    }
+    return text;
   }
 
   const reader = object.body.getReader();

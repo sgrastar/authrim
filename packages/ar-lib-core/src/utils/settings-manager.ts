@@ -494,12 +494,11 @@ export class SettingsManager {
 
       // Emit audit event
       if (this.auditCallback && Object.keys(diff).length > 0) {
-        // At this point scope is guaranteed to be tenant or client (platform throws earlier)
-        const scopeWithId = scope as { type: 'tenant' | 'client'; id: string };
+        const scopeId = scope.type === 'platform' ? 'platform' : scope.id;
         await this.auditCallback({
           event: 'settings.updated',
-          scope: scopeWithId.type,
-          scopeId: scopeWithId.id,
+          scope: scope.type,
+          scopeId,
           category,
           diff,
           actor,

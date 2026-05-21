@@ -24,6 +24,7 @@ import { EventHandlerRegistryImpl } from '../services/event-handler-registry';
 import { EventHookRegistryImpl } from '../services/event-hook-registry';
 import { createWebhookRegistry } from '../services/webhook-registry';
 import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
+import { createTenantRegistryKeyResolver } from '../services/audit/tenant-key';
 import { resolveOptionalCoreAdapterFromHono } from '../context';
 import { createAuditLog } from './audit-log';
 import { decryptValue } from './pii-encryption';
@@ -217,6 +218,13 @@ export async function createEventDispatcherFromContext(
     hookRegistry: getGlobalHookRegistry(),
     decryptSecret,
     auditLogWriter: buildRuntimeAuditLogWriter(c.env),
+    runtimeLogging: {
+      env: {
+        ...c.env,
+        DB_ADMIN: c.env.DB_ADMIN ?? adapter,
+      },
+      tenantKeyResolver: createTenantRegistryKeyResolver(adapter),
+    },
     options: {
       environment,
       enableAuditLog: options?.enableAuditLog ?? true,
@@ -287,6 +295,13 @@ export async function createEventDispatcherFromEnv(
     hookRegistry: getGlobalHookRegistry(),
     decryptSecret,
     auditLogWriter: buildRuntimeAuditLogWriter(env),
+    runtimeLogging: {
+      env: {
+        ...env,
+        DB_ADMIN: env.DB_ADMIN ?? adapter,
+      },
+      tenantKeyResolver: createTenantRegistryKeyResolver(adapter),
+    },
     options: {
       environment,
       enableAuditLog: options?.enableAuditLog ?? true,

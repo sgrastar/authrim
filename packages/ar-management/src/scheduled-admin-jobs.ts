@@ -1,6 +1,7 @@
 import type { Env } from '@authrim/ar-lib-core';
 import { processPendingGenericAdminJobs } from './admin-job-executor';
 import { processPendingDataExportRequests } from './data-export';
+import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import { processPendingSupportOpsSnapshotJobs } from './support-ops';
 import { processPendingTenantDeletionJobs } from './tenant-deletion-jobs';
 import {
@@ -81,6 +82,12 @@ export async function processScheduledAdminJobQueues(
     await processPendingTenantDiscoveryReindexJobs(env, log);
   } catch (jobsError) {
     log.error('Tenant discovery reindex job processing failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processLoggingStorageMaintenanceJobs(env, log);
+  } catch (jobsError) {
+    log.error('Logging/storage maintenance job processing failed', {}, jobsError as Error);
   }
 
   try {

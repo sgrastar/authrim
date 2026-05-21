@@ -1,6 +1,6 @@
 /**
  * Japanese Translations for Authrim Setup Tool
- * 日本語翻訳
+ * Japanese translations
  */
 
 import type { Translations } from '../types.js';

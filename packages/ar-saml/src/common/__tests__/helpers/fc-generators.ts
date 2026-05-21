@@ -281,7 +281,7 @@ export const mixedXmlTextArb = fc.oneof(
   fc.constant('<test>value</test>'),
   fc.constant('text with "quotes" and \'apostrophes\''),
   fc.constant('special chars: < > & " \''),
-  fc.constant('日本語テスト'),
+  fc.constant('Unicode test: café'),
   fc.constant('émoji: 🔐')
 );
 

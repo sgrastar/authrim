@@ -238,130 +238,53 @@ export class D1Adapter implements DatabaseAdapter {
   /**
    * Execute multiple statements in a transaction
    *
-   * D1 doesn't have traditional transactions, but batch() provides
-   * all-or-nothing semantics. We collect statements and execute them
-   * in a batch at the end.
+   * D1's batch API is only suitable when the full statement list is known up
+   * front. Transaction callbacks in this adapter contract await each
+   * tx.query/tx.execute call and may branch on query results, so deferring
+   * execution until after the callback returns deadlocks the callback. Execute
+   * statements immediately to preserve the callback semantics shared with the
+   * Postgres and MySQL adapters.
    */
   async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
     const startTime = Date.now();
-    const collectedStatements: Array<{ sql: string; params?: unknown[] }> = [];
-    const pendingResults: Array<{
-      resolve: (value: unknown) => void;
-      reject: (reason: unknown) => void;
-      type: 'query' | 'queryOne' | 'execute';
-    }> = [];
+    let statementCount = 0;
 
-    // Create a transaction context that collects statements
     const txContext: TransactionContext = {
-      query: <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-        return new Promise((resolve, reject) => {
-          collectedStatements.push({ sql, params });
-          pendingResults.push({
-            resolve: resolve as (value: unknown) => void,
-            reject,
-            type: 'query',
-          });
-        });
+      query: async <T>(sql: string, params?: unknown[], options?: QueryOptions): Promise<T[]> => {
+        statementCount++;
+        return this.query<T>(sql, params, options);
       },
-      queryOne: <T>(sql: string, params?: unknown[]): Promise<T | null> => {
-        return new Promise((resolve, reject) => {
-          collectedStatements.push({ sql, params });
-          pendingResults.push({
-            resolve: resolve as (value: unknown) => void,
-            reject,
-            type: 'queryOne',
-          });
-        });
+      queryOne: async <T>(
+        sql: string,
+        params?: unknown[],
+        options?: QueryOptions
+      ): Promise<T | null> => {
+        statementCount++;
+        return this.queryOne<T>(sql, params, options);
       },
-      execute: (sql: string, params?: unknown[]): Promise<ExecuteResult> => {
-        return new Promise((resolve, reject) => {
-          collectedStatements.push({ sql, params });
-          pendingResults.push({
-            resolve: resolve as (value: unknown) => void,
-            reject,
-            type: 'execute',
-          });
-        });
+      execute: async (sql: string, params?: unknown[]): Promise<ExecuteResult> => {
+        statementCount++;
+        return this.execute(sql, params);
       },
     };
 
-    // Note: D1 batch doesn't support mixing reads and writes in the same way
-    // For now, we execute all statements in batch
-    // This is a simplified implementation - for complex transactions,
-    // consider using a proper transaction-supporting database
-
     try {
-      // Execute the transaction function (collects statements)
       const result = await fn(txContext);
-
-      // If no statements collected, just return the result
-      if (collectedStatements.length === 0) {
-        return result;
-      }
-
-      // Execute all statements in batch
-      const preparedStatements = collectedStatements.map((stmt) =>
-        stmt.params ? this.db.prepare(stmt.sql).bind(...stmt.params) : this.db.prepare(stmt.sql)
-      );
-
-      const batchResults = await retryD1Operation(
-        async () => this.db.batch(preparedStatements),
-        `D1Adapter.transaction[${this.partition}]`,
-        this.retryConfig
-      );
-
-      if (!batchResults) {
-        throw new Error('Transaction failed: batch execution failed after retries');
-      }
-
-      // Resolve pending promises with results
-      for (let i = 0; i < pendingResults.length; i++) {
-        const pending = pendingResults[i];
-        const batchResult = batchResults[i];
-
-        if (!batchResult.success) {
-          pending.reject(new Error(batchResult.error ?? 'Statement failed'));
-          continue;
-        }
-
-        switch (pending.type) {
-          case 'query':
-            pending.resolve(batchResult.results ?? []);
-            break;
-          case 'queryOne':
-            pending.resolve(batchResult.results?.[0] ?? null);
-            break;
-          case 'execute':
-            pending.resolve({
-              rowsAffected: batchResult.meta?.changes ?? 0,
-              lastInsertRowid: batchResult.meta?.last_row_id,
-              success: batchResult.success,
-              durationMs: batchResult.meta?.duration,
-            } as ExecuteResult);
-            break;
-        }
-      }
-
       if (this.debug) {
         log.debug('D1Adapter.transaction completed', {
           partition: this.partition,
           durationMs: Date.now() - startTime,
-          statementCount: collectedStatements.length,
+          statementCount,
         });
       }
 
       return result;
     } catch (error) {
-      // Reject all pending promises
-      for (const pending of pendingResults) {
-        pending.reject(error);
-      }
-
       log.error(
         'D1Adapter.transaction error',
         {
           partition: this.partition,
-          statementCount: collectedStatements.length,
+          statementCount,
         },
         error as Error
       );

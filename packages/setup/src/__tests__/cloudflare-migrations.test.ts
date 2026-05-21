@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildRecordMigrationSql,
   buildRuntimeProfileSeedSql,
+  listD1MigrationSqlFiles,
   shouldMirrorPiiMigrationsToCore,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
@@ -109,6 +110,30 @@ describe('buildRecordMigrationSql', () => {
     expect(sql).toContain("SELECT 'seed''file.sql', 1234567890");
     expect(sql).toContain('WHERE NOT EXISTS');
     expect(sql).not.toContain('INSERT OR IGNORE');
+  });
+});
+
+describe('listD1MigrationSqlFiles', () => {
+  it('discovers nested phase directory migrations in explicit relative order', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'authrim-migrations-'));
+    try {
+      mkdirSync(join(dir, 'logging-storage', 'phase2'), { recursive: true });
+      mkdirSync(join(dir, 'logging-storage', 'phase1'), { recursive: true });
+      writeFileSync(join(dir, '000_fresh_schema.sql'), '-- fresh');
+      writeFileSync(join(dir, '010_flat.sql'), '-- flat');
+      writeFileSync(join(dir, 'logging-storage', 'phase2', '002_policy.sql'), '-- phase2');
+      writeFileSync(join(dir, 'logging-storage', 'phase1', '001_destination.sql'), '-- phase1');
+      writeFileSync(join(dir, '.ignored.sql'), '-- ignored');
+
+      expect(listD1MigrationSqlFiles(dir)).toEqual([
+        '000_fresh_schema.sql',
+        '010_flat.sql',
+        'logging-storage/phase1/001_destination.sql',
+        'logging-storage/phase2/002_policy.sql',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

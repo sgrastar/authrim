@@ -1,307 +1,211 @@
-import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { jwksHandler } from '../jwks';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { generateKeySet } from '@authrim/ar-lib-core/utils/keys';
+import type { JWK } from 'jose';
 
-// Store generated test key
-let testPrivateKey: string;
-let testPublicJWK: string;
+let primaryJwk: JWK;
+let secondaryJwk: JWK;
+let fallbackJwk: JWK;
 
-/**
- * Create a mock environment for testing
- */
-function createMockEnv(privateKey?: string, keyId?: string, publicJWK?: string): Env {
+function createKeyManager(keys: JWK[] | Promise<JWK[]>) {
+  const getAllPublicKeysRpc = vi.fn(async () => keys);
+  const idFromName = vi.fn((name: string) => ({ name }) as unknown as DurableObjectId);
+  const get = vi.fn(() => ({ getAllPublicKeysRpc }));
+
+  return {
+    namespace: {
+      idFromName,
+      get,
+    } as unknown as Env['KEY_MANAGER'],
+    idFromName,
+    get,
+    getAllPublicKeysRpc,
+  };
+}
+
+function createFailingKeyManager(error: Error) {
+  const getAllPublicKeysRpc = vi.fn(async () => {
+    throw error;
+  });
+  const idFromName = vi.fn((name: string) => ({ name }) as unknown as DurableObjectId);
+  const get = vi.fn(() => ({ getAllPublicKeysRpc }));
+
+  return {
+    namespace: {
+      idFromName,
+      get,
+    } as unknown as Env['KEY_MANAGER'],
+    idFromName,
+    get,
+    getAllPublicKeysRpc,
+  };
+}
+
+function createMockEnv(options: {
+  keyManager?: Env['KEY_MANAGER'];
+  publicJWK?: JWK;
+  publicJWKJson?: string;
+}): Env {
   return {
     ISSUER_URL: 'https://test.example.com',
-    ACCESS_TOKEN_EXPIRY: '3600',
-    AUTH_CODE_EXPIRY: '600',
-    STATE_EXPIRY: '600',
-    NONCE_EXPIRY: '600',
-    PRIVATE_KEY_PEM: privateKey,
-    KEY_ID: keyId,
-    PUBLIC_JWK_JSON: publicJWK,
+    PUBLIC_JWK_JSON:
+      options.publicJWKJson ?? (options.publicJWK ? JSON.stringify(options.publicJWK) : undefined),
+    KEY_MANAGER: options.keyManager,
   } as Env;
+}
+
+function createApp(tenantId = 'default') {
+  const app = new Hono<{ Bindings: Env }>();
+  app.use('*', async (c, next) => {
+    (c as { set: (key: string, value: string) => void }).set('tenantId', tenantId);
+    await next();
+  });
+  app.get('/.well-known/jwks.json', jwksHandler);
+  return app;
 }
 
 describe('JWKS Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
-  // Generate a test key before running tests
   beforeAll(async () => {
-    const keySet = await generateKeySet('test-key', 2048);
-    testPrivateKey = keySet.privatePEM;
-    testPublicJWK = JSON.stringify(keySet.publicJWK);
+    primaryJwk = (await generateKeySet('primary-key', 2048)).publicJWK;
+    secondaryJwk = (await generateKeySet('secondary-key', 2048)).publicJWK;
+    fallbackJwk = (await generateKeySet('fallback-key', 2048)).publicJWK;
   });
 
   beforeEach(() => {
-    app = new Hono<{ Bindings: Env }>();
-    app.get('/.well-known/jwks.json', jwksHandler);
+    app = createApp();
   });
 
-  describe('JWKS Endpoint', () => {
-    it('should return valid JWKS with configured key', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
+  it('returns active public keys from KeyManager', async () => {
+    const keyManager = createKeyManager([primaryJwk, secondaryJwk]);
+    const response = await app.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({
+        keyManager: keyManager.namespace,
+        publicJWK: fallbackJwk,
+      })
+    );
 
-      expect(response.status).toBe(200);
-      expect(response.headers.get('Content-Type')).toContain('application/json');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toContain('application/json');
+    expect(response.headers.get('Cache-Control')).toContain('max-age=300');
+    expect(response.headers.get('Vary')).toContain('Accept-Encoding');
 
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      expect(jwks).toHaveProperty('keys');
-      expect(Array.isArray(jwks.keys)).toBe(true);
-      expect(jwks.keys.length).toBe(1);
-    });
-
-    it('should return empty key set when no private key configured', async () => {
-      const env = createMockEnv(undefined, undefined);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      expect(response.status).toBe(200);
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      expect(jwks).toHaveProperty('keys');
-      expect(jwks.keys).toEqual([]);
-    });
-
-    it('should include correct JWK fields', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      const jwk = jwks.keys[0];
-
-      expect(jwk).toHaveProperty('kty', 'RSA');
-      expect(jwk).toHaveProperty('use', 'sig');
-      expect(jwk).toHaveProperty('alg', 'RS256');
-      expect(jwk).toHaveProperty('kid');
-      expect(jwk).toHaveProperty('n');
-      expect(jwk).toHaveProperty('e');
-    });
-
-    it('should use provided key ID', async () => {
-      const keySet = await generateKeySet('custom-key-id-123', 2048);
-      const env = createMockEnv(
-        testPrivateKey,
-        'custom-key-id-123',
-        JSON.stringify(keySet.publicJWK)
-      );
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      const jwk = jwks.keys[0];
-
-      expect(jwk.kid).toBe('custom-key-id-123');
-    });
-
-    it('should use default key ID when not provided', async () => {
-      const keySet = await generateKeySet('default', 2048);
-      const env = createMockEnv(testPrivateKey, undefined, JSON.stringify(keySet.publicJWK));
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      const jwk = jwks.keys[0];
-
-      expect(jwk.kid).toBe('default');
-    });
+    const jwks = (await response.json()) as { keys: JWK[] };
+    expect(jwks.keys.map((key) => key.kid)).toEqual(['primary-key', 'secondary-key']);
+    expect(jwks.keys.map((key) => key.kid)).not.toContain('fallback-key');
+    expect(keyManager.idFromName).toHaveBeenCalledWith('default-v3');
+    expect(keyManager.get).toHaveBeenCalledTimes(1);
+    expect(keyManager.getAllPublicKeysRpc).toHaveBeenCalledTimes(1);
   });
 
-  describe('Cache Headers', () => {
-    it('should include Cache-Control header', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
+  it('uses tenant context to select the KeyManager instance', async () => {
+    const tenantApp = createApp('tenant-a');
+    const keyManager = createKeyManager([primaryJwk]);
 
-      const cacheControl = response.headers.get('Cache-Control');
-      expect(cacheControl).toBeDefined();
-      expect(cacheControl).toContain('public');
-      expect(cacheControl).toContain('max-age=3600');
-    });
+    await tenantApp.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({ keyManager: keyManager.namespace })
+    );
 
-    it('should include Vary header', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
+    expect(keyManager.idFromName).toHaveBeenCalledWith('tenant-a-v3');
+  });
 
-      const vary = response.headers.get('Vary');
-      expect(vary).toBeDefined();
-      expect(vary).toContain('Accept-Encoding');
+  it('falls back to PUBLIC_JWK_JSON when KeyManager returns no keys', async () => {
+    const keyManager = createKeyManager([]);
+    const response = await app.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({
+        keyManager: keyManager.namespace,
+        publicJWK: fallbackJwk,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toContain('max-age=3600');
+
+    const jwks = (await response.json()) as { keys: JWK[] };
+    expect(jwks.keys).toHaveLength(1);
+    expect(jwks.keys[0]?.kid).toBe('fallback-key');
+  });
+
+  it('falls back to PUBLIC_JWK_JSON when KeyManager RPC fails', async () => {
+    const keyManager = createFailingKeyManager(new Error('key manager unavailable'));
+    const response = await app.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({
+        keyManager: keyManager.namespace,
+        publicJWK: fallbackJwk,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const jwks = (await response.json()) as { keys: JWK[] };
+    expect(jwks.keys[0]?.kid).toBe('fallback-key');
+  });
+
+  it('returns an empty key set when neither KeyManager nor fallback keys are available', async () => {
+    const keyManager = createKeyManager([]);
+    const response = await app.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({ keyManager: keyManager.namespace })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ keys: [] });
+  });
+
+  it('returns a server error when fallback key JSON is invalid', async () => {
+    const keyManager = createKeyManager([]);
+    const response = await app.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({
+        keyManager: keyManager.namespace,
+        publicJWKJson: 'invalid-json{',
+      })
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get('Content-Type')).toContain('application/json');
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'server_error',
+      message: 'Failed to generate JWKS',
     });
   });
 
-  describe('JWK Structure', () => {
-    it('should include RSA modulus (n)', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
+  it('does not expose private key material in published keys', async () => {
+    const keyManager = createKeyManager([primaryJwk]);
+    const response = await app.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({ keyManager: keyManager.namespace })
+    );
 
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      const jwk = jwks.keys[0];
+    const jwks = (await response.json()) as { keys: Array<Record<string, unknown>> };
+    const jwk = jwks.keys[0];
 
-      expect(jwk.n).toBeDefined();
-      expect(typeof jwk.n).toBe('string');
-      expect((jwk.n as string).length).toBeGreaterThan(0);
+    expect(jwk).toMatchObject({
+      kty: 'RSA',
+      use: 'sig',
+      alg: 'RS256',
+      kid: 'primary-key',
     });
-
-    it('should include RSA exponent (e)', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      const jwk = jwks.keys[0];
-
-      expect(jwk.e).toBeDefined();
-      expect(typeof jwk.e).toBe('string');
-      // RSA exponent is typically "AQAB" (65537 in base64url)
-      expect((jwk.e as string).length).toBeGreaterThan(0);
-    });
-
-    it('should not include private key material', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-      const jwk = jwks.keys[0];
-
-      // Private JWK fields should not be present
-      expect(jwk.d).toBeUndefined();
-      expect(jwk.p).toBeUndefined();
-      expect(jwk.q).toBeUndefined();
-      expect(jwk.dp).toBeUndefined();
-      expect(jwk.dq).toBeUndefined();
-      expect(jwk.qi).toBeUndefined();
-    });
-  });
-
-  describe('Error Handling', () => {
-    it('should handle invalid JWK JSON gracefully', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', 'invalid-json{');
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      expect(response.status).toBe(500);
-      const error = await response.json();
-      expect(error).toHaveProperty('error');
-      expect(error).toHaveProperty('message');
-    });
-
-    it('should return JSON content type for errors', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', 'invalid-json{');
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      expect(response.headers.get('Content-Type')).toContain('application/json');
-    });
-  });
-
-  describe('JWKS Compliance', () => {
-    it('should return proper JSON content type', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      expect(response.headers.get('Content-Type')).toContain('application/json');
-    });
-
-    it('should return valid JSON structure', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
-
-      // JWKS must have "keys" array
-      expect(jwks).toHaveProperty('keys');
-      expect(Array.isArray(jwks.keys)).toBe(true);
-    });
-
-    it('should return 200 OK status on success', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
-      const response = await app.request(
-        '/.well-known/jwks.json',
-        {
-          method: 'GET',
-        },
-        env
-      );
-
-      expect(response.status).toBe(200);
-    });
+    expect(jwk?.n).toEqual(expect.any(String));
+    expect(jwk?.e).toEqual(expect.any(String));
+    expect(jwk?.d).toBeUndefined();
+    expect(jwk?.p).toBeUndefined();
+    expect(jwk?.q).toBeUndefined();
+    expect(jwk?.dp).toBeUndefined();
+    expect(jwk?.dq).toBeUndefined();
+    expect(jwk?.qi).toBeUndefined();
   });
 });

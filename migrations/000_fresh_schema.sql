@@ -5,12 +5,13 @@
 
 -- tenants table must be created first as other tables reference it via FK
 CREATE TABLE tenants (
-  id          TEXT PRIMARY KEY,           -- slug形式: ^[a-z0-9-]+$, max 63chars
-  tenant_code TEXT NOT NULL UNIQUE,       -- 手入力/発見用コード（グローバル一意）
-  name        TEXT NOT NULL,              -- 表示名
+  id          TEXT PRIMARY KEY,           -- slug format: ^[a-z0-9-]+$, max 63chars
+  tenant_code TEXT NOT NULL UNIQUE,       -- manual-entry/discovery code (globally unique)
+  tenant_key  TEXT NOT NULL UNIQUE,       -- opaque key for logging/storage object paths
+  name        TEXT NOT NULL,              -- display name
   description TEXT,
-  is_active   INTEGER NOT NULL DEFAULT 1, -- 0=無効, 1=有効
-  is_default  INTEGER NOT NULL DEFAULT 0, -- デフォルトテナント（1つのみ）
+  is_active   INTEGER NOT NULL DEFAULT 1, -- 0=disabled, 1=enabled
+  is_default  INTEGER NOT NULL DEFAULT 0, -- default tenant (only one)
   default_tenant_guard TEXT,              -- 'default' when is_default=1, NULL otherwise
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
@@ -30,13 +31,14 @@ CREATE TABLE trust_groups (
 
 CREATE UNIQUE INDEX idx_trust_groups_tenant_id ON trust_groups(tenant_id, id);
 
--- 既存の 'default' テナントを初期挿入
+-- Seed the existing 'default' tenant
 INSERT INTO tenants (
-  id, tenant_code, name, is_active, is_default, default_tenant_guard, created_at, updated_at
+  id, tenant_code, tenant_key, name, is_active, is_default, default_tenant_guard, created_at, updated_at
 )
 VALUES (
   'default',
   'default',
+  't_' || lower(hex(randomblob(18))),
   'Default',
   1,
   1,
@@ -540,6 +542,23 @@ CREATE TABLE object_catalog_objects (
   deleted_at INTEGER,
   FOREIGN KEY (catalog_id) REFERENCES object_catalog(id) ON DELETE CASCADE,
   UNIQUE(catalog_id, representation, object_index)
+);
+
+CREATE TABLE sensitive_detail_chunk_index (
+  catalog_id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  object_class TEXT NOT NULL,
+  bucket_binding TEXT NOT NULL CHECK (bucket_binding IN ('SENSITIVE_DETAILS')),
+  object_key TEXT NOT NULL,
+  content_encoding TEXT NOT NULL DEFAULT 'gzip' CHECK (content_encoding IN ('gzip', 'none')),
+  line_number INTEGER NOT NULL,
+  byte_offset INTEGER,
+  byte_length INTEGER,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  checksum_sha256 TEXT,
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER,
+  FOREIGN KEY (catalog_id) REFERENCES object_catalog(id) ON DELETE CASCADE
 );
 
 CREATE TABLE device_codes (
@@ -2011,6 +2030,91 @@ CREATE INDEX idx_object_catalog_objects_bucket_key
 CREATE INDEX idx_object_catalog_objects_deleted_at
   ON object_catalog_objects(deleted_at);
 
+CREATE INDEX idx_sensitive_detail_chunk_index_tenant_class
+  ON sensitive_detail_chunk_index(tenant_id, object_class, created_at);
+
+CREATE INDEX idx_sensitive_detail_chunk_index_object
+  ON sensitive_detail_chunk_index(object_key, line_number);
+
+CREATE TABLE IF NOT EXISTS log_object_catalog (
+  id TEXT PRIMARY KEY,
+  tenant_key TEXT NOT NULL,
+  log_type TEXT NOT NULL,
+  plane TEXT NOT NULL,
+  surface TEXT,
+  object_key TEXT NOT NULL,
+  object_kind TEXT NOT NULL CHECK (object_kind IN ('chunk', 'manifest', 'dlq_payload', 'export_artifact')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'committed', 'orphan_candidate', 'deleted')),
+  record_count INTEGER NOT NULL DEFAULT 0,
+  byte_count INTEGER NOT NULL DEFAULT 0,
+  checksum_sha256 TEXT,
+  compression TEXT CHECK (compression IN ('none', 'gzip_block')),
+  encryption_scope TEXT,
+  key_version INTEGER,
+  created_at INTEGER NOT NULL,
+  committed_at INTEGER,
+  deleted_at INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_log_object_catalog_object_key
+  ON log_object_catalog(object_key);
+
+CREATE INDEX IF NOT EXISTS idx_log_object_catalog_tenant_type_time
+  ON log_object_catalog(tenant_key, log_type, plane, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_log_object_catalog_status
+  ON log_object_catalog(status, created_at);
+
+CREATE TABLE IF NOT EXISTS log_chunk_record_index (
+  record_id TEXT NOT NULL,
+  tenant_key TEXT NOT NULL,
+  log_type TEXT NOT NULL,
+  plane TEXT NOT NULL,
+  surface TEXT,
+  object_catalog_id TEXT NOT NULL,
+  chunk_id TEXT NOT NULL,
+  line_number INTEGER,
+  block_offset INTEGER,
+  block_length INTEGER,
+  record_offset INTEGER,
+  record_length INTEGER,
+  event_at INTEGER NOT NULL,
+  index_profile TEXT NOT NULL,
+  indexed_fields TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'committed', 'deleted')),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (tenant_key, log_type, plane, record_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_log_chunk_record_index_time
+  ON log_chunk_record_index(tenant_key, log_type, plane, event_at);
+
+CREATE INDEX IF NOT EXISTS idx_log_chunk_record_index_object
+  ON log_chunk_record_index(object_catalog_id);
+
+CREATE INDEX IF NOT EXISTS idx_log_chunk_record_index_status
+  ON log_chunk_record_index(status, created_at);
+
+CREATE TABLE IF NOT EXISTS log_chunk_manifests (
+  id TEXT PRIMARY KEY,
+  tenant_key TEXT NOT NULL,
+  log_type TEXT NOT NULL,
+  plane TEXT NOT NULL,
+  bucket_start_at INTEGER NOT NULL,
+  bucket_end_at INTEGER NOT NULL,
+  shard TEXT NOT NULL,
+  manifest_object_key TEXT NOT NULL,
+  chunk_count INTEGER NOT NULL,
+  record_count INTEGER NOT NULL,
+  checksum_sha256 TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'committed', 'repair_needed')),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_log_chunk_manifests_bucket
+  ON log_chunk_manifests(tenant_key, log_type, plane, bucket_start_at, shard);
+
 CREATE INDEX idx_device_codes_client_id ON device_codes(tenant_id, client_id);
 
 CREATE INDEX idx_device_codes_expires_at ON device_codes(expires_at);
@@ -2668,3 +2772,225 @@ CREATE INDEX idx_sobgr_action
   ON support_operation_break_glass_requests(tenant_id, action_id);
 CREATE INDEX idx_sobgr_reveals_request
   ON support_operation_break_glass_reveals(tenant_id, break_glass_request_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS internal_notification_events (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (
+    category IN (
+      'storage_registry_security',
+      'storage_registry_health',
+      'tenant_database_stats',
+      'tenant_database_health',
+      'logging_destination_health',
+      'logging_delivery_failure',
+      'logging_fallback_used',
+      'logging_dlq_backlog',
+      'logging_quota_warning',
+      'logging_repair_job_status',
+      'notification_delivery_failure'
+    )
+  ),
+  event_type TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (
+    status IN ('pending', 'delivered', 'failed', 'dead_letter', 'suppressed')
+  ),
+  deduplication_key TEXT,
+  payload_json TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  delivered_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_notification_events_dedup
+  ON internal_notification_events(deduplication_key);
+
+CREATE INDEX IF NOT EXISTS idx_internal_notification_events_pending
+  ON internal_notification_events(status, severity, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_internal_notification_events_tenant_created
+  ON internal_notification_events(tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS internal_notification_delivery_routes (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  scope_type TEXT NOT NULL DEFAULT 'platform' CHECK (scope_type IN ('platform', 'tenant')),
+  scope_id TEXT NOT NULL DEFAULT 'global',
+  provider TEXT NOT NULL CHECK (provider IN ('webhook', 'email', 'slack', 'custom')),
+  destination_id TEXT,
+  categories_json TEXT,
+  severities_json TEXT,
+  min_severity TEXT NOT NULL DEFAULT 'medium'
+    CHECK (min_severity IN ('critical', 'high', 'medium', 'low', 'info')),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  failure_policy TEXT NOT NULL DEFAULT 'retry_until_dead_letter'
+    CHECK (failure_policy IN ('best_effort', 'retry_until_dead_letter', 'fail_closed')),
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  retry_after_seconds INTEGER NOT NULL DEFAULT 300,
+  suppression_key TEXT,
+  created_by TEXT,
+  updated_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_internal_notification_delivery_routes_lookup
+  ON internal_notification_delivery_routes(scope_type, scope_id, enabled, provider);
+
+CREATE TABLE IF NOT EXISTS internal_notification_delivery_attempts (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  route_id TEXT,
+  provider TEXT NOT NULL,
+  destination_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'delivered', 'failed', 'dead_letter', 'suppressed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  response_status INTEGER,
+  error_class TEXT,
+  error_message TEXT,
+  next_attempt_at INTEGER,
+  payload_sha256 TEXT,
+  delivered_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_internal_notification_delivery_attempts_event
+  ON internal_notification_delivery_attempts(event_id, provider, status);
+
+CREATE INDEX IF NOT EXISTS idx_internal_notification_delivery_attempts_retry
+  ON internal_notification_delivery_attempts(status, next_attempt_at, updated_at);
+
+CREATE TABLE IF NOT EXISTS logging_usage_aggregates (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT,
+  tenant_key TEXT,
+  log_type TEXT,
+  plane TEXT,
+  lane TEXT CHECK (lane IS NULL OR lane IN ('critical', 'default', 'bulk')),
+  metric_name TEXT NOT NULL,
+  window_kind TEXT NOT NULL CHECK (window_kind IN ('hour', 'day')),
+  window_start_at INTEGER NOT NULL,
+  window_end_at INTEGER NOT NULL,
+  value INTEGER NOT NULL DEFAULT 0,
+  source_table TEXT NOT NULL,
+  metadata_json TEXT,
+  refreshed_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_logging_usage_aggregates_window
+  ON logging_usage_aggregates(window_kind, window_start_at, metric_name);
+
+CREATE TABLE IF NOT EXISTS logging_quota_policies (
+  id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('platform', 'tenant')),
+  scope_id TEXT NOT NULL,
+  log_type TEXT,
+  plane TEXT,
+  lane TEXT CHECK (lane IS NULL OR lane IN ('critical', 'default', 'bulk')),
+  metric_name TEXT NOT NULL,
+  window_kind TEXT NOT NULL DEFAULT 'day' CHECK (window_kind IN ('hour', 'day')),
+  soft_limit INTEGER,
+  hard_limit INTEGER,
+  warning_ratio REAL NOT NULL DEFAULT 0.8,
+  enforcement_mode TEXT NOT NULL DEFAULT 'warn_only'
+    CHECK (enforcement_mode IN ('disabled', 'observe', 'warn_only', 'soft_limit', 'hard_non_critical')),
+  critical_behavior TEXT NOT NULL DEFAULT 'never_block' CHECK (critical_behavior IN ('never_block')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'deleted')),
+  created_by TEXT,
+  updated_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER,
+  version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_logging_quota_policies_lookup
+  ON logging_quota_policies(scope_type, scope_id, status, metric_name, window_kind);
+
+CREATE TABLE IF NOT EXISTS logging_quota_evaluations (
+  id TEXT PRIMARY KEY,
+  quota_policy_id TEXT NOT NULL,
+  tenant_id TEXT,
+  tenant_key TEXT,
+  log_type TEXT,
+  plane TEXT,
+  lane TEXT,
+  metric_name TEXT NOT NULL,
+  window_kind TEXT NOT NULL,
+  window_start_at INTEGER NOT NULL,
+  window_end_at INTEGER NOT NULL,
+  value INTEGER NOT NULL,
+  soft_limit INTEGER,
+  hard_limit INTEGER,
+  state TEXT NOT NULL CHECK (state IN ('ok', 'warning', 'soft_exceeded', 'hard_exceeded')),
+  enforcement_action TEXT NOT NULL CHECK (
+    enforcement_action IN ('none', 'notify', 'throttle_non_critical', 'block_non_critical')
+  ),
+  evaluated_at INTEGER NOT NULL,
+  notification_event_id TEXT,
+  metadata_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_logging_quota_evaluations_state
+  ON logging_quota_evaluations(state, evaluated_at DESC);
+
+CREATE TABLE IF NOT EXISTS tenant_database_probe_results (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  shard_group TEXT NOT NULL DEFAULT 'default',
+  shard_index INTEGER NOT NULL DEFAULT 0,
+  generation INTEGER,
+  probe_kind TEXT NOT NULL CHECK (probe_kind IN ('dry_run', 'write_read_delete')),
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed', 'skipped')),
+  latency_ms INTEGER,
+  binding_ref TEXT,
+  connection_ref TEXT,
+  provider TEXT,
+  schema_version INTEGER,
+  error_class TEXT,
+  error_message TEXT,
+  metadata_json TEXT,
+  created_by TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_database_probe_results_scope
+  ON tenant_database_probe_results(tenant_id, role, shard_group, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS logging_catalog_repair_jobs (
+  id TEXT PRIMARY KEY,
+  job_kind TEXT NOT NULL CHECK (job_kind IN ('scan', 'apply_safe', 'dangerous_preview', 'dangerous_apply')),
+  status TEXT NOT NULL CHECK (
+    status IN ('queued', 'running', 'completed', 'failed', 'cancel_requested', 'cancelled')
+  ),
+  tenant_key TEXT,
+  log_type TEXT,
+  plane TEXT,
+  requested_action TEXT,
+  progress_current INTEGER NOT NULL DEFAULT 0,
+  progress_total INTEGER,
+  preview_artifact_ref TEXT,
+  result_json TEXT,
+  error_class TEXT,
+  last_error TEXT,
+  requested_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  started_at INTEGER,
+  completed_at INTEGER,
+  cancel_requested_at INTEGER,
+  cancel_requested_by TEXT,
+  metadata_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_logging_catalog_repair_jobs_queue
+  ON logging_catalog_repair_jobs(status, created_at);

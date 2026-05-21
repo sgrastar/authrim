@@ -105,15 +105,15 @@ export type RecommendationLevel = 'recommended' | 'standard' | 'advanced' | 'dep
  * Setting categories for UI grouping.
  */
 export type SettingCategory =
-  | 'authentication' // 認証方式
-  | 'security' // セキュリティ
-  | 'tokens' // トークン設定
-  | 'consent' // 同意設定
-  | 'scopes' // スコープ・権限
-  | 'encryption' // 暗号化
-  | 'session' // セッション
-  | 'integration' // 外部連携
-  | 'compliance'; // コンプライアンス
+  | 'authentication' // authentication methods
+  | 'security' // security
+  | 'tokens' // token settings
+  | 'consent' // consent settings
+  | 'scopes' // scopes and permissions
+  | 'encryption' // encryption
+  | 'session' // session
+  | 'integration' // external integrations
+  | 'compliance'; // compliance
 
 /**
  * Input types for UI rendering.
@@ -227,7 +227,7 @@ export interface SettingChangeImpact {
  * Area affected by a setting change.
  */
 export interface AffectedArea {
-  /** Area name (e.g., "ログインフロー") */
+  /** Area name (e.g., "login flow") */
   area: string;
 
   /** Impact description */
@@ -280,7 +280,7 @@ export interface FlowNodeDisplayState {
   /** Category for palette grouping */
   category: NodeCategory;
 
-  /** Badge text (e.g., "推奨", "必須") */
+  /** Badge text (e.g., "recommended", "required") */
   badge?: NodeBadge;
 }
 
@@ -288,11 +288,11 @@ export interface FlowNodeDisplayState {
  * Node categories for palette grouping.
  */
 export type NodeCategory =
-  | 'authentication' // 認証方式
-  | 'verification' // 検証
-  | 'consent' // 同意
-  | 'flow_control' // フロー制御
-  | 'oidc_core'; // OIDC コア（編集不可）
+  | 'authentication' // authentication methods
+  | 'verification' // verification
+  | 'consent' // consent
+  | 'flow_control' // flow control
+  | 'oidc_core'; // OIDC core (not editable)
 
 /**
  * Badge for node display.
@@ -324,7 +324,7 @@ export interface NodePaletteCategory {
   /** Category ID */
   id: NodeCategory;
 
-  /** Display name (e.g., "認証方式") */
+  /** Display name (e.g., "authentication methods") */
   displayName: string;
 
   /** Category description */

@@ -9,6 +9,7 @@ const repoMocks = vi.hoisted(() => ({
     listUsableForTenant: vi.fn(),
     getDestination: vi.fn(),
     getDestinationWithCredential: vi.fn(),
+    updateDestination: vi.fn(),
     updateCredential: vi.fn(),
     deleteDestination: vi.fn(),
     listUsage: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listUsableForTenant = repoMocks.storage.listUsableForTenant;
     getDestination = repoMocks.storage.getDestination;
     getDestinationWithCredential = repoMocks.storage.getDestinationWithCredential;
+    updateDestination = repoMocks.storage.updateDestination;
     updateCredential = repoMocks.storage.updateCredential;
     deleteDestination = repoMocks.storage.deleteDestination;
     listUsage = repoMocks.storage.listUsage;
@@ -70,8 +72,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     AdminDatabaseConnectionRepository: MockDatabaseConnectionRepository,
     encryptValue: repoMocks.encryptValue,
     createErrorResponse: vi.fn(
-      (c: { json: (body: unknown, status?: number) => Response }, errorCode: string) =>
-        c.json({ error: 'error', error_code: errorCode }, statusByCode[errorCode] ?? 500)
+      (
+        c: { json: (body: unknown, status?: number) => Response },
+        errorCode: string,
+        options?: { extensions?: Record<string, unknown> }
+      ) =>
+        c.json(
+          { error: 'error', error_code: errorCode, ...(options?.extensions ?? {}) },
+          statusByCode[errorCode] ?? 500
+        )
     ),
   };
 });
@@ -163,6 +172,7 @@ describe('admin infrastructure resource routers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repoMocks.encryptValue.mockResolvedValue({ encrypted: 'enc:v1:ciphertext', keyVersion: 1 });
+    repoMocks.writeAdminAuditLog.mockResolvedValue('audit_1');
     repoMocks.requireAdminPermissionOrElevationGrant.mockResolvedValue({
       grantedBy: 'grant',
       grant: { public_grant_id: 'egr_1' },
@@ -172,6 +182,9 @@ describe('admin infrastructure resource routers', () => {
     repoMocks.storage.getDestination.mockResolvedValue(storageDestination());
     repoMocks.storage.getDestinationWithCredential.mockResolvedValue(
       storageDestination({ credential_encrypted: null })
+    );
+    repoMocks.storage.updateDestination.mockResolvedValue(
+      storageDestination({ display_name: 'Logs v2' })
     );
     repoMocks.storage.createDestination.mockImplementation(async (input) =>
       storageDestination({
@@ -231,7 +244,7 @@ describe('admin infrastructure resource routers', () => {
     });
   });
 
-  it('creates a tenant storage destination with encrypted write-only credentials', async () => {
+  it('creates a platform storage destination with encrypted write-only credentials', async () => {
     const app = createApp();
     const response = await app.request(
       '/api/admin/storage-destinations',
@@ -239,6 +252,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-test-roles': 'system_admin',
           'x-test-permissions': [
             ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
             ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE,
@@ -247,6 +261,7 @@ describe('admin infrastructure resource routers', () => {
         body: JSON.stringify({
           name: 'logs',
           provider: 'aws_s3',
+          config: { bucket: 'logs', region: 'us-east-1' },
           credential: { accessKeyId: 'plain-access-key' },
         }),
       },
@@ -258,13 +273,39 @@ describe('admin infrastructure resource routers', () => {
     expect(repoMocks.encryptValue).toHaveBeenCalled();
     expect(repoMocks.storage.createDestination).toHaveBeenCalledWith(
       expect.objectContaining({
+        scope_type: 'platform',
+        scope_id: 'platform',
         credential_encrypted: 'enc:v1:ciphertext',
         credential_key_version: 1,
       })
     );
     expect(JSON.stringify(body)).not.toContain('plain-access-key');
     expect(JSON.stringify(body)).not.toContain('enc:v1:ciphertext');
-    expect(body.has_credential).toBe(true);
+    expect(body.item).toMatchObject({ has_credential: true });
+    expect(body.audit_id).toBe('audit_1');
+  });
+
+  it('redacts storage destination provider config for tenant admins', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/storage-destinations',
+      {
+        headers: {
+          'x-test-roles': 'tenant_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_LIST,
+        },
+      },
+      env
+    );
+    const body = (await response.json()) as { items: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(body.items[0]).toMatchObject({
+      config: {},
+      credential_key_version: null,
+      credential_updated_at: null,
+      credential_updated_by: null,
+    });
   });
 
   it('rejects storage destination credential creation without credential permission', async () => {
@@ -275,11 +316,13 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-test-roles': 'system_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
         },
         body: JSON.stringify({
           name: 'logs',
           provider: 'aws_s3',
+          config: { bucket: 'logs', region: 'us-east-1' },
           credential: { secret: 'plain' },
         }),
       },
@@ -290,6 +333,162 @@ describe('admin infrastructure resource routers', () => {
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     expect(repoMocks.storage.createDestination).not.toHaveBeenCalled();
+  });
+
+  it('rejects tenant admin storage destination creation even with create permission', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/storage-destinations',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-roles': 'tenant_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
+        },
+        body: JSON.stringify({
+          name: 'logs',
+          provider: 'aws_s3',
+          config: { bucket: 'logs', region: 'us-east-1' },
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(403);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    expect(repoMocks.storage.createDestination).not.toHaveBeenCalled();
+  });
+
+  it('rejects storage destination creation when provider config is incomplete', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/storage-destinations',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-roles': 'system_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
+        },
+        body: JSON.stringify({
+          name: 'logs',
+          provider: 'aws_s3',
+          config: { bucket: 'logs' },
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    expect(body.details).toEqual({
+      fields: [
+        {
+          path: 'config.region',
+          code: 'required',
+          message: 'Config field region is required.',
+        },
+      ],
+    });
+    expect(repoMocks.storage.createDestination).not.toHaveBeenCalled();
+  });
+
+  it('rejects inline secrets in legacy storage destination config', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/storage-destinations',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-roles': 'system_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
+        },
+        body: JSON.stringify({
+          name: 'logs',
+          provider: 'aws_s3',
+          config: {
+            bucket: 'logs',
+            region: 'us-east-1',
+            headers: [{ secretAccessKey: 'inline-secret' }],
+          },
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.details).toEqual({
+      fields: [
+        {
+          path: 'config.headers.0.secretAccessKey',
+          code: 'secret_not_allowed',
+          message:
+            'Storage destination config must reference credentials, not include secret values.',
+        },
+      ],
+    });
+    expect(repoMocks.storage.createDestination).not.toHaveBeenCalled();
+  });
+
+  it('validates storage destination config updates through provider schemas', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/storage-destinations/sd_1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-roles': 'system_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE,
+        },
+        body: JSON.stringify({
+          config: { bucket: 'logs' },
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.details).toEqual({
+      fields: [
+        {
+          path: 'config.region',
+          code: 'required',
+          message: 'Config field region is required.',
+        },
+      ],
+    });
+    expect(repoMocks.storage.updateDestination).not.toHaveBeenCalled();
+  });
+
+  it('rejects tenant admin storage destination updates even with update permission', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/storage-destinations/sd_1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-roles': 'tenant_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE,
+        },
+        body: JSON.stringify({
+          display_name: 'Tenant controlled',
+        }),
+      },
+      env
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(403);
+    expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    expect(repoMocks.storage.updateDestination).not.toHaveBeenCalled();
   });
 
   it('rejects platform storage destination access without platform authority', async () => {
@@ -310,6 +509,30 @@ describe('admin infrastructure resource routers', () => {
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   });
 
+  it('does not allow storage destination usage writes with usage read permission only', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/storage-destinations/sd_1/usage',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-roles': 'system_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_USAGE_READ,
+        },
+        body: JSON.stringify({
+          feature: 'diagnostic_logging',
+          resource_type: 'tenant',
+          resource_id: 'tenant-a',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(403);
+    expect(repoMocks.storage.recordUsage).not.toHaveBeenCalled();
+  });
+
   it('requires elevation for storage destination credential rotation', async () => {
     repoMocks.requireAdminPermissionOrElevationGrant.mockResolvedValue(
       new Response(JSON.stringify({ error: 'approval_required' }), { status: 403 })
@@ -321,6 +544,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          'x-test-roles': 'system_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE,
         },
         body: JSON.stringify({ credential: { secret: 'plain' } }),
@@ -342,6 +566,7 @@ describe('admin infrastructure resource routers', () => {
       {
         method: 'DELETE',
         headers: {
+          'x-test-roles': 'system_admin',
           'x-test-permissions': [
             ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_DELETE,
             ADMIN_PERMISSIONS.ALL,
@@ -363,6 +588,7 @@ describe('admin infrastructure resource routers', () => {
       {
         method: 'POST',
         headers: {
+          'x-test-roles': 'system_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_TEST,
         },
       },
@@ -374,7 +600,8 @@ describe('admin infrastructure resource routers', () => {
     expect(repoMocks.storage.getDestinationWithCredential).toHaveBeenCalledWith('sd_1');
     expect(repoMocks.testStorageDestinationConnectivity).toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain('credential_encrypted');
-    expect(body.status).toBe('ok');
+    expect(body.result).toMatchObject({ status: 'ok' });
+    expect(body.audit_id).toBe('audit_1');
   });
 
   it('requires platform authority for database connections', async () => {

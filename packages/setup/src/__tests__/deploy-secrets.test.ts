@@ -88,6 +88,12 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-management')).not.toContain('ADMIN_API_SECRET');
   });
 
+  it('uploads the logging cursor secret only to management', () => {
+    expect(getSecretNamesForWorker('ar-management')).toContain('LOGGING_CURSOR_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-auth')).not.toContain('LOGGING_CURSOR_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-token')).not.toContain('LOGGING_CURSOR_HMAC_SECRET');
+  });
+
   it('does not upload Admin API root bearer material to SAML or bridge workers', () => {
     expect(getSecretNamesForWorker('ar-saml')).toContain('KEY_MANAGER_SECRET');
     expect(getSecretNamesForWorker('ar-saml')).not.toContain('ADMIN_API_SECRET');

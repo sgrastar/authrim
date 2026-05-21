@@ -158,6 +158,7 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
     { file: 'rp_token_encryption_key.txt', name: 'RP_TOKEN_ENCRYPTION_KEY' },
     { file: 'object_encryption_root_key.txt', name: 'OBJECT_ENCRYPTION_ROOT_KEY' },
     { file: 'version_manager_secret.txt', name: 'VERSION_MANAGER_SECRET' },
+    { file: 'logging_cursor_hmac_secret.txt', name: 'LOGGING_CURSOR_HMAC_SECRET' },
     {
       file: 'tenant_runtime_registry_signing_private.jwk.json',
       name: 'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
