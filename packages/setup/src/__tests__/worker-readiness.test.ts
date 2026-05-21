@@ -160,6 +160,7 @@ describe('waitForWorkerDeploymentsReady', () => {
         { workerName: 'dev-ar-auth', deployedAt: '2026-05-18T00:00:00.000Z' },
         { workerName: 'dev-ar-router', deployedAt: '2026-05-18T00:00:00.000Z' },
       ],
+      requireFreshDeployment: true,
       maxWaitMs: 0,
     });
 
@@ -168,6 +169,21 @@ describe('waitForWorkerDeploymentsReady', () => {
     expect(result.staleWorkers).toEqual(['dev-ar-router']);
     expect(result.error).toContain('missing: dev-ar-auth');
     expect(result.error).toContain('stale: dev-ar-router');
+  });
+
+  it('treats existing workers as visible by default even when deployment timestamps are older', async () => {
+    mocks.getWorkerDeployments.mockResolvedValue({
+      exists: true,
+      lastDeployedAt: '2026-05-17T23:00:00.000Z',
+    });
+
+    const result = await waitForWorkerDeploymentsReady({
+      targets: [{ workerName: 'dev-ar-router', deployedAt: '2026-05-18T00:00:00.000Z' }],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(true);
+    expect(result.staleWorkers).toEqual([]);
   });
 });
 

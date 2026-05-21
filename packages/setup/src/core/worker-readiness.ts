@@ -258,6 +258,7 @@ function deploymentIsAtLeast(
 
 export async function waitForWorkerDeploymentsReady(options: {
   targets: WorkerDeploymentReadinessTarget[];
+  requireFreshDeployment?: boolean;
   maxWaitMs?: number;
   initialDelayMs?: number;
   maxDelayMs?: number;
@@ -303,6 +304,7 @@ export async function waitForWorkerDeploymentsReady(options: {
     lastStale = results
       .filter(
         (result) =>
+          options.requireFreshDeployment === true &&
           result.deployment.exists &&
           !deploymentIsAtLeast(result.deployment.lastDeployedAt, result.target.deployedAt)
       )
