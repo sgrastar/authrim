@@ -14,16 +14,14 @@ import {
   addNamespaceDeclarations,
   serializeXml,
   parseXml,
-  findElement,
-  findElements,
+  findDirectChildElement,
+  findDirectChildElements,
+  base64Encode,
+  base64EncodeBytes,
   getAttribute,
   getTextContent,
 } from './xml-utils';
-import {
-  bytesToBinaryString,
-  decodePostBindingMessage,
-  inflateRedirectBindingMessage,
-} from './message-limits';
+import { decodePostBindingMessage, inflateRedirectBindingMessage } from './message-limits';
 import type { NameIDFormat } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 
@@ -254,9 +252,13 @@ export function parseLogoutRequestRedirect(samlRequestEncoded: string): ParsedLo
  */
 export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
   const doc = parseXml(xml);
-  const logoutRequestElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'LogoutRequest');
+  const logoutRequestElement = doc.documentElement;
 
-  if (!logoutRequestElement) {
+  if (
+    !logoutRequestElement ||
+    logoutRequestElement.namespaceURI !== SAML_NAMESPACES.SAML2P ||
+    logoutRequestElement.localName !== 'LogoutRequest'
+  ) {
     throw new Error('Invalid LogoutRequest: missing LogoutRequest element');
   }
 
@@ -270,7 +272,11 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
   }
 
   // Parse Issuer
-  const issuerElement = findElement(logoutRequestElement, SAML_NAMESPACES.SAML2, 'Issuer');
+  const issuerElement = findDirectChildElement(
+    logoutRequestElement,
+    SAML_NAMESPACES.SAML2,
+    'Issuer'
+  );
   const issuer = getTextContent(issuerElement);
 
   if (!issuer) {
@@ -278,7 +284,11 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
   }
 
   // Parse NameID
-  const nameIdElement = findElement(logoutRequestElement, SAML_NAMESPACES.SAML2, 'NameID');
+  const nameIdElement = findDirectChildElement(
+    logoutRequestElement,
+    SAML_NAMESPACES.SAML2,
+    'NameID'
+  );
   if (!nameIdElement) {
     throw new Error('Invalid LogoutRequest: missing NameID');
   }
@@ -289,7 +299,7 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
   const nameIdSPNameQualifier = getAttribute(nameIdElement, 'SPNameQualifier') || undefined;
 
   // Parse SessionIndex (optional, can have multiple per SAML 2.0 spec)
-  const sessionIndexElements = findElements(
+  const sessionIndexElements = findDirectChildElements(
     logoutRequestElement,
     SAML_NAMESPACES.SAML2P,
     'SessionIndex'
@@ -343,9 +353,13 @@ export function parseLogoutResponseRedirect(samlResponseEncoded: string): Parsed
  */
 export function parseLogoutResponseXml(xml: string): ParsedLogoutResponse {
   const doc = parseXml(xml);
-  const logoutResponseElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'LogoutResponse');
+  const logoutResponseElement = doc.documentElement;
 
-  if (!logoutResponseElement) {
+  if (
+    !logoutResponseElement ||
+    logoutResponseElement.namespaceURI !== SAML_NAMESPACES.SAML2P ||
+    logoutResponseElement.localName !== 'LogoutResponse'
+  ) {
     throw new Error('Invalid LogoutResponse: missing LogoutResponse element');
   }
 
@@ -359,7 +373,11 @@ export function parseLogoutResponseXml(xml: string): ParsedLogoutResponse {
   }
 
   // Parse Issuer
-  const issuerElement = findElement(logoutResponseElement, SAML_NAMESPACES.SAML2, 'Issuer');
+  const issuerElement = findDirectChildElement(
+    logoutResponseElement,
+    SAML_NAMESPACES.SAML2,
+    'Issuer'
+  );
   const issuer = getTextContent(issuerElement);
 
   if (!issuer) {
@@ -367,15 +385,30 @@ export function parseLogoutResponseXml(xml: string): ParsedLogoutResponse {
   }
 
   // Parse Status
-  const statusElement = findElement(logoutResponseElement, SAML_NAMESPACES.SAML2P, 'Status');
+  const statusElement = findDirectChildElement(
+    logoutResponseElement,
+    SAML_NAMESPACES.SAML2P,
+    'Status'
+  );
   if (!statusElement) {
     throw new Error('Invalid LogoutResponse: missing Status');
   }
 
-  const statusCodeElement = findElement(statusElement, SAML_NAMESPACES.SAML2P, 'StatusCode');
-  const statusCode = getAttribute(statusCodeElement!, 'Value') || '';
+  const statusCodeElement = findDirectChildElement(
+    statusElement,
+    SAML_NAMESPACES.SAML2P,
+    'StatusCode'
+  );
+  if (!statusCodeElement) {
+    throw new Error('Invalid LogoutResponse: missing StatusCode');
+  }
+  const statusCode = getAttribute(statusCodeElement, 'Value') || '';
 
-  const statusMessageElement = findElement(statusElement, SAML_NAMESPACES.SAML2P, 'StatusMessage');
+  const statusMessageElement = findDirectChildElement(
+    statusElement,
+    SAML_NAMESPACES.SAML2P,
+    'StatusMessage'
+  );
   const statusMessage = statusMessageElement
     ? getTextContent(statusMessageElement) || undefined
     : undefined;
@@ -395,7 +428,7 @@ export function parseLogoutResponseXml(xml: string): ParsedLogoutResponse {
  * Encode LogoutRequest/Response for HTTP-POST binding
  */
 export function encodeForPostBinding(xml: string): string {
-  return btoa(xml);
+  return base64Encode(xml);
 }
 
 /**
@@ -415,5 +448,5 @@ export function encodeForRedirectBinding(xml: string): string {
  */
 export function encodeForRedirectBindingQueryValue(xml: string): string {
   const deflated = pako.deflateRaw(xml);
-  return btoa(bytesToBinaryString(deflated));
+  return base64EncodeBytes(deflated);
 }

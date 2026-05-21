@@ -82,6 +82,18 @@ describe('SAML assertion encryption', () => {
     ).rejects.toThrow('missing SP encryption certificate');
   });
 
+  it('rejects nested Response content when encrypting assertions', async () => {
+    await expect(
+      encryptSAMLAssertion(`<wrapper>${baseResponse}</wrapper>`, 'certificate')
+    ).rejects.toThrow('Cannot encrypt SAML assertion: missing Assertion element');
+  });
+
+  it('rejects nested Assertion content when encrypting NameID', async () => {
+    await expect(
+      encryptSAMLNameID(`<wrapper>${baseResponse}</wrapper>`, 'certificate')
+    ).rejects.toThrow('Cannot encrypt SAML NameID: missing NameID element');
+  });
+
   it('uses legacy XML Encryption algorithms only with explicit opt-in', async () => {
     const publicKeyPem = await generateRsaOaepPublicKeyPem();
     const encrypted = await applySAMLAssertionEncryptionPolicy(baseResponse, {

@@ -1,11 +1,11 @@
 /**
- * Flow API - Hono APIハンドラ
+ * Flow API - Hono API handler
  *
- * エンドポイント:
- * - POST /api/flow/init      - Flow初期化、UIContract返却
- * - POST /api/flow/submit    - Capability応答送信
- * - GET  /api/flow/state/:sessionId - 現在のUIContract取得
- * - POST /api/flow/cancel    - Flowキャンセル
+ * Endpoints:
+ * - POST /api/flow/init      - Flow initialization, return UIContract
+ * - POST /api/flow/submit    - Submit capability response
+ * - GET  /api/flow/state/:sessionId - get the current UIContract
+ * - POST /api/flow/cancel    - Flow cancellation
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -76,13 +76,13 @@ flowApi.use('*', async (c, next) => {
 
 /**
  * POST /api/flow/init
- * Flow初期化 - UIContractを返却
+ * Flow initialization - return UIContract
  *
- * FlowExecutorを使用して:
- * 1. FlowRegistryからFlow定義を取得
- * 2. FlowCompilerでCompiledPlanを生成
- * 3. FlowStateStore DOでRuntimeState作成
- * 4. UIContractGeneratorでUIContract生成
+ * Using FlowExecutor:
+ * 1. Retrieve the flow definition from FlowRegistry
+ * 2. Generate CompiledPlan with FlowCompiler
+ * 3. Create RuntimeState in the FlowStateStore DO
+ * 4. Generate UIContract with UIContractGenerator
  */
 flowApi.post('/init', async (c) => {
   try {
@@ -102,10 +102,10 @@ flowApi.post('/init', async (c) => {
       );
     }
 
-    // FlowExecutorを作成
+    // Create a FlowExecutor
     const executor = createFlowExecutor(c.env);
 
-    // Flow初期化
+    // Flow initialization
     const response = await executor.initFlow({
       flowType: (body.flowType || 'login') as FlowType,
       clientId: body.clientId,
@@ -131,9 +131,9 @@ flowApi.post('/init', async (c) => {
 
 /**
  * POST /api/flow/submit
- * Capability応答を送信
+ * Submit a capability response
  *
- * 冪等性保証: sessionId + requestId の組み合わせで重複検知
+ * Idempotency guarantee: detect duplicates with the sessionId + requestId combination
  */
 flowApi.post('/submit', async (c) => {
   try {
@@ -153,10 +153,10 @@ flowApi.post('/submit', async (c) => {
       );
     }
 
-    // FlowExecutorを作成
+    // Create a FlowExecutor
     const executor = createFlowExecutor(c.env);
 
-    // Capability応答を処理
+    // Process the capability response
     const response = await executor.submitCapability({ ...body, tenantId });
 
     return c.json(response);
@@ -177,17 +177,17 @@ flowApi.post('/submit', async (c) => {
 
 /**
  * GET /api/flow/state/:sessionId
- * 現在のUIContractを取得（冪等）
+ * Get the current UIContract (idempotent)
  */
 flowApi.get('/state/:sessionId', async (c) => {
   try {
     const sessionId = c.req.param('sessionId');
     const tenantId = getTenantIdFromContext(c);
 
-    // FlowExecutorを作成
+    // Create a FlowExecutor
     const executor = createFlowExecutor(c.env);
 
-    // 状態を取得
+    // Get state
     const response = await executor.getFlowState(sessionId, tenantId);
 
     return c.json(response);
@@ -207,17 +207,17 @@ flowApi.get('/state/:sessionId', async (c) => {
 
 /**
  * POST /api/flow/cancel
- * Flowキャンセル
+ * Flow cancellation
  */
 flowApi.post('/cancel', async (c) => {
   try {
     const { sessionId } = await c.req.json<{ sessionId: string }>();
     const tenantId = getTenantIdFromContext(c);
 
-    // FlowExecutorを作成
+    // Create a FlowExecutor
     const executor = createFlowExecutor(c.env);
 
-    // Flowキャンセル
+    // Flow cancellation
     await executor.cancelFlow(sessionId, tenantId);
 
     return c.json({ success: true, sessionId });

@@ -2,13 +2,18 @@
  * Diagnostic Log R2 Storage Adapter
  *
  * Storage adapter for diagnostic logs to Cloudflare R2.
- * Supports JSONL format with date-based partitioning.
+ * Supports immutable JSONL chunks with date-based partitioning.
  *
  * Path structure:
- * - {prefix}/{logType}/{tenantId}/{YYYY-MM-DD}/{HH}.jsonl
- * - {prefix}/{logType}/{tenantId}/{clientId}/{YYYY-MM-DD}/{HH}.jsonl
+ * - {prefix}/v1/{tenantKey}/diagnostic_detail/diagnostic/{category}/_tenant/{yyyy}/{mm}/{dd}/{hh}/{chunkId}.jsonl
+ * - {prefix}/v1/{tenantKey}/diagnostic_detail/diagnostic/{category}/{clientId}/{yyyy}/{mm}/{dd}/{hh}/{chunkId}.jsonl
  */
 
+import {
+  createLoggingId,
+  deriveTenantKeyFromTenantId,
+  formatUtcPartition,
+} from '@authrim/ar-lib-logging';
 import type {
   DiagnosticLogEntry,
   DiagnosticLogWriteResult,
@@ -16,6 +21,11 @@ import type {
   DiagnosticLogQueryResult,
   DiagnosticLogCategory,
 } from './types';
+import { readR2ObjectTextWithLimit } from '../../utils/body-limits';
+
+const DIAGNOSTIC_R2_OBJECT_MAX_BYTES = 16 * 1024 * 1024;
+const DIAGNOSTIC_CHUNK_WINDOW_MS = 5 * 60 * 1000;
+const TENANT_SCOPE_SEGMENT = '_tenant';
 
 /**
  * R2 adapter configuration
@@ -30,36 +40,118 @@ export interface DiagnosticLogR2AdapterConfig {
   /** Tenant ID */
   tenantId: string;
 
+  /** Opaque tenant key for R2 paths */
+  tenantKey?: string;
+
+  /** Salt used when deriving tenant keys from tenant IDs */
+  tenantKeySalt?: string;
+
   /** Client ID (optional, for future client-scoped logging) */
   clientId?: string;
+}
+
+function cleanDiagnosticSegment(value: string): string {
+  return value.replaceAll(/[^a-zA-Z0-9._=-]/g, '_').slice(0, 128) || '_';
+}
+
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
+function normalizeDiagnosticPrefix(prefix?: string): string {
+  const raw = trimSlashes(prefix ?? 'diagnostic-logs');
+  const cleaned = raw
+    .split('/')
+    .map((segment) => cleanDiagnosticSegment(segment))
+    .filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+    .join('/');
+  return cleaned || 'diagnostic-logs';
+}
+
+async function resolveDiagnosticTenantKey(options: {
+  tenantId: string;
+  tenantKey?: string;
+  tenantKeySalt?: string;
+}): Promise<string> {
+  return (
+    options.tenantKey ??
+    (await deriveTenantKeyFromTenantId(options.tenantId, options.tenantKeySalt))
+  );
+}
+
+function floorToDiagnosticChunkWindow(timestamp: number): number {
+  return Math.floor(timestamp / DIAGNOSTIC_CHUNK_WINDOW_MS) * DIAGNOSTIC_CHUNK_WINDOW_MS;
 }
 
 /**
  * Build R2 object key for diagnostic logs
  *
- * Tenant path by default; include clientId when available.
+ * Tenant path by default; include clientId when available. The key uses an
+ * opaque tenant key so raw tenant IDs are not embedded in R2 object names.
  *
  * @param options - Path construction options
  * @returns R2 object key
  */
-export function buildDiagnosticLogPath(options: {
+export async function buildDiagnosticLogPath(options: {
   pathPrefix: string;
   tenantId: string;
+  tenantKey?: string;
+  tenantKeySalt?: string;
   clientId?: string;
   category: DiagnosticLogCategory;
   timestamp: number;
-}): string {
-  const date = new Date(options.timestamp);
-  const dateStr = date.toISOString().slice(0, 10); // YYYY-MM-DD
-  const hour = date.getUTCHours().toString().padStart(2, '0');
+  chunkId?: string;
+}): Promise<string> {
+  const tenantKey = await resolveDiagnosticTenantKey(options);
+  const partition = formatUtcPartition(options.timestamp);
+  const chunkId = options.chunkId ?? createLoggingId('chk', options.timestamp);
+  return [
+    normalizeDiagnosticPrefix(options.pathPrefix),
+    'v1',
+    cleanDiagnosticSegment(tenantKey),
+    'diagnostic_detail',
+    'diagnostic',
+    cleanDiagnosticSegment(options.category),
+    options.clientId ? cleanDiagnosticSegment(options.clientId) : TENANT_SCOPE_SEGMENT,
+    partition.year,
+    partition.month,
+    partition.day,
+    partition.hour,
+    `${cleanDiagnosticSegment(chunkId)}.jsonl`,
+  ].join('/');
+}
 
-  // Tenant only
-  if (!options.clientId) {
-    return `${options.pathPrefix}/${options.category}/${options.tenantId}/${dateStr}/${hour}.jsonl`;
+export async function buildDiagnosticLogPrefix(options: {
+  pathPrefix: string;
+  tenantId: string;
+  tenantKey?: string;
+  tenantKeySalt?: string;
+  category?: DiagnosticLogCategory;
+  clientId?: string;
+}): Promise<string> {
+  const tenantKey = await resolveDiagnosticTenantKey(options);
+  const segments = [
+    normalizeDiagnosticPrefix(options.pathPrefix),
+    'v1',
+    cleanDiagnosticSegment(tenantKey),
+    'diagnostic_detail',
+    'diagnostic',
+  ];
+  if (options.category) {
+    segments.push(cleanDiagnosticSegment(options.category));
   }
-
-  // Tenant + client
-  return `${options.pathPrefix}/${options.category}/${options.tenantId}/${options.clientId}/${dateStr}/${hour}.jsonl`;
+  if (options.clientId) {
+    segments.push(cleanDiagnosticSegment(options.clientId));
+  }
+  return segments.join('/');
 }
 
 /**
@@ -69,12 +161,16 @@ export class DiagnosticLogR2Adapter {
   private readonly bucket: R2Bucket;
   private readonly pathPrefix: string;
   private readonly tenantId: string;
+  private readonly tenantKey?: string;
+  private readonly tenantKeySalt?: string;
   private readonly clientId?: string;
 
   constructor(config: DiagnosticLogR2AdapterConfig) {
     this.bucket = config.bucket;
-    this.pathPrefix = config.pathPrefix.replace(/\/$/, ''); // Remove trailing slash
+    this.pathPrefix = normalizeDiagnosticPrefix(config.pathPrefix);
     this.tenantId = config.tenantId;
+    this.tenantKeySalt = config.tenantKeySalt;
+    this.tenantKey = config.tenantKey;
     this.clientId = config.clientId;
   }
 
@@ -100,37 +196,45 @@ export class DiagnosticLogR2Adapter {
 
     const startTime = Date.now();
 
-    // Group entries by category and hour
-    const grouped = this.groupEntriesByHour(entries);
+    // Group entries by category and bounded chunk window. Each group becomes a
+    // new immutable object; existing chunks are never read and rewritten.
+    const grouped = this.groupEntriesByChunkWindow(entries);
+    const tenantKey = await resolveDiagnosticTenantKey({
+      tenantId: this.tenantId,
+      tenantKey: this.tenantKey,
+      tenantKeySalt: this.tenantKeySalt,
+    });
 
     let written = 0;
     const errors: string[] = [];
 
     for (const [key, groupEntries] of grouped) {
       try {
-        const [category, dateHour] = key.split('|') as [DiagnosticLogCategory, string];
-        const r2Key = buildDiagnosticLogPath({
+        const [category, chunkStartAtText] = key.split('|') as [DiagnosticLogCategory, string];
+        const chunkStartAt = Number.parseInt(chunkStartAtText, 10);
+        const chunkEndAt = Math.max(...groupEntries.map((entry) => entry.timestamp));
+        const chunkId = createLoggingId('chk', chunkStartAt);
+        const r2Key = await buildDiagnosticLogPath({
           pathPrefix: this.pathPrefix,
           tenantId: this.tenantId,
+          tenantKey,
           clientId: this.clientId,
           category,
-          timestamp: groupEntries[0].timestamp,
+          timestamp: chunkStartAt,
+          chunkId,
         });
-
-        // Append to existing file or create new
-        const existing = await this.bucket.get(r2Key);
-        const existingContent = existing ? await existing.text() : '';
-        const newLines = groupEntries.map((e) => JSON.stringify(e)).join('\n');
-        const content = existingContent ? `${existingContent}\n${newLines}` : newLines;
+        const content = `${groupEntries.map((e) => JSON.stringify(e)).join('\n')}\n`;
 
         await this.bucket.put(r2Key, content, {
           httpMetadata: { contentType: 'application/x-ndjson' },
           customMetadata: {
-            tenantId: this.tenantId,
+            tenantKey,
             clientId: this.clientId ?? '',
             category,
-            entryCount: String(content.split('\n').length),
-            lastModified: new Date().toISOString(),
+            entryCount: String(groupEntries.length),
+            chunkStartAt: String(chunkStartAt),
+            chunkEndAt: String(chunkEndAt),
+            createdAt: new Date().toISOString(),
           },
         });
 
@@ -155,25 +259,13 @@ export class DiagnosticLogR2Adapter {
   async query(options: DiagnosticLogQueryOptions): Promise<DiagnosticLogQueryResult> {
     const startTime = Date.now();
 
-    const prefix = this.buildQueryPrefix(options);
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
 
     try {
-      // List objects in the date range
-      const listed = await this.bucket.list({
-        prefix,
-        limit: 1000, // R2 list limit
-      });
-
       const entries: DiagnosticLogEntry[] = [];
-
-      // Filter by date if provided
-      const filteredObjects = this.filterObjectsByDate(
-        listed.objects,
-        options.startTime,
-        options.endTime
-      );
+      const objects = await this.listQueryObjects(options);
+      const filteredObjects = this.filterObjectsByDate(objects, options.startTime, options.endTime);
 
       // Read and parse entries
       for (const obj of filteredObjects) {
@@ -182,7 +274,7 @@ export class DiagnosticLogR2Adapter {
         const content = await this.bucket.get(obj.key);
         if (!content) continue;
 
-        const text = await content.text();
+        const text = await readR2ObjectTextWithLimit(content, DIAGNOSTIC_R2_OBJECT_MAX_BYTES);
 
         // Parse JSONL
         const lines = text.split('\n').filter((l) => l.trim());
@@ -224,25 +316,30 @@ export class DiagnosticLogR2Adapter {
    * Delete logs older than retention period
    */
   async deleteByRetention(beforeTime: number, batchSize: number = 100): Promise<number> {
-    const prefix = this.clientId
-      ? `${this.pathPrefix}/${this.tenantId}/${this.clientId}/`
-      : `${this.pathPrefix}/${this.tenantId}/`;
+    const prefix = await buildDiagnosticLogPrefix({
+      pathPrefix: this.pathPrefix,
+      tenantId: this.tenantId,
+      tenantKey: this.tenantKey,
+      tenantKeySalt: this.tenantKeySalt,
+    });
 
     try {
-      const listed = await this.bucket.list({ prefix, limit: batchSize });
       let deleted = 0;
+      let cursor: string | undefined;
 
-      for (const obj of listed.objects) {
-        // Check if object is older than retention
-        const dateMatch = obj.key.match(/\/(\d{4}-\d{2}-\d{2})\//);
-        if (dateMatch) {
-          const objDate = new Date(dateMatch[1]).getTime();
+      do {
+        const listed = await this.bucket.list({ prefix, limit: batchSize, cursor });
+
+        for (const obj of listed.objects) {
+          const objDate = this.getObjectDayTimestamp(obj.key);
           if (objDate < beforeTime) {
             await this.bucket.delete(obj.key);
             deleted++;
           }
         }
-      }
+
+        cursor = listed.truncated ? listed.cursor : undefined;
+      } while (cursor);
 
       return deleted;
     } catch {
@@ -277,14 +374,14 @@ export class DiagnosticLogR2Adapter {
   // Helper Methods
   // ---------------------------------------------------------------------------
 
-  private groupEntriesByHour(entries: DiagnosticLogEntry[]): Map<string, DiagnosticLogEntry[]> {
+  private groupEntriesByChunkWindow(
+    entries: DiagnosticLogEntry[]
+  ): Map<string, DiagnosticLogEntry[]> {
     const grouped = new Map<string, DiagnosticLogEntry[]>();
 
     for (const entry of entries) {
-      const date = new Date(entry.timestamp);
-      const dateStr = date.toISOString().slice(0, 10); // YYYY-MM-DD
-      const hour = date.getUTCHours().toString().padStart(2, '0');
-      const key = `${entry.category}|${dateStr}/${hour}`;
+      const chunkStartAt = floorToDiagnosticChunkWindow(entry.timestamp);
+      const key = `${entry.category}|${chunkStartAt}`;
 
       const existing = grouped.get(key) ?? [];
       existing.push(entry);
@@ -294,23 +391,47 @@ export class DiagnosticLogR2Adapter {
     return grouped;
   }
 
-  private buildQueryPrefix(options: DiagnosticLogQueryOptions): string {
-    let prefix = `${this.pathPrefix}/`;
+  private async listQueryObjects(options: DiagnosticLogQueryOptions): Promise<R2Object[]> {
+    const prefix = await buildDiagnosticLogPrefix({
+      pathPrefix: this.pathPrefix,
+      tenantId: options.tenantId,
+      tenantKey: options.tenantId === this.tenantId ? this.tenantKey : undefined,
+      tenantKeySalt: this.tenantKeySalt,
+      category: options.category,
+      clientId: options.category ? options.clientId : undefined,
+    });
+    const objects: R2Object[] = [];
+    let cursor: string | undefined;
 
-    // Add category if specified
-    if (options.category) {
-      prefix += `${options.category}/`;
+    do {
+      const listed = await this.bucket.list({
+        prefix,
+        limit: 1000,
+        cursor,
+      });
+      objects.push(...listed.objects);
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+
+    return objects;
+  }
+
+  private getObjectDayTimestamp(key: string): number {
+    const partitionMatch = key.match(/\/yyyy=(\d{4})\/mm=(\d{2})\/dd=(\d{2})\//);
+    if (partitionMatch) {
+      return Date.UTC(
+        Number.parseInt(partitionMatch[1], 10),
+        Number.parseInt(partitionMatch[2], 10) - 1,
+        Number.parseInt(partitionMatch[3], 10)
+      );
     }
 
-    // Add tenant ID
-    prefix += `${options.tenantId}/`;
-
-    // Add client ID if specified
-    if (options.clientId) {
-      prefix += `${options.clientId}/`;
+    const legacyMatch = key.match(/\/(\d{4}-\d{2}-\d{2})\//);
+    if (legacyMatch) {
+      return new Date(`${legacyMatch[1]}T00:00:00.000Z`).getTime();
     }
 
-    return prefix;
+    return Number.POSITIVE_INFINITY;
   }
 
   private filterObjectsByDate(
@@ -321,10 +442,9 @@ export class DiagnosticLogR2Adapter {
     if (!startTime && !endTime) return objects;
 
     return objects.filter((obj) => {
-      const dateMatch = obj.key.match(/\/(\d{4}-\d{2}-\d{2})\//);
-      if (!dateMatch) return true; // Include if no date in path
+      const objDate = this.getObjectDayTimestamp(obj.key);
+      if (!Number.isFinite(objDate)) return true;
 
-      const objDate = new Date(dateMatch[1]).getTime();
       if (startTime && objDate < startTime - 86400000) return false; // Day buffer
       if (endTime && objDate > endTime + 86400000) return false;
       return true;
@@ -335,6 +455,9 @@ export class DiagnosticLogR2Adapter {
     entry: DiagnosticLogEntry,
     options: DiagnosticLogQueryOptions
   ): boolean {
+    if (entry.tenantId !== options.tenantId) return false;
+    if (options.clientId && entry.clientId !== options.clientId) return false;
+
     // Time range filter
     if (options.startTime && entry.timestamp < options.startTime) return false;
     if (options.endTime && entry.timestamp >= options.endTime) return false;
@@ -366,6 +489,8 @@ export function createDiagnosticLogR2Adapter(
   options: {
     pathPrefix?: string;
     tenantId: string;
+    tenantKey?: string;
+    tenantKeySalt?: string;
     clientId?: string;
   }
 ): DiagnosticLogR2Adapter {
@@ -373,6 +498,8 @@ export function createDiagnosticLogR2Adapter(
     bucket,
     pathPrefix: options.pathPrefix ?? 'diagnostic-logs',
     tenantId: options.tenantId,
+    tenantKey: options.tenantKey,
+    tenantKeySalt: options.tenantKeySalt,
     clientId: options.clientId,
   });
 }

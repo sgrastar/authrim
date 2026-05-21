@@ -17,6 +17,7 @@ import {
   normalizeStructuredReference,
   resolveProductProtectedResourceAudience,
   resolveProductProtectedResourceDetailClasses,
+  resolveUserStoreRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 import { type ApprovalNotificationPolicySource } from './approval-notification-policy';
 import { describeApprovalCompletionMethod } from './approval-completion-guidance';
@@ -167,7 +168,15 @@ export async function resolveApprovalSteps(
         );
       }
 
-      const coreAdapter = ensureDatabaseAdapter(c.env.DB, 'admin-approvals-guardian-resolution');
+      const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(
+        c.env,
+        request.tenant_id,
+        { requestPath: c.req?.path }
+      );
+      const coreAdapter = ensureDatabaseAdapter(
+        userStoreSources.coreDb,
+        'admin-approvals-guardian-resolution'
+      );
       const relationships = await coreAdapter.query<{ relationship_type: string; from_id: string }>(
         `SELECT relationship_type, from_id
            FROM relationships

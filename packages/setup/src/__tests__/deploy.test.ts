@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execa } from 'execa';
@@ -7,6 +7,7 @@ import {
   buildUiWorkerBuildEnv,
   deployAll,
   deployUiWorkerComponent,
+  deployUiWorkerBindingTargets,
   deployWorker,
 } from '../core/deploy.js';
 
@@ -162,19 +163,65 @@ describe('deployUiWorkerComponent', () => {
 
     expect(result.success).toBe(true);
     expect(vi.mocked(execa)).toHaveBeenCalledWith(
-      'npx',
-      ['wrangler', 'secret', 'put', 'ADMIN_UI_BFF_PRIVATE_KEY_PEM', '--env', 'test'],
+      'pnpm',
+      ['exec', 'wrangler', 'secret', 'put', 'ADMIN_UI_BFF_PRIVATE_KEY_PEM', '--env', 'test'],
       expect.objectContaining({
+        cwd: join(rootDir, 'packages', 'ar-admin-ui'),
         input: '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
       })
     );
     expect(vi.mocked(execa)).toHaveBeenCalledWith(
-      'npx',
-      ['wrangler', 'secret', 'put', 'ADMIN_UI_BFF_SCOPES', '--env', 'test'],
+      'pnpm',
+      ['exec', 'wrangler', 'secret', 'put', 'ADMIN_UI_BFF_SCOPES', '--env', 'test'],
       expect.objectContaining({
+        cwd: join(rootDir, 'packages', 'ar-admin-ui'),
         input: 'admin-ui:proxy',
       })
     );
+  });
+});
+
+describe('deployUiWorkerBindingTargets', () => {
+  it('pre-deploys UI Workers without service bindings or custom routes before router deploy', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    createUiPackage(rootDir, 'ar-admin-ui');
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    } as Awaited<ReturnType<typeof execa>>);
+
+    const result = await deployUiWorkerBindingTargets(
+      {
+        env: 'test',
+        rootDir,
+        apiBaseUrl: 'https://test.example.com',
+      },
+      {
+        loginUi: true,
+        adminUi: true,
+      }
+    );
+
+    expect(result.failedCount).toBe(0);
+    const loginWrangler = readFileSync(
+      join(rootDir, 'packages', 'ar-login-ui', 'wrangler.toml'),
+      'utf-8'
+    );
+    const adminWrangler = readFileSync(
+      join(rootDir, 'packages', 'ar-admin-ui', 'wrangler.toml'),
+      'utf-8'
+    );
+
+    expect(loginWrangler).toContain('name = "test-ar-login-ui"');
+    expect(loginWrangler).toContain('workers_dev = true');
+    expect(loginWrangler).not.toContain('[[services]]');
+    expect(loginWrangler).not.toContain('[[routes]]');
+    expect(adminWrangler).toContain('name = "test-ar-admin-ui"');
+    expect(adminWrangler).toContain('workers_dev = true');
+    expect(adminWrangler).not.toContain('[[services]]');
+    expect(adminWrangler).not.toContain('[[routes]]');
   });
 });
 

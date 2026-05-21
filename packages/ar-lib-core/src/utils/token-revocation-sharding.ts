@@ -106,7 +106,7 @@ export interface RevocationShardConfig {
  * Default shard count for token revocation store sharding.
  * Can be overridden via KV or AUTHRIM_REVOCATION_SHARDS environment variable.
  */
-export const DEFAULT_REVOCATION_SHARD_COUNT = 16;
+export const DEFAULT_REVOCATION_SHARD_COUNT = 4;
 
 /**
  * Legacy shard count used for tokens without generation info.

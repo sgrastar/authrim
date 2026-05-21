@@ -33,6 +33,7 @@ import {
   ensureSupportedTenantId,
   isSingleTenantMode,
 } from './single-tenant-guard';
+import { createOpaqueTenantKey } from './logging-tenant-key';
 
 // =============================================================================
 // Constants
@@ -1287,14 +1288,15 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
     const nowTs = Math.floor(now.getTime() / 1000);
     const nowIso = now.toISOString();
 
-    // Clone tenant with new id, name, and description
+    // Clone tenant with new id, name, description, and opaque logging tenant key
+    const tenantKey = createOpaqueTenantKey();
     await adapter.execute(
       `INSERT INTO tenants (
-         id, tenant_code, name, description, is_active, is_default,
+         id, tenant_code, tenant_key, name, description, is_active, is_default,
          default_tenant_guard, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)`,
-      [newTenantId, newTenantId, name, description ?? null, null, nowTs, nowTs]
+       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+      [newTenantId, newTenantId, tenantKey, name, description ?? null, null, nowTs, nowTs]
     );
 
     const clonedItems = {

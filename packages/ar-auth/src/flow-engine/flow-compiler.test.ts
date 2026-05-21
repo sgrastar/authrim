@@ -1,7 +1,7 @@
 /**
- * FlowCompiler - ユニットテスト
+ * FlowCompiler - unit tests
  *
- * Decisionノードのコンパイル検証、遷移マップのpriority順確認、sourceHandleの保持確認
+ * Validate Decision node compilation, transition-map priority ordering, and sourceHandle preservation
  */
 
 import { describe, it, expect } from 'vitest';
@@ -339,7 +339,7 @@ describe('FlowCompiler - Decision Node', () => {
     const transitions = plan.transitions.get('decision_1');
     expect(transitions).toBeDefined();
 
-    // priority が設定されているか確認
+    // Verify that priority is set
     const highRiskTransition = transitions?.find((t) => t.sourceHandle === 'branch_high_risk');
     const mediumRiskTransition = transitions?.find((t) => t.sourceHandle === 'branch_medium_risk');
     const lowRiskTransition = transitions?.find((t) => t.sourceHandle === 'branch_low_risk');
@@ -348,7 +348,7 @@ describe('FlowCompiler - Decision Node', () => {
     expect(mediumRiskTransition?.priority).toBe(2);
     expect(lowRiskTransition?.priority).toBe(3);
 
-    // ソート順を確認（priority順になっているか）
+    // Verify sort order (is in priority order)
     const prioritizedTransitions = transitions?.filter((t) => t.priority !== undefined);
     if (prioritizedTransitions && prioritizedTransitions.length > 1) {
       for (let i = 0; i < prioritizedTransitions.length - 1; i++) {
@@ -469,7 +469,7 @@ describe('FlowCompiler - Backward Compatibility', () => {
 });
 
 // =============================================================================
-// Security Tests - Critical/High脆弱性対策
+// Security Tests - Critical/High-severity vulnerability mitigations
 // =============================================================================
 
 describe('Security - Capability Array Size Limit (Critical 2)', () => {

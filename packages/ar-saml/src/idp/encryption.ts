@@ -2,7 +2,7 @@ import type { SAMLSPConfig } from '@authrim/ar-lib-core';
 import { DIGEST_ALGORITHMS, SAML_NAMESPACES, XML_ENCRYPTION_ALGORITHMS } from '../common/constants';
 import {
   createElement,
-  findElement,
+  findDirectChildElement,
   parseXml,
   serializeXml,
   setAttribute,
@@ -74,12 +74,15 @@ export async function encryptSAMLAssertion(
   algorithms: ResolvedSAMLXmlEncryptionAlgorithms = resolveXmlEncryptionAlgorithms({})
 ): Promise<string> {
   const doc = parseXml(xml);
-  const responseElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
+  const responseElement = doc.documentElement;
+  const isResponseElement =
+    responseElement?.namespaceURI === SAML_NAMESPACES.SAML2P &&
+    responseElement.localName === 'Response';
   const assertionElement = responseElement
-    ? findElement(responseElement, SAML_NAMESPACES.SAML2, 'Assertion')
+    ? findDirectChildElement(responseElement, SAML_NAMESPACES.SAML2, 'Assertion')
     : null;
 
-  if (!responseElement || !assertionElement) {
+  if (!responseElement || !isResponseElement || !assertionElement) {
     throw new Error('Cannot encrypt SAML assertion: missing Assertion element');
   }
 
@@ -100,12 +103,17 @@ export async function encryptSAMLNameID(
   algorithms: ResolvedSAMLXmlEncryptionAlgorithms = resolveXmlEncryptionAlgorithms({})
 ): Promise<string> {
   const doc = parseXml(xml);
-  const assertionElement = findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion');
+  const responseElement = doc.documentElement;
+  const assertionElement =
+    responseElement?.namespaceURI === SAML_NAMESPACES.SAML2P &&
+    responseElement.localName === 'Response'
+      ? findDirectChildElement(responseElement, SAML_NAMESPACES.SAML2, 'Assertion')
+      : null;
   const subjectElement = assertionElement
-    ? findElement(assertionElement, SAML_NAMESPACES.SAML2, 'Subject')
+    ? findDirectChildElement(assertionElement, SAML_NAMESPACES.SAML2, 'Subject')
     : null;
   const nameIdElement = subjectElement
-    ? findElement(subjectElement, SAML_NAMESPACES.SAML2, 'NameID')
+    ? findDirectChildElement(subjectElement, SAML_NAMESPACES.SAML2, 'NameID')
     : null;
 
   if (!subjectElement || !nameIdElement) {

@@ -56,6 +56,13 @@ export interface KeyPair {
   createdAt: string;
 }
 
+export interface JwkKeyPair {
+  privateJwk: JWK;
+  publicJwk: JWK;
+  keyId: string;
+  createdAt: string;
+}
+
 export interface KeyMetadata {
   kid: string;
   algorithm: string;
@@ -67,10 +74,14 @@ export interface KeyMetadata {
     rpTokenEncryptionKey?: string;
     objectEncryptionRootKey?: string;
     versionManagerSecret?: string;
+    loggingCursorHmacSecret?: string;
     setupMachinePrivateKey?: string;
     setupMachinePublicKey?: string;
     adminUiBffPrivateKey?: string;
     adminUiBffPublicKey?: string;
+    tenantRuntimeRegistrySigningPrivateJwk?: string;
+    tenantRuntimeRegistryVerifyingPublicJwks?: string;
+    tenantRuntimeRegistrySigningKeyId?: string;
   };
 }
 
@@ -85,12 +96,16 @@ export interface GeneratedSecrets {
   setupMachineKeyPair: KeyPair;
   /** ES256 key pair for Admin UI BFF Admin Machine Access transport auth */
   adminUiBffMachineKeyPair: KeyPair;
+  /** Ed25519 key pair for tenant runtime registry snapshots */
+  tenantRuntimeRegistryKeyPair: JwkKeyPair;
   /** RP Token encryption key (hex encoded) */
   rpTokenEncryptionKey: string;
   /** Root key for object plane encryption (hex encoded) */
   objectEncryptionRootKey: string;
   /** Scoped VersionManager Durable Object secret */
   versionManagerSecret: string;
+  /** HMAC secret for opaque logging Admin API cursors */
+  loggingCursorHmacSecret: string;
   /** Admin API secret */
   adminApiSecret: string;
   /** Key Manager secret */
@@ -206,6 +221,31 @@ export function generateEs256KeyPair(keyId?: string): KeyPair {
   };
 }
 
+export function generateEd25519JwkKeyPair(keyId?: string): JwkKeyPair {
+  const kid = keyId || generateKeyId('tenant-runtime-registry');
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const privateJwk = privateKey.export({ format: 'jwk' }) as JWK;
+  const publicJwk = publicKey.export({ format: 'jwk' }) as JWK;
+  const metadata = {
+    kid,
+    use: 'sig',
+    alg: 'EdDSA',
+  };
+
+  return {
+    privateJwk: {
+      ...privateJwk,
+      ...metadata,
+    },
+    publicJwk: {
+      ...publicJwk,
+      ...metadata,
+    },
+    keyId: kid,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 // =============================================================================
 // Secret Generation
 // =============================================================================
@@ -235,14 +275,19 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
   const keyPair = generateRsaKeyPair(keyId);
   const setupMachineKeyPair = generateEs256KeyPair(`${keyPair.keyId}-setup`);
   const adminUiBffMachineKeyPair = generateEs256KeyPair(`${keyPair.keyId}-admin-ui-bff`);
+  const tenantRuntimeRegistryKeyPair = generateEd25519JwkKeyPair(
+    `${keyPair.keyId}-tenant-runtime-registry`
+  );
 
   return {
     keyPair,
     setupMachineKeyPair,
     adminUiBffMachineKeyPair,
+    tenantRuntimeRegistryKeyPair,
     rpTokenEncryptionKey: generateHexSecret(32), // 256-bit key
     objectEncryptionRootKey: generateHexSecret(32), // 256-bit key
     versionManagerSecret: generateBase64Secret(32), // 256-bit secret
+    loggingCursorHmacSecret: generateBase64Secret(32), // 256-bit secret
     adminApiSecret: generateBase64Secret(32), // 256-bit secret
     keyManagerSecret: generateBase64Secret(32), // 256-bit secret
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
@@ -461,6 +506,7 @@ export async function saveKeysToDirectory(
     rpTokenEncryptionKey: join(targetDir, 'rp_token_encryption_key.txt'),
     objectEncryptionRootKey: join(targetDir, 'object_encryption_root_key.txt'),
     versionManagerSecret: join(targetDir, 'version_manager_secret.txt'),
+    loggingCursorHmacSecret: join(targetDir, 'logging_cursor_hmac_secret.txt'),
     adminApiSecret: join(targetDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(targetDir, 'key_manager_secret.txt'),
     setupToken: join(targetDir, 'setup_token.txt'),
@@ -468,6 +514,18 @@ export async function saveKeysToDirectory(
     setupMachinePublicKey: join(targetDir, 'setup_machine_public.jwk.json'),
     adminUiBffPrivateKey: join(targetDir, 'admin_ui_bff_private.pem'),
     adminUiBffPublicKey: join(targetDir, 'admin_ui_bff_public.jwk.json'),
+    tenantRuntimeRegistrySigningPrivateJwk: join(
+      targetDir,
+      'tenant_runtime_registry_signing_private.jwk.json'
+    ),
+    tenantRuntimeRegistryVerifyingPublicJwks: join(
+      targetDir,
+      'tenant_runtime_registry_verify.jwks.json'
+    ),
+    tenantRuntimeRegistrySigningKeyId: join(
+      targetDir,
+      'tenant_runtime_registry_signing_key_id.txt'
+    ),
     metadata: join(targetDir, 'metadata.json'),
   };
 
@@ -489,6 +547,8 @@ export async function saveKeysToDirectory(
   await chmod(paths.objectEncryptionRootKey, SENSITIVE_FILE_MODE);
   await writeFile(paths.versionManagerSecret, secrets.versionManagerSecret, 'utf-8');
   await chmod(paths.versionManagerSecret, SENSITIVE_FILE_MODE);
+  await writeFile(paths.loggingCursorHmacSecret, secrets.loggingCursorHmacSecret, 'utf-8');
+  await chmod(paths.loggingCursorHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.adminApiSecret, secrets.adminApiSecret, 'utf-8');
   await chmod(paths.adminApiSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.keyManagerSecret, secrets.keyManagerSecret, 'utf-8');
@@ -520,6 +580,24 @@ export async function saveKeysToDirectory(
     'utf-8'
   );
   await chmod(paths.adminUiBffPublicKey, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.tenantRuntimeRegistrySigningPrivateJwk,
+    JSON.stringify(secrets.tenantRuntimeRegistryKeyPair.privateJwk, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.tenantRuntimeRegistrySigningPrivateJwk, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.tenantRuntimeRegistryVerifyingPublicJwks,
+    JSON.stringify({ keys: [secrets.tenantRuntimeRegistryKeyPair.publicJwk] }, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.tenantRuntimeRegistryVerifyingPublicJwks, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.tenantRuntimeRegistrySigningKeyId,
+    secrets.tenantRuntimeRegistryKeyPair.keyId,
+    'utf-8'
+  );
+  await chmod(paths.tenantRuntimeRegistrySigningKeyId, SENSITIVE_FILE_MODE);
 
   // Write metadata
   const metadata: KeyMetadata = {
@@ -533,10 +611,14 @@ export async function saveKeysToDirectory(
       rpTokenEncryptionKey: paths.rpTokenEncryptionKey,
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       versionManagerSecret: paths.versionManagerSecret,
+      loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
       adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
       adminUiBffPublicKey: paths.adminUiBffPublicKey,
+      tenantRuntimeRegistrySigningPrivateJwk: paths.tenantRuntimeRegistrySigningPrivateJwk,
+      tenantRuntimeRegistryVerifyingPublicJwks: paths.tenantRuntimeRegistryVerifyingPublicJwks,
+      tenantRuntimeRegistrySigningKeyId: paths.tenantRuntimeRegistrySigningKeyId,
     },
   };
 
@@ -643,10 +725,20 @@ export async function ensureSupplementalKeyFiles(
   const paths = {
     objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
     versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
+    loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
     adminUiBffPrivateKey: join(keysDir, 'admin_ui_bff_private.pem'),
     adminUiBffPublicKey: join(keysDir, 'admin_ui_bff_public.jwk.json'),
+    tenantRuntimeRegistrySigningPrivateJwk: join(
+      keysDir,
+      'tenant_runtime_registry_signing_private.jwk.json'
+    ),
+    tenantRuntimeRegistryVerifyingPublicJwks: join(
+      keysDir,
+      'tenant_runtime_registry_verify.jwks.json'
+    ),
+    tenantRuntimeRegistrySigningKeyId: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
   };
 
   if (!existsSync(paths.objectEncryptionRootKey)) {
@@ -657,6 +749,11 @@ export async function ensureSupplementalKeyFiles(
   if (!existsSync(paths.versionManagerSecret)) {
     await writeSensitiveFile(paths.versionManagerSecret, generateBase64Secret(32));
     createdFiles.push(paths.versionManagerSecret);
+  }
+
+  if (!existsSync(paths.loggingCursorHmacSecret)) {
+    await writeSensitiveFile(paths.loggingCursorHmacSecret, generateBase64Secret(32));
+    createdFiles.push(paths.loggingCursorHmacSecret);
   }
 
   await writeMissingMachineKeyPair(
@@ -675,15 +772,45 @@ export async function ensureSupplementalKeyFiles(
     `${baseKeyId}-admin-ui-bff`,
     createdFiles
   );
+  const hasRuntimeSigningPrivate = existsSync(paths.tenantRuntimeRegistrySigningPrivateJwk);
+  const hasRuntimeVerifyingJwks = existsSync(paths.tenantRuntimeRegistryVerifyingPublicJwks);
+  const hasRuntimeSigningKeyId = existsSync(paths.tenantRuntimeRegistrySigningKeyId);
+  if (hasRuntimeSigningPrivate || hasRuntimeVerifyingJwks || hasRuntimeSigningKeyId) {
+    if (!hasRuntimeSigningPrivate || !hasRuntimeVerifyingJwks || !hasRuntimeSigningKeyId) {
+      throw new Error(
+        `Incomplete tenant runtime registry key set: ${paths.tenantRuntimeRegistrySigningPrivateJwk}, ${paths.tenantRuntimeRegistryVerifyingPublicJwks}, and ${paths.tenantRuntimeRegistrySigningKeyId} are required`
+      );
+    }
+  } else {
+    const keyPair = generateEd25519JwkKeyPair(`${baseKeyId}-tenant-runtime-registry`);
+    await writeSensitiveFile(
+      paths.tenantRuntimeRegistrySigningPrivateJwk,
+      JSON.stringify(keyPair.privateJwk, null, 2)
+    );
+    await writeSensitiveFile(
+      paths.tenantRuntimeRegistryVerifyingPublicJwks,
+      JSON.stringify({ keys: [keyPair.publicJwk] }, null, 2)
+    );
+    await writeSensitiveFile(paths.tenantRuntimeRegistrySigningKeyId, keyPair.keyId);
+    createdFiles.push(
+      paths.tenantRuntimeRegistrySigningPrivateJwk,
+      paths.tenantRuntimeRegistryVerifyingPublicJwks,
+      paths.tenantRuntimeRegistrySigningKeyId
+    );
+  }
 
   if (createdFiles.length > 0) {
     await updateMetadataWithSupplementalFiles(keysDir, {
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       versionManagerSecret: paths.versionManagerSecret,
+      loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
       adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
       adminUiBffPublicKey: paths.adminUiBffPublicKey,
+      tenantRuntimeRegistrySigningPrivateJwk: paths.tenantRuntimeRegistrySigningPrivateJwk,
+      tenantRuntimeRegistryVerifyingPublicJwks: paths.tenantRuntimeRegistryVerifyingPublicJwks,
+      tenantRuntimeRegistrySigningKeyId: paths.tenantRuntimeRegistrySigningKeyId,
     });
   }
 
@@ -848,6 +975,10 @@ export function generateWranglerSecretCommands(
 
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'version_manager_secret.txt')})" | wrangler secret put VERSION_MANAGER_SECRET${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'logging_cursor_hmac_secret.txt')})" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET${envFlag}`
   );
 
   // Admin API secret

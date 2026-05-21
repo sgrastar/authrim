@@ -926,6 +926,10 @@ export class SessionStore extends DurableObject<Env> {
 
   private async initializeSessionPersistence(): Promise<SessionPersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
+    if (context.transientAuth?.sessionColdPersistence === 'disabled') {
+      return null;
+    }
+
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
     const tenantId = await this.ensureTenantContext();
     if (!tenantId) {

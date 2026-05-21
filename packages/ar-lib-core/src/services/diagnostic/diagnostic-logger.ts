@@ -31,9 +31,12 @@ import {
   redactPII,
   applyPrivacyModeToEntry,
 } from '../../utils/diagnostic-security';
+import { readRequestTextWithLimit } from '../../utils/body-limits';
+import { readResponseTextWithLimit } from '../../utils/url-security';
 import type { DiagnosticLogPrivacyMode } from './types';
 
 const log = createLogger().module('DIAGNOSTIC_LOGGER');
+const DIAGNOSTIC_BODY_SUMMARY_MAX_BYTES = 64 * 1024;
 
 /**
  * Diagnostic Logger Configuration
@@ -104,6 +107,7 @@ export class DiagnosticLogger {
     this.r2Adapter = createDiagnosticLogR2Adapter(bucket, {
       pathPrefix: this.settings['diagnostic-logging.r2_path_prefix'],
       tenantId: this.tenantId,
+      tenantKeySalt: this.env.LOGGING_TENANT_KEY_SALT,
       clientId: this.clientId,
     });
   }
@@ -185,7 +189,10 @@ export class DiagnosticLogger {
     if (this.settings['diagnostic-logging.http_body_schema_aware']) {
       try {
         const clonedRequest = options.request.clone();
-        const bodyText = await clonedRequest.text();
+        const bodyText = await readRequestTextWithLimit(
+          clonedRequest,
+          DIAGNOSTIC_BODY_SUMMARY_MAX_BYTES
+        );
         if (bodyText) {
           const bodyObj = JSON.parse(bodyText);
           bodySummary = extractBodySummary(
@@ -243,7 +250,10 @@ export class DiagnosticLogger {
     if (this.settings['diagnostic-logging.http_body_schema_aware']) {
       try {
         const clonedResponse = options.response.clone();
-        const bodyText = await clonedResponse.text();
+        const bodyText = await readResponseTextWithLimit(
+          clonedResponse,
+          DIAGNOSTIC_BODY_SUMMARY_MAX_BYTES
+        );
         if (bodyText) {
           const bodyObj = JSON.parse(bodyText);
           bodySummary = extractBodySummary(bodyObj);

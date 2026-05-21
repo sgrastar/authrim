@@ -38,6 +38,12 @@ import { operationalLogsRouter } from './operational-logs';
 import { storageDestinationsRouter } from './storage-destinations';
 import { databaseConnectionsRouter } from './database-connections';
 import { machineAccessRouter } from './machine-access';
+import {
+  adminLoggingRouter,
+  destinationsRouter,
+  loggingPoliciesRouter,
+  notificationsRouter,
+} from './logging-control';
 
 // Create main router for admin management
 export const adminManagementRouter = new Hono<{ Bindings: Env }>();
@@ -60,6 +66,10 @@ adminManagementRouter.route('/me/passkeys', myPasskeysRouter);
 adminManagementRouter.route('/approvals', adminApprovalsRouter);
 adminManagementRouter.route('/operational-logs', operationalLogsRouter);
 adminManagementRouter.route('/storage-destinations', storageDestinationsRouter);
+adminManagementRouter.route('/destinations', destinationsRouter);
+adminManagementRouter.route('/logging-policies', loggingPoliciesRouter);
+adminManagementRouter.route('/admin-logging', adminLoggingRouter);
+adminManagementRouter.route('/notifications', notificationsRouter);
 adminManagementRouter.route('/database-connections', databaseConnectionsRouter);
 adminManagementRouter.route('/machine-access', machineAccessRouter);
 
@@ -83,5 +93,11 @@ export { operationalLogsRouter } from './operational-logs';
 export { storageDestinationsRouter } from './storage-destinations';
 export { databaseConnectionsRouter } from './database-connections';
 export { machineAccessRouter } from './machine-access';
+export {
+  adminLoggingRouter,
+  destinationsRouter,
+  loggingPoliciesRouter,
+  notificationsRouter,
+} from './logging-control';
 
 export default adminManagementRouter;

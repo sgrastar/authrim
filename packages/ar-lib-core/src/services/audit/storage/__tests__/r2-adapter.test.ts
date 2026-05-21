@@ -17,6 +17,68 @@ function createEventEntry(overrides: Partial<EventLogEntry> = {}): EventLogEntry
 }
 
 describe('R2AuditAdapter', () => {
+  it('writes immutable tenant_key JSONL batches without read-modify-write appends', async () => {
+    const bucket = {
+      get: vi.fn().mockResolvedValue(null),
+      list: vi.fn(),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn(),
+      head: vi.fn(),
+      createMultipartUpload: vi.fn(),
+      resumeMultipartUpload: vi.fn(),
+    } as unknown as R2Bucket;
+
+    const adapter = createR2AuditAdapter(bucket, {
+      id: 'archive:test',
+      pathPrefix: 'audit',
+      format: 'jsonl',
+    });
+    const result = await adapter.writeEventLogBatch([createEventEntry()]);
+
+    expect(result.success).toBe(true);
+    expect(bucket.get).not.toHaveBeenCalled();
+    const objectKey = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const metadata = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[2]
+      ?.customMetadata;
+    expect(objectKey).toContain('audit/event/t_');
+    expect(objectKey).not.toContain('tenant-1');
+    expect(metadata).toEqual(
+      expect.objectContaining({
+        tenantKey: expect.stringMatching(/^t_/),
+        entryCount: '1',
+      })
+    );
+    expect(metadata).not.toHaveProperty('tenantId');
+  });
+
+  it('uses a tenant registry backed key resolver for archive paths', async () => {
+    const bucket = {
+      get: vi.fn().mockResolvedValue(null),
+      list: vi.fn(),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn(),
+      head: vi.fn(),
+      createMultipartUpload: vi.fn(),
+      resumeMultipartUpload: vi.fn(),
+    } as unknown as R2Bucket;
+
+    const adapter = createR2AuditAdapter(bucket, {
+      id: 'archive:test',
+      pathPrefix: 'audit',
+      format: 'jsonl',
+      tenantKeyResolver: async () => 't_registry_archive',
+    });
+    const result = await adapter.writeEventLogBatch([createEventEntry()]);
+
+    expect(result.success).toBe(true);
+    const objectKey = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const metadata = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[2]
+      ?.customMetadata;
+    expect(objectKey).toContain('audit/event/t_registry_archive/');
+    expect(objectKey).not.toContain('tenant-1');
+    expect(metadata).toEqual(expect.objectContaining({ tenantKey: 't_registry_archive' }));
+  });
+
   it('reads canonical archive records back as raw audit entries', async () => {
     const entry = createEventEntry();
     const body = JSON.stringify(

@@ -18,6 +18,7 @@ import {
 } from '../../core/cloudflare.js';
 import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
 import { findAuthrimBaseDir } from '../../core/paths.js';
+import { loadLockFileAuto } from '../../core/lock.js';
 
 // =============================================================================
 // Types
@@ -132,6 +133,10 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
 
   console.log('');
 
+  const baseDir = findAuthrimBaseDir(process.cwd());
+  const { lock } = await loadLockFileAuto(baseDir, env);
+  const knownD1Names = lock ? Object.values(lock.d1).map((entry) => entry.name) : [];
+
   // Delete environment
   const result = await deleteEnvironment({
     env,
@@ -140,10 +145,10 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     deleteKV,
     deleteQueues,
     deleteR2,
+    knownD1Names,
     onProgress: (msg) => console.log(msg),
   });
 
-  const baseDir = findAuthrimBaseDir(process.cwd());
   const cleanupResult = await cleanupLocalEnvironmentArtifacts({
     baseDir,
     env,

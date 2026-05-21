@@ -1,6 +1,6 @@
 /**
  * Japanese Translations for Authrim Setup Tool
- * 日本語翻訳
+ * Japanese translations
  */
 
 import type { Translations } from '../types.js';
@@ -482,7 +482,7 @@ const ja: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'シャーディングを設定しますか？（高負荷環境向け）',
   'sharding.title': 'シャーディング設定',
-  'sharding.note': '注: シャード数は2の累乗を推奨（8, 16, 32, 64, 128）',
+  'sharding.note': '注: シャード数は2の累乗を推奨（4, 8, 16, 32, 64, 128）',
   'sharding.authCodeShards': '認可コードのシャード数',
   'sharding.refreshTokenShards': 'リフレッシュトークンのシャード数',
 
@@ -929,13 +929,15 @@ const ja: Translations = {
   'web.preview.issuerUrl': 'Issuer URL:',
   'web.preview.loginUi': 'ログインUI:',
   'web.preview.adminUi': '管理UI:',
-  'web.preview.pagesUrl': 'ログインUI (Worker):',
+  'web.preview.pagesUrl': 'ログインUI Origin:',
   'web.preview.tenantDiscover': 'テナント選択 (共通入り口):',
   'web.preview.adminAccess': '管理UIアクセス先:',
   'web.preview.firstTenant': '{{name}} (初期テナント)',
   'web.preview.otherTenants': '他のテナント',
   'web.preview.allTenantsShared': '(全テナント共通)',
+  'web.preview.loginUiOriginNote': '(デプロイ先Origin。テナントログインはIssuerの /login を使用)',
   'web.preview.viaApiProxy': '(APIと同じドメイン経由でプロキシ)',
+  'web.preview.conflictWarningTitle': '⚠️ 設定上の問題',
   'web.preview.conflictWarningMsg':
     '{{conflictUI}}のカスタムドメインがAPIと同じ（{{baseDomain}}）ですが、「URLからテナント名を除外」が無効のため、{{baseDomain}} へのAPIリクエスト（/authorize, /api/auth/* 等）が 404 になり、ログインフローが機能しません。',
   'web.preview.conflictActionMsg':

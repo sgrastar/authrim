@@ -66,6 +66,10 @@ interface FAPIConfig {
 // Key: tenantId:settingsHash, Value: metadata
 const metadataCache = new Map<string, OIDCProviderMetadata>();
 
+export function clearDiscoveryMetadataCache(): void {
+  metadataCache.clear();
+}
+
 /**
  * OpenID Connect Discovery Endpoint Handler
  * https://openid.net/specs/openid-connect-discovery-1_0.html

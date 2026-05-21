@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import { buildDiagnosticLogPath, type Env } from '@authrim/ar-lib-core';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -96,7 +96,14 @@ describe('Diagnostic Logs Export API', () => {
     const bucket = new MockR2Bucket();
     const env = createEnv(bucket);
 
-    const key = 'diagnostic-logs/token-validation/tenant-1/rp-client/2026-04-21/00.jsonl';
+    const key = await buildDiagnosticLogPath({
+      pathPrefix: 'diagnostic-logs',
+      tenantId: 'tenant-1',
+      clientId: 'rp-client',
+      category: 'token-validation',
+      timestamp: Date.UTC(2026, 3, 21, 0, 0, 0),
+      chunkId: 'chk_test_1',
+    });
     bucket.store.set(
       key,
       [
@@ -166,7 +173,14 @@ describe('Diagnostic Logs Export API', () => {
       'tenant:tenant-1:diagnostic-logging.storage_mode.default': 'full',
     });
 
-    const key = 'diagnostic-logs/token-validation/tenant-1/rp-client/2026-04-21/00.jsonl';
+    const key = await buildDiagnosticLogPath({
+      pathPrefix: 'diagnostic-logs',
+      tenantId: 'tenant-1',
+      clientId: 'rp-client',
+      category: 'token-validation',
+      timestamp: Date.UTC(2026, 3, 21, 0, 10, 0),
+      chunkId: 'chk_test_2',
+    });
     bucket.store.set(
       key,
       JSON.stringify({

@@ -18,7 +18,7 @@
  * Storage Strategy:
  * - Durable Storage as primary (for atomic operations)
  * - In-memory cache for hot data (active CIBA requests)
- * - D1 for persistence, recovery, and audit trail
+ * - Profile-controlled D1 persistence, recovery, and audit trail
  * - Dual mapping: auth_req_id → metadata, user_code → auth_req_id
  */
 
@@ -962,6 +962,10 @@ export class CIBARequestStore {
 
   private async initializeRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
     const context = await this.ensurePersistenceContext();
+    if (context.transientAuth?.deviceCibaColdPersistence === 'disabled') {
+      return null;
+    }
+
     const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
     if (!this.tenantId) {
       throw new Error('CIBA request persistence requires tenant context');

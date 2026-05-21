@@ -30,7 +30,7 @@
 	const cases = $derived(data?.config?.cases || []);
 	const defaultCase = $derived(data?.config?.defaultCase);
 
-	// 3分岐以上の場合の垂直配置の計算
+	// Calculate vertical layout for three or more branches
 	const casePositions = $derived.by(() => {
 		const count = cases.length + (defaultCase ? 1 : 0);
 
@@ -38,7 +38,7 @@
 			return [];
 		}
 
-		// 2分岐以下は従来通り
+		// Use the previous layout for two or fewer branches
 		if (count <= 2) {
 			const positions = [];
 			cases.forEach((caseItem, index) => {
@@ -63,9 +63,9 @@
 			return positions;
 		}
 
-		// 3分岐以上は右側に垂直配置
+		// Place three or more branches vertically on the right
 		const positions = [];
-		const spacing = 40; // 各ハンドル間のスペース
+		const spacing = 40; // Space between handles
 		const totalHeight = (count - 1) * spacing;
 		const startY = -totalHeight / 2;
 

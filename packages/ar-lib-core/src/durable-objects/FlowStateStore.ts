@@ -1,13 +1,13 @@
 /**
  * FlowStateStore - Durable Object
  *
- * 責務（厳格に限定）:
- * - RuntimeState保管
- * - 排他制御（同一セッションの並行リクエスト防止）
- * - TTL管理（有効期限切れの自動削除）
- * - requestId重複検知（冪等性）
+ * Responsibilities (strictly limited):
+ * - RuntimeState storage
+ * - mutual exclusion control (prevents concurrent requests for the same session)
+ * - TTL management (automatic deletion of expired state)
+ * - requestIdduplicate detection (idempotency)
  *
- * 責務外（Worker側で処理）:
+ * Out of scope (handled on the Worker side):
  * - PolicyResolver
  * - UIContractGenerator
  * - CapabilityResolver
@@ -21,7 +21,7 @@ import type { DurableObjectState } from '@cloudflare/workers-types';
 // Types (Flow Engine specific)
 // =============================================================================
 
-/** OAuth Flow パラメータ */
+/** OAuth Flow parameters */
 export interface OAuthFlowParams {
   state?: string;
   nonce?: string;
@@ -39,55 +39,55 @@ export interface OAuthFlowParams {
   claims?: string;
 }
 
-/** RuntimeState - Layer 3: DO保存用 */
+/** RuntimeState - Layer 3: for DO storage */
 export interface RuntimeState {
-  /** セッションID */
+  /** Session ID */
   sessionId: string;
-  /** FlowID（どのFlowを実行中か） */
+  /** FlowID (which flow is executing) */
   flowId: string;
-  /** FlowType（'login' | 'authorization' | 'consent' | 'logout'） */
+  /** FlowType ('login' | 'authorization' | 'consent' | 'logout') */
   flowType: string;
-  /** テナントID */
+  /** Tenant ID */
   tenantId: string;
-  /** クライアントID */
+  /** Client ID */
   clientId: string;
-  /** 現在のノードID */
+  /** Current node ID */
   currentNodeId: string;
-  /** 訪問済みノードID配列 */
+  /** Visited node ID array */
   visitedNodeIds: string[];
-  /** 収集済みデータ（capabilityId → 応答データ） */
+  /** Collected data (capabilityId → response data) */
   collectedData: Record<string, unknown>;
-  /** 完了済みcapabilityId配列 */
+  /** Completed capabilityId array */
   completedCapabilities: string[];
-  /** OAuthパラメータ（PKCE等） */
+  /** OAuthparameters (PKCE, etc.) */
   oauthParams?: OAuthFlowParams;
-  /** 認証済みユーザーID（認証完了後に設定） */
+  /** Authenticated user ID (set after authentication completes) */
   userId?: string;
-  /** Flow開始時刻（Unix ms） */
+  /** Flow start time (Unix ms) */
   startedAt: number;
-  /** Flow有効期限（Unix ms） */
+  /** Flow expiration time (Unix ms) */
   expiresAt: number;
-  /** 最終アクティビティ時刻（Unix ms） */
+  /** Last activity time (Unix ms) */
   lastActivityAt: number;
   /** Recent request timestamps for per-session rate limiting */
   requestTimestamps: number[];
-  /** 処理済みrequestId → スナップショット（冪等性用） */
+  /** Processed requestId → snapshot (for idempotency) */
   processedRequestIds: Record<string, RuntimeStateSnapshot>;
 }
 
-/** RuntimeStateスナップショット（冪等性用） */
+/** RuntimeState snapshot (for idempotency) */
 export interface RuntimeStateSnapshot {
-  /** リクエストID */
+  /** Request ID */
   requestId: string;
-  /** 処理時刻（Unix ms） */
+  /** Processed at (Unix ms) */
   processedAt: number;
-  /** 処理結果のノードID */
+  /** Result node ID */
   resultNodeId: string;
-  /** 処理結果データ */
+  /** Result data */
   resultData: FlowSubmitResult;
 }
 
-/** Capability応答処理の結果 */
+/** Result of processing a capability response */
 export type FlowSubmitResult =
   | {
       type: 'continue';
@@ -102,30 +102,30 @@ export type FlowSubmitResult =
       error: { code: string; message: string };
     };
 
-/** RuntimeState作成パラメータ */
+/** RuntimeState creation parameters */
 export interface CreateRuntimeStateParams {
-  /** セッションID */
+  /** Session ID */
   sessionId: string;
   /** FlowID */
   flowId: string;
-  /** FlowType（'login' | 'authorization' | 'consent' | 'logout'） */
+  /** FlowType ('login' | 'authorization' | 'consent' | 'logout') */
   flowType: string;
-  /** テナントID */
+  /** Tenant ID */
   tenantId: string;
-  /** クライアントID */
+  /** Client ID */
   clientId: string;
-  /** エントリーノードID */
+  /** Entry node ID */
   entryNodeId: string;
-  /** TTL（ミリ秒） */
+  /** TTL (milliseconds) */
   ttlMs?: number;
-  /** OAuthパラメータ */
+  /** OAuthparameters */
   oauthParams?: OAuthFlowParams;
 }
 
-/** デフォルトのFlow TTL（15分） */
+/** Default Flow TTL (15 minutes) */
 export const DEFAULT_FLOW_TTL_MS = 15 * 60 * 1000;
 
-/** 冪等性用に保持する最大requestId数 */
+/** Maximum number of requestIds to retain for idempotency */
 export const MAX_PROCESSED_REQUEST_IDS = 100;
 
 // =============================================================================
@@ -135,8 +135,8 @@ export const MAX_PROCESSED_REQUEST_IDS = 100;
 /**
  * FlowStateStore Durable Object
  *
- * Durable Objectは同一IDへのリクエストを直列化するため、
- * 並行リクエストの排他制御が自動的に行われる。
+ * Durable Objects serialize requests for the same ID,,
+ * so mutual exclusion for concurrent requests is handled automatically..
  */
 export class FlowStateStore {
   private state: DurableObjectState;
@@ -148,8 +148,8 @@ export class FlowStateStore {
   }
 
   /**
-   * HTTPリクエストハンドラ
-   * DOへのすべてのリクエストはここを通る
+   * HTTP request handler
+   * All requests to the DO pass through here
    */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -157,12 +157,12 @@ export class FlowStateStore {
     const pathname = url.pathname;
 
     try {
-      // 初期化（必要に応じて）
+      // Initialize (if needed)
       if (!this.initialized) {
         await this.loadState();
       }
 
-      // ルーティング
+      // Routing
       switch (`${method} ${pathname}`) {
         case 'POST /init':
           return await this.handleInit(request);
@@ -194,7 +194,7 @@ export class FlowStateStore {
   // =============================================================================
 
   /**
-   * POST /init - RuntimeState初期化
+   * POST /init - RuntimeState initialization
    */
   private async handleInit(request: Request): Promise<Response> {
     const params = (await request.json()) as CreateRuntimeStateParams;
@@ -203,7 +203,7 @@ export class FlowStateStore {
       return validationError;
     }
 
-    // 既存の状態があればエラー
+    // Error when existing state is present
     if (this.runtimeState) {
       return new Response(
         JSON.stringify({
@@ -214,7 +214,7 @@ export class FlowStateStore {
       );
     }
 
-    // RuntimeState作成
+    // Create RuntimeState
     const now = Date.now();
     this.runtimeState = {
       sessionId: params.sessionId,
@@ -234,10 +234,10 @@ export class FlowStateStore {
       processedRequestIds: {},
     };
 
-    // 永続化
+    // Persist
     await this.saveState();
 
-    // TTLアラーム設定
+    // Set TTL alarm
     await this.state.storage.setAlarm(this.runtimeState.expiresAt);
 
     return new Response(JSON.stringify({ success: true, state: this.getPublicState() }), {
@@ -246,21 +246,21 @@ export class FlowStateStore {
   }
 
   /**
-   * POST /submit - Capability応答処理
-   * 冪等性: sessionId + requestId で重複検知
+   * POST /submit - capability responseprocessing
+   * idempotency: Detect duplicates with sessionId + requestId
    */
   private async handleSubmit(request: Request): Promise<Response> {
     const body = (await request.json()) as {
       requestId: string;
       capabilityId: string;
       response: unknown;
-      // Worker側で計算された結果
+      // Result calculated on the Worker side
       result: FlowSubmitResult;
       nextNodeId: string;
       requestTimestamps?: number[];
     };
 
-    // 状態チェック
+    // State check
     if (!this.runtimeState) {
       return new Response(
         JSON.stringify({
@@ -276,7 +276,7 @@ export class FlowStateStore {
       return validationError;
     }
 
-    // 有効期限チェック
+    // Expiration check
     if (Date.now() > this.runtimeState.expiresAt) {
       return new Response(
         JSON.stringify({
@@ -287,10 +287,10 @@ export class FlowStateStore {
       );
     }
 
-    // 冪等性チェック
+    // Idempotency check
     const existingSnapshot = this.runtimeState.processedRequestIds[body.requestId];
     if (existingSnapshot) {
-      // 同一requestIdの再送 → 前回の結果を返す
+      // Resent same requestId → return the previous result
       return new Response(JSON.stringify(existingSnapshot.resultData), {
         headers: {
           'Content-Type': 'application/json',
@@ -299,7 +299,7 @@ export class FlowStateStore {
       });
     }
 
-    // 状態更新
+    // Update state
     const now = Date.now();
     this.runtimeState.currentNodeId = body.nextNodeId;
     this.runtimeState.visitedNodeIds.push(body.nextNodeId);
@@ -313,7 +313,7 @@ export class FlowStateStore {
       );
     }
 
-    // 冪等性スナップショット保存
+    // Save idempotency snapshot
     const snapshot: RuntimeStateSnapshot = {
       requestId: body.requestId,
       processedAt: now,
@@ -322,10 +322,10 @@ export class FlowStateStore {
     };
     this.runtimeState.processedRequestIds[body.requestId] = snapshot;
 
-    // 古いスナップショットを削除（MAX_PROCESSED_REQUEST_IDS以上は保持しない）
+    // Delete old snapshots (do not keep more than MAX_PROCESSED_REQUEST_IDS)
     this.pruneOldSnapshots();
 
-    // 永続化
+    // Persist
     await this.saveState();
 
     return new Response(JSON.stringify(body.result), {
@@ -334,7 +334,7 @@ export class FlowStateStore {
   }
 
   /**
-   * GET /state - 現在の状態取得
+   * GET /state - Get current state
    */
   private async handleGetState(request: Request): Promise<Response> {
     if (!this.runtimeState) {
@@ -352,7 +352,7 @@ export class FlowStateStore {
       return validationError;
     }
 
-    // 有効期限チェック
+    // Expiration check
     if (Date.now() > this.runtimeState.expiresAt) {
       return new Response(
         JSON.stringify({
@@ -369,7 +369,7 @@ export class FlowStateStore {
   }
 
   /**
-   * DELETE /cancel - セッションキャンセル
+   * DELETE /cancel - Session cancellation
    */
   private async handleCancel(request: Request): Promise<Response> {
     const validationError = this.validateRuntimeRequest(request, { allowMissingState: true });
@@ -378,10 +378,10 @@ export class FlowStateStore {
     }
 
     if (this.runtimeState) {
-      // アラームをキャンセル
+      // Cancel the alarm
       await this.state.storage.deleteAlarm();
 
-      // 状態をクリア
+      // Clear state
       this.runtimeState = null;
       await this.state.storage.delete('runtimeState');
     }
@@ -392,18 +392,18 @@ export class FlowStateStore {
   }
 
   /**
-   * POST /check-request - 冪等性チェック（Worker側での事前チェック用）
+   * POST /check-request - Idempotency check (for pre-checking on the Worker side)
    *
-   * requestIdが既に処理済みかどうかをチェックし、
-   * 処理済みの場合はキャッシュされた結果を返す。
-   * これによりWorker側でUIContractの再生成を回避できる。
+   * Check whether requestId has already been processed,
+   * return the cached result when it has already been processed.
+   * This lets the Worker side avoid regenerating the UIContract.
    */
   private async handleCheckRequest(request: Request): Promise<Response> {
     const body = (await request.json()) as {
       requestId: string;
     };
 
-    // 状態チェック
+    // State check
     if (!this.runtimeState) {
       return new Response(
         JSON.stringify({
@@ -419,7 +419,7 @@ export class FlowStateStore {
       return validationError;
     }
 
-    // 有効期限チェック
+    // Expiration check
     if (Date.now() > this.runtimeState.expiresAt) {
       return new Response(
         JSON.stringify({
@@ -430,10 +430,10 @@ export class FlowStateStore {
       );
     }
 
-    // 冪等性チェック
+    // Idempotency check
     const existingSnapshot = this.runtimeState.processedRequestIds[body.requestId];
     if (existingSnapshot) {
-      // 同一requestIdの再送 → 前回の結果を返す
+      // Resent same requestId → return the previous result
       return new Response(
         JSON.stringify({
           found: true,
@@ -448,7 +448,7 @@ export class FlowStateStore {
       );
     }
 
-    // 未処理
+    // unprocessed
     return new Response(
       JSON.stringify({
         found: false,
@@ -461,14 +461,14 @@ export class FlowStateStore {
   }
 
   // =============================================================================
-  // Alarm Handler (TTL管理)
+  // Alarm Handler (TTL management)
   // =============================================================================
 
   /**
-   * アラームハンドラ - 有効期限切れ時に呼ばれる
+   * Alarm handler - called on expiration
    */
   async alarm(): Promise<void> {
-    // 有効期限切れの状態をクリア
+    // Clear expired state
     this.runtimeState = null;
     await this.state.storage.delete('runtimeState');
   }
@@ -478,12 +478,12 @@ export class FlowStateStore {
   // =============================================================================
 
   /**
-   * 状態をストレージから読み込み
+   * Load state from storage
    */
   private async loadState(): Promise<void> {
     const stored = await this.state.storage.get<RuntimeState>('runtimeState');
     if (stored) {
-      // processedRequestIdsをオブジェクトとして復元
+      // Restore processedRequestIds as an object
       this.runtimeState = {
         ...stored,
         requestTimestamps: stored.requestTimestamps || [],
@@ -494,7 +494,7 @@ export class FlowStateStore {
   }
 
   /**
-   * 状態をストレージに保存
+   * Save state to storage
    */
   private async saveState(): Promise<void> {
     if (this.runtimeState) {
@@ -503,7 +503,7 @@ export class FlowStateStore {
   }
 
   /**
-   * 公開用の状態サブセットを取得
+   * Get the public state subset
    */
   private getPublicState(): {
     sessionId: string;
@@ -608,7 +608,7 @@ export class FlowStateStore {
   }
 
   /**
-   * 古い冪等性スナップショットを削除
+   * Delete old idempotency snapshots
    */
   private pruneOldSnapshots(): void {
     if (!this.runtimeState) return;
@@ -616,7 +616,7 @@ export class FlowStateStore {
     const requestIds = Object.keys(this.runtimeState.processedRequestIds);
     if (requestIds.length <= MAX_PROCESSED_REQUEST_IDS) return;
 
-    // processedAtでソートして古いものを削除
+    // Sort by processedAt and delete the oldest items
     const sorted = requestIds.sort((a, b) => {
       const aTime = this.runtimeState!.processedRequestIds[a].processedAt;
       const bTime = this.runtimeState!.processedRequestIds[b].processedAt;

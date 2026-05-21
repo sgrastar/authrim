@@ -489,7 +489,7 @@ const pt: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Configurar sharding? (para ambientes de alta carga)',
   'sharding.title': 'Configurações de Sharding',
-  'sharding.note': 'Nota: Recomenda-se potência de 2 para número de shards (8, 16, 32, 64, 128)',
+  'sharding.note': 'Nota: Recomenda-se potência de 2 para número de shards (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Número de shards do Auth Code',
   'sharding.refreshTokenShards': 'Número de shards do Refresh Token',
 
@@ -948,13 +948,15 @@ const pt: Translations = {
   'web.preview.issuerUrl': 'URL do Emissor:',
   'web.preview.loginUi': 'UI de Login:',
   'web.preview.adminUi': 'UI de Admin:',
-  'web.preview.pagesUrl': 'UI de Login (Worker):',
+  'web.preview.pagesUrl': 'Origem da UI de Login:',
   'web.preview.tenantDiscover': 'Seleção de Tenant (Entrada Comum):',
   'web.preview.adminAccess': 'Acesso à UI de Admin:',
   'web.preview.firstTenant': '{{name}} (Tenant Principal)',
   'web.preview.otherTenants': 'Outros Tenants',
   'web.preview.allTenantsShared': '(compartilhado por todos os tenants)',
+  'web.preview.loginUiOriginNote': '(origem de deploy; o login do tenant usa /login do issuer)',
   'web.preview.viaApiProxy': '(proxied pelo mesmo domínio da API)',
+  'web.preview.conflictWarningTitle': '⚠️ Problema de configuração',
   'web.preview.conflictWarningMsg':
     'O domínio personalizado de {{conflictUI}} é o mesmo que o da API ({{baseDomain}}). Como "Remover tenant da URL" está desabilitado, requisições à API em {{baseDomain}} (/authorize, /api/auth/*, etc.) retornarão 404 e o fluxo de login falhará.',
   'web.preview.conflictActionMsg':

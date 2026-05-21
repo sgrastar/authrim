@@ -12,12 +12,41 @@ export interface EmailCodeTemplateData {
   logoUrl?: string;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeLogoUrl(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Generate Email Code (OTP) email HTML
  * OTP AutoFill is handled via Authentication-Info header
  */
 export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
   const { name, email, code, expiresInMinutes, appName, logoUrl } = data;
+  const htmlName = name ? escapeHtml(name) : '';
+  const htmlEmail = escapeHtml(email);
+  const htmlCode = escapeHtml(code);
+  const htmlAppName = escapeHtml(appName);
+  const htmlLogoUrl = safeLogoUrl(logoUrl);
 
   return `
 <!DOCTYPE html>
@@ -25,7 +54,7 @@ export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your verification code for ${appName}</title>
+  <title>Your verification code for ${htmlAppName}</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -116,16 +145,16 @@ export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
 <body>
   <div class="container">
     <div class="header">
-      ${logoUrl ? `<img src="${logoUrl}" alt="${appName}" class="logo" />` : ''}
+      ${htmlLogoUrl ? `<img src="${escapeHtml(htmlLogoUrl)}" alt="${htmlAppName}" class="logo" />` : ''}
       <h1>Verification Code</h1>
     </div>
     <div class="content">
-      <p class="greeting">Hello${name ? ` ${name}` : ''},</p>
+      <p class="greeting">Hello${htmlName ? ` ${htmlName}` : ''},</p>
       <p class="message">
-        We received a request to sign in to your ${appName} account (${email}). Use the verification code below:
+        We received a request to sign in to your ${htmlAppName} account (${htmlEmail}). Use the verification code below:
       </p>
       <div class="code-container">
-        <div class="code">${code}</div>
+        <div class="code">${htmlCode}</div>
       </div>
       <div class="warning">
         <p class="warning-text">
@@ -137,8 +166,8 @@ export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
       </p>
     </div>
     <div class="footer">
-      <p>This email was sent by ${appName}</p>
-      <p>© ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
+      <p>This email was sent by ${htmlAppName}</p>
+      <p>© ${new Date().getFullYear()} ${htmlAppName}. All rights reserved.</p>
     </div>
   </div>
 </body>

@@ -1,11 +1,11 @@
 /**
  * Risk-Based Authentication Flow with Switch Node
  *
- * このフローは、リスクスコアレベルに基づいて異なる認証パスに分岐します：
- * - low: 通常ログイン続行
- * - medium: 警告表示
- * - high: 追加認証（MFA）
- * - critical: ブロック
+ * This flow branches into different authentication paths based on the risk score level:
+ * - low: continue normal login
+ * - medium: warning display
+ * - high: additional authentication (MFA)
+ * - critical: block
  *
  * @see /private/docs/flow-engine-decision-guide.md
  */

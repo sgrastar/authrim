@@ -18,14 +18,21 @@ import {
   getLogStatistics,
   DIAGNOSTIC_LOGGING_CATEGORY_META,
   applyPrivacyModeToEntry,
+  buildDiagnosticLogPrefix,
   type DiagnosticLogPrivacyMode,
   type DiagnosticLoggingSettings,
   type ExportOptions,
+  readR2ObjectTextWithLimit,
 } from '@authrim/ar-lib-core';
 
 const log = createLogger().module('DiagnosticLogsExportAPI');
+const DIAGNOSTIC_EXPORT_R2_OBJECT_MAX_BYTES = 16 * 1024 * 1024;
 
 const app = new Hono<{ Bindings: Env }>();
+
+function safeFilenameSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 120) || 'tenant';
+}
 
 /**
  * Export query parameters
@@ -127,8 +134,41 @@ function resolveEffectiveMode(
   return rank[storedMode] <= rank[requestedMode] ? storedMode : requestedMode;
 }
 
+function getDiagnosticObjectDayTimestamp(key: string): number {
+  const partitionMatch = key.match(/\/yyyy=(\d{4})\/mm=(\d{2})\/dd=(\d{2})\//);
+  if (partitionMatch) {
+    return Date.UTC(
+      Number.parseInt(partitionMatch[1], 10),
+      Number.parseInt(partitionMatch[2], 10) - 1,
+      Number.parseInt(partitionMatch[3], 10)
+    );
+  }
+
+  const legacyMatch = key.match(/\/(\d{4}-\d{2}-\d{2})\//);
+  if (legacyMatch) {
+    return new Date(`${legacyMatch[1]}T00:00:00.000Z`).getTime();
+  }
+
+  return Number.POSITIVE_INFINITY;
+}
+
+function isDiagnosticObjectInDateRange(key: string, startDate: Date, endDate: Date): boolean {
+  const day = getDiagnosticObjectDayTimestamp(key);
+  if (!Number.isFinite(day)) return true;
+  const start = Date.UTC(
+    startDate.getUTCFullYear(),
+    startDate.getUTCMonth(),
+    startDate.getUTCDate()
+  );
+  const end =
+    Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate()) +
+    24 * 60 * 60 * 1000 -
+    1;
+  return day >= start - 24 * 60 * 60 * 1000 && day <= end + 24 * 60 * 60 * 1000;
+}
+
 /**
- * List R2 objects in date range
+ * List immutable diagnostic chunk objects in date range.
  */
 async function listR2Objects(
   r2: R2Bucket,
@@ -137,33 +177,22 @@ async function listR2Objects(
   endDate: Date
 ): Promise<string[]> {
   const keys: string[] = [];
-  const dateRanges = generateDateRanges(startDate, endDate);
+  let cursor: string | undefined;
+  const listPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`;
 
-  for (const dateStr of dateRanges) {
-    const datePrefix = `${prefix}/${dateStr}/`;
-    const listed = await r2.list({ prefix: datePrefix });
+  do {
+    const listed = await r2.list({ prefix: listPrefix, limit: 1000, cursor });
 
     for (const object of listed.objects) {
-      keys.push(object.key);
+      if (isDiagnosticObjectInDateRange(object.key, startDate, endDate)) {
+        keys.push(object.key);
+      }
     }
-  }
+
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
 
   return keys;
-}
-
-/**
- * Generate date range strings (YYYY-MM-DD format)
- */
-function generateDateRanges(startDate: Date, endDate: Date): string[] {
-  const ranges: string[] = [];
-  const current = new Date(startDate);
-
-  while (current <= endDate) {
-    ranges.push(current.toISOString().slice(0, 10));
-    current.setDate(current.getDate() + 1);
-  }
-
-  return ranges;
 }
 
 /**
@@ -177,7 +206,7 @@ async function fetchLogsFromR2(r2: R2Bucket, keys: string[]): Promise<Diagnostic
       const object = await r2.get(key);
       if (!object) continue;
 
-      const text = await object.text();
+      const text = await readR2ObjectTextWithLimit(object, DIAGNOSTIC_EXPORT_R2_OBJECT_MAX_BYTES);
       const lines = text.split('\n').filter((line) => line.trim());
 
       for (const line of lines) {
@@ -322,19 +351,35 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     const tokenHashPrefixLength =
       diagnosticSettings['diagnostic-logging.token_hash_prefix_length'] ?? 12;
 
-    // Build R2 prefix
+    // Build R2 prefixes for immutable diagnostic chunks.
     const logTypes = categories || ['token-validation', 'auth-decision'];
     const allLogs: DiagnosticLogEntry[] = [];
+    const pathPrefix = diagnosticSettings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
 
     const prefixes: string[] = [];
 
     for (const logType of logTypes) {
       if (clientIds && clientIds.length > 0) {
         for (const clientId of clientIds) {
-          prefixes.push(`diagnostic-logs/${logType}/${tenantId}/${clientId}`);
+          prefixes.push(
+            await buildDiagnosticLogPrefix({
+              pathPrefix,
+              tenantId,
+              tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
+              category: logType as DiagnosticLogEntry['category'],
+              clientId,
+            })
+          );
         }
       } else {
-        prefixes.push(`diagnostic-logs/${logType}/${tenantId}`);
+        prefixes.push(
+          await buildDiagnosticLogPrefix({
+            pathPrefix,
+            tenantId,
+            tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
+            category: logType as DiagnosticLogEntry['category'],
+          })
+        );
       }
     }
 
@@ -393,11 +438,11 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     if (format === 'jsonl') {
       output = formatAsJSONL(processedLogs, exportOptions);
       contentType = 'application/x-ndjson';
-      filename = `diagnostic-logs-${tenantId}-${Date.now()}.jsonl`;
+      filename = `diagnostic-logs-${safeFilenameSegment(tenantId)}-${Date.now()}.jsonl`;
     } else if (format === 'text') {
       output = formatAsText(processedLogs, exportOptions);
       contentType = 'text/plain';
-      filename = `diagnostic-logs-${tenantId}-${Date.now()}.txt`;
+      filename = `diagnostic-logs-${safeFilenameSegment(tenantId)}-${Date.now()}.txt`;
     } else {
       // Default: JSON
       const jsonData: Record<string, unknown> = {
@@ -410,7 +455,7 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
 
       output = JSON.stringify(jsonData, null, 2);
       contentType = 'application/json';
-      filename = `diagnostic-logs-${tenantId}-${Date.now()}.json`;
+      filename = `diagnostic-logs-${safeFilenameSegment(tenantId)}-${Date.now()}.json`;
     }
 
     // Return as downloadable file
@@ -418,6 +463,8 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
       headers: {
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${filename}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
       },
     });
   } catch (error) {

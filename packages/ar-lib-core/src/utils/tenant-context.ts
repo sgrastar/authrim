@@ -266,7 +266,7 @@ export function fnv1a32(str: string): number {
  *
  * @param userId - User identifier (sub claim)
  * @param clientId - OAuth client identifier
- * @param shardCount - Number of shards (default: 64)
+ * @param shardCount - Number of shards (default: 4)
  * @returns Shard index (0 to shardCount - 1)
  */
 export function getAuthCodeShardIndex(

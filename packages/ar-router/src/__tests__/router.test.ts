@@ -808,6 +808,42 @@ describe('Router Worker', () => {
       expect(forwardedRequest.headers.get('Authorization')).toBe('Bearer test-token');
     });
 
+    it('should forward original host hints to service bindings', async () => {
+      const req = new Request('https://first.multi-tenant.authrim.com/token', {
+        method: 'POST',
+        body: 'grant_type=client_credentials',
+      });
+      await app.fetch(req, mockEnv);
+
+      const forwardedRequest = mockEnv.OP_TOKEN.fetch.mock.calls[0][0];
+      expect(forwardedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+      expect(forwardedRequest.headers.get('X-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+    });
+
+    it('should overwrite spoofed forwarded host hints at the router boundary', async () => {
+      const req = new Request('https://first.multi-tenant.authrim.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Forwarded-Host': 'attacker.example.com',
+          'X-Forwarded-Host': 'attacker.example.com',
+        },
+        body: 'grant_type=client_credentials',
+      });
+      await app.fetch(req, mockEnv);
+
+      const forwardedRequest = mockEnv.OP_TOKEN.fetch.mock.calls[0][0];
+      expect(forwardedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+      expect(forwardedRequest.headers.get('X-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+    });
+
     it('should allow POST from tenant subdomain origin in multi-tenant mode', async () => {
       const mtEnv = {
         ...mockEnv,
@@ -963,6 +999,274 @@ describe('Router Worker', () => {
       const proxiedRequest = fetchMock.mock.calls[0]?.[0];
       expect(proxiedRequest).toBeInstanceOf(Request);
       expect((proxiedRequest as Request).redirect).toBe('manual');
+    });
+
+    it('should proxy login UI through service binding when configured', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithLoginUi = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://first.example.com',
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://first.example.com/login?client_id=test');
+      const res = await app.fetch(req, envWithLoginUi);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(new URL(proxiedRequest.url).pathname).toBe('/login');
+      expect(new URL(proxiedRequest.url).search).toBe('?client_id=test');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
+    });
+
+    it('should proxy tenant root requests to Login UI when configured', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithLoginUi = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://first.example.com/');
+      const res = await app.fetch(req, envWithLoginUi);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(new URL(proxiedRequest.url).pathname).toBe('/');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
+    });
+
+    it('should proxy admin UI through service binding when configured', async () => {
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithAdminUi = {
+        ...mockEnv,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://admin.example.com/admin/info');
+      const res = await app.fetch(req, envWithAdminUi);
+
+      expect(res.status).toBe(200);
+      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const proxiedRequest = adminUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).origin).toBe(
+        'https://phase9-ar-admin-ui.example.workers.dev'
+      );
+      expect(new URL(proxiedRequest.url).pathname).toBe('/admin/info');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('admin.example.com');
+    });
+
+    it('should return explicit 404 responses when UI proxies are not enabled', async () => {
+      const adminResponse = await app.fetch(
+        new Request('https://admin.example.com/admin/info'),
+        mockEnv
+      );
+      const adminBody = (await adminResponse.json()) as Record<string, string>;
+      expect(adminResponse.status).toBe(404);
+      expect(adminBody.message).toBe('Admin UI proxy is not enabled');
+      expect(adminBody.hint).toContain('ENABLE_ADMIN_UI_PROXY=true');
+
+      const setupResponse = await app.fetch(
+        new Request('https://admin.example.com/setup/complete'),
+        mockEnv
+      );
+      const setupBody = (await setupResponse.json()) as Record<string, string>;
+      expect(setupResponse.status).toBe(404);
+      expect(setupBody.message).toBe('Admin UI proxy is not enabled');
+
+      const adminRootResponse = await app.fetch(
+        new Request('https://admin.example.com/admin'),
+        mockEnv
+      );
+      const adminRootBody = (await adminRootResponse.json()) as Record<string, string>;
+      expect(adminRootResponse.status).toBe(404);
+      expect(adminRootBody.message).toBe('Admin UI proxy is not enabled');
+
+      const loginSubpathResponse = await app.fetch(
+        new Request('https://first.example.com/login/reset-password'),
+        mockEnv
+      );
+      const loginSubpathBody = (await loginSubpathResponse.json()) as Record<string, string>;
+      expect(loginSubpathResponse.status).toBe(404);
+      expect(loginSubpathBody.message).toBe('Login UI proxy is not enabled');
+
+      const geoResponse = await app.fetch(
+        new Request('https://admin.example.com/geo/world.json'),
+        mockEnv
+      );
+      const geoBody = (await geoResponse.json()) as Record<string, string>;
+      expect(geoResponse.status).toBe(404);
+      expect(geoBody.message).toBe('Admin UI proxy is not enabled');
+    });
+
+    it('should rewrite Origin and Referer when proxying state-changing Login UI requests', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithLoginUi = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://first.example.com/signup', {
+        method: 'POST',
+        headers: {
+          Host: 'first.example.com',
+          Origin: 'https://first.example.com',
+          Referer: 'https://first.example.com/signup?client_id=test',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'email=user%40example.com',
+      });
+      const res = await app.fetch(req, envWithLoginUi);
+
+      expect(res.status).toBe(200);
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(proxiedRequest.headers.get('Origin')).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(proxiedRequest.headers.get('Referer')).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev/signup?client_id=test'
+      );
+    });
+
+    it('should try static assets against the UI indicated by Referer before falling back', async () => {
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      adminUiWorker.fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ worker: 'ADMIN_UI_WORKER' }), { status: 404 })
+      );
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithUis = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://admin.example.com/_app/immutable/chunk.js', {
+        headers: {
+          Referer: 'https://admin.example.com/admin/clients',
+        },
+      });
+      const res = await app.fetch(req, envWithUis);
+      const body = (await res.json()) as { worker: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('LOGIN_UI_WORKER');
+      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(new URL(adminUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
+        'https://phase9-ar-admin-ui.example.workers.dev'
+      );
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+    });
+
+    it('should return static asset not found when no UI proxy can serve the asset', async () => {
+      const res = await app.fetch(
+        new Request('https://example.com/_app/immutable/missing.js'),
+        mockEnv
+      );
+      const body = (await res.json()) as Record<string, string>;
+
+      expect(res.status).toBe(404);
+      expect(body.message).toBe('Static asset not found in any UI');
+    });
+
+    it('should keep admin root requests on Admin UI when both UI proxies are configured', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithUis = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        ADMIN_UI_URL: 'https://admin.example.com',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://admin.example.com/');
+      const res = await app.fetch(req, envWithUis);
+
+      expect(res.status).toBe(200);
+      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+
+      const proxiedRequest = adminUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).pathname).toBe('/');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('admin.example.com');
+    });
+
+    it('should return API metadata at root when no UI proxy is enabled', async () => {
+      const res = await app.fetch(new Request('https://api.example.com/'), mockEnv);
+      const body = (await res.json()) as {
+        name: string;
+        endpoints: Record<string, string>;
+      };
+
+      expect(res.status).toBe(200);
+      expect(body.name).toBe('Authrim OIDC Provider');
+      expect(body.endpoints).toMatchObject({
+        discovery: '/.well-known/openid-configuration',
+        authorize: '/authorize',
+        token: '/token',
+        userinfo: '/userinfo',
+      });
+    });
+
+    it('should convert service binding failures into router server_error responses', async () => {
+      const envWithFailingToken = {
+        ...mockEnv,
+        OP_TOKEN: {
+          fetch: vi.fn(async () => {
+            throw new Error('token worker unavailable');
+          }),
+        },
+      };
+
+      const res = await app.fetch(
+        new Request('https://example.com/token', {
+          method: 'POST',
+          body: 'grant_type=client_credentials',
+        }),
+        envWithFailingToken
+      );
+      const body = (await res.json()) as Record<string, string>;
+
+      expect(res.status).toBe(500);
+      expect(body.error).toBe('server_error');
+      expect(body.error_description).toBe('An unexpected error occurred in the router');
     });
   });
 });

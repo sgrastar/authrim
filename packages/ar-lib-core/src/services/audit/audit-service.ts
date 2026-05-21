@@ -36,6 +36,7 @@ import {
   calculateRetentionUntil,
   arrayBufferToBase64,
 } from './utils';
+import type { TenantKeyResolver } from './tenant-key';
 import { AnonymizationService } from './anonymization';
 import { createLogger, type Logger } from '../../utils/logger';
 
@@ -63,6 +64,15 @@ export interface AuditServiceDependencies {
   /** R2 bucket for large details */
   r2Bucket: R2Bucket;
 
+  /** R2 bucket for chunked sensitive detail payloads */
+  sensitiveDetailBucket?: R2Bucket;
+
+  /** Root key for object-plane sensitive detail encryption */
+  objectEncryptionRootKey?: string;
+
+  /** Object-plane encryption key version */
+  objectEncryptionKeyVersion?: number;
+
   /** Audit queue for async processing (optional) */
   auditQueue?: Queue<AuditQueueMessage>;
 
@@ -89,6 +99,9 @@ export interface AuditServiceDependencies {
     target: AuditTarget,
     logType: 'event' | 'pii'
   ) => Promise<IAuditStorageAdapter | null>;
+
+  /** Optional tenant registry backed tenant_key resolver for direct R2 detail evacuation */
+  tenantKeyResolver?: TenantKeyResolver;
 }
 
 /**
@@ -98,6 +111,9 @@ export class AuditService implements IAuditService {
   private readonly coreAdapter: DatabaseAdapter;
   private readonly piiAdapter: DatabaseAdapter;
   private readonly r2Bucket: R2Bucket;
+  private readonly sensitiveDetailBucket?: R2Bucket;
+  private readonly objectEncryptionRootKey?: string;
+  private readonly objectEncryptionKeyVersion?: number;
   private readonly auditQueue?: Queue<AuditQueueMessage>;
   private readonly configKv?: KVNamespace;
   private readonly logger: Logger;
@@ -105,6 +121,7 @@ export class AuditService implements IAuditService {
   private readonly resolveAuditProfile?: (tenantId: string) => Promise<AuditProfile>;
   private readonly resolveDeliveryPlan?: AuditServiceDependencies['resolveDeliveryPlan'];
   private readonly resolvePrimaryAdapter?: AuditServiceDependencies['resolvePrimaryAdapter'];
+  private readonly tenantKeyResolver?: TenantKeyResolver;
 
   // In-memory config cache (3 minute TTL)
   private configCache: Map<string, { config: TenantPIIConfig; expiresAt: number }> = new Map();
@@ -117,6 +134,9 @@ export class AuditService implements IAuditService {
     this.coreAdapter = ensureDatabaseAdapter(deps.coreSource, 'audit-core');
     this.piiAdapter = ensureDatabaseAdapter(deps.piiSource, 'audit-pii');
     this.r2Bucket = deps.r2Bucket;
+    this.sensitiveDetailBucket = deps.sensitiveDetailBucket;
+    this.objectEncryptionRootKey = deps.objectEncryptionRootKey;
+    this.objectEncryptionKeyVersion = deps.objectEncryptionKeyVersion;
     this.auditQueue = deps.auditQueue;
     this.configKv = deps.configKv;
     this.logger = deps.logger ?? createLogger().module('AuditService');
@@ -124,6 +144,7 @@ export class AuditService implements IAuditService {
     this.resolveAuditProfile = deps.resolveAuditProfile;
     this.resolveDeliveryPlan = deps.resolveDeliveryPlan;
     this.resolvePrimaryAdapter = deps.resolvePrimaryAdapter;
+    this.tenantKeyResolver = deps.tenantKeyResolver;
   }
 
   private getDefaultAuditProfile(): AuditProfile {
@@ -363,7 +384,24 @@ export class AuditService implements IAuditService {
         params.details as Record<string, unknown>,
         config
       );
-      const result = await writeEventDetails(sanitizedDetails, this.r2Bucket, tenantId, entryId);
+      const result = await writeEventDetails(
+        sanitizedDetails,
+        this.r2Bucket,
+        tenantId,
+        entryId,
+        undefined,
+        this.tenantKeyResolver,
+        this.sensitiveDetailBucket && this.objectEncryptionRootKey
+          ? {
+              adapter: this.coreAdapter,
+              bucket: this.sensitiveDetailBucket,
+              rootKeyHex: this.objectEncryptionRootKey,
+              keyVersion: this.objectEncryptionKeyVersion,
+              createdAt,
+              tenantKeyResolver: this.tenantKeyResolver,
+            }
+          : undefined
+      );
       detailsJson = result.detailsJson;
       detailsR2Key = result.detailsR2Key;
     }
@@ -492,7 +530,19 @@ export class AuditService implements IAuditService {
       JSON.stringify(encrypted),
       this.r2Bucket,
       tenantId,
-      entryId
+      entryId,
+      undefined,
+      this.tenantKeyResolver,
+      this.sensitiveDetailBucket && this.objectEncryptionRootKey
+        ? {
+            adapter: this.coreAdapter,
+            bucket: this.sensitiveDetailBucket,
+            rootKeyHex: this.objectEncryptionRootKey,
+            keyVersion: this.objectEncryptionKeyVersion,
+            createdAt,
+            tenantKeyResolver: this.tenantKeyResolver,
+          }
+        : undefined
     );
 
     const entry: PIILogEntry = {

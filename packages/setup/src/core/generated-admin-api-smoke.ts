@@ -115,178 +115,178 @@ export async function runGeneratedAdminApiSmoke(
   const tenantId = target.tenantId;
 
   try {
-  const checks: SmokeCheck[] = [];
-  const smokeRunId = Date.now();
-  const clientName = `Generated Admin Smoke Client ${smokeRunId}`;
-  const updatedDescription = `Generated environment validation smoke ${smokeRunId}`;
-  let createdClientId = '';
+    const checks: SmokeCheck[] = [];
+    const smokeRunId = Date.now();
+    const clientName = `Generated Admin Smoke Client ${smokeRunId}`;
+    const updatedDescription = `Generated environment validation smoke ${smokeRunId}`;
+    let createdClientId = '';
 
-  const statsCheck = makeSmokeCheck(
-    'admin-stats',
-    'admin stats endpoint',
-    `${target.baseUrl}/api/admin/stats`
-  );
-  await runAdminJsonRequest({
-    check: statsCheck,
-    baseUrl: target.baseUrl,
-    path: '/api/admin/stats',
-    adminSecret,
-    tenantId,
-    timeoutMs,
-    validate: (payload, check) => {
-      validateJsonObject(check, payload, 'admin stats');
-    },
-  });
-  checks.push(finalizeCheck(statsCheck, 'admin stats endpoint verified'));
-
-  const clientsListCheck = makeSmokeCheck(
-    'admin-clients-list',
-    'admin clients list',
-    `${target.baseUrl}/api/admin/clients`
-  );
-  await runAdminJsonRequest({
-    check: clientsListCheck,
-    baseUrl: target.baseUrl,
-    path: '/api/admin/clients',
-    adminSecret,
-    tenantId,
-    timeoutMs,
-    validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'admin clients list')) {
-        return;
-      }
-      if (!Array.isArray((payload as Record<string, unknown>).clients)) {
-        addFail(check, 'clients is not an array');
-      }
-    },
-  });
-  checks.push(finalizeCheck(clientsListCheck, 'admin clients list verified'));
-
-  const clientCreateCheck = makeSmokeCheck(
-    'admin-client-create',
-    'admin client create',
-    `${target.baseUrl}/api/admin/clients`
-  );
-  await runAdminJsonRequest({
-    check: clientCreateCheck,
-    baseUrl: target.baseUrl,
-    path: '/api/admin/clients',
-    method: 'POST',
-    adminSecret,
-    tenantId,
-    timeoutMs,
-    expectedStatus: 201,
-    body: {
-      client_name: clientName,
-      description: 'Generated environment validation smoke client',
-      redirect_uris: ['https://example.invalid/authrim/generated-admin-smoke/callback'],
-      grant_types: ['authorization_code'],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'client_secret_basic',
-      require_pkce: true,
-    },
-    validate: (payload, check) => {
-      if (!validateJsonObject(check, payload, 'admin client create response')) {
-        return;
-      }
-      const client = getClientFromPayload(payload);
-      const clientId = typeof client?.client_id === 'string' ? client.client_id : '';
-      if (!clientId) {
-        addFail(check, 'client.client_id was not returned');
-        return;
-      }
-      createdClientId = clientId;
-      addPass(check, `client_id=${createdClientId}`);
-    },
-  });
-  checks.push(finalizeCheck(clientCreateCheck, 'admin client create verified'));
-
-  if (createdClientId) {
-    const clientGetCheck = makeSmokeCheck(
-      'admin-client-get',
-      'admin client get',
-      `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
+    const statsCheck = makeSmokeCheck(
+      'admin-stats',
+      'admin stats endpoint',
+      `${target.baseUrl}/api/admin/stats`
     );
     await runAdminJsonRequest({
-      check: clientGetCheck,
+      check: statsCheck,
       baseUrl: target.baseUrl,
-      path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
+      path: '/api/admin/stats',
       adminSecret,
       tenantId,
       timeoutMs,
       validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'admin client get response')) {
-          return;
-        }
-        const client = getClientFromPayload(payload);
-        if (client?.client_id !== createdClientId) {
-          addFail(check, `client_id expected=${createdClientId}`);
-        }
+        validateJsonObject(check, payload, 'admin stats');
       },
     });
-    checks.push(finalizeCheck(clientGetCheck, 'admin client get verified'));
+    checks.push(finalizeCheck(statsCheck, 'admin stats endpoint verified'));
 
-    const clientUpdateCheck = makeSmokeCheck(
-      'admin-client-update',
-      'admin client update',
-      `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
+    const clientsListCheck = makeSmokeCheck(
+      'admin-clients-list',
+      'admin clients list',
+      `${target.baseUrl}/api/admin/clients`
     );
     await runAdminJsonRequest({
-      check: clientUpdateCheck,
+      check: clientsListCheck,
       baseUrl: target.baseUrl,
-      path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
-      method: 'PUT',
+      path: '/api/admin/clients',
       adminSecret,
       tenantId,
       timeoutMs,
+      validate: (payload, check) => {
+        if (!validateJsonObject(check, payload, 'admin clients list')) {
+          return;
+        }
+        if (!Array.isArray((payload as Record<string, unknown>).clients)) {
+          addFail(check, 'clients is not an array');
+        }
+      },
+    });
+    checks.push(finalizeCheck(clientsListCheck, 'admin clients list verified'));
+
+    const clientCreateCheck = makeSmokeCheck(
+      'admin-client-create',
+      'admin client create',
+      `${target.baseUrl}/api/admin/clients`
+    );
+    await runAdminJsonRequest({
+      check: clientCreateCheck,
+      baseUrl: target.baseUrl,
+      path: '/api/admin/clients',
+      method: 'POST',
+      adminSecret,
+      tenantId,
+      timeoutMs,
+      expectedStatus: 201,
       body: {
-        description: updatedDescription,
+        client_name: clientName,
+        description: 'Generated environment validation smoke client',
+        redirect_uris: ['https://example.invalid/authrim/generated-admin-smoke/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'client_secret_basic',
+        require_pkce: true,
       },
       validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'admin client update response')) {
+        if (!validateJsonObject(check, payload, 'admin client create response')) {
           return;
         }
         const client = getClientFromPayload(payload);
-        if (client?.description !== updatedDescription) {
-          addFail(check, `description expected=${updatedDescription}`);
-        }
-      },
-    });
-    checks.push(finalizeCheck(clientUpdateCheck, 'admin client update verified'));
-
-    const clientDeleteCheck = makeSmokeCheck(
-      'admin-client-delete',
-      'admin client delete',
-      `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
-    );
-    await runAdminJsonRequest({
-      check: clientDeleteCheck,
-      baseUrl: target.baseUrl,
-      path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
-      method: 'DELETE',
-      adminSecret,
-      tenantId,
-      timeoutMs,
-      validate: (payload, check) => {
-        if (!validateJsonObject(check, payload, 'admin client delete response')) {
+        const clientId = typeof client?.client_id === 'string' ? client.client_id : '';
+        if (!clientId) {
+          addFail(check, 'client.client_id was not returned');
           return;
         }
-        if ((payload as Record<string, unknown>).success !== true) {
-          addFail(check, 'success=true was expected');
-        }
+        createdClientId = clientId;
+        addPass(check, `client_id=${createdClientId}`);
       },
     });
-    checks.push(finalizeCheck(clientDeleteCheck, 'admin client delete verified'));
-  }
+    checks.push(finalizeCheck(clientCreateCheck, 'admin client create verified'));
 
-  return {
-    ok: isSmokeSuccessful(checks),
-    env: target.env,
-    baseUrl: target.baseUrl,
-    configPath: target.configPath,
-    adminSecretPath,
-    checks,
-  };
+    if (createdClientId) {
+      const clientGetCheck = makeSmokeCheck(
+        'admin-client-get',
+        'admin client get',
+        `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
+      );
+      await runAdminJsonRequest({
+        check: clientGetCheck,
+        baseUrl: target.baseUrl,
+        path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
+        adminSecret,
+        tenantId,
+        timeoutMs,
+        validate: (payload, check) => {
+          if (!validateJsonObject(check, payload, 'admin client get response')) {
+            return;
+          }
+          const client = getClientFromPayload(payload);
+          if (client?.client_id !== createdClientId) {
+            addFail(check, `client_id expected=${createdClientId}`);
+          }
+        },
+      });
+      checks.push(finalizeCheck(clientGetCheck, 'admin client get verified'));
+
+      const clientUpdateCheck = makeSmokeCheck(
+        'admin-client-update',
+        'admin client update',
+        `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
+      );
+      await runAdminJsonRequest({
+        check: clientUpdateCheck,
+        baseUrl: target.baseUrl,
+        path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
+        method: 'PUT',
+        adminSecret,
+        tenantId,
+        timeoutMs,
+        body: {
+          description: updatedDescription,
+        },
+        validate: (payload, check) => {
+          if (!validateJsonObject(check, payload, 'admin client update response')) {
+            return;
+          }
+          const client = getClientFromPayload(payload);
+          if (client?.description !== updatedDescription) {
+            addFail(check, `description expected=${updatedDescription}`);
+          }
+        },
+      });
+      checks.push(finalizeCheck(clientUpdateCheck, 'admin client update verified'));
+
+      const clientDeleteCheck = makeSmokeCheck(
+        'admin-client-delete',
+        'admin client delete',
+        `${target.baseUrl}/api/admin/clients/${encodeURIComponent(createdClientId)}`
+      );
+      await runAdminJsonRequest({
+        check: clientDeleteCheck,
+        baseUrl: target.baseUrl,
+        path: `/api/admin/clients/${encodeURIComponent(createdClientId)}`,
+        method: 'DELETE',
+        adminSecret,
+        tenantId,
+        timeoutMs,
+        validate: (payload, check) => {
+          if (!validateJsonObject(check, payload, 'admin client delete response')) {
+            return;
+          }
+          if ((payload as Record<string, unknown>).success !== true) {
+            addFail(check, 'success=true was expected');
+          }
+        },
+      });
+      checks.push(finalizeCheck(clientDeleteCheck, 'admin client delete verified'));
+    }
+
+    return {
+      ok: isSmokeSuccessful(checks),
+      env: target.env,
+      baseUrl: target.baseUrl,
+      configPath: target.configPath,
+      adminSecretPath,
+      checks,
+    };
   } finally {
     await adminAccess.cleanup?.();
   }

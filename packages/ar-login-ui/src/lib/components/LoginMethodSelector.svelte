@@ -157,7 +157,16 @@
 				onclick={() => onExternalLogin?.(provider)}
 				style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 			>
-				<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+				{#if provider.iconUrl}
+					<img
+						src={provider.iconUrl}
+						alt=""
+						loading="lazy"
+						style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
+					/>
+				{:else}
+					<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+				{/if}
 				{getProviderButtonText(provider)}
 			</Button>
 		{/each}

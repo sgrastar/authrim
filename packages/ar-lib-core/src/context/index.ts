@@ -51,6 +51,7 @@ export {
   createAuthContextFromHono,
   createPIIContextFromHono,
   elevateToPIIContext,
+  getRuntimeUserStoreSourcesFromHonoContext,
   hasPIIDatabase,
   resolveOptionalCoreAdapterFromHono,
 } from './hono-context';

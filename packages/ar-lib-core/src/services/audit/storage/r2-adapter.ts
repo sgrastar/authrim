@@ -12,6 +12,9 @@
 
 import type { EventLogEntry, PIILogEntry } from '../types';
 import { extractAuditEntryFromCanonicalPayload } from '../canonical-format';
+import { createLoggingId } from '@authrim/ar-lib-logging';
+import { resolveAuditTenantKey, type TenantKeyResolver } from '../tenant-key';
+import { readR2ObjectTextWithLimit } from '../../../utils/body-limits';
 import type {
   IAuditStorageAdapter,
   AuditStorageBackendType,
@@ -21,6 +24,8 @@ import type {
   AuditStorageHealth,
   AuditLogType,
 } from './adapter';
+
+const AUDIT_R2_QUERY_OBJECT_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * R2 adapter configuration.
@@ -38,6 +43,12 @@ export interface R2AuditAdapterConfig {
   /** File format */
   format: 'json' | 'jsonl';
 
+  /** Optional salt used while tenant_key is derived before registry-backed tenant keys exist */
+  tenantKeySalt?: string;
+
+  /** Optional tenant registry backed tenant_key resolver */
+  tenantKeyResolver?: TenantKeyResolver;
+
   /** Optional serializer for archive event records */
   eventSerializer?: (entry: EventLogEntry) => unknown;
 
@@ -49,15 +60,17 @@ export interface R2AuditAdapterConfig {
  * R2 audit storage adapter implementation.
  *
  * Path format:
- * - Event logs: {pathPrefix}/event/{tenantId}/{YYYY-MM-DD}/{hour}.jsonl
- * - PII logs: {pathPrefix}/pii/{tenantId}/{YYYY-MM-DD}/{hour}.jsonl
- * - Single entries: {pathPrefix}/event/{tenantId}/{YYYY-MM-DD}/{entryId}.json
+ * - Event logs: {pathPrefix}/event/{tenantKey}/{YYYY-MM-DD}/{hour}/{batchId}.jsonl
+ * - PII logs: {pathPrefix}/pii/{tenantKey}/{YYYY-MM-DD}/{hour}/{batchId}.jsonl
+ * - Single entries: {pathPrefix}/event/{tenantKey}/{YYYY-MM-DD}/{entryId}.json
  */
 export class R2AuditAdapter implements IAuditStorageAdapter {
   private readonly id: string;
   private readonly bucket: R2Bucket;
   private readonly pathPrefix: string;
   private readonly format: 'json' | 'jsonl';
+  private readonly tenantKeySalt?: string;
+  private readonly tenantKeyResolver?: TenantKeyResolver;
   private readonly eventSerializer?: (entry: EventLogEntry) => unknown;
   private readonly piiSerializer?: (entry: PIILogEntry) => unknown;
 
@@ -66,6 +79,8 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
     this.bucket = config.bucket;
     this.pathPrefix = config.pathPrefix.replace(/\/$/, ''); // Remove trailing slash
     this.format = config.format;
+    this.tenantKeySalt = config.tenantKeySalt;
+    this.tenantKeyResolver = config.tenantKeyResolver;
     this.eventSerializer = config.eventSerializer;
     this.piiSerializer = config.piiSerializer;
   }
@@ -86,13 +101,14 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
     const startTime = Date.now();
 
     try {
-      const key = this.buildEntryKey('event', entry.tenantId, entry.id, entry.createdAt);
+      const key = await this.buildEntryKey('event', entry.tenantId, entry.id, entry.createdAt);
       const body = JSON.stringify(this.eventSerializer ? this.eventSerializer(entry) : entry);
+      const tenantKey = await this.tenantKeyFor(entry.tenantId);
 
       await this.bucket.put(key, body, {
         httpMetadata: { contentType: 'application/json' },
         customMetadata: {
-          tenantId: entry.tenantId,
+          tenantKey,
           eventType: entry.eventType,
           createdAt: String(entry.createdAt),
         },
@@ -158,7 +174,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
     startTime: number
   ): Promise<AuditWriteResult> {
     // Group entries by tenant and hour
-    const grouped = this.groupEntriesByHour(entries, (e) => ({
+    const grouped = await this.groupEntriesByHour(entries, (e) => ({
       tenantId: e.tenantId,
       createdAt: e.createdAt,
     }));
@@ -168,23 +184,19 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
     for (const [key, groupEntries] of grouped) {
       try {
-        const [tenantId, dateHour] = key.split('|');
-        const r2Key = `${this.pathPrefix}/event/${tenantId}/${dateHour}.jsonl`;
-
-        // Append to existing file or create new
-        const existing = await this.bucket.get(r2Key);
-        const existingContent = existing ? await existing.text() : '';
+        const [tenantKey, dateHour] = key.split('|');
+        const batchId = createLoggingId('chk');
+        const r2Key = `${this.pathPrefix}/event/${tenantKey}/${dateHour}/${batchId}.jsonl`;
         const newLines = groupEntries
           .map((e) => JSON.stringify(this.eventSerializer ? this.eventSerializer(e) : e))
           .join('\n');
-        const content = existingContent ? `${existingContent}\n${newLines}` : newLines;
 
-        await this.bucket.put(r2Key, content, {
+        await this.bucket.put(r2Key, newLines, {
           httpMetadata: { contentType: 'application/x-ndjson' },
           customMetadata: {
-            tenantId,
-            entryCount: String(content.split('\n').length),
-            lastModified: new Date().toISOString(),
+            tenantKey,
+            entryCount: String(groupEntries.length),
+            createdAt: new Date().toISOString(),
           },
         });
 
@@ -207,14 +219,14 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
     const startTime = Date.now();
 
     try {
-      const key = this.buildEntryKey('pii', entry.tenantId, entry.id, entry.createdAt);
+      const key = await this.buildEntryKey('pii', entry.tenantId, entry.id, entry.createdAt);
       const body = JSON.stringify(this.piiSerializer ? this.piiSerializer(entry) : entry);
+      const tenantKey = await this.tenantKeyFor(entry.tenantId);
 
       await this.bucket.put(key, body, {
         httpMetadata: { contentType: 'application/json' },
         customMetadata: {
-          tenantId: entry.tenantId,
-          userId: entry.userId,
+          tenantKey,
           changeType: entry.changeType,
           createdAt: String(entry.createdAt),
         },
@@ -279,7 +291,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
     entries: PIILogEntry[],
     startTime: number
   ): Promise<AuditWriteResult> {
-    const grouped = this.groupEntriesByHour(entries, (e) => ({
+    const grouped = await this.groupEntriesByHour(entries, (e) => ({
       tenantId: e.tenantId,
       createdAt: e.createdAt,
     }));
@@ -289,22 +301,19 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
     for (const [key, groupEntries] of grouped) {
       try {
-        const [tenantId, dateHour] = key.split('|');
-        const r2Key = `${this.pathPrefix}/pii/${tenantId}/${dateHour}.jsonl`;
-
-        const existing = await this.bucket.get(r2Key);
-        const existingContent = existing ? await existing.text() : '';
+        const [tenantKey, dateHour] = key.split('|');
+        const batchId = createLoggingId('chk');
+        const r2Key = `${this.pathPrefix}/pii/${tenantKey}/${dateHour}/${batchId}.jsonl`;
         const newLines = groupEntries
           .map((e) => JSON.stringify(this.piiSerializer ? this.piiSerializer(e) : e))
           .join('\n');
-        const content = existingContent ? `${existingContent}\n${newLines}` : newLines;
 
-        await this.bucket.put(r2Key, content, {
+        await this.bucket.put(r2Key, newLines, {
           httpMetadata: { contentType: 'application/x-ndjson' },
           customMetadata: {
-            tenantId,
-            entryCount: String(content.split('\n').length),
-            lastModified: new Date().toISOString(),
+            tenantKey,
+            entryCount: String(groupEntries.length),
+            createdAt: new Date().toISOString(),
           },
         });
 
@@ -333,7 +342,8 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
     // R2 queries are limited - we need to list and filter
     // This is primarily for archive retrieval, not real-time queries
     const logType = options.logType;
-    const prefix = `${this.pathPrefix}/${logType}/${options.tenantId}/`;
+    const tenantKey = await this.tenantKeyFor(options.tenantId);
+    const prefix = `${this.pathPrefix}/${logType}/${tenantKey}/`;
 
     try {
       // List objects in the date range
@@ -360,7 +370,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
         const content = await this.bucket.get(obj.key);
         if (!content) continue;
 
-        const text = await content.text();
+        const text = await readR2ObjectTextWithLimit(content, AUDIT_R2_QUERY_OBJECT_MAX_BYTES);
 
         if (obj.key.endsWith('.jsonl')) {
           // Parse JSONL
@@ -532,7 +542,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
     batchSize: number = 100
   ): Promise<number> {
     const prefix = tenantId
-      ? `${this.pathPrefix}/${logType}/${tenantId}/`
+      ? `${this.pathPrefix}/${logType}/${await this.tenantKeyFor(tenantId)}/`
       : `${this.pathPrefix}/${logType}/`;
 
     try {
@@ -541,7 +551,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
       for (const obj of listed.objects) {
         // Check if object is older than retention
-        // We can use the date from the path: {prefix}/{tenantId}/{YYYY-MM-DD}/...
+        // We can use the date from the path: {prefix}/{tenantKey}/{YYYY-MM-DD}/...
         const dateMatch = obj.key.match(/\/(\d{4}-\d{2}-\d{2})\//);
         if (dateMatch) {
           const objDate = new Date(dateMatch[1]).getTime();
@@ -594,29 +604,38 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
   // Helper Methods
   // ---------------------------------------------------------------------------
 
-  private buildEntryKey(
+  private async tenantKeyFor(tenantId: string): Promise<string> {
+    return resolveAuditTenantKey(tenantId, {
+      tenantKeySalt: this.tenantKeySalt,
+      tenantKeyResolver: this.tenantKeyResolver,
+    });
+  }
+
+  private async buildEntryKey(
     logType: string,
     tenantId: string,
     entryId: string,
     createdAt: number
-  ): string {
+  ): Promise<string> {
+    const tenantKey = await this.tenantKeyFor(tenantId);
     const date = new Date(createdAt);
     const dateStr = date.toISOString().slice(0, 10); // YYYY-MM-DD
-    return `${this.pathPrefix}/${logType}/${tenantId}/${dateStr}/${entryId}.json`;
+    return `${this.pathPrefix}/${logType}/${tenantKey}/${dateStr}/${entryId}.json`;
   }
 
-  private groupEntriesByHour<T>(
+  private async groupEntriesByHour<T>(
     entries: T[],
     getInfo: (entry: T) => { tenantId: string; createdAt: number }
-  ): Map<string, T[]> {
+  ): Promise<Map<string, T[]>> {
     const grouped = new Map<string, T[]>();
 
     for (const entry of entries) {
       const { tenantId, createdAt } = getInfo(entry);
+      const tenantKey = await this.tenantKeyFor(tenantId);
       const date = new Date(createdAt);
       const dateStr = date.toISOString().slice(0, 10); // YYYY-MM-DD
       const hour = date.getUTCHours().toString().padStart(2, '0');
-      const key = `${tenantId}|${dateStr}/${hour}`;
+      const key = `${tenantKey}|${dateStr}/${hour}`;
 
       const existing = grouped.get(key) ?? [];
       existing.push(entry);
@@ -690,6 +709,8 @@ export function createR2AuditAdapter(
     id?: string;
     pathPrefix?: string;
     format?: 'json' | 'jsonl';
+    tenantKeySalt?: string;
+    tenantKeyResolver?: TenantKeyResolver;
     eventSerializer?: (entry: EventLogEntry) => unknown;
     piiSerializer?: (entry: PIILogEntry) => unknown;
   }
@@ -699,6 +720,8 @@ export function createR2AuditAdapter(
     bucket,
     pathPrefix: options?.pathPrefix ?? 'audit-logs',
     format: options?.format ?? 'jsonl',
+    tenantKeySalt: options?.tenantKeySalt,
+    tenantKeyResolver: options?.tenantKeyResolver,
     eventSerializer: options?.eventSerializer,
     piiSerializer: options?.piiSerializer,
   });

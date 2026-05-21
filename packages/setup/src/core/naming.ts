@@ -54,6 +54,7 @@ export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [
 
 export const DURABLE_OBJECTS = [
   { name: 'SESSION_STORE', className: 'SessionStore' },
+  { name: 'SESSION_CLIENT_STORE', className: 'SessionClientStore' },
   { name: 'KEY_MANAGER', className: 'KeyManager' },
   { name: 'AUTH_CODE_STORE', className: 'AuthorizationCodeStore' },
   { name: 'REFRESH_TOKEN_ROTATOR', className: 'RefreshTokenRotator' },
@@ -66,6 +67,7 @@ export const DURABLE_OBJECTS = [
   { name: 'TOKEN_REVOCATION_STORE', className: 'TokenRevocationStore' },
   { name: 'VERSION_MANAGER', className: 'VersionManager' },
   { name: 'SAML_REQUEST_STORE', className: 'SAMLRequestStore' },
+  { name: 'SAML_AGGREGATE_METADATA_STORE', className: 'SAMLAggregateMetadataStore' },
   { name: 'PERMISSION_CHANGE_HUB', className: 'PermissionChangeHub' },
   { name: 'FLOW_STATE_STORE', className: 'FlowStateStore' },
 ] as const;
@@ -83,6 +85,7 @@ export const KV_NAMESPACES = [
   'REBAC_CACHE',
   'USER_CACHE',
   'AUTHRIM_CONFIG',
+  'TENANT_RUNTIME_REGISTRY',
   'STATE_STORE',
   'CONSENT_CACHE',
 ] as const;

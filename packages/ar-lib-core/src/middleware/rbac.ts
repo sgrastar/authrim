@@ -58,6 +58,13 @@ function hasSuperAdminPrivileges(roles: string[]): boolean {
   );
 }
 
+function hasMachineAdminBypass(authContext: AdminAuthContext): boolean {
+  return (
+    authContext.authMethod === 'machine_access_token' &&
+    (authContext.permissions ?? []).some((permission) => permission === 'admin:*')
+  );
+}
+
 /**
  * Get admin auth context from request
  *
@@ -112,7 +119,7 @@ export function requireRole(roleName: string) {
     }
 
     // Super admins bypass all role checks
-    if (hasSuperAdminPrivileges(authContext.roles)) {
+    if (hasSuperAdminPrivileges(authContext.roles) || hasMachineAdminBypass(authContext)) {
       return next();
     }
 
@@ -153,7 +160,7 @@ export function requireAnyRole(roleNames: string[]) {
     }
 
     // Super admins bypass all role checks
-    if (hasSuperAdminPrivileges(authContext.roles)) {
+    if (hasSuperAdminPrivileges(authContext.roles) || hasMachineAdminBypass(authContext)) {
       return next();
     }
 
@@ -196,7 +203,7 @@ export function requireAllRoles(roleNames: string[]) {
     }
 
     // Super admins bypass all role checks
-    if (hasSuperAdminPrivileges(authContext.roles)) {
+    if (hasSuperAdminPrivileges(authContext.roles) || hasMachineAdminBypass(authContext)) {
       return next();
     }
 

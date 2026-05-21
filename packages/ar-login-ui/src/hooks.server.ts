@@ -35,7 +35,7 @@ function getValidProxyUrl(candidate: unknown): string | undefined {
 	return value;
 }
 
-function getConfiguredApiBackendUrl(platformEnv?: Record<string, unknown>): string | undefined {
+function getExplicitProxyBackendUrl(platformEnv?: Record<string, unknown>): string | undefined {
 	const candidates = [
 		platformEnv?.API_BACKEND_URL,
 		platformEnv?.PUBLIC_API_PROXY_BACKEND_URL,
@@ -43,6 +43,35 @@ function getConfiguredApiBackendUrl(platformEnv?: Record<string, unknown>): stri
 		import.meta.env.PUBLIC_API_PROXY_BACKEND_URL,
 		typeof process !== 'undefined' ? process.env?.API_BACKEND_URL : undefined,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_API_PROXY_BACKEND_URL : undefined
+	];
+
+	for (const candidate of candidates) {
+		const url = getValidProxyUrl(candidate);
+		if (url) {
+			return url;
+		}
+	}
+
+	return undefined;
+}
+
+export function getConfiguredApiBackendUrl(
+	platformEnv?: Record<string, unknown>
+): string | undefined {
+	const explicitProxyBackendUrl = getExplicitProxyBackendUrl(platformEnv);
+	if (explicitProxyBackendUrl) {
+		return explicitProxyBackendUrl;
+	}
+
+	const candidates = [
+		platformEnv?.PUBLIC_API_BASE_URL,
+		dynamicEnv.PUBLIC_API_BASE_URL,
+		import.meta.env.PUBLIC_API_BASE_URL,
+		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
+		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		import.meta.env.PUBLIC_AUTHRIM_ISSUER,
+		typeof process !== 'undefined' ? process.env?.PUBLIC_API_BASE_URL : undefined,
+		typeof process !== 'undefined' ? process.env?.PUBLIC_AUTHRIM_ISSUER : undefined
 	];
 
 	for (const candidate of candidates) {
@@ -144,7 +173,7 @@ function isDevelopmentRuntime(): boolean {
 }
 
 function isProxyEnabled(platformEnv?: Record<string, unknown>): boolean {
-	return getConfiguredApiBackendUrl(platformEnv) !== undefined || isDevelopmentRuntime();
+	return getExplicitProxyBackendUrl(platformEnv) !== undefined || isDevelopmentRuntime();
 }
 
 function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
@@ -182,7 +211,7 @@ function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefine
 	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
 }
 
-function buildProxyHeaders(
+export function buildProxyHeaders(
 	event: RequestEvent,
 	platformEnv: Record<string, unknown> | undefined,
 	forwardedHost: string
@@ -215,6 +244,7 @@ function buildProxyHeaders(
 	if (clientIP) {
 		headers.set('X-Forwarded-For', clientIP);
 	}
+	headers.set('X-Authrim-Original-Host', forwardedHost);
 	headers.set('X-Authrim-Forwarded-Host', forwardedHost);
 	headers.set('X-Forwarded-Host', forwardedHost);
 	headers.set('X-Forwarded-Proto', 'https');

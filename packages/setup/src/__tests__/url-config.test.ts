@@ -6,8 +6,10 @@ import {
   getUiWorkersDevUrl,
   getWorkersDevUrl,
   resolveAdminUiEntryUrl,
+  resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
   resolveLoginUiEntryUrl,
+  resolveOperationalApiBaseUrl,
   resolveTenantDiscoverUrl,
   validateDomainRoutingConfig,
 } from '../core/url-config.js';
@@ -142,10 +144,102 @@ describe('url-config helpers', () => {
       'https://first.multi-tenant.authrim.com/login'
     );
     expect(resolveTenantDiscoverUrl(config, { env: 'mt' })).toBe(
-      'https://mt-ar-login-ui.workers.dev/discover'
+      'https://multi-tenant.authrim.com/discover'
     );
     expect(resolveAdminUiEntryUrl(config, { env: 'mt' })).toBe(
       'https://mt-ar-admin-ui.workers.dev/admin/info'
+    );
+    expect(resolveOperationalApiBaseUrl(config, { env: 'mt' })).toBe(
+      'https://multi-tenant.authrim.com'
+    );
+    expect(resolveApiBaseUrlCandidates(config, { env: 'mt', purpose: 'operational' })).toEqual([
+      'https://multi-tenant.authrim.com',
+      'https://first.multi-tenant.authrim.com',
+    ]);
+    // Token and admin setup endpoints resolve the tenant from the host before
+    // X-Tenant-Id can help, so tenant-aware issuer URL must be tried first.
+    expect(
+      resolveApiBaseUrlCandidates(config, { env: 'mt', purpose: 'tenant-scoped-admin' })
+    ).toEqual(['https://first.multi-tenant.authrim.com', 'https://multi-tenant.authrim.com']);
+  });
+
+  it('keeps workers.dev candidates only when workers.dev is expected to be enabled', () => {
+    const workersDevOnlyConfig = {
+      urls: {
+        api: {
+          auto: 'https://dev-ar-router.workers.dev',
+        },
+      },
+    } as Partial<AuthrimConfig>;
+    const customDomainConfig = {
+      urls: {
+        api: {
+          custom: 'https://api.example.com',
+          auto: 'https://prod-ar-router.example.workers.dev',
+        },
+      },
+    } as Partial<AuthrimConfig>;
+
+    expect(
+      resolveApiBaseUrlCandidates(workersDevOnlyConfig, {
+        env: 'dev',
+        workersSubdomain: 'acct',
+      })
+    ).toEqual(['https://dev-ar-router.acct.workers.dev']);
+    expect(resolveApiBaseUrlCandidates(customDomainConfig, { env: 'prod' })).toEqual([
+      'https://api.example.com',
+    ]);
+  });
+
+  it('keeps tenant discovery on the multi-tenant base domain when Login UI has no custom domain', () => {
+    const config = {
+      tenant: {
+        name: 'first',
+        multiTenant: true,
+        baseDomain: 'multi-tenant.authrim.com',
+        nakedDomain: false,
+      },
+      urls: {
+        api: {
+          custom: 'https://multi-tenant.authrim.com',
+          auto: 'https://mt-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://mt-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+    } as Partial<AuthrimConfig>;
+
+    expect(resolveTenantDiscoverUrl(config, { env: 'mt' })).toBe(
+      'https://multi-tenant.authrim.com/discover'
+    );
+  });
+
+  it('uses the shared Login UI custom domain for tenant discovery when configured', () => {
+    const config = {
+      tenant: {
+        name: 'first',
+        multiTenant: true,
+        baseDomain: 'multi-tenant.authrim.com',
+        nakedDomain: false,
+      },
+      urls: {
+        api: {
+          custom: 'https://multi-tenant.authrim.com',
+          auto: 'https://mt-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.multi-tenant.authrim.com',
+          auto: 'https://mt-ar-login-ui.example.workers.dev',
+          sameAsApi: false,
+        },
+      },
+    } as Partial<AuthrimConfig>;
+
+    expect(resolveTenantDiscoverUrl(config, { env: 'mt' })).toBe(
+      'https://login.multi-tenant.authrim.com/discover'
     );
   });
 

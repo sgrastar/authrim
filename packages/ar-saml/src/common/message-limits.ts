@@ -1,5 +1,5 @@
 import * as pako from 'pako';
-import { base64Decode } from './xml-utils';
+import { base64Decode, base64DecodeToBytes } from './xml-utils';
 
 export const SAML_MESSAGE_LIMITS = {
   postBodyBytes: 3 * 1024 * 1024,
@@ -44,7 +44,9 @@ export async function parsePostBindingFormDataWithLimit(
 
   const contentType = rawRequest.headers.get('content-type')?.toLowerCase() ?? '';
   if (contentType.includes('application/x-www-form-urlencoded')) {
-    const body = await readRequestTextWithLimit(rawRequest, SAML_MESSAGE_LIMITS.postBodyBytes);
+    const body = new TextDecoder().decode(
+      await readRequestBytesWithLimit(rawRequest, SAML_MESSAGE_LIMITS.postBodyBytes)
+    );
     const params = new URLSearchParams(body);
     const formData = new FormData();
     for (const [key, value] of params.entries()) {
@@ -53,13 +55,26 @@ export async function parsePostBindingFormDataWithLimit(
     return formData;
   }
 
-  return rawRequest.formData();
+  if (contentType.includes('multipart/form-data')) {
+    const body = await readRequestBytesWithLimit(rawRequest, SAML_MESSAGE_LIMITS.postBodyBytes);
+    const bodyBuffer = body.buffer.slice(
+      body.byteOffset,
+      body.byteOffset + body.byteLength
+    ) as ArrayBuffer;
+    return new Request(rawRequest.url, {
+      method: rawRequest.method,
+      headers: rawRequest.headers,
+      body: bodyBuffer,
+    }).formData();
+  }
+
+  throw new Error('SAML POST binding requires application/x-www-form-urlencoded');
 }
 
-async function readRequestTextWithLimit(request: Request, maxBytes: number): Promise<string> {
+async function readRequestBytesWithLimit(request: Request, maxBytes: number): Promise<Uint8Array> {
   const reader = request.body?.getReader();
   if (!reader) {
-    return '';
+    return new Uint8Array();
   }
 
   const chunks: Uint8Array[] = [];
@@ -89,7 +104,7 @@ async function readRequestTextWithLimit(request: Request, maxBytes: number): Pro
     offset += chunk.byteLength;
   }
 
-  return new TextDecoder().decode(body);
+  return body;
 }
 
 export function decodePostBindingMessage(encoded: string, label: string): string {
@@ -110,8 +125,7 @@ export function inflateRedirectBindingMessage(encoded: string, label: string): s
     throw new Error(`${label} exceeds maximum encoded size`);
   }
 
-  const decoded = base64Decode(encoded);
-  const compressed = Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+  const compressed = base64DecodeToBytes(encoded);
   if (compressed.byteLength > SAML_MESSAGE_LIMITS.redirectCompressedBytes) {
     throw new Error(`${label} exceeds maximum compressed size`);
   }

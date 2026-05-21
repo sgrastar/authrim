@@ -476,6 +476,159 @@ describe('Client Authentication Tests', () => {
   });
 
   // ==========================================================================
+  // Token endpoint request validation
+  // ==========================================================================
+
+  describe('Token endpoint request validation', () => {
+    it('rejects non-form requests before parsing or authenticating clients', async () => {
+      const ctx = createMockContext({
+        headers: { 'Content-Type': 'application/json' },
+        body: { grant_type: 'authorization_code', client_id: 'confidential-client' },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_request',
+        error_description: 'Content-Type must be application/x-www-form-urlencoded',
+      });
+      expect(ctx.req.parseBody).not.toHaveBeenCalled();
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('returns invalid_request when form parsing fails and avoids token issuance', async () => {
+      const ctx = createMockContext({
+        body: { grant_type: 'authorization_code', client_id: 'confidential-client' },
+        env: mockEnv,
+      });
+      vi.mocked(ctx.req.parseBody).mockRejectedValueOnce(new Error('malformed form body'));
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_request',
+        error_description: 'Failed to parse request body',
+      });
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects unsupported grant types without client lookup or token issuance', async () => {
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:example:params:oauth:grant-type:unknown',
+          client_id: 'confidential-client',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'unsupported_grant_type',
+        error_description:
+          "Grant type 'urn:example:params:oauth:grant-type:unknown' is not supported",
+      });
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Grant-specific required parameter validation', () => {
+    it('rejects device_code grant requests without a device_code before polling storage', async () => {
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          client_id: 'device-client',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_request',
+        error_description: 'device_code is required',
+      });
+      expect(mockEnv.DEVICE_CODE_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects device_code grant requests without client_id before polling storage', async () => {
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          device_code: 'device-code-123',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_request',
+        error_description: 'client_id is required',
+      });
+      expect(mockEnv.DEVICE_CODE_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects CIBA grant requests without auth_req_id before polling storage', async () => {
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:openid:params:grant-type:ciba',
+          client_id: 'ciba-client',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_request',
+        error_description: 'auth_req_id is required',
+      });
+      expect(mockEnv.CIBA_REQUEST_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects CIBA grant requests without client_id before polling storage', async () => {
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:openid:params:grant-type:ciba',
+          auth_req_id: 'auth-req-123',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_request',
+        error_description: 'client_id is required',
+      });
+      expect(mockEnv.CIBA_REQUEST_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
   // Direct Auth custom grant
   // ==========================================================================
 

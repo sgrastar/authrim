@@ -14,6 +14,7 @@
  */
 
 export { SessionStore } from './SessionStore';
+export { SessionClientStore } from './SessionClientStore';
 export { AuthorizationCodeStore } from './AuthorizationCodeStore';
 export { RefreshTokenRotator } from './RefreshTokenRotator';
 export { KeyManager } from './KeyManager';
@@ -26,12 +27,18 @@ export { DeviceCodeStore } from './DeviceCodeStore';
 export { CIBARequestStore } from './CIBARequestStore';
 export { VersionManager } from './VersionManager';
 export { SAMLRequestStore } from './SAMLRequestStore';
+export { SAMLAggregateMetadataStore } from './SAMLAggregateMetadataStore';
 export { PermissionChangeHub } from './PermissionChangeHub';
 export { UserCodeRateLimiter } from './UserCodeRateLimiter';
 export { FlowStateStore } from './FlowStateStore';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
+export type {
+  RegisterSessionClientRequest,
+  SessionClientRecord,
+  UpdateSessionClientActivityRequest,
+} from './SessionClientStore';
 
 export type {
   AuthorizationCode,

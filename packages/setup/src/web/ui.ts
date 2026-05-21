@@ -15,11 +15,233 @@ import {
   WILDCARD_DNS_MANUAL_COPY,
   getCloudflareDnsRecordsDashboardUrl,
 } from '../core/wildcard-dns-manual-action.js';
-import { computeApiDomainUiState, isValidCustomDomain } from './domain-form-state.js';
 
 const CLOUDFLARE_DNS_ADD_RECORD_IMAGE_DATA_URI = `data:image/png;base64,${readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'cloudflare-dns-add-record-example.png')
 ).toString('base64')}`;
+
+const DOMAIN_FORM_BROWSER_SCRIPT = String.raw`
+    function isValidCustomDomain(domain) {
+      const normalized = String(domain || '').trim();
+      if (normalized.length === 0 || normalized.length > 253) {
+        return false;
+      }
+
+      const labels = normalized.split('.');
+      if (labels.length < 2 || labels.some(function(label) {
+        return label.length === 0 || label.length > 63;
+      })) {
+        return false;
+      }
+
+      if (labels.some(function(label) {
+        return label.toLowerCase().startsWith('xn--');
+      })) {
+        return false;
+      }
+
+      const tld = labels[labels.length - 1];
+      if (!/^[a-z]{2,63}$/i.test(tld)) {
+        return false;
+      }
+
+      return labels.every(function(label) {
+        return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label);
+      });
+    }
+
+    function validateSetupDomainInputs(input) {
+      function normalizeDomain(value) {
+        return String(value || '')
+          .trim()
+          .replace(/^https?:\/\//i, '')
+          .replace(/\/.*$/, '')
+          .replace(/\\.+$/, '')
+          .toLowerCase();
+      }
+
+      function getZoneName(hostname) {
+        const parts = hostname.split('.').filter(Boolean);
+        const twoPartTlds = new Set([
+          'co.uk',
+          'org.uk',
+          'gov.uk',
+          'ac.uk',
+          'co.jp',
+          'or.jp',
+          'ne.jp',
+          'co.nz',
+          'org.nz',
+          'net.nz',
+          'co.kr',
+          'or.kr',
+          'ne.kr',
+          'co.in',
+          'firm.in',
+          'net.in',
+          'org.in',
+          'gen.in',
+          'co.id',
+          'web.id',
+          'ac.id',
+          'or.id',
+          'co.za',
+          'org.za',
+          'net.za',
+          'com.au',
+          'net.au',
+          'org.au',
+          'com.br',
+          'net.br',
+          'org.br',
+        ]);
+        const lastTwo = parts.slice(-2).join('.');
+        if (twoPartTlds.has(lastTwo) && parts.length >= 3) {
+          return parts.slice(-3).join('.');
+        }
+        return parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+      }
+
+      function prefixLabelsFor(hostname, parentDomain) {
+        if (!hostname || !parentDomain || hostname === parentDomain) {
+          return [];
+        }
+        const suffix = '.' + parentDomain;
+        if (!hostname.endsWith(suffix)) {
+          return [];
+        }
+        return hostname.slice(0, -suffix.length).split('.').filter(Boolean);
+      }
+
+      function buildBaseMessage(hostname) {
+        return (
+          'Base Domain must be the parent domain used by tenant URLs. "' + hostname + '" has ' +
+          'two or more labels before the registered domain, which would create unsupported ' +
+          'two-label tenant hosts.'
+        );
+      }
+
+      function buildUiMessage(label, hostname, suggestion) {
+        return (
+          label + ' domain "' + hostname + '" is too deep for the standard tenant domain model. ' +
+          'Use a one-label host such as "' + suggestion + '" instead.'
+        );
+      }
+
+      const issues = [];
+      const apiDomain = normalizeDomain(input.apiDomain);
+      const loginUiDomain = normalizeDomain(input.loginUiDomain);
+      const adminUiDomain = normalizeDomain(input.adminUiDomain);
+
+      if (apiDomain && isValidCustomDomain(apiDomain)) {
+        const zoneName = getZoneName(apiDomain);
+        const apiPrefixLabels = prefixLabelsFor(apiDomain, zoneName);
+        if (apiPrefixLabels.length >= 2) {
+          const suggested = apiPrefixLabels[apiPrefixLabels.length - 1] + '.' + zoneName;
+          issues.push({
+            field: 'apiDomain',
+            message: buildBaseMessage(apiDomain),
+            suggestion: suggested,
+          });
+        }
+      }
+
+      [
+        ['loginUiDomain', 'Login UI', loginUiDomain],
+        ['adminUiDomain', 'Admin UI', adminUiDomain],
+      ].forEach(function(entry) {
+        const field = entry[0];
+        const label = entry[1];
+        const hostname = entry[2];
+        if (!hostname || !isValidCustomDomain(hostname)) {
+          return;
+        }
+
+        const parentDomain =
+          apiDomain && hostname.endsWith('.' + apiDomain) ? apiDomain : getZoneName(hostname);
+        const uiPrefixLabels = prefixLabelsFor(hostname, parentDomain);
+        if (uiPrefixLabels.length >= 2) {
+          const suggestion = uiPrefixLabels.join('-') + '.' + parentDomain;
+          issues.push({
+            field: field,
+            message: buildUiMessage(label, hostname, suggestion),
+            suggestion: suggestion,
+          });
+        }
+      });
+
+      return issues;
+    }
+
+    function computeApiDomainUiState(input) {
+      const baseDomain = input.baseDomain.trim();
+      const tenantName = input.tenantName.trim() || 'default';
+      const primaryTenant = (input.primaryTenant || '').trim();
+      const hasBaseDomain = baseDomain.length > 0;
+      const multiTenantEnabled = hasBaseDomain && input.multiTenantChecked;
+      const nakedDomainEnabled = multiTenantEnabled && input.nakedDomainChecked;
+      const nakedTenantName = primaryTenant || tenantName;
+      const exampleRows = [];
+
+      if (multiTenantEnabled) {
+        if (nakedDomainEnabled) {
+          exampleRows.push({
+            kind: 'initial-tenant',
+            tenantName: nakedTenantName,
+            url: 'https://' + baseDomain,
+          });
+          if (nakedTenantName !== tenantName) {
+            exampleRows.push({
+              kind: 'initial-tenant-explicit',
+              tenantName: tenantName,
+              url: 'https://' + tenantName + '.' + baseDomain,
+            });
+          }
+          exampleRows.push({
+            kind: 'other-tenant',
+            url: 'https://{tenantName}.' + baseDomain,
+          });
+        } else {
+          exampleRows.push({
+            kind: 'initial-tenant',
+            tenantName: tenantName,
+            url: 'https://' + tenantName + '.' + baseDomain,
+          });
+          exampleRows.push({
+            kind: 'other-tenant',
+            url: 'https://{tenantName}.' + baseDomain,
+          });
+        }
+      }
+
+      return {
+        hasBaseDomain: hasBaseDomain,
+        hasValidBaseDomain: isValidCustomDomain(baseDomain),
+        multiTenantEnabled: multiTenantEnabled,
+        showWorkersDevNote: !hasBaseDomain,
+        showNakedDomainControls: multiTenantEnabled,
+        showTenantFields: !hasBaseDomain || (multiTenantEnabled && !nakedDomainEnabled),
+        showPrimaryTenantRow: nakedDomainEnabled,
+        showExamples: multiTenantEnabled,
+        baseDomainPlaceholder: nakedDomainEnabled
+          ? 'example.com'
+          : multiTenantEnabled
+            ? 'tenant.example.com'
+            : 'oidc.example.com',
+        multiTenantHintMode: !hasBaseDomain
+          ? 'needs-custom-domain'
+          : multiTenantEnabled
+            ? 'multi-tenant'
+            : 'single-tenant',
+        nakedDomainHintMode: !multiTenantEnabled
+          ? 'hidden'
+          : nakedDomainEnabled
+            ? 'omit-tenant'
+            : 'include-tenant',
+        exampleRows: exampleRows,
+      };
+    }
+`;
 
 export function getHtmlTemplate(
   sessionToken?: string,
@@ -755,7 +977,7 @@ export function getHtmlTemplate(
     .preview-tenant-block {
       margin-top: 0.5rem;
       margin-bottom: 0.5rem;
-      padding: 0.4rem 0.75rem;
+      padding: 0.6rem 0.75rem;
       border-left: 2px solid var(--primary);
       border-radius: 0 4px 4px 0;
       background: rgba(0, 0, 0, 0.03);
@@ -773,8 +995,9 @@ export function getHtmlTemplate(
     }
 
     .preview-tenant-row {
-      display: flex;
-      gap: 0.5rem;
+      display: grid;
+      grid-template-columns: 6.25rem minmax(0, 1fr);
+      column-gap: 0.75rem;
       font-size: 0.79rem;
       margin-top: 0.15rem;
       align-items: baseline;
@@ -782,13 +1005,13 @@ export function getHtmlTemplate(
 
     .preview-tenant-label {
       color: var(--text-muted);
-      flex-shrink: 0;
-      min-width: 5.5rem;
+      white-space: nowrap;
     }
 
     .preview-tenant-url {
       color: var(--primary);
-      word-break: break-all;
+      overflow-wrap: break-word;
+      word-break: normal;
     }
 
     /* ========================================
@@ -800,6 +1023,7 @@ export function getHtmlTemplate(
       border-radius: 12px;
       padding: 1.25rem;
       margin-bottom: 1.25rem;
+      --preview-label-width: 13.75rem;
     }
 
     .infra-section h4 {
@@ -813,20 +1037,63 @@ export function getHtmlTemplate(
     }
 
     .infra-item {
-      display: flex;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: var(--preview-label-width) minmax(0, 1fr);
+      column-gap: 1rem;
+      align-items: start;
       padding: 0.375rem 0;
       font-size: 0.875rem;
     }
 
     .infra-label {
       color: var(--text-muted);
+      white-space: nowrap;
     }
 
     .infra-value {
       font-family: var(--font-mono);
       font-size: 0.8rem;
       color: var(--primary);
+      min-width: 0;
+      overflow-wrap: break-word;
+      word-break: normal;
+    }
+
+    .infra-value-note {
+      display: block;
+      margin-top: 0.2rem;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+
+    .preview-component-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+      font-family: var(--font-sans);
+    }
+
+    .preview-component-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 1.5rem;
+      padding: 0.2rem 0.55rem;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.09);
+      color: var(--primary);
+      font-size: 0.78rem;
+      font-weight: 600;
+      line-height: 1.15;
+      white-space: nowrap;
+    }
+
+    [data-theme="dark"] .preview-component-badge {
+      background: rgba(96, 165, 250, 0.12);
+      border-color: rgba(96, 165, 250, 0.35);
     }
 
     /* ========================================
@@ -1280,7 +1547,7 @@ export function getHtmlTemplate(
     }
 
     .manual-guide-visual {
-      margin-top: 1rem;
+      margin-top: 0.875rem;
       border-radius: 18px;
       overflow: hidden;
       border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1314,6 +1581,126 @@ export function getHtmlTemplate(
     [data-theme="dark"] .manual-guide-visual {
       background: rgba(2, 6, 23, 0.88);
       border-color: rgba(148, 163, 184, 0.22);
+    }
+
+    .manual-wildcard-warning {
+      line-height: 1.55;
+    }
+
+    .manual-wildcard-warning strong {
+      display: block;
+      margin-bottom: 0.4rem;
+    }
+
+    .manual-guide-timing {
+      margin: 0.35rem 0 0;
+      font-weight: 600;
+    }
+
+    .manual-guide-steps {
+      margin-top: 0.7rem;
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .manual-guide-step-text,
+    .manual-guide-retry {
+      margin: 0;
+    }
+
+    .manual-guide-values {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0.45rem;
+      margin: 0;
+    }
+
+    .manual-guide-value {
+      min-width: 0;
+      min-height: 4.7rem;
+      padding: 0.5rem 0.6rem;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.5);
+      border: 1px solid rgba(217, 119, 6, 0.18);
+      display: grid;
+      grid-template-rows: 1rem minmax(1.7rem, 1fr);
+      gap: 0.25rem;
+      position: relative;
+    }
+
+    .manual-guide-value-main {
+      grid-column: span 2;
+    }
+
+    .manual-guide-value-secondary {
+      grid-column: span 3;
+    }
+
+    [data-theme="dark"] .manual-guide-value {
+      background: rgba(2, 6, 23, 0.24);
+      border-color: rgba(251, 191, 36, 0.2);
+    }
+
+    .manual-guide-value dt {
+      margin: 0 0 0.18rem;
+      font-family: var(--font-sans);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      opacity: 0.78;
+      padding-right: 3.25rem;
+    }
+
+    .manual-guide-value dd {
+      margin: 0;
+      min-width: 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 700;
+      overflow-wrap: break-word;
+      color: inherit;
+    }
+
+    .manual-guide-value-body {
+      min-width: 0;
+    }
+
+    .manual-guide-copy-btn {
+      position: absolute;
+      top: 0.45rem;
+      right: 0.5rem;
+      padding: 0.22rem 0.45rem;
+      border-radius: 6px;
+      border: 1px solid rgba(217, 119, 6, 0.25);
+      background: rgba(255, 255, 255, 0.42);
+      color: inherit;
+      font-family: var(--font-sans);
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .manual-guide-copy-btn:disabled {
+      cursor: default;
+      opacity: 0.85;
+    }
+
+    [data-theme="dark"] .manual-guide-copy-btn {
+      background: rgba(15, 23, 42, 0.5);
+      border-color: rgba(251, 191, 36, 0.24);
+    }
+
+    @media (max-width: 720px) {
+      .manual-guide-values {
+        grid-template-columns: 1fr;
+      }
+
+      .manual-guide-value-main,
+      .manual-guide-value-secondary {
+        grid-column: auto;
+      }
     }
 
     .prereq-capabilities {
@@ -2185,8 +2572,33 @@ export function getHtmlTemplate(
       return text;
     }
 
-    const isValidCustomDomain = ${isValidCustomDomain.toString()};
-    const computeApiDomainUiState = ${computeApiDomainUiState.toString()};
+    function appendTranslatedRichText(parent, key, params = {}) {
+      const template = _translations[key] || key;
+      const parts = template.split(/(<strong>|<\\/strong>|\\{\\{[a-zA-Z0-9_]+\\}\\})/g);
+      const stack = [parent];
+
+      for (const part of parts) {
+        if (!part) continue;
+        if (part === '<strong>') {
+          const strong = document.createElement('strong');
+          stack[stack.length - 1].appendChild(strong);
+          stack.push(strong);
+          continue;
+        }
+        if (part === '</strong>') {
+          if (stack.length > 1) stack.pop();
+          continue;
+        }
+
+        const placeholderMatch = part.match(/^\\{\\{([a-zA-Z0-9_]+)\\}\\}$/);
+        const text = placeholderMatch
+          ? String(params[placeholderMatch[1]] ?? '')
+          : part;
+        stack[stack.length - 1].appendChild(document.createTextNode(text));
+      }
+    }
+
+${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function getApiDomainUiCopy() {
       const locale = String(_currentLocale || 'en').toLowerCase();
@@ -2926,42 +3338,7 @@ export function getHtmlTemplate(
       </div>
     </div>
 
-    <!-- Step 1.6: Setup Mode Selection (Quick / Custom) -->
-    <div id="section-mode" class="card hidden">
-      <h2 class="card-title" data-i18n="web.mode.title">Setup Mode</h2>
-      <p style="margin-bottom: 1.5rem; color: var(--text-muted);" data-i18n="web.mode.subtitle">Choose how you want to set up Authrim:</p>
-
-      <div class="mode-cards">
-        <div class="mode-card" id="mode-quick">
-          <div class="mode-icon">⚡</div>
-          <h3 data-i18n="web.mode.quick">Quick Setup</h3>
-          <p data-i18n="web.mode.quickDesc">Get started in ~5 minutes</p>
-          <ul>
-            <li data-i18n="web.mode.quickEnv">Environment selection</li>
-            <li data-i18n="web.mode.quickDomain">Optional custom domain</li>
-            <li data-i18n="web.mode.quickDefault">Default components</li>
-          </ul>
-          <!--<span class="mode-badge" data-i18n="web.mode.recommended">Recommended</span>-->
-        </div>
-
-        <div class="mode-card" id="mode-custom">
-          <div class="mode-icon">🔧</div>
-          <h3 data-i18n="web.mode.custom">Custom Setup</h3>
-          <p data-i18n="web.mode.customDesc">Full control over configuration</p>
-          <ul>
-            <li data-i18n="web.mode.customComp">Component selection</li>
-            <li data-i18n="web.mode.customUrl">URL configuration</li>
-            <li data-i18n="web.mode.customAdvanced">Advanced settings</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="button-group">
-        <button class="btn-secondary" id="btn-back-top" data-i18n="web.btn.back">Back</button>
-      </div>
-    </div>
-
-    <!-- Step 1.7: Load Config -->
+    <!-- Step 1.6: Load Config -->
     <div id="section-load-config" class="card hidden">
       <h2 class="card-title" data-i18n="web.loadConfig.title">Load Configuration</h2>
       <p style="margin-bottom: 1rem; color: var(--text-muted);" data-i18n="web.loadConfig.subtitle">Select your authrim-config.json file:</p>
@@ -3072,6 +3449,7 @@ export function getHtmlTemplate(
           <label for="base-domain" data-i18n="web.form.baseDomain">Base Domain (API Domain)</label>
           <input type="text" id="base-domain" placeholder="oidc.example.com" data-i18n-placeholder="web.form.baseDomainPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.baseDomainHint">Custom domain for Authrim. Leave empty to use workers.dev</small>
+          <div id="base-domain-depth-error" class="alert alert-warning" style="display: none; margin-top: 0.5rem;" role="alert"></div>
           <div id="domain-check-row" style="display: none; margin-top: 0.5rem;">
             <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkZoneButton">
               Check Zone
@@ -3165,6 +3543,8 @@ export function getHtmlTemplate(
             <input type="text" id="login-domain" placeholder="login.example.com" data-i18n-placeholder="web.form.loginDomainPlaceholder">
             <span class="domain-default" id="login-default">{env}-ar-login-ui.workers.dev</span>
           </div>
+          <div id="login-domain-depth-error" class="alert alert-warning" style="display: none; margin-top: 0.5rem;" role="alert"></div>
+          <div id="login-domain-zone-status" class="domain-check-status" style="margin-top: 0.5rem;" aria-live="polite"></div>
         </div>
 
         <div class="domain-row" id="admin-domain-row">
@@ -3173,6 +3553,8 @@ export function getHtmlTemplate(
             <input type="text" id="admin-domain" placeholder="admin.example.com" data-i18n-placeholder="web.form.adminDomainPlaceholder">
             <span class="domain-default" id="admin-default">{env}-ar-admin-ui.workers.dev</span>
           </div>
+          <div id="admin-domain-depth-error" class="alert alert-warning" style="display: none; margin-top: 0.5rem;" role="alert"></div>
+          <div id="admin-domain-zone-status" class="domain-check-status" style="margin-top: 0.5rem;" aria-live="polite"></div>
         </div>
 
         <div class="section-hint hint-box" style="margin-top: 0.75rem;" data-i18n="web.section.corsHint">
@@ -3184,54 +3566,54 @@ export function getHtmlTemplate(
       <div class="infra-section" id="config-preview">
         <h4>📋 <span data-i18n="web.section.configPreview">Configuration Preview</span></h4>
 
-        <!-- 共通行 (常時表示) -->
+        <!-- Common row (always visible) -->
         <div class="infra-item">
           <span class="infra-label" data-i18n="web.preview.components">Components:</span>
-          <span class="infra-value" id="preview-components">API, Login UI, Admin UI</span>
-        </div>
-        <div class="infra-item">
-          <span class="infra-label" data-i18n="web.preview.workers">Workers:</span>
-          <span class="infra-value" id="preview-workers">{env}-ar-router, {env}-ar-auth, ...</span>
+          <span class="infra-value preview-component-list" id="preview-components">
+            <span class="preview-component-badge">API</span>
+            <span class="preview-component-badge">Login UI</span>
+            <span class="preview-component-badge">Admin UI</span>
+          </span>
         </div>
 
-        <!-- シングルテナント用 Issuer 行 (multi-tenant=off 時のみ表示) -->
+        <!-- Single-tenant Issuer row (shown only when multi-tenant=off) -->
         <div class="infra-item" id="preview-issuer-row">
           <span class="infra-label" data-i18n="web.preview.issuerUrl">Issuer URL:</span>
           <span class="infra-value" id="preview-issuer">https://{tenant}.{base-domain}</span>
         </div>
 
-        <!-- マルチテナント拡張プレビュー (multi-tenant=on 時のみ表示) -->
+        <!-- Multi-tenant expansion preview (shown only when multi-tenant=on) -->
         <div id="preview-multi-tenant-section" style="display:none;">
-          <!-- テナント別カード (JS で描画) -->
+          <!-- Tenant cards (rendered by JS) -->
           <div id="preview-mt-rows" aria-live="polite"></div>
 
-          <!-- Login UI Worker URL -->
+          <!-- Login UI deployment origin -->
           <div class="infra-item" id="preview-login-pages-row" style="margin-top: 0.25rem;">
-            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI (Worker):</span>
+            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI Origin:</span>
             <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.workers.dev</span>
           </div>
 
-          <!-- テナント選択 共通入り口 -->
+          <!-- Tenant selection common entry -->
           <div class="infra-item" id="preview-tenant-discover-row" style="margin-top: 0.25rem;">
-            <span class="infra-label" data-i18n="web.preview.tenantDiscover">テナント選択 (共通入り口):</span>
+            <span class="infra-label" data-i18n="web.preview.tenantDiscover">Tenant Selection (Common Entry):</span>
             <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.workers.dev/discover</span>
           </div>
 
-          <!-- Admin UI アクセス先 -->
+          <!-- Admin UI access target -->
           <div class="infra-item" id="preview-admin-access-row">
             <span class="infra-label" data-i18n="web.preview.adminAccess">Admin UI Access:</span>
             <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.workers.dev/admin</span>
           </div>
 
-          <!-- 無効設定の警告 (条件に合致した時のみ表示) -->
+          <!-- Invalid-configuration warning (shown only when the condition matches) -->
           <div id="preview-config-warning" class="hint-box error-hint" style="display:none; margin-top:0.75rem;" role="alert">
-            <strong id="preview-warning-title">⚠️ 設定上の問題</strong>
+            <strong id="preview-warning-title" data-i18n="web.preview.conflictWarningTitle">⚠️ Configuration issue</strong>
             <div id="preview-warning-message" style="margin-top: 0.25rem;"></div>
             <div id="preview-warning-action" style="margin-top: 0.5rem; font-weight: 600;"></div>
           </div>
         </div>
 
-        <!-- シングルテナント用 Login UI / Admin UI 行 (multi-tenant=off 時のみ表示) -->
+        <!-- Single-tenant Login UI / Admin UI row (shown only when multi-tenant=off) -->
         <div class="infra-item" id="preview-login-row">
           <span class="infra-label" data-i18n="web.preview.loginUi">Login UI:</span>
           <span class="infra-value" id="preview-login">{env}-ar-login-ui.workers.dev</span>
@@ -3263,6 +3645,41 @@ export function getHtmlTemplate(
       <p style="margin-bottom: 1.5rem; font-size: 0.85rem; color: var(--text-muted);" data-i18n="web.db.regionNote">
         Note: Database region cannot be changed after creation.
       </p>
+
+      <div class="database-card" style="margin-bottom: 1rem;">
+        <h3>Storage Deployment Profile</h3>
+        <div class="db-description">
+          <p>Select how user core/PII data is placed for this deployment.</p>
+        </div>
+        <div class="radio-group">
+          <label class="radio-item">
+            <input type="radio" name="storage-profile" value="builtin:storage:shared-d1" checked>
+            <span style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <strong>Shared D1</strong>
+              <small style="color: var(--text-muted);">One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.</small>
+            </span>
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="storage-profile" value="builtin:storage:tenant-d1">
+            <span style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <strong>Tenant D1</strong>
+              <small style="color: var(--text-muted);">One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.</small>
+            </span>
+          </label>
+        </div>
+        <div id="tenant-d1-slot-config" class="tenant-d1-slot-config" style="margin-top: 1rem; display: none;">
+          <h3>Preallocated tenant slots</h3>
+          <div class="db-description">
+            <p>Each tenant slot creates two D1 databases: core and PII.</p>
+          </div>
+          <label for="tenant-d1-preallocated-slots" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+            <span>Slots</span>
+            <strong id="tenant-d1-preallocated-slots-value">3</strong>
+          </label>
+          <input id="tenant-d1-preallocated-slots" type="range" min="1" max="500" step="1" value="3" style="width: 100%;">
+          <small style="color: var(--text-muted);">Default is 3. Maximum is 500 slots.</small>
+        </div>
+      </div>
 
       <div class="database-config-stack">
         <!-- Core Database (Non-PII) -->
@@ -3576,11 +3993,11 @@ export function getHtmlTemplate(
       </h2>
 
       <p id="deploy-ready-text" style="margin-bottom: 1rem;" data-i18n="web.deploy.readyText">Ready to deploy Authrim workers to Cloudflare.</p>
-      <div id="deploy-manual-wildcard-warning" class="alert alert-warning hidden" style="margin-bottom: 1rem;">
+      <div id="deploy-manual-wildcard-warning" class="alert alert-warning manual-wildcard-warning hidden" style="margin-bottom: 1rem;">
         <strong id="deploy-manual-wildcard-title"></strong>
         <p id="deploy-manual-wildcard-summary" style="margin-top: 0.5rem;"></p>
-        <p id="deploy-manual-wildcard-timing" style="margin-top: 0.5rem;"></p>
-        <ol id="deploy-manual-wildcard-steps" style="margin: 0.75rem 0 0 1.25rem;"></ol>
+        <p id="deploy-manual-wildcard-timing" class="manual-guide-timing"></p>
+        <div id="deploy-manual-wildcard-steps" class="manual-guide-steps"></div>
         <div class="manual-guide-visual">
           <img
             id="deploy-manual-wildcard-example-image"
@@ -3588,7 +4005,7 @@ export function getHtmlTemplate(
             src=${cloudflareDnsAddRecordImageDataUriJson}
           >
         </div>
-        <p id="deploy-manual-wildcard-retry" style="margin-top: 0.75rem;"></p>
+        <p id="deploy-manual-wildcard-retry" class="manual-guide-retry" style="margin-top: 0.75rem;"></p>
         <div class="button-group" style="margin-top: 0.75rem;">
           <a id="deploy-manual-wildcard-dashboard-link" class="btn-secondary hidden" target="_blank" rel="noreferrer">Open Cloudflare DNS</a>
           <a id="deploy-manual-wildcard-docs-link" class="btn-secondary" target="_blank" rel="noreferrer">Open DNS docs</a>
@@ -3787,6 +4204,82 @@ export function getHtmlTemplate(
         <div id="env-email-progress" class="hidden" style="margin-top: 1rem;">
           <div style="font-weight: 500; margin-bottom: 0.5rem;" data-i18n="web.envDetail.emailProgress">Email Setup Progress:</div>
           <div id="env-email-log" class="progress-log" style="max-height: 240px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+        </div>
+      </div>
+
+      <div class="resource-section" id="env-tenant-d1-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          🧩 Tenant D1 Pool
+        </div>
+        <p id="env-tenant-d1-summary" style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;">
+          Loading tenant storage status...
+        </p>
+
+        <div id="env-tenant-d1-stats" class="hidden" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin-top: 1rem;">
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Capacity</div>
+            <div id="env-tenant-d1-capacity" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Available</div>
+            <div id="env-tenant-d1-available" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Assigned</div>
+            <div id="env-tenant-d1-assigned" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Needs Reset</div>
+            <div id="env-tenant-d1-reset-required" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+        </div>
+
+        <div id="env-tenant-d1-expand" class="hidden" style="margin-top: 1rem; display: grid; gap: 0.75rem;">
+          <label for="env-tenant-d1-add-slots" style="display: block; font-weight: 600;">Add Tenant D1 Slots</label>
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+            <input id="env-tenant-d1-add-slots" type="number" min="1" max="500" value="1" style="max-width: 140px;">
+            <button class="btn-primary" id="btn-expand-tenant-d1-pool">
+              ➕ Expand Pool and Deploy
+            </button>
+            <button class="btn-secondary" id="btn-refresh-tenant-d1-pool">
+              🔄 Refresh
+            </button>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">
+            This updates the environment config, creates additional core/PII D1 databases, refreshes Worker bindings, and redeploys workers.
+          </div>
+        </div>
+
+      <div id="env-tenant-d1-progress" class="hidden" style="margin-top: 1rem;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;">Tenant D1 Pool Progress:</div>
+          <div id="env-tenant-d1-log" class="progress-log" style="max-height: 260px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+        </div>
+      </div>
+
+      <div class="resource-section" id="env-r2-provision-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          📁 Dedicated R2 Buckets
+        </div>
+        <p id="env-r2-provision-summary" style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;">
+          Loading R2 bucket status...
+        </p>
+
+        <div id="env-r2-provision-actions" style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+          <button class="btn-primary" id="btn-provision-r2-buckets">
+            📁 Provision R2 and Deploy
+          </button>
+          <button class="btn-secondary" id="btn-refresh-r2-buckets">
+            🔄 Refresh
+          </button>
+        </div>
+
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem;">
+          This creates Authrim R2 buckets, records lock bindings, enables the R2 feature flag, and redeploys workers.
+        </div>
+
+        <div id="env-r2-provision-progress" class="hidden" style="margin-top: 1rem;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;">R2 Provisioning Progress:</div>
+          <div id="env-r2-provision-log" class="progress-log" style="max-height: 240px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
         </div>
       </div>
 
@@ -4128,12 +4621,81 @@ export function getHtmlTemplate(
 
     // State
     let currentStep = 1;
-    let setupMode = 'quick'; // 'quick' or 'custom'
     let config = {};
     let loadedConfig = null;
     let provisioningCompleted = false;
     let provisionPollInterval = null;
     let lastPrerequisitesResult = null;
+
+    function normalizeStorageProfileId(value) {
+      return value === 'builtin:storage:tenant-d1'
+        ? 'builtin:storage:tenant-d1'
+        : 'builtin:storage:shared-d1';
+    }
+
+    function buildProfilesConfig(storageProfileId) {
+      return {
+        defaults: {
+          storage: normalizeStorageProfileId(storageProfileId),
+          audit: 'builtin:audit:standard',
+          residency: 'builtin:residency:default',
+        },
+        registry: {
+          backend: 'kv',
+        },
+        references: {
+          hyperdrive: {},
+        },
+        seed: {
+          storage: [],
+          audit: [],
+          residency: [],
+        },
+      };
+    }
+
+    function getSelectedStorageProfileId() {
+      return normalizeStorageProfileId(
+        document.querySelector('input[name="storage-profile"]:checked')?.value
+      );
+    }
+
+    function getTenantD1PreallocatedSlots() {
+      const value = Number.parseInt(
+        document.getElementById('tenant-d1-preallocated-slots')?.value || '3',
+        10
+      );
+      return Number.isInteger(value) ? Math.min(500, Math.max(1, value)) : 3;
+    }
+
+    function setTenantD1PreallocatedSlots(value) {
+      const normalized = Math.min(500, Math.max(1, Number.parseInt(value || '3', 10) || 3));
+      const input = document.getElementById('tenant-d1-preallocated-slots');
+      const label = document.getElementById('tenant-d1-preallocated-slots-value');
+      if (input) input.value = String(normalized);
+      if (label) label.textContent = String(normalized);
+    }
+
+    function updateTenantD1SlotConfigVisibility() {
+      const visible = getSelectedStorageProfileId() === 'builtin:storage:tenant-d1';
+      const panel = document.getElementById('tenant-d1-slot-config');
+      if (panel) panel.style.display = visible ? 'block' : 'none';
+    }
+
+    function setSelectedStorageProfileId(profileId) {
+      const normalized = normalizeStorageProfileId(profileId);
+      document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
+        input.checked = input.value === normalized;
+      });
+      updateTenantD1SlotConfigVisibility();
+    }
+
+    document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
+      input.addEventListener('change', updateTenantD1SlotConfigVisibility);
+    });
+    document.getElementById('tenant-d1-preallocated-slots')?.addEventListener('input', (event) => {
+      setTenantD1PreallocatedSlots(event.currentTarget.value);
+    });
 
     // Elements
     const steps = {
@@ -4150,7 +4712,6 @@ export function getHtmlTemplate(
     const sections = {
       prerequisites: document.getElementById('section-prerequisites'),
       topMenu: document.getElementById('section-top-menu'),
-      mode: document.getElementById('section-mode'),
       loadConfig: document.getElementById('section-load-config'),
       config: document.getElementById('section-config'),
       database: document.getElementById('section-database'),
@@ -4336,10 +4897,69 @@ export function getHtmlTemplate(
 
       const steps = document.getElementById('deploy-manual-wildcard-steps');
       steps.textContent = '';
+
+      const valueRows = [];
+      const textSteps = [];
       stepsTemplate.forEach((step) => {
-        const li = document.createElement('li');
-        li.textContent = step;
-        steps.appendChild(li);
+        const separatorIndex = step.indexOf(':');
+        const label = separatorIndex >= 0 ? step.slice(0, separatorIndex).trim() : '';
+        const value = separatorIndex >= 0 ? step.slice(separatorIndex + 1).trim() : '';
+        if (['Type', 'Name (required)', 'Target (required)', 'Proxy status', 'TTL'].includes(label)) {
+          valueRows.push({ label, value });
+        } else if (step) {
+          textSteps.push(step);
+        }
+      });
+
+      if (textSteps[0]) {
+        const intro = document.createElement('p');
+        intro.className = 'manual-guide-step-text';
+        intro.textContent = textSteps[0];
+        steps.appendChild(intro);
+      }
+
+      if (valueRows.length > 0) {
+        const values = document.createElement('dl');
+        values.className = 'manual-guide-values';
+        valueRows.forEach(({ label, value }) => {
+          const item = document.createElement('div');
+          const isSecondary = ['Proxy status', 'TTL'].includes(label);
+          const isCopyable = ['Name (required)', 'Target (required)'].includes(label);
+          item.className =
+            'manual-guide-value ' +
+            (isSecondary ? 'manual-guide-value-secondary' : 'manual-guide-value-main');
+          const dt = document.createElement('dt');
+          dt.textContent = label.replace(' (required)', '');
+          const body = document.createElement('div');
+          body.className = 'manual-guide-value-body';
+          const dd = document.createElement('dd');
+          dd.textContent = value;
+          body.appendChild(dd);
+          if (isCopyable) {
+            const copyButton = document.createElement('button');
+            copyButton.type = 'button';
+            copyButton.className = 'manual-guide-copy-btn';
+            const copyLabel = document.createElement('span');
+            copyLabel.setAttribute('data-copy-label', '');
+            copyLabel.textContent = t('web.envDetail.copyBtn');
+            copyButton.appendChild(copyLabel);
+            copyButton.addEventListener('click', () =>
+              copyTextWithFeedback(copyButton, value, 'web.envDetail.copyBtn')
+            );
+            body.appendChild(copyButton);
+          }
+          item.appendChild(dt);
+          item.appendChild(body);
+          values.appendChild(item);
+        });
+        steps.appendChild(values);
+      }
+
+      textSteps.slice(1).forEach((step) => {
+        const detail = document.createElement('p');
+        detail.className = 'manual-guide-step-text';
+        detail.textContent = step;
+        steps.appendChild(detail);
       });
 
       const dashboardLink = document.getElementById('deploy-manual-wildcard-dashboard-link');
@@ -4530,6 +5150,144 @@ export function getHtmlTemplate(
       return null;
     }
 
+    function getExpectedDeployWorkerCount() {
+      const components = (config && config.components) || {};
+      let count = 6; // ar-lib-core, discovery, auth, token, userinfo, management
+      if (components.saml) count++;
+      if (components.async) count++;
+      if (components.vc) count++;
+      if (components.bridge) count++;
+      if (components.policy) count++;
+      count++; // ar-router
+      return count;
+    }
+
+    function createDeployProgressTracker() {
+      let percent = 0;
+      let currentTask = t('web.status.initializing') || 'Initializing...';
+      let expectedWorkers = getExpectedDeployWorkerCount();
+      let finalUiStarted = false;
+      const workerCompleted = new Set();
+      const counters = {};
+
+      function setProgress(nextPercent, task) {
+        const normalized = Math.max(0, Math.min(Math.round(nextPercent), 99));
+        percent = Math.max(percent, normalized);
+        if (task) currentTask = task;
+        updateProgressUI('deploy', percent, 100, currentTask);
+      }
+
+      function complete(task) {
+        percent = 100;
+        currentTask = task || 'Deployment complete!';
+        updateProgressUI('deploy', 100, 100, currentTask);
+      }
+
+      function bump(key, start, end, step, task) {
+        counters[key] = (counters[key] || 0) + 1;
+        setProgress(Math.min(start + counters[key] * step, end), task);
+      }
+
+      function trackWorkerSuccess(message) {
+        const match = message.match(/^\\s*✓\\s+([a-z0-9-]+-ar-[a-z0-9-]+)\\s+deployed successfully/i);
+        if (!match) return false;
+
+        workerCompleted.add(match[1]);
+        const completed = workerCompleted.size;
+        const workerPercent = 45 + (Math.min(completed, expectedWorkers) / expectedWorkers) * 21;
+        setProgress(workerPercent, 'Deploying API Workers (' + completed + '/' + expectedWorkers + ')');
+        return true;
+      }
+
+      return {
+        handle(message) {
+          const taskInfo = parseProgressMessage(message);
+          const totalMatch = message.match(/^Total:\\s+(\\d+)\\s*$/);
+          if (totalMatch) {
+            expectedWorkers = Math.max(parseInt(totalMatch[1], 10), 1);
+            setProgress(66, 'API Workers deployed (' + workerCompleted.size + '/' + expectedWorkers + ')');
+            return;
+          }
+
+          if (message.includes('Clearing build cache')) {
+            setProgress(2, 'Preparing build...');
+          } else if (message.includes('Building packages')) {
+            setProgress(6, 'Building packages...');
+          } else if (message.includes('Packages built successfully')) {
+            setProgress(12, 'Packages built successfully');
+          } else if (message.includes('Uploading secrets from')) {
+            setProgress(14, 'Uploading secrets...');
+          } else if (message.includes('uploaded')) {
+            bump('secrets', 14, 29, 1, 'Uploading secrets...');
+          } else if (message.includes('Refreshing wrangler.toml')) {
+            setProgress(31, 'Refreshing Worker configuration...');
+          } else if (message.includes('wrangler.toml files refreshed')) {
+            setProgress(34, 'Worker configuration refreshed');
+          } else if (message.includes('Ensuring wildcard DNS')) {
+            setProgress(36, 'Checking wildcard DNS...');
+          } else if (message.includes('Wildcard DNS resolves')) {
+            setProgress(38, 'Wildcard DNS ready');
+          } else if (message.includes('Preparing UI Worker binding targets')) {
+            setProgress(39, 'Preparing UI Worker bindings...');
+          } else if (
+            !finalUiStarted &&
+            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
+          ) {
+            bump('uiBindingBuild', 39, 42, 1.5, taskInfo || 'Preparing UI Worker bindings...');
+          } else if (!finalUiStarted && message.includes('deployed as UI Worker')) {
+            bump('uiBindingDeploy', 42, 44, 1, 'UI Worker bindings ready');
+          } else if (message.includes('Starting Authrim deployment')) {
+            setProgress(45, 'Deploying API Workers (0/' + expectedWorkers + ')');
+          } else if (trackWorkerSuccess(message)) {
+            return;
+          } else if (message.includes('Deployment Summary')) {
+            setProgress(66, 'API Worker deployment summary');
+          } else if (message.includes('Verifying Worker deployments')) {
+            setProgress(68, 'Verifying Worker deployments...');
+          } else if (message.includes('Worker deployments are visible')) {
+            setProgress(71, 'Worker deployments are visible');
+          } else if (message.includes('Verifying Worker HTTP health')) {
+            setProgress(73, 'Checking Worker health...');
+          } else if (message.includes('Worker HTTP health checks passed')) {
+            setProgress(76, 'Worker health checks passed');
+          } else if (message.includes('Waiting for API router')) {
+            setProgress(78, 'Waiting for API router...');
+          } else if (message.includes('API router is reachable')) {
+            setProgress(80, 'API router is reachable');
+          } else if (message.includes('Running D1 database migrations')) {
+            setProgress(82, 'Running database migrations...');
+          } else if (message.includes('Database migrations completed successfully')) {
+            setProgress(87, 'Database migrations complete');
+          } else if (
+            message.includes('Ensuring initial tenant') ||
+            message.includes('Ensuring initial admin roles') ||
+            message.includes('Ensuring setup machine access') ||
+            message.includes('Seeding runtime profiles') ||
+            message.includes('runtime snapshot')
+          ) {
+            bump('bootstrap', 87, 91, 1, taskInfo || 'Finalizing runtime bootstrap...');
+          } else if (message.includes('Deploying Login/Admin UI')) {
+            finalUiStarted = true;
+            setProgress(92, 'Deploying Login/Admin UI...');
+          } else if (
+            finalUiStarted &&
+            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
+          ) {
+            bump('finalUiBuild', 92, 95, 1.5, taskInfo || 'Building UI Workers...');
+          } else if (finalUiStarted && message.includes('deployed as UI Worker')) {
+            bump('finalUiDeploy', 95, 98, 1.5, 'Deploying UI Workers...');
+          } else if (message.includes('All UI packages deployed to Workers')) {
+            setProgress(98, 'UI Workers deployed');
+          } else if (message.includes('Deployment complete')) {
+            complete('✓ Deployment complete!');
+          } else if (taskInfo) {
+            setProgress(percent, taskInfo);
+          }
+        },
+        complete,
+      };
+    }
+
     // Safe DOM element creation helpers
     function createAlert(type, content) {
       const div = document.createElement('div');
@@ -4639,14 +5397,11 @@ export function getHtmlTemplate(
     }
 
     function resetConfigurationForm() {
-      setupMode = 'quick';
       config = {};
       provisioningCompleted = false;
       domainZoneId = null;
 
-      document.getElementById('mode-quick').classList.remove('selected');
-      document.getElementById('mode-custom').classList.remove('selected');
-      document.getElementById('advanced-options').classList.add('hidden');
+      document.getElementById('advanced-options').classList.remove('hidden');
 
       document.getElementById('env').value = '';
       document.getElementById('base-domain').value = '';
@@ -4667,6 +5422,8 @@ export function getHtmlTemplate(
 
       document.getElementById('domain-check-row').style.display = 'none';
       document.getElementById('domain-check-status').replaceChildren();
+      document.getElementById('login-domain-zone-status').replaceChildren();
+      document.getElementById('admin-domain-zone-status').replaceChildren();
       document.getElementById('custom-domain-binding-row').style.display = 'none';
       document.getElementById('custom-domain-binding').checked = true;
 
@@ -4688,6 +5445,8 @@ export function getHtmlTemplate(
     }
 
     function resetDatabaseAndEmailForm() {
+      setSelectedStorageProfileId('builtin:storage:shared-d1');
+
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
         input.checked = input.value === 'auto';
       });
@@ -4895,36 +5654,14 @@ export function getHtmlTemplate(
     // Top menu handlers
     document.getElementById('menu-new-setup').addEventListener('click', async () => {
       await resetSetupFlowState();
-      showSection('mode');
-    });
-
-    document.getElementById('menu-load-config').addEventListener('click', () => {
-      showSection('loadConfig');
-    });
-
-    // Setup mode handlers
-    document.getElementById('mode-quick').addEventListener('click', () => {
-      setupMode = 'quick';
-      document.getElementById('mode-quick').classList.add('selected');
-      document.getElementById('mode-custom').classList.remove('selected');
-      document.getElementById('advanced-options').classList.add('hidden');
-      setStep(2);
-      showSection('config');
-      updatePreview();
-    });
-
-    document.getElementById('mode-custom').addEventListener('click', () => {
-      setupMode = 'custom';
-      document.getElementById('mode-custom').classList.add('selected');
-      document.getElementById('mode-quick').classList.remove('selected');
       document.getElementById('advanced-options').classList.remove('hidden');
       setStep(2);
       showSection('config');
       updatePreview();
     });
 
-    document.getElementById('btn-back-top').addEventListener('click', () => {
-      showSection('topMenu');
+    document.getElementById('menu-load-config').addEventListener('click', () => {
+      showSection('loadConfig');
     });
 
     document.getElementById('btn-back-top-2').addEventListener('click', () => {
@@ -5046,21 +5783,17 @@ export function getHtmlTemplate(
         bridge: true,
         policy: true,
       };
+      const profiles = loadedConfig.profiles || buildProfilesConfig('builtin:storage:shared-d1');
 
       // Build internal config
       config = {
         env,
-        apiDomain: apiDomain || null,
-        loginUiDomain: loginUiDomain || null,
-        adminUiDomain: adminUiDomain || null,
+        apiDomain: stripProtocol(apiDomain) || null,
+        loginUiDomain: stripProtocol(loginUiDomain) || null,
+        adminUiDomain: stripProtocol(adminUiDomain) || null,
         tenant,
         components,
-      };
-
-      // Helper to remove https:// prefix for display in input fields
-      const stripProtocol = (url) => {
-        if (!url) return '';
-        return url.replace(/^https?:[/][/]/, '');
+        profiles,
       };
 
       // Set form values
@@ -5079,6 +5812,8 @@ export function getHtmlTemplate(
         document.getElementById('primary-tenant').value = config.tenant?.primaryTenant || '';
       }
       updateBaseDomainUI();
+      setSelectedStorageProfileId(config.profiles?.defaults?.storage);
+      setTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots || 3);
 
       // Set component checkboxes
       if (document.getElementById('comp-login-ui')) {
@@ -5110,7 +5845,7 @@ export function getHtmlTemplate(
 
       // Show configuration screen for review/editing
       // User can modify settings before proceeding to provision
-      setupMode = 'custom'; // Enable all options for editing
+      // Loaded configurations always expose all component options for editing.
       document.getElementById('advanced-options').classList.remove('hidden');
       setStep(2);
       showSection('config');
@@ -5127,6 +5862,46 @@ export function getHtmlTemplate(
         tenantName: document.getElementById('tenant-name').value.trim(),
         primaryTenant: document.getElementById('primary-tenant').value.trim(),
       });
+    }
+
+    function getCurrentSetupDomainValidationIssues() {
+      return validateSetupDomainInputs({
+        apiDomain: document.getElementById('base-domain').value.trim(),
+        loginUiDomain: document.getElementById('login-domain').value.trim(),
+        adminUiDomain: document.getElementById('admin-domain').value.trim(),
+        tenantName: document.getElementById('tenant-name').value.trim(),
+      });
+    }
+
+    function renderDomainDepthError(elementId, issue) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      if (!issue) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+
+      el.textContent = issue.suggestion
+        ? issue.message + ' Suggested host: ' + issue.suggestion
+        : issue.message;
+      el.style.display = 'block';
+    }
+
+    function refreshDomainDepthValidation() {
+      const issues = getCurrentSetupDomainValidationIssues();
+      const byField = new Map(issues.map((issue) => [issue.field, issue]));
+
+      renderDomainDepthError('base-domain-depth-error', byField.get('apiDomain'));
+      renderDomainDepthError('login-domain-depth-error', byField.get('loginUiDomain'));
+      renderDomainDepthError('admin-domain-depth-error', byField.get('adminUiDomain'));
+
+      const configureButton = document.getElementById('btn-configure');
+      if (configureButton) {
+        configureButton.disabled = issues.length > 0;
+      }
+
+      return issues;
     }
 
     function renderTenantUrlExamples(state, copy) {
@@ -5249,6 +6024,45 @@ export function getHtmlTemplate(
       return normalizedHost === normalizedBase || normalizedHost.endsWith('.' + normalizedBase);
     }
 
+    function normalizeDomainHostname(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      try {
+        return new URL(raw.match(/^https?:\\/\\//i) ? raw : 'https://' + raw).hostname.toLowerCase();
+      } catch {
+        return raw
+          .replace(/^https?:\\/\\//i, '')
+          .replace(/\\/.*$/, '')
+          .replace(/[.]+$/, '')
+          .toLowerCase();
+      }
+    }
+
+    function isImmediateSubdomainOfBaseDomain(host, baseDomain) {
+      if (!host || !baseDomain || !host.endsWith('.' + baseDomain)) return false;
+      const prefix = host.slice(0, -baseDomain.length - 1);
+      return prefix.length > 0 && !prefix.includes('.');
+    }
+
+    function isRoutedByMultiTenantRouterHost(host, baseDomain) {
+      return host === baseDomain || isImmediateSubdomainOfBaseDomain(host, baseDomain);
+    }
+
+    function uiDomainRequiresOwnRoute(domain) {
+      const uiHost = normalizeDomainHostname(domain);
+      if (!uiHost) return false;
+
+      const apiHost = normalizeDomainHostname(document.getElementById('base-domain').value);
+      if (apiHost && uiHost === apiHost) return false;
+
+      const domainUiState = getCurrentApiDomainUiState();
+      if (domainUiState.multiTenantEnabled && apiHost) {
+        return !isRoutedByMultiTenantRouterHost(uiHost, apiHost);
+      }
+
+      return true;
+    }
+
     function describeAdminPreviewMode(mode) {
       if (mode === 'same-origin') {
         return 'same-origin - relative Admin API calls on the same origin';
@@ -5291,22 +6105,36 @@ export function getHtmlTemplate(
       const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
+      refreshDomainDepthValidation();
 
-      // Components - build list based on mode and selections
+      // Components - build list based on selections
       const components = ['API'];
-      if (setupMode === 'quick') {
-        components.push('Login UI', 'Admin UI');
-      } else {
-        if (document.getElementById('comp-login-ui').checked) components.push('Login UI');
-        if (document.getElementById('comp-admin-ui').checked) components.push('Admin UI');
-        if (document.getElementById('comp-saml').checked) components.push('SAML IdP');
-        if (document.getElementById('comp-async').checked) components.push('Device Flow/CIBA');
-        if (document.getElementById('comp-vc').checked) components.push('Verifiable Credentials');
-      }
-      document.getElementById('preview-components').textContent = components.join(', ');
+      if (document.getElementById('comp-login-ui').checked) components.push('Login UI');
+      if (document.getElementById('comp-admin-ui').checked) components.push('Admin UI');
+      if (document.getElementById('comp-saml').checked) components.push('SAML IdP');
+      if (document.getElementById('comp-async').checked) components.push('Device Flow/CIBA');
+      if (document.getElementById('comp-vc').checked) components.push('Verifiable Credentials');
+      const previewComponents = document.getElementById('preview-components');
+      previewComponents.textContent = '';
+      components.forEach((component) => {
+        const badge = document.createElement('span');
+        badge.className = 'preview-component-badge';
+        badge.textContent = component;
+        previewComponents.appendChild(badge);
+      });
 
-      // Workers
-      document.getElementById('preview-workers').textContent = env + '-ar-router, ' + env + '-ar-auth, ...';
+      const setPreviewValue = (element, value, note) => {
+        element.textContent = '';
+        const main = document.createElement('span');
+        main.textContent = value;
+        element.appendChild(main);
+        if (note) {
+          const noteEl = document.createElement('span');
+          noteEl.className = 'infra-value-note';
+          noteEl.textContent = note;
+          element.appendChild(noteEl);
+        }
+      };
 
       // Generate domains with account subdomain
       const workersDomain = workersSubdomain
@@ -5384,26 +6212,26 @@ export function getHtmlTemplate(
         adminApiModeRow.style.display = 'none';
       }
 
-      // === マルチテナント拡張プレビュー ===
+      // === Multi-tenant expansion preview ===
       const previewMtSection = document.getElementById('preview-multi-tenant-section');
       const previewIssuerRow = document.getElementById('preview-issuer-row');
       const previewLoginRow  = document.getElementById('preview-login-row');
       const previewAdminRow  = document.getElementById('preview-admin-row');
 
       if (multiTenantEnabled && baseDomain) {
-        // シングルテナント用行を非表示にしてマルチテナントセクションを表示
+        // Hide single-tenant rows and show the multi-tenant section
         previewIssuerRow.style.display = 'none';
         previewLoginRow.style.display  = 'none';
         previewAdminRow.style.display  = 'none';
         previewMtSection.style.display = '';
 
-        // 最初のテナントのベースURL
+        // Base URL of the first tenant
         const firstBase = nakedDomain
           ? 'https://' + baseDomain
           : 'https://' + tenantName + '.' + baseDomain;
         const otherBase = 'https://{tenantName}.' + baseDomain;
 
-        // テナントカードを描画 (createElement + textContent で XSS を防ぐ)
+        // Render tenant cards (prevent XSS with createElement + textContent)
         const mtRowsContainer = document.getElementById('preview-mt-rows');
         mtRowsContainer.textContent = '';
 
@@ -5439,42 +6267,46 @@ export function getHtmlTemplate(
         mtRowsContainer.appendChild(makeBlock(t('web.preview.firstTenant', { name: tenantName }), firstBase));
         mtRowsContainer.appendChild(makeBlock(t('web.preview.otherTenants'), otherBase));
 
-        // Login UI Worker URL (shared by all tenants)
+        // Login UI deployment origin. Tenant login remains canonical on each issuer host.
         const loginPagesRow = document.getElementById('preview-login-pages-row');
         const tenantDiscoverRow = document.getElementById('preview-tenant-discover-row');
         if (loginUiEnabled) {
-          loginPagesRow.style.display = '';
-          document.getElementById('preview-login-pages').textContent =
-            'https://' + loginUiWorkerDomain + '  ' + t('web.preview.allTenantsShared');
-          // テナント選択画面: カスタムドメインが設定されていればそちらを優先
           const loginUiBase = loginDomain ? loginDomain : loginUiWorkerDomain;
+          loginPagesRow.style.display = '';
+          setPreviewValue(
+            document.getElementById('preview-login-pages'),
+            'https://' + loginUiBase,
+            t('web.preview.loginUiOriginNote')
+          );
+          // Tenant discovery uses the shared Login UI custom domain when one is configured.
+          // Without a Login UI custom domain, the router-owned base domain remains the fallback.
           tenantDiscoverRow.style.display = '';
           document.getElementById('preview-tenant-discover').textContent =
-            'https://' + loginUiBase + '/discover';
+            'https://' + (loginDomain || baseDomain) + '/discover';
         } else {
           loginPagesRow.style.display = 'none';
           tenantDiscoverRow.style.display = 'none';
         }
 
-        // Admin UI アクセス先
+        // Admin UI access target
         const adminAccessRow = document.getElementById('preview-admin-access-row');
         const adminAccessEl  = document.getElementById('preview-admin-access');
         if (adminUiEnabled) {
           adminAccessRow.style.display = '';
           const adminSameAsApi = adminDomain !== '' && adminDomain === baseDomain;
           if (adminSameAsApi) {
-            adminAccessEl.textContent = firstBase + '/admin  ' + t('web.preview.viaApiProxy');
+            setPreviewValue(adminAccessEl, firstBase + '/admin/info', t('web.preview.viaApiProxy'));
           } else if (adminDomain) {
-            adminAccessEl.textContent = 'https://' + adminDomain + '/admin';
+            adminAccessEl.textContent = 'https://' + adminDomain + '/admin/info';
           } else {
-            adminAccessEl.textContent = 'https://' + adminUiWorkerDomain + '/admin';
+            adminAccessEl.textContent = 'https://' + adminUiWorkerDomain + '/admin/info';
           }
         } else {
           adminAccessRow.style.display = 'none';
         }
 
-        // 無効設定の検出と警告表示
-        // sameAsApi かつ nakedDomain=false → naked domainへのAPIコールが404になる
+        // Detect invalid settings and show a warning
+        // sameAsApi with nakedDomain=false makes API calls to the naked domain return 404
         const loginSameAsApi = loginDomain !== '' && loginDomain === baseDomain;
         const adminSameAsApi2 = adminDomain !== '' && adminDomain === baseDomain;
         const hasConflict = (loginSameAsApi || adminSameAsApi2) && !nakedDomain;
@@ -5492,7 +6324,7 @@ export function getHtmlTemplate(
         }
 
       } else {
-        // シングルテナントモード: 既存の行を表示
+        // Single-tenant mode: show existing rows
         previewIssuerRow.style.display = '';
         previewLoginRow.style.display  = '';
         previewAdminRow.style.display  = '';
@@ -5689,6 +6521,90 @@ export function getHtmlTemplate(
       }
     });
 
+    async function checkUiCustomDomainZone(field, options) {
+      const inputId = field === 'login' ? 'login-domain' : 'admin-domain';
+      const statusId = field === 'login' ? 'login-domain-zone-status' : 'admin-domain-zone-status';
+      const label = field === 'login' ? 'Login UI' : 'Admin UI';
+      const domain = document.getElementById(inputId).value.trim();
+      const statusEl = document.getElementById(statusId);
+      const blockOnFailure = options?.blockOnFailure === true;
+
+      statusEl.replaceChildren();
+      if (!domain || !isValidCustomDomain(domain) || !uiDomainRequiresOwnRoute(domain)) {
+        return true;
+      }
+
+      statusEl.replaceChildren(
+        createAlert(
+          'info',
+          label + ': ' + t('domain.checkingZone', { domain })
+        )
+      );
+
+      try {
+        const result = await api('/cloudflare/check-zone', {
+          method: 'POST',
+          body: { domain },
+        });
+        const zoneName = result.zone?.name || result.zoneName || domain;
+        const diagnosticAlert = createZoneDiagnosticAlert(result, {
+          domain,
+          zone: zoneName,
+          onRetry: () => checkUiCustomDomainZone(field, options),
+        });
+
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
+        }
+
+        const ok = Boolean(result.found && result.zone);
+        if (!ok && blockOnFailure) {
+          statusEl.appendChild(
+            createAlert(
+              'error',
+              label +
+                ' custom domain requires a direct Worker custom-domain route. Confirm that the Cloudflare zone is available before continuing.'
+            )
+          );
+        }
+        return ok || !blockOnFailure;
+      } catch (e) {
+        const diagnosticAlert = createZoneDiagnosticAlert(
+          {
+            found: false,
+            zoneName: domain,
+            diagnostic: {
+              code: 'api_error',
+              severity: 'error',
+              allowBinding: false,
+              actions: ['retry_check', 'reload_page'],
+            },
+          },
+          {
+            domain,
+            zone: domain,
+            onRetry: () => checkUiCustomDomainZone(field, options),
+          }
+        );
+
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
+        }
+        if (blockOnFailure) {
+          statusEl.appendChild(
+            createAlert(
+              'error',
+              label +
+                ' custom domain route cannot be verified right now. Retry the zone check before continuing.'
+            )
+          );
+        }
+        return !blockOnFailure;
+      }
+    }
+
     // Auto-check domain on blur (debounced)
     let domainCheckTimer;
     document.getElementById('base-domain').addEventListener('blur', () => {
@@ -5699,6 +6615,34 @@ export function getHtmlTemplate(
           document.getElementById('check-domain-btn').click();
         }
       }, 500);
+    });
+
+    let loginDomainCheckTimer;
+    let adminDomainCheckTimer;
+    document.getElementById('login-domain').addEventListener('blur', () => {
+      clearTimeout(loginDomainCheckTimer);
+      loginDomainCheckTimer = setTimeout(() => {
+        checkUiCustomDomainZone('login', { blockOnFailure: false });
+      }, 500);
+    });
+    document.getElementById('admin-domain').addEventListener('blur', () => {
+      clearTimeout(adminDomainCheckTimer);
+      adminDomainCheckTimer = setTimeout(() => {
+        checkUiCustomDomainZone('admin', { blockOnFailure: false });
+      }, 500);
+    });
+
+    ['login-domain', 'admin-domain', 'base-domain', 'enable-multi-tenant', 'naked-domain'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        document.getElementById('login-domain-zone-status').replaceChildren();
+        document.getElementById('admin-domain-zone-status').replaceChildren();
+      });
+      el.addEventListener('change', () => {
+        document.getElementById('login-domain-zone-status').replaceChildren();
+        document.getElementById('admin-domain-zone-status').replaceChildren();
+      });
     });
 
     // Initial UI state
@@ -5742,10 +6686,22 @@ export function getHtmlTemplate(
 
     document.getElementById('btn-back-mode').addEventListener('click', () => {
       setStep(1);
-      showSection('mode');
+      showSection('topMenu');
     });
 
     document.getElementById('btn-configure').addEventListener('click', async () => {
+      const domainDepthIssues = refreshDomainDepthValidation();
+      if (domainDepthIssues.length > 0) {
+        const firstIssue = domainDepthIssues[0];
+        const focusMap = {
+          apiDomain: 'base-domain',
+          loginUiDomain: 'login-domain',
+          adminUiDomain: 'admin-domain',
+        };
+        document.getElementById(focusMap[firstIssue.field])?.focus();
+        return;
+      }
+
       // Get and validate environment name
       const envRaw = document.getElementById('env').value.trim();
       if (!envRaw || !validateEnvName(envRaw)) {
@@ -5777,7 +6733,7 @@ export function getHtmlTemplate(
         console.warn('Environment check failed:', e);
       } finally {
         configureBtn.textContent = originalText;
-        configureBtn.disabled = false;
+        configureBtn.disabled = refreshDomainDepthValidation().length > 0;
       }
 
       const baseDomain = document.getElementById('base-domain').value.trim();
@@ -5795,6 +6751,17 @@ export function getHtmlTemplate(
         : undefined;
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
+      const loginUiEnabled = document.getElementById('comp-login-ui').checked;
+      const adminUiEnabled = document.getElementById('comp-admin-ui').checked;
+
+      const loginZoneOk =
+        !loginUiEnabled || (await checkUiCustomDomainZone('login', { blockOnFailure: true }));
+      const adminZoneOk =
+        !adminUiEnabled || (await checkUiCustomDomainZone('admin', { blockOnFailure: true }));
+      if (!loginZoneOk || !adminZoneOk) {
+        document.getElementById(!loginZoneOk ? 'login-domain' : 'admin-domain').focus();
+        return;
+      }
 
       config = {
         env,
@@ -5812,14 +6779,15 @@ export function getHtmlTemplate(
         },
         components: {
           api: true,
-          loginUi: setupMode === 'quick' || document.getElementById('comp-login-ui').checked,
-          adminUi: setupMode === 'quick' || document.getElementById('comp-admin-ui').checked,
-          saml: setupMode === 'custom' && document.getElementById('comp-saml').checked,
-          async: setupMode === 'custom' && document.getElementById('comp-async').checked,
-          vc: setupMode === 'custom' && document.getElementById('comp-vc').checked,
+          loginUi: loginUiEnabled,
+          adminUi: adminUiEnabled,
+          saml: document.getElementById('comp-saml').checked,
+          async: document.getElementById('comp-async').checked,
+          vc: document.getElementById('comp-vc').checked,
           bridge: true, // Standard component
           policy: true, // Standard component
         },
+        profiles: buildProfilesConfig('builtin:storage:shared-d1'),
       };
 
       // Create default config with component settings
@@ -5835,6 +6803,7 @@ export function getHtmlTemplate(
           components: config.components,
           zoneId: domainZoneId || null,
           customDomainBinding: config.apiDomain ? customDomainBinding : false,
+          profiles: config.profiles,
         },
       });
 
@@ -5862,6 +6831,7 @@ export function getHtmlTemplate(
 
     document.getElementById('btn-continue-database').addEventListener('click', () => {
       // Get selected values
+      const storageProfileId = getSelectedStorageProfileId();
       const coreLocation = document.querySelector('input[name="db-core-location"]:checked').value;
       const piiLocation = document.querySelector('input[name="db-pii-location"]:checked').value;
 
@@ -5877,6 +6847,22 @@ export function getHtmlTemplate(
       config.database = {
         core: parseDbLocation(coreLocation),
         pii: parseDbLocation(piiLocation),
+      };
+      config.tenantD1 = {
+        ...(config.tenantD1 || {}),
+        preallocatedSlots: getTenantD1PreallocatedSlots(),
+      };
+      config.profiles = {
+        ...(config.profiles || buildProfilesConfig(storageProfileId)),
+        defaults: {
+          ...((config.profiles && config.profiles.defaults) || {}),
+          storage: storageProfileId,
+          audit: config.profiles?.defaults?.audit || 'builtin:audit:standard',
+          residency: config.profiles?.defaults?.residency || 'builtin:residency:default',
+        },
+        registry: config.profiles?.registry || { backend: 'kv' },
+        references: config.profiles?.references || { hyperdrive: {} },
+        seed: config.profiles?.seed || { storage: [], audit: [], residency: [] },
       };
 
       // Proceed to email configuration
@@ -6135,7 +7121,12 @@ export function getHtmlTemplate(
 
         const result = await api('/provision', {
           method: 'POST',
-          body: { env: config.env, databaseConfig: config.database, createR2: true },
+          body: {
+            env: config.env,
+            databaseConfig: config.database,
+            createR2: true,
+            storageProfileId: config.profiles?.defaults?.storage || 'builtin:storage:shared-d1',
+          },
         });
 
         // Stop polling
@@ -6234,10 +7225,8 @@ export function getHtmlTemplate(
       log.classList.add('hidden'); // Log is hidden by default, toggled via button
       output.textContent = t('web.status.startingDeploy') + '\\n\\n';
 
-      let completedCount = 0;
-      // Use indeterminate progress - actual step count varies based on components
-      // We'll update the total dynamically based on actual progress
-      let totalComponents = 0; // Will be calculated from actual progress
+      const deployProgress = createDeployProgressTracker();
+      let pollInterval = null;
       updateProgressUI('deploy', 0, 100, t('web.status.initializing'));
 
       try {
@@ -6257,31 +7246,24 @@ export function getHtmlTemplate(
 
         // Poll for status updates
         let lastProgressLength = 0;
-        const pollInterval = setInterval(async () => {
-          const statusResult = await api('/deploy/status');
-          if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
-            const newMessages = statusResult.progress.slice(lastProgressLength);
-            newMessages.forEach(msg => {
-              output.textContent += msg + '\\n';
-              // Update progress UI based on message content
-              const taskInfo = parseProgressMessage(msg);
-              // Count completed items (lines with checkmark)
-              if (msg.includes('✓') || msg.includes('✅')) {
-                completedCount++;
-              }
-              // Update total when we see completion markers (e.g., "5/5")
-              const progressMatch = msg.match(/(\\d+)\\/(\\d+)/);
-              if (progressMatch) {
-                const [, , total] = progressMatch;
-                totalComponents = Math.max(totalComponents, parseInt(total, 10) + completedCount);
-              }
-              // Display progress as percentage or show current task
-              const displayTotal = totalComponents > 0 ? totalComponents : completedCount + 10;
-              const percent = Math.min(Math.round((completedCount / displayTotal) * 100), 99);
-              updateProgressUI('deploy', percent, 100, taskInfo || ('Processing... ' + completedCount + ' steps completed'));
-            });
-            lastProgressLength = statusResult.progress.length;
-            scrollToBottom(log);
+        pollInterval = setInterval(async () => {
+          try {
+            const statusResult = await api('/deploy/status');
+            const progress = statusResult.progress || [];
+            if (progress.length < lastProgressLength) {
+              lastProgressLength = 0;
+            }
+            if (progress.length > lastProgressLength) {
+              const newMessages = progress.slice(lastProgressLength);
+              newMessages.forEach(msg => {
+                output.textContent += msg + '\\n';
+                deployProgress.handle(msg);
+              });
+              lastProgressLength = progress.length;
+              scrollToBottom(log);
+            }
+          } catch (e) {
+            // Ignore transient polling errors while deployment is running.
           }
         }, 1000);
 
@@ -6293,11 +7275,14 @@ export function getHtmlTemplate(
           },
         });
 
-        clearInterval(pollInterval);
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
 
         if (result.success) {
           // Final progress update
-          updateProgressUI('deploy', 100, 100, '✓ Deployment complete!');
+          deployProgress.complete('✓ Deployment complete!');
           output.textContent += '\\n✓ Deployment complete!\\n';
           if (result.logPath) {
             output.textContent += '📝 Log: ' + result.logPath + '\\n';
@@ -6314,10 +7299,11 @@ export function getHtmlTemplate(
           // Note: Tenant subdomain only works with custom domains, NOT workers.dev
           let apiUrl;
           if (config.apiDomain) {
+            const apiDomain = stripProtocol(config.apiDomain);
             if (config.tenant?.multiTenant && config.tenant.name && !config.tenant.nakedDomain) {
-              apiUrl = 'https://' + config.tenant.name + '.' + config.apiDomain;
+              apiUrl = 'https://' + config.tenant.name + '.' + apiDomain;
             } else {
-              apiUrl = 'https://' + config.apiDomain;
+              apiUrl = 'https://' + apiDomain;
             }
           } else {
             // Workers.dev - no tenant prefix (wildcard subdomains not supported)
@@ -6329,7 +7315,9 @@ export function getHtmlTemplate(
             ? config.env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
             : config.env + '-ar-login-ui.workers.dev';
           const loginUiUrl = loginUiEnabled
-            ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginUiWorkerDomain)
+            ? (config.loginUiDomain
+              ? ensureHttpsUrl(config.loginUiDomain)
+              : 'https://' + loginUiWorkerDomain)
             : null;
 
           output.textContent += '  API URL: ' + apiUrl + '\\n';
@@ -6395,6 +7383,10 @@ export function getHtmlTemplate(
           throw new Error(result.error || 'Deployment failed');
         }
       } catch (error) {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
         output.textContent += '\\n✗ Error: ' + error.message + '\\n';
         scrollToBottom(log);
         status.textContent = t('web.status.error');
@@ -6417,7 +7409,8 @@ export function getHtmlTemplate(
       };
       const completeUrls = buildEnvDetailUrls(completeEnv, config);
       const labelMap = {
-        Issuer: 'API (Issuer):',
+        Issuer: 'Issuer:',
+        'API Health': 'API Health:',
         'OIDC Discovery': 'Discovery:',
         'Tenant Discovery': 'Tenant Discovery:',
         'Login UI': 'Login UI:',
@@ -6523,16 +7516,14 @@ export function getHtmlTemplate(
         openLink.setAttribute('data-i18n', 'web.complete.openSetup');
         openDiv.appendChild(openLink);
 
-        // Warning hint (uses innerHTML for <strong> tags — not updated on language change)
+        // Warning hint with limited rich text from trusted translations.
         const hintDiv = document.createElement('div');
         hintDiv.className = 'hint-box';
         hintDiv.style.marginTop = '0.75rem';
-        const warningTemplate = t('web.complete.urlWarning', { date: expiresText });
-        // warningTemplate may contain <strong> tags — parse safely
         const warningPrefix = document.createTextNode('⚠️ ');
         hintDiv.appendChild(warningPrefix);
         const warningSpan = document.createElement('span');
-        warningSpan.innerHTML = warningTemplate; // safe: value from our own translation strings only
+        appendTranslatedRichText(warningSpan, 'web.complete.urlWarning', { date: expiresText });
         hintDiv.appendChild(warningSpan);
 
         adminSetupSection.appendChild(headerDiv);
@@ -6600,6 +7591,7 @@ export function getHtmlTemplate(
           env + '-REBAC_CACHE',
           env + '-USER_CACHE',
           env + '-AUTHRIM_CONFIG',
+          env + '-TENANT_RUNTIME_REGISTRY',
           env + '-STATE_STORE',
           env + '-CONSENT_CACHE'
         ],
@@ -6662,6 +7654,13 @@ export function getHtmlTemplate(
       appendDatabasePreviewItem(d1List, coreDbName, getRegionLabel(coreRegion.location, coreRegion.jurisdiction));
       appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
       appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
+      if (config.profiles?.defaults?.storage === 'builtin:storage:tenant-d1') {
+        const slots = config.tenantD1?.preallocatedSlots || 3;
+        const li = document.createElement('li');
+        li.textContent = 'Preallocated tenant D1 slots: ' + slots + ' (' + (slots * 2) + ' D1 databases)';
+        li.style.color = 'var(--text-muted)';
+        d1List.appendChild(li);
+      }
 
       resources.kv.forEach(name => {
         const li = document.createElement('li');
@@ -6781,6 +7780,7 @@ export function getHtmlTemplate(
           core: { location: 'auto', jurisdiction: 'none' },
           pii: { location: 'auto', jurisdiction: 'none' },
         },
+        profiles: config.profiles || buildProfilesConfig('builtin:storage:shared-d1'),
         features: {
           email: {
             provider: config.email?.provider || 'none',
@@ -7041,6 +8041,14 @@ export function getHtmlTemplate(
         checkAndShowAdminSetup(configKv.id);
       }
 
+      document.getElementById('env-tenant-d1-progress').classList.add('hidden');
+      document.getElementById('env-tenant-d1-log').textContent = '';
+      loadTenantD1PoolStatus(env.env);
+      document.getElementById('env-r2-provision-progress').classList.add('hidden');
+      document.getElementById('env-r2-provision-log').textContent = '';
+      document.getElementById('btn-provision-r2-buckets').disabled = false;
+      loadR2ProvisionStatus(env.env);
+
       // Reset and load worker version comparison
       resetWorkerUpdateUI();
       loadWorkerVersionComparison(env.env);
@@ -7054,6 +8062,28 @@ export function getHtmlTemplate(
     function stripTrailingSlash(url) {
       const value = String(url || '');
       return value.endsWith('/') ? value.slice(0, -1) : value;
+    }
+
+    function stripProtocol(urlOrDomain) {
+      return String(urlOrDomain || '').trim().replace(/^https?:[/][/]/, '').replace(/[/]+$/, '');
+    }
+
+    function ensureHttpsUrl(urlOrDomain) {
+      const normalized = stripProtocol(urlOrDomain);
+      return normalized ? 'https://' + normalized : '';
+    }
+
+    function firstConfiguredValue(...values) {
+      for (const value of values) {
+        const normalized = String(value || '').trim();
+        if (normalized) return normalized;
+      }
+      return '';
+    }
+
+    function firstConfiguredUrl(...values) {
+      const value = firstConfiguredValue(...values);
+      return value ? stripTrailingSlash(ensureHttpsUrl(value)) : '';
     }
 
     function isMultiTenantConfigured(config) {
@@ -7132,7 +8162,11 @@ export function getHtmlTemplate(
           : 'https://' + tenantName + '.' + baseDomain;
       }
 
-      const apiUrl = config?.urls?.api?.custom || config?.urls?.api?.auto;
+      const apiUrl = firstConfiguredUrl(
+        config?.urls?.api?.custom,
+        config?.apiDomain,
+        config?.urls?.api?.auto
+      );
       return apiUrl ? stripTrailingSlash(apiUrl) : fallbackIssuer;
     }
 
@@ -7141,8 +8175,33 @@ export function getHtmlTemplate(
       const fallbackLoginWorkerUrl = workersSubdomain
         ? 'https://' + envName + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
         : 'https://' + envName + '-ar-login-ui.workers.dev';
-      return stripTrailingSlash(
-        config?.urls?.loginUi?.custom || config?.urls?.loginUi?.auto || fallbackLoginWorkerUrl
+      return firstConfiguredUrl(
+        config?.urls?.loginUi?.custom,
+        config?.loginUiDomain,
+        config?.urls?.loginUi?.auto,
+        fallbackLoginWorkerUrl
+      );
+    }
+
+    function isWorkersDevUrl(url) {
+      try {
+        const hostname = new URL(url).hostname;
+        return hostname === 'workers.dev' || hostname.endsWith('.workers.dev');
+      } catch {
+        return false;
+      }
+    }
+
+    function resolveEnvDetailAdminBase(env, config) {
+      const envName = env.env;
+      const fallbackAdminWorkerUrl = workersSubdomain
+        ? 'https://' + envName + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : 'https://' + envName + '-ar-admin-ui.workers.dev';
+      return firstConfiguredUrl(
+        config?.urls?.adminUi?.custom,
+        config?.adminUiDomain,
+        config?.urls?.adminUi?.auto,
+        fallbackAdminWorkerUrl
       );
     }
 
@@ -7154,11 +8213,10 @@ export function getHtmlTemplate(
       const adminUiDeployed = hasUiWorker(env, adminProjectName);
       const multiTenantConfigured = isMultiTenantConfigured(config);
       const issuerUrl = resolveEnvDetailIssuerUrl(env, config);
+      const apiHealthUrl = issuerUrl + '/api/health';
       const discoveryUrl = issuerUrl + '/.well-known/openid-configuration';
       const loginSharedBaseUrl = resolveEnvDetailSharedLoginBase(env, config);
-      const fallbackAdminWorkerUrl = workersSubdomain
-        ? 'https://' + envName + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
-        : 'https://' + envName + '-ar-admin-ui.workers.dev';
+      const adminBaseUrl = resolveEnvDetailAdminBase(env, config);
       const loginEntryUrl = loginUiDeployed
         ? (
             multiTenantConfigured || config?.urls?.loginUi?.sameAsApi === true
@@ -7166,18 +8224,24 @@ export function getHtmlTemplate(
               : loginSharedBaseUrl
           ) + '/login'
         : null;
+      const tenantDiscoverBaseUrl =
+        multiTenantConfigured && config?.tenant?.baseDomain
+          ? (
+              config?.urls?.loginUi?.sameAsApi !== true &&
+              loginSharedBaseUrl &&
+              !isWorkersDevUrl(loginSharedBaseUrl)
+                ? loginSharedBaseUrl
+                : 'https://' + String(config.tenant.baseDomain).trim()
+            )
+          : loginSharedBaseUrl;
       const tenantDiscoverUrl = multiTenantConfigured && loginUiDeployed
-        ? loginSharedBaseUrl + '/discover'
+        ? tenantDiscoverBaseUrl + '/discover'
         : null;
       const adminEntryUrl = adminUiDeployed
         ? (
             config?.urls?.adminUi?.sameAsApi === true
               ? issuerUrl
-	              : stripTrailingSlash(
-	                  config?.urls?.adminUi?.custom ||
-	                    config?.urls?.adminUi?.auto ||
-	                    fallbackAdminWorkerUrl
-	                )
+              : adminBaseUrl
           ) + '/admin/info'
         : null;
       const notDeployed = t('web.envDetail.notDeployed') || 'Not Deployed';
@@ -7186,8 +8250,14 @@ export function getHtmlTemplate(
         {
           label: 'Issuer',
           value: issuerUrl,
-          href: issuerUrl,
-          description: 'Canonical OIDC issuer URL',
+          href: null,
+          description: 'Canonical OIDC issuer value',
+        },
+        {
+          label: 'API Health',
+          value: apiHealthUrl,
+          href: apiHealthUrl,
+          description: 'API router health check',
         },
         {
           label: 'OIDC Discovery',
@@ -7282,6 +8352,269 @@ export function getHtmlTemplate(
       }
 
       renderEnvEmailStatus(null);
+    }
+
+    function renderTenantD1PoolStatus(response) {
+      const summaryEl = document.getElementById('env-tenant-d1-summary');
+      const statsEl = document.getElementById('env-tenant-d1-stats');
+      const expandEl = document.getElementById('env-tenant-d1-expand');
+      const addInput = document.getElementById('env-tenant-d1-add-slots');
+
+      if (!response || !response.success) {
+        summaryEl.textContent = response?.error || 'Failed to load tenant storage status.';
+        statsEl.classList.add('hidden');
+        expandEl.classList.add('hidden');
+        return;
+      }
+
+      const pool = response.tenantD1Pool || {};
+      if (!pool.enabled) {
+        summaryEl.textContent =
+          'Shared D1 mode: tenant additions use the existing deployment-wide core/PII D1 databases. No pool expansion is required.';
+        statsEl.classList.add('hidden');
+        expandEl.classList.add('hidden');
+        return;
+      }
+
+      expandEl.classList.remove('hidden');
+      const configuredSlots = Number(pool.configuredSlots || pool.capacity || 0);
+      const maxAdd = Math.max(0, 500 - configuredSlots);
+      addInput.max = String(maxAdd || 1);
+      if (Number(addInput.value || '1') > maxAdd && maxAdd > 0) {
+        addInput.value = String(maxAdd);
+      }
+
+      if (!pool.tableReady) {
+        summaryEl.textContent =
+          'Tenant D1 pool is configured, but slot inventory is not available yet. Run deployment to create slots and publish inventory.';
+        statsEl.classList.add('hidden');
+        document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
+        return;
+      }
+
+      const counts = pool.counts || {};
+      document.getElementById('env-tenant-d1-capacity').textContent = String(pool.capacity ?? 0);
+      document.getElementById('env-tenant-d1-available').textContent = String(pool.available ?? 0);
+      document.getElementById('env-tenant-d1-assigned').textContent = String(counts.assigned || 0);
+      document.getElementById('env-tenant-d1-reset-required').textContent = String(
+        counts.reset_required || 0
+      );
+      summaryEl.textContent =
+        'Tenant D1 pool mode: Admin UI can add tenants while available slots remain. Expand only when capacity is low or exhausted.';
+      statsEl.classList.remove('hidden');
+      document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
+    }
+
+    async function loadTenantD1PoolStatus(envName) {
+      const summaryEl = document.getElementById('env-tenant-d1-summary');
+      summaryEl.textContent = 'Loading tenant storage status...';
+      try {
+        const response = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/status');
+        renderTenantD1PoolStatus(response);
+      } catch (error) {
+        renderTenantD1PoolStatus({ success: false, error: error.message });
+      }
+    }
+
+    async function expandTenantD1PoolForEnv() {
+      if (!selectedEnvForDetail) {
+        alert('No environment selected');
+        return;
+      }
+
+      const envName = selectedEnvForDetail.env;
+      const addSlots = Number.parseInt(
+        document.getElementById('env-tenant-d1-add-slots').value || '0',
+        10
+      );
+      if (!Number.isInteger(addSlots) || addSlots < 1) {
+        alert('Enter a positive slot count.');
+        return;
+      }
+
+      const confirmed = confirm(
+        'This will update the environment config, create additional tenant D1 databases, refresh Worker bindings, and redeploy workers. Continue?'
+      );
+      if (!confirmed) return;
+
+      const btn = document.getElementById('btn-expand-tenant-d1-pool');
+      const progressDiv = document.getElementById('env-tenant-d1-progress');
+      const logDiv = document.getElementById('env-tenant-d1-log');
+      btn.disabled = true;
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (message) => {
+        const line = document.createElement('div');
+        line.textContent = message;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      let pollInterval = null;
+      try {
+        addLog('Updating Tenant D1 pool config...');
+        const expansion = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/expand', {
+          method: 'POST',
+          body: { addSlots },
+        });
+        if (!expansion.success) {
+          throw new Error(expansion.error || 'Failed to update Tenant D1 pool config');
+        }
+        addLog('Configured slots: ' + expansion.currentSlots + ' -> ' + expansion.nextSlots);
+        addLog('Starting deployment...');
+
+        let lastProgressLength = 0;
+        pollInterval = setInterval(async () => {
+          try {
+            const statusResult = await api('/deploy/status');
+            if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
+              const newMessages = statusResult.progress.slice(lastProgressLength);
+              newMessages.forEach(addLog);
+              lastProgressLength = statusResult.progress.length;
+            }
+          } catch (error) {
+            // Ignore transient polling errors while deploy is running.
+          }
+        }, 1000);
+
+        const deployResult = await api('/deploy', {
+          method: 'POST',
+          body: {
+            env: envName,
+            dryRun: false,
+          },
+        });
+
+        if (!deployResult.success) {
+          throw new Error(deployResult.error || 'Deployment failed');
+        }
+
+        addLog('✅ Tenant D1 pool expansion completed.');
+        await loadTenantD1PoolStatus(envName);
+        await loadWorkerVersionComparison(envName);
+      } catch (error) {
+        addLog('❌ ' + error.message);
+      } finally {
+        if (pollInterval !== null) {
+          clearInterval(pollInterval);
+        }
+        btn.disabled = false;
+      }
+    }
+
+    function renderR2ProvisionStatus(response) {
+      const summaryEl = document.getElementById('env-r2-provision-summary');
+      const provisionBtn = document.getElementById('btn-provision-r2-buckets');
+
+      if (!response || !response.success) {
+        summaryEl.textContent = response?.error || 'Failed to load R2 bucket status.';
+        provisionBtn.disabled = false;
+        return;
+      }
+
+      if (response.enabled) {
+        summaryEl.textContent =
+          'R2 buckets are configured: ' + response.configured + ' / ' + response.required + '.';
+        provisionBtn.disabled = true;
+        return;
+      }
+
+      summaryEl.textContent =
+        'R2 buckets need provisioning: ' +
+        response.configured +
+        ' / ' +
+        response.required +
+        ' configured.';
+      provisionBtn.disabled = false;
+    }
+
+    async function loadR2ProvisionStatus(envName) {
+      const summaryEl = document.getElementById('env-r2-provision-summary');
+      summaryEl.textContent = 'Loading R2 bucket status...';
+      try {
+        const response = await api('/r2/' + encodeURIComponent(envName) + '/status');
+        renderR2ProvisionStatus(response);
+      } catch (error) {
+        renderR2ProvisionStatus({ success: false, error: error.message });
+      }
+    }
+
+    async function provisionR2BucketsForEnv() {
+      if (!selectedEnvForDetail) {
+        alert('No environment selected');
+        return;
+      }
+
+      const envName = selectedEnvForDetail.env;
+      const confirmed = confirm(
+        'This will create missing R2 buckets, refresh Worker bindings, and redeploy workers. Continue?'
+      );
+      if (!confirmed) return;
+
+      const btn = document.getElementById('btn-provision-r2-buckets');
+      const progressDiv = document.getElementById('env-r2-provision-progress');
+      const logDiv = document.getElementById('env-r2-provision-log');
+      btn.disabled = true;
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (message) => {
+        const line = document.createElement('div');
+        line.textContent = message;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      let pollInterval = null;
+      try {
+        addLog('Provisioning R2 buckets...');
+        const provisionResult = await api('/r2/' + encodeURIComponent(envName) + '/provision', {
+          method: 'POST',
+        });
+        if (!provisionResult.success) {
+          throw new Error(provisionResult.error || 'Failed to provision R2 buckets');
+        }
+        addLog('Configured buckets: ' + provisionResult.buckets.length);
+        addLog('Starting deployment...');
+
+        let lastProgressLength = 0;
+        pollInterval = setInterval(async () => {
+          try {
+            const statusResult = await api('/deploy/status');
+            if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
+              const newMessages = statusResult.progress.slice(lastProgressLength);
+              newMessages.forEach(addLog);
+              lastProgressLength = statusResult.progress.length;
+            }
+          } catch (error) {
+            // Ignore transient polling errors while deploy is running.
+          }
+        }, 1000);
+
+        const deployResult = await api('/deploy', {
+          method: 'POST',
+          body: {
+            env: envName,
+            dryRun: false,
+          },
+        });
+
+        if (!deployResult.success) {
+          throw new Error(deployResult.error || 'Deployment failed');
+        }
+
+        addLog('✅ R2 bucket provisioning completed.');
+        await loadR2ProvisionStatus(envName);
+        await loadWorkerVersionComparison(envName);
+      } catch (error) {
+        addLog('❌ ' + error.message);
+        btn.disabled = false;
+      } finally {
+        if (pollInterval !== null) {
+          clearInterval(pollInterval);
+        }
+      }
     }
 
     async function enableCloudflareEmailForEnv() {
@@ -7731,6 +9064,18 @@ export function getHtmlTemplate(
     document.getElementById('btn-update-admin-ui')?.addEventListener('click', () => updateUIComponent('ar-admin-ui'));
     document.getElementById('btn-update-login-ui')?.addEventListener('click', () => updateUIComponent('ar-login-ui'));
     document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
+    document.getElementById('btn-refresh-tenant-d1-pool')?.addEventListener('click', () => {
+      if (selectedEnvForDetail) {
+        loadTenantD1PoolStatus(selectedEnvForDetail.env);
+      }
+    });
+    document.getElementById('btn-expand-tenant-d1-pool')?.addEventListener('click', expandTenantD1PoolForEnv);
+    document.getElementById('btn-refresh-r2-buckets')?.addEventListener('click', () => {
+      if (selectedEnvForDetail) {
+        loadR2ProvisionStatus(selectedEnvForDetail.env);
+      }
+    });
+    document.getElementById('btn-provision-r2-buckets')?.addEventListener('click', provisionR2BucketsForEnv);
 
     // ===========================================
     // Admin Setup Functions

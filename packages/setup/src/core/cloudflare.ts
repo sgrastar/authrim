@@ -8,8 +8,9 @@
 import { execa, type ExecaError } from 'execa';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join as pathJoin } from 'node:path';
+import { basename, dirname, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
+import { readdirSync, statSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
@@ -34,6 +35,14 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PACKAGE_MIGRATIONS_DIR = pathJoin(__dirname, '..', '..', 'migrations');
+const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
+const D1_MIGRATION_MAX_ATTEMPTS = 4;
+const QUEUE_PROVISIONING_DEFINITIONS = [
+  { binding: 'AUDIT_QUEUE', nameSuffix: 'audit-queue' },
+  { binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE', nameSuffix: 'logging-delivery-critical-queue' },
+  { binding: 'LOGGING_DELIVERY_QUEUE', nameSuffix: 'logging-delivery-queue' },
+  { binding: 'LOGGING_DELIVERY_BULK_QUEUE', nameSuffix: 'logging-delivery-bulk-queue' },
+] as const;
 
 // =============================================================================
 // Types
@@ -67,6 +76,15 @@ export interface QueueInfo {
 export interface R2BucketInfo {
   binding: string;
   name: string;
+}
+
+export type R2BucketProvisioningState = 'configured' | 'recorded_but_missing' | 'missing';
+
+export interface R2BucketProvisioningStatus extends R2BucketInfo {
+  recorded: boolean;
+  exists: boolean;
+  configured: boolean;
+  state: R2BucketProvisioningState;
 }
 
 export interface ProvisionedResources {
@@ -114,8 +132,82 @@ export interface MigrationProfileConfig {
   };
 }
 
+export const R2_BUCKETS = [
+  { binding: 'AVATARS', suffix: 'authrim-avatars' },
+  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
+  { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts' },
+  { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts' },
+  { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details' },
+] as const;
+
+export type R2BucketBinding = (typeof R2_BUCKETS)[number]['binding'];
+
+export function getR2BucketName(env: string, binding: R2BucketBinding): string {
+  const bucket = R2_BUCKETS.find((candidate) => candidate.binding === binding);
+  if (!bucket) {
+    throw new Error(`Unknown R2 bucket binding: ${binding}`);
+  }
+  return `${env}-${bucket.suffix}`;
+}
+
+export function getRequiredR2Buckets(env: string): R2BucketInfo[] {
+  return R2_BUCKETS.map((bucket) => ({
+    binding: bucket.binding,
+    name: `${env}-${bucket.suffix}`,
+  }));
+}
+
+export function buildR2BucketProvisioningStatus(
+  env: string,
+  recordedBuckets: Record<string, { name: string }> | null | undefined,
+  cloudflareBucketNames: Iterable<string>
+): {
+  env: string;
+  enabled: boolean;
+  required: number;
+  configured: number;
+  missing: R2BucketProvisioningStatus[];
+  buckets: R2BucketProvisioningStatus[];
+} {
+  const existingNames = new Set(cloudflareBucketNames);
+  const buckets = getRequiredR2Buckets(env).map((bucket) => {
+    const recordedName = recordedBuckets?.[bucket.binding]?.name;
+    const name = recordedName ?? bucket.name;
+    const recorded = Boolean(recordedName);
+    const exists = existingNames.has(name);
+    const configured = recorded && exists;
+    const state: R2BucketProvisioningState = recorded
+      ? exists
+        ? 'configured'
+        : 'recorded_but_missing'
+      : 'missing';
+
+    return {
+      ...bucket,
+      name,
+      recorded,
+      exists,
+      configured,
+      state,
+    };
+  });
+
+  return {
+    env,
+    enabled: buckets.every((bucket) => bucket.configured),
+    required: buckets.length,
+    configured: buckets.filter((bucket) => bucket.configured).length,
+    missing: buckets.filter((bucket) => !bucket.configured),
+    buckets,
+  };
+}
+
 export function shouldMirrorPiiMigrationsToCore(config?: MigrationProfileConfig | null): boolean {
   return config?.profiles?.defaults?.storage === 'builtin:storage:single-db';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // =============================================================================
@@ -1535,6 +1627,29 @@ export async function createD1Database(
   return { id: idMatch[1], name };
 }
 
+export async function putKVKeyByNamespaceId(
+  namespaceId: string,
+  key: string,
+  value: string,
+  options: { expirationTtl?: number } = {}
+): Promise<void> {
+  const args = ['kv', 'key', 'put', key, value, '--namespace-id', namespaceId, '--remote'];
+  if (options.expirationTtl !== undefined) {
+    args.push('--ttl', String(options.expirationTtl));
+  }
+  await wrangler(args, { timeout: 60000 });
+}
+
+export async function getKVKeyByNamespaceId(namespaceId: string, key: string): Promise<string> {
+  const { stdout } = await wrangler(
+    ['kv', 'key', 'get', key, '--namespace-id', namespaceId, '--remote'],
+    {
+      timeout: 60000,
+    }
+  );
+  return stdout;
+}
+
 /**
  * Delete a D1 database
  */
@@ -1594,6 +1709,36 @@ export async function executeD1Migration(
   sqlFilePath: string,
   onProgress?: (message: string) => void
 ): Promise<{ success: boolean; error?: string }> {
+  const isAlreadyAppliedError = (message: string): boolean =>
+    message.includes('already exists') ||
+    message.includes('duplicate column name') ||
+    message.includes('UNIQUE constraint');
+
+  const isTransientD1MigrationError = (message: string): boolean => {
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes('file could not be uploaded') ||
+      normalized.includes('internalerror') ||
+      normalized.includes('please retry') ||
+      normalized.includes('we encountered an internal error') ||
+      normalized.includes('internal server error') ||
+      normalized.includes('bad gateway') ||
+      normalized.includes('service unavailable') ||
+      normalized.includes('gateway timeout') ||
+      normalized.includes('fetch failed') ||
+      normalized.includes('econnreset') ||
+      normalized.includes('etimedout') ||
+      normalized.includes('timed out')
+    );
+  };
+
+  const retryDelayMs = (attempt: number): number => {
+    if (process.env.NODE_ENV === 'test') {
+      return 0;
+    }
+    return Math.min(2_000 * 2 ** (attempt - 1), 15_000);
+  };
+
   try {
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
     const { readFileSync } = await import('node:fs');
@@ -1604,24 +1749,91 @@ export async function executeD1Migration(
     );
     await writeFile(tempSqlPath, renderedSql, 'utf-8');
     try {
-      await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes']);
+      for (let attempt = 1; attempt <= D1_MIGRATION_MAX_ATTEMPTS; attempt++) {
+        try {
+          await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes'], {
+            timeout: D1_MIGRATION_EXECUTE_TIMEOUT_MS,
+          });
+          return { success: true };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (isAlreadyAppliedError(message)) {
+            onProgress?.('  ⚠️ Migration already applied (skipped)');
+            return { success: true };
+          }
+
+          const canRetry =
+            attempt < D1_MIGRATION_MAX_ATTEMPTS && isTransientD1MigrationError(message);
+          if (!canRetry) {
+            return { success: false, error: message };
+          }
+
+          const delayMs = retryDelayMs(attempt);
+          onProgress?.(
+            `  ⚠️ Transient D1 migration failure for ${basename(sqlFilePath)} ` +
+              `(attempt ${attempt}/${D1_MIGRATION_MAX_ATTEMPTS}); retrying in ${Math.round(delayMs / 1000)}s`
+          );
+          if (delayMs > 0) {
+            await sleep(delayMs);
+          }
+        }
+      }
     } finally {
       await unlink(tempSqlPath).catch(() => {});
     }
-    return { success: true };
+    return { success: false, error: 'D1 migration retry loop exited unexpectedly' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Ignore "already exists" errors - migration may have been partially applied
-    if (
-      message.includes('already exists') ||
-      message.includes('duplicate column name') ||
-      message.includes('UNIQUE constraint')
-    ) {
+    if (isAlreadyAppliedError(message)) {
       onProgress?.('  ⚠️ Migration already applied (skipped)');
       return { success: true };
     }
     return { success: false, error: message };
   }
+}
+
+export interface D1ExecuteCommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+export async function executeD1Command(
+  dbName: string,
+  sql: string,
+  options: { json?: boolean; timeout?: number } = {}
+): Promise<D1ExecuteCommandResult> {
+  return wrangler(
+    [
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+      ...(options.json ? ['--json'] : []),
+    ],
+    { timeout: options.timeout ?? D1_MIGRATION_EXECUTE_TIMEOUT_MS }
+  );
+}
+
+export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
+  stdout: string
+): T[] {
+  const payload = JSON.parse(stdout) as Array<{ results?: T[] }> | { results?: T[] };
+  if (Array.isArray(payload)) {
+    return payload.flatMap((entry) => entry.results ?? []);
+  }
+  return payload.results ?? [];
+}
+
+export async function queryD1Rows<T extends Record<string, unknown>>(
+  dbName: string,
+  sql: string
+): Promise<T[]> {
+  const { stdout } = await executeD1Command(dbName, sql, { json: true });
+  return parseD1RowsFromWranglerJson<T>(stdout);
 }
 
 /** SQL to create the migration tracking table (idempotent) */
@@ -1683,6 +1895,35 @@ async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
   }
 }
 
+function extractMigrationVersion(filename: string): number {
+  const match = filename.match(/^(\d+)_/u);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+export async function validateD1MigrationVersion(
+  dbName: string,
+  expectedVersion: number
+): Promise<{ success: boolean; latestVersion: number; error?: string }> {
+  try {
+    const applied = await getAppliedMigrations(dbName);
+    const latestVersion = Math.max(0, ...Array.from(applied).map(extractMigrationVersion));
+    if (latestVersion < expectedVersion) {
+      return {
+        success: false,
+        latestVersion,
+        error: `D1 database ${dbName} migration version ${latestVersion} is below expected ${expectedVersion}`,
+      };
+    }
+    return { success: true, latestVersion };
+  } catch (error) {
+    return {
+      success: false,
+      latestVersion: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /**
  * Record a migration filename as applied.
  */
@@ -1698,6 +1939,57 @@ WHERE NOT EXISTS (
 }
 
 const FRESH_SCHEMA_MIGRATION_FILE = '000_fresh_schema.sql';
+const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
+
+interface ListD1MigrationOptions {
+  excludeTopLevelDirectories?: ReadonlySet<string>;
+}
+
+interface RunD1MigrationOptions extends ListD1MigrationOptions {
+  logSummaryLimit?: number;
+}
+
+export function listD1MigrationSqlFiles(
+  migrationsDir: string,
+  options: ListD1MigrationOptions = {}
+): string[] {
+  const files: string[] = [];
+
+  function walk(relativeDir: string): void {
+    const absoluteDir = relativeDir ? pathJoin(migrationsDir, relativeDir) : migrationsDir;
+    for (const entry of readdirSync(absoluteDir).sort()) {
+      if (entry.startsWith('.')) {
+        continue;
+      }
+      const relativePath = relativeDir ? `${relativeDir}/${entry}` : entry;
+      const absolutePath = pathJoin(migrationsDir, relativePath);
+      const stat = statSync(absolutePath);
+      if (stat.isDirectory()) {
+        if (!relativeDir && options.excludeTopLevelDirectories?.has(entry)) {
+          continue;
+        }
+        walk(relativePath);
+        continue;
+      }
+      if (stat.isFile() && entry.endsWith('.sql')) {
+        files.push(relativePath);
+      }
+    }
+  }
+
+  walk('');
+  return files.sort();
+}
+
+function formatMigrationFileSummary(files: string[], limit = 8): string {
+  if (files.length === 0) {
+    return '';
+  }
+
+  const visible = files.slice(0, limit).join(', ');
+  const remaining = files.length - limit;
+  return remaining > 0 ? `${visible}, +${remaining} more` : visible;
+}
 
 async function recordMigration(dbName: string, filename: string): Promise<void> {
   const sql = buildRecordMigrationSql(filename);
@@ -1705,6 +1997,21 @@ async function recordMigration(dbName: string, filename: string): Promise<void> 
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
   } catch {
     // Non-fatal: tracking failure should not abort the migration run
+  }
+}
+
+async function recordMigrations(dbName: string, filenames: string[]): Promise<void> {
+  if (filenames.length === 0) {
+    return;
+  }
+
+  const sql = filenames.map((filename) => buildRecordMigrationSql(filename)).join('\n');
+  try {
+    await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
+  } catch {
+    for (const filename of filenames) {
+      await recordMigration(dbName, filename);
+    }
   }
 }
 
@@ -1717,9 +2024,10 @@ async function recordMigration(dbName: string, filename: string): Promise<void> 
 export async function runD1Migrations(
   dbName: string,
   migrationsDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: RunD1MigrationOptions = {}
 ): Promise<{ success: boolean; appliedCount: number; skippedCount: number; error?: string }> {
-  const { existsSync, readdirSync } = await import('node:fs');
+  const { existsSync } = await import('node:fs');
   const { join } = await import('node:path');
 
   if (!existsSync(migrationsDir)) {
@@ -1731,10 +2039,7 @@ export async function runD1Migrations(
     };
   }
 
-  // Get all SQL files sorted by name (001_, 002_, etc.)
-  const sqlFiles = readdirSync(migrationsDir)
-    .filter((f) => f.endsWith('.sql') && !f.startsWith('.'))
-    .sort();
+  const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
 
   if (sqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
@@ -1752,17 +2057,19 @@ export async function runD1Migrations(
   let skippedCount = 0;
   const hasFreshSchema = sqlFiles.includes(FRESH_SCHEMA_MIGRATION_FILE);
   let freshSchemaApplied = hasFreshSchema && applied.has(FRESH_SCHEMA_MIGRATION_FILE);
+  const alreadyAppliedFiles: string[] = [];
+  const freshCoveredFiles: string[] = [];
+  const summaryLimit = options.logSummaryLimit ?? 8;
 
   for (const sqlFile of sqlFiles) {
     if (applied.has(sqlFile)) {
-      onProgress?.(`  ⏭  Skipping (already applied): ${sqlFile}`);
+      alreadyAppliedFiles.push(sqlFile);
       skippedCount++;
       continue;
     }
 
     if (hasFreshSchema && freshSchemaApplied && sqlFile !== FRESH_SCHEMA_MIGRATION_FILE) {
-      onProgress?.(`  ⏭  Skipping (covered by fresh schema): ${sqlFile}`);
-      await recordMigration(dbName, sqlFile);
+      freshCoveredFiles.push(sqlFile);
       skippedCount++;
       continue;
     }
@@ -1782,6 +2089,25 @@ export async function runD1Migrations(
     if (sqlFile === FRESH_SCHEMA_MIGRATION_FILE) {
       freshSchemaApplied = true;
     }
+  }
+
+  if (freshCoveredFiles.length > 0) {
+    await recordMigrations(dbName, freshCoveredFiles);
+    onProgress?.(
+      `  ⏭  Skipping ${freshCoveredFiles.length} migration(s) covered by fresh schema: ${formatMigrationFileSummary(
+        freshCoveredFiles,
+        summaryLimit
+      )}`
+    );
+  }
+
+  if (alreadyAppliedFiles.length > 0) {
+    onProgress?.(
+      `  ⏭  Skipping ${alreadyAppliedFiles.length} already-applied migration(s): ${formatMigrationFileSummary(
+        alreadyAppliedFiles,
+        summaryLimit
+      )}`
+    );
   }
 
   return { success: true, appliedCount, skippedCount };
@@ -1817,6 +2143,7 @@ UPDATE tenants
 SET id = ${tenantIdSql},
     tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
+    tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     is_active = 1,
     updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = 'default'
@@ -1825,10 +2152,10 @@ WHERE id = 'default'
   AND (SELECT COUNT(*) FROM tenants) = 1;
 
 INSERT INTO tenants (
-  id, tenant_code, name, description, is_active, is_default,
+  id, tenant_code, tenant_key, name, description, is_active, is_default,
   default_tenant_guard, created_at, updated_at
 )
-SELECT ${tenantIdSql}, ${tenantCodeSql}, ${displayNameSql}, NULL, 1,
+SELECT ${tenantIdSql}, ${tenantCodeSql}, 't_' || lower(hex(randomblob(18))), ${displayNameSql}, NULL, 1,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
        ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
@@ -1837,6 +2164,7 @@ WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
 UPDATE tenants
 SET tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
+    tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     is_active = 1,
     updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = ${tenantIdSql};
@@ -2269,6 +2597,36 @@ export async function seedRuntimeProfiles(
 }
 
 /**
+ * Locate the migrations root used by setup commands.
+ *
+ * Priority: local project > authrim subdir > cwd > bundled package migrations.
+ */
+export async function findMigrationsRoot(
+  rootDir: string,
+  onProgress?: (message: string) => void
+): Promise<{ path: string | null; searchPaths: string[] }> {
+  const { existsSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const searchPaths = [
+    resolve(rootDir, 'migrations'),
+    resolve(rootDir, 'authrim', 'migrations'),
+    resolve(process.cwd(), 'migrations'),
+    resolve(process.cwd(), 'authrim', 'migrations'),
+    PACKAGE_MIGRATIONS_DIR,
+  ];
+
+  for (const searchPath of searchPaths) {
+    onProgress?.(`  Checking for migrations at: ${searchPath}`);
+    if (existsSync(searchPath)) {
+      onProgress?.(`  ✓ Found migrations directory: ${searchPath}`);
+      return { path: searchPath, searchPaths };
+    }
+  }
+
+  return { path: null, searchPaths };
+}
+
+/**
  * Run migrations for an Authrim environment
  *
  * Searches for migrations directory in multiple locations:
@@ -2292,36 +2650,18 @@ export async function runMigrationsForEnvironment(
   admin: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
 }> {
   const { existsSync } = await import('node:fs');
-  const { join, resolve } = await import('node:path');
+  const { join } = await import('node:path');
 
   // Database names for this environment
   const coreDbName = getD1DatabaseName(env, 'core-db');
   const piiDbName = getD1DatabaseName(env, 'pii-db');
   const adminDbName = getD1DatabaseName(env, 'admin-db');
 
-  // Search for migrations directory in multiple locations
-  // Priority: local project > authrim subdir > cwd > package bundled
-  const searchPaths = [
-    resolve(rootDir, 'migrations'),
-    resolve(rootDir, 'authrim', 'migrations'),
-    resolve(process.cwd(), 'migrations'),
-    resolve(process.cwd(), 'authrim', 'migrations'),
-    // Bundled migrations in npm package (fallback for npx users)
-    PACKAGE_MIGRATIONS_DIR,
-  ];
-
-  let migrationsRoot: string | null = null;
-  for (const searchPath of searchPaths) {
-    onProgress?.(`  Checking for migrations at: ${searchPath}`);
-    if (existsSync(searchPath)) {
-      migrationsRoot = searchPath;
-      onProgress?.(`  ✓ Found migrations directory: ${searchPath}`);
-      break;
-    }
-  }
+  const migrationSearch = await findMigrationsRoot(rootDir, onProgress);
+  const migrationsRoot = migrationSearch.path;
 
   if (!migrationsRoot) {
-    const errorMsg = `Migrations directory not found. Searched:\n${searchPaths.map((p) => `    - ${p}`).join('\n')}`;
+    const errorMsg = `Migrations directory not found. Searched:\n${migrationSearch.searchPaths.map((p) => `    - ${p}`).join('\n')}`;
     onProgress?.(`  ❌ ${errorMsg}`);
     return {
       success: false,
@@ -2333,7 +2673,9 @@ export async function runMigrationsForEnvironment(
 
   // Run core database migrations
   onProgress?.(`📜 Running migrations for ${coreDbName}...`);
-  const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress);
+  const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress, {
+    excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+  });
   if (!coreResult.success) {
     onProgress?.(`  ❌ Core migration failed: ${coreResult.error}`);
   } else {
@@ -2661,10 +3003,117 @@ export async function createR2Bucket(name: string): Promise<{ name: string }> {
   try {
     await wrangler(['r2', 'bucket', 'create', name]);
     return { name };
-  } catch {
-    // Bucket might already exist
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isAlreadyExistsError(message)) {
+      throw error;
+    }
     return { name };
   }
+}
+
+function isAlreadyExistsError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('already exists') ||
+    normalized.includes('already in use') ||
+    normalized.includes('conflict') ||
+    normalized.includes('409')
+  );
+}
+
+export function parseR2BucketRows(stdout: string): Array<{ name: string }> {
+  try {
+    const parsed = JSON.parse(stdout) as
+      | Array<{ name?: unknown }>
+      | { buckets?: Array<{ name?: unknown }>; result?: Array<{ name?: unknown }> };
+    const rows = Array.isArray(parsed) ? parsed : (parsed.buckets ?? parsed.result ?? []);
+    return rows
+      .map((row) => (typeof row.name === 'string' ? row.name.trim() : ''))
+      .filter((name) => name.length > 0)
+      .map((name) => ({ name }));
+  } catch {
+    // Wrangler has emitted plain text in older versions. Keep a conservative fallback.
+  }
+
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const nameMatch = line.match(/^name:\s+(.+)$/i);
+      if (nameMatch?.[1]) {
+        return [{ name: nameMatch[1].trim() }];
+      }
+      if (/^[a-z0-9][a-z0-9-]*$/i.test(line)) {
+        return [{ name: line }];
+      }
+      return [];
+    });
+}
+
+async function listR2BucketNamesStrict(): Promise<Set<string>> {
+  return new Set((await listR2Buckets({ throwOnError: true })).map((bucket) => bucket.name));
+}
+
+async function waitForR2BucketVisible(name: string): Promise<void> {
+  const maxAttempts = process.env.NODE_ENV === 'test' ? 1 : 4;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const names = await listR2BucketNamesStrict();
+      if (names.has(name)) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < maxAttempts && process.env.NODE_ENV !== 'test') {
+      await sleep(Math.min(1_000 * 2 ** (attempt - 1), 5_000));
+    }
+  }
+
+  const suffix = lastError instanceof Error ? `: ${lastError.message}` : '';
+  throw new Error(`R2 bucket ${name} was not visible after creation${suffix}`);
+}
+
+export async function provisionR2Buckets(
+  env: string,
+  options: {
+    existing?: Record<string, { name: string }> | null;
+    onProgress?: (message: string) => void;
+  } = {}
+): Promise<R2BucketInfo[]> {
+  const onProgress = options.onProgress ?? (() => undefined);
+  const existing = options.existing ?? {};
+  const provisioned: R2BucketInfo[] = [];
+  let bucketNames = await listR2BucketNamesStrict();
+
+  for (const bucket of getRequiredR2Buckets(env)) {
+    const bucketName = existing[bucket.binding]?.name ?? bucket.name;
+    if (bucketNames.has(bucketName)) {
+      provisioned.push({
+        binding: bucket.binding,
+        name: bucketName,
+      });
+      onProgress(`  ✓ Existing: ${bucketName}`);
+      continue;
+    }
+
+    onProgress(`  ⏳ Creating: ${bucketName}...`);
+    const result = await createR2Bucket(bucketName);
+    await waitForR2BucketVisible(result.name);
+    bucketNames = await listR2BucketNamesStrict();
+    provisioned.push({
+      binding: bucket.binding,
+      name: result.name,
+    });
+    onProgress(`  ✅ ${bucketName} created`);
+  }
+
+  return provisioned;
 }
 
 // =============================================================================
@@ -2848,19 +3297,21 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
   // Provision Queues (optional)
   if (options.createQueues) {
     onProgress('📨 Queues');
-    const queueName = getQueueName(env, 'audit-queue');
-    onProgress(`  ⏳ Creating: ${queueName}...`);
+    for (const definition of QUEUE_PROVISIONING_DEFINITIONS) {
+      const queueName = getQueueName(env, definition.nameSuffix);
+      onProgress(`  ⏳ Creating: ${queueName}...`);
 
-    try {
-      const result = await createQueue(queueName);
-      resources.queues.push({
-        binding: 'AUDIT_QUEUE',
-        name: result.name,
-        id: result.id,
-      });
-      onProgress(`  ✅ ${queueName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${queueName} - ${sanitizeError(error)}`);
+      try {
+        const result = await createQueue(queueName);
+        resources.queues.push({
+          binding: definition.binding,
+          name: result.name,
+          id: result.id,
+        });
+        onProgress(`  ✅ ${queueName} created`);
+      } catch (error) {
+        onProgress(`  ⚠️ Skipped: ${queueName} - ${sanitizeError(error)}`);
+      }
     }
     onProgress('');
   }
@@ -2868,74 +3319,10 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
   // Provision R2 buckets (optional)
   if (options.createR2) {
     onProgress('📁 R2 Buckets');
-    const avatarBucketName = `${env}-authrim-avatars`;
-    onProgress(`  ⏳ Creating: ${avatarBucketName}...`);
-
     try {
-      const result = await createR2Bucket(avatarBucketName);
-      resources.r2.push({
-        binding: 'AVATARS',
-        name: result.name,
-      });
-      onProgress(`  ✅ ${avatarBucketName} created`);
+      resources.r2.push(...(await provisionR2Buckets(env, { onProgress })));
     } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${avatarBucketName} - ${sanitizeError(error)}`);
-    }
-
-    const diagnosticBucketName = `${env}-diagnostic-logs`;
-    onProgress(`  ⏳ Creating: ${diagnosticBucketName}...`);
-
-    try {
-      const result = await createR2Bucket(diagnosticBucketName);
-      resources.r2.push({
-        binding: 'DIAGNOSTIC_LOGS',
-        name: result.name,
-      });
-      onProgress(`  ✅ ${diagnosticBucketName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${diagnosticBucketName} - ${sanitizeError(error)}`);
-    }
-
-    const importArtifactsBucketName = `${env}-import-artifacts`;
-    onProgress(`  ⏳ Creating: ${importArtifactsBucketName}...`);
-
-    try {
-      const result = await createR2Bucket(importArtifactsBucketName);
-      resources.r2.push({
-        binding: 'IMPORT_ARTIFACTS',
-        name: result.name,
-      });
-      onProgress(`  ✅ ${importArtifactsBucketName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${importArtifactsBucketName} - ${sanitizeError(error)}`);
-    }
-
-    const exportArtifactsBucketName = `${env}-export-artifacts`;
-    onProgress(`  ⏳ Creating: ${exportArtifactsBucketName}...`);
-
-    try {
-      const result = await createR2Bucket(exportArtifactsBucketName);
-      resources.r2.push({
-        binding: 'EXPORT_ARTIFACTS',
-        name: result.name,
-      });
-      onProgress(`  ✅ ${exportArtifactsBucketName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${exportArtifactsBucketName} - ${sanitizeError(error)}`);
-    }
-
-    const sensitiveDetailsBucketName = `${env}-sensitive-details`;
-    onProgress(`  ⏳ Creating: ${sensitiveDetailsBucketName}...`);
-
-    try {
-      const result = await createR2Bucket(sensitiveDetailsBucketName);
-      resources.r2.push({
-        binding: 'SENSITIVE_DETAILS',
-        name: result.name,
-      });
-      onProgress(`  ✅ ${sensitiveDetailsBucketName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${sensitiveDetailsBucketName} - ${sanitizeError(error)}`);
+      onProgress(`  ⚠️ R2 provisioning skipped: ${sanitizeError(error)}`);
     }
     onProgress('');
   }
@@ -2999,10 +3386,11 @@ export function toResourceIds(resources: ProvisionedResources): {
 const AUTHRIM_PATTERNS = {
   worker:
     /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
-  d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db$/,
+  d1: /^(?:([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db|authrim-([a-z][a-z0-9-]*)-(?:tdb-slot-[0-9]{4}-(?:core|pii)|[a-z0-9-]+-(?:core|pii)))$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
-  kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
-  queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
+  kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
+  queue:
+    /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
   r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
@@ -3026,7 +3414,18 @@ export interface DeleteOptions {
   deleteQueues?: boolean;
   deleteR2?: boolean;
   deletePages?: boolean;
+  knownD1Names?: string[];
   onProgress?: (message: string) => void;
+}
+
+export function filterKnownD1NamesForEnvironment(env: string, names: string[]): string[] {
+  return Array.from(
+    new Set(
+      names.filter(
+        (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
+      )
+    )
+  );
 }
 
 /**
@@ -3055,22 +3454,16 @@ export async function listWorkers(): Promise<Array<{ name: string; id?: string }
 /**
  * List R2 buckets
  */
-export async function listR2Buckets(): Promise<Array<{ name: string }>> {
+export async function listR2Buckets(
+  options: { throwOnError?: boolean } = {}
+): Promise<Array<{ name: string }>> {
   try {
     const { stdout } = await wrangler(['r2', 'bucket', 'list']);
-    // Parse the output - format is "name: bucket-name" per line
-    const lines = stdout.split('\n').filter((line) => line.trim());
-    const buckets: Array<{ name: string }> = [];
-
-    for (const line of lines) {
-      // Parse "name: bucket-name" format
-      const match = line.match(/^name:\s+(.+)$/);
-      if (match && match[1]) {
-        buckets.push({ name: match[1].trim() });
-      }
+    return parseR2BucketRows(stdout);
+  } catch (error) {
+    if (options.throwOnError) {
+      throw error;
     }
-    return buckets;
-  } catch {
     return [];
   }
 }
@@ -3235,7 +3628,7 @@ export async function detectEnvironments(
     for (const db of databases) {
       const match = db.name.match(AUTHRIM_PATTERNS.d1);
       if (match) {
-        const env = match[1].toLowerCase();
+        const env = (match[1] ?? match[3]).toLowerCase();
         d1Envs.add(env);
         if (!environments.has(env)) {
           environments.set(env, {
@@ -3361,6 +3754,56 @@ export interface WorkerDeploymentInfo {
   versionId: string | null;
 }
 
+function parseLatestWorkerDeployment(stdout: string): {
+  createdAt: string | null;
+  author: string | null;
+  versionId: string | null;
+} {
+  const deploymentStarts = Array.from(
+    stdout.matchAll(/^Created:\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s*$/gm)
+  );
+
+  let latest: {
+    createdAt: string;
+    index: number;
+    nextIndex: number;
+  } | null = null;
+
+  for (let index = 0; index < deploymentStarts.length; index++) {
+    const match = deploymentStarts[index];
+    const createdAt = match[1];
+    if (!createdAt || match.index === undefined) {
+      continue;
+    }
+    const parsed = Date.parse(createdAt);
+    const latestParsed = latest ? Date.parse(latest.createdAt) : Number.NEGATIVE_INFINITY;
+    if (!latest || parsed > latestParsed) {
+      latest = {
+        createdAt,
+        index: match.index,
+        nextIndex: deploymentStarts[index + 1]?.index ?? stdout.length,
+      };
+    }
+  }
+
+  if (!latest) {
+    return {
+      createdAt: null,
+      author: null,
+      versionId: null,
+    };
+  }
+
+  const block = stdout.slice(latest.index, latest.nextIndex);
+  const authorMatch = block.match(/^Author:\s+(\S+)/m);
+  const versionMatch = block.match(/^Version\(s\):\s+\(\d+%\)\s+([a-f0-9-]+)/m);
+  return {
+    createdAt: latest.createdAt,
+    author: authorMatch?.[1] || null,
+    versionId: versionMatch?.[1] || null,
+  };
+}
+
 export async function getWorkerDeployments(name: string): Promise<WorkerDeploymentInfo> {
   try {
     const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name]);
@@ -3376,18 +3819,16 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
       };
     }
 
-    // Parse deployment info - get the first (most recent) deployment
-    // Format: Created: 2025-12-31T16:05:56.164Z
-    const createdMatch = stdout.match(/Created:\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/);
-    const authorMatch = stdout.match(/Author:\s+(\S+)/);
-    const versionMatch = stdout.match(/Version\(s\):\s+\(\d+%\)\s+([a-f0-9-]+)/);
+    // Wrangler does not guarantee newest-first output here; secret changes can appear before
+    // the upload deployment. Use the max top-level Created timestamp instead of the first one.
+    const deployment = parseLatestWorkerDeployment(stdout);
 
     return {
       name,
       exists: true,
-      lastDeployedAt: createdMatch?.[1] || null,
-      author: authorMatch?.[1] || null,
-      versionId: versionMatch?.[1] || null,
+      lastDeployedAt: deployment.createdAt,
+      author: deployment.author,
+      versionId: deployment.versionId,
     };
   } catch {
     return {
@@ -3412,13 +3853,9 @@ export async function deleteQueue(name: string): Promise<boolean> {
   }
 }
 
-const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = {
-  AVATARS: 'authrim-avatars',
-  DIAGNOSTIC_LOGS: 'diagnostic-logs',
-  IMPORT_ARTIFACTS: 'import-artifacts',
-  EXPORT_ARTIFACTS: 'export-artifacts',
-  SENSITIVE_DETAILS: 'sensitive-details',
-};
+const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries(
+  R2_BUCKETS.map((bucket) => [bucket.binding, bucket.suffix])
+);
 
 interface ObjectCatalogR2Row {
   bucket_binding?: unknown;
@@ -3481,9 +3918,7 @@ async function collectKnownR2ObjectsByBucket(
         objectsByBucket.set(bucketName, keys);
       }
     } catch (error) {
-      onProgress?.(
-        `  ⚠️ Could not read object catalog from ${dbName}: ${sanitizeError(error)}`
-      );
+      onProgress?.(`  ⚠️ Could not read object catalog from ${dbName}: ${sanitizeError(error)}`);
     }
   }
 
@@ -3502,15 +3937,33 @@ async function removeKnownR2Objects(
   }
 
   onProgress?.(`  🧹 Emptying known R2 objects: ${bucketName} (${objectKeys.length})...`);
+  const concurrency = 5;
   let removed = 0;
-  for (const objectKey of objectKeys) {
-    try {
-      await wrangler(['r2', 'object', 'delete', `${bucketName}/${objectKey}`, '--remote']);
-      removed += 1;
-    } catch (error) {
-      onProgress?.(`  ⚠️ R2 object cleanup skipped for ${bucketName}: ${sanitizeError(error)}`);
-    }
-  }
+  let completed = 0;
+  let nextIndex = 0;
+
+  const workerCount = Math.min(concurrency, objectKeys.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < objectKeys.length) {
+        const objectKey = objectKeys[nextIndex];
+        nextIndex += 1;
+        try {
+          await wrangler(['r2', 'object', 'delete', `${bucketName}/${objectKey}`, '--remote']);
+          removed += 1;
+        } catch (error) {
+          onProgress?.(`  ⚠️ R2 object cleanup skipped for ${bucketName}: ${sanitizeError(error)}`);
+        } finally {
+          completed += 1;
+          if (completed % 50 === 0 || completed === objectKeys.length) {
+            onProgress?.(
+              `  R2 object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+            );
+          }
+        }
+      }
+    })
+  );
   onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
 }
 
@@ -3553,6 +4006,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleteQueues = true,
     deleteR2 = true,
     deletePages = true,
+    knownD1Names = [],
     onProgress = console.log,
   } = options;
 
@@ -3569,15 +4023,34 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   const errors: string[] = [];
 
   // Get environment info first
-  const envs = await detectEnvironments();
-  const envInfo = envs.find((e) => e.env === env);
+  const envs = await detectEnvironments(onProgress);
+  let envInfo = envs.find((e) => e.env === env);
+  const safeKnownD1Names = filterKnownD1NamesForEnvironment(env, knownD1Names);
 
-  if (!envInfo) {
+  if (!envInfo && safeKnownD1Names.length === 0) {
     return {
       success: false,
       deleted,
       errors: [`Environment '${env}' not found`],
     };
+  }
+  if (!envInfo) {
+    envInfo = {
+      env,
+      workers: [],
+      d1: [],
+      kv: [],
+      queues: [],
+      r2: [],
+      pages: [],
+    };
+  }
+  const knownD1Set = new Set(envInfo.d1.map((db) => db.name));
+  for (const name of safeKnownD1Names) {
+    if (!knownD1Set.has(name)) {
+      envInfo.d1.push({ name, id: '' });
+      knownD1Set.add(name);
+    }
   }
 
   onProgress(`🗑️ Deleting environment: ${env}`);

@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   cancelStepUpAction,
@@ -15,6 +16,21 @@ import {
 } from '@authrim/ar-lib-core';
 
 export const stepUpRouter = new Hono<{ Bindings: Env }>();
+const STEP_UP_BODY_MAX_BYTES = 64 * 1024;
+
+stepUpRouter.use('*', (c, next) =>
+  bodyLimit({
+    maxSize: STEP_UP_BODY_MAX_BYTES,
+    onError: (ctx) =>
+      ctx.json(
+        {
+          error: 'payload_too_large',
+          error_description: 'Request body exceeds maximum allowed size',
+        },
+        413
+      ),
+  })(c, next)
+);
 
 type StepUpContext = Context<{ Bindings: Env }>;
 

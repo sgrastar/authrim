@@ -58,7 +58,12 @@ async function readR2ObjectTextWithLimit(object: R2ObjectBody, maxBytes: number)
     throw new Error(`Object exceeds maximum size: ${object.size} > ${maxBytes} bytes`);
   }
   if (!object.body) {
-    return object.text();
+    const text = await object.text();
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    if (byteLength > maxBytes) {
+      throw new Error(`Object exceeds maximum size: ${byteLength} > ${maxBytes} bytes`);
+    }
+    return text;
   }
 
   const reader = object.body.getReader();
@@ -520,7 +525,13 @@ function normalizeImportRecord(record: Record<string, string>): ImportedUserRowI
 }
 
 async function createUserImportRuntime(env: Env, tenantId: string): Promise<UserImportRuntime> {
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'management-user-import');
+  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'management-user-import',
+    {
+      tenantId,
+    }
+  );
   const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
   const piiAdapter = ensureDatabaseAdapter(
     customClaimSources.piiDb ?? customClaimSources.nonPiiDb,

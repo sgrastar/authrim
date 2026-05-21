@@ -9,7 +9,6 @@ import {
   AR_ERROR_CODES,
   validateAllowedOrigins,
   createAuditLogFromContext,
-  scheduleAuditLogFromContext,
   getLogger,
   hashClientSecret,
   publishEvent,
@@ -1034,7 +1033,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     });
 
-    scheduleAuditLogFromContext(c, 'client.created', 'client', client.client_id, {
+    await createAuditLogFromContext(c, 'client.created', 'client', client.client_id, {
       client_name: client.client_name,
       grant_types: client.grant_types,
     });
@@ -1936,7 +1935,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     });
 
-    scheduleAuditLogFromContext(c, 'client.updated', 'client', clientId, {
+    await createAuditLogFromContext(c, 'client.updated', 'client', clientId, {
       client_name: updatedClient?.client_name,
     });
     scheduleAdminAuditLog(c, 'client.updated', clientId, 'success', {
@@ -2045,7 +2044,7 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
       );
     });
 
-    scheduleAuditLogFromContext(c, 'client.deleted', 'client', clientId, {});
+    await createAuditLogFromContext(c, 'client.deleted', 'client', clientId, {});
     scheduleAdminAuditLog(c, 'client.deleted', clientId, 'success');
 
     return c.json({

@@ -22,8 +22,10 @@ import type { DiagnosticLoggingSettings } from '../types/settings/diagnostic-log
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from '../types/settings/diagnostic-logging';
 import { createLogger } from '../utils/logger';
 import { parseBasicAuth } from '../utils/basic-auth';
+import { readRequestTextWithLimit } from '../utils/body-limits';
 
 const log = createLogger().module('DiagnosticLoggingMiddleware');
+const DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES = 64 * 1024;
 
 /**
  * Diagnostic logging middleware configuration
@@ -174,16 +176,20 @@ async function resolveClientIdFromRequest(c: Context): Promise<string | undefine
 
   try {
     if (contentType.includes('application/x-www-form-urlencoded')) {
-      const bodyText = await c.req.raw.clone().text();
+      const bodyText = await readRequestTextWithLimit(
+        c.req.raw.clone(),
+        DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES
+      );
       const params = new URLSearchParams(bodyText);
       return params.get('client_id') ?? params.get('clientId') ?? undefined;
     }
 
     if (contentType.includes('application/json')) {
-      const body = await c.req.raw
-        .clone()
-        .json()
-        .catch(() => null);
+      const bodyText = await readRequestTextWithLimit(
+        c.req.raw.clone(),
+        DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES
+      );
+      const body = JSON.parse(bodyText) as unknown;
       if (body && typeof body === 'object') {
         const maybeClientId =
           (body as Record<string, unknown>).client_id ?? (body as Record<string, unknown>).clientId;

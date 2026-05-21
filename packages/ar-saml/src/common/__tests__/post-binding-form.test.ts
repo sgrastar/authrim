@@ -16,8 +16,12 @@ describe('buildSAMLPostBindingResponse', () => {
     expect(html).not.toContain('onload=');
     expect(html).toContain('<script nonce="');
     expect(csp).toContain("script-src 'nonce-");
+    expect(csp).toContain("style-src 'none'");
+    expect(csp).not.toContain("'unsafe-inline'");
     expect(csp).toContain("img-src 'none'");
     expect(csp).toContain("connect-src 'none'");
     expect(csp).toContain('form-action https://sp.example.com');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
   });
 });

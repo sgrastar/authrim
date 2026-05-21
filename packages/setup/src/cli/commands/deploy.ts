@@ -15,7 +15,6 @@ import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
 import { saveLockFile, loadLockFileAuto } from '../../core/lock.js';
 import {
   getEnvironmentPaths,
-  getLegacyPaths,
   findLegacyConfigPath,
   resolvePaths,
   listEnvironments,
@@ -26,9 +25,9 @@ import {
 } from '../../core/paths.js';
 import {
   deployAll,
-  deployWorker,
   uploadSecrets,
   deployAllUiWorkers,
+  deployUiWorkerBindingTargets,
   updateLockWithDeployments,
   buildApiPackages,
   DEFAULT_INTER_DEPLOY_DELAY_MS,
@@ -62,9 +61,20 @@ import {
   resolveDownstreamIntrospectionKeysDir,
 } from '../../core/downstream-introspection-deploy.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
-import { resolveIssuerUrl } from '../../core/url-config.js';
+import { resolveApiBaseUrlCandidates, resolveIssuerUrl } from '../../core/url-config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
-import { waitForRouterWorkerReady } from '../../core/worker-readiness.js';
+import {
+  buildWorkerHttpReadinessTargets,
+  waitForRouterWorkerReady,
+  waitForWorkerDeploymentsReady,
+  waitForWorkerHttpReady,
+} from '../../core/worker-readiness.js';
+import {
+  ensureInitialTenantD1Resources,
+  markTenantD1SlotsDeploymentState,
+  publishInitialTenantD1RuntimeSnapshot,
+} from '../../core/tenant-d1-bootstrap.js';
+import { validateSetupDomainInputs } from '../../web/domain-form-state.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
 import { saveMasterWranglerConfigs } from '../../core/wrangler-sync.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
@@ -113,6 +123,32 @@ async function loadConfig(configPath: string): Promise<AuthrimConfig | null> {
   }
 }
 
+function validateDeployDomainDepthConfig(config: AuthrimConfig): Array<{
+  path: string;
+  message: string;
+}> {
+  const multiTenant = config.tenant?.multiTenant === true;
+
+  return validateSetupDomainInputs({
+    apiDomain: multiTenant ? config.tenant?.baseDomain || '' : config.urls?.api?.custom || '',
+    loginUiDomain: config.urls?.loginUi?.custom,
+    adminUiDomain: config.urls?.adminUi?.custom,
+    tenantName: config.tenant?.name,
+  }).map((issue) => ({
+    path:
+      issue.field === 'apiDomain'
+        ? multiTenant
+          ? 'tenant.baseDomain'
+          : 'urls.api.custom'
+        : issue.field === 'loginUiDomain'
+          ? 'urls.loginUi.custom'
+          : 'urls.adminUi.custom',
+    message: issue.suggestion
+      ? `${issue.message} Suggested host: ${issue.suggestion}`
+      : issue.message,
+  }));
+}
+
 async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, string>> {
   const secrets: Record<string, string> = {};
 
@@ -122,6 +158,19 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
     { file: 'rp_token_encryption_key.txt', name: 'RP_TOKEN_ENCRYPTION_KEY' },
     { file: 'object_encryption_root_key.txt', name: 'OBJECT_ENCRYPTION_ROOT_KEY' },
     { file: 'version_manager_secret.txt', name: 'VERSION_MANAGER_SECRET' },
+    { file: 'logging_cursor_hmac_secret.txt', name: 'LOGGING_CURSOR_HMAC_SECRET' },
+    {
+      file: 'tenant_runtime_registry_signing_private.jwk.json',
+      name: 'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
+    },
+    {
+      file: 'tenant_runtime_registry_signing_key_id.txt',
+      name: 'TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID',
+    },
+    {
+      file: 'tenant_runtime_registry_verify.jwks.json',
+      name: 'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
+    },
     { file: 'admin_api_secret.txt', name: 'ADMIN_API_SECRET' },
     { file: 'key_manager_secret.txt', name: 'KEY_MANAGER_SECRET' },
     { file: 'cloudflare_api_token.txt', name: 'CLOUDFLARE_API_TOKEN' },
@@ -377,6 +426,17 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     process.exit(1);
   }
 
+  const domainDepthIssues = validateDeployDomainDepthConfig(config);
+  if (domainDepthIssues.length > 0) {
+    console.error(chalk.red('\n❌ Invalid domain configuration'));
+    for (const issue of domainDepthIssues) {
+      console.error(chalk.red(`  • ${issue.path}: ${issue.message}`));
+    }
+    console.log('');
+    console.log(chalk.yellow('Fix the domains in config.json before deploying.'));
+    process.exit(1);
+  }
+
   const env = options.env || config.environment.prefix;
 
   // Validate source directory
@@ -478,7 +538,32 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   // Refresh generated wrangler configs from the current config/lock before deployment.
   // This prevents stale bindings such as send_email from surviving across setup upgrades.
   if (structureType === 'new' && lock) {
-    const resourceIds = buildResourceIdsFromLock(lock);
+    const tenantD1BootstrapSpinner = ora('Checking initial tenant D1 bindings...').start();
+    const tenantD1BootstrapResult = await ensureInitialTenantD1Resources({
+      env,
+      config,
+      lock: currentLock,
+      rootDir,
+      onProgress: (msg) => {
+        tenantD1BootstrapSpinner.text = msg;
+      },
+    });
+    if (tenantD1BootstrapResult.success) {
+      if (tenantD1BootstrapResult.skipped) {
+        tenantD1BootstrapSpinner.succeed('Initial tenant D1 bootstrap not required');
+      } else {
+        await saveLockFile(currentLock, lockPath);
+        tenantD1BootstrapSpinner.succeed(
+          `Initial tenant D1 bindings ready (${tenantD1BootstrapResult.createdCount ?? 0} created)`
+        );
+      }
+    } else {
+      tenantD1BootstrapSpinner.fail('Initial tenant D1 bootstrap failed');
+      console.log(chalk.red(`  ${tenantD1BootstrapResult.error || 'unknown error'}`));
+      process.exit(1);
+    }
+
+    const resourceIds = buildResourceIdsFromLock(currentLock);
     const masterSpinner = ora('Refreshing generated wrangler configs...').start();
     const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
       baseDir,
@@ -763,6 +848,32 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     },
   };
 
+  const shouldPrepareUiBindingTargets =
+    (config.components.loginUi || config.components.adminUi) &&
+    (componentsToDeply?.includes('ar-router') || options.component === 'ar-router');
+
+  if (shouldPrepareUiBindingTargets) {
+    const placeholderSummary = await deployUiWorkerBindingTargets(
+      {
+        ...deployOptions,
+        apiBaseUrl: resolveIssuerUrl(config, { env }),
+      },
+      {
+        loginUi: config.components.loginUi ?? true,
+        adminUi: config.components.adminUi ?? true,
+      }
+    );
+
+    if (placeholderSummary.failedCount > 0) {
+      console.log(chalk.yellow('\n⚠️  UI Worker pre-deploy failed'));
+      for (const result of placeholderSummary.results.filter((candidate) => !candidate.success)) {
+        console.log(chalk.red(`  • ${result.component}: ${result.error || 'unknown error'}`));
+      }
+      console.log(chalk.gray('  ar-router may fail if it references missing UI Worker bindings.'));
+    }
+    console.log('');
+  }
+
   const summary = await deployAll(deployOptions, componentsToDeply);
 
   // Update lock file with deployment results
@@ -772,12 +883,104 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     console.log(chalk.gray(`\nLock file updated: ${lockPath}`));
   }
 
-  let deploymentApiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+  const markTenantD1SlotsAfterDeploymentIssue = async (
+    state: 'pending_binding' | 'unavailable',
+    stage: string,
+    errorCode: string
+  ): Promise<void> => {
+    if (options.dryRun || options.component) {
+      return;
+    }
+    const result = await markTenantD1SlotsDeploymentState({
+      env,
+      config,
+      lock: currentLock,
+      state,
+      stage,
+      errorCode,
+      onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+    });
+    if (result.success && !result.skipped) {
+      console.log(chalk.yellow(`  Tenant D1 slots marked ${state} for setup rerun recovery.`));
+    } else if (!result.success) {
+      console.log(
+        chalk.yellow(
+          `  Could not mark tenant D1 slots ${state}: ${result.error || 'unknown error'}`
+        )
+      );
+    }
+  };
+
+  if (!options.dryRun && !options.component && summary.failedCount > 0) {
+    const failedComponents = summary.results
+      .filter((result) => !result.success)
+      .map((result) => `${result.component}:${result.error || 'deploy_failed'}`)
+      .join(',');
+    await markTenantD1SlotsAfterDeploymentIssue(
+      'pending_binding',
+      'worker_deploy',
+      failedComponents || 'worker_deploy_failed'
+    );
+  }
+
+  let deploymentApiBaseUrl = resolveIssuerUrl(config, { env });
   if (!options.dryRun && !options.component && summary.failedCount === 0) {
+    const workerDeploymentSpinner = ora('Verifying Worker deployments...').start();
+    const workerDeploymentResult = await waitForWorkerDeploymentsReady({
+      targets: summary.results
+        .filter((result) => result.success)
+        .map((result) => ({
+          workerName: result.workerName,
+          deployedAt: result.deployedAt,
+        })),
+      onProgress: (msg) => {
+        workerDeploymentSpinner.text = msg;
+      },
+    });
+    if (workerDeploymentResult.ready) {
+      workerDeploymentSpinner.succeed('Worker deployments are visible');
+    } else {
+      workerDeploymentSpinner.fail('Worker deployments did not become visible');
+      console.error(chalk.red(`  ${workerDeploymentResult.error || 'unknown verification error'}`));
+      await markTenantD1SlotsAfterDeploymentIssue(
+        'unavailable',
+        'worker_deployment_visibility',
+        workerDeploymentResult.error || 'worker_deployment_visibility_failed'
+      );
+      process.exit(1);
+    }
+
+    const workersSubdomain = await getWorkersSubdomain();
+    const workerHttpTargets = buildWorkerHttpReadinessTargets(
+      summary.results.filter((result) => result.success),
+      workersSubdomain,
+      { workersDevEnabled: !config.urls?.api?.custom }
+    );
+    if (workerHttpTargets.length > 0) {
+      const workerHttpSpinner = ora('Verifying Worker HTTP health...').start();
+      const workerHttpResult = await waitForWorkerHttpReady({
+        targets: workerHttpTargets,
+        onProgress: (msg) => {
+          workerHttpSpinner.text = msg;
+        },
+      });
+      if (workerHttpResult.ready) {
+        workerHttpSpinner.succeed('Worker HTTP health checks passed');
+      } else {
+        workerHttpSpinner.fail('Worker HTTP health checks failed');
+        console.error(chalk.red(`  ${workerHttpResult.error || 'unknown health check error'}`));
+        await markTenantD1SlotsAfterDeploymentIssue(
+          'unavailable',
+          'worker_http_health',
+          workerHttpResult.error || 'worker_http_health_failed'
+        );
+        process.exit(1);
+      }
+    }
+
     if (!deploymentApiBaseUrl) {
-      const subdomain = await getWorkersSubdomain();
-      deploymentApiBaseUrl = subdomain
-        ? `https://${env}-ar-router.${subdomain}.workers.dev`
+      deploymentApiBaseUrl = workersSubdomain
+        ? `https://${env}-ar-router.${workersSubdomain}.workers.dev`
         : `https://${env}-ar-router.workers.dev`;
     }
 
@@ -797,6 +1000,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         chalk.red(
           `  ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
         )
+      );
+      await markTenantD1SlotsAfterDeploymentIssue(
+        'unavailable',
+        'router_readiness',
+        readinessResult.error || 'router_readiness_failed'
       );
       process.exit(1);
     }
@@ -822,13 +1030,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
     setupMachineAccessCleanupDone = true;
     const cleanupSpinner = ora('Removing setup machine access...').start();
-    const cleanupResult = await cleanupSetupMachineAccessInD1(
-      env,
-      getResolvedKeysDir(),
-      (msg) => {
-        cleanupSpinner.text = msg;
-      }
-    );
+    const cleanupResult = await cleanupSetupMachineAccessInD1(env, getResolvedKeysDir(), (msg) => {
+      cleanupSpinner.text = msg;
+    });
     if (cleanupResult.success) {
       cleanupSpinner.succeed('Setup machine access removed');
     } else {
@@ -951,6 +1155,33 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
           runtimeProfileSeedSuccess = false;
         }
+
+        const tenantD1SnapshotSpinner = ora(
+          'Publishing initial tenant D1 runtime snapshot...'
+        ).start();
+        const tenantD1SnapshotResult = await publishInitialTenantD1RuntimeSnapshot({
+          env,
+          config,
+          lock: currentLock,
+          rootDir,
+          keysDir: getResolvedKeysDir(),
+          onProgress: (msg) => {
+            tenantD1SnapshotSpinner.text = msg;
+          },
+        });
+        if (tenantD1SnapshotResult.success) {
+          if (tenantD1SnapshotResult.skipped) {
+            tenantD1SnapshotSpinner.succeed('Initial tenant D1 runtime snapshot not required');
+          } else {
+            tenantD1SnapshotSpinner.succeed('Initial tenant D1 runtime snapshot ready');
+          }
+        } else {
+          tenantD1SnapshotSpinner.fail('Initial tenant D1 runtime snapshot failed');
+          if (tenantD1SnapshotResult.error) {
+            console.log(chalk.red(`  ${tenantD1SnapshotResult.error}`));
+          }
+          process.exit(1);
+        }
       } else {
         migrationsSpinner.warn('Some migrations failed');
         if (migrationsResult.core.error) {
@@ -993,6 +1224,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       rootDir,
       keysDir,
       apiBaseUrl: deploymentApiBaseUrl,
+      apiBaseUrls: resolveApiBaseUrlCandidates(config, { env, purpose: 'tenant-scoped-admin' }),
       tenantId: config.tenant?.name,
       dryRun: options.dryRun,
       onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
@@ -1113,12 +1345,16 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
             uiEnvConfig: loginUiSettings.uiEnv,
             serviceBindingName: loginUiSettings.serviceBindingName,
+            workersDev: loginUiSettings.workersDev,
+            routes: loginUiSettings.routes,
           },
           'ar-admin-ui': {
             apiBaseUrl: adminUiSettings.apiBaseUrl,
             runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
             uiEnvConfig: adminUiSettings.uiEnv,
             serviceBindingName: adminUiSettings.serviceBindingName,
+            workersDev: adminUiSettings.workersDev,
+            routes: adminUiSettings.routes,
             adminUiBffSecrets,
           },
         },
@@ -1189,7 +1425,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   if (!options.dryRun && config.urls) {
     console.log(chalk.bold('URLs:'));
 
-    const apiUrl = config.urls.api?.custom || config.urls.api?.auto;
+    const apiUrl = resolveIssuerUrl(config, { env });
     const loginUrl = config.urls.loginUi?.custom || config.urls.loginUi?.auto;
     const adminUrl = config.urls.adminUi?.custom || config.urls.adminUi?.auto;
 

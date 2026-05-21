@@ -329,7 +329,9 @@
 		externalIdpLoading = providerId;
 		try {
 			const redirectUri =
-				provider.startMode === 'saml_sp' ? `${window.location.origin}/` : `${window.location.origin}/callback`;
+				provider.startMode === 'saml_sp'
+					? `${window.location.origin}/`
+					: `${window.location.origin}/callback`;
 			const { url } = await externalIdpAPI.startLogin(
 				providerId,
 				redirectUri,
@@ -615,7 +617,16 @@
 								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 							>
-								<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{#if provider.iconUrl}
+									<img
+										src={provider.iconUrl}
+										alt=""
+										loading="lazy"
+										style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
+									/>
+								{:else}
+									<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{/if}
 								{getProviderButtonText(provider)}
 							</Button>
 						{/each}

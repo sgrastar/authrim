@@ -184,14 +184,16 @@ export async function getPrimaryTenantVanityDomain(
     }
   }
 
-  if (!env.DB) return null;
-  const adapter =
-    'AUTHRIM_CONFIG' in env
+  const adapter = env.DB
+    ? ensureDatabaseAdapter(env.DB, 'tenant-vanity-domain-resolver')
+    : 'AUTHRIM_CONFIG' in env
       ? await resolveAuthCorePersistenceAdapterFromEnv(
           env as Parameters<typeof resolveAuthCorePersistenceAdapterFromEnv>[0],
           'tenant-vanity-domain-resolver'
         )
-      : ensureDatabaseAdapter(env.DB, 'tenant-vanity-domain-resolver');
+      : null;
+
+  if (!adapter) return null;
 
   try {
     const row = await adapter.queryOne<TenantVanityDomainRow>(

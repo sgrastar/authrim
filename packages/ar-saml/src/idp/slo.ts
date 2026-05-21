@@ -59,6 +59,7 @@ import {
   validateSAMLLogoutResponseSignature,
 } from './logout-response-signature';
 import { scheduleSAMLPolicyFailureAudit, type SAMLPolicyFailureKind } from './audit';
+import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import type { SAMLRedirectSignatureInput } from './authn-request-signature';
 import {
   createSAMLIdPLogoutFanoutTransaction,
@@ -887,37 +888,23 @@ function sendPostBindingResponse(
   cookieHeader?: string
 ): Response {
   const encodedResponse = encodeForPostBinding(responseXml);
-
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML Logout</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(destination)}">
-    <input type="hidden" name="SAMLResponse" value="${escapeHtml(encodedResponse)}" />
-    ${relayState ? `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue</button>
-    </noscript>
-  </form>
-</body>
-</html>`;
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-cache, no-store, must-revalidate',
-  };
-
-  if (cookieHeader) {
-    headers['Set-Cookie'] = cookieHeader;
+  const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
+  if (relayState) {
+    fields.push({ name: 'RelayState', value: relayState });
   }
 
-  return new Response(html, { headers });
+  const additionalHeaders: Record<string, string> = {};
+  if (cookieHeader) {
+    additionalHeaders['Set-Cookie'] = cookieHeader;
+  }
+
+  return buildSAMLPostBindingResponse({
+    title: 'SAML Logout',
+    actionUrl: destination,
+    fields,
+    buttonText: 'Continue',
+    additionalHeaders,
+  });
 }
 
 /**
@@ -929,32 +916,16 @@ function sendPostBindingRequest(
   relayState: string | null
 ): Response {
   const encodedRequest = encodeForPostBinding(requestXml);
+  const fields = [{ name: 'SAMLRequest', value: encodedRequest }];
+  if (relayState) {
+    fields.push({ name: 'RelayState', value: relayState });
+  }
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML Logout</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(destination)}">
-    <input type="hidden" name="SAMLRequest" value="${escapeHtml(encodedRequest)}" />
-    ${relayState ? `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue</button>
-    </noscript>
-  </form>
-</body>
-</html>`;
-
-  return new Response(html, {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-    },
+  return buildSAMLPostBindingResponse({
+    title: 'SAML Logout',
+    actionUrl: destination,
+    fields,
+    buttonText: 'Continue',
   });
 }
 
@@ -1024,18 +995,6 @@ function appendQueryString(destination: string, query: string): string {
       : '&'
     : '?';
   return `${base}${separator}${query}${hash}`;
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 /**

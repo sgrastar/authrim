@@ -31,6 +31,7 @@ const {
   mockDecryptValue,
   mockGetTenantIdFromContext,
   mockGetLogger,
+  mockEmitRuntimeLogRecords,
   mockWebhookRegistry,
   mockD1AdapterQuery,
   mockD1AdapterQueryOne,
@@ -51,6 +52,7 @@ const {
       debug: vi.fn(),
     }),
   }),
+  mockEmitRuntimeLogRecords: vi.fn(),
   mockWebhookRegistry: {
     register: vi.fn(),
     get: vi.fn(),
@@ -102,6 +104,9 @@ function resetMocks() {
     }),
   });
 
+  mockEmitRuntimeLogRecords.mockReset();
+  mockEmitRuntimeLogRecords.mockResolvedValue({ tenantKey: 'tk_test', targetResults: [] });
+
   mockWebhookRegistry.register.mockReset();
   mockWebhookRegistry.get.mockReset();
   mockWebhookRegistry.list.mockReset();
@@ -127,6 +132,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     decryptValue: mockDecryptValue,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     getLogger: mockGetLogger,
+    emitRuntimeLogRecords: mockEmitRuntimeLogRecords,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({
       query: mockD1AdapterQuery,
       queryOne: mockD1AdapterQueryOne,
@@ -202,8 +208,13 @@ function createMockDB(): D1Database {
   } as unknown as D1Database;
 }
 
-function createMockBucket(initial: Record<string, string> = {}): R2Bucket {
-  const storage = new Map<string, string>(Object.entries(initial));
+function createMockBucket(initial: Record<string, string | Uint8Array> = {}): R2Bucket {
+  const storage = new Map<string, Uint8Array>(
+    Object.entries(initial).map(([key, value]) => [
+      key,
+      typeof value === 'string' ? new TextEncoder().encode(value) : value,
+    ])
+  );
   return {
     put: vi.fn(async (key: string, value: ArrayBuffer | ArrayBufferView | string) => {
       const bytes =
@@ -214,24 +225,22 @@ function createMockBucket(initial: Record<string, string> = {}): R2Bucket {
             : value instanceof ArrayBuffer
               ? new Uint8Array(value)
               : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-      const text = typeof value === 'string' ? value : new TextDecoder().decode(bytes);
-      storage.set(key, text);
+      storage.set(key, bytes);
     }),
     get: vi.fn(async (key: string) => {
       const value = storage.get(key);
       if (!value) {
         return null;
       }
-      const body = new TextEncoder().encode(value);
       return {
         body: new ReadableStream<Uint8Array>({
           start(controller) {
-            controller.enqueue(body);
+            controller.enqueue(value);
             controller.close();
           },
         }),
-        size: body.byteLength,
-        text: async () => value,
+        size: value.byteLength,
+        text: async () => new TextDecoder().decode(value),
         writeHttpMetadata: vi.fn(),
       };
     }),
@@ -260,6 +269,7 @@ function createMockContext(options: {
 }) {
   const mockKV = options.kv ?? createMockKV({});
   const mockDB = options.db ?? createMockDB();
+  const loggingQueue = { send: vi.fn().mockResolvedValue(undefined) };
 
   if (options.tenantId) {
     mockGetTenantIdFromContext.mockReturnValue(options.tenantId);
@@ -288,6 +298,7 @@ function createMockContext(options: {
       SENSITIVE_DETAILS: options.sensitiveDetails,
       OBJECT_ENCRYPTION_ROOT_KEY: options.objectEncryptionRootKey,
       OBJECT_ENCRYPTION_KEY_VERSION: options.objectEncryptionKeyVersion,
+      LOGGING_DELIVERY_CRITICAL_QUEUE: loggingQueue,
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     get: vi.fn().mockImplementation((key: string) => {
@@ -304,6 +315,7 @@ function createMockContext(options: {
     set: vi.fn(),
     _mockKV: mockKV,
     _mockDB: mockDB,
+    _mockLoggingQueue: loggingQueue,
   } as any;
 
   return c;
@@ -1101,7 +1113,7 @@ describe('Webhook Admin API - Test Webhook', () => {
       );
     });
 
-    it('should include X-Webhook-Event header in request', async () => {
+    it('should include Authrim webhook headers in request', async () => {
       const c = createMockContext({
         method: 'POST',
         params: { id: 'webhook-123' },
@@ -1118,7 +1130,10 @@ describe('Webhook Admin API - Test Webhook', () => {
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
-            'X-Webhook-Event': 'webhook.test',
+            'X-Authrim-Event': 'webhook.test',
+            'X-Authrim-Webhook': 'webhook-123',
+            'X-Authrim-Timestamp': expect.stringMatching(/^\d+$/),
+            'X-Authrim-Delivery': expect.any(String),
           }),
         })
       );
@@ -1144,7 +1159,7 @@ describe('Webhook Admin API - Test Webhook', () => {
         expect.any(String),
         expect.objectContaining({
           headers: expect.objectContaining({
-            'X-Webhook-Signature': expect.stringMatching(/^sha256=[a-f0-9]+$/),
+            'X-Authrim-Signature-256': expect.stringMatching(/^sha256=[a-f0-9]+$/),
           }),
         })
       );
@@ -1368,7 +1383,8 @@ describe('Webhook Admin API - Get Delivery', () => {
 
     it('loads externalized request and response payloads from SENSITIVE_DETAILS', async () => {
       const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      const objectKey = 'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const objectKey =
+        'sensitive-details/tk_test/control/webhook/2026/05/01/00/chk_delivery-123.jsonl.gz';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
@@ -1392,7 +1408,7 @@ describe('Webhook Admin API - Get Delivery', () => {
         method: 'GET',
         params: { id: 'webhook-123', deliveryId: 'delivery-123' },
         sensitiveDetails: createMockBucket({
-          [objectKey]: JSON.stringify(encryptedPayload),
+          [objectKey]: `${JSON.stringify(encryptedPayload)}\n`,
         }),
         objectEncryptionRootKey: rootKey,
         objectEncryptionKeyVersion: '3',
@@ -1432,7 +1448,7 @@ describe('Webhook Admin API - Get Delivery', () => {
             catalog_deleted_at: null,
             physical_id: 'physical-123',
             representation: 'canonical_json',
-            object_kind: 'single',
+            object_kind: 'chunk',
             object_index: 0,
             bucket_binding: 'SENSITIVE_DETAILS',
             object_key: objectKey,
@@ -1443,21 +1459,35 @@ describe('Webhook Admin API - Get Delivery', () => {
             physical_deleted_at: null,
           };
         }
+        if (sql.includes('FROM sensitive_detail_chunk_index')) {
+          return {
+            catalog_id: 'catalog-123',
+            tenant_id: 'test-tenant',
+            object_class: 'webhook_delivery_payload',
+            bucket_binding: 'SENSITIVE_DETAILS',
+            object_key: objectKey,
+            content_encoding: 'none',
+            line_number: 0,
+            key_version: 3,
+            checksum_sha256: null,
+            created_at: 1714550400000,
+            deleted_at: null,
+          };
+        }
         return null;
       });
 
       const response = (await getWebhookDelivery(c)) as Response;
       const { body, status } = await getResponseData(response);
-      const objectCatalogQueryParams = mockD1AdapterQueryOne.mock.calls
-        .filter(([sql]) => String(sql).includes('FROM object_catalog oc'))
+      const chunkIndexQueryParams = mockD1AdapterQueryOne.mock.calls
+        .filter(([sql]) => String(sql).includes('FROM sensitive_detail_chunk_index'))
         .map(([, params]) => params);
 
       expect(status).toBe(200);
-      expect(objectCatalogQueryParams).toContainEqual([
-        'test-tenant',
+      expect(chunkIndexQueryParams).toContainEqual([
         'catalog-123',
-        'canonical_json',
-        0,
+        'test-tenant',
+        'webhook_delivery_payload',
       ]);
       expect(body.delivery.request_headers).toEqual({
         Authorization: 'Bearer token',
@@ -1471,7 +1501,8 @@ describe('Webhook Admin API - Get Delivery', () => {
 
     it('allows delivery detail reads with a matching elevation grant', async () => {
       const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      const objectKey = 'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const objectKey =
+        'sensitive-details/tk_test/control/webhook/2026/05/01/00/chk_delivery-123.jsonl.gz';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { 'Content-Type': 'application/json' },
@@ -1530,7 +1561,7 @@ describe('Webhook Admin API - Get Delivery', () => {
         params: { id: 'webhook-123', deliveryId: 'delivery-123' },
         adminPermissions: ['admin:webhooks:read'],
         sensitiveDetails: createMockBucket({
-          [objectKey]: JSON.stringify(encryptedPayload),
+          [objectKey]: `${JSON.stringify(encryptedPayload)}\n`,
         }),
         objectEncryptionRootKey: rootKey,
         objectEncryptionKeyVersion: '3',
@@ -1559,6 +1590,21 @@ describe('Webhook Admin API - Get Delivery', () => {
             detail_artifact_id: 'oa_test',
           };
         }
+        if (sql.includes('FROM sensitive_detail_chunk_index')) {
+          return {
+            catalog_id: 'catalog-123',
+            tenant_id: 'test-tenant',
+            object_class: 'webhook_delivery_payload',
+            bucket_binding: 'SENSITIVE_DETAILS',
+            object_key: objectKey,
+            content_encoding: 'none',
+            line_number: 0,
+            key_version: 3,
+            checksum_sha256: null,
+            created_at: 1714550400000,
+            deleted_at: null,
+          };
+        }
         return {
           catalog_id: 'catalog-123',
           public_artifact_id: 'oa_test',
@@ -1569,7 +1615,7 @@ describe('Webhook Admin API - Get Delivery', () => {
           catalog_deleted_at: null,
           physical_id: 'physical-123',
           representation: 'canonical_json',
-          object_kind: 'single',
+          object_kind: 'chunk',
           object_index: 0,
           bucket_binding: 'SENSITIVE_DETAILS',
           object_key: objectKey,
@@ -1717,7 +1763,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
       );
     });
 
-    it('should add X-Webhook-Replay header to replay request', async () => {
+    it('should add Authrim replay headers to replay request', async () => {
       const c = createMockContext({
         method: 'POST',
         params: { id: 'webhook-123' },
@@ -1745,15 +1791,46 @@ describe('Webhook Admin API - Replay Delivery', () => {
         expect.any(String),
         expect.objectContaining({
           headers: expect.objectContaining({
-            'X-Webhook-Replay': 'true',
+            'X-Authrim-Replay': 'true',
+            'X-Authrim-Original-Delivery': 'delivery-123',
+            'X-Authrim-Delivery': expect.any(String),
           }),
         })
+      );
+      expect(mockEmitRuntimeLogRecords).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'test-tenant',
+          logType: 'webhook',
+          surface: 'webhook_delivery',
+          records: [
+            expect.objectContaining({
+              payload: expect.objectContaining({
+                webhook_id: 'webhook-123',
+                event_type: 'user.created',
+                event_id: 'event-123_replay',
+                status: 'success',
+                replay: true,
+                original_delivery_id: 'delivery-123',
+              }),
+              indexedFields: expect.objectContaining({
+                webhookId: 'webhook-123',
+                eventType: 'user.created',
+                status: 'success',
+                httpStatus: 200,
+              }),
+            }),
+          ],
+        })
+      );
+      expect(JSON.stringify(mockEmitRuntimeLogRecords.mock.calls)).not.toContain(
+        '{"event":"user.created"}'
       );
     });
 
     it('replays from externalized delivery payloads and stores pointer-backed previews', async () => {
       const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      const objectKey = 'webhook-deliveries/test-tenant/webhook-123/2026/05/01/delivery-123.json';
+      const objectKey =
+        'sensitive-details/tk_test/control/webhook/2026/05/01/00/chk_delivery-123.jsonl.gz';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { 'Content-Type': 'application/json' },
@@ -1778,7 +1855,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
         params: { id: 'webhook-123' },
         body: { delivery_id: 'delivery-123' },
         sensitiveDetails: createMockBucket({
-          [objectKey]: JSON.stringify(encryptedPayload),
+          [objectKey]: `${JSON.stringify(encryptedPayload)}\n`,
         }),
         objectEncryptionRootKey: rootKey,
         objectEncryptionKeyVersion: '2',
@@ -1818,7 +1895,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
             catalog_deleted_at: null,
             physical_id: 'physical-123',
             representation: 'canonical_json',
-            object_kind: 'single',
+            object_kind: 'chunk',
             object_index: 0,
             bucket_binding: 'SENSITIVE_DETAILS',
             object_key: objectKey,
@@ -1827,6 +1904,21 @@ describe('Webhook Admin API - Replay Delivery', () => {
             total_bytes: 100,
             physical_created_at: 1714550400000,
             physical_deleted_at: null,
+          };
+        }
+        if (sql.includes('FROM sensitive_detail_chunk_index')) {
+          return {
+            catalog_id: 'catalog-123',
+            tenant_id: 'test-tenant',
+            object_class: 'webhook_delivery_payload',
+            bucket_binding: 'SENSITIVE_DETAILS',
+            object_key: objectKey,
+            content_encoding: 'none',
+            line_number: 0,
+            key_version: 2,
+            checksum_sha256: null,
+            created_at: 1714550400000,
+            deleted_at: null,
           };
         }
         return null;
@@ -1848,6 +1940,19 @@ describe('Webhook Admin API - Replay Delivery', () => {
         expect.stringContaining('INSERT INTO object_catalog'),
         expect.any(Array)
       );
+      expect(c._mockLoggingQueue.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload_type: 'chunk_write',
+          plane: 'sensitive_detail',
+          records: [
+            expect.objectContaining({
+              tenant_id: 'test-tenant',
+              object_class: 'webhook_delivery_payload',
+              index_db_binding: 'LOGGING_INDEX_DB',
+            }),
+          ],
+        })
+      );
       expect(mockD1AdapterExecute).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO webhook_deliveries'),
         expect.arrayContaining([expect.any(String)])
@@ -1855,7 +1960,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
       const deliveryInsert = mockD1AdapterExecute.mock.calls.find(
         ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO webhook_deliveries')
       );
-      expect(deliveryInsert?.[1]?.[7]).toContain('"X-Webhook-Replay":"true"');
+      expect(deliveryInsert?.[1]?.[7]).toContain('"X-Authrim-Replay":"***MASKED***"');
       expect(deliveryInsert?.[1]?.[8]).toContain('"event":"user.created"');
       expect(deliveryInsert?.[1]?.[13]).toEqual(expect.any(String));
     });
@@ -1894,7 +1999,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
         expect.any(String),
         expect.objectContaining({
           headers: expect.objectContaining({
-            'X-Webhook-Signature': expect.stringMatching(/^sha256=[a-f0-9]+$/),
+            'X-Authrim-Signature-256': expect.stringMatching(/^sha256=[a-f0-9]+$/),
           }),
         })
       );
@@ -1946,10 +2051,10 @@ describe('Webhook Security - HMAC Signature', () => {
 
     // Extract signatures
     const signature1 = (calls[0][1] as RequestInit).headers?.[
-      'X-Webhook-Signature' as keyof HeadersInit
+      'X-Authrim-Signature-256' as keyof HeadersInit
     ];
     const signature2 = (calls[1][1] as RequestInit).headers?.[
-      'X-Webhook-Signature' as keyof HeadersInit
+      'X-Authrim-Signature-256' as keyof HeadersInit
     ];
 
     // Same secret should produce same signature for same payload
@@ -1981,10 +2086,10 @@ describe('Webhook Security - HMAC Signature', () => {
 
     const calls = vi.mocked(fetch).mock.calls;
     const signature1 = (calls[0][1] as RequestInit).headers?.[
-      'X-Webhook-Signature' as keyof HeadersInit
+      'X-Authrim-Signature-256' as keyof HeadersInit
     ];
     const signature2 = (calls[1][1] as RequestInit).headers?.[
-      'X-Webhook-Signature' as keyof HeadersInit
+      'X-Authrim-Signature-256' as keyof HeadersInit
     ];
 
     expect(signature1).not.toBe(signature2);
@@ -2006,7 +2111,7 @@ describe('Webhook Security - HMAC Signature', () => {
 
     const calls = vi.mocked(fetch).mock.calls;
     const signature = (calls[0][1] as RequestInit).headers?.[
-      'X-Webhook-Signature' as keyof HeadersInit
+      'X-Authrim-Signature-256' as keyof HeadersInit
     ];
 
     expect(signature).toMatch(/^sha256=[a-f0-9]{64}$/);

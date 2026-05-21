@@ -462,6 +462,18 @@ function escapeHtml(unsafe: string): string {
     .replace(/'/g, '&#039;');
 }
 
+function safeHttpsDisplayUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Render HTML consent page (legacy fallback)
  * OIDC Dynamic OP conformance: displays logo_uri, policy_uri, tos_uri
@@ -482,20 +494,23 @@ function renderHtmlConsent(
   }
 ): Response {
   const { challenge_id, clientRow, scopeDetails, client_id } = params;
+  const safeLogoUri = safeHttpsDisplayUrl(clientRow.logo_uri);
+  const safePolicyUri = safeHttpsDisplayUrl(clientRow.policy_uri);
+  const safeTosUri = safeHttpsDisplayUrl(clientRow.tos_uri);
 
   // Build client info section with logo (OIDC Dynamic OP conformance)
-  const clientInfoHtml = clientRow.logo_uri
+  const clientInfoHtml = safeLogoUri
     ? `<div class="client-logo-container">
-        <img src="${escapeHtml(clientRow.logo_uri)}" alt="${escapeHtml(clientRow.client_name || 'Client')} logo" class="client-logo" onerror="this.style.display='none'">
+        <img src="${escapeHtml(safeLogoUri)}" alt="${escapeHtml(clientRow.client_name || 'Client')} logo" class="client-logo" onerror="this.style.display='none'">
       </div>`
     : '';
 
   // Build links section for policy and ToS
   const linksHtml =
-    clientRow.policy_uri || clientRow.tos_uri
+    safePolicyUri || safeTosUri
       ? `<div class="client-links">
-        ${clientRow.policy_uri ? `<a href="${escapeHtml(clientRow.policy_uri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a>` : ''}
-        ${clientRow.tos_uri ? `<a href="${escapeHtml(clientRow.tos_uri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a>` : ''}
+        ${safePolicyUri ? `<a href="${escapeHtml(safePolicyUri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a>` : ''}
+        ${safeTosUri ? `<a href="${escapeHtml(safeTosUri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a>` : ''}
       </div>`
       : '';
 

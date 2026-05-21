@@ -15,6 +15,7 @@ import {
   ensureDatabaseAdapter,
   resolveTenantRuntimeProfilesFromEnv,
 } from '@authrim/ar-lib-core';
+import { createLoggingTenantKeyResolverFromSource } from './logging-tenant-key';
 
 export interface AuditPrimaryCleanupSummary {
   tenantCount: number;
@@ -196,10 +197,15 @@ export async function cleanupResolvedAuditPrimaries(
       }
 
       const emittedAt = Date.now();
+      const tenantKeyResolver = createLoggingTenantKeyResolverFromSource(
+        env.DB,
+        'audit-maintenance-tenant-key'
+      );
       const adapter = createR2AuditAdapter(bucket, {
         id: `retention-archive:${target.bucketRef}:${logType}`,
         pathPrefix: target.prefix ?? 'audit',
         format: 'json',
+        ...({ tenantKeyResolver } as Record<string, unknown>),
         eventSerializer: (entry) =>
           buildCanonicalAuditArchiveRecordFromEntry(target, 'event_log', entry, {
             emittedAt,

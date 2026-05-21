@@ -493,6 +493,7 @@ export async function checkSessionIframeHandler(c: Context<{ Bindings: Env }>) {
       'X-Frame-Options': 'ALLOWALL',
       // Nonce-based CSP for inline script security (no 'unsafe-inline')
       'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors *;`,
+      'X-Content-Type-Options': 'nosniff',
       // Cache must be disabled - each response has a unique nonce
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       Pragma: 'no-cache',

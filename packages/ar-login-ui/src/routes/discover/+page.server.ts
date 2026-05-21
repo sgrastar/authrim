@@ -190,6 +190,27 @@ export const load: PageServerLoad = async (event) => {
 
 	if (
 		config.is_common_entry_host &&
+		config.config.mode === 'tenant_only' &&
+		discoveryGrantContext.expectedTenantId &&
+		discoveryGrantContext.returnTo &&
+		!inviteToken &&
+		!appHint
+	) {
+		const grant = await issueDiscoveryGrant(
+			event.fetch,
+			{
+				tenant_id: discoveryGrantContext.expectedTenantId,
+				expected_tenant_id: discoveryGrantContext.expectedTenantId,
+				return_to: discoveryGrantContext.returnTo,
+				login_hint: discoveryGrantContext.loginHint || undefined
+			},
+			discoveryHeaders
+		);
+		throw redirect(303, grant.login_url);
+	}
+
+	if (
+		config.is_common_entry_host &&
 		config.config.skip_discovery_if_only_one_tenant &&
 		config.single_active_tenant_candidate &&
 		!inviteToken &&

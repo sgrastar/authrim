@@ -138,10 +138,15 @@ const directPasskeyLoginPkce = new Map<string, DirectAuthPkceState>();
 const directPasskeySignupPkce = new Map<string, DirectAuthPkceState>();
 const directEmailCodePkce = new Map<string, DirectEmailCodeState>();
 
-// Get API base URL from environment variable or use default
-// In production, separate UI Worker deployments either proxy same-origin requests
-// or inject a cross-origin PUBLIC_API_BASE_URL at build time.
+// Get API base URL from the current browser origin or use the configured backend fallback.
+// The Login UI worker proxies same-origin /api/* requests to PUBLIC_API_BASE_URL server-side,
+// which avoids browser CORS for tenant/custom-domain login surfaces.
 export function resolveApiBaseUrl(): string {
+	// In browser, keep API calls same-origin and let hooks.server.ts proxy upstream.
+	if (browser && typeof window !== 'undefined') {
+		return window.location.origin;
+	}
+
 	// Try to get from environment variable (if set during build)
 	try {
 		// Use dynamic import to avoid build-time errors
@@ -149,11 +154,6 @@ export function resolveApiBaseUrl(): string {
 		if (envUrl) return envUrl;
 	} catch {
 		// Environment variable not set
-	}
-
-	// In browser, use current origin as fallback
-	if (browser && typeof window !== 'undefined') {
-		return window.location.origin;
 	}
 
 	// Default for SSR/build time

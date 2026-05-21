@@ -1,0 +1,63 @@
+{
+  "name": "@authrim/ar-lib-logging",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./chunks": {
+      "import": "./dist/chunks/index.js",
+      "types": "./dist/chunks/index.d.ts",
+      "default": "./src/chunks/index.ts"
+    },
+    "./coverage": {
+      "import": "./dist/coverage/index.js",
+      "types": "./dist/coverage/index.d.ts",
+      "default": "./src/coverage/index.ts"
+    },
+    "./delivery": {
+      "import": "./dist/delivery/index.js",
+      "types": "./dist/delivery/index.d.ts",
+      "default": "./src/delivery/index.ts"
+    },
+    "./destinations": {
+      "import": "./dist/destinations/index.js",
+      "types": "./dist/destinations/index.d.ts",
+      "default": "./src/destinations/index.ts"
+    },
+    "./keys": {
+      "import": "./dist/keys/index.js",
+      "types": "./dist/keys/index.d.ts",
+      "default": "./src/keys/index.ts"
+    },
+    "./messaging": {
+      "import": "./dist/messaging/index.js",
+      "types": "./dist/messaging/index.d.ts",
+      "default": "./src/messaging/index.ts"
+    },
+    "./policies": {
+      "import": "./dist/policies/index.js",
+      "types": "./dist/policies/index.d.ts",
+      "default": "./src/policies/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'Logging package: lint skipped'",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251121.0",
+    "@types/node": "^20.19.25",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.13"
+  }
+}

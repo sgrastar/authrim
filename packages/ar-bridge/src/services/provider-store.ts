@@ -10,8 +10,12 @@ import {
 } from '@authrim/ar-lib-core';
 import type { UpstreamProvider, TokenEndpointAuthMethod } from '../types';
 
-async function getCoreAdapter(env: Env, partition: string): Promise<DatabaseAdapter> {
-  return resolveAuthCorePersistenceAdapterFromEnv(env, partition);
+async function getCoreAdapter(
+  env: Env,
+  partition: string,
+  tenantId: string
+): Promise<DatabaseAdapter> {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, partition, { tenantId });
 }
 
 /**
@@ -22,7 +26,7 @@ export async function getProvider(
   tenantId: string,
   id: string
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get');
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get', tenantId);
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE id = ? AND tenant_id = ?',
     [id, tenantId]
@@ -41,7 +45,11 @@ export async function getProviderByIdOrSlug(
   idOrSlug: string,
   tenantId: string
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-id-or-slug');
+  const coreAdapter = await getCoreAdapter(
+    env,
+    'bridge-provider-store:get-by-id-or-slug',
+    tenantId
+  );
 
   // First try by slug (case-insensitive)
   let result = await coreAdapter.queryOne<DbUpstreamProvider>(
@@ -69,7 +77,7 @@ export async function getProviderByName(
   name: string,
   tenantId: string
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-name');
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-name', tenantId);
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE name = ? AND tenant_id = ? AND enabled = 1',
     [name, tenantId]
@@ -86,7 +94,7 @@ export async function listEnabledProviders(
   env: Env,
   tenantId: string
 ): Promise<UpstreamProvider[]> {
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-enabled');
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-enabled', tenantId);
   const result = await coreAdapter.query<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC',
     [tenantId]
@@ -99,7 +107,7 @@ export async function listEnabledProviders(
  * List all providers (for admin)
  */
 export async function listAllProviders(env: Env, tenantId: string): Promise<UpstreamProvider[]> {
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-all');
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-all', tenantId);
   const result = await coreAdapter.query<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC',
     [tenantId]
@@ -118,7 +126,7 @@ export async function createProvider(
   const id = crypto.randomUUID();
   const now = Date.now();
 
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:create');
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:create', provider.tenantId);
   await coreAdapter.execute(
     `INSERT INTO upstream_providers (
       id, tenant_id, slug, name, provider_type, enabled, priority,
@@ -189,7 +197,7 @@ export async function updateProvider(
   const now = Date.now();
   const updated = { ...existing, ...updates, updatedAt: now };
 
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:update');
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:update', tenantId);
   await coreAdapter.execute(
     `UPDATE upstream_providers SET
       slug = ?, name = ?, provider_type = ?, enabled = ?, priority = ?,
@@ -243,7 +251,7 @@ export async function updateProvider(
  * Delete provider
  */
 export async function deleteProvider(env: Env, tenantId: string, id: string): Promise<boolean> {
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:delete');
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:delete', tenantId);
   const result = await coreAdapter.execute(
     'DELETE FROM upstream_providers WHERE id = ? AND tenant_id = ?',
     [id, tenantId]

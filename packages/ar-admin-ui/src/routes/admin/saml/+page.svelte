@@ -4,6 +4,7 @@
 	import { Modal } from '$lib/components';
 	import {
 		adminSAMLAPI,
+		type SAMLFederationTrustProfile,
 		type SAMLAttributeReleaseRule,
 		type SAMLAttributePreset,
 		type SAMLProvider,
@@ -12,6 +13,7 @@
 
 	let providers = $state<SAMLProvider[]>([]);
 	let presets = $state<SAMLAttributePreset[]>([]);
+	let trustProfiles = $state<SAMLFederationTrustProfile[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	let actionMessage = $state('');
@@ -39,6 +41,10 @@
 			2
 		)
 	);
+	let trustProfileName = $state('');
+	let trustProfilePatterns = $state('https://metadata.gakunin.nii.ac.jp/*');
+	let trustProfileCertificate = $state('');
+	let creatingTrustProfile = $state(false);
 
 	onMount(() => {
 		void loadSAML();
@@ -54,6 +60,11 @@
 			]);
 			providers = providerResult.providers;
 			presets = presetResult.presets;
+			try {
+				trustProfiles = (await adminSAMLAPI.listFederationTrustProfiles()).profiles;
+			} catch {
+				trustProfiles = [];
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load SAML data';
 		} finally {
@@ -248,6 +259,45 @@
 				err instanceof Error ? err.message : 'Failed to delete SAML attribute preset';
 		}
 	}
+
+	async function createTrustProfile() {
+		if (!trustProfileName.trim() || !trustProfileCertificate.trim()) {
+			error = 'Trust profile name and certificate are required';
+			return;
+		}
+		creatingTrustProfile = true;
+		error = '';
+		try {
+			const profile = await adminSAMLAPI.createFederationTrustProfile({
+				name: trustProfileName.trim(),
+				metadataUrlPatterns: trustProfilePatterns
+					.split('\n')
+					.map((item) => item.trim())
+					.filter(Boolean),
+				certificates: [{ certificate: trustProfileCertificate.trim() }],
+				enabled: true
+			});
+			trustProfiles = [...trustProfiles, profile];
+			trustProfileName = '';
+			trustProfileCertificate = '';
+			actionMessage = 'Federation trust profile created';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to create federation trust profile';
+		} finally {
+			creatingTrustProfile = false;
+		}
+	}
+
+	async function deleteTrustProfile(profile: SAMLFederationTrustProfile) {
+		if (!window.confirm(`Delete federation trust profile ${profile.name}?`)) return;
+		try {
+			await adminSAMLAPI.deleteFederationTrustProfile(profile.id);
+			trustProfiles = trustProfiles.filter((item) => item.id !== profile.id);
+			actionMessage = 'Federation trust profile deleted';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to delete federation trust profile';
+		}
+	}
 </script>
 
 <svelte:head>
@@ -280,6 +330,93 @@
 
 	{#if actionMessage}
 		<div class="alert alert-success">{actionMessage}</div>
+	{/if}
+
+	{#if !loading}
+		<div class="panel trust-profiles-panel">
+			<div class="panel-header">
+				<div>
+					<h2 class="panel-title">Federation Trust Profiles</h2>
+					<p class="form-hint">
+						Trust anchors for signed aggregate metadata imports, scoped by metadata URL pattern.
+					</p>
+				</div>
+				<span class="badge badge-neutral">{trustProfiles.length}</span>
+			</div>
+
+			<div class="trust-profile-layout">
+				<div class="trust-profile-form">
+					<div class="form-group">
+						<label for="trustProfileName" class="form-label">Name *</label>
+						<input
+							id="trustProfileName"
+							bind:value={trustProfileName}
+							class="form-input"
+							placeholder="GakuNin Test Federation"
+						/>
+					</div>
+					<div class="form-group">
+						<label for="trustProfilePatterns" class="form-label">Metadata URL Patterns *</label>
+						<textarea
+							id="trustProfilePatterns"
+							bind:value={trustProfilePatterns}
+							class="form-input form-textarea monospace"
+							rows="3"
+						></textarea>
+					</div>
+					<div class="form-group">
+						<label for="trustProfileCertificate" class="form-label">Signing Certificate PEM *</label
+						>
+						<textarea
+							id="trustProfileCertificate"
+							bind:value={trustProfileCertificate}
+							class="form-input form-textarea monospace"
+							rows="6"
+							placeholder="-----BEGIN CERTIFICATE-----"
+						></textarea>
+					</div>
+					<div class="form-actions compact-actions">
+						<button
+							class="btn btn-primary btn-sm"
+							onclick={createTrustProfile}
+							disabled={creatingTrustProfile}
+						>
+							<i class="i-ph-shield-check"></i>
+							{creatingTrustProfile ? 'Creating...' : 'Add Trust Profile'}
+						</button>
+					</div>
+				</div>
+
+				{#if trustProfiles.length === 0}
+					<div class="empty-state compact-empty">No federation trust profiles configured.</div>
+				{:else}
+					<div class="trust-profile-list">
+						{#each trustProfiles as profile (profile.id)}
+							<div class="trust-profile-item">
+								<div class="trust-profile-main">
+									<div class="cell-primary">{profile.name}</div>
+									<div class="cell-secondary">{profile.metadataUrlPatterns.join(', ')}</div>
+									<div class="trust-profile-meta">
+										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
+											{profile.enabled ? 'Enabled' : 'Disabled'}
+										</span>
+										<span class="badge badge-info">{profile.policy || 'environment policy'}</span>
+										{#if profile.certificates[0]?.fingerprintSha256}
+											<span class="mono fingerprint">
+												{profile.certificates[0].fingerprintSha256}
+											</span>
+										{/if}
+									</div>
+								</div>
+								<button class="btn btn-danger btn-sm" onclick={() => deleteTrustProfile(profile)}>
+									Delete
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
 	{/if}
 
 	{#if loading}
@@ -490,7 +627,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each selectedPreset.attributeReleasePolicy.attributes as rule}
+					{#each selectedPreset.attributeReleasePolicy.attributes as rule, index (`${rule.name}-${rule.source || ''}-${index}`)}
 						<tr>
 							<td class="mono truncate" style="max-width: 320px;">{rule.name}</td>
 							<td>{rule.friendlyName || '-'}</td>
@@ -605,8 +742,62 @@
 		flex-wrap: wrap;
 	}
 
+	.trust-profiles-panel,
 	.presets-panel {
 		margin-top: 16px;
+	}
+
+	.trust-profile-layout {
+		display: grid;
+		grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+		gap: 16px;
+		align-items: start;
+	}
+
+	.trust-profile-form {
+		display: grid;
+		gap: 12px;
+	}
+
+	.trust-profile-list {
+		display: grid;
+		gap: 10px;
+	}
+
+	.trust-profile-item {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 12px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+	}
+
+	.trust-profile-main {
+		min-width: 0;
+	}
+
+	.trust-profile-meta {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		margin-top: 8px;
+	}
+
+	.fingerprint {
+		max-width: 280px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+	}
+
+	.compact-actions {
+		justify-content: flex-start;
 	}
 
 	.compact-table {
@@ -633,6 +824,10 @@
 	}
 
 	@media (max-width: 900px) {
+		.trust-profile-layout {
+			grid-template-columns: 1fr;
+		}
+
 		.data-table-container {
 			overflow-x: auto;
 		}

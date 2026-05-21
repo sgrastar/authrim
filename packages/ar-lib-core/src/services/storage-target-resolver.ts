@@ -1,5 +1,10 @@
 import { isDatabaseSource, MysqlAdapter, PostgresAdapter, type DatabaseSource } from '../db';
-import type { StorageProfile, StorageSlice, StorageTarget } from '../types/runtime-profile';
+import type {
+  StorageLogicalSource,
+  StorageProfile,
+  StorageSlice,
+  StorageTarget,
+} from '../types/runtime-profile';
 
 function normalizeBindingCandidates(ref: string | undefined): string[] {
   if (!ref) {
@@ -69,6 +74,10 @@ export function getBoundStorageTargetSource(
     throw new Error(`storage_profile_connection_not_resolved:${target.connectionRef}`);
   }
 
+  if (target.resolverRef) {
+    throw new Error(`unsupported_storage_profile_target_resolver:${target.resolverRef}`);
+  }
+
   throw new Error('storage_profile_target_not_resolved');
 }
 
@@ -77,6 +86,13 @@ export function getOptionalStorageSliceTarget(
   slice: StorageSlice
 ): StorageTarget | null {
   return profile.slices[slice] ?? null;
+}
+
+export function getOptionalStorageLogicalSourceTarget(
+  profile: StorageProfile,
+  source: StorageLogicalSource
+): StorageTarget | null {
+  return profile.logicalSources?.[source] ?? null;
 }
 
 export function getRequiredStorageSliceTarget(

@@ -51,7 +51,6 @@ export type PermissionLevel = 'view' | 'edit' | 'none';
  * API base URL
  */
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
-const FALLBACK_TENANT_ID = 'default';
 
 /**
  * Create settings context store
@@ -125,12 +124,16 @@ function createSettingsContextStore() {
 	return {
 		/**
 		 * Resolve the effective tenant ID for API calls.
-		 * In single-tenant mode we may temporarily have no loaded tenant list yet,
-		 * so fall back to 'default' instead of emitting empty tenant paths.
+		 * Prefer the loaded tenant context and only use the session tenant as a
+		 * last known-good fallback while the tenant list is unavailable.
 		 */
 		resolveTenantId(candidate?: string | null): string {
 			return (
-				candidate?.trim() || state.tenantId || state.availableTenants[0]?.id || FALLBACK_TENANT_ID
+				candidate?.trim() ||
+				state.tenantId ||
+				state.availableTenants[0]?.id ||
+				adminAuth.user?.tenantId ||
+				''
 			);
 		},
 
@@ -318,14 +321,29 @@ function createSettingsContextStore() {
 							? state.tenantId
 							: state.availableTenants[0]?.id
 					);
+					if (browser && state.tenantId) {
+						sessionStorage.setItem('settings_tenant_id', state.tenantId);
+					}
 				} else {
 					state.availableTenants = [];
-					state.tenantId = this.resolveTenantId(state.tenantId);
+					state.tenantId = this.resolveTenantId(
+						state.tenantId && state.tenantId !== 'default'
+							? state.tenantId
+							: adminAuth.user?.tenantId
+					);
+					if (browser && state.tenantId) {
+						sessionStorage.setItem('settings_tenant_id', state.tenantId);
+					}
 				}
 			} catch (err) {
 				console.warn('Failed to load tenants:', err);
 				state.availableTenants = [];
-				state.tenantId = this.resolveTenantId(state.tenantId);
+				state.tenantId = this.resolveTenantId(
+					state.tenantId && state.tenantId !== 'default' ? state.tenantId : adminAuth.user?.tenantId
+				);
+				if (browser && state.tenantId) {
+					sessionStorage.setItem('settings_tenant_id', state.tenantId);
+				}
 			} finally {
 				state.isLoading = false;
 			}
@@ -380,8 +398,10 @@ function createSettingsContextStore() {
 				state.currentLevel = savedLevel;
 			}
 
-			if (savedTenantId) {
+			if (savedTenantId && savedTenantId !== 'default') {
 				state.tenantId = savedTenantId;
+			} else if (adminAuth.user?.tenantId) {
+				state.tenantId = adminAuth.user.tenantId;
 			}
 
 			if (savedClientId) {
@@ -401,7 +421,7 @@ function createSettingsContextStore() {
 		 */
 		reset(): void {
 			state.currentLevel = 'tenant';
-			state.tenantId = this.resolveTenantId(state.availableTenants[0]?.id);
+			state.tenantId = state.availableTenants[0]?.id || adminAuth.user?.tenantId || '';
 			state.clientId = null;
 			state.error = null;
 

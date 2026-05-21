@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildRecordMigrationSql,
   buildRuntimeProfileSeedSql,
+  listD1MigrationSqlFiles,
   shouldMirrorPiiMigrationsToCore,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
@@ -112,6 +113,51 @@ describe('buildRecordMigrationSql', () => {
   });
 });
 
+describe('listD1MigrationSqlFiles', () => {
+  it('discovers nested phase directory migrations in explicit relative order', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'authrim-migrations-'));
+    try {
+      mkdirSync(join(dir, 'logging-storage', 'phase2'), { recursive: true });
+      mkdirSync(join(dir, 'logging-storage', 'phase1'), { recursive: true });
+      writeFileSync(join(dir, '000_fresh_schema.sql'), '-- fresh');
+      writeFileSync(join(dir, '010_flat.sql'), '-- flat');
+      writeFileSync(join(dir, 'logging-storage', 'phase2', '002_policy.sql'), '-- phase2');
+      writeFileSync(join(dir, 'logging-storage', 'phase1', '001_destination.sql'), '-- phase1');
+      writeFileSync(join(dir, '.ignored.sql'), '-- ignored');
+
+      expect(listD1MigrationSqlFiles(dir)).toEqual([
+        '000_fresh_schema.sql',
+        '010_flat.sql',
+        'logging-storage/phase1/001_destination.sql',
+        'logging-storage/phase2/002_policy.sql',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('can exclude top-level database-specific migration directories for core runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'authrim-migrations-'));
+    try {
+      mkdirSync(join(dir, 'admin'), { recursive: true });
+      mkdirSync(join(dir, 'pii'), { recursive: true });
+      mkdirSync(join(dir, 'logging-storage', 'phase1'), { recursive: true });
+      writeFileSync(join(dir, '000_fresh_schema.sql'), '-- fresh');
+      writeFileSync(join(dir, 'admin', '001_admin.sql'), '-- admin');
+      writeFileSync(join(dir, 'pii', '001_pii.sql'), '-- pii');
+      writeFileSync(join(dir, 'logging-storage', 'phase1', '001_destination.sql'), '-- phase1');
+
+      expect(
+        listD1MigrationSqlFiles(dir, {
+          excludeTopLevelDirectories: new Set(['admin', 'pii']),
+        })
+      ).toEqual(['000_fresh_schema.sql', 'logging-storage/phase1/001_destination.sql']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('migration seed SQL portability', () => {
   it('keeps current and setup mirror seed migrations free of INSERT OR IGNORE', () => {
     const migrationFiles = [
@@ -150,8 +196,14 @@ describe('migration seed SQL portability', () => {
 
   it('keeps Admin role assignment scope normalization independent from timestamp columns', () => {
     const migrationFiles = [
-      new URL('../../../../migrations/admin/016_admin_role_assignment_scope_normalization.sql', import.meta.url),
-      new URL('../../migrations/admin/016_admin_role_assignment_scope_normalization.sql', import.meta.url),
+      new URL(
+        '../../../../migrations/admin/016_admin_role_assignment_scope_normalization.sql',
+        import.meta.url
+      ),
+      new URL(
+        '../../migrations/admin/016_admin_role_assignment_scope_normalization.sql',
+        import.meta.url
+      ),
     ];
 
     for (const fileUrl of migrationFiles) {

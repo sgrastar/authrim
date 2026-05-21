@@ -375,31 +375,49 @@ export class AdminStorageDestinationRepository extends BaseRepository<AdminStora
     const now = getCurrentTimestamp();
     const tenantId = requireTenantId(input.tenant_id, 'AdminStorageDestinationRepository usage');
     const id = generateId();
-    await this.adapter.execute(
-      `INSERT INTO admin_storage_destination_usages (
-         id, destination_id, feature, resource_type, resource_id, tenant_id,
-         metadata_json, created_by, created_at, updated_at, is_active
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-       ON CONFLICT(destination_id, feature, resource_type, resource_id)
-       DO UPDATE SET
-         tenant_id = excluded.tenant_id,
-         metadata_json = excluded.metadata_json,
-         created_by = excluded.created_by,
-         updated_at = excluded.updated_at,
-         is_active = 1`,
+    const update = await this.adapter.execute(
+      `UPDATE admin_storage_destination_usages
+          SET tenant_id = ?,
+              metadata_json = ?,
+              created_by = ?,
+              updated_at = ?,
+              is_active = 1
+        WHERE destination_id = ?
+          AND feature = ?
+          AND resource_type = ?
+          AND resource_id = ?`,
       [
-        id,
-        input.destination_id,
-        input.feature,
-        input.resource_type,
-        input.resource_id,
         tenantId,
         JSON.stringify(input.metadata ?? {}),
         input.created_by ?? null,
         now,
-        now,
+        input.destination_id,
+        input.feature,
+        input.resource_type,
+        input.resource_id,
       ]
     );
+
+    if (update.rowsAffected === 0) {
+      await this.adapter.execute(
+        `INSERT INTO admin_storage_destination_usages (
+           id, destination_id, feature, resource_type, resource_id, tenant_id,
+           metadata_json, created_by, created_at, updated_at, is_active
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          id,
+          input.destination_id,
+          input.feature,
+          input.resource_type,
+          input.resource_id,
+          tenantId,
+          JSON.stringify(input.metadata ?? {}),
+          input.created_by ?? null,
+          now,
+          now,
+        ]
+      );
+    }
     const rows = await this.listUsage(input.destination_id);
     const usage = rows.find(
       (item) =>

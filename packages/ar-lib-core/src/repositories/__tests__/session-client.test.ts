@@ -131,4 +131,69 @@ describe('SessionClientRepository logout lookups', () => {
       },
     ]);
   });
+
+  it('hydrates logout targets from SessionClientStore records without reading session_clients', async () => {
+    queryMock.mockResolvedValue([
+      {
+        client_id: 'client-back',
+        client_name: 'Backchannel Client',
+        backchannel_logout_uri: 'https://client.example.com/backchannel',
+        backchannel_logout_session_required: 1,
+        frontchannel_logout_uri: null,
+        frontchannel_logout_session_required: 0,
+        logout_webhook_uri: null,
+        logout_webhook_secret_encrypted: null,
+      },
+      {
+        client_id: 'client-front',
+        client_name: 'Frontchannel Client',
+        backchannel_logout_uri: null,
+        backchannel_logout_session_required: 0,
+        frontchannel_logout_uri: 'https://client.example.com/frontchannel',
+        frontchannel_logout_session_required: 1,
+        logout_webhook_uri: 'https://client.example.com/webhook',
+        logout_webhook_secret_encrypted: 'encrypted-secret',
+      },
+    ]);
+
+    const result = await repository.hydrateLogoutTargetsFromSessionClients([
+      {
+        id: 'row-back',
+        tenant_id: 'tenant-a',
+        session_id: 'session-123',
+        client_id: 'client-back',
+        first_token_at: 100,
+        last_token_at: 200,
+        last_seen_at: null,
+      },
+      {
+        id: 'row-front',
+        tenant_id: 'tenant-a',
+        session_id: 'session-123',
+        client_id: 'client-front',
+        first_token_at: 101,
+        last_token_at: 201,
+        last_seen_at: 250,
+      },
+    ]);
+
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('FROM oauth_clients'), [
+      'tenant-a',
+      'client-back',
+      'client-front',
+    ]);
+    expect(queryMock.mock.calls[0][0]).not.toContain('session_clients');
+    expect(result.backchannelClients).toHaveLength(1);
+    expect(result.frontchannelClients).toHaveLength(1);
+    expect(result.webhookClients).toEqual([
+      {
+        id: 'row-front',
+        session_id: 'session-123',
+        client_id: 'client-front',
+        client_name: 'Frontchannel Client',
+        logout_webhook_uri: 'https://client.example.com/webhook',
+        logout_webhook_secret_encrypted: 'encrypted-secret',
+      },
+    ]);
+  });
 });

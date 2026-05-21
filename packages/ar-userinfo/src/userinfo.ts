@@ -4,8 +4,8 @@ import {
   introspectTokenFromContext,
   getClientCached,
   getCachedUser,
-  createAuthContextFromHono,
   createPIIContextFromHono,
+  resolveCustomClaimRuntimeSourcesFromEnv,
   encryptJWT,
   isUserInfoEncryptionRequired,
   getClientPublicKey,
@@ -17,10 +17,12 @@ import {
   type JWEAlgorithm,
   type JWEEncryption,
   loadFeatureConfig,
-  createCustomClaimSchemaResolver,
+  createCustomClaimSchemaResolverFromSources,
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  canServeUserInfoWithPIIStatus,
+  resolveOIDCPIIRequirement,
 } from '@authrim/ar-lib-core';
 import { SignJWT } from 'jose';
 
@@ -160,6 +162,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const user = await getCachedUser(c.env, tenantId, sub, {
     coreDb: piiCtx.coreAdapter,
     piiDb: piiCtx.defaultPiiAdapter,
+    cacheScope: piiCtx.userCacheScope,
+    piiCacheMode: piiCtx.piiCacheMode,
   });
 
   if (!user) {
@@ -172,6 +176,29 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       },
       401
     );
+  }
+
+  const piiRequirement = resolveOIDCPIIRequirement({
+    scopes,
+    claimsRequest,
+    targets: ['userinfo'],
+  });
+  if (user.pii_status) {
+    const piiAccess = canServeUserInfoWithPIIStatus(user.pii_status, {
+      requiresPII: piiRequirement.requiresPII,
+    });
+    if (!piiAccess.ok) {
+      const status = piiAccess.error === 'invalid_token' ? 401 : 503;
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: piiAccess.error,
+          error_description: piiAccess.error_description,
+        },
+        status
+      );
+    }
   }
 
   const userData = {
@@ -211,14 +238,14 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
     if (ccFeatureConfig.enabled) {
       const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const ccResolver = createCustomClaimSchemaResolver(
-        authCtx.coreAdapter,
-        piiCtx.defaultPiiAdapter,
-        c.env.AUTHRIM_CONFIG || null,
-        ccFeatureConfig
-      );
+      const ccSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+      const ccResolver = createCustomClaimSchemaResolverFromSources({
+        schemaDb: ccSources.schemaDb,
+        nonPiiDb: ccSources.nonPiiDb,
+        piiDb: ccSources.piiDb,
+        cache: c.env.AUTHRIM_CONFIG || null,
+        featureConfig: ccFeatureConfig,
+      });
       const ccResult = await ccResolver.resolveClaimsForTarget(tenantId, sub, scopes, 'userinfo');
       for (const [key, value] of Object.entries(ccResult.claims)) {
         if (!(key in userClaims)) userClaims[key] = value; // Prevent overwriting standard claims

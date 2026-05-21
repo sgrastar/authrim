@@ -16,12 +16,27 @@ const {
   const state = {
     objectCatalog: [] as Array<Record<string, unknown>>,
     objectCatalogObjects: [] as Array<Record<string, unknown>>,
+    sensitiveDetailChunkIndex: [] as Array<Record<string, unknown>>,
     adminAuditLogs: [] as Array<Record<string, unknown>>,
   };
 
   const adapter = {
     execute: vi.fn(async (sql: string, params: unknown[]) => {
-      if (sql.includes('INSERT INTO object_catalog_objects')) {
+      if (sql.includes('INSERT INTO sensitive_detail_chunk_index')) {
+        state.sensitiveDetailChunkIndex.push({
+          catalog_id: params[0],
+          tenant_id: params[1],
+          object_class: params[2],
+          bucket_binding: params[3],
+          object_key: params[4],
+          content_encoding: params[5],
+          line_number: params[6],
+          key_version: params[7],
+          checksum_sha256: params[8],
+          created_at: params[9],
+          deleted_at: params[10],
+        });
+      } else if (sql.includes('INSERT INTO object_catalog_objects')) {
         state.objectCatalogObjects.push({
           id: params[0],
           catalog_id: params[1],
@@ -73,6 +88,21 @@ const {
       return { rowsAffected: 1 };
     }),
     queryOne: vi.fn(async (sql: string, params: unknown[]) => {
+      if (sql.includes('FROM sensitive_detail_chunk_index')) {
+        const catalogId = params[0];
+        const tenantId = params[1];
+        const objectClass = params[2];
+        return (
+          state.sensitiveDetailChunkIndex.find(
+            (row) =>
+              row.catalog_id === catalogId &&
+              row.tenant_id === tenantId &&
+              row.object_class === objectClass &&
+              row.deleted_at == null
+          ) ?? null
+        );
+      }
+
       if (sql.startsWith('SELECT * FROM admin_audit_log WHERE id = ?')) {
         return state.adminAuditLogs.find((row) => row.id === params[0]) ?? null;
       }
@@ -152,7 +182,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-import { loadAdminAuditDetail, writeAdminAuditLog } from '../admin-shared';
+import { writeAdminAuditLog } from '../admin-shared';
 
 const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
@@ -214,6 +244,7 @@ function createMockContext(
   } = {}
 ) {
   const objectStore = createMockBucket();
+  const loggingQueue = { send: vi.fn().mockResolvedValue(undefined) };
   const contextStore = new Map<string, unknown>();
   const headers = new Map(
     Object.entries(options.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value])
@@ -222,6 +253,7 @@ function createMockContext(
     SENSITIVE_DETAILS: objectStore.bucket,
     OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
     OBJECT_ENCRYPTION_KEY_VERSION: '3',
+    LOGGING_DELIVERY_CRITICAL_QUEUE: loggingQueue,
     ...envOverrides,
   } as Env;
 
@@ -258,6 +290,7 @@ function createMockContext(
   return {
     c,
     objectStore,
+    loggingQueue,
   };
 }
 
@@ -266,11 +299,12 @@ describe('admin-shared audit detail externalization', () => {
     vi.clearAllMocks();
     dbState.objectCatalog.length = 0;
     dbState.objectCatalogObjects.length = 0;
+    dbState.sensitiveDetailChunkIndex.length = 0;
     dbState.adminAuditLogs.length = 0;
   });
 
   it('externalizes admin audit detail into SENSITIVE_DETAILS when object storage is available', async () => {
-    const { c, objectStore } = createMockContext();
+    const { c, objectStore, loggingQueue } = createMockContext();
 
     await writeAdminAuditLog(c, {
       action: 'admin.role.updated',
@@ -283,9 +317,17 @@ describe('admin-shared audit detail externalization', () => {
     });
 
     expect(dbState.objectCatalog).toHaveLength(1);
-    expect(dbState.objectCatalogObjects).toHaveLength(1);
+    expect(dbState.objectCatalogObjects).toHaveLength(0);
+    expect(dbState.sensitiveDetailChunkIndex).toHaveLength(0);
     expect(dbState.adminAuditLogs).toHaveLength(1);
-    expect(objectStore.store.size).toBe(1);
+    expect(objectStore.store.size).toBe(0);
+    expect(loggingQueue.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload_type: 'chunk_write',
+        plane: 'sensitive_detail',
+        records: [expect.objectContaining({ object_class: 'admin_audit_detail' })],
+      })
+    );
 
     const logRow = dbState.adminAuditLogs[0];
     expect(logRow.before_json).toBeNull();
@@ -298,25 +340,6 @@ describe('admin-shared audit detail externalization', () => {
     expect(typeof logRow.detail_object_catalog_id).toBe('string');
     const detailCatalog = dbState.objectCatalog[0];
     expect(detailCatalog.public_artifact_id).toMatch(/^oa_/);
-
-    const detail = await loadAdminAuditDetail(
-      c,
-      mockAdapter as unknown as import('@authrim/ar-lib-core').DatabaseAdapter,
-      'tenant-1',
-      detailCatalog.public_artifact_id as string,
-      logRow.detail_object_catalog_id as string
-    );
-    expect(detail).toEqual({
-      before: { display_name: 'Old Name' },
-      after: { display_name: 'New Name' },
-      metadata: {
-        ticket: 'CASE-123',
-        diff: ['name'],
-        admin_actor_type: 'admin_user',
-        admin_actor_id: 'admin-1',
-        admin_auth_method: 'session',
-      },
-    });
   });
 
   it('falls back to inline JSON when encrypted object storage is unavailable', async () => {
@@ -336,6 +359,7 @@ describe('admin-shared audit detail externalization', () => {
 
     expect(dbState.objectCatalog).toHaveLength(0);
     expect(dbState.objectCatalogObjects).toHaveLength(0);
+    expect(dbState.sensitiveDetailChunkIndex).toHaveLength(0);
     expect(dbState.adminAuditLogs).toHaveLength(1);
 
     const logRow = dbState.adminAuditLogs[0];

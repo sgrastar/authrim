@@ -97,6 +97,9 @@ export async function validateSAMLAuthnRequestSignature(
     (input.spConfig.acceptedAuthnRequestSignatureAlgorithms ?? []).includes(
       SIGNATURE_ALGORITHMS.RSA_SHA1
     );
+  const allowSha1DigestAlgorithm =
+    input.spConfig.authnRequestLegacyAlgorithmPolicy === 'explicit_opt_in' &&
+    (input.spConfig.acceptedAuthnRequestDigestAlgorithms ?? []).includes(DIGEST_ALGORITHMS.SHA1);
   const verifier = verifiers.verifyXmlSignature ?? verifyXmlSignature;
   let lastError: unknown;
   for (const certificate of certificates) {
@@ -107,6 +110,9 @@ export async function validateSAMLAuthnRequestSignature(
     };
     if (allowSha1SignatureAlgorithm) {
       verifyOptions.allowSha1SignatureAlgorithm = true;
+    }
+    if (allowSha1DigestAlgorithm) {
+      verifyOptions.allowSha1DigestAlgorithm = true;
     }
 
     try {

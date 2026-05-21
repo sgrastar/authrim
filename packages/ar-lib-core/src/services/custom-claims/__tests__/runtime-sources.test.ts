@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { DatabaseAdapter } from '../../../db';
 import {
   DEFAULT_AUDIT_PROFILE_ID,
   DEFAULT_RESIDENCY_PROFILE_ID,
   DEFAULT_STORAGE_PROFILE_ID,
+  TENANT_D1_STORAGE_PROFILE_ID,
 } from '../../../types/runtime-profile';
+import { clearTenantDatabaseResolverMemoryCache } from '../../tenant-database-resolver';
 import { resolveCustomClaimRuntimeSourcesFromEnv } from '../runtime-sources';
 
 function createMockKV(initial: Record<string, string> = {}): KVNamespace {
@@ -43,6 +45,10 @@ function createMockAdapter(name: string): DatabaseAdapter {
 }
 
 describe('resolveCustomClaimRuntimeSourcesFromEnv', () => {
+  beforeEach(() => {
+    clearTenantDatabaseResolverMemoryCache();
+  });
+
   it('resolves builtin D1 split bindings for custom claims by default', async () => {
     const env = {
       DB: { prepare: vi.fn(), batch: vi.fn() } as unknown as D1Database,
@@ -189,5 +195,110 @@ describe('resolveCustomClaimRuntimeSourcesFromEnv', () => {
     expect((resolved.schemaDb as DatabaseAdapter).getType()).toBe('postgres');
     expect((resolved.nonPiiDb as DatabaseAdapter).getType()).toBe('postgres');
     expect((resolved.piiDb as DatabaseAdapter)?.getType()).toBe('postgres');
+  });
+
+  it('resolves tenant-d1 custom claim sources through the tenant database registry', async () => {
+    const tenantCore = createMockAdapter('tenant-core');
+    const tenantPii = createMockAdapter('tenant-pii');
+    const queryOne = vi
+      .fn()
+      .mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        role: 'tenant_core',
+        shard_group: 'default',
+        generation: 1,
+        shard_count: 1,
+        shard_key_strategy: 'none',
+        runtime_generation: 1,
+        status: 'active',
+        updated_at: '2026-05-16T00:00:00.000Z',
+        updated_by: null,
+        metadata_json: null,
+      })
+      .mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        role: 'tenant_core',
+        generation: 1,
+        shard_group: 'default',
+        shard_index: 0,
+        provider: 'd1',
+        database_id: 'core-id',
+        database_name: 'authrim-dev-tenant-a-core',
+        binding_ref: 'TDB_TENANT_A_CORE',
+        connection_ref: null,
+        schema_version: 1,
+        status: 'active',
+        shard_count: 1,
+        shard_key_strategy: 'none',
+        worker_shard: 'primary',
+        deployment_target: null,
+        region_hint: null,
+        jurisdiction: null,
+        signature: null,
+        signature_key_id: null,
+        metadata_json: null,
+        created_at: '2026-05-16T00:00:00.000Z',
+        updated_at: '2026-05-16T00:00:00.000Z',
+        created_by: null,
+        updated_by: null,
+      })
+      .mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        role: 'tenant_pii',
+        shard_group: 'default',
+        generation: 1,
+        shard_count: 1,
+        shard_key_strategy: 'none',
+        runtime_generation: 1,
+        status: 'active',
+        updated_at: '2026-05-16T00:00:00.000Z',
+        updated_by: null,
+        metadata_json: null,
+      })
+      .mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        role: 'tenant_pii',
+        generation: 1,
+        shard_group: 'default',
+        shard_index: 0,
+        provider: 'd1',
+        database_id: 'pii-id',
+        database_name: 'authrim-dev-tenant-a-pii',
+        binding_ref: 'TDB_TENANT_A_PII',
+        connection_ref: null,
+        schema_version: 1,
+        status: 'active',
+        shard_count: 1,
+        shard_key_strategy: 'none',
+        worker_shard: 'primary',
+        deployment_target: null,
+        region_hint: null,
+        jurisdiction: null,
+        signature: null,
+        signature_key_id: null,
+        metadata_json: null,
+        created_at: '2026-05-16T00:00:00.000Z',
+        updated_at: '2026-05-16T00:00:00.000Z',
+        created_by: null,
+        updated_by: null,
+      });
+    const controlDb = createMockAdapter('admin');
+    controlDb.queryOne = queryOne as DatabaseAdapter['queryOne'];
+    const env = {
+      DB: { prepare: vi.fn(), batch: vi.fn() } as unknown as D1Database,
+      DB_ADMIN: controlDb,
+      TDB_TENANT_A_CORE: tenantCore,
+      TDB_TENANT_A_PII: tenantPii,
+      DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+      DEFAULT_AUDIT_PROFILE_ID,
+      DEFAULT_RESIDENCY_PROFILE_ID,
+    };
+
+    const resolved = await resolveCustomClaimRuntimeSourcesFromEnv(env, 'tenant-a');
+
+    expect(resolved.storageProfile.id).toBe(TENANT_D1_STORAGE_PROFILE_ID);
+    expect(resolved.schemaDb).toBe(tenantCore);
+    expect(resolved.nonPiiDb).toBe(tenantCore);
+    expect(resolved.piiDb).toBe(tenantPii);
   });
 });

@@ -1,8 +1,20 @@
 import type { Env } from '@authrim/ar-lib-core';
 import { processPendingGenericAdminJobs } from './admin-job-executor';
 import { processPendingDataExportRequests } from './data-export';
+import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import { processPendingSupportOpsSnapshotJobs } from './support-ops';
 import { processPendingTenantDeletionJobs } from './tenant-deletion-jobs';
+import {
+  processPendingTenantDatabaseHealthCheckJobs,
+  refreshTenantDatabaseHealth,
+} from './tenant-database-health-jobs';
+import {
+  processPendingTenantDatabaseReconciliationJobs,
+  refreshTenantDatabaseReconciliation,
+} from './tenant-database-reconciliation-jobs';
+import { refreshTenantDatabaseStats } from './tenant-database-stats-jobs';
+import { processPendingTenantDiscoveryReindexJobs } from './tenant-discovery-reindex-jobs';
+import { refreshTenantRuntimeRegistrySnapshots } from './tenant-runtime-registry-snapshot-jobs';
 import { processPendingUserImportJobs } from './user-import-jobs';
 
 interface ScheduledJobLogger {
@@ -38,6 +50,44 @@ export async function processScheduledAdminJobQueues(
     await processPendingSupportOpsSnapshotJobs(env, log);
   } catch (jobsError) {
     log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
+  }
+
+  try {
+    await refreshTenantDatabaseStats(env, log);
+  } catch (jobsError) {
+    log.error('Tenant database stats refresh failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processPendingTenantDatabaseHealthCheckJobs(env, log);
+    await refreshTenantDatabaseHealth(env, log);
+  } catch (jobsError) {
+    log.error('Tenant database health refresh failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processPendingTenantDatabaseReconciliationJobs(env, log);
+    await refreshTenantDatabaseReconciliation(env, log);
+  } catch (jobsError) {
+    log.error('Tenant database reconciliation failed', {}, jobsError as Error);
+  }
+
+  try {
+    await refreshTenantRuntimeRegistrySnapshots(env, log);
+  } catch (jobsError) {
+    log.error('Tenant runtime registry snapshot refresh failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processPendingTenantDiscoveryReindexJobs(env, log);
+  } catch (jobsError) {
+    log.error('Tenant discovery reindex job processing failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processLoggingStorageMaintenanceJobs(env, log);
+  } catch (jobsError) {
+    log.error('Logging/storage maintenance job processing failed', {}, jobsError as Error);
   }
 
   try {

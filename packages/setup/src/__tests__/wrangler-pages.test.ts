@@ -11,6 +11,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       });
 
       expect(result).toContain('name = "test-ar-login-ui"');
+      expect(result).toContain('workers_dev = true');
       expect(result).toContain('compatibility_date = "2024-01-01"');
       expect(result).toContain('nodejs_compat');
       expect(result).toContain('global_fetch_strictly_public');
@@ -30,6 +31,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       });
 
       expect(result).toContain('name = "prod-ar-admin-ui"');
+      expect(result).toContain('workers_dev = true');
       expect(result).toContain('main = ".svelte-kit/cloudflare/_worker.js"');
       expect(result).not.toContain('[[services]]');
     });
@@ -108,5 +110,21 @@ describe('generateUiWorkersWranglerConfig', () => {
     expect(result).toContain('[vars]');
     expect(result).toContain('API_BACKEND_URL = "__DISABLED__"');
     expect(result).toContain('PUBLIC_AUTHRIM_ISSUER = "https://issuer.example.com"');
+  });
+
+  it('disables workers.dev and binds a custom domain when UI custom domain routes are provided', () => {
+    const result = generateUiWorkersWranglerConfig({
+      component: 'ar-admin-ui',
+      env: 'phase9',
+      needsProxy: true,
+      workersDev: false,
+      routes: [{ pattern: 'admin.multi-tenant.authrim.com', custom_domain: true }],
+    });
+
+    expect(result).toContain('workers_dev = false');
+    expect(result).toContain('[[routes]]');
+    expect(result).toContain('pattern = "admin.multi-tenant.authrim.com"');
+    expect(result).toContain('custom_domain = true');
+    expect(result).toContain('binding = "AR_ROUTER"');
   });
 });

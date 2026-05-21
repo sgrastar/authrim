@@ -100,10 +100,19 @@ function buildDataExportObjectKey(
 }
 
 function escapeCsvCell(value: string): string {
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const trimmed = value.trimStart();
+  const safeValue =
+    trimmed.startsWith('=') ||
+    trimmed.startsWith('+') ||
+    trimmed.startsWith('@') ||
+    /^-\D/.test(trimmed) ||
+    /^[\t\r]/.test(value)
+      ? `'${value}`
+      : value;
+  if (/[",\n\r]/.test(safeValue)) {
+    return `"${safeValue.replace(/"/g, '""')}"`;
   }
-  return value;
+  return safeValue;
 }
 
 function flattenCsvRows(
@@ -664,6 +673,8 @@ async function createMaterializedExportDownloadResponse(
       'Content-Type':
         artifact.contentType || (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
       'Content-Disposition': `attachment; filename="${createExportFilename(requestedFormat)}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
     },
   });
 }
@@ -1105,6 +1116,9 @@ export async function dataExportArtifactChunkHandler(c: Context<{ Bindings: Env 
           'Content-Type':
             chunkArtifact.contentType ||
             (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
+          'Content-Disposition': `attachment; filename="${createExportFilename(requestedFormat)}"`,
+          'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'no-store',
         },
       });
     }
@@ -1134,6 +1148,9 @@ export async function dataExportArtifactChunkHandler(c: Context<{ Bindings: Env 
         'Content-Type':
           chunkArtifact.contentType ||
           (requestedFormat === 'csv' ? 'text/csv' : 'application/json'),
+        'Content-Disposition': `attachment; filename="${createExportFilename(requestedFormat)}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
       },
     });
   } catch (error) {

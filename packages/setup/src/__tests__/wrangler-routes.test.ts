@@ -290,6 +290,79 @@ describe('generateRoutes', () => {
     });
   });
 
+  it('includes generated tenant D1 bindings for tenant durable runtime workers', () => {
+    const config = {
+      version: '1.0.0',
+      environment: { prefix: 'tenantd1' },
+      urls: {
+        api: { custom: null, auto: 'https://tenantd1-ar-router.workers.dev' },
+      },
+      tenant: { multiTenant: true },
+      components: {},
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      features: { queue: { enabled: false }, r2: { enabled: false } },
+      keys: {},
+      cloudflare: {},
+      database: {},
+      security: {},
+      profile: 'basic-op',
+    } as unknown as AuthrimConfig;
+    const resourceIds = {
+      d1: {
+        DB: { id: 'core-id', name: 'tenantd1-authrim-core-db' },
+        DB_PII: { id: 'pii-id', name: 'tenantd1-authrim-pii-db' },
+        DB_ADMIN: { id: 'admin-id', name: 'tenantd1-authrim-admin-db' },
+        TDB_EXAMPLE_ABC123_CORE: {
+          id: 'tenant-core-id',
+          name: 'authrim-tenantd1-example-core',
+        },
+        TDB_EXAMPLE_DEF456_PII: {
+          id: 'tenant-pii-id',
+          name: 'authrim-tenantd1-example-pii',
+        },
+      },
+      kv: {
+        TENANT_RUNTIME_REGISTRY: {
+          id: 'kv-tenant-runtime-registry',
+          name: 'TENANTD1-TENANT_RUNTIME_REGISTRY',
+        },
+      },
+    };
+
+    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
+    const asyncConfig = generateWranglerConfig('ar-async', config, resourceIds);
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    expect(authConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TDB_EXAMPLE_ABC123_CORE' }),
+        expect.objectContaining({ binding: 'TDB_EXAMPLE_DEF456_PII' }),
+      ])
+    );
+    expect(authConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
+    );
+    expect(managementConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
+    );
+    expect(asyncConfig.d1_databases).toBeUndefined();
+    expect(routerConfig.d1_databases).toBeUndefined();
+  });
+
   it('serializes configured Hyperdrive bindings for non-router workers', () => {
     const config = {
       version: '1.0.0',
@@ -488,6 +561,18 @@ id = "kv-id"
       kv: {},
       queues: {
         AUDIT_QUEUE: { id: 'queue-audit', name: 'queuephase4-audit' },
+        LOGGING_DELIVERY_CRITICAL_QUEUE: {
+          id: 'queue-logging-critical',
+          name: 'queuephase4-logging-critical',
+        },
+        LOGGING_DELIVERY_QUEUE: {
+          id: 'queue-logging-default',
+          name: 'queuephase4-logging-default',
+        },
+        LOGGING_DELIVERY_BULK_QUEUE: {
+          id: 'queue-logging-bulk',
+          name: 'queuephase4-logging-bulk',
+        },
       },
       r2: {
         DIAGNOSTIC_LOGS: { name: 'queuephase4-logs' },
@@ -496,15 +581,52 @@ id = "kv-id"
 
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
+    const userinfoConfig = generateWranglerConfig('ar-userinfo', config, resourceIds);
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
 
     expect(authConfig.queues?.producers).toEqual([
       { queue: 'queuephase4-audit', binding: 'AUDIT_QUEUE' },
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
     ]);
     expect(tokenConfig.queues?.producers).toEqual([
       { queue: 'queuephase4-audit', binding: 'AUDIT_QUEUE' },
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
     ]);
-    expect(managementConfig.queues?.consumers).toEqual([{ queue: 'queuephase4-audit' }]);
+    expect(userinfoConfig.queues?.producers).toEqual([
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
+    ]);
+    expect(managementConfig.queues?.producers).toEqual([
+      {
+        queue: 'queuephase4-logging-critical',
+        binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      },
+      { queue: 'queuephase4-logging-default', binding: 'LOGGING_DELIVERY_QUEUE' },
+      { queue: 'queuephase4-logging-bulk', binding: 'LOGGING_DELIVERY_BULK_QUEUE' },
+    ]);
+    expect(managementConfig.queues?.consumers).toEqual([
+      { queue: 'queuephase4-audit' },
+      { queue: 'queuephase4-logging-critical' },
+      { queue: 'queuephase4-logging-default' },
+      { queue: 'queuephase4-logging-bulk' },
+    ]);
+    expect(managementConfig.vars.LOGGING_DELIVERY_QUEUE_NAMES).toBe(
+      'queuephase4-logging-critical,queuephase4-logging-default,queuephase4-logging-bulk'
+    );
   });
 
   it('serializes queue consumers in wrangler.toml output', () => {
@@ -714,10 +836,97 @@ id = "kv-id"
 
     expect(routerConfig.routes).toEqual([
       { pattern: 'test.authrim.com', custom_domain: true },
+      { pattern: '*.test.authrim.com', zone_name: 'authrim.com' },
       { pattern: '*.test.authrim.com/*', zone_name: 'authrim.com' },
     ]);
     // workers_dev should be false when custom domain is set
     expect(routerConfig.workers_dev).toBe(false);
+  });
+
+  it('uses tenant.baseDomain, not api.custom, as the multi-tenant wildcard route base', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: 'https://first.example.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+          customDomainBinding: true,
+        },
+        loginUi: {
+          custom: 'https://login.example.com',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.example.com',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'first',
+        displayName: 'First Tenant',
+        multiTenant: true,
+        userIdFormat: 'nanoid',
+        baseDomain: 'example.com',
+        nakedDomain: false,
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const routerConfig = generateWranglerConfig('ar-router', config, { d1: {}, kv: {} });
+
+    expect(routerConfig.routes).toEqual([
+      { pattern: 'example.com', custom_domain: true },
+      { pattern: '*.example.com', zone_name: 'example.com' },
+      { pattern: '*.example.com/*', zone_name: 'example.com' },
+    ]);
   });
 
   it('adds wildcard tenant routes in route mode when BASE_DOMAIN is configured', () => {
@@ -802,6 +1011,7 @@ id = "kv-id"
 
     expect(routerConfig.routes).toEqual([
       { pattern: 'test.authrim.com/*', zone_name: 'authrim.com' },
+      { pattern: '*.test.authrim.com', zone_name: 'authrim.com' },
       { pattern: '*.test.authrim.com/*', zone_name: 'authrim.com' },
     ]);
   });
@@ -884,7 +1094,11 @@ id = "kv-id"
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
     expect(routerConfig.services).toEqual(
-      expect.arrayContaining([{ binding: 'OP_VC', service: 'test-ar-vc' }])
+      expect.arrayContaining([
+        { binding: 'OP_VC', service: 'test-ar-vc' },
+        { binding: 'LOGIN_UI_WORKER', service: 'test-ar-login-ui' },
+        { binding: 'ADMIN_UI_WORKER', service: 'test-ar-admin-ui' },
+      ])
     );
   });
 

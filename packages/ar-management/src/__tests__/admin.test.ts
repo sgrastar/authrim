@@ -395,6 +395,11 @@ describe('Admin API Handlers', () => {
             registeredClients: expect.any(Number),
             newUsersToday: expect.any(Number),
             loginsToday: expect.any(Number),
+            piiHealth: expect.objectContaining({
+              statusCounts: expect.any(Object),
+              repairNeeded: expect.any(Number),
+              partialPIIUsers: expect.any(Number),
+            }),
           }),
           recentActivity: expect.any(Array),
         })
@@ -469,6 +474,10 @@ describe('Admin API Handlers', () => {
             registeredClients: 0,
             newUsersToday: 0,
             loginsToday: 0,
+            piiHealth: expect.objectContaining({
+              repairNeeded: 0,
+              partialPIIUsers: 0,
+            }),
           }),
           recentActivity: [],
         })
@@ -1377,6 +1386,70 @@ describe('Admin API Handlers', () => {
             name: 'Updated Name',
           }),
         })
+      );
+    });
+
+    it('should mark pii_status failed when a PII field update fails after core update', async () => {
+      const userId = 'user-pii-update-fails';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+      (mockDB as any)._mockStatement.all
+        .mockResolvedValueOnce({
+          results: [createCustomClaimSchemaRow({ is_required: 0 })],
+        })
+        .mockResolvedValueOnce({
+          results: [],
+        });
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        id: userId,
+        tenant_id: 'default',
+        email_verified: 1,
+        phone_number_verified: 0,
+        is_active: 1,
+        user_type: 'end_user',
+        pii_partition: 'default',
+        pii_status: 'active',
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+
+      const mockDBPII = createMockDB({
+        firstResult: {
+          id: userId,
+          email: 'old@example.com',
+          name: 'Old Name',
+        },
+      });
+      (mockDBPII as any)._mockStatement.run.mockRejectedValue(new Error('PII write failed'));
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: userId },
+        body: {
+          name: 'Updated Name',
+          email_verified: true,
+        },
+        db: mockDB,
+        dbPII: mockDBPII,
+      });
+
+      await adminUserUpdateHandler(c);
+
+      const coreSqls = (mockDB as any).prepare.mock.calls.map(([sql]: [string]) => sql);
+      expect(coreSqls).toContainEqual(expect.stringContaining('pii_status = ?'));
+      expect((mockDB as any)._mockStatement.bind).toHaveBeenCalledWith(
+        'failed',
+        expect.any(Number),
+        userId,
+        'default'
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Failed to update user',
+        },
+        500
       );
     });
 

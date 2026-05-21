@@ -31,6 +31,7 @@ import {
   getLogger,
   createLogger,
   processAuditQueue,
+  processLoggingDeliveryQueue,
   type AuditQueueMessage,
   isAllowedOrigin,
   parseAllowedOrigins,
@@ -43,12 +44,15 @@ import {
   hasAdminPermission,
   type AdminAuthContext,
   getDefaultTenantId,
+  readResponseTextWithLimit,
 } from '@authrim/ar-lib-core';
 import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
+
+const VERSION_MANAGER_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
 // Import handlers
 import { registerHandler } from './register';
@@ -257,6 +261,8 @@ import {
   adminJobsImportUploadHandler,
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
+  adminJobsTenantDatabaseProvisionHandler,
+  adminJobsTenantDatabaseActivateBatchHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
   adminJobTypesHandler,
@@ -298,6 +304,7 @@ import {
   adminRuntimeProfileGetHandler,
   adminRuntimeProfileListHandler,
   adminRuntimeProfileUpsertHandler,
+  adminTenantRuntimeRegistryEmergencyPurgeHandler,
   adminTenantRuntimeProfilesHandler,
 } from './runtime-profiles';
 import {
@@ -307,6 +314,8 @@ import {
   adminTenantUpdateHandler,
   adminTenantDeleteHandler,
   adminTenantSetDefaultHandler,
+  adminTenantProvisioningCleanupHandler,
+  adminTenantProvisioningRetryHandler,
 } from './admin-tenants';
 import {
   listTenantDomainMappingsHandler,
@@ -1087,7 +1096,7 @@ app.get('/api/admin/sessions/:id', adminSessionGetHandler);
 app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler); // RESTful: DELETE instead of POST
 app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler); // RESTful: /sessions instead of /revoke-all-sessions
 
-// Admin User Suspend/Lock endpoints (センシティブ操作 - 監査ログ付き)
+// Admin User Suspend/Lock endpoints (sensitive operation - with audit logs)
 // Rate limiting with strict profile (10 req/min) to prevent abuse
 app.use('/api/admin/users/:id/suspend', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
@@ -1204,8 +1213,15 @@ app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
 app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
+app.post('/api/admin/tenants/:id/provisioning/retry', adminTenantProvisioningRetryHandler);
+app.post('/api/admin/tenants/:id/provisioning/cleanup', adminTenantProvisioningCleanupHandler);
 app.get('/api/admin/tenants/:id/info', adminTenantInfoHandler);
 app.get('/api/admin/tenants/:id/runtime-profiles', adminTenantRuntimeProfilesHandler);
+app.post(
+  '/api/admin/tenants/:id/runtime-registry/emergency-purge',
+  requireSystemAdmin(),
+  adminTenantRuntimeRegistryEmergencyPurgeHandler
+);
 app.get('/api/admin/tenants/:id', adminTenantGetHandler);
 app.patch('/api/admin/tenants/:id', adminTenantUpdateHandler);
 app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
@@ -2283,6 +2299,11 @@ app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHand
 app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadHandler);
 app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
 app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
+app.post('/api/admin/jobs/tenant-databases/provision', adminJobsTenantDatabaseProvisionHandler);
+app.post(
+  '/api/admin/jobs/tenant-databases/activate-batch',
+  adminJobsTenantDatabaseActivateBatchHandler
+);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
@@ -2676,7 +2697,10 @@ app.post(
       );
 
       if (!response.ok) {
-        const error = await response.text();
+        const error = await readResponseTextWithLimit(
+          response,
+          VERSION_MANAGER_ERROR_BODY_MAX_BYTES
+        );
         const log = getLogger(c).module('VERSION-API');
         log.error('Failed to register version', { workerName, error });
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -2727,7 +2751,10 @@ app.get(
       );
 
       if (!response.ok) {
-        const error = await response.text();
+        const error = await readResponseTextWithLimit(
+          response,
+          VERSION_MANAGER_ERROR_BODY_MAX_BYTES
+        );
         const log = getLogger(c).module('VERSION-API');
         log.error('Failed to get version status', { error });
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -2960,13 +2987,54 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
 }
 
-async function handleAuditQueue(batch: MessageBatch<AuditQueueMessage>, env: Env): Promise<void> {
-  await processAuditQueue(batch, env, createLogger().module('AR-MANAGEMENT-AUDIT-QUEUE'));
+const LOGGING_DELIVERY_QUEUE_NAMES = new Set([
+  'LOGGING_DELIVERY_CRITICAL_QUEUE',
+  'LOGGING_DELIVERY_QUEUE',
+  'LOGGING_DELIVERY_BULK_QUEUE',
+]);
+
+function parseConfiguredLoggingDeliveryQueueNames(env: Env): Set<string> {
+  const raw = env.LOGGING_DELIVERY_QUEUE_NAMES;
+  if (!raw) {
+    return new Set();
+  }
+  return new Set(
+    raw
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function isLoggingDeliveryQueueName(queueName: string, env: Env): boolean {
+  return (
+    LOGGING_DELIVERY_QUEUE_NAMES.has(queueName) ||
+    parseConfiguredLoggingDeliveryQueueNames(env).has(queueName) ||
+    /(?:^|-)logging-delivery-(?:critical-|bulk-)?queue$/.test(queueName)
+  );
+}
+
+async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+  const queueName = String((batch as { queue?: unknown }).queue ?? '');
+  if (isLoggingDeliveryQueueName(queueName, env)) {
+    await processLoggingDeliveryQueue(
+      batch,
+      env,
+      createLogger().module('AR-MANAGEMENT-LOGGING-DELIVERY-QUEUE')
+    );
+    return;
+  }
+
+  await processAuditQueue(
+    batch as MessageBatch<AuditQueueMessage>,
+    env,
+    createLogger().module('AR-MANAGEMENT-AUDIT-QUEUE')
+  );
 }
 
 // Export for Cloudflare Workers with scheduled + queue handlers
 export default {
   fetch: app.fetch,
   scheduled: handleScheduled,
-  queue: handleAuditQueue,
+  queue: handleQueue,
 };

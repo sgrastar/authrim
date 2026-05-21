@@ -5,13 +5,8 @@ import {
   ensureDownstreamIntrospectionClient,
   loadDownstreamIntrospectionClientSecrets,
 } from './downstream-introspection-client.js';
-import {
-  findKeysDirectory,
-  getExternalKeysDir,
-  resolvePaths,
-  type EnvironmentPaths,
-  type LegacyPaths,
-} from './paths.js';
+import { waitForRouterWorkerReady } from './worker-readiness.js';
+import { findKeysDirectory, getExternalKeysDir, resolvePaths, type LegacyPaths } from './paths.js';
 
 export interface ResolveDownstreamIntrospectionKeysDirOptions {
   env: string;
@@ -25,6 +20,7 @@ export interface ConfigureDownstreamIntrospectionDeploymentOptions {
   rootDir: string;
   keysDir: string;
   apiBaseUrl?: string;
+  apiBaseUrls?: string[];
   tenantId?: string;
   dryRun?: boolean;
   onProgress?: (message: string) => void;
@@ -80,6 +76,30 @@ export async function resolveDownstreamIntrospectionApiBaseUrl(
   return `https://${env}-ar-router.workers.dev`;
 }
 
+function normalizeBaseUrl(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+async function resolveDownstreamIntrospectionApiBaseUrlCandidates(
+  env: string,
+  explicitApiBaseUrl?: string,
+  explicitApiBaseUrls?: string[]
+): Promise<string[]> {
+  const fallbackBaseUrl = await resolveDownstreamIntrospectionApiBaseUrl(env, explicitApiBaseUrl);
+  const candidates = [...(explicitApiBaseUrls ?? []), fallbackBaseUrl];
+  const seen = new Set<string>();
+
+  return candidates
+    .map((candidate) => normalizeBaseUrl(candidate.trim()))
+    .filter((candidate) => {
+      if (!candidate || seen.has(candidate)) {
+        return false;
+      }
+      seen.add(candidate);
+      return true;
+    });
+}
+
 export async function configureDownstreamIntrospectionDeployment(
   options: ConfigureDownstreamIntrospectionDeploymentOptions
 ): Promise<ConfigureDownstreamIntrospectionDeploymentResult> {
@@ -92,74 +112,107 @@ export async function configureDownstreamIntrospectionDeployment(
     };
   }
 
-  const apiBaseUrl = await resolveDownstreamIntrospectionApiBaseUrl(env, options.apiBaseUrl);
   const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+  const apiBaseUrls = await resolveDownstreamIntrospectionApiBaseUrlCandidates(
+    env,
+    options.apiBaseUrl,
+    options.apiBaseUrls
+  );
+  const errors: string[] = [];
 
-  const introspectionClientResult = await ensureDownstreamIntrospectionClient({
-    apiBaseUrl,
-    adminApiSecretPath,
-    keysDir,
-    tenantId,
-    onProgress,
-  });
+  for (const apiBaseUrl of apiBaseUrls) {
+    onProgress?.(`Preparing downstream introspection client via ${apiBaseUrl}`);
 
-  if (!introspectionClientResult.success) {
-    return {
-      success: false,
-      error: introspectionClientResult.error ?? 'Unknown downstream introspection client error',
-    };
-  }
+    const readinessResult = await waitForRouterWorkerReady({
+      apiBaseUrl,
+      maxWaitMs: 300_000,
+      requestTimeoutMs: 15_000,
+      requiredConsecutiveSuccesses: 3,
+      successDelayMs: 1_500,
+      onProgress,
+    });
+    if (!readinessResult.ready) {
+      errors.push(
+        `${apiBaseUrl}: router readiness failed at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown error'}`
+      );
+      continue;
+    }
 
-  const introspectionSecrets = await loadDownstreamIntrospectionClientSecrets(keysDir);
-  if (!introspectionSecrets) {
-    return {
-      success: false,
-      error: 'Downstream introspection client secrets were not written to disk',
-      clientId: introspectionClientResult.clientId,
-    };
-  }
+    const introspectionClientResult = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl,
+      adminApiSecretPath,
+      keysDir,
+      tenantId,
+      maxRetries: 24,
+      onProgress,
+    });
 
-  onProgress?.('Uploading downstream introspection secrets...');
-  const secretResult = await uploadSecrets(
-    introspectionSecrets,
-    {
+    if (!introspectionClientResult.success) {
+      errors.push(
+        `${apiBaseUrl}: ${introspectionClientResult.error ?? 'Unknown downstream introspection client error'}`
+      );
+      continue;
+    }
+
+    const introspectionSecrets = await loadDownstreamIntrospectionClientSecrets(keysDir);
+    if (!introspectionSecrets) {
+      return {
+        success: false,
+        error: 'Downstream introspection client secrets were not written to disk',
+        clientId: introspectionClientResult.clientId,
+      };
+    }
+
+    onProgress?.('Uploading downstream introspection secrets...');
+    const secretResult = await uploadSecrets(
+      introspectionSecrets,
+      {
+        env,
+        rootDir,
+        dryRun,
+        onProgress,
+      },
+      ['ar-userinfo']
+    );
+
+    if (!secretResult.success) {
+      return {
+        success: false,
+        error: 'Failed to upload downstream introspection secrets',
+        clientId: introspectionClientResult.clientId,
+        secretUploadErrors: secretResult.errors,
+      };
+    }
+
+    onProgress?.('Redeploying ar-userinfo after downstream introspection setup...');
+    const redeployResult = await deployWorker('ar-userinfo', {
       env,
       rootDir,
       dryRun,
       onProgress,
-    },
-    ['ar-userinfo']
-  );
+    } satisfies DeployOptions);
 
-  if (!secretResult.success) {
+    if (!redeployResult.success) {
+      return {
+        success: false,
+        error: redeployResult.error ?? 'Failed to redeploy ar-userinfo',
+        clientId: introspectionClientResult.clientId,
+        redeployResult,
+      };
+    }
+
     return {
-      success: false,
-      error: 'Failed to upload downstream introspection secrets',
-      clientId: introspectionClientResult.clientId,
-      secretUploadErrors: secretResult.errors,
-    };
-  }
-
-  onProgress?.('Redeploying ar-userinfo after downstream introspection setup...');
-  const redeployResult = await deployWorker('ar-userinfo', {
-    env,
-    rootDir,
-    dryRun,
-    onProgress,
-  } satisfies DeployOptions);
-
-  if (!redeployResult.success) {
-    return {
-      success: false,
-      error: redeployResult.error ?? 'Failed to redeploy ar-userinfo',
+      success: true,
       clientId: introspectionClientResult.clientId,
       redeployResult,
     };
   }
 
   return {
-    success: true,
-    clientId: introspectionClientResult.clientId,
-    redeployResult,
+    success: false,
+    error:
+      errors.length > 0
+        ? errors.join('; ')
+        : 'No API base URL candidates were available for downstream introspection setup',
   };
 }

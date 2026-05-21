@@ -33,6 +33,9 @@ describe('KV Namespace Naming', () => {
   it('should generate correct KV namespace name', () => {
     expect(getKVNamespaceName('prod', 'CLIENTS_CACHE')).toBe('PROD-CLIENTS_CACHE');
     expect(getKVNamespaceName('staging', 'SETTINGS')).toBe('STAGING-SETTINGS');
+    expect(getKVNamespaceName('prod', 'TENANT_RUNTIME_REGISTRY')).toBe(
+      'PROD-TENANT_RUNTIME_REGISTRY'
+    );
   });
 });
 

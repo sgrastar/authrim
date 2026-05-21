@@ -173,6 +173,113 @@ describe('PAR Handler', () => {
     expect(mockGetClientCached).not.toHaveBeenCalled();
   });
 
+  it('rejects non-POST requests before parsing the request body', async () => {
+    const c = createMockContext({
+      method: 'GET',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(405);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'PAR endpoint only accepts POST requests',
+    });
+    expect(c.req.parseBody).not.toHaveBeenCalled();
+    expect(mockGetClientCached).not.toHaveBeenCalled();
+  });
+
+  it('redacts RFC error details from PAR logs in production', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    const c = createMockContext({
+      method: 'GET',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    try {
+      const response = await parHandler(c);
+
+      expect(response.status).toBe(405);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'invalid_request',
+        error_description: 'PAR endpoint only accepts POST requests',
+      });
+      expect(mockLogger.error).toHaveBeenCalledWith('PAR error', {
+        action: 'handler',
+        rfcError: 'invalid_request',
+        status: 405,
+      });
+      expect(c.req.parseBody).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
+  it('rejects unknown clients before attempting client authentication or storage', async () => {
+    mockGetClientCached.mockResolvedValue(null);
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_client',
+      error_description: 'Client authentication failed',
+    });
+    expect(mockVerifyClientSecretHash).not.toHaveBeenCalled();
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects confidential clients without a valid client secret before storing the PAR request', async () => {
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      client_secret_hash: 'hash_secret',
+      redirect_uris: ['https://client.example.com/callback'],
+    });
+    mockVerifyClientSecretHash.mockResolvedValue(false);
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        client_secret: 'wrong-secret',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_client',
+      error_description: 'Client authentication failed',
+    });
+    expect(mockVerifyClientSecretHash).toHaveBeenCalledWith('wrong-secret', 'hash_secret');
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('enforces private_key_jwt for FAPI PAR requests', async () => {
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
@@ -212,6 +319,286 @@ describe('PAR Handler', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: 'invalid_client',
       error_description: 'FAPI 2.0 requires private_key_jwt authentication for PAR',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects FAPI requests that do not use S256 PKCE', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(
+            JSON.stringify({
+              fapi: {
+                enabled: true,
+                requirePrivateKeyJwt: false,
+              },
+            })
+          ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'FAPI 2.0 requires PKCE with S256 method',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed request objects before redirect and scope validation', async () => {
+    mockGetTokenFormat.mockReturnValue('unknown');
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        request: 'not-a-jwt-or-jwe',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request_object',
+      error_description: 'Invalid request object format',
+    });
+    expect(mockValidateRedirectUri).not.toHaveBeenCalled();
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects request object client_id mismatch before storing the request', async () => {
+    mockGetTokenFormat.mockReturnValue('jwt');
+    mockParseToken.mockReturnValue({
+      header: {
+        alg: 'none',
+      },
+      client_id: 'other-client',
+      response_type: 'code',
+    });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        request: 'unsigned-request-object',
+      },
+      env: {
+        ENVIRONMENT: 'development',
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(
+            JSON.stringify({
+              oidc: {
+                allowNoneAlgorithm: true,
+              },
+            })
+          ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'client_id mismatch between request parameter and request object',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('stores sanitized authorization_details when RAR is enabled', async () => {
+    const authorizationDetails = [{ type: 'payment_initiation', amount: '100.00' }];
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        authorization_details: JSON.stringify(authorizationDetails),
+      },
+      env: {
+        ENABLE_RAR: 'true',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockValidateAuthorizationDetails).toHaveBeenCalledWith(authorizationDetails, {
+      allowedTypes: ['ai_agent_action', 'payment_initiation', 'account_information'],
+    });
+    expect(mockStoreRequestRpc).toHaveBeenCalledWith({
+      requestUri: 'urn:ietf:params:oauth:request_uri:par_test',
+      data: expect.objectContaining({
+        authorization_details: JSON.stringify([{ type: 'payment_initiation' }]),
+      }),
+      ttl: 600,
+    });
+  });
+
+  it('rejects unregistered redirect_uri before PAR storage', async () => {
+    mockIsRedirectUriRegistered.mockReturnValue(false);
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://evil.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'redirect_uri not registered for this client',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed scopes and unsupported response types before PAR storage', async () => {
+    mockValidateScope.mockReturnValue({
+      valid: false,
+      error: 'scope must include openid',
+    });
+    const invalidScopeContext = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'profile',
+      },
+    });
+
+    const invalidScopeResponse = await parHandler(invalidScopeContext);
+
+    expect(invalidScopeResponse.status).toBe(400);
+    await expect(invalidScopeResponse.json()).resolves.toMatchObject({
+      error: 'invalid_scope',
+      error_description: 'scope must include openid',
+    });
+
+    vi.clearAllMocks();
+    mockValidateClientId.mockReturnValue({ valid: true });
+    mockValidateRedirectUri.mockReturnValue({ valid: true });
+    mockValidateScope.mockReturnValue({ valid: true });
+    mockIsRedirectUriRegistered.mockReturnValue(true);
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+    });
+    mockGetPARRequestStoreForNewRequest.mockResolvedValue({
+      requestUri: 'urn:ietf:params:oauth:request_uri:par_test',
+      stub: {
+        storeRequestRpc: mockStoreRequestRpc,
+      },
+    });
+    const unsupportedResponseTypeContext = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'token',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const unsupportedResponseTypeResponse = await parHandler(unsupportedResponseTypeContext);
+
+    expect(unsupportedResponseTypeResponse.status).toBe(400);
+    await expect(unsupportedResponseTypeResponse.json()).resolves.toMatchObject({
+      error: 'unsupported_response_type',
+      error_description: expect.stringContaining('Unsupported response_type'),
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed PKCE parameters before PAR storage', async () => {
+    const missingMethodContext = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        code_challenge: 'a'.repeat(43),
+      },
+    });
+
+    const missingMethodResponse = await parHandler(missingMethodContext);
+
+    expect(missingMethodResponse.status).toBe(400);
+    await expect(missingMethodResponse.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'code_challenge_method is required when code_challenge is present',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mockValidateClientId.mockReturnValue({ valid: true });
+    mockValidateRedirectUri.mockReturnValue({ valid: true });
+    mockValidateScope.mockReturnValue({ valid: true });
+    mockIsRedirectUriRegistered.mockReturnValue(true);
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+    });
+    const shortChallengeContext = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        code_challenge: 'short',
+        code_challenge_method: 'S256',
+      },
+    });
+
+    const shortChallengeResponse = await parHandler(shortChallengeContext);
+
+    expect(shortChallengeResponse.status).toBe(400);
+    await expect(shortChallengeResponse.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'code_challenge must be between 43 and 128 characters',
     });
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });
@@ -284,6 +671,155 @@ describe('PAR Handler', () => {
       error_description:
         'authorization_details parameter is not supported. Enable RAR feature to use Rich Authorization Requests.',
     });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('stores the DPoP key thumbprint with a successful PAR request', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        dpop: 'dpop-proof.jwt',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockValidateDPoPProof).toHaveBeenCalledWith(
+      'dpop-proof.jwt',
+      'POST',
+      'https://op.example.com/par',
+      undefined,
+      c.env,
+      'client-123',
+      'default'
+    );
+    expect(mockStoreRequestRpc).toHaveBeenCalledWith({
+      requestUri: 'urn:ietf:params:oauth:request_uri:par_test',
+      data: expect.objectContaining({
+        client_id: 'client-123',
+        dpop_jkt: 'thumbprint',
+      }),
+      ttl: 600,
+    });
+  });
+
+  it('rejects invalid DPoP proofs before storing the PAR request', async () => {
+    mockValidateDPoPProof.mockResolvedValue({
+      valid: false,
+      error: 'use_dpop_nonce',
+      error_description: 'DPoP nonce required',
+    });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        dpop: 'stale-proof.jwt',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'use_dpop_nonce',
+      error_description: 'DPoP nonce required',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns server_error when PAR storage is not bound', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+      env: {
+        PAR_REQUEST_STORE: undefined as unknown as Env['PAR_REQUEST_STORE'],
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'server_error',
+      error_description: 'PAR request storage unavailable',
+    });
+    expect(mockGetPARRequestStoreForNewRequest).not.toHaveBeenCalled();
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns server_error when the PAR request cannot be persisted', async () => {
+    mockStoreRequestRpc.mockRejectedValueOnce(new Error('storage unavailable'));
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'server_error',
+      error_description: 'Failed to store PAR request',
+    });
+    expect(mockGetPARRequestStoreForNewRequest).toHaveBeenCalledWith(
+      c.env,
+      'default',
+      'client-123',
+      expect.any(String)
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'PAR store error',
+      { action: 'store' },
+      expect.any(Error)
+    );
+  });
+
+  it('returns server_error when request body parsing fails unexpectedly', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+    });
+    c.req.parseBody.mockRejectedValueOnce(new Error('malformed form body'));
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'server_error',
+      error_description: 'An unexpected error occurred',
+    });
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'PAR unexpected error',
+      { action: 'handler', redacted: false },
+      expect.any(Error)
+    );
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });
 });

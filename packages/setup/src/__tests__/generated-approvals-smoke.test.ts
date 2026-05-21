@@ -39,6 +39,27 @@ describe('generated approvals smoke', () => {
       const url = typeof input === 'string' ? input : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
 
+      if (url.endsWith('/api/admin/settings/token-exchange') && method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            settings: {
+              enabled: { value: true, source: 'kv' },
+              allowedSubjectTokenTypes: { value: ['access_token'], source: 'default' },
+              maxResourceParams: { value: 10, source: 'default' },
+              maxAudienceParams: { value: 10, source: 'default' },
+              idJag: {
+                enabled: { value: false, source: 'default' },
+                allowedIssuers: { value: [], source: 'default' },
+                maxTokenLifetime: { value: 3600, source: 'default' },
+                includeTenantClaim: { value: true, source: 'default' },
+                requireConfidentialClient: { value: true, source: 'default' },
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+
       if (url.endsWith('/token') && method === 'POST') {
         return new Response(
           JSON.stringify({
@@ -271,6 +292,27 @@ describe('generated approvals smoke', () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = typeof input === 'string' ? input : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
+
+      if (url.endsWith('/api/admin/settings/token-exchange') && method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            settings: {
+              enabled: { value: true, source: 'kv' },
+              allowedSubjectTokenTypes: { value: ['access_token'], source: 'default' },
+              maxResourceParams: { value: 10, source: 'default' },
+              maxAudienceParams: { value: 10, source: 'default' },
+              idJag: {
+                enabled: { value: false, source: 'default' },
+                allowedIssuers: { value: [], source: 'default' },
+                maxTokenLifetime: { value: 3600, source: 'default' },
+                includeTenantClaim: { value: true, source: 'default' },
+                requireConfidentialClient: { value: true, source: 'default' },
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
 
       if (url.endsWith('/token') && method === 'POST') {
         return new Response(

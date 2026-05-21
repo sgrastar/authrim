@@ -1,11 +1,11 @@
 /**
- * UIContractGenerator - CompiledNodeからUIContract生成
+ * UIContractGenerator - Generate UIContract from CompiledNode
  *
- * 責務:
- * - CompiledNode + コンテキストからUIContract生成
- * - ResolvedCapability → Capability変換
- * - FeatureFlags生成
- * - ActionSet生成
+ * Responsibilities:
+ * - Generate UIContract from CompiledNode + context
+ * - ResolvedCapability → Capability conversion
+ * - FeatureFlags generation
+ * - ActionSet generation
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -27,18 +27,18 @@ import type {
 // =============================================================================
 
 /**
- * UIContract生成パラメータ
+ * UIContract generation parameters
  */
 export interface UIContractGeneratorParams {
-  /** コンパイル済みノード */
+  /** Compiled node */
   compiledNode: CompiledNode;
-  /** FlowID（state生成用） */
+  /** FlowID (stategeneratefor) */
   flowId: string;
-  /** RuntimeState（収集済みデータ参照用） */
+  /** RuntimeState (for collected data lookup) */
   runtimeState?: Partial<RuntimeState>;
-  /** FlowContext（ユーザー・クライアント情報） */
+  /** FlowContext (user/client information) */
   flowContext?: Partial<FlowContext>;
-  /** プロファイルID */
+  /** profile ID */
   profileId?: ProfileId;
 }
 
@@ -47,31 +47,31 @@ export interface UIContractGeneratorParams {
 // =============================================================================
 
 /**
- * UIContractGenerator - UIContract生成
+ * UIContractGenerator - UIContract generation
  */
 export class UIContractGenerator {
   /**
-   * UIContractを生成
+   * Generate a UIContract
    *
-   * @param params - 生成パラメータ
+   * @param params - generateparameters
    * @returns UIContract
    */
   generate(params: UIContractGeneratorParams): UIContract {
     const { compiledNode, flowId, runtimeState, flowContext, profileId } = params;
 
-    // state文字列を生成: {flowId}:{nodeId}
+    // Generate the state string: {flowId}:{nodeId}
     const state = `${flowId}:${compiledNode.id}`;
 
-    // FeatureFlagsを生成
+    // Build FeatureFlags
     const features = this.buildFeatureFlags(profileId || 'human-basic');
 
-    // Capabilitiesを変換
+    // Convert capabilities
     const capabilities = this.buildCapabilities(compiledNode);
 
-    // FlowContextを構築
+    // Build FlowContext
     const context = this.buildFlowContext(flowContext, runtimeState);
 
-    // ActionSetを生成
+    // Build ActionSet
     const actions = this.buildActionSet(compiledNode.type, compiledNode.intent);
 
     return {
@@ -86,10 +86,10 @@ export class UIContractGenerator {
   }
 
   /**
-   * FeatureFlagsを生成
+   * Build FeatureFlags
    */
   private buildFeatureFlags(profileId: ProfileId): FeatureFlags {
-    // プロファイル別のFeatureFlags設定
+    // Profile-specific FeatureFlags settings
     const profileConfigs: Record<string, FeatureFlags> = {
       'human-basic': {
         policy: {
@@ -177,12 +177,12 @@ export class UIContractGenerator {
       },
     };
 
-    // デフォルトはhuman-basic
+    // Default is human-basic
     return profileConfigs[profileId] || profileConfigs['human-basic'];
   }
 
   /**
-   * ResolvedCapabilityをCapabilityに変換
+   * Convert ResolvedCapability to Capability
    */
   private buildCapabilities(compiledNode: CompiledNode): Capability[] {
     return compiledNode.capabilities.map((resolved) => ({
@@ -196,7 +196,7 @@ export class UIContractGenerator {
   }
 
   /**
-   * FlowContextを構築
+   * Build FlowContext
    */
   private buildFlowContext(
     flowContext?: Partial<FlowContext>,
@@ -204,7 +204,7 @@ export class UIContractGenerator {
   ): FlowContext {
     const context: FlowContext = {};
 
-    // flowContextから情報をコピー
+    // Copy information from flowContext
     if (flowContext) {
       if (flowContext.branding) context.branding = flowContext.branding;
       if (flowContext.user) context.user = flowContext.user;
@@ -214,14 +214,14 @@ export class UIContractGenerator {
       if (flowContext.locale) context.locale = flowContext.locale;
     }
 
-    // runtimeStateから認証済みユーザー情報を補完
+    // Fill authenticated user information from runtimeState
     if (runtimeState?.userId && !context.user) {
       context.user = {
         id: runtimeState.userId,
       };
     }
 
-    // runtimeStateからemail等を補完
+    // Fill email and related fields from runtimeState
     if (runtimeState?.collectedData) {
       const email = (runtimeState.collectedData as Record<string, unknown>)['identifier_email'];
       if (email && typeof email === 'object' && 'email' in email) {
@@ -236,7 +236,7 @@ export class UIContractGenerator {
   }
 
   /**
-   * ActionSetを生成
+   * Build ActionSet
    */
   private buildActionSet(nodeType: GraphNodeType, intent: string): ActionSet {
     const primary = this.getPrimaryAction(nodeType, intent);
@@ -249,10 +249,10 @@ export class UIContractGenerator {
   }
 
   /**
-   * プライマリアクションを取得
+   * Get the primary action
    */
   private getPrimaryAction(nodeType: GraphNodeType, intent: string): ActionDefinition {
-    // ノードタイプ/Intent別のプライマリアクション
+    // Primary action by node type / intent
     switch (nodeType) {
       case 'start':
         return { type: 'CONTINUE', label: 'Get Started' };
@@ -281,12 +281,12 @@ export class UIContractGenerator {
   }
 
   /**
-   * セカンダリアクションを取得
+   * Get secondary actions
    */
   private getSecondaryActions(nodeType: GraphNodeType, intent: string): ActionDefinition[] {
     const actions: ActionDefinition[] = [];
 
-    // ほとんどのノードでBACKアクションを提供
+    // Provide a BACK action for most nodes
     if (nodeType !== 'start' && nodeType !== 'end') {
       actions.push({
         type: 'BACK',
@@ -295,7 +295,7 @@ export class UIContractGenerator {
       });
     }
 
-    // consentノードではDenyアクションを追加
+    // Add a Deny action for consent nodes
     if (nodeType === 'consent') {
       actions.push({
         type: 'DENY',
@@ -304,7 +304,7 @@ export class UIContractGenerator {
       });
     }
 
-    // errorノードではCancelアクションを追加
+    // Add a Cancel action for error nodes
     if (nodeType === 'error') {
       actions.push({
         type: 'CANCEL',
@@ -322,9 +322,9 @@ export class UIContractGenerator {
 // =============================================================================
 
 /**
- * UIContractGeneratorを作成
+ * Create a UIContractGenerator
  *
- * @returns UIContractGenerator インスタンス
+ * @returns UIContractGenerator instance
  *
  * @example
  * const generator = createUIContractGenerator();

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import { discoveryHandler } from '../discovery';
+import { clearDiscoveryMetadataCache, discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
 
@@ -30,6 +30,7 @@ describe('Discovery Profile Tests', () => {
   let app: Hono<{ Bindings: Env }>;
 
   beforeEach(() => {
+    clearDiscoveryMetadataCache();
     app = new Hono<{ Bindings: Env }>();
     app.get('/.well-known/openid-configuration', discoveryHandler);
   });

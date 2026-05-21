@@ -3,7 +3,7 @@ import type { StorageProfile, StorageSlice, StorageTarget } from '../types/runti
 export const AUTH_CORE_STORAGE_SLICE = 'users_core' as const;
 export const AUTH_CORE_STORAGE_SLICES = [AUTH_CORE_STORAGE_SLICE] as const;
 
-export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension';
+export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension' | 'authorization';
 
 export interface StorageSliceBoundaryPolicy {
   slice: StorageSlice;
@@ -53,6 +53,34 @@ export const STORAGE_SLICE_BOUNDARY_POLICIES: Readonly<
     d1Default: true,
     nonD1OptionRequired: true,
   },
+  passkeys: {
+    slice: 'passkeys',
+    boundaryClass: 'auth_core',
+    tenantOverrideAllowed: false,
+    d1Default: true,
+    nonD1OptionRequired: false,
+  },
+  linked_identities: {
+    slice: 'linked_identities',
+    boundaryClass: 'pii',
+    tenantOverrideAllowed: true,
+    d1Default: true,
+    nonD1OptionRequired: true,
+  },
+  consent: {
+    slice: 'consent',
+    boundaryClass: 'auth_core',
+    tenantOverrideAllowed: false,
+    d1Default: true,
+    nonD1OptionRequired: false,
+  },
+  authorization: {
+    slice: 'authorization',
+    boundaryClass: 'authorization',
+    tenantOverrideAllowed: false,
+    d1Default: true,
+    nonD1OptionRequired: false,
+  },
 } as const;
 
 const IMPLICIT_AUTH_CORE_TARGET: StorageTarget = {
@@ -62,7 +90,9 @@ const IMPLICIT_AUTH_CORE_TARGET: StorageTarget = {
 };
 
 export interface StorageBoundaryViolation {
-  code: 'tenant_auth_core_override_not_allowed';
+  code:
+    | 'tenant_auth_core_override_not_allowed'
+    | 'tenant_protected_storage_slice_override_not_allowed';
   message: string;
 }
 
@@ -106,6 +136,16 @@ export function getEffectiveAuthCoreTarget(profile: StorageProfile): StorageTarg
   return profile.slices.users_core ?? IMPLICIT_AUTH_CORE_TARGET;
 }
 
+function getEffectiveStorageSliceTarget(
+  profile: StorageProfile,
+  slice: StorageSlice
+): StorageTarget | null {
+  if (slice === AUTH_CORE_STORAGE_SLICE) {
+    return getEffectiveAuthCoreTarget(profile);
+  }
+  return profile.slices[slice] ?? null;
+}
+
 export function storageTargetsEqual(left: StorageTarget, right: StorageTarget): boolean {
   const normalizedLeft = normalizeStorageTarget(left);
   const normalizedRight = normalizeStorageTarget(right);
@@ -126,6 +166,26 @@ export function validateTenantStorageProfileOverride(
   const candidateTarget = getEffectiveAuthCoreTarget(candidateProfile);
 
   if (storageTargetsEqual(defaultTarget, candidateTarget)) {
+    for (const policy of listStorageSliceBoundaryPolicies()) {
+      if (policy.tenantOverrideAllowed || policy.slice === AUTH_CORE_STORAGE_SLICE) {
+        continue;
+      }
+      const candidateSliceTarget = getEffectiveStorageSliceTarget(candidateProfile, policy.slice);
+      if (!candidateSliceTarget) {
+        continue;
+      }
+      const defaultSliceTarget = getEffectiveStorageSliceTarget(defaultProfile, policy.slice);
+      if (defaultSliceTarget && storageTargetsEqual(defaultSliceTarget, candidateSliceTarget)) {
+        continue;
+      }
+      return {
+        code: 'tenant_protected_storage_slice_override_not_allowed',
+        message:
+          `Tenant storage profile overrides cannot change protected ${policy.slice} storage from ` +
+          `${defaultSliceTarget ? formatStorageTarget(defaultSliceTarget) : 'inherited'} to ` +
+          `${formatStorageTarget(candidateSliceTarget)}.`,
+      };
+    }
     return null;
   }
 

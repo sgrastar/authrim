@@ -15,7 +15,9 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
+  readRequestTextWithLimit,
   readResponseTextWithLimit,
+  safeFetch,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -23,6 +25,29 @@ import {
  * Must match the routes in ar-bridge/src/index.ts
  */
 const EXTERNAL_IDP_ADMIN_PATH = '/api/admin/external-providers';
+const EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES = 256 * 1024;
+const EXTERNAL_IDP_ADMIN_RESPONSE_MAX_BYTES = 1024 * 1024;
+
+async function readExternalIdpAdminBody(
+  c: Context<{ Bindings: Env }>
+): Promise<{ ok: true; body: string } | { ok: false; response: Response }> {
+  try {
+    return {
+      ok: true,
+      body: await readRequestTextWithLimit(c.req.raw, EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES),
+    };
+  } catch {
+    return {
+      ok: false,
+      response: await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST, {
+        extensions: {
+          field: 'body',
+          reason: 'request_body_too_large',
+        },
+      }),
+    };
+  }
+}
 
 async function proxyToExternalIdp(
   c: Context<{ Bindings: Env }>,
@@ -86,7 +111,10 @@ async function proxyToExternalIdp(
     const response = await c.env.EXTERNAL_IDP.fetch(targetUrl, requestInit);
 
     // Return response with appropriate status
-    const responseBody = await response.text();
+    const responseBody = await readResponseTextWithLimit(
+      response,
+      EXTERNAL_IDP_ADMIN_RESPONSE_MAX_BYTES
+    );
 
     // Debug: Log response status
     log.info('ar-bridge response', {
@@ -132,8 +160,11 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
       503
     );
   }
-  const body = await c.req.text();
-  return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'POST', body);
+  const body = await readExternalIdpAdminBody(c);
+  if (!body.ok) {
+    return body.response;
+  }
+  return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'POST', body.body);
 }
 
 /**
@@ -159,8 +190,16 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
       variables: { field: 'id' },
     });
   }
-  const body = await c.req.text();
-  return proxyToExternalIdp(c, `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`, 'PUT', body);
+  const body = await readExternalIdpAdminBody(c);
+  if (!body.ok) {
+    return body.response;
+  }
+  return proxyToExternalIdp(
+    c,
+    `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
+    'PUT',
+    body.body
+  );
 }
 
 /**
@@ -253,10 +292,26 @@ function sanitizeUrl(urlString: unknown): string | null {
   const sanitized = urlString.trim();
   if (sanitized.length > 2048) return null; // Max URL length
   try {
-    new URL(sanitized);
-    return sanitized;
+    const parsed = new URL(sanitized);
+    if (parsed.protocol !== 'https:') {
+      return null;
+    }
+    const safety = isUrlSafeForFetch(parsed);
+    if (!safety.safe) {
+      return null;
+    }
+    return parsed.toString();
   } catch {
     return null;
+  }
+}
+
+function safeUrlForLog(urlString: string): string {
+  try {
+    const url = new URL(urlString);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return '[invalid-url]';
   }
 }
 
@@ -314,7 +369,7 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     const urlSafetyCheck = isUrlSafeForFetch(parsedUrl);
     if (!urlSafetyCheck.safe) {
       log.warn('OIDC discovery blocked by SSRF protection', {
-        url: discoveryUrl,
+        url: safeUrlForLog(discoveryUrl),
         reason: urlSafetyCheck.reason,
       });
       return c.json({ error: 'URL not allowed for security reasons' }, 400);
@@ -324,19 +379,20 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       host.startsWith('www.') ? host.slice(4) : host;
     const baseHost = normalizeHost(parsedUrl.hostname);
 
-    log.info('Fetching OIDC discovery', { url: discoveryUrl });
+    log.info('Fetching OIDC discovery', { url: safeUrlForLog(discoveryUrl) });
 
     // Fetch the OIDC configuration from the external provider
     // Allow a single safe redirect (e.g., www -> apex) with SSRF protection
     const fetchDiscovery = async (url: string, redirects: number): Promise<Response> => {
-      const response = await fetch(url, {
+      const response = await safeFetch(url, {
         method: 'GET',
         headers: {
           Accept: 'application/json',
           'User-Agent': 'Authrim OIDC Discovery/1.0',
         },
         redirect: 'manual', // Handle redirects explicitly for SSRF protection
-        signal: AbortSignal.timeout(10000),
+        timeoutMs: 10000,
+        maxResponseSize: MAX_DISCOVERY_RESPONSE_SIZE,
       });
 
       if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -374,7 +430,10 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     const response = await fetchDiscovery(discoveryUrl, 0);
 
     if (!response.ok) {
-      log.warn('OIDC discovery failed', { status: response.status, url: discoveryUrl });
+      log.warn('OIDC discovery failed', {
+        status: response.status,
+        url: safeUrlForLog(discoveryUrl),
+      });
       return c.json(
         {
           error: `Failed to fetch OIDC configuration: ${response.status} ${response.statusText}`,
@@ -386,7 +445,10 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     // Check Content-Length if available
     const contentLength = response.headers.get('Content-Length');
     if (contentLength && parseInt(contentLength, 10) > MAX_DISCOVERY_RESPONSE_SIZE) {
-      log.warn('OIDC discovery response too large', { contentLength, url: discoveryUrl });
+      log.warn('OIDC discovery response too large', {
+        contentLength,
+        url: safeUrlForLog(discoveryUrl),
+      });
       return c.json({ error: 'Response too large' }, 400);
     }
 
@@ -395,7 +457,7 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       responseText = await readResponseTextWithLimit(response, MAX_DISCOVERY_RESPONSE_SIZE);
     } catch {
       log.warn('OIDC discovery response too large', {
-        url: discoveryUrl,
+        url: safeUrlForLog(discoveryUrl),
       });
       return c.json({ error: 'Response too large' }, 400);
     }
@@ -430,7 +492,10 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     // Validate issuer matches the discovery URL (RFC 8414 recommendation)
     const expectedIssuer = discoveryUrl.replace('/.well-known/openid-configuration', '');
     if (issuer !== expectedIssuer && issuer !== expectedIssuer + '/') {
-      log.warn('OIDC issuer mismatch', { expected: expectedIssuer, actual: issuer });
+      log.warn('OIDC issuer mismatch', {
+        expected: safeUrlForLog(expectedIssuer),
+        actual: safeUrlForLog(issuer),
+      });
       // This is a warning, not an error - some providers don't follow the spec strictly
     }
 
@@ -452,7 +517,7 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       ...(scopesSupported && { scopes_supported: scopesSupported }),
     };
 
-    log.info('OIDC discovery successful', { issuer });
+    log.info('OIDC discovery successful', { issuer: safeUrlForLog(issuer) });
 
     return c.json(sanitizedConfig);
   } catch (error) {

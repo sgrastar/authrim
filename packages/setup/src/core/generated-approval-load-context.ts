@@ -16,6 +16,7 @@ import {
   cleanupGeneratedApprovalSmokeClient,
   resolveGeneratedApprovalSmokeClient,
 } from './generated-approvals-smoke-client.js';
+import { ensureGeneratedTokenExchangeEnabled } from './generated-token-exchange-settings.js';
 
 const ELEVATION_GRANT_SUBJECT_TOKEN_TYPE = 'urn:authrim:token-type:elevation-grant';
 const PROTECTED_RESOURCE_GRANT_RETRY_DELAY_MS = 750;
@@ -258,6 +259,7 @@ export async function createGeneratedApprovalLoadContext(
   let targetAudience: string | undefined;
   let protectedResourcePath: string | undefined;
   let downstreamAccessToken: string | undefined;
+  let restoreTokenExchangeSettings: (() => Promise<SmokeCheck | null>) | undefined;
 
   const userCreateCheck = makeSmokeCheck(
     'approval-load-user-create',
@@ -521,6 +523,17 @@ export async function createGeneratedApprovalLoadContext(
     throw new Error('approval_load_subject_context_incomplete');
   }
 
+  const tokenExchangeEnable = await ensureGeneratedTokenExchangeEnabled({
+    baseUrl: target.baseUrl,
+    timeoutMs,
+    adminSecret,
+    tenantId,
+    checkId: 'approval-load-token-exchange-settings',
+    title: 'approval load token exchange settings',
+  });
+  checks.push(tokenExchangeEnable.check);
+  restoreTokenExchangeSettings = tokenExchangeEnable.restore;
+
   const tokenExchangeCheck = makeSmokeCheck(
     'approval-load-token-exchange',
     'approval load downstream token exchange',
@@ -675,6 +688,12 @@ export async function createGeneratedApprovalLoadContext(
       tenantId,
       userId: targetSubjectId,
     });
+    if (restoreTokenExchangeSettings) {
+      const restoreCheck = await restoreTokenExchangeSettings();
+      if (restoreCheck) {
+        cleanupChecks.push(restoreCheck);
+      }
+    }
     await adminAccess.cleanup?.();
     return cleanupChecks;
   };

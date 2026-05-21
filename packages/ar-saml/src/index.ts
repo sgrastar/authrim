@@ -67,6 +67,13 @@ import {
   handlePreviewMetadata,
   handleImportMetadata,
   handleRefreshMetadata,
+  handleListFederationTrustProfiles,
+  handleCreateFederationTrustProfile,
+  handleUpdateFederationTrustProfile,
+  handleDeleteFederationTrustProfile,
+  handleListAggregatePreviewEntities,
+  handleStartAggregateBatchCreate,
+  handleGetAggregateBatchStatus,
   handlePublishSigningNext,
   handlePromoteSigningNext,
   handleRetireSigningBackup,
@@ -227,6 +234,21 @@ app.delete('/api/admin/saml-attribute-presets/:id', handleDeleteAttributePreset)
  * Preview Metadata
  */
 app.post('/api/admin/saml-metadata/preview', handlePreviewMetadata);
+
+app.get(
+  '/api/admin/saml-metadata/previews/:previewId/entities',
+  handleListAggregatePreviewEntities
+);
+app.post(
+  '/api/admin/saml-metadata/previews/:previewId/batch-create',
+  handleStartAggregateBatchCreate
+);
+app.get('/api/admin/saml-metadata/batches/:batchId', handleGetAggregateBatchStatus);
+
+app.get('/api/admin/saml-federation-trust-profiles', handleListFederationTrustProfiles);
+app.post('/api/admin/saml-federation-trust-profiles', handleCreateFederationTrustProfile);
+app.put('/api/admin/saml-federation-trust-profiles/:id', handleUpdateFederationTrustProfile);
+app.delete('/api/admin/saml-federation-trust-profiles/:id', handleDeleteFederationTrustProfile);
 
 /**
  * Import Metadata

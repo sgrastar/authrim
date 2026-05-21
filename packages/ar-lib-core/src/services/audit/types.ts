@@ -93,8 +93,8 @@ export interface EventLogEntry {
 
   // -- Details (R2 or inline) --
   /**
-   * R2 key for detailed data (if > 2KB).
-   * Path format: event-details/{tenantId}/{YYYY-MM-DD}/{entryId}.json
+   * Sensitive detail catalog reference for detailed data (if > 2KB).
+   * Format: sensitive-detail-catalog:{objectCatalogId}
    */
   detailsR2Key?: string;
 
@@ -197,8 +197,8 @@ export interface PIILogEntry {
 
   // -- Encrypted data --
   /**
-   * R2 key for encrypted values (if > 4KB).
-   * Path format: pii-values/{tenantId}/{YYYY-MM-DD}/{entryId}.json
+   * Sensitive detail catalog reference for encrypted values (if > 4KB).
+   * Format: sensitive-detail-catalog:{objectCatalogId}
    */
   valuesR2Key?: string;
 

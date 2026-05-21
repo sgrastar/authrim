@@ -1,0 +1,798 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: scripts/benchmarks/test-mail-otp-full-login-benchmark.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 200 max VUs, 4m0s max duration (incl. graceful stop):
+              * mail_otp_full_login: Up to 50.00 iterations/s for 3m30s over 3 stages (maxVUs: 150-200, gracefulStop: 30s)
+
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+Run                   [ 100% ] setup()
+mail_otp_full_login   [   0% ]
+
+running (0m09.0s), 000/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   0% ] 000/150 VUs  0m00.6s/3m30s  00.91 iters/s
+
+running (0m10.0s), 002/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   1% ] 002/150 VUs  0m01.6s/3m30s  02.87 iters/s
+
+running (0m11.0s), 005/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   1% ] 005/150 VUs  0m02.6s/3m30s  04.28 iters/s
+
+running (0m12.0s), 010/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   2% ] 010/150 VUs  0m03.6s/3m30s  05.91 iters/s
+
+running (0m13.0s), 017/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   2% ] 017/150 VUs  0m04.6s/3m30s  07.64 iters/s
+
+running (0m14.0s), 026/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   3% ] 026/150 VUs  0m05.6s/3m30s  09.40 iters/s
+
+running (0m15.0s), 036/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   3% ] 036/150 VUs  0m06.6s/3m30s  11.03 iters/s
+
+running (0m16.0s), 048/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   4% ] 048/150 VUs  0m07.6s/3m30s  12.71 iters/s
+
+running (0m17.0s), 061/150 VUs, 0 complete and 0 interrupted iterations
+mail_otp_full_login   [   4% ] 061/150 VUs  0m08.6s/3m30s  14.32 iters/s
+
+running (0m18.0s), 054/150 VUs, 23 complete and 0 interrupted iterations
+mail_otp_full_login   [   5% ] 054/150 VUs  0m09.6s/3m30s  16.07 iters/s
+
+running (0m19.0s), 053/150 VUs, 40 complete and 0 interrupted iterations
+mail_otp_full_login   [   5% ] 053/150 VUs  0m10.6s/3m30s  17.65 iters/s
+
+running (0m20.0s), 069/150 VUs, 43 complete and 0 interrupted iterations
+mail_otp_full_login   [   6% ] 069/150 VUs  0m11.6s/3m30s  19.36 iters/s
+
+running (0m21.0s), 087/150 VUs, 45 complete and 0 interrupted iterations
+mail_otp_full_login   [   6% ] 087/150 VUs  0m12.6s/3m30s  21.02 iters/s
+
+running (0m22.0s), 101/150 VUs, 53 complete and 0 interrupted iterations
+mail_otp_full_login   [   6% ] 101/150 VUs  0m13.6s/3m30s  22.69 iters/s
+
+running (0m23.0s), 119/150 VUs, 59 complete and 0 interrupted iterations
+mail_otp_full_login   [   7% ] 119/150 VUs  0m14.6s/3m30s  24.39 iters/s
+
+running (0m24.0s), 139/150 VUs, 63 complete and 0 interrupted iterations
+mail_otp_full_login   [   7% ] 139/150 VUs  0m15.6s/3m30s  25.08 iters/s
+
+running (0m25.0s), 153/154 VUs, 71 complete and 0 interrupted iterations
+mail_otp_full_login   [   8% ] 153/154 VUs  0m16.6s/3m30s  25.23 iters/s
+
+running (0m26.0s), 165/166 VUs, 72 complete and 0 interrupted iterations
+mail_otp_full_login   [   8% ] 165/166 VUs  0m17.6s/3m30s  25.36 iters/s
+
+running (0m27.0s), 173/174 VUs, 81 complete and 0 interrupted iterations
+mail_otp_full_login   [   9% ] 173/174 VUs  0m18.6s/3m30s  25.50 iters/s
+
+running (0m28.0s), 184/184 VUs, 86 complete and 0 interrupted iterations
+mail_otp_full_login   [   9% ] 184/184 VUs  0m19.6s/3m30s  25.64 iters/s
+
+running (0m29.0s), 194/194 VUs, 92 complete and 0 interrupted iterations
+mail_otp_full_login   [  10% ] 194/194 VUs  0m20.6s/3m30s  25.78 iters/s
+
+running (0m30.0s), 200/200 VUs, 96 complete and 0 interrupted iterations
+mail_otp_full_login   [  10% ] 200/200 VUs  0m21.6s/3m30s  25.92 iters/s
+
+running (0m31.0s), 200/200 VUs, 104 complete and 0 interrupted iterations
+mail_otp_full_login   [  11% ] 200/200 VUs  0m22.6s/3m30s  26.06 iters/s
+
+running (0m32.0s), 200/200 VUs, 110 complete and 0 interrupted iterations
+mail_otp_full_login   [  11% ] 200/200 VUs  0m23.6s/3m30s  26.20 iters/s
+
+running (0m33.0s), 200/200 VUs, 120 complete and 0 interrupted iterations
+mail_otp_full_login   [  12% ] 200/200 VUs  0m24.6s/3m30s  26.34 iters/s
+
+running (0m34.0s), 200/200 VUs, 121 complete and 0 interrupted iterations
+mail_otp_full_login   [  12% ] 200/200 VUs  0m25.6s/3m30s  26.47 iters/s
+
+running (0m35.0s), 200/200 VUs, 121 complete and 0 interrupted iterations
+mail_otp_full_login   [  13% ] 200/200 VUs  0m26.6s/3m30s  26.61 iters/s
+
+running (0m36.0s), 200/200 VUs, 133 complete and 0 interrupted iterations
+mail_otp_full_login   [  13% ] 200/200 VUs  0m27.6s/3m30s  26.76 iters/s
+
+running (0m37.0s), 198/200 VUs, 145 complete and 0 interrupted iterations
+mail_otp_full_login   [  14% ] 198/200 VUs  0m28.6s/3m30s  26.89 iters/s
+
+running (0m38.0s), 200/200 VUs, 151 complete and 0 interrupted iterations
+mail_otp_full_login   [  14% ] 200/200 VUs  0m29.6s/3m30s  27.03 iters/s
+
+running (0m39.0s), 195/200 VUs, 162 complete and 0 interrupted iterations
+mail_otp_full_login   [  15% ] 195/200 VUs  0m30.6s/3m30s  27.17 iters/s
+
+running (0m40.0s), 200/200 VUs, 165 complete and 0 interrupted iterations
+mail_otp_full_login   [  15% ] 200/200 VUs  0m31.6s/3m30s  27.31 iters/s
+
+running (0m41.0s), 200/200 VUs, 168 complete and 0 interrupted iterations
+mail_otp_full_login   [  16% ] 200/200 VUs  0m32.6s/3m30s  27.45 iters/s
+
+running (0m42.0s), 197/200 VUs, 178 complete and 0 interrupted iterations
+mail_otp_full_login   [  16% ] 197/200 VUs  0m33.6s/3m30s  27.58 iters/s
+
+running (0m43.0s), 196/200 VUs, 192 complete and 0 interrupted iterations
+mail_otp_full_login   [  16% ] 196/200 VUs  0m34.6s/3m30s  27.72 iters/s
+
+running (0m44.0s), 200/200 VUs, 192 complete and 0 interrupted iterations
+mail_otp_full_login   [  17% ] 200/200 VUs  0m35.6s/3m30s  27.86 iters/s
+
+running (0m45.0s), 200/200 VUs, 202 complete and 0 interrupted iterations
+mail_otp_full_login   [  17% ] 200/200 VUs  0m36.6s/3m30s  28.00 iters/s
+
+running (0m46.0s), 199/200 VUs, 217 complete and 0 interrupted iterations
+mail_otp_full_login   [  18% ] 199/200 VUs  0m37.6s/3m30s  28.14 iters/s
+
+running (0m47.0s), 198/200 VUs, 225 complete and 0 interrupted iterations
+mail_otp_full_login   [  18% ] 198/200 VUs  0m38.6s/3m30s  28.28 iters/s
+
+running (0m48.0s), 200/200 VUs, 233 complete and 0 interrupted iterations
+mail_otp_full_login   [  19% ] 200/200 VUs  0m39.6s/3m30s  28.42 iters/s
+
+running (0m49.0s), 199/200 VUs, 244 complete and 0 interrupted iterations
+mail_otp_full_login   [  19% ] 199/200 VUs  0m40.6s/3m30s  28.56 iters/s
+
+running (0m50.0s), 200/200 VUs, 249 complete and 0 interrupted iterations
+mail_otp_full_login   [  20% ] 200/200 VUs  0m41.6s/3m30s  28.70 iters/s
+
+running (0m51.0s), 200/200 VUs, 259 complete and 0 interrupted iterations
+mail_otp_full_login   [  20% ] 200/200 VUs  0m42.6s/3m30s  28.83 iters/s
+
+running (0m52.0s), 200/200 VUs, 262 complete and 0 interrupted iterations
+mail_otp_full_login   [  21% ] 200/200 VUs  0m43.6s/3m30s  28.97 iters/s
+
+running (0m53.0s), 200/200 VUs, 267 complete and 0 interrupted iterations
+mail_otp_full_login   [  21% ] 200/200 VUs  0m44.6s/3m30s  29.11 iters/s
+
+running (0m54.0s), 200/200 VUs, 268 complete and 0 interrupted iterations
+mail_otp_full_login   [  22% ] 200/200 VUs  0m45.6s/3m30s  29.25 iters/s
+
+running (0m55.0s), 200/200 VUs, 273 complete and 0 interrupted iterations
+mail_otp_full_login   [  22% ] 200/200 VUs  0m46.6s/3m30s  29.39 iters/s
+
+running (0m56.0s), 200/200 VUs, 282 complete and 0 interrupted iterations
+mail_otp_full_login   [  23% ] 200/200 VUs  0m47.6s/3m30s  29.53 iters/s
+
+running (0m57.0s), 200/200 VUs, 286 complete and 0 interrupted iterations
+mail_otp_full_login   [  23% ] 200/200 VUs  0m48.6s/3m30s  29.67 iters/s
+
+running (0m58.0s), 200/200 VUs, 291 complete and 0 interrupted iterations
+mail_otp_full_login   [  24% ] 200/200 VUs  0m49.6s/3m30s  29.81 iters/s
+
+running (0m59.0s), 200/200 VUs, 296 complete and 0 interrupted iterations
+mail_otp_full_login   [  24% ] 200/200 VUs  0m50.6s/3m30s  29.94 iters/s
+
+running (1m00.0s), 200/200 VUs, 299 complete and 0 interrupted iterations
+mail_otp_full_login   [  25% ] 200/200 VUs  0m51.6s/3m30s  30.08 iters/s
+
+running (1m01.0s), 200/200 VUs, 305 complete and 0 interrupted iterations
+mail_otp_full_login   [  25% ] 200/200 VUs  0m52.6s/3m30s  30.23 iters/s
+
+running (1m02.0s), 200/200 VUs, 308 complete and 0 interrupted iterations
+mail_otp_full_login   [  26% ] 200/200 VUs  0m53.6s/3m30s  30.36 iters/s
+
+running (1m03.0s), 199/200 VUs, 313 complete and 0 interrupted iterations
+mail_otp_full_login   [  26% ] 199/200 VUs  0m54.6s/3m30s  30.50 iters/s
+
+running (1m04.0s), 198/200 VUs, 320 complete and 0 interrupted iterations
+mail_otp_full_login   [  26% ] 198/200 VUs  0m55.6s/3m30s  30.64 iters/s
+
+running (1m05.0s), 200/200 VUs, 321 complete and 0 interrupted iterations
+mail_otp_full_login   [  27% ] 200/200 VUs  0m56.6s/3m30s  30.78 iters/s
+
+running (1m06.0s), 200/200 VUs, 321 complete and 0 interrupted iterations
+mail_otp_full_login   [  27% ] 200/200 VUs  0m57.6s/3m30s  30.92 iters/s
+
+running (1m07.0s), 200/200 VUs, 325 complete and 0 interrupted iterations
+mail_otp_full_login   [  28% ] 200/200 VUs  0m58.6s/3m30s  31.06 iters/s
+
+running (1m08.0s), 200/200 VUs, 327 complete and 0 interrupted iterations
+mail_otp_full_login   [  28% ] 200/200 VUs  0m59.6s/3m30s  31.20 iters/s
+
+running (1m09.0s), 198/200 VUs, 342 complete and 0 interrupted iterations
+mail_otp_full_login   [  29% ] 198/200 VUs  1m00.6s/3m30s  31.34 iters/s
+
+running (1m10.0s), 200/200 VUs, 343 complete and 0 interrupted iterations
+mail_otp_full_login   [  29% ] 200/200 VUs  1m01.6s/3m30s  31.47 iters/s
+
+running (1m11.0s), 200/200 VUs, 349 complete and 0 interrupted iterations
+mail_otp_full_login   [  30% ] 200/200 VUs  1m02.6s/3m30s  31.61 iters/s
+
+running (1m12.0s), 200/200 VUs, 363 complete and 0 interrupted iterations
+mail_otp_full_login   [  30% ] 200/200 VUs  1m03.6s/3m30s  31.75 iters/s
+
+running (1m13.0s), 200/200 VUs, 365 complete and 0 interrupted iterations
+mail_otp_full_login   [  31% ] 200/200 VUs  1m04.6s/3m30s  31.89 iters/s
+
+running (1m14.0s), 200/200 VUs, 373 complete and 0 interrupted iterations
+mail_otp_full_login   [  31% ] 200/200 VUs  1m05.6s/3m30s  32.03 iters/s
+
+running (1m15.0s), 200/200 VUs, 384 complete and 0 interrupted iterations
+mail_otp_full_login   [  32% ] 200/200 VUs  1m06.6s/3m30s  32.17 iters/s
+
+running (1m16.0s), 200/200 VUs, 390 complete and 0 interrupted iterations
+mail_otp_full_login   [  32% ] 200/200 VUs  1m07.6s/3m30s  32.31 iters/s
+
+running (1m17.0s), 200/200 VUs, 398 complete and 0 interrupted iterations
+mail_otp_full_login   [  33% ] 200/200 VUs  1m08.6s/3m30s  32.45 iters/s
+
+running (1m18.0s), 200/200 VUs, 411 complete and 0 interrupted iterations
+mail_otp_full_login   [  33% ] 200/200 VUs  1m09.6s/3m30s  32.59 iters/s
+
+running (1m19.0s), 200/200 VUs, 419 complete and 0 interrupted iterations
+mail_otp_full_login   [  34% ] 200/200 VUs  1m10.6s/3m30s  32.72 iters/s
+
+running (1m20.0s), 200/200 VUs, 421 complete and 0 interrupted iterations
+mail_otp_full_login   [  34% ] 200/200 VUs  1m11.6s/3m30s  32.86 iters/s
+
+running (1m21.0s), 200/200 VUs, 422 complete and 0 interrupted iterations
+mail_otp_full_login   [  35% ] 200/200 VUs  1m12.6s/3m30s  33.00 iters/s
+
+running (1m22.0s), 200/200 VUs, 437 complete and 0 interrupted iterations
+mail_otp_full_login   [  35% ] 200/200 VUs  1m13.6s/3m30s  33.14 iters/s
+
+running (1m23.0s), 200/200 VUs, 445 complete and 0 interrupted iterations
+mail_otp_full_login   [  36% ] 200/200 VUs  1m14.6s/3m30s  33.28 iters/s
+
+running (1m24.0s), 199/200 VUs, 460 complete and 0 interrupted iterations
+mail_otp_full_login   [  36% ] 199/200 VUs  1m15.6s/3m30s  33.42 iters/s
+
+running (1m25.0s), 200/200 VUs, 466 complete and 0 interrupted iterations
+mail_otp_full_login   [  36% ] 200/200 VUs  1m16.6s/3m30s  33.56 iters/s
+
+running (1m26.0s), 200/200 VUs, 467 complete and 0 interrupted iterations
+mail_otp_full_login   [  37% ] 200/200 VUs  1m17.6s/3m30s  33.70 iters/s
+
+running (1m27.0s), 200/200 VUs, 469 complete and 0 interrupted iterations
+mail_otp_full_login   [  37% ] 200/200 VUs  1m18.6s/3m30s  33.84 iters/s
+
+running (1m28.0s), 198/200 VUs, 479 complete and 0 interrupted iterations
+mail_otp_full_login   [  38% ] 198/200 VUs  1m19.6s/3m30s  33.97 iters/s
+
+running (1m29.0s), 200/200 VUs, 483 complete and 0 interrupted iterations
+mail_otp_full_login   [  38% ] 200/200 VUs  1m20.6s/3m30s  34.11 iters/s
+
+running (1m30.0s), 200/200 VUs, 488 complete and 0 interrupted iterations
+mail_otp_full_login   [  39% ] 200/200 VUs  1m21.6s/3m30s  34.25 iters/s
+
+running (1m31.0s), 200/200 VUs, 496 complete and 0 interrupted iterations
+mail_otp_full_login   [  39% ] 200/200 VUs  1m22.6s/3m30s  34.39 iters/s
+
+running (1m32.0s), 200/200 VUs, 502 complete and 0 interrupted iterations
+mail_otp_full_login   [  40% ] 200/200 VUs  1m23.6s/3m30s  34.53 iters/s
+
+running (1m33.0s), 200/200 VUs, 504 complete and 0 interrupted iterations
+mail_otp_full_login   [  40% ] 200/200 VUs  1m24.6s/3m30s  34.67 iters/s
+
+running (1m34.0s), 200/200 VUs, 508 complete and 0 interrupted iterations
+mail_otp_full_login   [  41% ] 200/200 VUs  1m25.6s/3m30s  34.81 iters/s
+
+running (1m35.0s), 200/200 VUs, 514 complete and 0 interrupted iterations
+mail_otp_full_login   [  41% ] 200/200 VUs  1m26.6s/3m30s  34.95 iters/s
+
+running (1m36.0s), 200/200 VUs, 515 complete and 0 interrupted iterations
+mail_otp_full_login   [  42% ] 200/200 VUs  1m27.6s/3m30s  35.09 iters/s
+
+running (1m37.0s), 200/200 VUs, 521 complete and 0 interrupted iterations
+mail_otp_full_login   [  42% ] 200/200 VUs  1m28.6s/3m30s  35.23 iters/s
+
+running (1m38.0s), 200/200 VUs, 521 complete and 0 interrupted iterations
+mail_otp_full_login   [  43% ] 200/200 VUs  1m29.6s/3m30s  35.36 iters/s
+
+running (1m39.0s), 199/200 VUs, 524 complete and 0 interrupted iterations
+mail_otp_full_login   [  43% ] 199/200 VUs  1m30.6s/3m30s  35.50 iters/s
+
+running (1m40.0s), 200/200 VUs, 527 complete and 0 interrupted iterations
+mail_otp_full_login   [  44% ] 200/200 VUs  1m31.6s/3m30s  35.64 iters/s
+
+running (1m41.0s), 200/200 VUs, 532 complete and 0 interrupted iterations
+mail_otp_full_login   [  44% ] 200/200 VUs  1m32.6s/3m30s  35.78 iters/s
+
+running (1m42.0s), 200/200 VUs, 537 complete and 0 interrupted iterations
+mail_otp_full_login   [  45% ] 200/200 VUs  1m33.6s/3m30s  35.92 iters/s
+
+running (1m43.0s), 200/200 VUs, 544 complete and 0 interrupted iterations
+mail_otp_full_login   [  45% ] 200/200 VUs  1m34.6s/3m30s  36.06 iters/s
+
+running (1m44.0s), 200/200 VUs, 553 complete and 0 interrupted iterations
+mail_otp_full_login   [  46% ] 200/200 VUs  1m35.6s/3m30s  36.20 iters/s
+
+running (1m45.0s), 199/200 VUs, 564 complete and 0 interrupted iterations
+mail_otp_full_login   [  46% ] 199/200 VUs  1m36.6s/3m30s  36.34 iters/s
+
+running (1m46.0s), 200/200 VUs, 570 complete and 0 interrupted iterations
+mail_otp_full_login   [  46% ] 200/200 VUs  1m37.6s/3m30s  36.47 iters/s
+
+running (1m47.0s), 200/200 VUs, 576 complete and 0 interrupted iterations
+mail_otp_full_login   [  47% ] 200/200 VUs  1m38.6s/3m30s  36.61 iters/s
+
+running (1m48.0s), 200/200 VUs, 584 complete and 0 interrupted iterations
+mail_otp_full_login   [  47% ] 200/200 VUs  1m39.6s/3m30s  36.75 iters/s
+
+running (1m49.0s), 200/200 VUs, 588 complete and 0 interrupted iterations
+mail_otp_full_login   [  48% ] 200/200 VUs  1m40.6s/3m30s  36.89 iters/s
+
+running (1m50.0s), 200/200 VUs, 603 complete and 0 interrupted iterations
+mail_otp_full_login   [  48% ] 200/200 VUs  1m41.6s/3m30s  37.03 iters/s
+
+running (1m51.0s), 200/200 VUs, 605 complete and 0 interrupted iterations
+mail_otp_full_login   [  49% ] 200/200 VUs  1m42.6s/3m30s  37.17 iters/s
+
+running (1m52.0s), 200/200 VUs, 621 complete and 0 interrupted iterations
+mail_otp_full_login   [  49% ] 200/200 VUs  1m43.6s/3m30s  37.31 iters/s
+
+running (1m53.0s), 200/200 VUs, 622 complete and 0 interrupted iterations
+mail_otp_full_login   [  50% ] 200/200 VUs  1m44.6s/3m30s  37.45 iters/s
+
+running (1m54.0s), 200/200 VUs, 629 complete and 0 interrupted iterations
+mail_otp_full_login   [  50% ] 200/200 VUs  1m45.6s/3m30s  37.59 iters/s
+
+running (1m55.0s), 200/200 VUs, 635 complete and 0 interrupted iterations
+mail_otp_full_login   [  51% ] 200/200 VUs  1m46.6s/3m30s  37.72 iters/s
+
+running (1m56.0s), 200/200 VUs, 645 complete and 0 interrupted iterations
+mail_otp_full_login   [  51% ] 200/200 VUs  1m47.6s/3m30s  37.86 iters/s
+
+running (1m57.0s), 199/200 VUs, 654 complete and 0 interrupted iterations
+mail_otp_full_login   [  52% ] 199/200 VUs  1m48.6s/3m30s  38.00 iters/s
+
+running (1m58.0s), 200/200 VUs, 665 complete and 0 interrupted iterations
+mail_otp_full_login   [  52% ] 200/200 VUs  1m49.6s/3m30s  38.14 iters/s
+
+running (1m59.0s), 200/200 VUs, 669 complete and 0 interrupted iterations
+mail_otp_full_login   [  53% ] 200/200 VUs  1m50.6s/3m30s  38.28 iters/s
+
+running (2m00.0s), 200/200 VUs, 672 complete and 0 interrupted iterations
+mail_otp_full_login   [  53% ] 200/200 VUs  1m51.6s/3m30s  38.42 iters/s
+
+running (2m01.0s), 200/200 VUs, 677 complete and 0 interrupted iterations
+mail_otp_full_login   [  54% ] 200/200 VUs  1m52.6s/3m30s  38.56 iters/s
+
+running (2m02.0s), 200/200 VUs, 686 complete and 0 interrupted iterations
+mail_otp_full_login   [  54% ] 200/200 VUs  1m53.6s/3m30s  38.70 iters/s
+
+running (2m03.0s), 200/200 VUs, 693 complete and 0 interrupted iterations
+mail_otp_full_login   [  55% ] 200/200 VUs  1m54.6s/3m30s  38.83 iters/s
+
+running (2m04.0s), 200/200 VUs, 696 complete and 0 interrupted iterations
+mail_otp_full_login   [  55% ] 200/200 VUs  1m55.6s/3m30s  38.98 iters/s
+
+running (2m05.0s), 200/200 VUs, 702 complete and 0 interrupted iterations
+mail_otp_full_login   [  56% ] 200/200 VUs  1m56.6s/3m30s  39.12 iters/s
+
+running (2m06.0s), 200/200 VUs, 703 complete and 0 interrupted iterations
+mail_otp_full_login   [  56% ] 200/200 VUs  1m57.6s/3m30s  39.25 iters/s
+
+running (2m07.0s), 200/200 VUs, 709 complete and 0 interrupted iterations
+mail_otp_full_login   [  56% ] 200/200 VUs  1m58.6s/3m30s  39.39 iters/s
+
+running (2m08.0s), 200/200 VUs, 715 complete and 0 interrupted iterations
+mail_otp_full_login   [  57% ] 200/200 VUs  1m59.6s/3m30s  39.53 iters/s
+
+running (2m09.0s), 200/200 VUs, 721 complete and 0 interrupted iterations
+mail_otp_full_login   [  57% ] 200/200 VUs  2m00.6s/3m30s  39.67 iters/s
+
+running (2m10.0s), 200/200 VUs, 722 complete and 0 interrupted iterations
+mail_otp_full_login   [  58% ] 200/200 VUs  2m01.6s/3m30s  39.81 iters/s
+
+running (2m11.0s), 200/200 VUs, 726 complete and 0 interrupted iterations
+mail_otp_full_login   [  58% ] 200/200 VUs  2m02.6s/3m30s  39.95 iters/s
+
+running (2m12.0s), 200/200 VUs, 727 complete and 0 interrupted iterations
+mail_otp_full_login   [  59% ] 200/200 VUs  2m03.6s/3m30s  40.09 iters/s
+
+running (2m13.0s), 200/200 VUs, 735 complete and 0 interrupted iterations
+mail_otp_full_login   [  59% ] 200/200 VUs  2m04.6s/3m30s  40.23 iters/s
+
+running (2m14.0s), 198/200 VUs, 746 complete and 0 interrupted iterations
+mail_otp_full_login   [  60% ] 198/200 VUs  2m05.6s/3m30s  40.36 iters/s
+
+running (2m15.0s), 200/200 VUs, 753 complete and 0 interrupted iterations
+mail_otp_full_login   [  60% ] 200/200 VUs  2m06.6s/3m30s  40.50 iters/s
+
+running (2m16.0s), 198/200 VUs, 767 complete and 0 interrupted iterations
+mail_otp_full_login   [  61% ] 198/200 VUs  2m07.6s/3m30s  40.64 iters/s
+
+running (2m17.0s), 200/200 VUs, 775 complete and 0 interrupted iterations
+mail_otp_full_login   [  61% ] 200/200 VUs  2m08.6s/3m30s  40.78 iters/s
+
+running (2m18.0s), 200/200 VUs, 787 complete and 0 interrupted iterations
+mail_otp_full_login   [  62% ] 200/200 VUs  2m09.6s/3m30s  40.92 iters/s
+
+running (2m19.0s), 200/200 VUs, 795 complete and 0 interrupted iterations
+mail_otp_full_login   [  62% ] 200/200 VUs  2m10.6s/3m30s  41.06 iters/s
+
+running (2m20.0s), 200/200 VUs, 803 complete and 0 interrupted iterations
+mail_otp_full_login   [  63% ] 200/200 VUs  2m11.6s/3m30s  41.20 iters/s
+
+running (2m21.0s), 200/200 VUs, 813 complete and 0 interrupted iterations
+mail_otp_full_login   [  63% ] 200/200 VUs  2m12.6s/3m30s  41.34 iters/s
+
+running (2m22.0s), 199/200 VUs, 819 complete and 0 interrupted iterations
+mail_otp_full_login   [  64% ] 199/200 VUs  2m13.6s/3m30s  41.48 iters/s
+
+running (2m23.0s), 200/200 VUs, 826 complete and 0 interrupted iterations
+mail_otp_full_login   [  64% ] 200/200 VUs  2m14.6s/3m30s  41.61 iters/s
+
+running (2m24.0s), 200/200 VUs, 837 complete and 0 interrupted iterations
+mail_otp_full_login   [  65% ] 200/200 VUs  2m15.6s/3m30s  41.75 iters/s
+
+running (2m25.0s), 200/200 VUs, 846 complete and 0 interrupted iterations
+mail_otp_full_login   [  65% ] 200/200 VUs  2m16.6s/3m30s  41.89 iters/s
+
+running (2m26.0s), 200/200 VUs, 853 complete and 0 interrupted iterations
+mail_otp_full_login   [  66% ] 200/200 VUs  2m17.6s/3m30s  42.03 iters/s
+
+running (2m27.0s), 200/200 VUs, 867 complete and 0 interrupted iterations
+mail_otp_full_login   [  66% ] 200/200 VUs  2m18.6s/3m30s  42.17 iters/s
+
+running (2m28.0s), 200/200 VUs, 870 complete and 0 interrupted iterations
+mail_otp_full_login   [  66% ] 200/200 VUs  2m19.6s/3m30s  42.31 iters/s
+
+running (2m29.0s), 200/200 VUs, 875 complete and 0 interrupted iterations
+mail_otp_full_login   [  67% ] 200/200 VUs  2m20.6s/3m30s  42.45 iters/s
+
+running (2m30.0s), 200/200 VUs, 882 complete and 0 interrupted iterations
+mail_otp_full_login   [  67% ] 200/200 VUs  2m21.6s/3m30s  42.59 iters/s
+
+running (2m31.0s), 200/200 VUs, 894 complete and 0 interrupted iterations
+mail_otp_full_login   [  68% ] 200/200 VUs  2m22.6s/3m30s  42.72 iters/s
+
+running (2m32.0s), 200/200 VUs, 902 complete and 0 interrupted iterations
+mail_otp_full_login   [  68% ] 200/200 VUs  2m23.6s/3m30s  42.86 iters/s
+
+running (2m33.0s), 200/200 VUs, 902 complete and 0 interrupted iterations
+mail_otp_full_login   [  69% ] 200/200 VUs  2m24.6s/3m30s  43.00 iters/s
+
+running (2m34.0s), 200/200 VUs, 909 complete and 0 interrupted iterations
+mail_otp_full_login   [  69% ] 200/200 VUs  2m25.6s/3m30s  43.14 iters/s
+
+running (2m35.0s), 200/200 VUs, 909 complete and 0 interrupted iterations
+mail_otp_full_login   [  70% ] 200/200 VUs  2m26.6s/3m30s  43.28 iters/s
+
+running (2m36.0s), 200/200 VUs, 916 complete and 0 interrupted iterations
+mail_otp_full_login   [  70% ] 200/200 VUs  2m27.6s/3m30s  43.42 iters/s
+
+running (2m37.0s), 200/200 VUs, 921 complete and 0 interrupted iterations
+mail_otp_full_login   [  71% ] 200/200 VUs  2m28.6s/3m30s  43.56 iters/s
+
+running (2m38.0s), 200/200 VUs, 921 complete and 0 interrupted iterations
+mail_otp_full_login   [  71% ] 200/200 VUs  2m29.6s/3m30s  43.70 iters/s
+
+running (2m39.0s), 200/200 VUs, 924 complete and 0 interrupted iterations
+mail_otp_full_login   [  72% ] 200/200 VUs  2m30.6s/3m30s  43.84 iters/s
+
+running (2m40.0s), 200/200 VUs, 926 complete and 0 interrupted iterations
+mail_otp_full_login   [  72% ] 200/200 VUs  2m31.6s/3m30s  43.98 iters/s
+
+running (2m41.0s), 200/200 VUs, 928 complete and 0 interrupted iterations
+mail_otp_full_login   [  73% ] 200/200 VUs  2m32.6s/3m30s  44.11 iters/s
+
+running (2m42.0s), 200/200 VUs, 935 complete and 0 interrupted iterations
+mail_otp_full_login   [  73% ] 200/200 VUs  2m33.6s/3m30s  44.25 iters/s
+
+running (2m43.0s), 200/200 VUs, 940 complete and 0 interrupted iterations
+mail_otp_full_login   [  74% ] 200/200 VUs  2m34.6s/3m30s  44.39 iters/s
+
+running (2m44.0s), 200/200 VUs, 953 complete and 0 interrupted iterations
+mail_otp_full_login   [  74% ] 200/200 VUs  2m35.6s/3m30s  44.53 iters/s
+
+running (2m45.0s), 200/200 VUs, 956 complete and 0 interrupted iterations
+mail_otp_full_login   [  75% ] 200/200 VUs  2m36.6s/3m30s  44.67 iters/s
+
+running (2m46.0s), 198/200 VUs, 974 complete and 0 interrupted iterations
+mail_otp_full_login   [  75% ] 198/200 VUs  2m37.6s/3m30s  44.81 iters/s
+
+running (2m47.0s), 200/200 VUs, 982 complete and 0 interrupted iterations
+mail_otp_full_login   [  76% ] 200/200 VUs  2m38.6s/3m30s  44.95 iters/s
+
+running (2m48.0s), 200/200 VUs, 989 complete and 0 interrupted iterations
+mail_otp_full_login   [  76% ] 200/200 VUs  2m39.6s/3m30s  45.09 iters/s
+
+running (2m49.0s), 200/200 VUs, 1003 complete and 0 interrupted iterations
+mail_otp_full_login   [  76% ] 200/200 VUs  2m40.6s/3m30s  45.22 iters/s
+
+running (2m50.0s), 200/200 VUs, 1008 complete and 0 interrupted iterations
+mail_otp_full_login   [  77% ] 200/200 VUs  2m41.6s/3m30s  45.36 iters/s
+
+running (2m51.0s), 200/200 VUs, 1009 complete and 0 interrupted iterations
+mail_otp_full_login   [  77% ] 200/200 VUs  2m42.6s/3m30s  45.50 iters/s
+
+running (2m52.0s), 199/200 VUs, 1018 complete and 0 interrupted iterations
+mail_otp_full_login   [  78% ] 199/200 VUs  2m43.6s/3m30s  45.64 iters/s
+
+running (2m53.0s), 200/200 VUs, 1028 complete and 0 interrupted iterations
+mail_otp_full_login   [  78% ] 200/200 VUs  2m44.6s/3m30s  45.78 iters/s
+
+running (2m54.0s), 200/200 VUs, 1031 complete and 0 interrupted iterations
+mail_otp_full_login   [  79% ] 200/200 VUs  2m45.6s/3m30s  45.92 iters/s
+
+running (2m55.0s), 200/200 VUs, 1039 complete and 0 interrupted iterations
+mail_otp_full_login   [  79% ] 200/200 VUs  2m46.6s/3m30s  46.06 iters/s
+
+running (2m56.0s), 200/200 VUs, 1048 complete and 0 interrupted iterations
+mail_otp_full_login   [  80% ] 200/200 VUs  2m47.6s/3m30s  46.20 iters/s
+
+running (2m57.0s), 199/200 VUs, 1053 complete and 0 interrupted iterations
+mail_otp_full_login   [  80% ] 199/200 VUs  2m48.6s/3m30s  46.34 iters/s
+
+running (2m58.0s), 200/200 VUs, 1060 complete and 0 interrupted iterations
+mail_otp_full_login   [  81% ] 200/200 VUs  2m49.6s/3m30s  46.48 iters/s
+
+running (2m59.0s), 200/200 VUs, 1072 complete and 0 interrupted iterations
+mail_otp_full_login   [  81% ] 200/200 VUs  2m50.6s/3m30s  46.61 iters/s
+
+running (3m00.0s), 200/200 VUs, 1075 complete and 0 interrupted iterations
+mail_otp_full_login   [  82% ] 200/200 VUs  2m51.6s/3m30s  46.75 iters/s
+
+running (3m01.0s), 200/200 VUs, 1077 complete and 0 interrupted iterations
+mail_otp_full_login   [  82% ] 200/200 VUs  2m52.6s/3m30s  46.89 iters/s
+
+running (3m02.0s), 200/200 VUs, 1080 complete and 0 interrupted iterations
+mail_otp_full_login   [  83% ] 200/200 VUs  2m53.6s/3m30s  47.03 iters/s
+
+running (3m03.0s), 200/200 VUs, 1092 complete and 0 interrupted iterations
+mail_otp_full_login   [  83% ] 200/200 VUs  2m54.6s/3m30s  47.17 iters/s
+
+running (3m04.0s), 200/200 VUs, 1103 complete and 0 interrupted iterations
+mail_otp_full_login   [  84% ] 200/200 VUs  2m55.6s/3m30s  47.31 iters/s
+
+running (3m05.0s), 200/200 VUs, 1103 complete and 0 interrupted iterations
+mail_otp_full_login   [  84% ] 200/200 VUs  2m56.6s/3m30s  47.45 iters/s
+
+running (3m06.0s), 200/200 VUs, 1107 complete and 0 interrupted iterations
+mail_otp_full_login   [  85% ] 200/200 VUs  2m57.6s/3m30s  47.59 iters/s
+
+running (3m07.0s), 199/200 VUs, 1112 complete and 0 interrupted iterations
+mail_otp_full_login   [  85% ] 199/200 VUs  2m58.6s/3m30s  47.72 iters/s
+
+running (3m08.0s), 200/200 VUs, 1113 complete and 0 interrupted iterations
+mail_otp_full_login   [  86% ] 200/200 VUs  2m59.6s/3m30s  47.86 iters/s
+
+running (3m09.0s), 200/200 VUs, 1117 complete and 0 interrupted iterations
+mail_otp_full_login   [  86% ] 200/200 VUs  3m00.6s/3m30s  48.00 iters/s
+
+running (3m10.0s), 200/200 VUs, 1124 complete and 0 interrupted iterations
+mail_otp_full_login   [  86% ] 200/200 VUs  3m01.6s/3m30s  48.14 iters/s
+
+running (3m11.0s), 200/200 VUs, 1125 complete and 0 interrupted iterations
+mail_otp_full_login   [  87% ] 200/200 VUs  3m02.6s/3m30s  48.28 iters/s
+
+running (3m12.0s), 200/200 VUs, 1127 complete and 0 interrupted iterations
+mail_otp_full_login   [  87% ] 200/200 VUs  3m03.6s/3m30s  48.42 iters/s
+
+running (3m13.0s), 200/200 VUs, 1129 complete and 0 interrupted iterations
+mail_otp_full_login   [  88% ] 200/200 VUs  3m04.6s/3m30s  48.56 iters/s
+
+running (3m14.0s), 200/200 VUs, 1135 complete and 0 interrupted iterations
+mail_otp_full_login   [  88% ] 200/200 VUs  3m05.6s/3m30s  48.70 iters/s
+
+running (3m15.0s), 199/200 VUs, 1145 complete and 0 interrupted iterations
+mail_otp_full_login   [  89% ] 199/200 VUs  3m06.6s/3m30s  48.84 iters/s
+
+running (3m16.0s), 200/200 VUs, 1151 complete and 0 interrupted iterations
+mail_otp_full_login   [  89% ] 200/200 VUs  3m07.6s/3m30s  48.98 iters/s
+
+running (3m17.0s), 199/200 VUs, 1154 complete and 0 interrupted iterations
+mail_otp_full_login   [  90% ] 199/200 VUs  3m08.6s/3m30s  49.11 iters/s
+
+running (3m18.0s), 200/200 VUs, 1165 complete and 0 interrupted iterations
+mail_otp_full_login   [  90% ] 200/200 VUs  3m09.6s/3m30s  49.25 iters/s
+
+running (3m19.0s), 200/200 VUs, 1165 complete and 0 interrupted iterations
+mail_otp_full_login   [  91% ] 200/200 VUs  3m10.6s/3m30s  49.39 iters/s
+
+running (3m20.0s), 200/200 VUs, 1165 complete and 0 interrupted iterations
+mail_otp_full_login   [  91% ] 200/200 VUs  3m11.6s/3m30s  49.53 iters/s
+
+running (3m21.0s), 200/200 VUs, 1165 complete and 0 interrupted iterations
+mail_otp_full_login   [  92% ] 200/200 VUs  3m12.6s/3m30s  49.67 iters/s
+
+running (3m22.0s), 200/200 VUs, 1165 complete and 0 interrupted iterations
+mail_otp_full_login   [  92% ] 200/200 VUs  3m13.6s/3m30s  49.81 iters/s
+
+running (3m23.0s), 200/200 VUs, 1208 complete and 0 interrupted iterations
+mail_otp_full_login   [  93% ] 200/200 VUs  3m14.6s/3m30s  49.95 iters/s
+
+running (3m24.0s), 200/200 VUs, 1225 complete and 0 interrupted iterations
+mail_otp_full_login   [  93% ] 200/200 VUs  3m15.6s/3m30s  47.96 iters/s
+
+running (3m25.0s), 200/200 VUs, 1226 complete and 0 interrupted iterations
+mail_otp_full_login   [  94% ] 200/200 VUs  3m16.6s/3m30s  44.57 iters/s
+
+running (3m26.0s), 200/200 VUs, 1235 complete and 0 interrupted iterations
+mail_otp_full_login   [  94% ] 200/200 VUs  3m17.6s/3m30s  41.31 iters/s
+
+running (3m27.0s), 200/200 VUs, 1242 complete and 0 interrupted iterations
+mail_otp_full_login   [  95% ] 200/200 VUs  3m18.6s/3m30s  37.95 iters/s
+
+running (3m28.0s), 200/200 VUs, 1244 complete and 0 interrupted iterations
+mail_otp_full_login   [  95% ] 200/200 VUs  3m19.6s/3m30s  34.64 iters/s
+
+running (3m29.0s), 200/200 VUs, 1244 complete and 0 interrupted iterations
+mail_otp_full_login   [  96% ] 200/200 VUs  3m20.6s/3m30s  31.30 iters/s
+
+running (3m30.0s), 200/200 VUs, 1250 complete and 0 interrupted iterations
+mail_otp_full_login   [  96% ] 200/200 VUs  3m21.6s/3m30s  27.93 iters/s
+
+running (3m31.0s), 199/200 VUs, 1271 complete and 0 interrupted iterations
+mail_otp_full_login   [  96% ] 199/200 VUs  3m22.6s/3m30s  24.63 iters/s
+
+running (3m32.0s), 199/200 VUs, 1285 complete and 0 interrupted iterations
+mail_otp_full_login   [  97% ] 199/200 VUs  3m23.6s/3m30s  21.29 iters/s
+
+running (3m33.0s), 200/200 VUs, 1290 complete and 0 interrupted iterations
+mail_otp_full_login   [  97% ] 200/200 VUs  3m24.6s/3m30s  17.89 iters/s
+
+running (3m34.0s), 200/200 VUs, 1290 complete and 0 interrupted iterations
+mail_otp_full_login   [  98% ] 200/200 VUs  3m25.6s/3m30s  14.61 iters/s
+
+running (3m35.0s), 200/200 VUs, 1292 complete and 0 interrupted iterations
+mail_otp_full_login   [  98% ] 200/200 VUs  3m26.6s/3m30s  11.25 iters/s
+
+running (3m36.0s), 200/200 VUs, 1298 complete and 0 interrupted iterations
+mail_otp_full_login   [  99% ] 200/200 VUs  3m27.6s/3m30s  07.74 iters/s
+
+running (3m37.0s), 188/200 VUs, 1316 complete and 0 interrupted iterations
+mail_otp_full_login   [  99% ] 188/200 VUs  3m28.6s/3m30s  04.46 iters/s
+
+running (3m38.0s), 186/200 VUs, 1321 complete and 0 interrupted iterations
+mail_otp_full_login   [ 100% ] 186/200 VUs  3m29.6s/3m30s  02.49 iters/s
+
+running (3m39.0s), 186/200 VUs, 1321 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m40.0s), 186/200 VUs, 1321 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m41.0s), 185/200 VUs, 1322 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m42.0s), 180/200 VUs, 1327 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m43.0s), 171/200 VUs, 1336 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m44.0s), 167/200 VUs, 1340 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m45.0s), 163/200 VUs, 1344 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m46.0s), 152/200 VUs, 1355 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m47.0s), 141/200 VUs, 1366 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m48.0s), 138/200 VUs, 1369 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m49.0s), 138/200 VUs, 1369 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m50.0s), 135/200 VUs, 1372 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m51.0s), 122/200 VUs, 1385 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m52.0s), 121/200 VUs, 1386 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m53.0s), 110/200 VUs, 1397 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m54.0s), 082/200 VUs, 1425 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m55.0s), 065/200 VUs, 1442 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m56.0s), 058/200 VUs, 1449 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m57.0s), 051/200 VUs, 1456 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m58.0s), 043/200 VUs, 1464 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (3m59.0s), 037/200 VUs, 1470 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (4m00.0s), 019/200 VUs, 1488 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (4m01.0s), 010/200 VUs, 1497 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (4m02.0s), 008/200 VUs, 1499 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (4m03.0s), 002/200 VUs, 1505 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+running (4m04.0s), 002/200 VUs, 1505 complete and 0 interrupted iterations
+mail_otp_full_login ↓ [ 100% ] 186/200 VUs  3m30s  02.49 iters/s
+
+ 📊 Mail OTP Full Login Benchmark - Summary
+ ======================================================================
+
+ 🎯 Preset: rps50
+ 📝 Description: 50 RPS - High throughput (3 min)
+ 🗄️  Storage profile: tenant-d1
+ 🪞 Transient auth mirror mode: current
+
+ 📈 Flow Statistics:
+   Total iterations: 1507
+   Flow success rate: 99.40%
+
+ ⏱️  Step-by-step Latency:
+   1. Authorize Init:
+      p50: 6379.58ms
+      p95: 7714.89ms
+   2. Email Code Generate:
+      p50: 3743.07ms
+      p95: 5005.36ms
+   3. Email Code Verify:
+      p50: 6857.96ms
+      p95: 8180.05ms
+   4. Authorize Code:
+      p50: 6676.64ms
+      p95: 8022.22ms
+   5. Token:
+      p50: 6664.32ms
+      p95: 8138.78ms
+   Full Flow:
+      p50: 30553.00ms
+      p95: 33817.40ms
+      p99: 0.00ms
+
+ ✅ Step-by-step Success Rate:
+   Email code auth: 99.60%
+   Authorization code: 99.47%
+   Token issuance: 99.40%
+
+ ❌ Error Statistics:
+   OTP generate errors: 2
+   OTP verify errors: 1
+   Session errors: 1
+   Authorization code errors: 2
+   Rate limit (429): 0
+   Server errors (5xx): 0
+
+ 🚀 Throughput: 6.17 flows/s
+ ======================================================================
+
+running (4m04.4s), 000/200 VUs, 1507 complete and 0 interrupted iterations
+mail_otp_full_login ✓ [ 100% ] 000/200 VUs  3m30s  02.49 iters/s

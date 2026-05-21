@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { AuthrimConfigSchema, safeParseConfig } from '../../core/config.js';
 import { loadLockFileAuto } from '../../core/lock.js';
+import { validateSetupDomainInputs } from '../../web/domain-form-state.js';
 import {
   findAuthrimBaseDir,
   findLegacyConfigPath,
@@ -177,7 +178,7 @@ async function showConfig(configPath: string, jsonOutput?: boolean, env?: string
     // Runtime Profiles
     console.log(chalk.bold('\n🧭 Runtime Profiles'));
     console.log(
-      `  Default Storage:   ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:standard')}`
+      `  Default Storage:   ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:shared-d1')}`
     );
     console.log(
       `  Default Audit:     ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
@@ -262,6 +263,47 @@ async function validateConfig(configPath: string, jsonOutput?: boolean): Promise
     const result = safeParseConfig(data);
 
     if (result.success) {
+      const domainIssues = validateSetupDomainInputs({
+        apiDomain:
+          result.data.tenant.multiTenant === true
+            ? result.data.tenant.baseDomain || ''
+            : result.data.urls?.api?.custom || '',
+        loginUiDomain: result.data.urls?.loginUi?.custom,
+        adminUiDomain: result.data.urls?.adminUi?.custom,
+        tenantName: result.data.tenant.name,
+      }).map((issue) => ({
+        path:
+          issue.field === 'apiDomain'
+            ? result.data.tenant.multiTenant === true
+              ? 'tenant.baseDomain'
+              : 'urls.api.custom'
+            : issue.field === 'loginUiDomain'
+              ? 'urls.loginUi.custom'
+              : 'urls.adminUi.custom',
+        message: issue.suggestion
+          ? `${issue.message} Suggested host: ${issue.suggestion}`
+          : issue.message,
+      }));
+
+      if (domainIssues.length > 0) {
+        spinner.fail('Configuration validation failed');
+
+        if (jsonOutput) {
+          console.log(JSON.stringify({ valid: false, errors: domainIssues }, null, 2));
+        } else {
+          console.log(chalk.red('\n✗ Configuration has validation errors:\n'));
+          for (const issue of domainIssues) {
+            console.log(chalk.red(`  • ${issue.path}: ${issue.message}`));
+          }
+          console.log('');
+          console.log(chalk.yellow('Fix the errors above and run validation again.'));
+          console.log('');
+        }
+
+        process.exitCode = 1;
+        return;
+      }
+
       spinner.succeed('Configuration is valid');
 
       if (jsonOutput) {

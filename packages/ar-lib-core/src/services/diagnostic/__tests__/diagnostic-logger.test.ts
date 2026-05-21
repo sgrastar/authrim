@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { createDiagnosticLogR2Adapter } from '../diagnostic-log-r2-adapter';
 import { createDiagnosticLogger, DiagnosticLogger } from '../diagnostic-logger';
 import type { DiagnosticLoggingSettings } from '../../../types/settings/diagnostic-logging';
 import type { Env } from '../../../types/env';
+import type { DiagnosticLogEntry } from '../types';
 
 class MockR2ObjectBody {
   constructor(private readonly value: string) {}
@@ -159,6 +161,117 @@ describe('DiagnosticLogger', () => {
     expect(bodySummary.grant_type).toBe('authorization_code');
     expect(bodySummary.code_hash).toBe('sha256:code-123...');
     expect(entry.remoteAddress).toBe('203.0.113.0/24');
+  });
+
+  it('writes immutable diagnostic chunk objects instead of appending to an hourly object', async () => {
+    const bucket = new MockR2Bucket();
+    const logger = new DiagnosticLogger({
+      env: createEnv(bucket),
+      tenantId: 'tenant-1',
+      clientId: 'rp-client',
+      settings: createSettings(),
+    });
+
+    await logger.logAuthDecision({
+      diagnosticSessionId: 'session-a',
+      decision: 'allow',
+      reason: 'first check',
+      requestId: 'req-1',
+    });
+    await logger.logAuthDecision({
+      diagnosticSessionId: 'session-a',
+      decision: 'deny',
+      reason: 'second check',
+      requestId: 'req-2',
+    });
+
+    expect(bucket.store.size).toBe(2);
+    const keys = Array.from(bucket.store.keys());
+    expect(keys.every((key) => key.includes('/v1/'))).toBe(true);
+    expect(keys.every((key) => !key.includes('/tenant-1/'))).toBe(true);
+
+    const entries = getStoredEntries(bucket);
+    expect(entries).toHaveLength(2);
+  });
+
+  it('queries client-scoped immutable chunks without requiring a category filter', async () => {
+    const bucket = new MockR2Bucket();
+    const adapter = createDiagnosticLogR2Adapter(bucket as unknown as R2Bucket, {
+      pathPrefix: 'diagnostic-logs',
+      tenantId: 'tenant-1',
+      clientId: 'client-a',
+    });
+    const otherClientAdapter = createDiagnosticLogR2Adapter(bucket as unknown as R2Bucket, {
+      pathPrefix: 'diagnostic-logs',
+      tenantId: 'tenant-1',
+      clientId: 'client-b',
+    });
+    const baseEntry = {
+      tenantId: 'tenant-1',
+      level: 'debug',
+      timestamp: Date.UTC(2026, 4, 21, 10, 0, 0),
+      storageMode: 'masked',
+    } satisfies Partial<DiagnosticLogEntry>;
+
+    await adapter.writeLogBatch([
+      {
+        ...baseEntry,
+        id: 'tok-1',
+        clientId: 'client-a',
+        category: 'token-validation',
+        step: 'issuer-check',
+        result: 'pass',
+      },
+      {
+        ...baseEntry,
+        id: 'auth-1',
+        clientId: 'client-a',
+        category: 'auth-decision',
+        decision: 'allow',
+        reason: 'ok',
+      },
+    ] as DiagnosticLogEntry[]);
+    await otherClientAdapter.writeLog({
+      ...baseEntry,
+      id: 'tok-2',
+      clientId: 'client-b',
+      category: 'token-validation',
+      step: 'issuer-check',
+      result: 'pass',
+    } as DiagnosticLogEntry);
+
+    const result = await adapter.query({
+      tenantId: 'tenant-1',
+      clientId: 'client-a',
+      limit: 10,
+    });
+
+    expect(result.entries.map((entry) => entry.id).sort()).toEqual(['auth-1', 'tok-1']);
+  });
+
+  it('skips schema-aware request body summaries when the cloned body is oversized', async () => {
+    const bucket = new MockR2Bucket();
+    const logger = new DiagnosticLogger({
+      env: createEnv(bucket),
+      tenantId: 'tenant-1',
+      clientId: 'rp-client',
+      settings: createSettings(),
+    });
+
+    const request = new Request('https://rp.example.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ value: 'x'.repeat(70 * 1024) }),
+    });
+
+    await logger.logHttpRequest({
+      request,
+      requestId: 'req-oversized',
+    });
+
+    const entries = getStoredEntries(bucket);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].bodySummary).toBeUndefined();
   });
 
   it('applies minimal privacy transforms to token validation logs before writing', async () => {

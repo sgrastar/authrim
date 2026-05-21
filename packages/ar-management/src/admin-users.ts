@@ -11,7 +11,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   escapeLikePattern,
-  scheduleAuditLogFromContext,
+  createAuditLogFromContext,
   getLogger,
   publishEvent,
   USER_EVENTS,
@@ -21,6 +21,7 @@ import {
   syncUserLifecycleState,
   getRequiredCustomClaimViolationStatuses,
   resolveCustomClaimRuntimeSourcesFromEnv,
+  runPIIWriteWithCompensation,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_USER_CREATE_RESERVED_FIELDS,
@@ -50,6 +51,7 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
       totalClientsResult,
       newUsersTodayResult,
       loginsTodayResult,
+      piiStatusRows,
       recentUsersCoreResult,
     ] = await Promise.all([
       authCtx.coreAdapter.queryOne<{ count: number }>(
@@ -72,11 +74,28 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
         'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND last_login_at >= ? AND is_active = 1',
         [tenantId, todayStart]
       ),
+      authCtx.coreAdapter.query<{ pii_status: string; count: number }>(
+        'SELECT pii_status, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_status',
+        [tenantId]
+      ),
       authCtx.coreAdapter.query<{ id: string; created_at: number }>(
         'SELECT id, created_at FROM users_core WHERE tenant_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 10',
         [tenantId]
       ),
     ]);
+
+    const piiStatusCounts = {
+      none: 0,
+      pending: 0,
+      active: 0,
+      failed: 0,
+      deleted: 0,
+    };
+    for (const row of piiStatusRows) {
+      if (row.pii_status in piiStatusCounts) {
+        piiStatusCounts[row.pii_status as keyof typeof piiStatusCounts] = Number(row.count) || 0;
+      }
+    }
 
     let recentActivity: {
       type: string;
@@ -131,6 +150,11 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
         registeredClients: totalClientsResult?.count || 0,
         newUsersToday: newUsersTodayResult?.count || 0,
         loginsToday: loginsTodayResult?.count || 0,
+        piiHealth: {
+          statusCounts: piiStatusCounts,
+          repairNeeded: piiStatusCounts.pending + piiStatusCounts.failed,
+          partialPIIUsers: piiStatusCounts.pending + piiStatusCounts.failed,
+        },
       },
       recentActivity,
     });
@@ -664,7 +688,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       log.error('Failed to publish user.created event', { action: 'publish_event' }, err as Error);
     });
 
-    scheduleAuditLogFromContext(c, 'user.created', 'user', userId, {
+    await createAuditLogFromContext(c, 'user.created', 'user', userId, {
       user_type: userCore?.user_type,
     });
     scheduleAdminAuditLog(c, 'user.created', userId, 'success', {
@@ -806,33 +830,47 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (Object.keys(coreUpdateData).length > 0) {
-      await authCtx.repositories.userCore.update(userId, coreUpdateData);
-    }
+    const hasPiiFieldChanges = Object.keys(piiUpdateData).length > 0;
+    const hasPiiCustomFieldChanges =
+      Object.keys(customFieldValidation.piiValues).length > 0 ||
+      customFieldValidation.piiKeysToDelete.length > 0;
+    const requiresPiiCompensation =
+      hasPIIDatabase(c) && (hasPiiFieldChanges || hasPiiCustomFieldChanges);
 
-    if (Object.keys(piiUpdateData).length > 0 && hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-      await piiCtx.piiRepositories.userPII.updatePII(userId, piiUpdateData, piiAdapter);
-    }
+    await runPIIWriteWithCompensation({
+      userId,
+      userCore: authCtx.repositories.userCore,
+      requiresPIIWrite: requiresPiiCompensation,
+      write: async () => {
+        if (Object.keys(coreUpdateData).length > 0) {
+          await authCtx.repositories.userCore.update(userId, coreUpdateData);
+        }
 
-    if (hasCustomFieldChanges) {
-      await persistCustomClaimWrite({
-        db: customClaimSources.nonPiiDb,
-        dbPii: customClaimSources.piiDb,
-        tenantId,
-        userId,
-        validation: customFieldValidation,
-      });
-      await syncUserLifecycleState({
-        db: customClaimSources.nonPiiDb,
-        dbPii: customClaimSources.piiDb,
-        schemaDb: customClaimSources.schemaDb,
-        stateDb: authCtx.coreAdapter,
-        tenantId,
-        userId,
-      });
-    }
+        if (hasPiiFieldChanges && hasPIIDatabase(c)) {
+          const piiCtx = createPIIContextFromHono(c, tenantId);
+          const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+          await piiCtx.piiRepositories.userPII.updatePII(userId, piiUpdateData, piiAdapter);
+        }
+
+        if (hasCustomFieldChanges) {
+          await persistCustomClaimWrite({
+            db: customClaimSources.nonPiiDb,
+            dbPii: customClaimSources.piiDb,
+            tenantId,
+            userId,
+            validation: customFieldValidation,
+          });
+          await syncUserLifecycleState({
+            db: customClaimSources.nonPiiDb,
+            dbPii: customClaimSources.piiDb,
+            schemaDb: customClaimSources.schemaDb,
+            stateDb: authCtx.coreAdapter,
+            tenantId,
+            userId,
+          });
+        }
+      },
+    });
 
     await invalidateUserCache(c.env, tenantId, userId);
     const updatedCore = await authCtx.repositories.userCore.findById(userId);
@@ -877,7 +915,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       log.error('Failed to publish user.updated event', { action: 'publish_event' }, err as Error);
     });
 
-    scheduleAuditLogFromContext(c, 'user.updated', 'user', userId, {
+    await createAuditLogFromContext(c, 'user.updated', 'user', userId, {
       user_type: updatedCore?.user_type,
     });
     scheduleAdminAuditLog(c, 'user.updated', userId, 'success', {
@@ -963,7 +1001,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       log.error('Failed to publish user.deleted event', { action: 'publish_event' }, err as Error);
     });
 
-    scheduleAuditLogFromContext(c, 'user.deleted', 'user', userId, {});
+    await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {});
     scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
 
     return c.json({
@@ -1216,7 +1254,7 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     });
 
     await invalidateUserCache(c.env, tenantId, userId);
-    scheduleAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, {
+    await createAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, {
       reason: deletionReason,
       retention_days: retentionDays,
     });

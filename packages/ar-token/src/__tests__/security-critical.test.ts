@@ -486,6 +486,54 @@ describe('Security-Critical Tests', () => {
       );
     });
 
+    it('rejects authorization_code token issuance when PII scopes are requested for failed PII state', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({
+        userId: 'user-pii-failed',
+        scope: 'openid email',
+      });
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockValidateGrantType.mockReturnValue({ valid: true });
+      mocks.mockValidateAuthCode.mockReturnValue({ valid: true });
+      mocks.mockValidateClientId.mockReturnValue({ valid: true });
+      mocks.mockValidateRedirectUri.mockReturnValue({ valid: true });
+      mocks.mockGetCachedUserCore.mockResolvedValue({
+        id: authCodeData.userId,
+        pii_status: 'failed',
+        email_verified: true,
+        phone_number_verified: false,
+        updated_at: 1700000000000,
+      });
+
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const ctx = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'authorization_code',
+          code: 'valid-auth-code',
+          redirect_uri: authCodeData.redirectUri,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({
+        error: 'temporarily_unavailable',
+        error_description: 'Requested claims require PII that is not currently available.',
+      });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
     it('uses the runtime-resolved core adapter for refresh_token RBAC and policy lookups', async () => {
       const client = createConfidentialClient({ require_pkce: false });
       const refreshTokenPayload = createRefreshTokenPayload({

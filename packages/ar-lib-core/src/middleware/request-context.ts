@@ -30,6 +30,7 @@ import {
 } from '../services/tenant-vanity-domain-resolver';
 import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
 import { resolveUserStoreRuntimeSourcesFromEnv } from '../services/user-store-runtime-sources';
+import { TenantDatabaseResolverError } from '../services/tenant-database-resolver';
 
 /**
  * Request context available to all handlers via c.get()
@@ -106,6 +107,49 @@ function shouldAttemptVanityHostResolution(
   return true;
 }
 
+function isTenantDatabaseControlPlanePath(path: string): boolean {
+  return path.startsWith('/api/admin/jobs/tenant-databases/');
+}
+
+function shouldResolveRuntimeUserStoreSources(
+  requestClass:
+    | 'platform_admin'
+    | 'tenant_inventory_admin'
+    | 'tenant_scoped_admin'
+    | 'discovery_ui'
+    | 'health_or_internal'
+    | 'public_protocol_or_rest',
+  path: string
+): boolean {
+  if (isTenantDatabaseControlPlanePath(path)) {
+    return false;
+  }
+
+  return requestClass === 'tenant_scoped_admin' || requestClass === 'public_protocol_or_rest';
+}
+
+function getConfiguredUrlHostname(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): boolean {
+  if (!requestHost) {
+    return false;
+  }
+
+  return [getConfiguredUrlHostname(env.ADMIN_UI_URL), getConfiguredUrlHostname(env.UI_URL)].some(
+    (hostname) => hostname === requestHost
+  );
+}
+
 export function requestContextMiddleware(options: RequestContextMiddlewareOptions = {}) {
   const { requireTenant = true } = options;
 
@@ -159,6 +203,14 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     );
     let tenantId = tenantResult.tenantId;
     const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
+    if (isReservedUiHost(c.env, requestHost)) {
+      tenantResult.success = false;
+      tenantResult.tenantId = c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+      delete tenantResult.error;
+      delete tenantResult.statusCode;
+      tenantId = tenantResult.tenantId;
+    }
+
     if (
       !tenantResult.success &&
       shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)
@@ -266,7 +318,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       requestHost === `${tenantId}.${c.env.BASE_DOMAIN}`
     ) {
       const primaryVanity = await getPrimaryTenantVanityDomain(
-        { ...c.env, DB: authCoreSource },
+        { AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG, DB: authCoreSource },
         tenantId
       );
       if (primaryVanity && primaryVanity.hostname !== requestHost) {
@@ -325,10 +377,33 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ctx.set('tenantId', tenantId);
     ctx.set('logger', logger);
     ctx.set('startTime', startTime);
-    ctx.set(
-      'runtimeUserStoreSources',
-      await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId)
-    );
+    if (shouldResolveRuntimeUserStoreSources(requestClass, c.req.path)) {
+      try {
+        ctx.set(
+          'runtimeUserStoreSources',
+          await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId, { requestPath: c.req.path })
+        );
+      } catch (error) {
+        if (error instanceof TenantDatabaseResolverError) {
+          logger.warn('Tenant database runtime source resolution failed', {
+            error: error.code,
+            tenantId,
+            path: c.req.path,
+            storageProfile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
+          });
+          return c.json(
+            {
+              error: error.code,
+              storage_profile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
+              route: c.req.path,
+              tenant_id: tenantId,
+            },
+            409
+          );
+        }
+        throw error;
+      }
+    }
 
     // Log request start
     logger.debug('Request started', {

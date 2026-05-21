@@ -59,14 +59,18 @@ export interface RuntimeProfileReferenceCatalog {
 	};
 }
 
-export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension';
+export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension' | 'authorization';
 
 export type StorageSlice =
 	| 'users_core'
 	| 'users_pii'
 	| 'custom_claims'
 	| 'registration_fields'
-	| 'custom_pii';
+	| 'custom_pii'
+	| 'passkeys'
+	| 'linked_identities'
+	| 'consent'
+	| 'authorization';
 
 export interface StorageSliceBoundaryPolicy {
 	slice: StorageSlice;
@@ -87,12 +91,97 @@ export interface StorageProfileTenantOverridePolicy {
 	reason?: string;
 }
 
+export interface StorageProfileOperatorGuidance {
+	profileId: string;
+	deploymentProfile: 'shared-d1' | 'tenant-d1' | 'external-durable' | 'legacy-custom';
+	selectionScope: 'deployment';
+	recommendedScale: 'small' | 'medium_large' | 'regulated_or_large' | 'custom';
+	warnings: string[];
+	requirements: string[];
+	upgradeTargets: string[];
+}
+
+export interface StorageProfileDeploymentSelectionPolicy {
+	profileId: string;
+	environmentDefaultStorageProfileId: string;
+	deploymentSelectionAllowed: boolean;
+	selectionScope: 'deployment';
+	isEnvironmentDefault: boolean;
+	guidance: StorageProfileOperatorGuidance;
+}
+
+export interface TenantDatabaseStatsSummary {
+	active_tenant_core_databases: number;
+	stats_rows: number;
+	missing_stats_count: number;
+	stale_stats_count: number;
+	warning_count: number;
+	strong_warning_count: number;
+	stale_file_size_count: number;
+	unavailable_file_size_count: number;
+}
+
+export interface TenantDatabaseStatsStatus {
+	available: boolean;
+	staleAfterHours: number;
+	cutoffIso: string;
+	summary: TenantDatabaseStatsSummary | null;
+	attentionRequired: boolean;
+	unavailableReason?: 'db_admin_not_configured' | 'query_failed';
+}
+
+export interface RuntimeRegistrySecurityNotificationStatus {
+	available: boolean;
+	attentionRequired: boolean;
+	summary: {
+		pending_count: number;
+		failed_count: number;
+		dead_letter_count: number;
+		critical_count: number;
+		high_count: number;
+		latest_created_at: string | null;
+	} | null;
+	unavailableReason?: 'db_admin_not_configured' | 'query_failed';
+}
+
+export type StorageProfileCapabilityState = 'supported' | 'partial' | 'unsupported' | 'planned';
+export type StorageProfileCapabilityCriticality =
+	| 'security_critical'
+	| 'user_critical'
+	| 'admin_critical'
+	| 'non_critical';
+
+export interface StorageProfileCapabilityStatusEntry {
+	id: string;
+	label: string;
+	state: StorageProfileCapabilityState;
+	criticality: StorageProfileCapabilityCriticality;
+	detail: string;
+}
+
+export interface StorageProfileCapabilityStatus {
+	profileId: string;
+	deploymentProfile: 'shared-d1' | 'tenant-d1' | 'external-durable' | 'legacy-custom';
+	mvpReady: boolean;
+	unsupportedCount: number;
+	partialCount: number;
+	capabilities: StorageProfileCapabilityStatusEntry[];
+}
+
 export interface StorageProfileListPolicy {
 	authCoreSlice: string;
 	authCoreSlices: string[];
 	slicePolicies: Record<string, StorageSliceBoundaryPolicy>;
 	environmentDefaultStorageProfileId: string;
+	tenantDatabaseStatsStatus?: TenantDatabaseStatsStatus | null;
+	runtimeRegistrySecurityNotifications?: RuntimeRegistrySecurityNotificationStatus | null;
+	capabilityStatus?: Record<string, StorageProfileCapabilityStatus>;
 	tenantOverrideEligibility: Record<string, StorageProfileTenantOverridePolicy>;
+	deploymentSelectionPolicy?: {
+		selectionScope: 'deployment';
+		environmentDefaultStorageProfileId: string;
+		profiles: Record<string, StorageProfileDeploymentSelectionPolicy>;
+	};
 }
 
 export interface RuntimeProfileListResponse {
@@ -170,7 +259,10 @@ export const adminRuntimeProfilesAPI = {
 			activation_status?: RuntimeProfileActivationStatus;
 			reference_management?: RuntimeProfileReferenceManagementPolicy;
 			reference_catalog?: RuntimeProfileReferenceCatalog;
-			storage_policy?: StorageProfileTenantOverridePolicy;
+			storage_policy?: StorageProfileTenantOverridePolicy & {
+				deploymentSelectionPolicy?: StorageProfileDeploymentSelectionPolicy;
+				capabilityStatus?: StorageProfileCapabilityStatus;
+			};
 		}>(response);
 	},
 

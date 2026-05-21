@@ -391,16 +391,7 @@ async function captureForLanguage(page: Page, lang: string): Promise<void> {
   await page.click('#menu-new-setup');
   await page.waitForTimeout(ANIMATION_DELAY);
 
-  // 4. Setup Mode Selection
-  await page.waitForSelector('#section-mode:not(.hidden)', { timeout: 5000 });
-  await page.waitForTimeout(ANIMATION_DELAY);
-  await capture(page, screenshotDir, '04-setup-mode.png');
-
-  // Click "Custom Setup"
-  await page.click('#mode-custom');
-  await page.waitForTimeout(ANIMATION_DELAY);
-
-  // 5. Configuration screen
+  // 4. Configuration screen
   await page.waitForSelector('#section-config:not(.hidden)', { timeout: 5000 });
   await page.waitForTimeout(LONG_DELAY);
 
@@ -415,25 +406,25 @@ async function captureForLanguage(page: Page, lang: string): Promise<void> {
   }
 
   await page.waitForTimeout(ANIMATION_DELAY);
-  await capture(page, screenshotDir, '05-configuration.png');
+  await capture(page, screenshotDir, '04-configuration.png');
 
   // Click Continue
   await page.click('#btn-configure');
   await page.waitForTimeout(ANIMATION_DELAY);
 
-  // 6. Database Configuration
+  // 5. Database Configuration
   await page.waitForSelector('#section-database:not(.hidden)', { timeout: 5000 });
   await page.waitForTimeout(LONG_DELAY);
-  await capture(page, screenshotDir, '06-database.png');
+  await capture(page, screenshotDir, '05-database.png');
 
   // Click Continue
   await page.click('#btn-continue-database');
   await page.waitForTimeout(ANIMATION_DELAY);
 
-  // 7. Email Configuration
+  // 6. Email Configuration
   await page.waitForSelector('#section-email:not(.hidden)', { timeout: 5000 });
   await page.waitForTimeout(LONG_DELAY);
-  await capture(page, screenshotDir, '07-email.png');
+  await capture(page, screenshotDir, '06-email.png');
 
   // Click Continue
   await page.click('#btn-continue-email');
@@ -442,44 +433,44 @@ async function captureForLanguage(page: Page, lang: string): Promise<void> {
   // Handle "Save Configuration?" modal
   const saveModal = await page.$('#save-config-modal:not(.hidden)');
   if (saveModal) {
-    await capture(page, screenshotDir, '08-save-modal.png');
+    await capture(page, screenshotDir, '07-save-modal.png');
     await page.click('#modal-skip-save');
     await page.waitForTimeout(ANIMATION_DELAY);
   }
 
-  // 8. Provisioning screen
+  // 7. Provisioning screen
   await page.waitForSelector('#section-provision:not(.hidden)', { timeout: 5000 });
   await page.waitForTimeout(LONG_DELAY);
-  await capture(page, screenshotDir, '09-provision-ready.png');
+  await capture(page, screenshotDir, '08-provision-ready.png');
 
   // Start provisioning
   await page.click('#btn-provision');
   await page.waitForTimeout(500);
-  await capture(page, screenshotDir, '10-provisioning.png');
+  await capture(page, screenshotDir, '09-provisioning.png');
 
   // Wait for provisioning to complete
   await page.waitForSelector('#btn-goto-deploy:not(.hidden)', { timeout: 30000 });
   await page.waitForTimeout(ANIMATION_DELAY);
-  await capture(page, screenshotDir, '11-provision-complete.png');
+  await capture(page, screenshotDir, '10-provision-complete.png');
 
   // Click Continue to Deploy
   await page.click('#btn-goto-deploy');
   await page.waitForTimeout(ANIMATION_DELAY);
 
-  // 9. Deployment screen
+  // 8. Deployment screen
   await page.waitForSelector('#section-deploy:not(.hidden)', { timeout: 5000 });
   await page.waitForTimeout(LONG_DELAY);
-  await capture(page, screenshotDir, '12-deploy-ready.png');
+  await capture(page, screenshotDir, '11-deploy-ready.png');
 
   // Start deployment
   await page.click('#btn-deploy');
   await page.waitForTimeout(500);
-  await capture(page, screenshotDir, '13-deploying.png');
+  await capture(page, screenshotDir, '12-deploying.png');
 
-  // 10. Complete screen
+  // 9. Complete screen
   await page.waitForSelector('#section-complete:not(.hidden)', { timeout: 60000 });
   await page.waitForTimeout(LONG_DELAY);
-  await capture(page, screenshotDir, '14-complete.png');
+  await capture(page, screenshotDir, '13-complete.png');
 }
 
 /**

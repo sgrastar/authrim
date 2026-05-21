@@ -482,7 +482,7 @@ const ko: Translations = {
   // Sharding settings
   'sharding.configurePrompt': '샤딩을 구성하시겠습니까? (고부하 환경용)',
   'sharding.title': '샤딩 설정',
-  'sharding.note': '참고: 샤드 수는 2의 거듭제곱을 권장합니다 (8, 16, 32, 64, 128)',
+  'sharding.note': '참고: 샤드 수는 2의 거듭제곱을 권장합니다 (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': '인증 코드 샤드 수',
   'sharding.refreshTokenShards': '리프레시 토큰 샤드 수',
 
@@ -930,13 +930,15 @@ const ko: Translations = {
   'web.preview.issuerUrl': '발급자 URL:',
   'web.preview.loginUi': '로그인 UI:',
   'web.preview.adminUi': '관리자 UI:',
-  'web.preview.pagesUrl': '로그인 UI (Worker):',
+  'web.preview.pagesUrl': '로그인 UI Origin:',
   'web.preview.tenantDiscover': '테넌트 선택 (공통 입구):',
   'web.preview.adminAccess': '관리자 UI 접속:',
   'web.preview.firstTenant': '{{name}} (기본 테넌트)',
   'web.preview.otherTenants': '다른 테넌트',
   'web.preview.allTenantsShared': '(모든 테넌트 공통)',
+  'web.preview.loginUiOriginNote': '(배포 Origin. 테넌트 로그인은 Issuer /login 사용)',
   'web.preview.viaApiProxy': '(API와 동일 도메인 경유 프록시)',
+  'web.preview.conflictWarningTitle': '⚠️ 구성 문제',
   'web.preview.conflictWarningMsg':
     '{{conflictUI}}의 커스텀 도메인이 API와 동일합니다（{{baseDomain}}）. "URL에서 테넌트 제거"가 비활성화되어 있어 {{baseDomain}}으로의 API 요청（/authorize, /api/auth/* 등）이 404를 반환하고 로그인 흐름이 작동하지 않습니다.',
   'web.preview.conflictActionMsg':

@@ -1,16 +1,16 @@
 /**
- * FlowRegistry - Flow定義の取得・管理
+ * FlowRegistry - retrieve and manage flow definitions
  *
- * 責務:
- * - relational store からのカスタムFlow取得（Admin UI経由）
- * - ビルトインFlowの取得
- * - KVからのカスタムFlow取得（レガシー）
+ * Responsibilities:
+ * - get custom flow from relational store (via Admin UI)
+ * - get built-in flow
+ * - from KVcustom flowget (legacy)
  *
- * 優先順位:
+ * Priority order:
  * 1. relational store: client-specific flow (tenant_id + client_id + profile_id)
  * 2. relational store: tenant default flow (tenant_id + profile_id, client_id = NULL)
- * 3. ビルトインFlow
- * 4. KV: カスタムFlow（レガシー）
+ * 3. built-in flow
+ * 4. KV: custom flow (legacy)
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -24,7 +24,7 @@ import { BUILTIN_FLOWS, getBuiltinFlow } from './flows/login-flow';
 // =============================================================================
 
 /**
- * FlowType - サポートするフロータイプ
+ * FlowType - supported flow type
  */
 export type FlowType = 'login' | 'authorization' | 'consent' | 'logout';
 
@@ -32,9 +32,9 @@ export type FlowType = 'login' | 'authorization' | 'consent' | 'logout';
  * FlowRegistryOptions
  */
 export interface FlowRegistryOptions {
-  /** KVNamespace（カスタムFlow用、レガシー） */
+  /** KVNamespace (custom flowfor, legacy) */
   kv?: KVNamespace;
-  /** DatabaseSource（推奨: Admin UIからのカスタムFlow） */
+  /** DatabaseSource (recommended: custom flow from Admin UI) */
   db?: DatabaseSource;
 }
 
@@ -43,12 +43,12 @@ export interface FlowRegistryOptions {
 // =============================================================================
 
 /**
- * FlowRegistry - Flow定義の取得・管理
+ * FlowRegistry - retrieve and manage flow definitions
  *
- * ヘッドレス運用対応:
- * - ビルトインFlowのみでも動作
- * - relational store が設定されていればAdmin UIからのカスタムFlowを取得
- * - KVが設定されていればレガシーカスタムFlowも取得可能
+ * Supports headless operation:
+ * - Works with built-in flows only
+ * - get custom flows from Admin UI when relational store is configured
+ * - can also get legacy custom flows when KV is configured
  */
 export class FlowRegistry {
   private kv?: KVNamespace;
@@ -60,25 +60,25 @@ export class FlowRegistry {
   }
 
   /**
-   * FlowTypeからGraphDefinitionを取得
+   * Get a GraphDefinition from FlowType
    *
-   * 優先順位:
+   * Priority order:
    * 1. Database: client-specific flow (tenant_id + client_id + profile_id)
    * 2. Database: tenant default flow (tenant_id + profile_id, client_id = NULL)
-   * 3. ビルトインFlow
-   * 4. KV: カスタムFlow（レガシー）
+   * 3. built-in flow
+   * 4. KV: custom flow (legacy)
    *
-   * @param flowType - フロータイプ
-   * @param tenantId - テナントID
-   * @param clientId - クライアントID（オプション、client-specific flow用）
-   * @returns GraphDefinition または null
+   * @param flowType - Flow type
+   * @param tenantId - Tenant ID
+   * @param clientId - Client ID (options, client-specific flowfor)
+   * @returns GraphDefinition or null
    */
   async getFlow(
     flowType: FlowType,
     tenantId?: string,
     clientId?: string
   ): Promise<GraphDefinition | null> {
-    // profileIdを解決（flowType → profileId）
+    // Resolve profileId (flowType -> profileId)
     const profileId = this.flowTypeToProfileId(flowType);
 
     // 1. Database: client-specific flow
@@ -97,7 +97,7 @@ export class FlowRegistry {
       }
     }
 
-    // 3. ビルトインFlowを検索
+    // 3. Find built-in flow
     const builtinFlowId = this.getBuiltinFlowId(flowType);
     const builtinFlow = getBuiltinFlow(builtinFlowId);
 
@@ -105,7 +105,7 @@ export class FlowRegistry {
       return builtinFlow;
     }
 
-    // 4. カスタムFlow（KV）を検索（レガシー）
+    // 4. Find custom flow in KV (legacy)
     if (this.kv && tenantId) {
       const customFlow = await this.getCustomFlowFromKV(tenantId, flowType);
       if (customFlow) {
@@ -113,38 +113,38 @@ export class FlowRegistry {
       }
     }
 
-    // 5. 見つからない場合はnull
+    // 5. Return null when not found
     return null;
   }
 
   /**
-   * すべてのビルトインFlowIDを取得
+   * Get all built-in flow IDs
    */
   getBuiltinFlowIds(): string[] {
     return Object.keys(BUILTIN_FLOWS);
   }
 
   /**
-   * FlowTypeからビルトインFlowIDを解決
+   * Resolve a built-in flow ID from FlowType
    */
   private getBuiltinFlowId(flowType: FlowType): string {
-    // FlowType → ビルトインFlowIDのマッピング
+    // FlowType -> built-in flow ID mapping
     const flowTypeToId: Record<FlowType, string> = {
       login: 'human-basic-login',
-      authorization: 'human-basic-authorization', // 将来追加
-      consent: 'human-basic-consent', // 将来追加
-      logout: 'human-basic-logout', // 将来追加
+      authorization: 'human-basic-authorization', // Add in the future
+      consent: 'human-basic-consent', // Add in the future
+      logout: 'human-basic-logout', // Add in the future
     };
 
     return flowTypeToId[flowType];
   }
 
   /**
-   * FlowTypeからProfileIdを解決
+   * Resolve ProfileId from FlowType
    */
   private flowTypeToProfileId(flowType: FlowType): string {
-    // FlowType → ProfileIDのマッピング
-    // 現在はすべて 'human-basic' を使用
+    // FlowType -> ProfileID mapping
+    // Currently all use 'human-basic'
     const flowTypeToProfile: Record<FlowType, string> = {
       login: 'human-basic',
       authorization: 'human-basic',
@@ -156,11 +156,11 @@ export class FlowRegistry {
   }
 
   /**
-   * Database から Flow 定義を取得
+   * Get the flow definition from Database
    *
-   * @param tenantId - テナントID
-   * @param profileId - プロファイルID
-   * @param clientId - クライアントID（NULLの場合はテナントデフォルト）
+   * @param tenantId - Tenant ID
+   * @param profileId - profile ID
+   * @param clientId - Client ID (tenant default when NULL)
    */
   private async getFlowFromDatabase(
     tenantId: string,
@@ -202,7 +202,7 @@ export class FlowRegistry {
 
       return null;
     } catch (error) {
-      // セキュリティ対策（High 9）: error オブジェクトをそのまま出力せず、メッセージのみ
+      // Security mitigation (High 9): Log only the message instead of the raw error object
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       console.error(`Failed to get flow from database: ${errorMsg}`);
       return null;
@@ -210,9 +210,9 @@ export class FlowRegistry {
   }
 
   /**
-   * KVからカスタムFlow定義を取得（レガシー）
+   * Get custom flow definition from KV (legacy)
    *
-   * キー形式: flow:{tenantId}:{flowType}
+   * Key format: flow:{tenantId}:{flowType}
    */
   private async getCustomFlowFromKV(
     tenantId: string,
@@ -233,7 +233,7 @@ export class FlowRegistry {
   }
 
   /**
-   * GraphDefinitionの簡易バリデーション
+   * Basic GraphDefinition validation
    */
   private isValidGraphDefinition(obj: unknown): obj is GraphDefinition {
     if (!obj || typeof obj !== 'object') {
@@ -257,19 +257,19 @@ export class FlowRegistry {
 // =============================================================================
 
 /**
- * FlowRegistryを作成
+ * Create a FlowRegistry
  *
- * @param options - オプション
- * @returns FlowRegistry インスタンス
+ * @param options - options
+ * @returns FlowRegistry instance
  *
  * @example
- * // ビルトインFlowのみ
+ * // built-in flows only
  * const registry = createFlowRegistry();
  *
- * // DatabaseSource 対応（推奨: Admin UIからのカスタムFlow）
+ * // DatabaseSource support (recommended: custom flow from Admin UI)
  * const registry = createFlowRegistry({ db: env.DB });
  *
- * // DatabaseSource + KV対応（フルオプション）
+ * // DatabaseSource + KVsupport (full options)
  * const registry = createFlowRegistry({ db: env.DB, kv: env.AUTHRIM_CONFIG });
  */
 export function createFlowRegistry(options: FlowRegistryOptions = {}): FlowRegistry {

@@ -60,4 +60,17 @@ describe('SAML metadata signing', () => {
       )
     ).toThrow('SAML metadata signing requires EntityDescriptor ID');
   });
+
+  it('rejects nested EntityDescriptor when signing metadata', () => {
+    expect(() =>
+      signSAMLMetadata(
+        `<wrapper>${metadataXml}</wrapper>`,
+        {
+          privateKeyPem: 'private-key',
+          certificate: 'certificate',
+        },
+        vi.fn()
+      )
+    ).toThrow('SAML metadata signing requires EntityDescriptor ID');
+  });
 });

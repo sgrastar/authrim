@@ -4,10 +4,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, externalIdpAPI } from '$lib/api/client';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
-	import {
-		fetchRegistrationFields,
-		type RegistrationField
-	} from '$lib/api/registration-fields';
+	import { fetchRegistrationFields, type RegistrationField } from '$lib/api/registration-fields';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
 	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
@@ -330,7 +327,9 @@
 		externalIdpLoading = providerId;
 		try {
 			const redirectUri =
-				provider.startMode === 'saml_sp' ? `${window.location.origin}/` : `${window.location.origin}/callback`;
+				provider.startMode === 'saml_sp'
+					? `${window.location.origin}/`
+					: `${window.location.origin}/callback`;
 			const { url } = await externalIdpAPI.startLogin(
 				providerId,
 				redirectUri,
@@ -435,7 +434,8 @@
 					</h2>
 					{#if inviteTenantName}
 						<p class="auth-section-subtitle">
-							You've been invited to <strong>{inviteTenantName}</strong>. Create your account to continue.
+							You've been invited to <strong>{inviteTenantName}</strong>. Create your account to
+							continue.
 						</p>
 					{:else}
 						<p class="auth-section-subtitle">
@@ -503,7 +503,9 @@
 								{/if}
 							{:else if field.field_type === 'enum'}
 								<div class="form-group">
-									<label class="form-label" for={`signup-${field.field_key}`}>{getFieldLabel(field)}</label>
+									<label class="form-label" for={`signup-${field.field_key}`}
+										>{getFieldLabel(field)}</label
+									>
 									<select
 										id={`signup-${field.field_key}`}
 										class="custom-field-select"
@@ -531,7 +533,8 @@
 									placeholder={field.placeholder ?? ''}
 									bind:value={customFieldValues[field.field_key]}
 									error={customFieldErrors[field.field_key]}
-									oninput={() => setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+									oninput={() =>
+										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
 									required={field.required}
 								/>
 							{:else if field.field_type === 'number'}
@@ -541,7 +544,8 @@
 									placeholder={field.placeholder ?? ''}
 									bind:value={customFieldValues[field.field_key]}
 									error={customFieldErrors[field.field_key]}
-									oninput={() => setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+									oninput={() =>
+										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
 									required={field.required}
 								/>
 							{:else}
@@ -551,7 +555,8 @@
 									placeholder={field.placeholder ?? ''}
 									bind:value={customFieldValues[field.field_key]}
 									error={customFieldErrors[field.field_key]}
-									oninput={() => setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+									oninput={() =>
+										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
 									required={field.required}
 								/>
 							{/if}
@@ -619,7 +624,16 @@
 								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 							>
-								<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{#if provider.iconUrl}
+									<img
+										src={provider.iconUrl}
+										alt=""
+										loading="lazy"
+										style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
+									/>
+								{:else}
+									<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{/if}
 								{getProviderButtonText(provider)}
 							</Button>
 						{/each}

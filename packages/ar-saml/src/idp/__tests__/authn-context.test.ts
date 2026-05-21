@@ -24,6 +24,20 @@ describe('SAML AuthnContext handling', () => {
     });
   });
 
+  it('ignores nested RequestedAuthnContext outside the direct AuthnRequest children', () => {
+    const request = parseRequestElement(`
+      <samlp:AuthnRequest xmlns:samlp="${SAML_NAMESPACES.SAML2P}" xmlns:saml="${SAML_NAMESPACES.SAML2}">
+        <wrapper>
+          <samlp:RequestedAuthnContext Comparison="exact">
+            <saml:AuthnContextClassRef>${AUTHN_CONTEXT.PASSWORD}</saml:AuthnContextClassRef>
+          </samlp:RequestedAuthnContext>
+        </wrapper>
+      </samlp:AuthnRequest>
+    `);
+
+    expect(parseRequestedAuthnContext(request)).toBeUndefined();
+  });
+
   it('uses PasswordProtectedTransport when no AuthnContext is requested', () => {
     expect(resolveSAMLAuthnContextClassRef(authnRequest())).toBe(
       AUTHN_CONTEXT.PASSWORD_PROTECTED_TRANSPORT

@@ -9,6 +9,7 @@ import {
   getClient,
   putClient,
   getCachedUser,
+  buildUserCacheKey,
   getCachedConsent,
 } from '../kv';
 import type { Env } from '../../types/env';
@@ -456,6 +457,16 @@ describe('KV Utilities', () => {
   });
 
   describe('User Cache Read-Through', () => {
+    it('builds profile-aware user cache keys when storage scope is provided', () => {
+      expect(
+        buildUserCacheKey('tenant-a', 'user-1', {
+          storageProfileId: 'builtin:storage:tenant-d1',
+          sourceGeneration: 3,
+          schemaVersion: 12,
+        })
+      ).toBe('tenant:tenant-a:user:v2:sp:builtin%3Astorage%3Atenant-d1:gen:3:schema:12:user-1');
+    });
+
     it('should isolate cached user metadata by tenant', async () => {
       const userCacheKV = new MockKVNamespace();
       (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
@@ -472,14 +483,55 @@ describe('KV Utilities', () => {
 
       const tenantAUser = await getCachedUser(env, 'tenant-a', userId, {
         coreDb: env.DB,
+        piiCacheMode: 'merged',
       });
       const tenantBUser = await getCachedUser(env, 'tenant-b', userId, {
         coreDb: env.DB,
+        piiCacheMode: 'merged',
       });
 
       expect(tenantAUser?.email).toBe('a@example.test');
       expect(tenantBUser?.email).toBe('b@example.test');
       expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
+    it('should ignore old user cache entries when storage profile scope changes', async () => {
+      const userCacheKV = new MockKVNamespace();
+      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      const userId = 'profile-scoped-user';
+
+      await userCacheKV.put(
+        buildUserCacheKey('tenant-a', userId, {
+          storageProfileId: 'builtin:storage:shared-d1',
+          sourceGeneration: 1,
+          schemaVersion: 1,
+        }),
+        JSON.stringify({ id: userId, email: 'old@example.test', email_verified: true })
+      );
+
+      const coreAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue(null),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const user = await getCachedUser(env, 'tenant-a', userId, {
+        coreDb: coreAdapter,
+        piiCacheMode: 'merged',
+        cacheScope: {
+          storageProfileId: 'builtin:storage:tenant-d1',
+          sourceGeneration: 2,
+          schemaVersion: 1,
+        },
+      });
+
+      expect(user).toBeNull();
+      expect(coreAdapter.queryOne).toHaveBeenCalled();
     });
 
     it('should include tenant scope in user DB fallback queries', async () => {
@@ -502,6 +554,151 @@ describe('KV Utilities', () => {
         'user-1',
         'tenant-a',
       ]);
+    });
+
+    it('encrypts short-TTL cross-request PII cache entries', async () => {
+      const userCacheKV = new MockKVNamespace();
+      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      env.OBJECT_ENCRYPTION_ROOT_KEY =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      env.OBJECT_ENCRYPTION_KEY_VERSION = '7';
+      env.PII_CACHE_TTL = '120';
+      const coreAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue({
+          id: 'user-1',
+          pii_status: 'active',
+          email_verified: 1,
+          phone_number_verified: 0,
+          updated_at: 123,
+        }),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+      const piiAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue({
+          email: 'user@example.test',
+          name: 'User Example',
+          family_name: null,
+          given_name: null,
+          middle_name: null,
+          nickname: null,
+          preferred_username: null,
+          picture: null,
+          locale: null,
+          phone_number: null,
+          address_formatted: null,
+          address_street_address: null,
+          address_locality: null,
+          address_region: null,
+          address_postal_code: null,
+          address_country: null,
+          birthdate: null,
+          gender: null,
+          profile: null,
+          website: null,
+          zoneinfo: null,
+        }),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const first = await getCachedUser(env, 'tenant-a', 'user-1', {
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+        piiCacheMode: 'encrypted_short_ttl',
+      });
+      const rawCached = await userCacheKV.get(buildUserCacheKey('tenant-a', 'user-1'));
+      const second = await getCachedUser(env, 'tenant-a', 'user-1', {
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+        piiCacheMode: 'encrypted_short_ttl',
+      });
+
+      expect(first?.email).toBe('user@example.test');
+      expect(second?.email).toBe('user@example.test');
+      expect(rawCached).not.toContain('user@example.test');
+      expect(JSON.parse(rawCached ?? '{}')).toMatchObject({
+        purpose: 'user-pii-cache',
+        algorithm: 'AES-256-GCM',
+        tenantId: 'tenant-a',
+        keyVersion: 7,
+        keyState: 'current',
+      });
+      expect(coreAdapter.queryOne).toHaveBeenCalledTimes(1);
+      expect(piiAdapter.queryOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not read or write cross-request PII cache when no_cross_request_pii mode is enabled', async () => {
+      const userCacheKV = new MockKVNamespace();
+      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      const coreAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue({
+          id: 'user-1',
+          email_verified: 1,
+          phone_number_verified: 0,
+          updated_at: 123,
+        }),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+      const piiAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockResolvedValue({
+          email: 'user@example.test',
+          name: 'User Example',
+          family_name: null,
+          given_name: null,
+          middle_name: null,
+          nickname: null,
+          preferred_username: null,
+          picture: null,
+          locale: null,
+          phone_number: null,
+          address_formatted: null,
+          address_street_address: null,
+          address_locality: null,
+          address_region: null,
+          address_postal_code: null,
+          address_country: null,
+          birthdate: null,
+          gender: null,
+          profile: null,
+          website: null,
+          zoneinfo: null,
+        }),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const user = await getCachedUser(env, 'tenant-a', 'user-1', {
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+        piiCacheMode: 'no_cross_request_pii',
+      });
+
+      expect(user?.email).toBe('user@example.test');
+      expect(await userCacheKV.get(buildUserCacheKey('tenant-a', 'user-1'))).toBeNull();
+      expect(coreAdapter.queryOne).toHaveBeenCalledTimes(1);
+      expect(piiAdapter.queryOne).toHaveBeenCalledTimes(1);
     });
   });
 

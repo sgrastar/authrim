@@ -1,17 +1,3 @@
----
-project: Authrim
-lang: en
-date: 2026-05-12
-description: "Open Source Identity & Access Platform for the modern web"
-type: reference
-tags:
-  - authrim
-  - identity-platform
-  - cloudflare-workers
-  - oidc
-  - oauth2
-  - saml
----
 # Authrim
 
 > **Open Source Identity & Access Platform for the modern web**

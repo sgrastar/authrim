@@ -133,6 +133,7 @@ function createMockContext(options: {
 // Sample user data for testing (CachedUser format)
 const sampleUser = {
   id: 'user-123',
+  pii_status: 'active' as const,
   email: 'test@example.com',
   email_verified: true,
   name: 'Test User',
@@ -327,6 +328,84 @@ describe('UserInfo Endpoint', () => {
         401
       );
     });
+
+    it('passes runtime-resolved tenant adapters and cache scope to getCachedUser', async () => {
+      const createAdapter = (name: string) => ({
+        query: vi.fn(),
+        queryOne: vi.fn(),
+        execute: vi.fn(),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: vi.fn().mockReturnValue(name),
+        close: vi.fn(),
+      });
+      const runtimeCoreAdapter = createAdapter('tenant-core');
+      const runtimePiiAdapter = createAdapter('tenant-pii');
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+        env: { DB: undefined as unknown as Env['DB'] },
+      });
+      c.get = vi.fn((key: string) => {
+        if (key === 'logger') {
+          return {
+            module: () => ({ info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+          };
+        }
+        if (key === 'tenantId') {
+          return 'tenant-a';
+        }
+        if (key === 'runtimeUserStoreSources') {
+          return {
+            storageProfile: {
+              id: 'builtin:storage:tenant-d1',
+              kind: 'storage',
+              label: 'Tenant D1',
+              slices: {},
+            },
+            coreDb: runtimeCoreAdapter,
+            piiDb: runtimePiiAdapter,
+            userCacheScope: {
+              storageProfileId: 'builtin:storage:tenant-d1',
+              sourceGeneration: 'core:2:pii:2',
+              schemaVersion: 'core:87:pii:12',
+            },
+            piiCacheMode: 'no_cross_request_pii',
+          };
+        }
+        return undefined;
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue(null);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+      vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
+
+      await userinfoHandler(c);
+
+      expect(getCachedUser).toHaveBeenCalledWith(
+        c.env,
+        'tenant-a',
+        'user-123',
+        expect.objectContaining({
+          coreDb: runtimeCoreAdapter,
+          piiDb: runtimePiiAdapter,
+          cacheScope: {
+            storageProfileId: 'builtin:storage:tenant-d1',
+            sourceGeneration: 'core:2:pii:2',
+            schemaVersion: 'core:87:pii:12',
+          },
+          piiCacheMode: 'no_cross_request_pii',
+        })
+      );
+    });
   });
 
   describe('Scope-based Claim Filtering', () => {
@@ -433,6 +512,35 @@ describe('UserInfo Endpoint', () => {
       expect(responseBody.email_verified).toBe(true);
       // Should NOT include profile claims
       expect(responseBody).not.toHaveProperty('name');
+    });
+
+    it('should fail when requested scopes require PII but pii_status is failed', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid email',
+          client_id: 'client-123',
+        },
+      });
+      vi.mocked(getCachedUser).mockResolvedValue({
+        ...sampleUser,
+        pii_status: 'failed',
+      });
+
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Requested claims require PII that is not currently available.',
+        },
+        503
+      );
     });
 
     it('should return phone claims with phone scope', async () => {

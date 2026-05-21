@@ -1,11 +1,11 @@
 /**
- * FlowCompiler - GraphDefinitionをCompiledPlanに変換
+ * FlowCompiler - Convert GraphDefinition to CompiledPlan
  *
- * 責務:
- * - GraphDefinition（編集用）→ CompiledPlan（実行用）変換
- * - ノードのMap化
- * - 遷移マップの構築
- * - CapabilityTemplateの解決
+ * Responsibilities:
+ * - GraphDefinition (for editing)→ CompiledPlan (for execution)convert
+ * - Map nodes by ID
+ * - Build the transition map
+ * - Resolve CapabilityTemplate
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -31,10 +31,10 @@ import type { CapabilityHints, ValidationRule, StabilityLevel } from '@authrim/a
 // Constants
 // =============================================================================
 
-/** CompiledPlanのバージョン */
+/** CompiledPlan version */
 const COMPILED_PLAN_VERSION = '1.0.0';
 
-/** DoS攻撃対策: ノードあたりの最大Capability数 */
+/** DoS mitigation: maximum capabilities per node */
 const MAX_CAPABILITIES_PER_NODE = 20;
 
 // =============================================================================
@@ -42,29 +42,29 @@ const MAX_CAPABILITIES_PER_NODE = 20;
 // =============================================================================
 
 /**
- * FlowCompilerService - GraphDefinitionをCompiledPlanにコンパイル
+ * FlowCompilerService - Compile GraphDefinition into CompiledPlan
  */
 export class FlowCompilerService implements FlowCompiler {
   /**
-   * GraphDefinitionをCompiledPlanにコンパイル
+   * Compile GraphDefinition into CompiledPlan
    *
    * @param graph - GraphDefinition
    * @returns CompiledPlan
    */
   compile(graph: GraphDefinition): CompiledPlan {
-    // 1. ノードマップを構築
+    // 1. Build the node map
     const nodes = this.buildNodeMap(graph);
 
-    // 2. 遷移マップを構築
+    // 2. Build the transition map
     const transitions = this.buildTransitionMap(graph.edges);
 
-    // 3. Decision/Switchノードの遷移にpriorityを設定してソート
+    // 3. Set priorities on Decision/Switch transitions and sort them
     this.enrichTransitionsWithPriority(nodes, transitions);
 
-    // 4. 各ノードのnextOnSuccess/nextOnErrorを設定
+    // 4. Set nextOnSuccess/nextOnError for each node
     this.resolveNodeTransitions(nodes, transitions);
 
-    // 5. エントリーポイントを特定
+    // 5. Identify the entry point
     const entryNodeId = this.findEntryNode(graph.nodes);
 
     return {
@@ -80,7 +80,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * ノードマップを構築
+   * Build the node map
    */
   private buildNodeMap(graph: GraphDefinition): Map<string, CompiledNode> {
     const nodes = new Map<string, CompiledNode>();
@@ -94,7 +94,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * GraphNodeをCompiledNodeにコンパイル
+   * Compile GraphNode to CompiledNode
    */
   private compileNode(node: GraphNode): CompiledNode {
     // Derive intent from node type if not specified
@@ -105,11 +105,11 @@ export class FlowCompilerService implements FlowCompiler {
       type: node.type,
       intent,
       capabilities: this.resolveCapabilities(node.data.capabilities, node.id),
-      nextOnSuccess: null, // 後で遷移マップから設定
-      nextOnError: null, // 後で遷移マップから設定
+      nextOnSuccess: null, // Set later from the transition map
+      nextOnError: null, // Set later from the transition map
     };
 
-    // Decision/Switchノードの場合は設定を保持
+    // Keep the configuration for Decision/Switch nodes
     if (node.type === 'decision' || node.type === 'switch') {
       compiledNode.decisionConfig = this.compileDecisionConfig(node);
     }
@@ -118,30 +118,30 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * Decision/Switchノードの設定をコンパイル
+   * Compile Decision/Switch node configuration
    *
-   * セキュリティ対策:
-   * - DoS攻撃防止のため、分岐数に制限を設ける
-   * - Decision: 最大50分岐
-   * - Switch: 最大100ケース
+   * Security mitigation:
+   * - to prevent DoS attacks, limit the number of branches
+   * - Decision: maximum 50 branches
+   * - Switch: maximum 100 cases
    */
   private compileDecisionConfig(
     node: GraphNode
   ): DecisionNodeConfig | SwitchNodeConfig | undefined {
     const config = node.data.config;
 
-    // セキュリティ制限定数
+    // Security limit constants
     const MAX_DECISION_BRANCHES = 50;
     const MAX_SWITCH_CASES = 100;
-    const MAX_VALUES_PER_CASE = 100; // 各Switchケースの最大値数
+    const MAX_VALUES_PER_CASE = 100; // Maximum values per Switch case
 
     if (node.type === 'decision') {
-      // DecisionNodeConfig として解釈
+      // Interpret as DecisionNodeConfig
       const decisionConfig = config as unknown as DecisionNodeConfig | undefined;
 
-      // DoS攻撃対策: 分岐数制限
+      // DoS mitigation: branch count limit
       if (decisionConfig && decisionConfig.branches.length > MAX_DECISION_BRANCHES) {
-        // セキュリティ対策（High 6）: 詳細はログのみ、エラーメッセージは汎用的に
+        // Security mitigation (High 6): details only in logs; keep error messages generic
         console.error(
           `[Security] Decision node "${node.id}" has too many branches: ${decisionConfig.branches.length} (max: ${MAX_DECISION_BRANCHES})`
         );
@@ -152,23 +152,23 @@ export class FlowCompilerService implements FlowCompiler {
     }
 
     if (node.type === 'switch') {
-      // SwitchNodeConfig として解釈
+      // Interpret as SwitchNodeConfig
       const switchConfig = config as unknown as SwitchNodeConfig | undefined;
 
       if (switchConfig) {
-        // DoS攻撃対策: ケース数制限
+        // DoS mitigation: case count limit
         if (switchConfig.cases.length > MAX_SWITCH_CASES) {
-          // セキュリティ対策（High 6）: 詳細はログのみ、エラーメッセージは汎用的に
+          // Security mitigation (High 6): details only in logs; keep error messages generic
           console.error(
             `[Security] Switch node "${node.id}" has too many cases: ${switchConfig.cases.length} (max: ${MAX_SWITCH_CASES})`
           );
           throw new Error('Invalid flow configuration');
         }
 
-        // DoS攻撃対策: 各ケースの値の数を制限
+        // DoS mitigation: limit the number of values per case
         for (const caseItem of switchConfig.cases) {
           if (caseItem.values.length > MAX_VALUES_PER_CASE) {
-            // セキュリティ対策（High 6）: 詳細はログのみ、エラーメッセージは汎用的に
+            // Security mitigation (High 6): details only in logs; keep error messages generic
             console.error(
               `[Security] Switch case "${caseItem.id}" in node "${node.id}" has too many values: ${caseItem.values.length} (max: ${MAX_VALUES_PER_CASE})`
             );
@@ -206,7 +206,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * CapabilityTemplateをResolvedCapabilityに解決
+   * Resolve CapabilityTemplate to ResolvedCapability
    */
   private resolveCapabilities(
     templates: CapabilityTemplate[] | undefined,
@@ -216,9 +216,9 @@ export class FlowCompilerService implements FlowCompiler {
       return [];
     }
 
-    // DoS攻撃対策: Capability配列サイズ制限
+    // DoS mitigation: limit Capability array size
     if (templates.length > MAX_CAPABILITIES_PER_NODE) {
-      // セキュリティ対策（High 6）: 詳細はログのみ、エラーメッセージは汎用的に
+      // Security mitigation (High 6): details only in logs; keep error messages generic
       console.error(
         `[Security] Node "${nodeId}" has too many capabilities: ${templates.length} (max: ${MAX_CAPABILITIES_PER_NODE})`
       );
@@ -229,22 +229,22 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * 単一のCapabilityTemplateをResolvedCapabilityに解決
+   * Resolve a single CapabilityTemplate to ResolvedCapability
    */
   private resolveCapability(template: CapabilityTemplate, nodeId: string): ResolvedCapability {
-    // ID生成: ${nodeId}_${idSuffix}
+    // Generate ID: ${nodeId}_${idSuffix}
     const id = `${nodeId}_${template.idSuffix}`;
 
-    // ヒントをデフォルト値で補完
+    // Fill hints with default values
     const hints: CapabilityHints = {
       ...this.getDefaultHints(template.type),
       ...template.hintsTemplate,
     };
 
-    // バリデーションルールをコピー
+    // Copy validation rules
     const validationRules: ValidationRule[] = template.validationRules || [];
 
-    // 安定性レベルを決定
+    // Determine stability level
     const stability = this.getStabilityLevel(template.type);
 
     return {
@@ -258,7 +258,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * CapabilityTypeに応じたデフォルトヒントを取得
+   * Get default hints for the CapabilityType
    */
   private getDefaultHints(type: string): Partial<CapabilityHints> {
     const defaults: Record<string, Partial<CapabilityHints>> = {
@@ -287,10 +287,10 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * CapabilityTypeに応じた安定性レベルを取得
+   * Get stability level for the CapabilityType
    */
   private getStabilityLevel(type: string): StabilityLevel {
-    // コアCapabilityはcore、それ以外はstable
+    // Core capabilities are core; all others are stable
     const coreCapabilities = [
       'collect_identifier',
       'collect_secret',
@@ -304,7 +304,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * 遷移マップを構築
+   * Build the transition map
    */
   private buildTransitionMap(edges: GraphEdge[]): Map<string, CompiledTransition[]> {
     const transitions = new Map<string, CompiledTransition[]>();
@@ -323,7 +323,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * GraphEdgeをCompiledTransitionにコンパイル
+   * Compile GraphEdge to CompiledTransition
    */
   private compileTransition(edge: GraphEdge): CompiledTransition {
     const transition: CompiledTransition = {
@@ -331,12 +331,12 @@ export class FlowCompilerService implements FlowCompiler {
       type: edge.type,
     };
 
-    // sourceHandleを保持（Decision/Switchノード用）
+    // Preserve sourceHandle (Decision/Switch nodefor)
     if (edge.sourceHandle) {
       transition.sourceHandle = edge.sourceHandle;
     }
 
-    // 条件付き遷移の場合、条件をコンパイル
+    // For conditional transitions, compile the condition
     if (edge.type === 'conditional' && edge.data?.condition) {
       transition.condition = this.compileCondition(edge.data.condition);
     }
@@ -345,7 +345,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * EdgeConditionをCompiledConditionにコンパイル
+   * Compile EdgeCondition to CompiledCondition
    */
   private compileCondition(condition: { type: string; expression: string }): CompiledCondition {
     return {
@@ -356,7 +356,7 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * 条件評価関数を作成
+   * Create the condition evaluation function
    */
   private createEvaluator(
     type: string,
@@ -364,28 +364,28 @@ export class FlowCompilerService implements FlowCompiler {
   ): (context: EvaluationContext) => boolean {
     switch (type) {
       case 'capability_result':
-        // capability応答に基づく評価
+        // Evaluation based on capability response
         return (context) => {
-          // 簡易実装: capabilityIdが完了済みかチェック
+          // simple implementation: check whether capabilityId is complete
           const capabilityId = expression.replace('completed:', '');
           return context.completedCapabilities.includes(capabilityId);
         };
 
       case 'feature_flag':
-        // 機能フラグに基づく評価
+        // Evaluation based on feature flags
         return (context) => {
           const flagName = expression;
           return context.featureFlags?.[flagName] ?? false;
         };
 
       case 'policy_check':
-        // ポリシーチェック（将来実装）
+        // policy check (future implementation)
         return () => true;
 
       case 'custom':
-        // カスタム式（簡易評価）
+        // Custom expression (simple evaluation)
         return (context) => {
-          // allowRetry === true のような簡単な式を評価
+          // Evaluate a simple expression such as allowRetry === true
           if (expression === 'allowRetry === true') {
             return (context.collectedData as { allowRetry?: boolean }).allowRetry === true;
           }
@@ -398,14 +398,14 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * Decision/Switchノードの遷移にpriorityを設定してソート
+   * Set priorities on Decision/Switch transitions and sort them
    */
   private enrichTransitionsWithPriority(
     nodes: Map<string, CompiledNode>,
     transitions: Map<string, CompiledTransition[]>
   ): void {
     for (const [nodeId, node] of nodes) {
-      // Decision/Switchノード以外はスキップ
+      // Skip non-Decision/Switch nodes
       if (node.type !== 'decision' && node.type !== 'switch') {
         continue;
       }
@@ -416,20 +416,20 @@ export class FlowCompilerService implements FlowCompiler {
       }
 
       if (node.type === 'decision') {
-        // DecisionNodeConfig の branches から priority を設定
+        // Set priority from DecisionNodeConfig branches
         const config = node.decisionConfig as DecisionNodeConfig;
 
         for (const transition of nodeTransitions) {
           if (!transition.sourceHandle) continue;
 
-          // sourceHandle に対応する branch を検索
+          // find the branch matching sourceHandle
           const branch = config.branches.find((b) => b.id === transition.sourceHandle);
           if (branch) {
             transition.priority = branch.priority;
           }
         }
 
-        // priority順にソート（小さい方が先）
+        // Sort by priority order (lower values first)
         nodeTransitions.sort((a, b) => {
           const priorityA = a.priority ?? Number.MAX_SAFE_INTEGER;
           const priorityB = b.priority ?? Number.MAX_SAFE_INTEGER;
@@ -438,14 +438,14 @@ export class FlowCompilerService implements FlowCompiler {
       }
 
       if (node.type === 'switch') {
-        // Switchノードは priority を設定しない（定義順を維持）
-        // 必要に応じて将来的に priority を追加可能
+        // Switch nodes do not set priority (preserve definition order)
+        // priority can be added in the future if needed
       }
     }
   }
 
   /**
-   * 各ノードのnextOnSuccess/nextOnErrorを設定
+   * Set nextOnSuccess/nextOnError for each node
    */
   private resolveNodeTransitions(
     nodes: Map<string, CompiledNode>,
@@ -454,13 +454,13 @@ export class FlowCompilerService implements FlowCompiler {
     for (const [nodeId, node] of nodes) {
       const nodeTransitions = transitions.get(nodeId) || [];
 
-      // success遷移を検索
+      // Find success transition
       const successTransition = nodeTransitions.find((t) => t.type === 'success');
       if (successTransition) {
         node.nextOnSuccess = successTransition.targetNodeId;
       }
 
-      // error遷移を検索
+      // Find error transition
       const errorTransition = nodeTransitions.find((t) => t.type === 'error');
       if (errorTransition) {
         node.nextOnError = errorTransition.targetNodeId;
@@ -469,22 +469,22 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
-   * エントリーポイントノードを特定
+   * Identify the entry point node
    */
   private findEntryNode(nodes: GraphNode[]): string {
-    // startタイプのノードを検索
+    // Find a start-type node
     const startNode = nodes.find((n) => n.type === 'start');
 
     if (startNode) {
       return startNode.id;
     }
 
-    // startノードがない場合は最初のノード
+    // Use the first node when there is no start node
     if (nodes.length > 0) {
       return nodes[0].id;
     }
 
-    // セキュリティ対策（High 6）: 詳細はログのみ、エラーメッセージは汎用的に
+    // Security mitigation (High 6): details only in logs; keep error messages generic
     console.error('[Security] No nodes found in GraphDefinition');
     throw new Error('Invalid flow configuration');
   }
@@ -495,9 +495,9 @@ export class FlowCompilerService implements FlowCompiler {
 // =============================================================================
 
 /**
- * FlowCompilerを作成
+ * Create FlowCompiler
  *
- * @returns FlowCompiler インスタンス
+ * @returns FlowCompiler instance
  *
  * @example
  * const compiler = createFlowCompiler();

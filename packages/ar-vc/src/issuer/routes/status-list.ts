@@ -77,7 +77,9 @@ async function getStatusList(
   tenantId: string,
   listId: string
 ): Promise<StatusListData | null> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'vc-status-list');
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'vc-status-list', {
+    tenantId,
+  });
   return adapter.queryOne<StatusListData>(
     `SELECT public_id AS id, tenant_id, purpose, encoded_list, updated_at
      FROM status_lists

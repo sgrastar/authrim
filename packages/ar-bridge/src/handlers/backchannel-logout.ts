@@ -234,7 +234,8 @@ async function invalidateUserSessions(
     // Query D1 for sessions with matching external_provider_id and external_provider_sub
     const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
       env,
-      `bridge-backchannel-logout:${tenantId}`
+      `bridge-backchannel-logout:${tenantId}`,
+      { tenantId }
     );
     const sessions = await coreAdapter.query<{ id: string }>(
       `SELECT id FROM sessions

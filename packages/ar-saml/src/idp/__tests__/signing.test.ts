@@ -33,6 +33,14 @@ describe('SAML response signing policy', () => {
     });
   });
 
+  it('rejects a nested Response when extracting IDs for signing', () => {
+    const wrappedResponse = `<wrapper>${responseXml}</wrapper>`;
+
+    expect(() => extractSAMLResponseIds(wrappedResponse)).toThrow(
+      'Cannot sign SAML Response: missing Response element'
+    );
+  });
+
   it('signs only the Assertion when signAssertions is true', () => {
     const signer = vi.fn((xml: string, options: SignOptions) => {
       return `${xml}\n<!-- signed ${options.referenceUri} -->`;
@@ -132,5 +140,18 @@ describe('SAML response signing policy', () => {
   IssueInstant="2024-01-15T10:30:00Z" />`;
 
     expect(extractSAMLProtocolMessageId(logoutRequestXml, 'LogoutRequest')).toBe('_logout123');
+  });
+
+  it('rejects a nested protocol message when extracting IDs for signing', () => {
+    const logoutRequestXml = `<wrapper>
+  <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+    ID="_logout123"
+    Version="2.0"
+    IssueInstant="2024-01-15T10:30:00Z" />
+</wrapper>`;
+
+    expect(() => extractSAMLProtocolMessageId(logoutRequestXml, 'LogoutRequest')).toThrow(
+      'Cannot sign SAML LogoutRequest: missing LogoutRequest element'
+    );
   });
 });

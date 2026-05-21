@@ -66,7 +66,7 @@ function resolveRequiredTenantId(
   return resolvedTenantId;
 }
 
-function getRuntimeUserStoreSourcesFromHonoContext(
+export function getRuntimeUserStoreSourcesFromHonoContext(
   c: HonoContext<{ Bindings: Env }>
 ): ResolvedUserStoreRuntimeSources | undefined {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -87,7 +87,11 @@ export function resolveOptionalCoreAdapterFromHono(
   partition: string = 'core'
 ): DatabaseAdapter | null {
   const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
-  return ensureOptionalDatabaseAdapter(runtimeSources?.coreDb ?? c.env.DB ?? null, partition);
+  const runtimeSource =
+    partition === 'policy' || partition === 'rebac'
+      ? (runtimeSources?.policyDb ?? runtimeSources?.coreDb)
+      : runtimeSources?.coreDb;
+  return ensureOptionalDatabaseAdapter(runtimeSource ?? c.env.DB ?? null, partition);
 }
 
 /**
@@ -124,6 +128,8 @@ export function createAuthContextFromHono(
     coreAdapter,
     cache: new MapRequestScopedCache(),
     honoContext: c,
+    userCacheScope: runtimeSources?.userCacheScope,
+    piiCacheMode: runtimeSources?.piiCacheMode,
   };
 }
 
@@ -172,6 +178,8 @@ export function createPIIContextFromHono(
     coreAdapter,
     cache: new MapRequestScopedCache(),
     honoContext: c,
+    userCacheScope: runtimeSources?.userCacheScope,
+    piiCacheMode: runtimeSources?.piiCacheMode,
     piiRepositories: {
       userPII: new UserPIIRepository(piiAdapter, resolvedTenantId),
       tombstone: new TombstoneRepository(piiAdapter),

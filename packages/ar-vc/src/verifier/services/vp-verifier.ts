@@ -74,7 +74,8 @@ export async function verifyVPToken(
     // 3. Check issuer trust using repository
     const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
       env,
-      `vc-vp-verifier:${options.tenantId}`
+      `vc-vp-verifier:${options.tenantId}`,
+      { tenantId: options.tenantId }
     );
     const trustedIssuerRepo = new TrustedIssuerRepository(adapter);
     const trustResult = await checkIssuerTrust(trustedIssuerRepo, issuerDid, options.tenantId);

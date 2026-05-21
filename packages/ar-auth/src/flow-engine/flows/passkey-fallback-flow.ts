@@ -1,12 +1,12 @@
 /**
  * Passkey Authentication with Fallback (5-way Decision Branching)
  *
- * このフローは、Passkey認証結果に基づいて5つの分岐を実装します：
- * 1. 認証成功 → ログイン完了
- * 2. Passkey未登録 → Passkey登録画面
- * 3. デバイス非対応 → パスワードログインへフォールバック
- * 4. ユーザーキャンセル → 再試行 or パスワードログイン
- * 5. その他エラー → エラー画面
+ * This flow implements five branches based on the Passkey authentication result:
+ * 1. Authentication success → login complete
+ * 2. Passkey not registered → Passkey registration screen
+ * 3. device unsupported → fall back to password login
+ * 4. user cancellation → retry or password login
+ * 5. other error → error screen
  *
  * @see /private/docs/flow-engine-decision-guide.md
  */

@@ -161,6 +161,8 @@ async function deployComponent(
     runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
     uiEnvConfig: uiSettings.uiEnv,
     serviceBindingName: uiSettings.serviceBindingName,
+    workersDev: uiSettings.workersDev,
+    routes: uiSettings.routes,
     onProgress: (message) => console.log(message),
   });
 

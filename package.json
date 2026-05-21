@@ -1,6 +1,6 @@
 {
   "name": "authrim",
-  "version": "0.1.17",
+  "version": "0.2.0",
   "description": "A scalable Edge Identity Provider built on Cloudflare Workers - OIDC, OAuth 2.0, SAML",
   "private": true,
   "type": "module",
@@ -18,6 +18,9 @@
     "deploy:api": "BUILD_TARGET=api ./scripts/deploy-with-retry.sh",
     "deploy:all": "./scripts/deploy-all.sh",
     "test": "turbo run test",
+    "test:coverage": "pnpm run test:coverage:api",
+    "test:coverage:api": "turbo run test --filter=!@authrim/ar-admin-ui --filter=!@authrim/ar-login-ui -- --coverage",
+    "test:coverage:critical": "turbo run test --filter=@authrim/ar-auth --filter=@authrim/ar-token --filter=@authrim/ar-management --filter=@authrim/ar-lib-core --filter=@authrim/ar-lib-logging --filter=@authrim/ar-lib-policy --filter=@authrim/ar-saml -- --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
@@ -53,7 +56,9 @@
     "setup:smoke-generated-auth-flow": "tsx test/environment-validation/smoke-generated-auth-flow.ts",
     "setup:smoke-generated-approvals": "tsx test/environment-validation/smoke-generated-approvals.ts",
     "setup:smoke-generated-server-surfaces": "tsx test/environment-validation/smoke-generated-server-surfaces.ts",
-    "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts"
+    "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts",
+    "setup:local-capacity": "tsx test/environment-validation/local-capacity.ts",
+    "setup:local-user-scale": "tsx test/environment-validation/local-user-scale.ts"
   },
   "workspaces": [
     "packages/*"
@@ -69,7 +74,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "hono": "4.12.18",
+    "hono": "4.12.21",
     "jose": "^6.1.2"
   },
   "devDependencies": {
@@ -108,7 +113,7 @@
       "cookie": ">=0.7.0",
       "basic-ftp": ">=5.2.0",
       "rollup": ">=4.59.0",
-      "hono": "4.12.18",
+      "hono": "4.12.21",
       "@hono/node-server": "^1.19.13",
       "tar": "^7.5.14",
       "devalue": "^5.8.0",

@@ -57,6 +57,7 @@ export async function testDiagnosticLogR2Connection(c: Context<{ Bindings: Env }
     const adapter = createDiagnosticLogR2Adapter(bucket, {
       pathPrefix,
       tenantId,
+      tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
     });
 
     // Test health

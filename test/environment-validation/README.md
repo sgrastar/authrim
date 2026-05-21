@@ -65,7 +65,13 @@ Usage:
 pnpm exec tsx test/environment-validation/validate-generated-env.ts --env single
 pnpm exec tsx test/environment-validation/validate-generated-env.ts --config /path/to/.authrim/single/config.json
 pnpm exec tsx test/environment-validation/validate-generated-env.ts --env single --json
+pnpm exec tsx test/environment-validation/validate-generated-env.ts --env single --live-cloudflare
 ```
+
+Add `--live-cloudflare` when you want read-only checks against the currently authenticated
+Cloudflare account. It verifies that D1 databases and R2 buckets recorded in `lock.json` still
+exist, and for `builtin:storage:tenant-d1` environments it also checks `DB_ADMIN`
+`tenant_database_slots` count against `tenantD1.preallocatedSlots`.
 
 ## Public API smoke
 
@@ -328,6 +334,45 @@ Purpose:
 - if the temporary validation machine cannot access approval management, the runner preflights that
   condition and exits as a documented skip instead of creating partial load-test state
 
+## Local fixed-LPS capacity check
+
+Use this when k6 Cloud/Grafana Cloud is not available and you want a Mac-local open-loop generator.
+It uses supported generated-environment APIs, bootstraps one approval/grant/protected-resource
+context, then sends requests at a fixed local rate.
+
+```bash
+# Low-risk read-heavy check
+pnpm exec tsx test/environment-validation/local-capacity.ts \
+  --env single \
+  --scenario protected-resource \
+  --lps 100 \
+  --duration-seconds 30
+
+# Mixed read/token/introspection check
+pnpm exec tsx test/environment-validation/local-capacity.ts \
+  --env single \
+  --scenario mixed \
+  --lps 150 \
+  --duration-seconds 30 \
+  --json
+```
+
+Scenarios:
+
+- `registration-fields`: public read path, useful for checking local generator overhead.
+- `protected-resource`: authorized downstream profile read, closer to UserInfo/core/PII read load.
+- `token-exchange`: token issuance path for downstream elevation grants.
+- `introspection`: token validation path.
+- `mixed`: rotates protected-resource, token-exchange, introspection, and registration-fields.
+
+Interpretation:
+
+- This can usually generate 100/150 local requests per second on a modern Mac for simple scenarios,
+  but it is not equivalent to k6 Cloud distributed capacity testing.
+- Against a remote Cloudflare deployment, the result includes home network latency and one client IP.
+- Against local Wrangler/Miniflare on the same Mac, the result includes local runtime and D1/SQLite
+  emulation overhead, so it should be treated as a regression/smoke signal, not a production SLO.
+
 Main checks:
 
 - `GET /api/v1/registration-fields`
@@ -365,6 +410,56 @@ Interpretation:
   approval/grant/introspection/protected-resource surfaces
 - the executed abuse paths failed protectively rather than through generic worker failure
 - this is a resilience signal, not a sizing recommendation for `3000-10000 RPS`
+
+## Local synthetic user-scale benchmark
+
+Use this when you need a Mac-local 1M/10M-user data-volume check without k6 Cloud or Grafana. It
+creates a synthetic SQLite database with `users_core` and `users_pii` shaped like the Authrim
+queries that matter for tenant storage sizing, then reports query latency and `EXPLAIN QUERY PLAN`.
+
+```bash
+# Shared multi-tenant shape: 1M users spread across 200 tenants
+pnpm setup:local-user-scale -- \
+  --env single \
+  --users 1000000 \
+  --tenant-count 200 \
+  --scenario mixed
+
+# Worst-case tenant shape: 1M users inside one tenant
+pnpm setup:local-user-scale -- \
+  --env single \
+  --users 1000000 \
+  --tenant-count 1 \
+  --scenario pii-search \
+  --fresh
+
+# Larger index/cardinality rehearsal; expect this to take materially longer and use more disk
+pnpm setup:local-user-scale -- \
+  --config /path/to/.authrim/single/config.json \
+  --users 10000000 \
+  --tenant-count 200 \
+  --scenario domain-lookup \
+  --query-iterations 3
+```
+
+Scenarios:
+
+- `admin-list`: admin user list count, first page, deep page, and PII hydrate shape.
+- `pii-search`: exact `email_blind_index` lookup and current admin contains-search shape.
+- `domain-lookup`: `tenant_id + email_domain_hash + version` lookup.
+- `mixed`: all of the above.
+
+Interpretation:
+
+- This is a SQLite approximation for local data-volume regression checks, not a Cloudflare D1 SLO.
+- `--env` and `--config` read the generated setup metadata, tenant ID, storage profile, and lock
+  D1 bindings, but the synthetic benchmark database remains local and disposable.
+- `--tenant-count 200` approximates consortium/shared shape; `--tenant-count 1` approximates a very
+  large dedicated tenant.
+- The current admin contains-search path uses `LIKE '%term%'`; this benchmark intentionally makes
+  that scan-heavy behavior visible.
+- Reused DBs are kept under `/tmp/authrim-local-user-scale-{users}-{tenants}.sqlite` unless
+  `--db-path` or `--fresh` is supplied.
 
 ## Explicitly out of scope
 

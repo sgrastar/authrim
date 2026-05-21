@@ -23,11 +23,25 @@ export interface Tenant {
 	is_default: boolean;
 	created_at: number;
 	updated_at: number;
+	provisioning_status?: 'active' | 'inactive' | 'provisioning_failed';
+	provisioning_error?: string | null;
+	provisioning_slot_id?: string | null;
+	provisioning_updated_at?: number | null;
 }
 
 export interface TenantListResponse {
 	tenants: Tenant[];
 	total: number;
+	tenant_d1_pool?: {
+		enabled: boolean;
+		capacity?: number;
+		available_slots?: number;
+		reserved_slots?: number;
+		assigned_slots?: number;
+		pending_binding_slots?: number;
+		unavailable_slots?: number;
+		reset_required_slots?: number;
+	};
 	single_tenant_mode?: boolean;
 	single_tenant_reason?: string | null;
 }
@@ -36,6 +50,21 @@ export interface TenantDeleteResponse {
 	job_id: string;
 	status: 'pending';
 	estimated_completion: number;
+}
+
+export interface TenantProvisioningCleanupResponse {
+	status: 'cleaned';
+	tenant_id: string;
+	slot_id: string | null;
+}
+
+export interface TenantProvisioningRetryResponse extends Tenant {
+	provisioning?: {
+		mode: string;
+		slot_id: string;
+		smoke_test: 'passed';
+		retry: 'succeeded';
+	};
 }
 
 export interface CreateTenantRequest {
@@ -148,6 +177,48 @@ export const adminTenantsAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error_description || error.message || 'Failed to delete tenant');
+		}
+		return response.json();
+	},
+
+	/**
+	 * Delete a failed tenant provisioning draft.
+	 */
+	async cleanupProvisioning(id: string): Promise<TenantProvisioningCleanupResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/provisioning/cleanup`,
+			{
+				method: 'POST',
+				skipTenantHeader: true
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to cleanup tenant provisioning draft'
+			);
+		}
+		return response.json();
+	},
+
+	/**
+	 * Retry a failed tenant provisioning draft.
+	 */
+	async retryProvisioning(id: string): Promise<TenantProvisioningRetryResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/provisioning/retry`,
+			{
+				method: 'POST',
+				skipTenantHeader: true
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to retry tenant provisioning'
+			);
 		}
 		return response.json();
 	},

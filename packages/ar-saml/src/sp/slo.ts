@@ -39,13 +39,14 @@ import {
   type ParsedLogoutResponse,
 } from '../common/slo-messages';
 import { parsePostBindingFormDataWithLimit } from '../common/message-limits';
-import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
+import { base64Decode, generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import { STATUS_CODES, DEFAULTS } from '../common/constants';
 import { signXml, verifyXmlSignature, hasSignature } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfigByEntityId } from '../admin/providers';
 import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user-store';
 import { requireSAMLTenantId, resolveSAMLTenantIdFromContext } from '../common/tenant';
+import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 
 /**
  * Handle SP Single Logout (both POST and GET)
@@ -148,7 +149,7 @@ async function processLogoutRequest(
 
   // Verify signature if present (for POST binding with embedded signature)
   if (samlBase64) {
-    const decodedXml = atob(samlBase64);
+    const decodedXml = base64Decode(samlBase64);
     if (hasSignature(decodedXml)) {
       try {
         // Use expectedId and strictXswProtection to prevent XSW attacks
@@ -210,7 +211,7 @@ async function processLogoutResponse(
 
   // Verify signature if present
   if (idpConfig && samlBase64) {
-    const decodedXml = atob(samlBase64);
+    const decodedXml = base64Decode(samlBase64);
     if (hasSignature(decodedXml)) {
       try {
         // Use expectedId and strictXswProtection to prevent XSW attacks
@@ -413,31 +414,17 @@ function sendPostBindingResponse(
   cookieHeader: string
 ): Response {
   const encodedResponse = encodeForPostBinding(responseXml);
+  const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
+  if (relayState) {
+    fields.push({ name: 'RelayState', value: relayState });
+  }
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML Logout</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(destination)}">
-    <input type="hidden" name="SAMLResponse" value="${escapeHtml(encodedResponse)}" />
-    ${relayState ? `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue</button>
-    </noscript>
-  </form>
-</body>
-</html>`;
-
-  return new Response(html, {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+  return buildSAMLPostBindingResponse({
+    title: 'SAML Logout',
+    actionUrl: destination,
+    fields,
+    buttonText: 'Continue',
+    additionalHeaders: {
       'Set-Cookie': cookieHeader,
     },
   });
@@ -499,29 +486,19 @@ export async function initiateSPLogout(
 
   // Encode for POST binding
   const encodedRequest = encodeForPostBinding(logoutRequestXml);
+  const fields = [{ name: 'SAMLRequest', value: encodedRequest }];
+  if (returnUrl) {
+    fields.push({ name: 'RelayState', value: returnUrl });
+  }
 
-  // Build auto-submit form
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML Logout</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(destination)}">
-    <input type="hidden" name="SAMLRequest" value="${escapeHtml(encodedRequest)}" />
-    ${returnUrl ? `<input type="hidden" name="RelayState" value="${escapeHtml(returnUrl)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue to Logout</button>
-    </noscript>
-  </form>
-</body>
-</html>`;
+  const response = buildSAMLPostBindingResponse({
+    title: 'SAML Logout',
+    actionUrl: destination,
+    fields,
+    buttonText: 'Continue to Logout',
+  });
 
-  return { html };
+  return { html: await response.text() };
 }
 
 /**
@@ -557,16 +534,4 @@ async function buildLogoutCompleteUrlForSP(
     usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
   );
   return { type: 'redirect', url };
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }

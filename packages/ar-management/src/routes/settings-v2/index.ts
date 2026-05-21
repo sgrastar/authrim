@@ -55,6 +55,7 @@ import {
   createLogger,
   // Security
   sanitizeObject,
+  createAuditLogFromContext,
   // Admin Auth
   type AdminAuthContext,
   ensureDatabaseAdapter,
@@ -130,7 +131,8 @@ async function getClientTenantId(
 
     const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
       env,
-      'settings-v2-client-tenant'
+      'settings-v2-client-tenant',
+      { tenantId }
     );
     const result = await adapter.queryOne<{ tenant_id: string }>(
       'SELECT tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
@@ -209,13 +211,15 @@ const settingsV2 = new Hono<{
 /**
  * Get or create SettingsManager for the request
  */
-function getSettingsManager(env: Env): SettingsManager {
+function getSettingsManager(
+  env: Env,
+  auditContext?: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>
+): SettingsManager {
   const manager = createSettingsManager({
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS ?? null,
     cacheTTL: 5000, // 5 seconds (as per plan)
     auditCallback: async (event) => {
-      // Log audit event (can be extended to write to KV/R2)
       log.info('Settings change', {
         action: event.event,
         scope: event.scope,
@@ -224,6 +228,21 @@ function getSettingsManager(env: Env): SettingsManager {
         actor: event.actor,
         diff: event.diff,
       });
+      if (auditContext) {
+        await createAuditLogFromContext(
+          auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
+          `settings.${event.event}`,
+          'settings',
+          `${event.scope}:${event.scopeId}:${event.category}`,
+          {
+            scope: event.scope,
+            scope_id: event.scopeId,
+            category: event.category,
+            actor: event.actor,
+            diff: sanitizeObject(event.diff),
+          }
+        );
+      }
     },
   });
 
@@ -233,6 +252,42 @@ function getSettingsManager(env: Env): SettingsManager {
   }
 
   return manager;
+}
+
+async function recordSettingsAuditFailure(
+  c: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>,
+  input: {
+    category: CategoryName;
+    scope: SettingScope;
+    reason: string;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  const scopeId =
+    'id' in input.scope && typeof input.scope.id === 'string' ? input.scope.id : 'platform';
+  try {
+    await createAuditLogFromContext(
+      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      'settings.patch.failure',
+      'settings',
+      `${input.scope.type}:${scopeId}:${input.category}`,
+      {
+        scope: input.scope.type,
+        scope_id: scopeId,
+        category: input.category,
+        result: 'failure',
+        reason: input.reason,
+        ...(input.metadata ? sanitizeObject(input.metadata) : {}),
+      },
+      'warning'
+    );
+  } catch {
+    log.warn('Failed to mirror settings failure audit', {
+      category: input.category,
+      scope: input.scope.type,
+      reason: input.reason,
+    });
+  }
 }
 
 /**
@@ -303,6 +358,10 @@ async function validateTenantRuntimeProfilePatch(
       error: 'internal_error',
       message: `Default storage profile "${defaults.storageProfileId}" not found`,
     };
+  }
+
+  if (candidateProfile.id === defaultProfile.id) {
+    return { ok: true };
   }
 
   const violation = validateTenantStorageProfileOverride(defaultProfile, candidateProfile);
@@ -422,7 +481,7 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Cannot access settings for this tenant', 403);
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
 
   try {
@@ -472,7 +531,7 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
 
   try {
@@ -482,6 +541,7 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
 
     // Validate ifMatch is provided
     if (!body.ifMatch) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
@@ -510,6 +570,12 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     // 200 OK if anything was applied (even with rejections)
     // 400 Bad Request if everything was rejected
     if (!hasApplied && hasRejections) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'validation_failed',
+        metadata: { rejected: result.rejected },
+      });
       return c.json(
         {
           error: 'validation_failed',
@@ -524,9 +590,16 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
   } catch (error) {
     // Handle JSON parse errors
     if (error instanceof SyntaxError) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
       return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
     }
     if (error instanceof ConflictError) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'version_conflict',
+        metadata: { current_version: error.currentVersion },
+      });
       return c.json(
         {
           error: 'conflict',
@@ -538,12 +611,20 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     }
     if (error instanceof Error) {
       if (error.message.includes('Unknown category')) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
         return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
       }
       if (error.message.includes('read-only')) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'read_only' });
         return errorResponse(c, 'forbidden', error.message, 403);
       }
     }
+    await recordSettingsAuditFailure(c, {
+      category,
+      scope,
+      reason: 'unhandled_error',
+      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+    });
     throw error;
   }
 });
@@ -585,7 +666,7 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
@@ -648,7 +729,7 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
@@ -695,7 +776,7 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
@@ -704,6 +785,7 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     const body = parsePatchRequest(rawBody);
 
     if (!body.ifMatch) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
@@ -715,6 +797,12 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
       result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
 
     if (!hasApplied && hasRejections) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'validation_failed',
+        metadata: { rejected: result.rejected },
+      });
       return c.json(
         {
           error: 'validation_failed',
@@ -729,9 +817,16 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
   } catch (error) {
     // Handle JSON parse errors
     if (error instanceof SyntaxError) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
       return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
     }
     if (error instanceof ConflictError) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'version_conflict',
+        metadata: { current_version: error.currentVersion },
+      });
       return c.json(
         {
           error: 'conflict',
@@ -741,6 +836,12 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
         409
       );
     }
+    await recordSettingsAuditFailure(c, {
+      category,
+      scope,
+      reason: 'unhandled_error',
+      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+    });
     throw error;
   }
 });
@@ -793,7 +894,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
@@ -801,6 +902,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     const body = parsePatchRequest(rawBody);
 
     if (!body.ifMatch) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
@@ -812,6 +914,12 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
       result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
 
     if (!hasApplied && hasRejections) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'validation_failed',
+        metadata: { rejected: result.rejected },
+      });
       return c.json(
         {
           error: 'validation_failed',
@@ -825,9 +933,16 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     return c.json(result);
   } catch (error) {
     if (error instanceof SyntaxError) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
       return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
     }
     if (error instanceof ConflictError) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'version_conflict',
+        metadata: { current_version: error.currentVersion },
+      });
       return c.json(
         {
           error: 'conflict',
@@ -838,8 +953,15 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
       );
     }
     if (error instanceof Error && error.message.includes('Unknown category')) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
       return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
     }
+    await recordSettingsAuditFailure(c, {
+      category,
+      scope,
+      reason: 'unhandled_error',
+      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+    });
     throw error;
   }
 });
@@ -878,7 +1000,7 @@ settingsV2.get('/platform/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view platform settings', 403);
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope: SettingScope = { type: 'platform' };
 
   try {
@@ -929,7 +1051,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
       );
     }
 
-    const manager = getSettingsManager(c.env);
+    const manager = getSettingsManager(c.env, c);
     const scope: SettingScope = { type: 'platform' };
 
     try {
@@ -937,6 +1059,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
       const body = parsePatchRequest(rawBody);
 
       if (!body.ifMatch) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
         return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
       }
 
@@ -947,6 +1070,12 @@ settingsV2.patch('/platform/settings/:category', (c) => {
         result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
 
       if (!hasApplied && hasRejections) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'validation_failed',
+          metadata: { rejected: result.rejected },
+        });
         return c.json(
           {
             error: 'validation_failed',
@@ -960,9 +1089,16 @@ settingsV2.patch('/platform/settings/:category', (c) => {
       return c.json(result);
     } catch (error) {
       if (error instanceof SyntaxError) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
         return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
       }
       if (error instanceof ConflictError) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'version_conflict',
+          metadata: { current_version: error.currentVersion },
+        });
         return c.json(
           {
             error: 'conflict',
@@ -973,8 +1109,15 @@ settingsV2.patch('/platform/settings/:category', (c) => {
         );
       }
       if (error instanceof Error && error.message.includes('Unknown category')) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
         return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
       }
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'unhandled_error',
+        metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+      });
       throw error;
     }
   })();
@@ -1003,7 +1146,7 @@ settingsV2.delete('/platform/settings/:category', (c) => {
 settingsV2.get('/settings/meta/:category', async (c) => {
   const category = c.req.param('category')!;
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const meta = manager.getMeta(category);
 
   if (!meta) {

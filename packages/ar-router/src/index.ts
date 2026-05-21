@@ -47,6 +47,12 @@ interface Env {
   AR_LOGIN_UI_URL?: string;
   /** Admin UI Worker URL (e.g., https://admin.example.com) */
   AR_ADMIN_UI_URL?: string;
+  /** Public Admin UI URL (e.g., https://admin.example.com) */
+  ADMIN_UI_URL?: string;
+  /** Login UI Worker service binding */
+  LOGIN_UI_WORKER?: Fetcher;
+  /** Admin UI Worker service binding */
+  ADMIN_UI_WORKER?: Fetcher;
   /** Enable Login UI proxy (true/false) */
   ENABLE_LOGIN_UI_PROXY?: string;
   /** Enable Admin UI proxy (true/false) */
@@ -127,6 +133,17 @@ function bearerTokenTransportError(): Response {
   );
 }
 
+function createServiceBindingRequest(request: Request): Request {
+  const forwarded = new Request(request.url, request);
+  const headers = new Headers(forwarded.headers);
+  const originalHost = new URL(request.url).host;
+
+  headers.set('X-Authrim-Forwarded-Host', originalHost);
+  headers.set('X-Forwarded-Host', originalHost);
+
+  return new Request(forwarded, { headers });
+}
+
 async function requestHasFormBearerToken(request: Request): Promise<boolean> {
   const contentType = request.headers.get('Content-Type')?.toLowerCase() ?? '';
   if (
@@ -144,6 +161,18 @@ async function requestHasFormBearerToken(request: Request): Promise<boolean> {
   }
 }
 
+function getConfiguredUrlHostname(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Proxy request to a UI Worker.
  * Maintains all headers, query params, and body.
@@ -151,7 +180,12 @@ async function requestHasFormBearerToken(request: Request): Promise<boolean> {
  * SvelteKit CSRF protection (which compares Origin vs event.url.origin)
  * does not reject proxied state-changing requests.
  */
-async function proxyToUiWorker(request: Request, baseUrl: string, path: string): Promise<Response> {
+async function proxyToUiWorker(
+  request: Request,
+  baseUrl: string,
+  path: string,
+  serviceBinding?: Fetcher
+): Promise<Response> {
   const targetUrl = new URL(path, baseUrl);
   targetUrl.search = new URL(request.url).search;
 
@@ -184,7 +218,7 @@ async function proxyToUiWorker(request: Request, baseUrl: string, path: string):
     redirect: 'manual',
   });
 
-  return fetch(proxyRequest);
+  return serviceBinding ? serviceBinding.fetch(proxyRequest) : fetch(proxyRequest);
 }
 
 // Create Hono app with Cloudflare Workers types
@@ -302,7 +336,7 @@ app.use('*', async (c, next) => {
       }
     } catch {
       // KV read error - continue with env fallback
-      // Fail-safe: don't block requests due to KV issues
+      // fail-safe: don't block requests due to KV issues
     }
   }
 
@@ -448,7 +482,7 @@ app.get('/.well-known/openid-credential-issuer', async (c) => {
   if (!c.env.OP_VC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_VC.fetch(request);
 });
 
@@ -456,7 +490,7 @@ app.get('/.well-known/openid-credential-verifier', async (c) => {
   if (!c.env.OP_VC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_VC.fetch(request);
 });
 
@@ -464,7 +498,7 @@ app.get('/.well-known/did.json', async (c) => {
   if (!c.env.OP_VC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_VC.fetch(request);
 });
 
@@ -476,7 +510,7 @@ app.get('/.well-known/did.json', async (c) => {
  * - /.well-known/webfinger
  */
 app.get('/.well-known/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_DISCOVERY.fetch(request);
 });
 
@@ -488,34 +522,34 @@ app.get('/.well-known/*', async (c) => {
  * - /par (POST) - Pushed Authorization Request
  */
 app.all('/authorize/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.get('/authorize', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.post('/authorize', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 // Login/Confirm flow endpoints
 app.all('/flow/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 // PAR endpoint (RFC 9126)
 app.post('/par', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.get('/par', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -524,7 +558,7 @@ app.get('/par', async (c) => {
  * - /token (POST)
  */
 app.post('/token', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_TOKEN.fetch(request);
 });
 
@@ -533,17 +567,17 @@ app.post('/token', async (c) => {
  * - /userinfo (GET/POST)
  */
 app.get('/userinfo', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_USERINFO.fetch(request);
 });
 
 app.post('/userinfo', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_USERINFO.fetch(request);
 });
 
 app.all('/api/protected/customer-profiles/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_USERINFO.fetch(request);
 });
 
@@ -561,12 +595,12 @@ app.all('/api/protected/customer-profiles/*', async (c) => {
  * - /api/v1/auth/direct/token - Exchange auth_code for session/tokens
  */
 app.all('/api/v1/auth/direct/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.get('/api/v1/registration-fields', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -575,7 +609,7 @@ app.get('/api/v1/registration-fields', async (c) => {
  * - /api/v1/diagnostic-logs/ingest
  */
 app.all('/api/v1/diagnostic-logs/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
@@ -585,15 +619,15 @@ app.all('/api/v1/diagnostic-logs/*', async (c) => {
  * - /api/auth/login-methods - Public endpoint for available login methods + UI config
  */
 app.get('/api/auth/login-methods', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 app.all('/api/auth/discovery', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 app.all('/api/auth/discovery/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
@@ -605,22 +639,22 @@ app.all('/api/auth/discovery/*', async (c) => {
  * - /api/auth/session/* - ITP-compliant session management (deprecated, use /api/sessions/*)
  */
 app.all('/api/auth/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.get('/auth/login-challenge', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.get('/auth/consent', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.post('/auth/consent', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -632,7 +666,7 @@ app.post('/auth/consent', async (c) => {
  * - /api/sessions/verify - Verify session token
  */
 app.all('/api/sessions/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -641,7 +675,7 @@ app.all('/api/sessions/*', async (c) => {
  * - /session/check - Iframe for RPs to monitor session state
  */
 app.get('/session/check', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -653,22 +687,22 @@ app.get('/session/check', async (c) => {
  * - /logout-error - Post-logout landing page (validation error)
  */
 app.get('/logout', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.post('/logout/backchannel', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.get('/logged-out', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.get('/logout-error', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -682,7 +716,7 @@ app.post('/device_authorization', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
@@ -690,7 +724,7 @@ app.get('/device', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
@@ -698,7 +732,7 @@ app.post('/device', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
@@ -706,7 +740,7 @@ app.all('/api/device/*', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
@@ -719,7 +753,7 @@ app.post('/bc-authorize', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
@@ -727,7 +761,7 @@ app.all('/api/ciba/*', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_ASYNC.fetch(request);
 });
 
@@ -742,38 +776,38 @@ app.all('/api/ciba/*', async (c) => {
  * - /scim/v2/* - SCIM 2.0 User Provisioning (RFC 7643, 7644)
  */
 app.post('/register', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.get('/clients/:client_id', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.put('/clients/:client_id', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.delete('/clients/:client_id', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.post('/introspect', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.post('/revoke', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 // Batch Token Revocation endpoint (RFC 7009 extension)
 app.post('/revoke/batch', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
@@ -790,7 +824,7 @@ app.post('/revoke/batch', async (c) => {
  */
 app.all('/api/admin/*', async (c) => {
   const path = c.req.path;
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
 
   // Route admin auth endpoints to OP_AUTH
   if (path.startsWith('/api/admin/auth/')) {
@@ -819,38 +853,38 @@ app.all('/api/admin/*', async (c) => {
 });
 
 app.all('/api/approval-artifacts/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.all('/api/approval-receipts/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.all('/auth/step-up/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.all('/me/devices', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.all('/me/devices/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 app.get('/api/avatars/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 // SCIM 2.0 endpoints - RFC 7643, 7644
 app.all('/scim/v2/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
@@ -863,7 +897,7 @@ app.all('/scim/v2/*', async (c) => {
  * This ensures all Cloudflare PoPs serve the latest deployed Worker bundle.
  */
 app.all('/api/internal/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
@@ -877,7 +911,7 @@ app.all('/saml/*', async (c) => {
   if (!c.env.OP_SAML) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_SAML.fetch(request);
 });
 
@@ -888,7 +922,7 @@ app.all('/vci/*', async (c) => {
   if (!c.env.OP_VC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_VC.fetch(request);
 });
 
@@ -896,7 +930,7 @@ app.all('/vp/*', async (c) => {
   if (!c.env.OP_VC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_VC.fetch(request);
 });
 
@@ -904,7 +938,7 @@ app.all('/did/*', async (c) => {
   if (!c.env.OP_VC) {
     return notFoundResponse();
   }
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_VC.fetch(request);
 });
 
@@ -917,17 +951,17 @@ app.all('/did/*', async (c) => {
  * - /external-idp/admin/* - Admin API for external IdP management
  */
 app.all('/auth/external/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.EXTERNAL_IDP.fetch(request);
 });
 
 app.all('/handoff/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.EXTERNAL_IDP.fetch(request);
 });
 
 app.all('/external-idp/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.EXTERNAL_IDP.fetch(request);
 });
 
@@ -936,7 +970,7 @@ app.all('/external-idp/*', async (c) => {
  * - /_internal/warmup - Pre-heat Durable Objects (admin only)
  */
 app.all('/_internal/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -946,12 +980,12 @@ app.all('/_internal/*', async (c) => {
  * - /api/admin-init-setup/* - Setup API endpoints
  */
 app.get('/admin-init-setup', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 app.all('/api/admin-init-setup/*', async (c) => {
-  const request = new Request(c.req.url, c.req.raw);
+  const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
@@ -970,7 +1004,7 @@ app.all('/api/admin-init-setup/*', async (c) => {
 app.all('/admin/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
     const path = c.req.path;
-    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, path);
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, path, c.env.ADMIN_UI_WORKER);
   }
   // If proxy not enabled, return 404
   return c.json(
@@ -987,7 +1021,7 @@ app.all('/admin/*', async (c) => {
 // After passkey registration, ar-auth redirects to /setup/complete
 app.all('/setup/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path, c.env.ADMIN_UI_WORKER);
   }
   return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
@@ -995,7 +1029,7 @@ app.all('/setup/*', async (c) => {
 // Admin UI proxy - exact /admin path (redirect to /admin/)
 app.get('/admin', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, '/admin');
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, '/admin', c.env.ADMIN_UI_WORKER);
   }
   return c.json(
     {
@@ -1011,7 +1045,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
   // Handle exact path
   app.all(uiPath, async (c) => {
     if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
+      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
     }
     return c.json(
       {
@@ -1026,7 +1060,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
   // Handle paths with trailing content (e.g., /login/*, /signup/*)
   app.all(`${uiPath}/*`, async (c) => {
     if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
+      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
     }
     return c.json(
       {
@@ -1042,7 +1076,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
 // This handles /geo/* paths for WorldMap GeoJSON data (Admin UI only)
 app.get('/geo/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path, c.env.ADMIN_UI_WORKER);
   }
   return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
@@ -1081,13 +1115,46 @@ app.all('/_app/*', async (c) => {
 
   // Try each UI in order, return first successful response
   for (const ui of uisToTry) {
-    const response = await proxyToUiWorker(c.req.raw.clone(), ui.url, c.req.path);
+    const serviceBinding = ui.name === 'admin' ? c.env.ADMIN_UI_WORKER : c.env.LOGIN_UI_WORKER;
+    const response = await proxyToUiWorker(c.req.raw.clone(), ui.url, c.req.path, serviceBinding);
     if (response.ok) {
       return response;
     }
   }
 
   return c.json({ error: 'not_found', message: 'Static asset not found in any UI' }, 404);
+});
+
+// Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
+app.get('/', async (c) => {
+  const requestHost = new URL(c.req.url).hostname.toLowerCase();
+  const adminUiHost =
+    getConfiguredUrlHostname(c.env.ADMIN_UI_URL) ||
+    (c.env.BASE_DOMAIN ? `admin.${c.env.BASE_DOMAIN.toLowerCase()}` : null);
+  if (
+    adminUiHost &&
+    requestHost === adminUiHost &&
+    c.env.ENABLE_ADMIN_UI_PROXY === 'true' &&
+    c.env.AR_ADMIN_UI_URL
+  ) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, '/', c.env.ADMIN_UI_WORKER);
+  }
+
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, '/', c.env.LOGIN_UI_WORKER);
+  }
+
+  // Return basic API info when Login UI proxy is not enabled.
+  return c.json({
+    name: 'Authrim OIDC Provider',
+    version: '1.0.0',
+    endpoints: {
+      discovery: '/.well-known/openid-configuration',
+      authorize: '/authorize',
+      token: '/token',
+      userinfo: '/userinfo',
+    },
+  });
 });
 
 // 404 handler
@@ -1112,25 +1179,6 @@ app.onError((err, c) => {
     },
     500
   );
-});
-
-// Root path proxy for Login UI (handles external auth callbacks like /?external_auth=success)
-// This must be registered after all API routes to avoid conflicts
-app.get('/', async (c) => {
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, '/');
-  }
-  // Return basic API info when Login UI proxy is not enabled
-  return c.json({
-    name: 'Authrim OIDC Provider',
-    version: '1.0.0',
-    endpoints: {
-      discovery: '/.well-known/openid-configuration',
-      authorize: '/authorize',
-      token: '/token',
-      userinfo: '/userinfo',
-    },
-  });
 });
 
 // Export for Cloudflare Workers

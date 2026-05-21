@@ -13,7 +13,7 @@
  * Test flow (5 steps):
  * 1. GET /authorize - Start authorization request (light load)
  * 2. POST /api/admin/test/email-codes - Generate OTP code (ChallengeStore DO write)
- * 3. POST /api/auth/email-code/verify - Verify OTP + issue session (SessionStore DO write)
+ * 3. POST /api/auth/email-codes/verify - Verify OTP + issue session (SessionStore DO write)
  * 4. GET /authorize (with Cookie) - Generate authorization code (AuthCodeStore DO write)
  * 5. POST /token - Issue token (RefreshTokenRotator write, JWT signing)
  *
@@ -29,6 +29,7 @@
  *   CLIENT_SECRET     - OAuth client secret (required)
  *   ADMIN_API_SECRET  - Admin API secret (required)
  *   PRESET            - Preset name (default: rps10)
+ *   TENANT_ID         - Tenant ID for tenant-d1 admin test endpoints (optional)
  *   USER_LIST_PATH    - User list file path (default: ../seeds/otp_user_list.txt)
  *
  * Usage:
@@ -55,8 +56,8 @@ import encoding from 'k6/encoding';
 import { randomBytes, sha256 } from 'k6/crypto';
 
 // Test identification
-const TEST_NAME = 'Mail OTP Full Login Benchmark';
-const TEST_ID = 'mail-otp-full-login-benchmark';
+const TEST_NAME = __ENV.TEST_NAME || 'Mail OTP Full Login Benchmark';
+const TEST_ID = __ENV.TEST_ID || 'mail-otp-full-login-benchmark';
 
 // Custom metrics - step-by-step latency
 const authorizeInitLatency = new Trend('authorize_init_latency');
@@ -88,6 +89,9 @@ const ADMIN_API_SECRET = __ENV.ADMIN_API_SECRET || '';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://localhost:3000/callback';
 const PRESET = __ENV.PRESET || 'rps10';
 const USER_LIST_PATH = __ENV.USER_LIST_PATH || '../seeds/otp_user_list.txt';
+const STORAGE_PROFILE = __ENV.STORAGE_PROFILE || 'unspecified';
+const TRANSIENT_AUTH_MIRROR_MODE = __ENV.TRANSIENT_AUTH_MIRROR_MODE || 'unspecified';
+const TENANT_ID = __ENV.TENANT_ID || '';
 
 // Hostname extraction function
 function extractHostname(url) {
@@ -173,6 +177,11 @@ export const options = {
       preAllocatedVUs: selectedPreset.preAllocatedVUs,
       maxVUs: selectedPreset.maxVUs,
       stages: selectedPreset.stages,
+      tags: {
+        test_id: TEST_ID,
+        storage_profile: STORAGE_PROFILE,
+        transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
+      },
     },
   },
   thresholds: selectedPreset.thresholds,
@@ -191,7 +200,7 @@ try {
   console.log(`📂 Loaded ${userList.length} users from ${USER_LIST_PATH}`);
 } catch (e) {
   console.warn(`⚠️  Could not load user list: ${e.message}`);
-  console.warn("   Will generate random email addresses");
+  console.warn('   Will generate random email addresses');
 }
 
 /**
@@ -237,12 +246,14 @@ function generateRandomEmail() {
 
 // Setup
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔑 Client: ${CLIENT_ID}`);
-  console.log("");
+  console.log(`🗄️  Storage profile: ${STORAGE_PROFILE}`);
+  console.log(`🪞 Transient auth mirror mode: ${TRANSIENT_AUTH_MIRROR_MODE}`);
+  console.log('');
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
     throw new Error('CLIENT_ID and CLIENT_SECRET are required');
@@ -267,10 +278,10 @@ export function setup() {
     }
     console.log(`📦 Generated ${users.length} random email addresses`);
   }
-  console.log("");
+  console.log('');
 
   // Warmup
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(5, users.length); i++) {
     const user = users[i];
     // Warmup authorize endpoint
@@ -283,17 +294,20 @@ export function setup() {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${ADMIN_API_SECRET}`,
+        ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
       },
       tags: { name: 'Warmup' },
     });
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     users,
     userCount: users.length,
     preset: PRESET,
+    storageProfile: STORAGE_PROFILE,
+    transientAuthMirrorMode: TRANSIENT_AUTH_MIRROR_MODE,
     baseUrl: BASE_URL,
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
@@ -326,14 +340,14 @@ export default function (data) {
   // ===============================
   const authorizeInitUrl =
     `${baseUrl}/authorize?` +
-    "response_type=code&" +
+    'response_type=code&' +
     `client_id=${encodeURIComponent(clientId)}&` +
     `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-    "scope=openid&" +
+    'scope=openid&' +
     `state=${state}&` +
     `nonce=${nonce}&` +
     `code_challenge=${codeChallenge}&` +
-    "code_challenge_method=S256";
+    'code_challenge_method=S256';
 
   const step1Response = http.get(authorizeInitUrl, {
     headers: { Accept: 'text/html', Connection: 'keep-alive' },
@@ -364,6 +378,7 @@ export default function (data) {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${adminSecret}`,
+          ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
           Connection: 'keep-alive',
         },
         tags: { name: 'EmailCodeGenerate' },
@@ -393,11 +408,11 @@ export default function (data) {
   }
 
   // ===============================
-  // Step 3: POST /api/auth/email-code/verify (OTP verification + session issuance)
+  // Step 3: POST /api/auth/email-codes/verify (OTP verification + session issuance)
   // ===============================
   if (success && otpCode && otpSessionId) {
     const step3Response = http.post(
-      `${baseUrl}/api/auth/email-code/verify`,
+      `${baseUrl}/api/auth/email-codes/verify`,
       JSON.stringify({ email: user.email, code: otpCode }),
       {
         headers: {
@@ -433,7 +448,7 @@ export default function (data) {
       if (!sessionCookie) {
         success = false;
         sessionErrors.add(1);
-        console.error("❌ No session ID returned from verify endpoint");
+        console.error('❌ No session ID returned from verify endpoint');
       }
     }
   }
@@ -446,15 +461,15 @@ export default function (data) {
   if (success && sessionCookie) {
     const authorizeCodeUrl =
       `${baseUrl}/authorize?` +
-      "response_type=code&" +
+      'response_type=code&' +
       `client_id=${encodeURIComponent(clientId)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      "scope=openid&" +
+      'scope=openid&' +
       `state=${state}&` +
       `nonce=${nonce}&` +
       `code_challenge=${codeChallenge}&` +
-      "code_challenge_method=S256&" +
-      "prompt=none";
+      'code_challenge_method=S256&' +
+      'prompt=none';
 
     const step4Response = http.get(authorizeCodeUrl, {
       headers: {
@@ -473,7 +488,7 @@ export default function (data) {
       if (location) {
         const codeMatch = location.match(/[?&]code=([^&]+)/);
         if (codeMatch) {
-          authCode = codeMatch[1];
+          authCode = decodeURIComponent(codeMatch[1]);
         }
       }
     }
@@ -492,11 +507,11 @@ export default function (data) {
   // Step 5: POST /token (token issuance)
   // ===============================
   if (success && authCode) {
-    const credentials = encoding.b64encode(`${clientId}:${clientSecret}`);
+    const credentials = encoding.b64encode(`${clientId}:${clientSecret}`, 'std');
 
     const step5Response = http.post(
       `${baseUrl}/token`,
-      "grant_type=authorization_code" +
+      'grant_type=authorization_code' +
         `&code=${encodeURIComponent(authCode)}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&code_verifier=${codeVerifier}`,
@@ -537,9 +552,11 @@ export default function (data) {
 
 // Teardown
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
+  console.log(`🗄️  Storage profile: ${data.storageProfile}`);
+  console.log(`🪞 Transient auth mirror mode: ${data.transientAuthMirrorMode}`);
   console.log(`🎯 Target: ${data.baseUrl}`);
   console.log(`📈 User count: ${data.userCount}`);
 }
@@ -574,6 +591,8 @@ export function handleSummary(data) {
 
  🎯 Preset: ${PRESET}
  📝 Description: ${selectedPreset.description}
+ 🗄️  Storage profile: ${STORAGE_PROFILE}
+ 🪞 Transient auth mirror mode: ${TRANSIENT_AUTH_MIRROR_MODE}
 
  📈 Flow Statistics:
    Total iterations: ${getCount('iterations')}
@@ -626,6 +645,8 @@ export function handleSummary(data) {
     test_name: TEST_NAME,
     preset: PRESET,
     description: selectedPreset.description,
+    storage_profile: STORAGE_PROFILE,
+    transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
     timestamp: new Date().toISOString(),
     target: BASE_URL,
     metrics: {

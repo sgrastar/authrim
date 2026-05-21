@@ -161,6 +161,21 @@ describe('SLO Message Builder', () => {
       expect(parsed.nameIdNameQualifier).toBe('https://idp.example.com/saml/idp');
       expect(parsed.nameIdSPNameQualifier).toBe('https://sp.example.com');
     });
+
+    it('should reject a nested LogoutRequest when the document root is different', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<wrapper xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+  <samlp:LogoutRequest ID="_nested" Version="2.0" IssueInstant="2024-01-15T10:30:00Z">
+    <saml:Issuer>https://sp.example.com</saml:Issuer>
+    <saml:NameID>user@example.com</saml:NameID>
+  </samlp:LogoutRequest>
+</wrapper>`;
+
+      expect(() => parseLogoutRequestXml(xml)).toThrow(
+        'Invalid LogoutRequest: missing LogoutRequest element'
+      );
+    });
   });
 
   describe('parseLogoutResponseXml', () => {
@@ -184,6 +199,23 @@ describe('SLO Message Builder', () => {
       expect(parsed.inResponseTo).toBe('_req_original_456');
       expect(parsed.statusCode).toBe(STATUS_CODES.SUCCESS);
       expect(parsed.statusMessage).toBe('Logout successful');
+    });
+
+    it('should reject a nested LogoutResponse when the document root is different', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<wrapper xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+  <samlp:LogoutResponse ID="_nested" Version="2.0" IssueInstant="2024-01-15T10:31:00Z">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <samlp:Status>
+      <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+    </samlp:Status>
+  </samlp:LogoutResponse>
+</wrapper>`;
+
+      expect(() => parseLogoutResponseXml(xml)).toThrow(
+        'Invalid LogoutResponse: missing LogoutResponse element'
+      );
     });
   });
 

@@ -21,7 +21,6 @@ import {
   AR_ERROR_CODES,
   validateAllowedOrigins,
   createAuditLogFromContext,
-  scheduleAuditLogFromContext,
   getLogger,
   // Crypto utilities
   hashClientSecret,
@@ -39,6 +38,7 @@ import {
   // Cache Invalidation (P0 KV Cache Optimization)
   invalidateTenantProfileCache,
   // Write-Through KV Cache (Phase 3)
+  readResponseTextWithLimit,
 } from '@authrim/ar-lib-core';
 import {
   logSanitizedError,
@@ -63,6 +63,9 @@ import {
   listArchiveAuditEvents,
 } from './audit-archive-query';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
+import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+
+const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
 export {
   adminStatsHandler,
@@ -565,6 +568,10 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
                       Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
                   }
                 : undefined,
+            runtimeLogging: {
+              env: c.env,
+              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
+            },
           },
           {
             tenantId,
@@ -735,6 +742,10 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
                       Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
                   }
                 : undefined,
+            runtimeLogging: {
+              env: c.env,
+              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
+            },
           },
           {
             tenantId,
@@ -931,6 +942,10 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
                       Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
                   }
                 : undefined,
+            runtimeLogging: {
+              env: c.env,
+              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
+            },
           },
           {
             tenantId,
@@ -2320,7 +2335,10 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
     );
 
     if (!response.ok) {
-      const error = await response.text();
+      const error = await readResponseTextWithLimit(
+        response,
+        TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES
+      );
       logSanitizedError('Failed to register token', error);
       return c.json(
         {
@@ -2918,8 +2936,7 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
 
     log.info('Revoked consent', { action: 'consent_revoke', userId, clientId });
 
-    // Write audit logs (non-blocking)
-    scheduleAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
+    await createAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
       client_id: clientId,
       scopes: previousScopes,
     });

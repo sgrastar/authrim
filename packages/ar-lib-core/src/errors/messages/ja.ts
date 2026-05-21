@@ -1,7 +1,7 @@
 /**
- * Japanese Error Messages (日本語エラーメッセージ)
+ * Japanese Error Messages
  *
- * メッセージ形式: {placeholder} で動的値をサポート
+ * Message format: {placeholder} supports dynamic values
  *
  * @packageDocumentation
  */
@@ -10,7 +10,7 @@ import type { ErrorMessages } from '../types';
 
 export const errorMessagesJa: ErrorMessages = {
   // ============================================
-  // RFC標準エラー
+  // RFC standard errors
   // ============================================
   invalid_request: 'リクエストに必要なパラメータが不足しているか、形式が正しくありません',
   invalid_client: 'クライアント認証に失敗しました',
@@ -46,7 +46,7 @@ export const errorMessagesJa: ErrorMessages = {
   invalid_client_metadata: 'クライアントメタデータが無効です',
 
   // ============================================
-  // 認証 (AUTH)
+  // Authentication (AUTH)
   // ============================================
   'auth.session_expired.title': 'セッション期限切れ',
   'auth.session_expired.detail': '認証セッションが期限切れです。再度ログインしてください。',
@@ -81,7 +81,7 @@ export const errorMessagesJa: ErrorMessages = {
   'auth.did_verification_failed.detail': 'DID署名の検証に失敗しました。',
 
   // ============================================
-  // トークン (TOKEN)
+  // Token (TOKEN)
   // ============================================
   'token.invalid.title': '無効なトークン',
   'token.invalid.detail': 'トークンが無効または形式が正しくありません。',
@@ -107,7 +107,7 @@ export const errorMessagesJa: ErrorMessages = {
     'DPoPノンスが必要です。提供されたノンスで再試行してください。',
 
   // ============================================
-  // クライアント (CLIENT)
+  // Client (CLIENT)
   // ============================================
   'client.auth_failed.title': 'クライアント認証失敗',
   'client.auth_failed.detail': 'クライアント認証に失敗しました。',
@@ -127,7 +127,7 @@ export const errorMessagesJa: ErrorMessages = {
   'client.jwks_invalid.detail': 'クライアントのJWKSが無効または取得できませんでした。',
 
   // ============================================
-  // ユーザー (USER)
+  // User (USER)
   // ============================================
   'user.invalid_credentials.title': '無効な認証情報',
   'user.invalid_credentials.detail': '入力された認証情報が無効です。',
@@ -143,7 +143,7 @@ export const errorMessagesJa: ErrorMessages = {
   'user.phone_not_verified.detail': '続行する前に電話番号を確認してください。',
 
   // ============================================
-  // セッション (SESSION)
+  // Session (SESSION)
   // ============================================
   'session.store_error.title': 'セッションエラー',
   'session.store_error.detail': 'セッションストアへのアクセス中にエラーが発生しました。',
@@ -153,7 +153,7 @@ export const errorMessagesJa: ErrorMessages = {
   'session.concurrent_limit.detail': '同時セッションの最大数に達しました。',
 
   // ============================================
-  // ポリシー (POLICY)
+  // Policy (POLICY)
   // ============================================
   'policy.feature_disabled.title': '機能が無効',
   'policy.feature_disabled.detail': 'この機能は現在無効になっています。',
@@ -174,7 +174,7 @@ export const errorMessagesJa: ErrorMessages = {
   'policy.abac_denied.detail': '属性ベースのアクセス制御によりアクセスが拒否されました。',
 
   // ============================================
-  // 管理API (ADMIN)
+  // Admin API (ADMIN)
   // ============================================
   'admin.auth_required.title': '管理者認証が必要',
   'admin.auth_required.detail': '管理者認証が必要です。',
@@ -218,7 +218,7 @@ export const errorMessagesJa: ErrorMessages = {
   'vc.did_resolution_failed.detail': 'DIDドキュメントの解決に失敗しました。',
 
   // ============================================
-  // 外部IdP (BRIDGE)
+  // External IdP (BRIDGE)
   // ============================================
   'bridge.link_required.title': 'アカウント連携が必要',
   'bridge.link_required.detail': '続行するにはアカウント連携が必要です。',
@@ -235,7 +235,7 @@ export const errorMessagesJa: ErrorMessages = {
     'ジャストインタイムユーザープロビジョニングに失敗しました。',
 
   // ============================================
-  // 設定 (CONFIG)
+  // Configuration (CONFIG)
   // ============================================
   'config.kv_not_configured.title': '設定エラー',
   'config.kv_not_configured.detail': 'キー値ストアが設定されていません。',
@@ -249,7 +249,7 @@ export const errorMessagesJa: ErrorMessages = {
   'config.db_not_configured.detail': 'データベースが設定されていません。',
 
   // ============================================
-  // レート制限 (RATE)
+  // Rate limiting (RATE)
   // ============================================
   'rate.limit_exceeded.title': 'レート制限超過',
   'rate.limit_exceeded.detail': 'レート制限を超過しました。{retry_after}秒後に再試行してください。',
@@ -260,7 +260,7 @@ export const errorMessagesJa: ErrorMessages = {
     'リクエストが多すぎます。しばらくしてからもう一度お試しください。',
 
   // ============================================
-  // フロー API (FLOW)
+  // Flow API (FLOW)
   // ============================================
   'flow.missing_challenge_id.title': 'チャレンジID未指定',
   'flow.missing_challenge_id.detail':
@@ -290,7 +290,7 @@ export const errorMessagesJa: ErrorMessages = {
   'flow.capability_not_found.detail': 'Capability「{capability_id}」が見つかりませんでした。',
 
   // ============================================
-  // 内部エラー (INTERNAL)
+  // Internal errors (INTERNAL)
   // ============================================
   'internal.error.title': '内部エラー',
   'internal.error.detail': '内部エラーが発生しました。',

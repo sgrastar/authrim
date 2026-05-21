@@ -576,6 +576,10 @@ export interface UiWorkerDeployOptions extends DeployOptions {
   runtimeApiBackendUrl?: string;
   /** Service Binding name for UI Worker -> router communication (e.g., 'AR_ROUTER') */
   serviceBindingName?: string;
+  /** Whether to expose the UI Worker on workers.dev */
+  workersDev?: boolean;
+  /** Custom-domain routes for the UI Worker */
+  routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
   /** Optional Admin UI BFF machine credentials uploaded as UI Worker secrets */
   adminUiBffSecrets?: AdminUiBffWorkerSecrets;
 }
@@ -600,6 +604,8 @@ export async function deployUiWorkerComponent(
     uiEnvConfig,
     runtimeApiBackendUrl,
     serviceBindingName,
+    workersDev,
+    routes,
     adminUiBffSecrets,
   } = options;
 
@@ -648,6 +654,8 @@ export async function deployUiWorkerComponent(
         component,
         env,
         needsProxy: !!serviceBindingName,
+        workersDev,
+        routes,
         vars: {
           ...generatedUiEnv,
           API_BACKEND_URL: runtimeSecretValue,
@@ -732,10 +740,14 @@ export async function deployUiWorkerComponent(
 
     const uiWorkerName = projectName || `${env}-${component}`;
 
-    const result = await execa('pnpm', ['exec', 'wrangler', 'deploy', '--config', 'wrangler.toml'], {
-      cwd: uiDir,
-      reject: false, // Don't throw on non-zero exit
-    });
+    const result = await execa(
+      'pnpm',
+      ['exec', 'wrangler', 'deploy', '--config', 'wrangler.toml'],
+      {
+        cwd: uiDir,
+        reject: false, // Don't throw on non-zero exit
+      }
+    );
 
     if (result.exitCode !== 0) {
       // Get meaningful error from stderr or stdout
@@ -809,6 +821,8 @@ export async function deployAllUiWorkers(
           | 'uiEnvConfig'
           | 'uiEnvPath'
           | 'serviceBindingName'
+          | 'workersDev'
+          | 'routes'
           | 'adminUiBffSecrets'
         >
       >
@@ -839,6 +853,56 @@ export async function deployAllUiWorkers(
     successCount: results.filter((r) => r.success).length,
     failedCount: results.filter((r) => !r.success).length,
   };
+}
+
+/**
+ * Create UI Worker scripts before ar-router is deployed.
+ *
+ * Cloudflare validates Service Binding targets at deploy time. In multi-tenant
+ * mode ar-router binds LOGIN_UI_WORKER/ADMIN_UI_WORKER, while some final UI
+ * deployments may also bind back to ar-router. This lightweight first pass
+ * breaks that first-deploy cycle; the full UI deployment later overwrites these
+ * scripts with the final env, routes, and secrets.
+ */
+export async function deployUiWorkerBindingTargets(
+  options: DeployOptions & {
+    apiBaseUrl?: string;
+  },
+  enabledComponents: { loginUi: boolean; adminUi: boolean }
+): Promise<UiWorkersDeploymentSummary> {
+  const apiBaseUrl = options.apiBaseUrl || `https://${options.env}-ar-router.workers.dev`;
+  const placeholderUiEnv: UiEnvConfig = {
+    PUBLIC_API_BASE_URL: apiBaseUrl,
+    PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
+    API_BACKEND_URL: DISABLED_API_BACKEND_URL,
+  };
+
+  options.onProgress?.('Preparing UI Worker binding targets before router deploy...');
+
+  return deployAllUiWorkers(
+    {
+      ...options,
+      perComponent: {
+        'ar-login-ui': {
+          apiBaseUrl,
+          runtimeApiBackendUrl: DISABLED_API_BACKEND_URL,
+          uiEnvConfig: placeholderUiEnv,
+          serviceBindingName: undefined,
+          workersDev: true,
+          routes: [],
+        },
+        'ar-admin-ui': {
+          apiBaseUrl,
+          runtimeApiBackendUrl: DISABLED_API_BACKEND_URL,
+          uiEnvConfig: placeholderUiEnv,
+          serviceBindingName: undefined,
+          workersDev: true,
+          routes: [],
+        },
+      },
+    },
+    enabledComponents
+  );
 }
 
 export async function deployUiWorker(

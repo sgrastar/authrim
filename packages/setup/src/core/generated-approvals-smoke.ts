@@ -17,6 +17,7 @@ import {
   cleanupGeneratedApprovalSmokeClient,
   resolveGeneratedApprovalSmokeClient,
 } from './generated-approvals-smoke-client.js';
+import { ensureGeneratedTokenExchangeEnabled } from './generated-token-exchange-settings.js';
 
 const ELEVATION_GRANT_SUBJECT_TOKEN_TYPE = 'urn:authrim:token-type:elevation-grant';
 const PROTECTED_RESOURCE_GRANT_RETRY_DELAY_MS = 750;
@@ -245,6 +246,7 @@ export async function runGeneratedApprovalsSmoke(
   let subjectToken: string | undefined;
   let targetAudience: string | undefined;
   let protectedResourcePath: string | undefined;
+  let restoreTokenExchangeSettings: (() => Promise<SmokeCheck | null>) | undefined;
 
   const userCreateCheck = makeSmokeCheck(
     'approval-smoke-user-create',
@@ -439,9 +441,7 @@ export async function runGeneratedApprovalsSmoke(
           }
         },
       });
-      checks.push(
-        finalizeCheck(issueArtifactCheck, 'manual approval artifact issue verified')
-      );
+      checks.push(finalizeCheck(issueArtifactCheck, 'manual approval artifact issue verified'));
     }
 
     if (!artifactPath) {
@@ -635,9 +635,7 @@ export async function runGeneratedApprovalsSmoke(
         }
       },
     });
-    checks.push(
-      finalizeCheck(requestReadCheck, 'approval request read after completion verified')
-    );
+    checks.push(finalizeCheck(requestReadCheck, 'approval request read after completion verified'));
 
     const receiptsCheck = makeSmokeCheck(
       'approval-receipts-admin-read',
@@ -664,9 +662,7 @@ export async function runGeneratedApprovalsSmoke(
         }
       },
     });
-    checks.push(
-      finalizeCheck(receiptsCheck, 'approval decision receipts admin read verified')
-    );
+    checks.push(finalizeCheck(receiptsCheck, 'approval decision receipts admin read verified'));
 
     if (grantId && resolvedClientId) {
       const subjectTokenCheck = makeSmokeCheck(
@@ -728,9 +724,7 @@ export async function runGeneratedApprovalsSmoke(
           }
         },
       });
-      checks.push(
-        finalizeCheck(subjectTokenCheck, 'approval grant subject token issue verified')
-      );
+      checks.push(finalizeCheck(subjectTokenCheck, 'approval grant subject token issue verified'));
     } else if (grantId) {
       const subjectTokenWarn = makeSmokeCheck(
         'approval-subject-token',
@@ -741,12 +735,21 @@ export async function runGeneratedApprovalsSmoke(
         subjectTokenWarn,
         'service client could not be resolved, so subject token issue was skipped'
       );
-      checks.push(
-        finalizeCheck(subjectTokenWarn, 'approval grant subject token issue skipped')
-      );
+      checks.push(finalizeCheck(subjectTokenWarn, 'approval grant subject token issue skipped'));
     }
 
     if (subjectToken && resolvedClientId && resolvedClientSecret && targetAudience) {
+      const tokenExchangeEnable = await ensureGeneratedTokenExchangeEnabled({
+        baseUrl: target.baseUrl,
+        timeoutMs,
+        adminSecret,
+        tenantId,
+        checkId: 'approval-token-exchange-settings',
+        title: 'approval token exchange settings',
+      });
+      checks.push(tokenExchangeEnable.check);
+      restoreTokenExchangeSettings = tokenExchangeEnable.restore;
+
       const tokenExchangeCheck = makeSmokeCheck(
         'approval-downstream-token-exchange',
         'approval downstream token exchange',
@@ -796,9 +799,7 @@ export async function runGeneratedApprovalsSmoke(
           }
         }
       }
-      checks.push(
-        finalizeCheck(tokenExchangeCheck, 'approval downstream token exchange verified')
-      );
+      checks.push(finalizeCheck(tokenExchangeCheck, 'approval downstream token exchange verified'));
 
       if (downstreamAccessToken) {
         const introspectionCheck = makeSmokeCheck(
@@ -852,18 +853,12 @@ export async function runGeneratedApprovalsSmoke(
                 'authrim_elevation.resource_class=customer_profile verified'
               );
             } else {
-              addWarn(
-                introspectionCheck,
-                'authrim_elevation.resource_class could not be verified'
-              );
+              addWarn(introspectionCheck, 'authrim_elevation.resource_class could not be verified');
             }
           }
         }
         checks.push(
-          finalizeCheck(
-            introspectionCheck,
-            'approval downstream token introspection verified'
-          )
+          finalizeCheck(introspectionCheck, 'approval downstream token introspection verified')
         );
 
         if (protectedResourcePath) {
@@ -972,10 +967,7 @@ export async function runGeneratedApprovalsSmoke(
             'integration_hint.product_route is missing, so protected resource read was skipped'
           );
           checks.push(
-            finalizeCheck(
-              protectedResourceWarn,
-              'approval protected resource read skipped'
-            )
+            finalizeCheck(protectedResourceWarn, 'approval protected resource read skipped')
           );
         }
       }
@@ -989,9 +981,7 @@ export async function runGeneratedApprovalsSmoke(
         protectedResourceWarn,
         'service client secret could not be resolved, so token exchange and protected resource read were skipped'
       );
-      checks.push(
-        finalizeCheck(protectedResourceWarn, 'approval protected resource read skipped')
-      );
+      checks.push(finalizeCheck(protectedResourceWarn, 'approval protected resource read skipped'));
     }
 
     return {
@@ -1006,6 +996,12 @@ export async function runGeneratedApprovalsSmoke(
       checks,
     };
   } finally {
+    if (restoreTokenExchangeSettings) {
+      const restoreCheck = await restoreTokenExchangeSettings();
+      if (restoreCheck) {
+        checks.push(restoreCheck);
+      }
+    }
     await cleanupGeneratedApprovalSmokeClient({
       checks,
       baseUrl: target.baseUrl,

@@ -284,14 +284,13 @@ async function executeGeneratedValidationMachineSql(env: string, sql: string): P
   );
 
   if (result.exitCode !== 0) {
-    throw new Error(`validation_machine_sql_failed:${result.all || result.stderr || result.stdout}`);
+    throw new Error(
+      `validation_machine_sql_failed:${result.all || result.stderr || result.stdout}`
+    );
   }
 }
 
-async function writeGeneratedValidationMachineKeys(
-  keysDir: string,
-  keyId: string
-): Promise<void> {
+async function writeGeneratedValidationMachineKeys(keysDir: string, keyId: string): Promise<void> {
   const keyPair = generateEs256KeyPair(keyId);
   await writeFile(join(keysDir, SETUP_MACHINE_PRIVATE_KEY_FILE), keyPair.privateKeyPem, 'utf-8');
   await chmod(join(keysDir, SETUP_MACHINE_PRIVATE_KEY_FILE), 0o600);
@@ -338,8 +337,7 @@ async function createGeneratedValidationMachineAccess(options: {
       principalId,
       principalType: 'ci',
       displayName: 'Authrim Generated Environment Validation',
-      description:
-        'Temporary machine principal created by environment-validation smoke tests.',
+      description: 'Temporary machine principal created by environment-validation smoke tests.',
       permissions,
       tokenTtlSeconds: 600,
       createdByActorId: 'environment-validation',

@@ -197,7 +197,11 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     try {
       const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
       if (ccFeatureConfig.enabled && tokenResult.userId) {
-        const authAdapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core');
+        const authAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+          c.env,
+          'vc-issuer-core',
+          { tenantId: tokenResult.tenantId }
+        );
         const runtimeSources = await resolveUserStoreRuntimeSourcesFromEnv(
           c.env,
           tokenResult.tenantId
@@ -242,7 +246,9 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const vct = body.vct || tokenResult.vct || 'https://authrim.com/credentials/identity/v1';
 
     // Initialize repositories
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core');
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core', {
+      tenantId: tokenResult.tenantId,
+    });
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);

@@ -30,6 +30,7 @@ import {
   isShardedSessionId,
   createAuthContextFromHono,
   getTenantIdFromContext,
+  resolveLogoutTargetsFromSessionClientStore,
   createBackchannelLogoutOrchestrator,
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
@@ -287,35 +288,58 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('Session not in D1, using fallback userId', { sessionId: sessId });
         }
 
-        // Get clients from session_clients table (this works regardless of D1 session)
-        const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
-          authCtx.repositories.sessionClient.findBackchannelLogoutClients(sessId).catch((error) => {
-            log.warn('Failed to load backchannel clients', {
-              sessionId: sessId,
-              error: (error as Error).message,
-              action: 'BackchannelLogout',
-            });
-            return [];
-          }),
+        const storeTargets = await resolveLogoutTargetsFromSessionClientStore(
+          c.env,
+          tenantId,
+          sessId,
           authCtx.repositories.sessionClient
-            .findFrontchannelLogoutClients(sessId)
-            .catch((error) => {
-              log.warn('Failed to load frontchannel clients', {
+        ).catch((error) => {
+          log.warn('Failed to load logout clients from SessionClientStore', {
+            sessionId: sessId,
+            error: (error as Error).message,
+            action: 'Logout',
+          });
+          return null;
+        });
+        let targetClients = storeTargets;
+        if (!targetClients) {
+          const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
+            authCtx.repositories.sessionClient
+              .findBackchannelLogoutClients(sessId)
+              .catch((error) => {
+                log.warn('Failed to load backchannel clients', {
+                  sessionId: sessId,
+                  error: (error as Error).message,
+                  action: 'BackchannelLogout',
+                });
+                return [];
+              }),
+            authCtx.repositories.sessionClient
+              .findFrontchannelLogoutClients(sessId)
+              .catch((error) => {
+                log.warn('Failed to load frontchannel clients', {
+                  sessionId: sessId,
+                  error: (error as Error).message,
+                  action: 'FrontchannelLogout',
+                });
+                return [];
+              }),
+            authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
+              log.warn('Failed to load webhook clients', {
                 sessionId: sessId,
                 error: (error as Error).message,
-                action: 'FrontchannelLogout',
+                action: 'LogoutWebhook',
               });
               return [];
             }),
-          authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
-            log.warn('Failed to load webhook clients', {
-              sessionId: sessId,
-              error: (error as Error).message,
-              action: 'LogoutWebhook',
-            });
-            return [];
-          }),
-        ]);
+          ]);
+          targetClients = {
+            backchannelClients,
+            frontchannelClients,
+            webhookClients,
+          };
+        }
+        const { backchannelClients, frontchannelClients, webhookClients } = targetClients;
 
         // Only add if we have clients to notify
         if (
@@ -913,6 +937,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         const responseHeaders = new Headers({
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
+          'Content-Security-Policy':
+            "default-src 'none'; frame-src https:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+          'X-Content-Type-Options': 'nosniff',
         });
         // Clear both cookies - need append() for multiple Set-Cookie headers
         responseHeaders.append(

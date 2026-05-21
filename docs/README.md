@@ -26,7 +26,8 @@ Documentation for the Authrim OpenID Connect Provider project.
 | [Roadmap](./ROADMAP.md)                                          | Product roadmap and feature status                                                                                                                          |
 | [Access Control](./access-control.md)                            | RBAC, ABAC, and ReBAC architecture and usage                                                                                                                |
 | [Admin Jobs](./admin-jobs.md)                                    | Tenant-scoped asynchronous Admin Jobs, result artifacts, retry state, and UI behavior                                                                       |
-| [SAML Production Readiness](./saml-production-readiness.md)       | SAML metadata, signing rollover, attribute presets, SLO fanout observation, and operational limits                                                          |
+| [Testing Documentation](./testing/README.md)                     | Lightweight ISO/IEC/IEEE 29119-aligned testing profile, regression bank, and release confidence checklist                                                   |
+| [SAML Production Readiness](./saml-production-readiness.md)      | SAML metadata, signing rollover, attribute presets, SLO fanout observation, and operational limits                                                          |
 
 ---
 

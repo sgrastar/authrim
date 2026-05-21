@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import type { SAMLIdPConfig, SAMLAssertion } from '@authrim/ar-lib-core';
+import type { SAMLIdPConfig, SAMLAssertion, SAMLRequestData } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
   type DatabaseAdapter,
@@ -35,13 +35,7 @@ import {
   createAuditLog,
 } from '@authrim/ar-lib-core';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
-import {
-  parseXml,
-  findElement,
-  findElements,
-  getAttribute,
-  getTextContent,
-} from '../common/xml-utils';
+import { parseXml, getAttribute, getTextContent } from '../common/xml-utils';
 import {
   decodePostBindingMessage,
   parsePostBindingFormDataWithLimit,
@@ -93,7 +87,10 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const responseXml = decodePostBindingMessage(samlResponse, 'SAML Response');
 
     // Parse and validate Response
-    const { issuer, assertion, inResponseTo } = parseAndValidateResponse(responseXml, issuerUrl);
+    const { responseId, issuer, assertion, inResponseTo } = parseAndValidateResponse(
+      responseXml,
+      issuerUrl
+    );
 
     // Get IdP configuration
     const idpConfig = await getIdPConfigByEntityId(env, tenantId, issuer);
@@ -101,71 +98,35 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
     }
 
-    // Verify signature if present
-    if (hasSignature(responseXml)) {
-      try {
-        // Use strictXswProtection to prevent XML Signature Wrapping attacks
-        // This ensures no duplicate IDs exist and validates Reference URI points to correct element
-        // Note: SAML signatures can be on Response or Assertion - both are valid
-        verifyXmlSignature(responseXml, {
-          certificateOrKey: idpConfig.certificate,
-          strictXswProtection: true,
-        });
-
-        // Additional validation: ensure the Assertion we're using is covered by the signature
-        // Parse the Response and Assertion IDs
-        const doc = parseXml(responseXml);
-        const responseElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
-        const responseId = responseElement ? getAttribute(responseElement, 'ID') : null;
-        const assertionElement = findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion');
-        const assertionId = assertionElement ? getAttribute(assertionElement, 'ID') : null;
-
-        // Check if assertion itself is signed (has its own Signature element)
-        const assertionHasSignature = assertionElement
-          ? findElement(assertionElement, 'http://www.w3.org/2000/09/xmldsig#', 'Signature') !==
-            null
-          : false;
-
-        // If assertion is not directly signed, ensure Response is signed (which covers the assertion)
-        if (!assertionHasSignature && !responseId) {
-          log.warn('Neither Assertion nor Response has verifiable signature coverage', {});
-        }
-      } catch (error) {
-        log.error('Signature verification failed', {}, error as Error);
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
-    } else if (idpConfig.certificate) {
-      // IdP is expected to sign, but no signature found
-      log.warn('Expected signed response but none found', {});
-      // Depending on security requirements, you might want to reject unsigned responses
+    try {
+      validateSAMLResponseSignature(responseXml, idpConfig, responseId, assertion.id);
+    } catch (error) {
+      log.error('Signature verification failed', {}, error as Error);
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate InResponseTo (if we sent an AuthnRequest)
+    let validatedRequest: SAMLRequestData | null = null;
     if (inResponseTo) {
-      const isValidRequest = await validateInResponseTo(env, tenantId, inResponseTo, issuer);
-      if (!isValidRequest) {
-        const strictMode = await getStrictInResponseToSetting(env);
-        if (strictMode) {
-          log.error('InResponseTo validation failed (strict mode)', { inResponseTo });
-          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-        }
-        log.warn('InResponseTo validation failed', { inResponseTo });
-        // Continue anyway for IdP-initiated SSO compatibility (non-strict mode)
-      }
-    }
-
-    // Validate OneTimeUse condition (SAML 2.0 Core 2.5.1.5)
-    if (assertion.conditions?.oneTimeUse) {
-      const isFirstUse = await checkAndRecordOneTimeUse(
-        env,
-        tenantId,
-        issuer,
-        assertion.id,
-        assertion.conditions.notOnOrAfter
-      );
-      if (!isFirstUse) {
+      validatedRequest = await consumeInResponseTo(env, tenantId, inResponseTo, issuer);
+      if (!validatedRequest) {
+        log.error('InResponseTo validation failed', { inResponseTo });
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
+    } else if (await getStrictInResponseToSetting(env)) {
+      log.error('SAML Response missing InResponseTo while strict mode is enabled', {});
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const isFirstUse = await checkAndRecordBearerAssertionUse(
+      env,
+      tenantId,
+      issuer,
+      assertion.id,
+      assertion.subjectConfirmationData.notOnOrAfter
+    );
+    if (!isFirstUse) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const authnContextClassRef = assertion.authnStatement?.authnContext?.authnContextClassRef;
@@ -243,7 +204,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     c.executionCtx?.waitUntil(auditPromise);
 
     // Determine redirect URL
-    let returnUrl = relayState;
+    let returnUrl = validatedRequest?.relayState || resolveSafeReturnUrl(env, tenantId, relayState);
     if (!returnUrl) {
       const uiConfig = await getUIConfig(env);
       returnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${buildIssuerUrl(env, tenantId)}/`;
@@ -420,10 +381,42 @@ function getUrlOrigin(value: unknown): string | null {
   }
 }
 
+function resolveSafeReturnUrl(env: Env, tenantId: string, value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return null;
+  }
+
+  const issuerOrigin = getUrlOrigin(buildIssuerUrl(env, tenantId));
+  const uiOrigin = getUrlOrigin((env as unknown as Record<string, unknown>).UI_URL);
+  const allowedOrigins = new Set(
+    [issuerOrigin, uiOrigin].filter((origin): origin is string => Boolean(origin))
+  );
+
+  return allowedOrigins.has(url.origin) ? url.toString() : null;
+}
+
 interface ParsedResponse {
+  responseId: string;
   issuer: string;
   inResponseTo?: string;
-  assertion: SAMLAssertion;
+  assertion: ParsedSAMLAssertion;
+}
+
+interface ParsedSAMLAssertion extends SAMLAssertion {
+  subjectConfirmationData: {
+    notOnOrAfter: string;
+  };
 }
 
 /**
@@ -432,10 +425,18 @@ interface ParsedResponse {
 function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedResponse {
   const doc = parseXml(xml);
 
-  // Find Response element
-  const responseElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
-  if (!responseElement) {
-    throw new Error('Invalid SAML Response: missing Response element');
+  const responseElement = doc.documentElement;
+  if (
+    !responseElement ||
+    responseElement.namespaceURI !== SAML_NAMESPACES.SAML2P ||
+    responseElement.localName !== 'Response'
+  ) {
+    throw new Error('Invalid SAML Response: root element must be Response');
+  }
+
+  const responseId = getAttribute(responseElement, 'ID');
+  if (!responseId) {
+    throw new Error('Invalid SAML Response: missing Response ID');
   }
 
   // Check Destination
@@ -452,17 +453,24 @@ function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedRespons
   const inResponseTo = getAttribute(responseElement, 'InResponseTo') || undefined;
 
   // Check Status
-  const statusElement = findElement(responseElement, SAML_NAMESPACES.SAML2P, 'Status');
+  const statusElement = findDirectChildElement(responseElement, SAML_NAMESPACES.SAML2P, 'Status');
   if (!statusElement) {
     throw new Error('Invalid SAML Response: missing Status element');
   }
 
-  const statusCodeElement = findElement(statusElement, SAML_NAMESPACES.SAML2P, 'StatusCode');
-  const statusCode = getAttribute(statusCodeElement!, 'Value');
+  const statusCodeElement = findDirectChildElement(
+    statusElement,
+    SAML_NAMESPACES.SAML2P,
+    'StatusCode'
+  );
+  if (!statusCodeElement) {
+    throw new Error('Invalid SAML Response: missing StatusCode element');
+  }
+  const statusCode = getAttribute(statusCodeElement, 'Value');
 
   if (statusCode !== STATUS_CODES.SUCCESS) {
     const statusMessage = getTextContent(
-      findElement(statusElement, SAML_NAMESPACES.SAML2P, 'StatusMessage')
+      findDirectChildElement(statusElement, SAML_NAMESPACES.SAML2P, 'StatusMessage')
     );
     throw new Error(
       `SAML authentication failed: ${statusCode} - ${statusMessage || 'Unknown error'}`
@@ -470,22 +478,25 @@ function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedRespons
   }
 
   // Get Issuer
-  const issuerElement = findElement(responseElement, SAML_NAMESPACES.SAML2, 'Issuer');
+  const issuerElement = findDirectChildElement(responseElement, SAML_NAMESPACES.SAML2, 'Issuer');
   const issuer = getTextContent(issuerElement);
   if (!issuer) {
     throw new Error('Invalid SAML Response: missing Issuer');
   }
 
-  // Find Assertion
-  const assertionElement = findElement(responseElement, SAML_NAMESPACES.SAML2, 'Assertion');
-  if (!assertionElement) {
-    throw new Error('Invalid SAML Response: missing Assertion');
+  const assertionElements = findDirectChildElements(
+    responseElement,
+    SAML_NAMESPACES.SAML2,
+    'Assertion'
+  );
+  if (assertionElements.length !== 1) {
+    throw new Error('Invalid SAML Response: expected exactly one Assertion');
   }
 
   // Parse Assertion (pass inResponseTo for SubjectConfirmationData validation)
-  const assertion = parseAssertion(assertionElement, issuerUrl, inResponseTo);
+  const assertion = parseAssertion(assertionElements[0], issuerUrl, inResponseTo);
 
-  return { issuer, inResponseTo, assertion };
+  return { responseId, issuer, inResponseTo, assertion };
 }
 
 /**
@@ -499,21 +510,24 @@ function parseAssertion(
   assertionElement: Element,
   issuerUrl: string,
   inResponseTo?: string
-): SAMLAssertion {
+): ParsedSAMLAssertion {
   const id = getAttribute(assertionElement, 'ID') || '';
+  if (!id) {
+    throw new Error('Invalid Assertion: missing ID');
+  }
   const issueInstant = getAttribute(assertionElement, 'IssueInstant') || '';
 
   // Get Issuer
-  const issuerElement = findElement(assertionElement, SAML_NAMESPACES.SAML2, 'Issuer');
+  const issuerElement = findDirectChildElement(assertionElement, SAML_NAMESPACES.SAML2, 'Issuer');
   const issuer = getTextContent(issuerElement) || '';
 
   // Parse Subject
-  const subjectElement = findElement(assertionElement, SAML_NAMESPACES.SAML2, 'Subject');
+  const subjectElement = findDirectChildElement(assertionElement, SAML_NAMESPACES.SAML2, 'Subject');
   if (!subjectElement) {
     throw new Error('Invalid Assertion: missing Subject');
   }
 
-  const nameIdElement = findElement(subjectElement, SAML_NAMESPACES.SAML2, 'NameID');
+  const nameIdElement = findDirectChildElement(subjectElement, SAML_NAMESPACES.SAML2, 'NameID');
   if (!nameIdElement) {
     throw new Error('Invalid Assertion: missing NameID');
   }
@@ -525,13 +539,23 @@ function parseAssertion(
 
   // Validate SubjectConfirmation (SAML 2.0 Profiles 4.1.4.2)
   const expectedAcsUrl = `${issuerUrl}/saml/sp/acs`;
-  validateSubjectConfirmation(subjectElement, expectedAcsUrl, inResponseTo);
+  const subjectConfirmationData = validateSubjectConfirmation(
+    subjectElement,
+    expectedAcsUrl,
+    inResponseTo
+  );
 
   // Parse Conditions
-  const conditionsElement = findElement(assertionElement, SAML_NAMESPACES.SAML2, 'Conditions');
+  const conditionsElement = findDirectChildElement(
+    assertionElement,
+    SAML_NAMESPACES.SAML2,
+    'Conditions'
+  );
   let conditions: SAMLAssertion['conditions'];
 
-  if (conditionsElement) {
+  if (!conditionsElement) {
+    throw new Error('Invalid Assertion: missing Conditions');
+  } else {
     const notBefore = getAttribute(conditionsElement, 'NotBefore');
     const notOnOrAfter = getAttribute(conditionsElement, 'NotOnOrAfter');
 
@@ -540,36 +564,47 @@ function parseAssertion(
     const clockSkewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
 
     if (notBefore) {
-      const notBeforeTime = new Date(notBefore).getTime();
+      const notBeforeTime = parseSAMLDateTimeMs(notBefore, 'Conditions NotBefore');
       if (now < notBeforeTime - clockSkewMs) {
         throw new Error('Assertion is not yet valid (NotBefore)');
       }
     }
 
     if (notOnOrAfter) {
-      const notOnOrAfterTime = new Date(notOnOrAfter).getTime();
+      const notOnOrAfterTime = parseSAMLDateTimeMs(notOnOrAfter, 'Conditions NotOnOrAfter');
       if (now > notOnOrAfterTime + clockSkewMs) {
         throw new Error('Assertion has expired (NotOnOrAfter)');
       }
     }
 
-    // Get Audience
-    const audienceElements = findElements(conditionsElement, SAML_NAMESPACES.SAML2, 'Audience');
+    // Get Audience from direct AudienceRestriction children.
+    const audienceRestrictionElements = findDirectChildElements(
+      conditionsElement,
+      SAML_NAMESPACES.SAML2,
+      'AudienceRestriction'
+    );
+    const audienceElements = audienceRestrictionElements.flatMap((audienceRestriction) =>
+      findDirectChildElements(audienceRestriction, SAML_NAMESPACES.SAML2, 'Audience')
+    );
     const audiences = audienceElements.map((el) => getTextContent(el) || '').filter(Boolean);
 
     // Validate audience
     const expectedAudience = `${issuerUrl}/saml/sp`;
-    if (audiences.length > 0 && !audiences.includes(expectedAudience)) {
+    if (audiences.length === 0 || !audiences.includes(expectedAudience)) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Audience in SAML Assertion');
     }
 
     // Check OneTimeUse condition (SAML 2.0 Core 2.5.1.5)
-    const oneTimeUseElement = findElement(conditionsElement, SAML_NAMESPACES.SAML2, 'OneTimeUse');
+    const oneTimeUseElement = findDirectChildElement(
+      conditionsElement,
+      SAML_NAMESPACES.SAML2,
+      'OneTimeUse'
+    );
     const oneTimeUse = oneTimeUseElement !== null;
 
     // Check ProxyRestriction condition (SAML 2.0 Core 2.5.1.6)
-    const proxyRestrictionElement = findElement(
+    const proxyRestrictionElement = findDirectChildElement(
       conditionsElement,
       SAML_NAMESPACES.SAML2,
       'ProxyRestriction'
@@ -592,7 +627,7 @@ function parseAssertion(
   }
 
   // Parse AuthnStatement
-  const authnStatementElement = findElement(
+  const authnStatementElement = findDirectChildElement(
     assertionElement,
     SAML_NAMESPACES.SAML2,
     'AuthnStatement'
@@ -600,16 +635,14 @@ function parseAssertion(
   let authnStatement: SAMLAssertion['authnStatement'];
 
   if (authnStatementElement) {
-    const authnContextElement = findElement(
+    const authnContextElement = findDirectChildElement(
       authnStatementElement,
       SAML_NAMESPACES.SAML2,
       'AuthnContext'
     );
-    const authnContextClassRefElement = findElement(
-      authnContextElement!,
-      SAML_NAMESPACES.SAML2,
-      'AuthnContextClassRef'
-    );
+    const authnContextClassRefElement = authnContextElement
+      ? findDirectChildElement(authnContextElement, SAML_NAMESPACES.SAML2, 'AuthnContextClassRef')
+      : null;
 
     authnStatement = {
       authnInstant: getAttribute(authnStatementElement, 'AuthnInstant') || '',
@@ -622,7 +655,7 @@ function parseAssertion(
   }
 
   // Parse Attributes
-  const attributeStatementElement = findElement(
+  const attributeStatementElement = findDirectChildElement(
     assertionElement,
     SAML_NAMESPACES.SAML2,
     'AttributeStatement'
@@ -630,7 +663,7 @@ function parseAssertion(
   const attributeStatement: SAMLAssertion['attributeStatement'] = [];
 
   if (attributeStatementElement) {
-    const attributeElements = findElements(
+    const attributeElements = findDirectChildElements(
       attributeStatementElement,
       SAML_NAMESPACES.SAML2,
       'Attribute'
@@ -641,7 +674,11 @@ function parseAssertion(
       const nameFormat = getAttribute(attrEl, 'NameFormat') || undefined;
       const friendlyName = getAttribute(attrEl, 'FriendlyName') || undefined;
 
-      const valueElements = findElements(attrEl, SAML_NAMESPACES.SAML2, 'AttributeValue');
+      const valueElements = findDirectChildElements(
+        attrEl,
+        SAML_NAMESPACES.SAML2,
+        'AttributeValue'
+      );
       const values = valueElements.map((el) => getTextContent(el) || '').filter(Boolean);
 
       attributeStatement.push({ name, nameFormat, friendlyName, values });
@@ -656,6 +693,7 @@ function parseAssertion(
       nameId,
       nameIdFormat: nameIdFormat as SAMLAssertion['subject']['nameIdFormat'],
     },
+    subjectConfirmationData,
     conditions,
     authnStatement,
     attributeStatement: attributeStatement.length > 0 ? attributeStatement : undefined,
@@ -688,9 +726,9 @@ function validateSubjectConfirmation(
   subjectElement: Element,
   expectedAcsUrl: string,
   expectedInResponseTo?: string
-): void {
+): ParsedSAMLAssertion['subjectConfirmationData'] {
   // Find SubjectConfirmation element
-  const subjectConfirmationElement = findElement(
+  const subjectConfirmationElement = findDirectChildElement(
     subjectElement,
     SAML_NAMESPACES.SAML2,
     'SubjectConfirmation'
@@ -719,7 +757,7 @@ function validateSubjectConfirmation(
   }
 
   // For bearer method, SubjectConfirmationData is required
-  const subjectConfirmationDataElement = findElement(
+  const subjectConfirmationDataElement = findDirectChildElement(
     subjectConfirmationElement,
     SAML_NAMESPACES.SAML2,
     'SubjectConfirmationData'
@@ -751,7 +789,10 @@ function validateSubjectConfirmation(
     throw new Error('Invalid Assertion: SubjectConfirmationData missing NotOnOrAfter attribute');
   }
 
-  const notOnOrAfterTime = new Date(notOnOrAfter).getTime();
+  const notOnOrAfterTime = parseSAMLDateTimeMs(
+    notOnOrAfter,
+    'SubjectConfirmationData NotOnOrAfter'
+  );
   const now = Date.now();
   const clockSkewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
 
@@ -786,13 +827,15 @@ function validateSubjectConfirmation(
       // Strict mode can be enabled via SAML_STRICT_INRESPONSETO
     }
   }
+
+  return { notOnOrAfter };
 }
 
 /**
- * Check and record OneTimeUse assertion (SAML 2.0 Core 2.5.1.5)
+ * Check and record a bearer assertion ID to prevent replay.
  * Returns true if this is the first use, false if already used
  */
-async function checkAndRecordOneTimeUse(
+async function checkAndRecordBearerAssertionUse(
   env: Env,
   tenantId: string,
   idpEntityId: string,
@@ -807,14 +850,17 @@ async function checkAndRecordOneTimeUse(
   const existingEntry = await kvStore.get(key);
   if (existingEntry) {
     const log = createLogger().module('SAML-SP-ACS');
-    log.warn('OneTimeUse assertion already used', { assertionId });
+    log.warn('Bearer assertion already used', { assertionId });
     return false;
   }
 
-  // Calculate TTL based on NotOnOrAfter (or default 5 minutes)
+  // Calculate TTL based on SubjectConfirmationData NotOnOrAfter.
   let expirationTtl = 300; // Default 5 minutes
   if (notOnOrAfter) {
-    const notOnOrAfterTime = new Date(notOnOrAfter).getTime();
+    const notOnOrAfterTime = parseSAMLDateTimeMs(
+      notOnOrAfter,
+      'SubjectConfirmationData NotOnOrAfter'
+    );
     const now = Date.now();
     const clockSkewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
     // Keep the record until after the assertion would have expired anyway
@@ -875,14 +921,14 @@ async function getStrictInResponseToSetting(env: Env): Promise<boolean> {
 }
 
 /**
- * Validate InResponseTo against stored request
+ * Consume InResponseTo against stored request
  */
-async function validateInResponseTo(
+async function consumeInResponseTo(
   env: Env,
   tenantId: string,
   inResponseTo: string,
   issuer: string
-): Promise<boolean> {
+): Promise<SAMLRequestData | null> {
   try {
     const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
       buildSAMLRequestStoreInstanceName(tenantId, 'sp', issuer)
@@ -896,10 +942,85 @@ async function validateInResponseTo(
       }
     );
 
-    return response.ok;
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as SAMLRequestData;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function validateSAMLResponseSignature(
+  xml: string,
+  idpConfig: SAMLIdPConfig,
+  responseId: string,
+  assertionId: string
+): void {
+  if (!idpConfig.certificate) {
+    throw new Error('IdP certificate is required to verify SAML Response signatures');
+  }
+
+  if (!hasSignature(xml)) {
+    throw new Error('Signed SAML Response or Assertion is required for configured IdP');
+  }
+
+  verifyXmlSignature(xml, {
+    certificateOrKey: idpConfig.certificate,
+    strictXswProtection: true,
+  });
+
+  const signedReferences = getSignatureReferenceUris(xml);
+  if (!signedReferences.has(`#${responseId}`) && !signedReferences.has(`#${assertionId}`)) {
+    throw new Error('SAML signature does not cover the processed Response or Assertion');
+  }
+}
+
+function getSignatureReferenceUris(xml: string): Set<string> {
+  const doc = parseXml(xml);
+  const signatures = doc.getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Signature');
+  const uris = new Set<string>();
+  for (let i = 0; i < signatures.length; i++) {
+    const references = signatures[i].getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Reference');
+    for (let j = 0; j < references.length; j++) {
+      const uri = getAttribute(references[j], 'URI');
+      if (uri) {
+        uris.add(uri);
+      }
+    }
+  }
+  return uris;
+}
+
+function parseSAMLDateTimeMs(value: string, label: string): number {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) {
+    throw new Error(`Invalid SAML dateTime: ${label}`);
+  }
+  return time;
+}
+
+function findDirectChildElement(
+  parent: Element,
+  namespace: string,
+  localName: string
+): Element | null {
+  return findDirectChildElements(parent, namespace, localName)[0] ?? null;
+}
+
+function findDirectChildElements(parent: Element, namespace: string, localName: string): Element[] {
+  const results: Element[] = [];
+  for (let i = 0; i < parent.childNodes.length; i++) {
+    const child = parent.childNodes[i];
+    if (
+      child.nodeType === 1 &&
+      (child as Element).namespaceURI === namespace &&
+      (child as Element).localName === localName
+    ) {
+      results.push(child as Element);
+    }
+  }
+  return results;
 }
 
 function validateAuthnContextPolicy(

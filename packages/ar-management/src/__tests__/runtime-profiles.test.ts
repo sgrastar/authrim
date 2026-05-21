@@ -6,7 +6,21 @@ import {
   DEFAULT_AUDIT_PROFILE_ID,
   DEFAULT_RESIDENCY_PROFILE_ID,
   DEFAULT_STORAGE_PROFILE_ID,
+  TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION,
 } from '@authrim/ar-lib-core';
+
+const { mockWriteAdminAuditLog } = vi.hoisted(() => ({
+  mockWriteAdminAuditLog: vi.fn(),
+}));
+
+vi.mock('../admin-shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../admin-shared')>();
+  return {
+    ...actual,
+    writeAdminAuditLog: mockWriteAdminAuditLog,
+  };
+});
+
 import {
   adminRuntimeProfileDefaultsHandler,
   adminRuntimeProfileDefaultsUpdateHandler,
@@ -14,6 +28,7 @@ import {
   adminRuntimeProfileGetHandler,
   adminRuntimeProfileListHandler,
   adminRuntimeProfileUpsertHandler,
+  adminTenantRuntimeRegistryEmergencyPurgeHandler,
   adminTenantRuntimeProfilesHandler,
 } from '../runtime-profiles';
 
@@ -38,8 +53,34 @@ function createMockKV(initial: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
+function createMockD1First(row: Record<string, unknown> | null): D1Database {
+  const first = vi.fn(async () => row);
+  const bind = vi.fn(() => ({ first }));
+  const prepare = vi.fn(() => ({
+    bind,
+    first,
+  }));
+
+  return {
+    prepare,
+    batch: vi.fn(),
+    dump: vi.fn(),
+    exec: vi.fn(),
+  } as unknown as D1Database;
+}
+
 function createTestApp() {
-  const app = new Hono<{ Bindings: Env }>();
+  const app = new Hono<{
+    Bindings: Env;
+    Variables: {
+      adminAuth?: {
+        userId: string;
+        actorId: string;
+        roles: string[];
+        authMethod: 'session';
+      };
+    };
+  }>();
   app.get('/api/admin/runtime-profiles', adminRuntimeProfileListHandler);
   app.get('/api/admin/runtime-profiles/defaults', adminRuntimeProfileDefaultsHandler);
   app.put('/api/admin/runtime-profiles/defaults', adminRuntimeProfileDefaultsUpdateHandler);
@@ -47,6 +88,19 @@ function createTestApp() {
   app.put('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileUpsertHandler);
   app.delete('/api/admin/runtime-profiles/:kind/:id', adminRuntimeProfileDeleteHandler);
   app.get('/api/admin/tenants/:id/runtime-profiles', adminTenantRuntimeProfilesHandler);
+  app.use('/api/admin/tenants/:id/runtime-registry/emergency-purge', async (c, next) => {
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      actorId: 'admin-1',
+      roles: ['system_admin'],
+      authMethod: 'session',
+    });
+    await next();
+  });
+  app.post(
+    '/api/admin/tenants/:id/runtime-registry/emergency-purge',
+    adminTenantRuntimeRegistryEmergencyPurgeHandler
+  );
   return app;
 }
 
@@ -132,6 +186,7 @@ describe('runtime profile admin handlers', () => {
         };
       };
       storage_policy: {
+        environmentDefaultStorageProfileId: string;
         authCoreSlices: string[];
         slicePolicies: {
           users_core: {
@@ -143,6 +198,44 @@ describe('runtime profile admin handlers', () => {
             boundaryClass: string;
             nonD1OptionRequired: boolean;
           };
+        };
+        tenantOverrideEligibility: Record<string, { tenantOverrideAllowed: boolean }>;
+        tenantDatabaseStatsStatus?: {
+          available: boolean;
+          attentionRequired: boolean;
+          staleAfterHours: number;
+          unavailableReason?: string;
+          summary: {
+            active_tenant_core_databases: number;
+            stats_rows: number;
+            missing_stats_count: number;
+            stale_stats_count: number;
+            warning_count: number;
+            strong_warning_count: number;
+            stale_file_size_count: number;
+            unavailable_file_size_count: number;
+          } | null;
+        };
+        capabilityStatus?: Record<
+          string,
+          {
+            mvpReady: boolean;
+            unsupportedCount: number;
+            partialCount: number;
+            capabilities: Array<{ id: string; state: string }>;
+          }
+        >;
+        deploymentSelectionPolicy: {
+          selectionScope: string;
+          environmentDefaultStorageProfileId: string;
+          profiles: Record<
+            string,
+            {
+              deploymentSelectionAllowed: boolean;
+              isEnvironmentDefault: boolean;
+              guidance: { deploymentProfile: string; warnings: string[] };
+            }
+          >;
         };
       };
     };
@@ -190,6 +283,48 @@ describe('runtime profile admin handlers', () => {
       'storage_policy.tenantOverrideEligibility.tenant-a-storage.tenantOverrideAllowed',
       true
     );
+    expect(allBody.storage_policy.tenantDatabaseStatsStatus).toEqual(
+      expect.objectContaining({
+        available: false,
+        attentionRequired: false,
+        staleAfterHours: 36,
+        unavailableReason: 'db_admin_not_configured',
+        summary: null,
+      })
+    );
+    expect(allBody.storage_policy.capabilityStatus?.[DEFAULT_STORAGE_PROFILE_ID]).toEqual(
+      expect.objectContaining({
+        mvpReady: true,
+        unsupportedCount: 0,
+      })
+    );
+    expect(allBody.storage_policy.capabilityStatus?.['builtin:storage:tenant-d1']).toEqual(
+      expect.objectContaining({
+        mvpReady: false,
+        unsupportedCount: expect.any(Number),
+        capabilities: expect.arrayContaining([
+          expect.objectContaining({ id: 'device_ciba_cold_persistence', state: 'unsupported' }),
+        ]),
+      })
+    );
+    expect(allBody.storage_policy.deploymentSelectionPolicy).toEqual(
+      expect.objectContaining({
+        selectionScope: 'deployment',
+        environmentDefaultStorageProfileId: DEFAULT_STORAGE_PROFILE_ID,
+      })
+    );
+    expect(
+      allBody.storage_policy.deploymentSelectionPolicy.profiles[DEFAULT_STORAGE_PROFILE_ID]
+    ).toEqual(
+      expect.objectContaining({
+        deploymentSelectionAllowed: true,
+        isEnvironmentDefault: true,
+        guidance: expect.objectContaining({
+          deploymentProfile: 'shared-d1',
+          warnings: expect.arrayContaining([expect.stringContaining('Shared D1')]),
+        }),
+      })
+    );
     expect(allBody.storage_policy.authCoreSlices).toEqual(['users_core']);
     expect(allBody.storage_policy.slicePolicies.users_core).toEqual(
       expect.objectContaining({
@@ -217,6 +352,59 @@ describe('runtime profile admin handlers', () => {
     expect(customOnlyBody.profiles.storage.map((profile) => profile.id)).toEqual([
       'tenant-a-storage',
     ]);
+  });
+
+  it('includes tenant database stats summary in storage policy when control DB is available', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+    env.DB_ADMIN = createMockD1First({
+      active_tenant_core_databases: 4,
+      stats_rows: 3,
+      missing_stats_count: 1,
+      stale_stats_count: 1,
+      warning_count: 1,
+      strong_warning_count: 1,
+      stale_file_size_count: 1,
+      unavailable_file_size_count: 0,
+    });
+
+    const res = await app.request('/api/admin/runtime-profiles?kind=storage', undefined, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      storage_policy: {
+        tenantDatabaseStatsStatus: {
+          available: boolean;
+          attentionRequired: boolean;
+          staleAfterHours: number;
+          summary: {
+            active_tenant_core_databases: number;
+            missing_stats_count: number;
+            stale_stats_count: number;
+            warning_count: number;
+            strong_warning_count: number;
+            stale_file_size_count: number;
+            unavailable_file_size_count: number;
+          };
+        };
+      };
+    };
+
+    expect(body.storage_policy.tenantDatabaseStatsStatus).toEqual(
+      expect.objectContaining({
+        available: true,
+        attentionRequired: true,
+        staleAfterHours: 36,
+        summary: expect.objectContaining({
+          active_tenant_core_databases: 4,
+          missing_stats_count: 1,
+          stale_stats_count: 1,
+          warning_count: 1,
+          strong_warning_count: 1,
+          stale_file_size_count: 1,
+          unavailable_file_size_count: 0,
+        }),
+      })
+    );
   });
 
   it('creates, updates, fetches, and deletes a custom runtime profile', async () => {
@@ -936,7 +1124,7 @@ describe('runtime profile admin handlers', () => {
     expect(body.storage_policy.violationCode).toBe('tenant_auth_core_override_not_allowed');
   });
 
-  it('resolves tenant effective runtime profiles from environment defaults and tenant overrides', async () => {
+  it('resolves tenant effective runtime profiles from deployment defaults and tenant audit/residency overrides', async () => {
     const app = createTestApp();
     const env = createEnv({
       'profile-registry:storage:tenant-a-storage': JSON.stringify({
@@ -985,6 +1173,10 @@ describe('runtime profile admin handlers', () => {
         };
         tenantOverrideRequested: boolean;
         tenantOverrideAllowed: boolean;
+        deploymentSelectionPolicy: {
+          selectionScope: string;
+          isEnvironmentDefault: boolean;
+        };
       };
     };
 
@@ -1008,5 +1200,108 @@ describe('runtime profile admin handlers', () => {
     );
     expect(body.storage_policy.tenantOverrideRequested).toBe(true);
     expect(body.storage_policy.tenantOverrideAllowed).toBe(true);
+    expect(body.storage_policy.deploymentSelectionPolicy).toEqual(
+      expect.objectContaining({
+        selectionScope: 'deployment',
+        isEnvironmentDefault: false,
+      })
+    );
+  });
+
+  it('purges tenant runtime registry snapshots with break-glass confirmation and audit log', async () => {
+    const app = createTestApp();
+    const registry = createMockKV({
+      'tenant:acme:runtime-registry:snapshot:tenant:edge-a': JSON.stringify({ tenant_id: 'acme' }),
+      'tenant:acme:runtime-registry:generation:tenant:edge-a': '7',
+    });
+    const env = {
+      ...createEnv(),
+      TENANT_RUNTIME_REGISTRY: registry,
+    } as Env;
+
+    const response = await app.request(
+      '/api/admin/tenants/acme/runtime-registry/emergency-purge',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          breakGlassConfirmation: TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION,
+          reason: 'stale generated binding after emergency rollback',
+          deploymentTarget: 'edge-a',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      purged: boolean;
+      tenant_id: string;
+      deployment_target: string;
+      snapshot_key: string;
+      generation_key: string;
+    };
+    expect(body).toEqual(
+      expect.objectContaining({
+        purged: true,
+        tenant_id: 'acme',
+        deployment_target: 'edge-a',
+        snapshot_key: 'tenant:acme:runtime-registry:snapshot:tenant:edge-a',
+        generation_key: 'tenant:acme:runtime-registry:generation:tenant:edge-a',
+      })
+    );
+    await expect(registry.get(body.snapshot_key)).resolves.toBeNull();
+    await expect(registry.get(body.generation_key)).resolves.toBeNull();
+    expect(mockWriteAdminAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'tenant_runtime_registry_snapshot.emergency_purge',
+        resourceType: 'tenant_runtime_registry_snapshot',
+        resourceId: 'tenant:acme:runtime-registry:snapshot:tenant:edge-a',
+        result: 'success',
+        severity: 'critical',
+        metadata: expect.objectContaining({
+          tenant_id: 'acme',
+          deployment_target: 'edge-a',
+          reason: 'stale generated binding after emergency rollback',
+          generation_key: 'tenant:acme:runtime-registry:generation:tenant:edge-a',
+        }),
+      })
+    );
+  });
+
+  it('rejects tenant runtime registry emergency purge without exact confirmation', async () => {
+    const app = createTestApp();
+    const registry = createMockKV({
+      'tenant:acme:runtime-registry:snapshot:tenant:edge-a': JSON.stringify({ tenant_id: 'acme' }),
+      'tenant:acme:runtime-registry:generation:tenant:edge-a': '7',
+    });
+    const env = {
+      ...createEnv(),
+      TENANT_RUNTIME_REGISTRY: registry,
+    } as Env;
+
+    const response = await app.request(
+      '/api/admin/tenants/acme/runtime-registry/emergency-purge',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          breakGlassConfirmation: 'PURGE',
+          reason: 'operator typed the wrong confirmation',
+          deploymentTarget: 'edge-a',
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(400);
+    await expect(
+      registry.get('tenant:acme:runtime-registry:snapshot:tenant:edge-a')
+    ).resolves.not.toBeNull();
+    await expect(
+      registry.get('tenant:acme:runtime-registry:generation:tenant:edge-a')
+    ).resolves.toBe('7');
+    expect(mockWriteAdminAuditLog).not.toHaveBeenCalled();
   });
 });

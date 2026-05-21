@@ -33,8 +33,11 @@ import type { EventHandlerContext } from '../types/events/handler';
 import type { EventHandlerRegistryImpl } from './event-handler-registry';
 import type { EventHookRegistryImpl } from './event-hook-registry';
 import type { WebhookRegistryImpl, WebhookConfigWithScope } from './webhook-registry';
+import type { RuntimeLogEmitterEnv } from './logging-runtime-emitter';
+import type { TenantKeyResolver } from './audit/tenant-key';
 import { executeBeforeHooks } from './event-hook-registry';
-import { generateWebhookSignature, sendWebhook } from './webhook-sender';
+import { sendWebhook } from './webhook-sender';
+import { emitRuntimeLogRecords } from './logging-runtime-emitter';
 import { createLogger } from '../utils/logger';
 import { writeLegacyAuditLog } from '../utils/audit-log';
 
@@ -62,8 +65,22 @@ export interface EventDispatcherConfig {
   decryptSecret: SecretDecryptor;
   /** Optional runtime-aware audit log writer */
   auditLogWriter?: (event: UnifiedEvent, context: EventHandlerContext) => Promise<void>;
+  /** Optional metadata-only runtime log emission for webhook delivery */
+  runtimeLogging?: EventDispatcherRuntimeLoggingConfig;
   /** Options */
   options?: EventDispatcherOptions;
+}
+
+/**
+ * Optional runtime log emission dependencies.
+ */
+export interface EventDispatcherRuntimeLoggingConfig {
+  /** Environment bindings used by the runtime log emitter */
+  env: RuntimeLogEmitterEnv;
+  /** Optional tenant key resolver backed by the tenant registry */
+  tenantKeyResolver?: TenantKeyResolver;
+  /** Whether runtime logging failures should be ignored. Default: true. */
+  failOpen?: boolean;
 }
 
 /**
@@ -113,6 +130,41 @@ const DEFAULT_MAX_PAYLOAD_SIZE = 256 * 1024;
 /** KV prefix for deduplication */
 const DEDUP_PREFIX = 'event:dedup:';
 
+function getSafeHostname(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function classifyWebhookRuntimeLogError(result: {
+  success: boolean;
+  skipped?: boolean;
+  error?: string;
+  statusCode?: number;
+}): string | null {
+  if (result.success) {
+    return null;
+  }
+  if (result.skipped) {
+    return 'skipped';
+  }
+  if (result.statusCode !== undefined) {
+    return result.statusCode === 400 ? 'rejected_by_receiver' : 'http_status';
+  }
+  if (result.error === 'Invalid webhook URL') {
+    return 'invalid_url';
+  }
+  if (result.error === 'Request failed') {
+    return 'request_failed';
+  }
+  if (result.error === 'missing_secret') {
+    return 'missing_secret';
+  }
+  return 'delivery_failed';
+}
+
 // =============================================================================
 // Event Dispatcher Implementation
 // =============================================================================
@@ -159,6 +211,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     event: UnifiedEvent,
     context: EventHandlerContext
   ) => Promise<void>;
+  private readonly runtimeLogging?: EventDispatcherRuntimeLoggingConfig;
   private readonly options: Required<EventDispatcherOptions>;
 
   constructor(config: EventDispatcherConfig) {
@@ -169,6 +222,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     this.hookRegistry = config.hookRegistry;
     this.decryptSecret = config.decryptSecret;
     this.auditLogWriter = config.auditLogWriter;
+    this.runtimeLogging = config.runtimeLogging;
 
     // Apply defaults
     this.options = {
@@ -518,11 +572,22 @@ export class EventDispatcherImpl implements IEventDispatcher {
     error?: string;
     retryable?: boolean;
     statusCode?: number;
+    deliveryId?: string;
+    durationMs?: number;
   }> {
+    const startedAt = Date.now();
     try {
       // Skip if no secret (can't sign)
       if (!webhook.secretEncrypted) {
-        return { success: false, skipped: true };
+        const result = {
+          success: false,
+          skipped: true,
+          error: 'missing_secret',
+          retryable: false,
+          durationMs: Date.now() - startedAt,
+        };
+        await this.emitWebhookRuntimeLog(event, webhook, result, startedAt);
+        return result;
       }
 
       // Decrypt secret
@@ -537,32 +602,120 @@ export class EventDispatcherImpl implements IEventDispatcher {
         data: event.data,
       });
 
-      // Generate signature
-      const signature = await generateWebhookSignature(payload, secret);
-
       // Send webhook
       const result = await sendWebhook({
         url: webhook.url,
         payload,
-        signature,
+        secret,
         timeoutMs: webhook.timeoutMs,
         webhookId: webhook.id,
         customHeaders: webhook.headers,
       });
 
-      return {
+      const deliveryResult = {
         success: result.success,
         error: result.error,
         retryable: result.retryable,
         statusCode: result.statusCode,
+        deliveryId: result.deliveryId,
+        durationMs: Date.now() - startedAt,
       };
+      await this.emitWebhookRuntimeLog(event, webhook, deliveryResult, startedAt);
+      return deliveryResult;
     } catch (error) {
       log.error('Webhook error', { webhookId: webhook.id }, error as Error);
-      return {
+      const result = {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
         retryable: true,
+        durationMs: Date.now() - startedAt,
       };
+      await this.emitWebhookRuntimeLog(event, webhook, result, startedAt);
+      return result;
+    }
+  }
+
+  /**
+   * Emit metadata-only delivery logs for normal event webhook dispatch.
+   *
+   * SECURITY: The runtime record intentionally excludes the webhook payload,
+   * decrypted secret, request headers, full URL, and response body/error text.
+   */
+  private async emitWebhookRuntimeLog(
+    event: UnifiedEvent,
+    webhook: WebhookConfigWithScope,
+    result: {
+      success: boolean;
+      skipped?: boolean;
+      error?: string;
+      retryable?: boolean;
+      statusCode?: number;
+      deliveryId?: string;
+      durationMs?: number;
+    },
+    eventAt: number
+  ): Promise<void> {
+    if (!this.runtimeLogging) {
+      return;
+    }
+    const deliveryStatus = result.skipped ? 'skipped' : result.success ? 'delivered' : 'failed';
+    const recordId = [
+      'webhook',
+      event.id,
+      webhook.id,
+      result.deliveryId ?? crypto.randomUUID(),
+    ].join(':');
+
+    try {
+      await emitRuntimeLogRecords({
+        env: {
+          ...this.runtimeLogging.env,
+          DB_ADMIN: this.runtimeLogging.env.DB_ADMIN ?? this.adapter,
+          LOGGING_INDEX_DB: this.adapter,
+        },
+        tenantId: webhook.tenantId || event.tenantId,
+        logType: 'webhook',
+        surface: 'webhook_delivery',
+        planes: ['archive', 'external_sink'],
+        tenantKeyResolver: this.runtimeLogging.tenantKeyResolver,
+        records: [
+          {
+            id: recordId,
+            eventAt,
+            payload: {
+              kind: 'webhook_delivery',
+              event_id: event.id,
+              event_type: event.type,
+              webhook_id: webhook.id,
+              delivery_id: result.deliveryId ?? null,
+              status: deliveryStatus,
+              status_code: result.statusCode ?? null,
+              retryable: result.retryable ?? false,
+              duration_ms: result.durationMs ?? null,
+              endpoint_host: getSafeHostname(webhook.url),
+              error_class: classifyWebhookRuntimeLogError(result),
+            },
+            indexedFields: {
+              event_id: event.id,
+              event_type: event.type,
+              webhook_id: webhook.id,
+              delivery_id: result.deliveryId ?? null,
+              status: deliveryStatus,
+              status_code: result.statusCode ?? null,
+              error_class: classifyWebhookRuntimeLogError(result),
+            },
+          },
+        ],
+      });
+    } catch (error) {
+      log.error(
+        'Webhook runtime logging error',
+        { eventId: event.id, webhookId: webhook.id },
+        error as Error
+      );
+      if (this.runtimeLogging.failOpen === false) {
+        throw error;
+      }
     }
   }
 

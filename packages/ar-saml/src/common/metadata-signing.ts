@@ -1,6 +1,6 @@
 import type { Env, SAMLSigningRole } from '@authrim/ar-lib-core';
 import { signXml, type SignOptions } from './signature';
-import { parseXml, findElement, getAttribute } from './xml-utils';
+import { parseXml, getAttribute } from './xml-utils';
 import { SAML_NAMESPACES } from './constants';
 import { getSAMLSigningMaterial, type SAMLSigningKeyContext } from './saml-signing-keys';
 
@@ -51,8 +51,12 @@ export function signSAMLMetadata(
 
 function getSAMLMetadataDescriptorId(metadataXml: string): string {
   const doc = parseXml(metadataXml);
-  const entityDescriptor = findElement(doc, SAML_NAMESPACES.MD, 'EntityDescriptor');
-  const descriptorId = entityDescriptor ? getAttribute(entityDescriptor, 'ID') : null;
+  const entityDescriptor = doc.documentElement;
+  const descriptorId =
+    entityDescriptor?.namespaceURI === SAML_NAMESPACES.MD &&
+    entityDescriptor.localName === 'EntityDescriptor'
+      ? getAttribute(entityDescriptor, 'ID')
+      : null;
 
   if (!descriptorId) {
     throw new Error('SAML metadata signing requires EntityDescriptor ID');

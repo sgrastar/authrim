@@ -14,6 +14,7 @@ import {
   ensureDownstreamIntrospectionClient,
   loadDownstreamIntrospectionClientSecrets,
 } from '../core/downstream-introspection-client.js';
+import { waitForRouterWorkerReady } from '../core/worker-readiness.js';
 
 vi.mock('../core/cloudflare.js', () => ({
   getWorkersSubdomain: vi.fn(),
@@ -27,6 +28,10 @@ vi.mock('../core/deploy.js', () => ({
 vi.mock('../core/downstream-introspection-client.js', () => ({
   ensureDownstreamIntrospectionClient: vi.fn(),
   loadDownstreamIntrospectionClientSecrets: vi.fn(),
+}));
+
+vi.mock('../core/worker-readiness.js', () => ({
+  waitForRouterWorkerReady: vi.fn(),
 }));
 
 const tempDirs: string[] = [];
@@ -43,6 +48,13 @@ beforeEach(() => {
   vi.mocked(deployWorker).mockReset();
   vi.mocked(ensureDownstreamIntrospectionClient).mockReset();
   vi.mocked(loadDownstreamIntrospectionClientSecrets).mockReset();
+  vi.mocked(waitForRouterWorkerReady).mockReset();
+  vi.mocked(waitForRouterWorkerReady).mockResolvedValue({
+    ready: true,
+    attempts: 3,
+    elapsedMs: 3000,
+    checkedUrl: 'https://single-ar-router.example.com/api/health',
+  });
 });
 
 afterEach(() => {
@@ -128,6 +140,7 @@ describe('configureDownstreamIntrospectionDeployment', () => {
       adminApiSecretPath: join(keysDir, 'admin_api_secret.txt'),
       keysDir,
       tenantId: 'tenant-a',
+      maxRetries: 24,
       onProgress: undefined,
     });
     expect(vi.mocked(uploadSecrets)).toHaveBeenCalledWith(
@@ -179,5 +192,62 @@ describe('configureDownstreamIntrospectionDeployment', () => {
     expect(result.success).toBe(false);
     expect(result.secretUploadErrors).toEqual(['wrangler secret put failed']);
     expect(vi.mocked(deployWorker)).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the next API base URL candidate when readiness fails', async () => {
+    const rootDir = createTempRoot();
+    const keysDir = join(rootDir, '.authrim-keys', 'single');
+    const redeployResult: DeployResult = {
+      component: 'ar-userinfo',
+      workerName: 'single-ar-userinfo',
+      success: true,
+      deployedAt: new Date().toISOString(),
+      version: '1.2.3',
+    };
+
+    vi.mocked(waitForRouterWorkerReady)
+      .mockResolvedValueOnce({
+        ready: false,
+        attempts: 12,
+        elapsedMs: 300000,
+        checkedUrl: 'https://first.example.com/api/health',
+        error: 'HTTP 530: Error 1016',
+      })
+      .mockResolvedValueOnce({
+        ready: true,
+        attempts: 3,
+        elapsedMs: 3000,
+        checkedUrl: 'https://example.com/api/health',
+      });
+    vi.mocked(ensureDownstreamIntrospectionClient).mockResolvedValue({
+      success: true,
+      clientId: 'client-123',
+      clientSecret: 'secret-123',
+    });
+    vi.mocked(loadDownstreamIntrospectionClientSecrets).mockResolvedValue({
+      DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-123',
+      DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-123',
+    });
+    vi.mocked(uploadSecrets).mockResolvedValue({
+      success: true,
+      errors: [],
+    });
+    vi.mocked(deployWorker).mockResolvedValue(redeployResult);
+
+    const result = await configureDownstreamIntrospectionDeployment({
+      env: 'single',
+      rootDir,
+      keysDir,
+      apiBaseUrls: ['https://first.example.com', 'https://example.com'],
+      tenantId: 'tenant-a',
+    });
+
+    expect(result.success).toBe(true);
+    expect(vi.mocked(ensureDownstreamIntrospectionClient)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ensureDownstreamIntrospectionClient)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiBaseUrl: 'https://example.com',
+      })
+    );
   });
 });

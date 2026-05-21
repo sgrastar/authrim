@@ -21,6 +21,16 @@ const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
 app.use('*', logger());
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    maxAge: 86400,
+  })
+);
 app.use('*', requestContextMiddleware());
 app.use('*', pluginContextMiddleware());
 
@@ -43,18 +53,6 @@ app.use(
     xFrameOptions: 'DENY',
     xContentTypeOptions: 'nosniff',
     referrerPolicy: 'strict-origin-when-cross-origin',
-  })
-);
-
-// CORS configuration
-app.use(
-  '*',
-  cors({
-    origin: '*',
-    allowMethods: ['GET', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
-    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
-    maxAge: 86400,
   })
 );
 

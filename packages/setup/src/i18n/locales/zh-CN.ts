@@ -1,6 +1,6 @@
 /**
  * Chinese (Simplified) Translations for Authrim Setup Tool
- * 简体中文翻译
+ * Simplified Chinese translations
  */
 
 import type { Translations } from '../types.js';
@@ -475,7 +475,7 @@ const zhCN: Translations = {
   // Sharding settings
   'sharding.configurePrompt': '配置分片？（用于高负载环境）',
   'sharding.title': '分片设置',
-  'sharding.note': '注意：建议分片数为 2 的幂（8、16、32、64、128）',
+  'sharding.note': '注意：建议分片数为 2 的幂（4、8、16、32、64、128）',
   'sharding.authCodeShards': '授权码分片数',
   'sharding.refreshTokenShards': '刷新令牌分片数',
 
@@ -915,13 +915,15 @@ const zhCN: Translations = {
   'web.preview.issuerUrl': '发行者 URL：',
   'web.preview.loginUi': '登录 UI：',
   'web.preview.adminUi': '管理 UI：',
-  'web.preview.pagesUrl': '登录 UI (Worker)：',
+  'web.preview.pagesUrl': '登录 UI Origin：',
   'web.preview.tenantDiscover': '租户选择（公共入口）：',
   'web.preview.adminAccess': '管理 UI 访问地址：',
   'web.preview.firstTenant': '{{name}}（主租户）',
   'web.preview.otherTenants': '其他租户',
   'web.preview.allTenantsShared': '（所有租户共用）',
+  'web.preview.loginUiOriginNote': '（部署 Origin；租户登录使用 Issuer 的 /login）',
   'web.preview.viaApiProxy': '（通过 API 同域代理）',
+  'web.preview.conflictWarningTitle': '⚠️ 配置问题',
   'web.preview.conflictWarningMsg':
     '{{conflictUI}} 的自定义域名与 API 相同（{{baseDomain}}），由于"从 URL 中移除租户名"已禁用，对 {{baseDomain}} 的 API 请求（/authorize、/api/auth/* 等）将返回 404，导致登录流程无法运行。',
   'web.preview.conflictActionMsg':

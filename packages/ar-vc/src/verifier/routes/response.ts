@@ -181,7 +181,8 @@ async function storeAttributeVerification(
 ): Promise<void> {
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    `vc-vp-response:${vpRequest.tenantId}`
+    `vc-vp-response:${vpRequest.tenantId}`,
+    { tenantId: vpRequest.tenantId }
   );
   const verificationRepo = new AttributeVerificationRepository(adapter);
 

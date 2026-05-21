@@ -12,13 +12,17 @@ interface CliOptions {
   env?: string;
   configPath?: string;
   json: boolean;
+  liveCloudflare: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = { json: false };
+  const options: CliOptions = { json: false, liveCloudflare: false };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === '--') {
+      continue;
+    }
     if (arg === '--env') {
       options.env = argv[index + 1];
       index += 1;
@@ -36,6 +40,10 @@ function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === '--json') {
       options.json = true;
+      continue;
+    }
+    if (arg === '--live-cloudflare') {
+      options.liveCloudflare = true;
       continue;
     }
     if (arg === '--help' || arg === '-h') {
@@ -59,6 +67,7 @@ Options:
   --env <env>         Validate .authrim/{env}/config.json and related files
   --config <path>     Validate a generated config.json directly
   --base-dir <path>   Override repository base directory
+  --live-cloudflare   Also verify lock.json D1/R2 resources against Cloudflare with read-only wrangler calls
   --json              Emit JSON instead of checklist text
 `);
 }
@@ -102,6 +111,7 @@ async function main(): Promise<void> {
     baseDir: target.baseDir,
     env: target.env,
     configPath: target.configPath,
+    liveCloudflare: options.liveCloudflare,
   });
 
   if (options.json) {

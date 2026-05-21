@@ -74,7 +74,10 @@ function createMockContext(options: {
   db: D1Database;
   envOverrides?: Partial<Env>;
 }) {
-  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+  const contextStore = new Map<string, unknown>([
+    ['tenantId', 'default'],
+    ['adminAuth', { userId: 'admin-user-1' }],
+  ]);
   return {
     req: {
       path: options.path,

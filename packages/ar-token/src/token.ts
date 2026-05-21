@@ -3,6 +3,9 @@ import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core'
 import {
   createAuthContextFromHono,
   createPIIContextFromHono,
+  getRuntimeUserStoreSourcesFromHonoContext,
+  resolveCustomClaimRuntimeSourcesFromEnv,
+  registerSessionClientInStore,
   createRefreshTokenFamily,
   getRefreshTokenRotatorStubByJti,
   // Logging
@@ -44,6 +47,8 @@ import {
   evaluateClaimsForTarget,
   buildStandardUserClaims,
   hasSAORulesForTarget,
+  canIssueTokenWithPIIStatus,
+  resolveOIDCPIIRequirement,
 } from '@authrim/ar-lib-core';
 import {
   revokeToken,
@@ -113,7 +118,10 @@ import {
 import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core';
 import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-core';
 // Custom Claim Schema Resolver
-import { loadFeatureConfig, createCustomClaimSchemaResolver } from '@authrim/ar-lib-core';
+import {
+  loadFeatureConfig,
+  createCustomClaimSchemaResolverFromSources,
+} from '@authrim/ar-lib-core';
 // Tenant context
 import { getTenantIdFromContext, hasPIIDatabase } from '@authrim/ar-lib-core';
 // Event System
@@ -1529,6 +1537,46 @@ async function handleAuthorizationCodeGrant(
   // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
   // phone scope values are returned from the UserInfo Endpoint"
   const authCtx = createAuthContextFromHono(c, tenantId);
+  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
+  if (!parsedClaimsRequest.ok) {
+    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
+  }
+
+  const tokenPIIRequirement = resolveOIDCPIIRequirement({
+    scopes: authCodeData.scope,
+    claimsRequest: parsedClaimsRequest.request,
+    targets: ['userinfo', 'id_token'],
+  });
+  try {
+    const subjectCore = await getCachedUserCore(
+      c.env,
+      tenantId,
+      authCodeData.sub,
+      authCtx.coreAdapter
+    );
+    if (subjectCore?.pii_status) {
+      const piiAccess = canIssueTokenWithPIIStatus(subjectCore.pii_status, {
+        requiresPII: tokenPIIRequirement.requiresPII,
+      });
+      if (!piiAccess.ok) {
+        return oauthError(c, piiAccess.error, piiAccess.error_description, 400);
+      }
+    }
+  } catch (piiStatusError) {
+    log.error(
+      'Failed to evaluate subject PII status for token issuance',
+      {},
+      piiStatusError as Error
+    );
+    if (tokenPIIRequirement.requiresPII) {
+      return oauthError(
+        c,
+        'temporarily_unavailable',
+        'Requested claims require PII that is not currently available',
+        400
+      );
+    }
+  }
 
   // Phase 1 RBAC: Fetch RBAC claims for tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
@@ -1904,13 +1952,14 @@ async function handleAuthorizationCodeGrant(
   try {
     const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
     if (ccFeatureConfig.enabled) {
-      const piiCtx = hasPIIDatabase(c) ? createPIIContextFromHono(c, tenantId) : null;
-      const ccResolver = createCustomClaimSchemaResolver(
-        authCtx.coreAdapter,
-        piiCtx?.defaultPiiAdapter ?? null,
-        c.env.AUTHRIM_CONFIG || null,
-        ccFeatureConfig
-      );
+      const ccSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+      const ccResolver = createCustomClaimSchemaResolverFromSources({
+        schemaDb: ccSources.schemaDb,
+        nonPiiDb: ccSources.nonPiiDb,
+        piiDb: ccSources.piiDb,
+        cache: c.env.AUTHRIM_CONFIG || null,
+        featureConfig: ccFeatureConfig,
+      });
       const ccScopes = (authCodeData.scope || '').split(' ').filter(Boolean);
       const ccResult = await ccResolver.resolveClaimsForTarget(
         tenantId,
@@ -1946,11 +1995,6 @@ async function handleAuthorizationCodeGrant(
     ...anonymousClaims,
   };
 
-  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
-  if (!parsedClaimsRequest.ok) {
-    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
-  }
-
   const shouldEvaluateIdTokenClaims =
     parsedClaimsRequest.request &&
     (Object.keys(parsedClaimsRequest.request.id_token).length > 0 ||
@@ -1962,6 +2006,8 @@ async function handleAuthorizationCodeGrant(
       const user = await getCachedUser(c.env, tenantId, authCodeData.sub, {
         coreDb: authCtx.coreAdapter,
         piiDb: piiCtx.defaultPiiAdapter,
+        cacheScope: piiCtx.userCacheScope,
+        piiCacheMode: piiCtx.piiCacheMode,
       });
       const availableClaims: Record<string, unknown> = {
         ...(user ? buildStandardUserClaims(user) : {}),
@@ -2227,16 +2273,62 @@ async function handleAuthorizationCodeGrant(
         clientId: client_id,
         action: 'Logout',
       });
-      const result = await authCtx.repositories.sessionClient.createOrUpdate({
+      const mirrorMode =
+        getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.transientAuth
+          ?.sessionClientMirror ?? 'async';
+      const registrationInput = {
         session_id: authCodeData.sid,
         client_id: client_id,
-      });
-      log.debug('Successfully registered session-client', {
-        id: result.id,
-        sidPrefix: authCodeData.sid.substring(0, 25),
-        clientIdPrefix: client_id.substring(0, 25),
-        action: 'Logout',
-      });
+      };
+      const storeRegistrationPromise = registerSessionClientInStore(
+        c.env,
+        tenantId,
+        registrationInput
+      )
+        .then((result) => {
+          if (!result) {
+            return;
+          }
+          log.debug('Successfully registered session-client in DO', {
+            id: result.id,
+            sidPrefix: authCodeData.sid?.substring(0, 25),
+            clientIdPrefix: client_id.substring(0, 25),
+            action: 'Logout',
+          });
+        })
+        .catch((error) => {
+          log.error(
+            'Failed to register session-client in DO',
+            { action: 'Logout' },
+            error as Error
+          );
+        });
+      const mirrorPromise =
+        mirrorMode === 'disabled'
+          ? Promise.resolve()
+          : authCtx.repositories.sessionClient
+              .createOrUpdate(registrationInput)
+              .then((result) => {
+                log.debug('Successfully mirrored session-client', {
+                  id: result.id,
+                  sidPrefix: authCodeData.sid?.substring(0, 25),
+                  clientIdPrefix: client_id.substring(0, 25),
+                  action: 'Logout',
+                });
+              })
+              .catch((error) => {
+                // Log error but don't fail the token request - logout tracking is non-critical
+                log.error('Failed to mirror session-client', { action: 'Logout' }, error as Error);
+              });
+      const registrationPromise = Promise.all([storeRegistrationPromise, mirrorPromise]).then(
+        () => undefined
+      );
+
+      if (mirrorMode === 'sync') {
+        await registrationPromise;
+      } else {
+        c.executionCtx?.waitUntil(registrationPromise);
+      }
     } catch (error) {
       // Log error but don't fail the token request - logout tracking is non-critical
       log.error('Failed to register session-client', { action: 'Logout' }, error as Error);

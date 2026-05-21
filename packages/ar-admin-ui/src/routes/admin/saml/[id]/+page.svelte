@@ -27,6 +27,10 @@
 		{
 			value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
 			label: 'Unspecified'
+		},
+		{
+			value: 'urn:mace:shibboleth:1.0:nameIdentifier',
+			label: 'Shibboleth 1.x'
 		}
 	];
 
@@ -43,6 +47,7 @@
 	let enabled = $state(true);
 	let metadataUrl = $state('');
 	let providerName = $state('Authrim');
+	let logoUrl = $state('');
 	let entityId = $state('');
 	let ssoUrl = $state('');
 	let acsUrl = $state('');
@@ -100,6 +105,7 @@
 		metadataUrl = data.config.metadataUrl || '';
 		importMetadataUrl = data.config.metadataUrl || '';
 		providerName = data.config.providerName || 'Authrim';
+		logoUrl = data.config.logoUrl || '';
 		entityId = data.config.entityId || '';
 		ssoUrl = data.config.ssoUrl || '';
 		acsUrl = data.config.acsUrl || '';
@@ -162,6 +168,7 @@
 	function buildConfig(): SAMLProviderConfig {
 		const config: SAMLProviderConfig = {
 			description: description.trim(),
+			logoUrl: logoUrl.trim() || undefined,
 			entityId: entityId.trim(),
 			metadataUrl: metadataUrl.trim(),
 			sloUrl: sloUrl.trim(),
@@ -202,6 +209,7 @@
 
 	function validate() {
 		if (!name.trim()) return 'Name is required';
+		if (!isValidLoginLogoUrl(logoUrl)) return 'Login UI logo URL must be a valid HTTPS URL';
 		if (!entityId.trim()) return 'Entity ID is required';
 		if (!allowPost && !allowRedirect) return 'At least one binding is required';
 		if (provider?.providerType === 'saml_idp' && (!ssoUrl.trim() || !certificate.trim())) {
@@ -212,6 +220,15 @@
 		}
 		parseMapping();
 		return '';
+	}
+
+	function isValidLoginLogoUrl(value: string): boolean {
+		if (!value.trim()) return true;
+		try {
+			return new URL(value.trim()).protocol === 'https:';
+		} catch {
+			return false;
+		}
 	}
 
 	async function handleSave() {
@@ -392,7 +409,7 @@
 					<div class="form-group">
 						<label for="nameIdFormat" class="form-label">NameID Format</label>
 						<select id="nameIdFormat" bind:value={nameIdFormat} class="form-select">
-							{#each nameIdFormats as format}
+							{#each nameIdFormats as format (format.value)}
 								<option value={format.value}>{format.label}</option>
 							{/each}
 						</select>
@@ -406,6 +423,28 @@
 							class="form-input form-textarea"
 							rows="3"
 						></textarea>
+					</div>
+
+					<div class="form-group form-group-full">
+						<label for="logoUrl" class="form-label">Login UI Logo URL</label>
+						<div class="logo-url-field">
+							<input
+								id="logoUrl"
+								type="url"
+								bind:value={logoUrl}
+								class="form-input"
+								placeholder="https://example.com/logo.png"
+							/>
+							{#if logoUrl}
+								<div class="logo-url-preview" aria-label="Logo preview">
+									<img src={logoUrl} alt="" loading="lazy" />
+								</div>
+							{/if}
+						</div>
+						<p class="form-hint">
+							Optional. Used as the provider logo on Login UI buttons. HTTPS only; the image is
+							fitted into a square.
+						</p>
 					</div>
 				</div>
 			</div>
@@ -541,7 +580,7 @@
 							<label for="attributePreset" class="form-label">Attribute Preset</label>
 							<select id="attributePreset" bind:value={attributePresetId} class="form-select">
 								<option value="">None</option>
-								{#each presets as preset}
+								{#each presets as preset (preset.id)}
 									<option value={preset.id}>{preset.label}</option>
 								{/each}
 							</select>
@@ -732,6 +771,33 @@
 		min-height: auto;
 		resize: vertical;
 		line-height: 1.45;
+	}
+
+	.logo-url-field {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.logo-url-field .form-input {
+		flex: 1;
+	}
+
+	.logo-url-preview {
+		display: grid;
+		width: 40px;
+		height: 40px;
+		flex: 0 0 40px;
+		place-items: center;
+		border: 1px solid var(--color-border, #d8dde6);
+		border-radius: 8px;
+		background: var(--color-surface-subtle, #f8fafc);
+	}
+
+	.logo-url-preview img {
+		max-width: 28px;
+		max-height: 28px;
+		object-fit: contain;
 	}
 
 	.monospace {

@@ -33,20 +33,24 @@ import {
   readResponseTextPreview,
   safeFetch,
   validateWebhookUrl,
+  emitRuntimeLogRecords,
   type WebhookConfigWithScope,
   type Env,
 } from '@authrim/ar-lib-core';
-import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
 import {
-  createObjectCatalogEntry,
   getObjectCatalogObjectRecordByPublicArtifactId,
   type ObjectClass,
 } from '@authrim/ar-lib-core/services/object-catalog';
-import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
+import {
+  loadChunkedSensitiveDetailJson,
+  storeChunkedSensitiveDetailJson,
+} from '@authrim/ar-lib-core/services/sensitive-detail-chunk-store';
+import { signHttpSinkPayload } from '@authrim/ar-lib-logging/delivery';
 import {
   auditAdminSensitiveRead,
   requireAdminPermissionOrElevationGrant,
 } from '../../admin-elevation-access';
+import { createLoggingTenantKeyResolver } from '../../logging-tenant-key';
 
 /**
  * Webhook retry policy configuration (matching types/events/webhook.ts)
@@ -146,7 +150,6 @@ interface ListWebhooksQuery {
 // Helpers
 // =============================================================================
 
-const ENCRYPTED_OBJECT_CONTENT_TYPE = 'application/vnd.authrim.object-envelope+json';
 const WEBHOOK_DELIVERY_DETAIL_CONTENT_TYPE = 'application/json';
 const DEFAULT_OBJECT_KEY_VERSION = 1;
 const DELIVERY_BODY_PREVIEW_LIMIT = 200;
@@ -227,19 +230,6 @@ function getObjectEncryptionKeyVersion(env: Env): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_OBJECT_KEY_VERSION;
 }
 
-function buildWebhookDeliveryObjectKey(
-  tenantId: string,
-  webhookId: string,
-  deliveryId: string,
-  createdAt: number
-): string {
-  const createdAtDate = new Date(normalizeTimestampMs(createdAt));
-  const year = createdAtDate.getUTCFullYear();
-  const month = String(createdAtDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(createdAtDate.getUTCDate()).padStart(2, '0');
-  return `webhook-deliveries/${tenantId}/${webhookId}/${year}/${month}/${day}/${deliveryId}.json`;
-}
-
 function buildBodyPreview(
   body: string | null | undefined,
   maxLength = DELIVERY_BODY_PREVIEW_LIMIT
@@ -291,50 +281,26 @@ async function storeWebhookDeliveryPayload(
   }
 
   const objectClass: ObjectClass = 'webhook_delivery_payload';
-  const objectKey = buildWebhookDeliveryObjectKey(tenantId, webhookId, deliveryId, createdAt);
   const keyVersion = getObjectEncryptionKeyVersion(c.env);
-  const plaintext = JSON.stringify(detail);
-  const encrypted = await encryptObjectArtifact(plaintext, {
-    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-    plane: 'SENSITIVE_DETAILS',
-    keyVersion,
-    contentType: WEBHOOK_DELIVERY_DETAIL_CONTENT_TYPE,
-    context: {
-      tenantId,
-      objectKey,
-      objectClass,
-    },
-  });
-  const body = JSON.stringify(encrypted);
-  const bodyBytes = new TextEncoder().encode(body);
-  const checksumBuffer = await crypto.subtle.digest('SHA-256', bodyBytes);
-  const checksumSha256 = Array.from(new Uint8Array(checksumBuffer))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-
-  await c.env.SENSITIVE_DETAILS.put(objectKey, body, {
-    httpMetadata: { contentType: ENCRYPTED_OBJECT_CONTENT_TYPE },
-  });
-
   const adapter = getCoreAdapter(c);
-  const { catalogId } = await createObjectCatalogEntry(adapter, {
+  const stored = await storeChunkedSensitiveDetailJson({
+    adapter,
+    bucket: c.env.SENSITIVE_DETAILS,
+    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
     tenantId,
     objectClass,
+    payload: detail,
+    contentType: WEBHOOK_DELIVERY_DETAIL_CONTENT_TYPE,
     createdAt: normalizeTimestampMs(createdAt),
-    objects: [
-      {
-        representation: 'canonical_json',
-        objectKind: 'single',
-        bucketBinding: 'SENSITIVE_DETAILS',
-        objectKey,
-        keyVersion,
-        checksumSha256,
-        totalBytes: bodyBytes.byteLength,
-      },
-    ],
+    keyVersion,
+    tenantKeySalt: (c.env as { LOGGING_TENANT_KEY_SALT?: string }).LOGGING_TENANT_KEY_SALT,
+    ...({ tenantKeyResolver: createLoggingTenantKeyResolver(adapter) } as Record<string, unknown>),
+    surface: 'webhook',
+    queueBindings: c.env as unknown as Record<string, unknown>,
+    indexDbBinding: 'LOGGING_INDEX_DB',
   });
 
-  return catalogId;
+  return stored.catalogId;
 }
 
 async function loadWebhookDeliveryPayload(
@@ -364,18 +330,16 @@ async function loadWebhookDeliveryPayload(
     : null;
   const effectiveCatalogId = resolvedCatalogId ?? fallbackCatalogId;
   const loaded = effectiveCatalogId
-    ? await loadCatalogObjectJson<Partial<WebhookDeliveryDetailPayload>>(adapter, c.env, {
+    ? await loadChunkedSensitiveDetailJson<Partial<WebhookDeliveryDetailPayload>>(adapter, c.env, {
         tenantId,
         objectCatalogId: effectiveCatalogId,
         expectedClass: 'webhook_delivery_payload',
-        expectedBucketBinding: 'SENSITIVE_DETAILS',
-        allowPlaintextFallback: false,
       })
     : null;
   if (!loaded) {
     return null;
   }
-  const parsed = loaded.value;
+  const parsed = loaded;
   return {
     requestHeaders:
       parsed.requestHeaders &&
@@ -413,6 +377,28 @@ function createRegistry(c: Context<{ Bindings: Env }>) {
 
 function validateWebhookDispatchUrl(c: Context<{ Bindings: Env }>, url: string): boolean {
   return validateWebhookUrl(url, c.env.ENVIRONMENT === 'development').valid;
+}
+
+function pathAndQueryForSignature(url: string): string {
+  const parsed = new URL(url);
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+async function applyAuthrimWebhookSignature(input: {
+  headers: Record<string, string>;
+  url: string;
+  body: string;
+  secret: string;
+  deliveryId: string;
+}): Promise<void> {
+  const signature = await signHttpSinkPayload({
+    method: 'POST',
+    path: pathAndQueryForSignature(input.url),
+    body: input.body,
+    secret: input.secret,
+    deliveryId: input.deliveryId,
+  });
+  Object.assign(input.headers, signature.headers);
 }
 
 /**
@@ -782,13 +768,17 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
       },
     };
 
+    const deliveryId = crypto.randomUUID();
+    const requestBody = JSON.stringify(testPayload);
+
     // Build headers
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'X-Webhook-Event': 'webhook.test',
-      'X-Webhook-ID': webhookId,
-      'X-Webhook-Timestamp': testPayload.timestamp,
       ...(webhook.headers || {}),
+      'X-Authrim-Event': 'webhook.test',
+      'X-Authrim-Webhook': webhookId,
+      'X-Authrim-Timestamp': Math.floor(Date.now() / 1000).toString(),
+      'X-Authrim-Delivery': deliveryId,
     };
 
     // Generate signature if secret is configured
@@ -796,20 +786,13 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
       // Decrypt the secret for signing
       const decryptResult = await decryptValue(webhook.secretEncrypted, c.env.PII_ENCRYPTION_KEY);
       if (decryptResult.decrypted) {
-        const encoder = new TextEncoder();
-        const key = await crypto.subtle.importKey(
-          'raw',
-          encoder.encode(decryptResult.decrypted),
-          { name: 'HMAC', hash: 'SHA-256' },
-          false,
-          ['sign']
-        );
-        const payloadBytes = encoder.encode(JSON.stringify(testPayload));
-        const signatureBytes = await crypto.subtle.sign('HMAC', key, payloadBytes);
-        const signature = Array.from(new Uint8Array(signatureBytes))
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('');
-        headers['X-Webhook-Signature'] = `sha256=${signature}`;
+        await applyAuthrimWebhookSignature({
+          headers,
+          url: webhook.url,
+          body: requestBody,
+          secret: decryptResult.decrypted,
+          deliveryId,
+        });
       }
     }
 
@@ -823,7 +806,7 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
       response = await safeFetch(webhook.url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(testPayload),
+        body: requestBody,
         requireHttps: true,
         timeoutMs: webhook.timeoutMs || 30000,
         maxResponseSize: 64 * 1024,
@@ -972,6 +955,80 @@ function formatWebhookDeliveryDetail(
     has_detail: !!row.detail_object_catalog_id,
     detail_artifact_id: row.detail_artifact_id ?? null,
   };
+}
+
+async function emitWebhookDeliveryRuntimeLog(
+  c: Context<{ Bindings: Env }>,
+  adapter: ReturnType<typeof getCoreAdapter>,
+  input: {
+    tenantId: string;
+    webhookId: string;
+    deliveryId: string;
+    eventType: string;
+    eventId: string;
+    status: WebhookDeliveryRow['status'];
+    statusCode?: number | null;
+    errorMessage?: string | null;
+    attempts: number;
+    createdAt: number;
+    completedAt?: number | null;
+    durationMs?: number | null;
+    detailObjectCatalogId?: string | null;
+    replay?: boolean;
+    originalDeliveryId?: string | null;
+  }
+): Promise<void> {
+  try {
+    await emitRuntimeLogRecords({
+      env: {
+        ...c.env,
+        DB_ADMIN: c.env.DB_ADMIN ?? adapter,
+        LOGGING_INDEX_DB: adapter,
+      },
+      tenantId: input.tenantId,
+      logType: 'webhook',
+      surface: 'webhook_delivery',
+      tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
+      records: [
+        {
+          id: input.deliveryId,
+          eventAt: normalizeTimestampMs(input.createdAt),
+          payload: {
+            delivery_id: input.deliveryId,
+            webhook_id: input.webhookId,
+            event_type: input.eventType,
+            event_id: input.eventId,
+            status: input.status,
+            status_code: input.statusCode ?? null,
+            error_message: input.errorMessage ?? null,
+            attempts: input.attempts,
+            created_at: input.createdAt,
+            completed_at: input.completedAt ?? null,
+            duration_ms: input.durationMs ?? null,
+            detail_object_catalog_id: input.detailObjectCatalogId ?? null,
+            replay: input.replay ?? false,
+            original_delivery_id: input.originalDeliveryId ?? null,
+          },
+          indexedFields: {
+            surface: 'webhook_delivery',
+            webhookId: input.webhookId,
+            eventType: input.eventType,
+            status: input.status,
+            httpStatus: input.statusCode ?? null,
+            attempt: input.attempts,
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    getLogger(c)
+      .module('WebhookAPI')
+      .warn('Failed to emit webhook delivery runtime log', {
+        webhookId: input.webhookId,
+        deliveryId: input.deliveryId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+  }
 }
 
 /**
@@ -1342,35 +1399,32 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
       },
     };
 
+    const newDeliveryId = crypto.randomUUID();
+    const replayRequestBody = JSON.stringify(replayPayload);
+
     // Build headers
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'X-Webhook-Event': delivery.event_type,
-      'X-Webhook-ID': webhookId,
-      'X-Webhook-Timestamp': new Date().toISOString(),
-      'X-Webhook-Replay': 'true',
-      'X-Webhook-Original-Delivery': deliveryId,
       ...(webhook.headers || {}),
+      'X-Authrim-Event': delivery.event_type,
+      'X-Authrim-Webhook': webhookId,
+      'X-Authrim-Timestamp': Math.floor(Date.now() / 1000).toString(),
+      'X-Authrim-Delivery': newDeliveryId,
+      'X-Authrim-Replay': 'true',
+      'X-Authrim-Original-Delivery': deliveryId,
     };
 
     // Generate signature if secret is configured
     if (webhook.secretEncrypted && c.env.PII_ENCRYPTION_KEY) {
       const decryptResult = await decryptValue(webhook.secretEncrypted, c.env.PII_ENCRYPTION_KEY);
       if (decryptResult.decrypted) {
-        const encoder = new TextEncoder();
-        const key = await crypto.subtle.importKey(
-          'raw',
-          encoder.encode(decryptResult.decrypted),
-          { name: 'HMAC', hash: 'SHA-256' },
-          false,
-          ['sign']
-        );
-        const payloadBytes = encoder.encode(JSON.stringify(replayPayload));
-        const signatureBytes = await crypto.subtle.sign('HMAC', key, payloadBytes);
-        const signature = Array.from(new Uint8Array(signatureBytes))
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('');
-        headers['X-Webhook-Signature'] = `sha256=${signature}`;
+        await applyAuthrimWebhookSignature({
+          headers,
+          url: webhook.url,
+          body: replayRequestBody,
+          secret: decryptResult.decrypted,
+          deliveryId: newDeliveryId,
+        });
       }
     }
 
@@ -1384,7 +1438,7 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
       response = await safeFetch(webhook.url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(replayPayload),
+        body: replayRequestBody,
         requireHttps: true,
         timeoutMs: webhook.timeoutMs || 30000,
         maxResponseSize: 64 * 1024,
@@ -1401,7 +1455,6 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
       error = err instanceof Error ? err.message : 'Unknown error';
 
       // Create new delivery record for failed replay
-      const newDeliveryId = crypto.randomUUID();
       const nowTs = Math.floor(Date.now() / 1000);
       let detailObjectCatalogId: string | null = null;
       try {
@@ -1451,6 +1504,24 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
         ]
       );
 
+      await emitWebhookDeliveryRuntimeLog(c, adapter, {
+        tenantId,
+        webhookId,
+        deliveryId: newDeliveryId,
+        eventType: delivery.event_type,
+        eventId: `${delivery.event_id}_replay`,
+        status: 'failed',
+        statusCode: null,
+        errorMessage: error,
+        attempts: 1,
+        createdAt: nowTs,
+        completedAt: null,
+        durationMs: endTime - startTime,
+        detailObjectCatalogId,
+        replay: true,
+        originalDeliveryId: deliveryId,
+      });
+
       // Audit log for failed replay
       await createAuditLogFromContext(c, 'webhook.replay_failed', 'webhook', webhookId, {
         original_delivery_id: deliveryId,
@@ -1474,7 +1545,6 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
     const isSuccess = response.status >= 200 && response.status < 300;
 
     // Create new delivery record
-    const newDeliveryId = crypto.randomUUID();
     const nowTs = Math.floor(Date.now() / 1000);
     let detailObjectCatalogId: string | null = null;
     try {
@@ -1527,6 +1597,24 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
         detailObjectCatalogId,
       ]
     );
+
+    await emitWebhookDeliveryRuntimeLog(c, adapter, {
+      tenantId,
+      webhookId,
+      deliveryId: newDeliveryId,
+      eventType: delivery.event_type,
+      eventId: `${delivery.event_id}_replay`,
+      status: isSuccess ? 'success' : 'failed',
+      statusCode: response.status,
+      errorMessage: null,
+      attempts: 1,
+      createdAt: nowTs,
+      completedAt: nowTs,
+      durationMs,
+      detailObjectCatalogId,
+      replay: true,
+      originalDeliveryId: deliveryId,
+    });
 
     // Audit log
     await createAuditLogFromContext(c, 'webhook.replay', 'webhook', webhookId, {

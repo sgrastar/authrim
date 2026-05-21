@@ -32,6 +32,7 @@
 import type { Context as HonoContext } from 'hono';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { PIIPartitionRouter, PartitionKey } from '../db/partition-router';
+import type { UserCacheScope, UserPiiCacheMode } from '../utils/kv';
 import type {
   UserCoreRepository,
   ClientRepository,
@@ -130,6 +131,12 @@ export interface AuthContext {
 
   /** Original Hono context (for request/env access) */
   honoContext: HonoContext;
+
+  /** Profile-aware user cache key scope for cross-request caches. */
+  userCacheScope?: UserCacheScope;
+
+  /** Runtime PII cache behavior selected by the active storage profile. */
+  piiCacheMode?: UserPiiCacheMode;
 }
 
 /**

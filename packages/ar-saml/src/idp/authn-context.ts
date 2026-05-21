@@ -1,8 +1,8 @@
 import type { SAMLAuthnRequest, SAMLSPConfig } from '@authrim/ar-lib-core';
 import { AUTHN_CONTEXT, SAML_NAMESPACES } from '../common/constants';
 import {
-  findElement,
-  findElements,
+  findDirectChildElement,
+  findDirectChildElements,
   getAttribute,
   getTextContent,
   type XMLElement,
@@ -42,7 +42,7 @@ export class SAMLAuthnContextPolicyError extends Error {
 export function parseRequestedAuthnContext(
   authnRequestElement: XMLElement
 ): SAMLAuthnRequest['requestedAuthnContext'] {
-  const requestedAuthnContextElement = findElement(
+  const requestedAuthnContextElement = findDirectChildElement(
     authnRequestElement,
     SAML_NAMESPACES.SAML2P,
     'RequestedAuthnContext'
@@ -52,7 +52,7 @@ export function parseRequestedAuthnContext(
   }
 
   const comparison = getAttribute(requestedAuthnContextElement, 'Comparison');
-  const classRefs = findElements(
+  const classRefs = findDirectChildElements(
     requestedAuthnContextElement,
     SAML_NAMESPACES.SAML2,
     'AuthnContextClassRef'
@@ -101,22 +101,25 @@ function resolveDefaultAuthnContextClassRef(options: SAMLAuthnContextResolutionO
   }
 
   const amr = options.session?.amr ?? [];
-  if (amr.includes('passkey') || options.session?.acr === AUTHN_CONTEXT.AUTHRIM_PHISHING_RESISTANT) {
+  if (
+    amr.includes('passkey') ||
+    options.session?.acr === AUTHN_CONTEXT.AUTHRIM_PHISHING_RESISTANT
+  ) {
     return options.spConfig.passkeyAuthnContextClassRef || AUTHN_CONTEXT.AUTHRIM_PHISHING_RESISTANT;
   }
 
   return options.session?.acr || configuredDefault;
 }
 
-function getSupportedAuthnContextClassRefs(
-  options: SAMLAuthnContextResolutionOptions
-): string[] {
+function getSupportedAuthnContextClassRefs(options: SAMLAuthnContextResolutionOptions): string[] {
   return Array.from(
-    new Set([
-      ...SUPPORTED_IDP_AUTHN_CONTEXT_CLASS_REFS,
-      options.spConfig?.defaultAuthnContextClassRef,
-      options.spConfig?.passkeyAuthnContextClassRef,
-    ].filter(isString))
+    new Set(
+      [
+        ...SUPPORTED_IDP_AUTHN_CONTEXT_CLASS_REFS,
+        options.spConfig?.defaultAuthnContextClassRef,
+        options.spConfig?.passkeyAuthnContextClassRef,
+      ].filter(isString)
+    )
   );
 }
 

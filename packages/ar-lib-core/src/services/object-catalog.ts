@@ -2,6 +2,8 @@ import type { DatabaseAdapter } from '../db/adapter';
 
 export const OBJECT_CLASSES = [
   'admin_audit_detail',
+  'event_log_detail',
+  'pii_log_values',
   'webhook_delivery_payload',
   'operational_log_detail',
   'user_export',

@@ -165,4 +165,28 @@ describe('idempotency middleware', () => {
     expect(payload.error_details?.retryable).toBe(false);
     expect(mockAdapter.execute).not.toHaveBeenCalled();
   });
+
+  it('rejects oversized idempotent request bodies before database work', async () => {
+    const body = 'x'.repeat(1024 * 1024 + 1);
+
+    const res = await createApp(requiredIdempotencyMiddleware()).request(
+      '/protected',
+      {
+        method: 'POST',
+        headers: {
+          'Idempotency-Key': 'idem-key-001',
+          'Content-Type': 'text/plain',
+        },
+        body,
+      },
+      mockEnv
+    );
+    const payload = (await res.json()) as { error: string; error_description: string };
+
+    expect(res.status).toBe(413);
+    expect(payload.error).toBe('invalid_request');
+    expect(payload.error_description).toContain('size limit');
+    expect(mockAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
 });

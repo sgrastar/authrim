@@ -2,13 +2,13 @@
  * Handoff Token Verification Handler
  * POST /handoff/verify
  *
- * RPがハンドオフトークンを検証し、RP専用のアクセストークンを発行する
+ * The RP verifies the handoff token and issues an RP-specific access token
  *
- * セキュリティ:
- * - Origin検証（client_idのallowedRedirectUrisからoriginを抽出して照合）
- * - State検証（CSRF対策）
- * - aud検証（トークン再利用防止）
- * - Rate Limiting（brute force対策）
+ * security:
+ * - Origin validation (extract the origin from client_id allowedRedirectUris and compare it)
+ * - State validation (CSRF mitigation)
+ * - aud validation (token reuse prevention)
+ * - Rate Limiting (brute-force mitigation)
  */
 
 import type { Context } from 'hono';
@@ -151,11 +151,11 @@ async function createHandoffSession(
   const { handoff_token, state, client_id } = body;
   const tenantId = getTenantIdFromContext(c);
 
-  // 0. Rate Limiting（brute force対策）
+  // 0. Rate Limiting (brute-force mitigation)
   const rateLimitKey = `handoff:verify:${client_id}:${clientIp}`;
   const rateLimitConfig: RateLimitConfig = {
-    maxRequests: 10, // 10回
-    windowSeconds: 60, // 60秒
+    maxRequests: 10, // 10 requests
+    windowSeconds: 60, // 60 seconds
   };
 
   try {
@@ -173,10 +173,10 @@ async function createHandoffSession(
     log.error('Rate limit check failed', {}, rateLimitError as Error);
   }
 
-  // 1. Origin検証（必須：攻撃防止）
+  // 1. Origin validation (required:attack prevention)
   let origin: string | null = c.req.header('Origin') || null;
 
-  // Originヘッダーがない場合、RefererからoriginToを抽出（try-catchで処理）
+  // When the Origin header is missing, extract originTo from Referer (handled with try-catch)
   if (!origin) {
     const referer = c.req.header('Referer');
     if (referer) {
@@ -196,7 +196,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED);
   }
 
-  // client_idに紐づくallowedRedirectUrisからoriginを抽出して検証
+  // Extract and validate the origin from allowedRedirectUris tied to client_id
   const authCtx = createAuthContextFromHono(c, tenantId);
   const client = await authCtx.repositories.client.findByClientId(client_id);
 
@@ -268,7 +268,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED);
   }
 
-  // 2. ハンドオフトークンを消費
+  // 2. Consume the handoff token
   const handoffStore = await getChallengeStoreByChallengeId(
     c.env,
     handoff_token,
@@ -301,7 +301,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
 
-  // 3. aud検証（トークン再利用防止）
+  // 3. aud validation (token reuse prevention)
   const allowedHandoffAudiences = new Set(['handoff', 'saml_sp_cookie_handoff']);
   if (
     typeof handoffData.metadata?.aud !== 'string' ||
@@ -348,7 +348,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
 
-  // 4. State検証（CSRF対策）
+  // 4. State validation (CSRF mitigation)
   if (handoffData.metadata?.state !== state) {
     log.error('State mismatch - POTENTIAL CSRF ATTACK', {
       expected: handoffData.metadata?.state,
@@ -359,7 +359,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
 
-  // 5. client_id検証
+  // 5. client_id validation
   if (handoffData.metadata?.client_id && handoffData.metadata.client_id !== client_id) {
     log.error('Client ID mismatch - POTENTIAL ATTACK', {
       expected: handoffData.metadata?.client_id,
@@ -369,7 +369,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
 
-  // 6. AS SSOセッション検証
+  // 6. AS SSO session validation
   const asSessionId = handoffData.challenge;
 
   if (!isShardedSessionId(asSessionId)) {
@@ -390,7 +390,7 @@ async function createHandoffSession(
   // Use explicit type annotation after null check
   const asSession: Session = asSessionResult;
 
-  // 7. ユーザー情報取得
+  // 7. Get user information
   const userCore = await authCtx.repositories.userCore.findById(handoffData.userId);
 
   if (!userCore || !userCore.is_active) {
@@ -410,13 +410,13 @@ async function createHandoffSession(
     }
   }
 
-  // 8. RP専用のAccess Token（Session）を新規発行
-  // ⚠️ 重要: AS SessionIDを直接返さない（XSS対策）
+  // 8. Issue a new RP-specific Access Token (Session)
+  // ⚠️ Important: Do not return the AS SessionID directly (XSS mitigation)
   const { stub: rpSessionStore, sessionId: rpAccessToken } = await getSessionStoreForNewSession(
     c.env,
     tenantId
   );
-  const rpTokenTTL = 60 * 60; // 1時間（短命化）
+  const rpTokenTTL = 60 * 60; // 1 hour (short-lived)
 
   await rpSessionStore.createSessionRpc(
     rpAccessToken,
@@ -428,8 +428,8 @@ async function createHandoffSession(
       amr: asSession.data?.amr || ['external_idp'],
       acr: asSession.data?.acr || 'urn:mace:incommon:iap:bronze',
       client_id,
-      audience: 'rp', // RP用トークンであることを明示
-      source_session_id: asSessionId, // AS SessionIDを記録（監査用）
+      audience: 'rp', // Mark explicitly as an RP token
+      source_session_id: asSessionId, // Record the AS SessionID (for audit)
       token_type: options.dpopJkt ? 'DPoP' : 'Cookie',
       ...(options.dpopJkt ? { cnf: { jkt: options.dpopJkt } } : {}),
     },
@@ -511,12 +511,12 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
       return handoffSession;
     }
 
-    // 9. レスポンス返却
+    // 9. Return the response
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json({
       token_type: 'DPoP',
-      access_token: handoffSession.rpAccessToken, // RP専用トークン（AS SessionIDとは別）
+      access_token: handoffSession.rpAccessToken, // RP-specific token (separate from the AS SessionID)
       expires_in: handoffSession.rpTokenTTL,
       ...(include.session
         ? {

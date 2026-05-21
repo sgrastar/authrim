@@ -7,7 +7,7 @@
  * Requires client_id/client_secret authentication.
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   createLogger,
@@ -19,6 +19,9 @@ import {
   applyPrivacyModeToEntry,
   getDefaultTenantId,
   isMultiTenantEnabled,
+  emitRuntimeLogRecords,
+  readRequestTextWithLimit,
+  verifyClientSecretHash,
   type DiagnosticLogEntry,
   type DiagnosticLogPrivacyMode,
   type DiagnosticLoggingSettings,
@@ -71,18 +74,22 @@ async function validateClient(
       return { valid: false, error: 'client_not_found' };
     }
 
-    // For confidential clients, client_secret is required
-    if (client.token_endpoint_auth_method !== 'none' && !clientSecret) {
+    const requiresSecret = client.token_endpoint_auth_method !== 'none';
+
+    if (!requiresSecret) {
+      return { valid: true, client };
+    }
+
+    if (!clientSecret) {
       return { valid: false, error: 'client_secret_required' };
     }
 
-    // Verify client_secret for confidential clients
-    // Note: OAuthClient has client_secret_hash, not client_secret
-    // We need to hash the provided secret and compare
-    if (client.token_endpoint_auth_method !== 'none' && clientSecret) {
-      // For simplicity, we'll accept any secret for now
-      // In production, implement proper secret verification
-      // TODO: Implement proper client_secret verification with hashing
+    if (!client.client_secret_hash) {
+      return { valid: false, error: 'client_secret_not_configured' };
+    }
+
+    if (!(await verifyClientSecretHash(clientSecret, client.client_secret_hash))) {
+      return { valid: false, error: 'invalid_client_secret' };
     }
 
     return { valid: true, client };
@@ -131,6 +138,48 @@ function resolveHashSecret(env: Env, tenantId: string): string {
   return `${base}:${tenantId}`;
 }
 
+async function recordDiagnosticIngestFailure(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    reason: string;
+    tenantId?: string | null;
+    clientId?: string | null;
+    httpStatus: number;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  const tenantId = input.tenantId || getDefaultTenantId(c.env);
+  try {
+    await emitRuntimeLogRecords({
+      env: c.env,
+      tenantId,
+      logType: 'diagnostic',
+      surface: 'diagnostic_ingest',
+      planes: ['archive'],
+      records: [
+        {
+          id: `diag_ingest_${crypto.randomUUID()}`,
+          eventAt: Date.now(),
+          type: 'diagnostic.ingest.failure',
+          severity: input.httpStatus >= 500 ? 'error' : 'warn',
+          subject: input.clientId ? `client:${input.clientId}` : null,
+          payload: {
+            reason: input.reason,
+            client_id: input.clientId ?? null,
+            http_status: input.httpStatus,
+            ...(input.metadata ?? {}),
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    log.warn('Failed to record diagnostic ingest failure event', {
+      reason: input.reason,
+      error: String(error),
+    });
+  }
+}
+
 /**
  * POST /api/v1/diagnostic-logs/ingest
  *
@@ -152,22 +201,31 @@ app.post('/', async (c) => {
 
   // Parse request body
   let body: IngestRequestBody;
+  let rawBody: string;
   try {
-    const rawBody = await c.req.text();
-
-    // Check request size
-    if (rawBody.length > MAX_REQUEST_SIZE) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Request size exceeds limit',
-        },
-        400
-      );
-    }
-
+    rawBody = await readRequestTextWithLimit(c.req.raw, MAX_REQUEST_SIZE);
+  } catch {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'request_too_large',
+      httpStatus: 400,
+      metadata: { max_request_size: MAX_REQUEST_SIZE },
+    });
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Request size exceeds limit',
+      },
+      400
+    );
+  }
+  try {
     body = JSON.parse(rawBody);
   } catch (error) {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'invalid_json',
+      httpStatus: 400,
+      metadata: { body_bytes: rawBody.length },
+    });
     return c.json(
       {
         error: 'invalid_request',
@@ -179,6 +237,11 @@ app.post('/', async (c) => {
 
   // Validate request body
   if (!body.client_id || !Array.isArray(body.logs)) {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'missing_required_fields',
+      clientId: typeof body.client_id === 'string' ? body.client_id : null,
+      httpStatus: 400,
+    });
     return c.json(
       {
         error: 'invalid_request',
@@ -190,6 +253,13 @@ app.post('/', async (c) => {
 
   // Check logs count
   if (body.logs.length > MAX_LOGS_PER_REQUEST) {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'too_many_logs',
+      clientId: body.client_id,
+      tenantId: body.tenant_id ?? null,
+      httpStatus: 400,
+      metadata: { log_count: body.logs.length, max_logs: MAX_LOGS_PER_REQUEST },
+    });
     return c.json(
       {
         error: 'invalid_request',
@@ -201,6 +271,11 @@ app.post('/', async (c) => {
 
   const tenantId = resolveIngestTenantId(c.env, body.tenant_id);
   if (!tenantId) {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'tenant_id_required',
+      clientId: body.client_id,
+      httpStatus: 400,
+    });
     return c.json(
       {
         error: 'invalid_request',
@@ -217,6 +292,12 @@ app.post('/', async (c) => {
       clientId: body.client_id,
       error: validation.error,
     });
+    await recordDiagnosticIngestFailure(c, {
+      reason: validation.error || 'client_validation_failed',
+      tenantId,
+      clientId: body.client_id,
+      httpStatus: 401,
+    });
 
     return c.json(
       {
@@ -229,6 +310,13 @@ app.post('/', async (c) => {
 
   const validatedTenantId = validation.client?.tenant_id;
   if (validatedTenantId !== tenantId) {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'client_tenant_mismatch',
+      tenantId,
+      clientId: body.client_id,
+      httpStatus: 401,
+      metadata: { validated_tenant_present: !!validatedTenantId },
+    });
     return c.json(
       {
         error: 'invalid_client',
@@ -254,6 +342,12 @@ app.post('/', async (c) => {
     diagnosticSettings = result.values as unknown as DiagnosticLoggingSettings;
 
     if (!diagnosticSettings['diagnostic-logging.sdk_ingest_enabled']) {
+      await recordDiagnosticIngestFailure(c, {
+        reason: 'sdk_ingest_disabled',
+        tenantId,
+        clientId: body.client_id,
+        httpStatus: 403,
+      });
       return c.json(
         {
           error: 'feature_disabled',
@@ -334,6 +428,7 @@ app.post('/', async (c) => {
         bucket: r2,
         pathPrefix: 'diagnostic-logs',
         tenantId,
+        tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
         clientId: body.client_id,
       });
 

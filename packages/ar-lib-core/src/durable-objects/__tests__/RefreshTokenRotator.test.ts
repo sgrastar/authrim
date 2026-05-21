@@ -91,7 +91,19 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 }
 
 // Mock Env
-const createMockEnv = (): Env => ({}) as Env;
+const createMockEnv = (): Env =>
+  ({
+    DB: {
+      prepare: () => ({
+        bind: () => ({
+          run: async () => ({ success: true }),
+          first: async () => null,
+          all: async () => ({ results: [] }),
+        }),
+      }),
+      batch: async () => [],
+    },
+  }) as unknown as Env;
 
 describe('RefreshTokenRotator V2', () => {
   let rotator: RefreshTokenRotator;

@@ -54,6 +54,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
       revokedInstallations: 0,
       matchedInstallations: 0,
     }),
+    resolveLogoutTargetsFromSessionClientStore: vi.fn().mockResolvedValue(null),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
@@ -69,6 +70,7 @@ import {
   validateIdTokenHint,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
+  resolveLogoutTargetsFromSessionClientStore,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -227,6 +229,38 @@ describe('Front-channel Logout', () => {
       await frontChannelLogoutHandler(c);
 
       // Should call sharded session store's invalidateSessionRpc
+      expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
+    });
+
+    it('should render front-channel logout iframes for clients linked to the session', async () => {
+      const { c } = createMockContext({
+        query: {},
+      });
+
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+        backchannelClients: [],
+        frontchannelClients: [
+          {
+            client_id: 'rp-client',
+            frontchannel_logout_uri: 'https://rp.example.com/logout',
+            frontchannel_logout_session_required: true,
+          },
+        ],
+        webhookClients: [],
+      } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+
+      const response = await frontChannelLogoutHandler(c);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toContain('text/html');
+      expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
+      expect(html).toContain('https://rp.example.com/logout');
+      expect(html).toContain('iss=https%3A%2F%2Fop.example.com');
+      expect(html).toContain('sid=0_session_123');
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
     });
 

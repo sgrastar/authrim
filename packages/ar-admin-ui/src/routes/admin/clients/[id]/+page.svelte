@@ -1099,8 +1099,8 @@
 
 		deleting = true;
 		try {
-			// TODO: Phase 4（監査ログ）実装時に論理削除への変更を検討
-			// 現在は物理削除のため、削除されたclient_idで発行されたトークンの追跡が困難
+			// TODO: Consider switching to soft deletion when Phase 4 audit logs are implemented
+			// Currently uses physical deletion, which makes tokens issued for deleted client_id values difficult to trace
 			await adminClientsAPI.delete(clientId);
 			goto('/admin/clients');
 		} catch (err) {

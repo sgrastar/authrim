@@ -19,15 +19,10 @@
 			const credential = await startAuthentication({ optionsJSON: options });
 
 			// Step 3: Verify credential with server
-			const result = await adminAuthAPI.verifyLogin(challengeId, credential);
+			await adminAuthAPI.verifyLogin(challengeId, credential);
 
-			// Step 4: Update auth store with user info. Session credentials stay in HttpOnly cookies.
-			adminAuth.setAuthenticated({
-				userId: result.userId,
-				email: result.user.email || '',
-				name: result.user.name || undefined,
-				roles: ['admin'] // Roles will be fetched on next session check
-			});
+			// Step 4: Refresh session-backed auth state, including tenant context and roles.
+			await adminAuth.checkAuth();
 
 			// Step 5: Redirect to admin dashboard
 			goto('/admin');
@@ -136,7 +131,7 @@
 		font-weight: 300;
 		color: var(--text-primary);
 		letter-spacing: 0.3em;
-		margin: 0 0 10px 0.3em; /* letter-spacing分だけ右にオフセット */
+		margin: 0 0 10px 0.3em; /* Offset to the right by the letter-spacing amount */
 		line-height: 1.2;
 	}
 

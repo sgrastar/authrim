@@ -1,5 +1,9 @@
 import type { AuditProfile, AuditRetentionConfig, AuditStorageConfig } from '@authrim/ar-lib-core';
-import { DEFAULT_AUDIT_WRITE_CONFIG } from '@authrim/ar-lib-core';
+import {
+  AUDIT_FAIL_CLOSED_CATEGORIES,
+  AUDIT_FAIL_OPEN_CATEGORIES,
+  DEFAULT_AUDIT_WRITE_CONFIG,
+} from '@authrim/ar-lib-core';
 import type { AuditHotQuerySupport } from './audit-hot-query';
 
 export type AuditFanoutDeliveryMode = 'none' | 'best_effort' | 'queue_retry_until_dlq';
@@ -50,6 +54,15 @@ export interface AuditOperationalPolicy {
     batchConfig: AuditStorageConfig['batchConfig'];
     note: string;
   };
+  eventFailurePolicy: {
+    mode: NonNullable<AuditProfile['backpressure']>['mode'];
+    tenantOverrideSupported: boolean;
+    eventCategoryOverrideStatus: 'reserved';
+    failOpenCategories: readonly string[];
+    failClosedCategories: readonly string[];
+    unknownEventBehavior: 'fail_closed_or_strong_retry';
+    note: string;
+  };
   queue: {
     binding: string;
     status: 'configured' | 'not_configured';
@@ -58,6 +71,16 @@ export interface AuditOperationalPolicy {
     dlqBehavior: 'cloudflare_managed';
     archiveBackupStatus: 'configured' | 'not_configured';
     introspection: 'partial';
+    note: string;
+  };
+  health: {
+    primaryTargetConfigured: boolean;
+    archiveTargetConfigured: boolean;
+    forwardingSinkCount: number;
+    queueConfigured: boolean;
+    queueArchiveConfigured: boolean;
+    hotQuerySupported: boolean;
+    healthCheckMode: 'configuration_only';
     note: string;
   };
   deliveryGuarantee: {
@@ -247,6 +270,18 @@ export function buildAuditOperationalPolicy(input: {
             ? 'Archive/sink fan-out is queue-backed. batchConfig is the current operator-facing queue shaping control.'
             : 'Archive/sink fan-out targets exist, but AUDIT_QUEUE is missing so queue-based backpressure is currently unavailable.',
     },
+    eventFailurePolicy: {
+      mode: profile.backpressure?.mode ?? 'event_class',
+      tenantOverrideSupported: profile.backpressure?.allowTenantOverride ?? true,
+      eventCategoryOverrideStatus: 'reserved',
+      failOpenCategories: AUDIT_FAIL_OPEN_CATEGORIES,
+      failClosedCategories: AUDIT_FAIL_CLOSED_CATEGORIES,
+      unknownEventBehavior: 'fail_closed_or_strong_retry',
+      note:
+        (profile.backpressure?.mode ?? 'event_class') === 'fail_closed_all'
+          ? 'All audit events require blocking or strong-retry delivery before reporting success.'
+          : 'Audit delivery behavior is selected from the explicit event classification catalog. Event-category runtime overrides are reserved for a future implementation.',
+    },
     queue: {
       binding: DEFAULT_AUDIT_WRITE_CONFIG.queueConfig.binding,
       status: queueConfigured ? 'configured' : 'not_configured',
@@ -258,6 +293,16 @@ export function buildAuditOperationalPolicy(input: {
       note: queueConfigured
         ? 'Runtime can confirm the queue binding exists, but Cloudflare Queue retry/DLQ policy is not fully introspectable at request time. Reported retry values are Authrim defaults.'
         : 'AUDIT_QUEUE is not bound. Queue-backed archive/sink fan-out and retry semantics are unavailable.',
+    },
+    health: {
+      primaryTargetConfigured: Boolean(profile.primary),
+      archiveTargetConfigured: hasArchiveTarget,
+      forwardingSinkCount: profile.sinks.length,
+      queueConfigured,
+      queueArchiveConfigured,
+      hotQuerySupported: hotQuery.supported,
+      healthCheckMode: 'configuration_only',
+      note: 'This reports request-time configuration health. Active adapter probes are available on storage adapters and can be wired into scheduled health checks.',
     },
     deliveryGuarantee: {
       primary: profile.primary ? 'sync_request_path' : 'none',
