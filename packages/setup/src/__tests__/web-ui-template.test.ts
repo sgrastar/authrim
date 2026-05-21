@@ -72,7 +72,7 @@ describe('getHtmlTemplate', () => {
       en as Record<string, string>,
       SUPPORTED_LOCALES
     );
-    const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(
+    const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map(
       (match) => match[1]
     );
 

@@ -57,22 +57,51 @@ function trimToLength(value: string, maxLength: number): string {
   return value.length > maxLength ? value.slice(0, maxLength) : value;
 }
 
-export function normalizeTenantDatabaseNamePart(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+function normalizeNamePartWithSeparator(
+  value: string,
+  fallback: string,
+  transform: (input: string) => string,
+  separator: string,
+  isAllowed: (charCode: number) => boolean
+): string {
+  const input = transform(value.trim());
+  let normalized = '';
+  let pendingSeparator = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const charCode = input.charCodeAt(i);
+    if (isAllowed(charCode)) {
+      if (pendingSeparator && normalized.length > 0) {
+        normalized += separator;
+      }
+      normalized += input[i];
+      pendingSeparator = false;
+    } else {
+      pendingSeparator = normalized.length > 0;
+    }
+  }
+
   return normalized || fallback;
 }
 
+export function normalizeTenantDatabaseNamePart(value: string, fallback: string): string {
+  return normalizeNamePartWithSeparator(
+    value,
+    fallback,
+    (input) => input.toLowerCase(),
+    '-',
+    (charCode) => (charCode >= 97 && charCode <= 122) || (charCode >= 48 && charCode <= 57)
+  );
+}
+
 export function normalizeTenantBindingNamePart(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return normalized || fallback;
+  return normalizeNamePartWithSeparator(
+    value,
+    fallback,
+    (input) => input.toUpperCase(),
+    '_',
+    (charCode) => (charCode >= 65 && charCode <= 90) || (charCode >= 48 && charCode <= 57)
+  );
 }
 
 export function buildTenantDatabaseBindingPlan(

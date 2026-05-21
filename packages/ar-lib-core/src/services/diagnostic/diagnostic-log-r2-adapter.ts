@@ -54,8 +54,20 @@ function cleanDiagnosticSegment(value: string): string {
   return value.replaceAll(/[^a-zA-Z0-9._=-]/g, '_').slice(0, 128) || '_';
 }
 
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
 function normalizeDiagnosticPrefix(prefix?: string): string {
-  const raw = (prefix ?? 'diagnostic-logs').replace(/^\/+|\/+$/g, '');
+  const raw = trimSlashes(prefix ?? 'diagnostic-logs');
   const cleaned = raw
     .split('/')
     .map((segment) => cleanDiagnosticSegment(segment))

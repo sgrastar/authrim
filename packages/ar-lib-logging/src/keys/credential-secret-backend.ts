@@ -157,6 +157,26 @@ export interface R2EncryptedCredentialSecretBackendOptions {
   now?: () => number;
 }
 
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
+function trimLeadingSlashes(value: string): string {
+  let start = 0;
+  while (start < value.length && value.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  return value.slice(start);
+}
+
 export class CredentialSecretBackendError extends Error {
   readonly code:
     | 'invalid_credential_ref'
@@ -548,7 +568,7 @@ export class R2EncryptedCredentialSecretBackend implements CredentialSecretBacke
 
   constructor(private readonly options: R2EncryptedCredentialSecretBackendOptions) {
     this.bucketName = options.bucketName ?? 'admin-secrets';
-    this.keyPrefix = (options.keyPrefix ?? 'destinations').replace(/^\/+|\/+$/g, '');
+    this.keyPrefix = trimSlashes(options.keyPrefix ?? 'destinations');
     this.keyVersion = options.keyVersion ?? 1;
     this.now = options.now ?? Date.now;
   }
@@ -579,7 +599,7 @@ export class R2EncryptedCredentialSecretBackend implements CredentialSecretBacke
         'Credential ref authority does not match this backend.'
       );
     }
-    return parsed.path.replace(/^\/+/, '');
+    return trimLeadingSlashes(parsed.path);
   }
 
   async putSecret(input: CredentialSecretPutInput): Promise<string> {

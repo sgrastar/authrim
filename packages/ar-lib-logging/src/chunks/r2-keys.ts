@@ -5,8 +5,20 @@ function cleanSegment(value: string): string {
   return value.replaceAll(/[^a-zA-Z0-9._=-]/g, '_').slice(0, 128);
 }
 
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
 export function normalizeR2Prefix(prefix?: string): string {
-  const raw = (prefix ?? 'logs').replace(/^\/+|\/+$/g, '');
+  const raw = trimSlashes(prefix ?? 'logs');
   const cleaned = raw
     .split('/')
     .map((segment) => cleanSegment(segment))

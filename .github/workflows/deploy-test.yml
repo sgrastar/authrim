@@ -27,9 +27,6 @@ jobs:
         include:
           - env_name: test
             hostname: test.authrim.com
-            config_secret: AUTHRIM_TEST_CONFIG
-            lock_secret: AUTHRIM_TEST_LOCK
-            keys_secret: AUTHRIM_TEST_KEYS_TAR_B64
 
     concurrency:
       group: deploy-${{ matrix.env_name }}
@@ -63,9 +60,9 @@ jobs:
 
       - name: Restore generated environment from secrets
         env:
-          AUTHRIM_ENV_CONFIG: ${{ secrets[matrix.config_secret] }}
-          AUTHRIM_ENV_LOCK: ${{ secrets[matrix.lock_secret] }}
-          AUTHRIM_ENV_KEYS_TAR_B64: ${{ secrets[matrix.keys_secret] }}
+          AUTHRIM_ENV_CONFIG: ${{ secrets.AUTHRIM_TEST_CONFIG }}
+          AUTHRIM_ENV_LOCK: ${{ secrets.AUTHRIM_TEST_LOCK }}
+          AUTHRIM_ENV_KEYS_TAR_B64: ${{ secrets.AUTHRIM_TEST_KEYS_TAR_B64 }}
         run: node scripts/ci-restore-generated-env.mjs
 
       - name: Deploy environment
