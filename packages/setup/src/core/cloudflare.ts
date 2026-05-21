@@ -267,6 +267,27 @@ export async function isWranglerInstalled(): Promise<boolean> {
  * Check if user is authenticated with Cloudflare
  */
 export async function checkAuth(): Promise<CloudflareAuth> {
+  const apiTokenAuth = async (): Promise<CloudflareAuth | null> => {
+    const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+    const tokenInfo = envToken
+      ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
+      : await getCloudflareApiToken();
+    if (!tokenInfo?.token) {
+      return null;
+    }
+
+    if (!(await verifyCloudflareApiToken(tokenInfo.token))) {
+      return null;
+    }
+
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
+    return {
+      isLoggedIn: true,
+      accountId,
+      email: tokenInfo.source === 'env' ? 'api-token' : undefined,
+    };
+  };
+
   try {
     const { stdout, stderr } = await wrangler(['whoami']);
     const combinedOutput = (stdout + '\n' + stderr).toLowerCase();
@@ -291,17 +312,50 @@ export async function checkAuth(): Promise<CloudflareAuth> {
     // Parse output to extract account info
     const emailMatch = stdout.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
     const accountMatch = stdout.match(/([a-f0-9]{32})/);
+    const envAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
 
     // Consider logged in if: no negative patterns AND (has email OR has logged in message)
     const isLoggedIn = !isNotLoggedIn && (hasEmail || hasLoggedInMessage);
+    if (!isLoggedIn) {
+      const tokenAuth = await apiTokenAuth();
+      if (tokenAuth) {
+        return tokenAuth;
+      }
+    }
 
     return {
       isLoggedIn,
       email: emailMatch?.[1],
-      accountId: accountMatch?.[1],
+      accountId: accountMatch?.[1] ?? envAccountId,
     };
   } catch {
+    const tokenAuth = await apiTokenAuth();
+    if (tokenAuth) {
+      return tokenAuth;
+    }
     return { isLoggedIn: false };
+  }
+}
+
+async function verifyCloudflareApiToken(token: string): Promise<boolean> {
+  try {
+    const response = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      return false;
+    }
+
+    try {
+      const data = (await response.json()) as { success?: boolean };
+      return data.success !== false;
+    } catch {
+      return true;
+    }
+  } catch {
+    return false;
   }
 }
 
