@@ -26,7 +26,9 @@ export function createLoggingTenantKeyResolver(adapter: DatabaseAdapter): Tenant
   return createTenantRegistryKeyResolver(adapter);
 }
 
-function canQueryTenantKeySource(source: DatabaseSource | null | undefined): source is DatabaseSource {
+function canQueryTenantKeySource(
+  source: DatabaseSource | null | undefined
+): source is DatabaseSource {
   const candidate = source as unknown as {
     queryOne?: unknown;
     prepare?: unknown;

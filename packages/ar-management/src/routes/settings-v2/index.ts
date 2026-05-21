@@ -52,10 +52,10 @@ import {
   rateLimitMiddleware,
   getRateLimitProfileAsync,
   // Logger
-	  createLogger,
-	  // Security
-	  sanitizeObject,
-	  createAuditLogFromContext,
+  createLogger,
+  // Security
+  sanitizeObject,
+  createAuditLogFromContext,
   // Admin Auth
   type AdminAuthContext,
   ensureDatabaseAdapter,
@@ -219,31 +219,31 @@ function getSettingsManager(
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS ?? null,
     cacheTTL: 5000, // 5 seconds (as per plan)
-	    auditCallback: async (event) => {
-	      log.info('Settings change', {
-	        action: event.event,
-	        scope: event.scope,
+    auditCallback: async (event) => {
+      log.info('Settings change', {
+        action: event.event,
+        scope: event.scope,
         scopeId: event.scopeId,
         category: event.category,
         actor: event.actor,
-	        diff: event.diff,
-	      });
-	      if (auditContext) {
-	        await createAuditLogFromContext(
-	          auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
-	          `settings.${event.event}`,
-	          'settings',
-	          `${event.scope}:${event.scopeId}:${event.category}`,
-	          {
-	            scope: event.scope,
-	            scope_id: event.scopeId,
-	            category: event.category,
-	            actor: event.actor,
-	            diff: sanitizeObject(event.diff),
-	          }
-	        );
-	      }
-	    },
+        diff: event.diff,
+      });
+      if (auditContext) {
+        await createAuditLogFromContext(
+          auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
+          `settings.${event.event}`,
+          'settings',
+          `${event.scope}:${event.scopeId}:${event.category}`,
+          {
+            scope: event.scope,
+            scope_id: event.scopeId,
+            category: event.category,
+            actor: event.actor,
+            diff: sanitizeObject(event.diff),
+          }
+        );
+      }
+    },
   });
 
   // Register all known categories

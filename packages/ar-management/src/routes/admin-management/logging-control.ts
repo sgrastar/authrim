@@ -1073,7 +1073,9 @@ function parseJsonMetadata(value: string | null): Record<string, unknown> {
   }
 }
 
-function serializeLoggingCatalogRepairJob(row: LoggingCatalogRepairJobRow): Record<string, unknown> {
+function serializeLoggingCatalogRepairJob(
+  row: LoggingCatalogRepairJobRow
+): Record<string, unknown> {
   return {
     id: row.id,
     job_kind: row.job_kind,
@@ -1508,10 +1510,7 @@ async function resolveRetryDeliverySource(
         ]),
       };
     }
-    const dlqObjectRead = await readR2TextWithLimit(
-      dlqObject,
-      DLQ_PAYLOAD_INLINE_READ_MAX_BYTES
-    );
+    const dlqObjectRead = await readR2TextWithLimit(dlqObject, DLQ_PAYLOAD_INLINE_READ_MAX_BYTES);
     if (!dlqObjectRead.ok) {
       return {
         ok: false,
@@ -1821,7 +1820,9 @@ function getDestinationRuntimeSupport(provider: string): {
   runtime_status: 'supported' | 'unsupported';
   runtime_unsupported_reason: string | null;
 } {
-  const supported = RUNTIME_SUPPORTED_DESTINATION_PROVIDERS.includes(provider as DestinationProvider);
+  const supported = RUNTIME_SUPPORTED_DESTINATION_PROVIDERS.includes(
+    provider as DestinationProvider
+  );
   return {
     runtime_supported: supported,
     runtime_status: supported ? 'supported' : 'unsupported',
@@ -2447,7 +2448,10 @@ function normalizeDestinationComparable(value: unknown): unknown {
 }
 
 function destinationValueChanged(previous: unknown, next: unknown): boolean {
-  return stableJson(normalizeDestinationComparable(previous)) !== stableJson(normalizeDestinationComparable(next));
+  return (
+    stableJson(normalizeDestinationComparable(previous)) !==
+    stableJson(normalizeDestinationComparable(next))
+  );
 }
 
 function destinationDiffEntry(field: string, previous: unknown, next: unknown) {
@@ -2577,8 +2581,7 @@ function readLoggingDeliveryLane(value: unknown): LoggingDeliveryLane | null {
 }
 
 function readLoggingQuotaMetric(value: unknown): LoggingQuotaMetric | null {
-  return typeof value === 'string' &&
-    (LOGGING_QUOTA_METRICS as readonly string[]).includes(value)
+  return typeof value === 'string' && (LOGGING_QUOTA_METRICS as readonly string[]).includes(value)
     ? (value as LoggingQuotaMetric)
     : null;
 }
@@ -2801,16 +2804,22 @@ async function readQuotaPolicyBody(
       : Number.parseInt(String(body.expected_version), 10);
 
   if (!scopeType) {
-    errors.push(fieldError('scope_type', 'invalid_value', 'Scope type must be platform or tenant.'));
+    errors.push(
+      fieldError('scope_type', 'invalid_value', 'Scope type must be platform or tenant.')
+    );
   }
   if (!metricName) {
     errors.push(fieldError('metric_name', 'invalid_value', 'Quota metric is not supported.'));
   }
   if (Number.isNaN(softLimit)) {
-    errors.push(fieldError('soft_limit', 'invalid_value', 'Soft limit must be a positive integer.'));
+    errors.push(
+      fieldError('soft_limit', 'invalid_value', 'Soft limit must be a positive integer.')
+    );
   }
   if (Number.isNaN(hardLimit)) {
-    errors.push(fieldError('hard_limit', 'invalid_value', 'Hard limit must be a positive integer.'));
+    errors.push(
+      fieldError('hard_limit', 'invalid_value', 'Hard limit must be a positive integer.')
+    );
   }
   if (Number.isNaN(warningRatio)) {
     errors.push(
@@ -2824,14 +2833,20 @@ async function readQuotaPolicyBody(
     !Number.isNaN(hardLimit) &&
     softLimit > hardLimit
   ) {
-    errors.push(fieldError('soft_limit', 'invalid_value', 'Soft limit must not exceed hard limit.'));
+    errors.push(
+      fieldError('soft_limit', 'invalid_value', 'Soft limit must not exceed hard limit.')
+    );
   }
   if (
     body.expected_version !== undefined &&
     (expectedVersion === null || !Number.isInteger(expectedVersion) || expectedVersion <= 0)
   ) {
     errors.push(
-      fieldError('expected_version', 'invalid_value', 'Expected version must be a positive integer.')
+      fieldError(
+        'expected_version',
+        'invalid_value',
+        'Expected version must be a positive integer.'
+      )
     );
   }
 
@@ -3029,7 +3044,9 @@ async function refreshLoggingUsageAggregatesForWindow(
   return { refreshed, window_start_at: input.windowStartAt, window_end_at: windowEndAt };
 }
 
-function readLoggingChangeProtection(value: unknown): LoggingDestinationOverrideRow['change_protection'] | null {
+function readLoggingChangeProtection(
+  value: unknown
+): LoggingDestinationOverrideRow['change_protection'] | null {
   return typeof value === 'string' &&
     (LOGGING_CHANGE_PROTECTIONS as readonly string[]).includes(value)
     ? (value as LoggingDestinationOverrideRow['change_protection'])
@@ -3123,11 +3140,7 @@ function destinationAllowsAssignment(input: {
     );
   }
   if (tenantId && destination.scope_type === 'tenant' && destination.scope_id !== tenantId) {
-    return fieldError(
-      fieldName,
-      'tenant_not_allowed',
-      'Destination is not assigned to tenant.'
-    );
+    return fieldError(fieldName, 'tenant_not_allowed', 'Destination is not assigned to tenant.');
   }
   return null;
 }
@@ -3184,7 +3197,11 @@ function storageAssignmentFieldError(input: {
       'Destination is not assigned to this log type and plane.'
     );
   }
-  return fieldError('destination_id', 'plane_not_allowed', 'Destination does not allow this plane.');
+  return fieldError(
+    'destination_id',
+    'plane_not_allowed',
+    'Destination does not allow this plane.'
+  );
 }
 
 async function canTenantReadDestination(
@@ -3276,15 +3293,15 @@ async function readLoggingDestinationOverrideBody(
       value: {
         tenantId: string | null;
         logType: LogType;
-	        plane: LogPlane;
-	        destinationId: string;
-	        fallbackPolicyId: string | null;
-	        enabled: boolean;
-	        changeProtection: LoggingDestinationOverrideRow['change_protection'];
-	        approvalPolicyId: string | null;
-	        expectedVersion: number | null;
-	        confirmation: string | null;
-	      };
+        plane: LogPlane;
+        destinationId: string;
+        fallbackPolicyId: string | null;
+        enabled: boolean;
+        changeProtection: LoggingDestinationOverrideRow['change_protection'];
+        approvalPolicyId: string | null;
+        expectedVersion: number | null;
+        confirmation: string | null;
+      };
     }
   | { ok: false; response: Response }
 > {
@@ -3292,11 +3309,11 @@ async function readLoggingDestinationOverrideBody(
   const fields: ReturnType<typeof fieldError>[] = [];
   const logType = readLogType(body.log_type);
   const plane = readLogPlane(body.plane);
-	  const destinationId = parseOptionalString(body.destination_id);
-	  const tenantId = parseOptionalString(body.tenant_id);
-	  const fallbackPolicyId = parseOptionalString(body.fallback_policy_id);
-	  const approvalPolicyId = parseOptionalString(body.approval_policy_id);
-	  const changeProtection = readLoggingChangeProtection(body.change_protection) ?? 'confirm';
+  const destinationId = parseOptionalString(body.destination_id);
+  const tenantId = parseOptionalString(body.tenant_id);
+  const fallbackPolicyId = parseOptionalString(body.fallback_policy_id);
+  const approvalPolicyId = parseOptionalString(body.approval_policy_id);
+  const changeProtection = readLoggingChangeProtection(body.change_protection) ?? 'confirm';
   const expectedVersion =
     body.expected_version === undefined || body.expected_version === null
       ? null
@@ -3337,13 +3354,13 @@ async function readLoggingDestinationOverrideBody(
     value: {
       tenantId,
       logType,
-	      plane,
-	      destinationId,
-	      fallbackPolicyId,
-	      enabled: body.enabled === undefined ? true : body.enabled !== false,
-	      changeProtection,
-	      approvalPolicyId,
-	      expectedVersion: expectedVersion ?? ifMatchVersion,
+      plane,
+      destinationId,
+      fallbackPolicyId,
+      enabled: body.enabled === undefined ? true : body.enabled !== false,
+      changeProtection,
+      approvalPolicyId,
+      expectedVersion: expectedVersion ?? ifMatchVersion,
       confirmation: parseOptionalString(body.confirmation),
     },
   };
@@ -3935,9 +3952,7 @@ function notificationRouteMatchesEvent(
   return true;
 }
 
-async function readNotificationDeliveryRouteBody(
-  c: AdminContext
-): Promise<
+async function readNotificationDeliveryRouteBody(c: AdminContext): Promise<
   | {
       ok: true;
       value: {
@@ -4083,7 +4098,8 @@ async function deliverNotificationViaRoute(
     }
     status = 'delivered';
   } catch (error) {
-    errorClass = error instanceof Error ? error.message.split(':')[0] : 'notification_delivery_failed';
+    errorClass =
+      error instanceof Error ? error.message.split(':')[0] : 'notification_delivery_failed';
     errorMessage = error instanceof Error ? error.message : 'notification_delivery_failed';
   }
 
@@ -4206,7 +4222,9 @@ async function parseCatalogRepairScope(
   }
 
   const logTypeRaw =
-    parseOptionalString(input.log_type) ?? c.req.query('filter[log_type]') ?? c.req.query('log_type');
+    parseOptionalString(input.log_type) ??
+    c.req.query('filter[log_type]') ??
+    c.req.query('log_type');
   const planeRaw =
     parseOptionalString(input.plane) ?? c.req.query('filter[plane]') ?? c.req.query('plane');
   const logType = readLogType(logTypeRaw);
@@ -4776,17 +4794,17 @@ destinationsRouter.post('/', async (c) => {
         now,
         1,
       ]
-	    );
-	    await replaceDestinationCapabilities(adapter, id, value.capabilities, now);
-	    await replaceStorageDestinationAssignments(adapter, {
-	      destinationId: id,
-	      tenantIds: value.allowedTenantIds,
-	      logTypes: value.allowedLogTypes,
-	      planes: value.allowedPlanes,
-	      actorId: authContext.userId,
-	      now,
-	    });
-	    const auditId = await writeAdminAuditLog(c, {
+    );
+    await replaceDestinationCapabilities(adapter, id, value.capabilities, now);
+    await replaceStorageDestinationAssignments(adapter, {
+      destinationId: id,
+      tenantIds: value.allowedTenantIds,
+      logTypes: value.allowedLogTypes,
+      planes: value.allowedPlanes,
+      actorId: authContext.userId,
+      now,
+    });
+    const auditId = await writeAdminAuditLog(c, {
       action: 'storage_destination.create',
       resourceType: 'admin_destination',
       resourceId: id,
@@ -4996,7 +5014,11 @@ destinationsRouter.post('/:id/diff-preview', async (c) => {
         value.allowedPlanes
       ),
       destinationDiffEntry('region', current.region, value.region),
-      destinationDiffEntry('critical_allowed', current.critical_allowed === 1, value.criticalAllowed),
+      destinationDiffEntry(
+        'critical_allowed',
+        current.critical_allowed === 1,
+        value.criticalAllowed
+      ),
       destinationDiffEntry(
         'default_fallback_eligible',
         current.default_fallback_eligible === 1,
@@ -5112,17 +5134,17 @@ destinationsRouter.patch('/:id', async (c) => {
         now,
         id,
       ]
-	    );
-	    await replaceDestinationCapabilities(adapter, id, value.capabilities, now);
-	    await replaceStorageDestinationAssignments(adapter, {
-	      destinationId: id,
-	      tenantIds: value.allowedTenantIds,
-	      logTypes: value.allowedLogTypes,
-	      planes: value.allowedPlanes,
-	      actorId: authContext.userId,
-	      now,
-	    });
-	    const auditId = await writeAdminAuditLog(c, {
+    );
+    await replaceDestinationCapabilities(adapter, id, value.capabilities, now);
+    await replaceStorageDestinationAssignments(adapter, {
+      destinationId: id,
+      tenantIds: value.allowedTenantIds,
+      logTypes: value.allowedLogTypes,
+      planes: value.allowedPlanes,
+      actorId: authContext.userId,
+      now,
+    });
+    const auditId = await writeAdminAuditLog(c, {
       action: 'storage_destination.update',
       resourceType: 'admin_destination',
       resourceId: id,
@@ -5985,65 +6007,65 @@ loggingPoliciesRouter.post('/assignments', async (c) => {
     }
 
     const adapter = getAdminAdapter(c);
-	    const authContext = getAuth(c);
-	    const now = Date.now();
-	    const id = createLoggingId('pol', now);
-	    const managedBy = parsed.value.tenantId && !critical ? 'tenant' : 'platform';
-	    const policyHash = await hashLoggingDestinationOverride({
-	      tenantId: parsed.value.tenantId,
-	      logType: parsed.value.logType,
-	      plane: parsed.value.plane,
-	      destinationId: parsed.value.destinationId,
-	      fallbackPolicyId: parsed.value.fallbackPolicyId,
-	      enabled: parsed.value.enabled,
-	      managedBy,
-	      changeProtection: parsed.value.changeProtection,
-	      approvalPolicyId: parsed.value.approvalPolicyId,
-	    });
-	    await adapter.execute(
-	      `INSERT INTO logging_destination_overrides (
+    const authContext = getAuth(c);
+    const now = Date.now();
+    const id = createLoggingId('pol', now);
+    const managedBy = parsed.value.tenantId && !critical ? 'tenant' : 'platform';
+    const policyHash = await hashLoggingDestinationOverride({
+      tenantId: parsed.value.tenantId,
+      logType: parsed.value.logType,
+      plane: parsed.value.plane,
+      destinationId: parsed.value.destinationId,
+      fallbackPolicyId: parsed.value.fallbackPolicyId,
+      enabled: parsed.value.enabled,
+      managedBy,
+      changeProtection: parsed.value.changeProtection,
+      approvalPolicyId: parsed.value.approvalPolicyId,
+    });
+    await adapter.execute(
+      `INSERT INTO logging_destination_overrides (
 	        id, tenant_id, log_type, plane, destination_id, fallback_policy_id,
 	        enabled, managed_by, change_protection, approval_policy_id, policy_hash,
 	        created_by, updated_by, created_at, updated_at, version
 	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-	      [
-	        id,
-	        parsed.value.tenantId,
-	        parsed.value.logType,
-	        parsed.value.plane,
-	        parsed.value.destinationId,
-	        parsed.value.fallbackPolicyId,
-	        parsed.value.enabled ? 1 : 0,
-	        managedBy,
-	        parsed.value.changeProtection,
-	        parsed.value.approvalPolicyId,
-	        policyHash,
-	        authContext.userId,
-	        authContext.userId,
-	        now,
-	        now,
-	        1,
-	      ]
-	    );
-	    await insertLoggingDestinationOverrideHistory(adapter, {
-	      overrideId: id,
-	      previous: null,
-	      next: {
-	        tenant_id: parsed.value.tenantId,
-	        log_type: parsed.value.logType,
-	        plane: parsed.value.plane,
-	        destination_id: parsed.value.destinationId,
-	        fallback_policy_id: parsed.value.fallbackPolicyId,
-	        enabled: parsed.value.enabled ? 1 : 0,
-	        change_protection: parsed.value.changeProtection,
-	        approval_policy_id: parsed.value.approvalPolicyId,
-	        policy_hash: policyHash,
-	        version: 1,
-	      },
-	      changedBy: authContext.userId,
-	      changedAt: now,
-	      changeReason: 'create',
-	    });
+      [
+        id,
+        parsed.value.tenantId,
+        parsed.value.logType,
+        parsed.value.plane,
+        parsed.value.destinationId,
+        parsed.value.fallbackPolicyId,
+        parsed.value.enabled ? 1 : 0,
+        managedBy,
+        parsed.value.changeProtection,
+        parsed.value.approvalPolicyId,
+        policyHash,
+        authContext.userId,
+        authContext.userId,
+        now,
+        now,
+        1,
+      ]
+    );
+    await insertLoggingDestinationOverrideHistory(adapter, {
+      overrideId: id,
+      previous: null,
+      next: {
+        tenant_id: parsed.value.tenantId,
+        log_type: parsed.value.logType,
+        plane: parsed.value.plane,
+        destination_id: parsed.value.destinationId,
+        fallback_policy_id: parsed.value.fallbackPolicyId,
+        enabled: parsed.value.enabled ? 1 : 0,
+        change_protection: parsed.value.changeProtection,
+        approval_policy_id: parsed.value.approvalPolicyId,
+        policy_hash: policyHash,
+        version: 1,
+      },
+      changedBy: authContext.userId,
+      changedAt: now,
+      changeReason: 'create',
+    });
     const auditId = await writeAdminAuditLog(c, {
       action: 'logging_destination_override.create',
       resourceType: 'logging_destination_override',
@@ -6055,14 +6077,14 @@ loggingPoliciesRouter.post('/assignments', async (c) => {
         tenant_id: parsed.value.tenantId,
         log_type: parsed.value.logType,
         plane: parsed.value.plane,
-	        destination_id: parsed.value.destinationId,
-	        fallback_policy_id: parsed.value.fallbackPolicyId,
-	        enabled: parsed.value.enabled,
-	        managed_by: managedBy,
-	        change_protection: parsed.value.changeProtection,
-	        approval_policy_id: parsed.value.approvalPolicyId,
-	        policy_hash: policyHash,
-	      },
+        destination_id: parsed.value.destinationId,
+        fallback_policy_id: parsed.value.fallbackPolicyId,
+        enabled: parsed.value.enabled,
+        managed_by: managedBy,
+        change_protection: parsed.value.changeProtection,
+        approval_policy_id: parsed.value.approvalPolicyId,
+        policy_hash: policyHash,
+      },
     });
 
     return c.json(
@@ -6072,14 +6094,14 @@ loggingPoliciesRouter.post('/assignments', async (c) => {
           tenant_id: parsed.value.tenantId,
           log_type: parsed.value.logType,
           plane: parsed.value.plane,
-	          destination_id: parsed.value.destinationId,
-	          fallback_policy_id: parsed.value.fallbackPolicyId,
-	          enabled: parsed.value.enabled ? 1 : 0,
-	          managed_by: managedBy,
-	          change_protection: parsed.value.changeProtection,
-	          approval_policy_id: parsed.value.approvalPolicyId,
-	          policy_hash: policyHash,
-	          version: 1,
+          destination_id: parsed.value.destinationId,
+          fallback_policy_id: parsed.value.fallbackPolicyId,
+          enabled: parsed.value.enabled ? 1 : 0,
+          managed_by: managedBy,
+          change_protection: parsed.value.changeProtection,
+          approval_policy_id: parsed.value.approvalPolicyId,
+          policy_hash: policyHash,
+          version: 1,
           created_at: now,
           updated_at: now,
         },
@@ -6342,8 +6364,8 @@ async function handleLoggingDestinationOverridePatch(
 
   try {
     const adapter = getAdminAdapter(c);
-	    const current = await adapter.queryOne<LoggingDestinationOverrideRow>(
-	      `SELECT id, tenant_id, log_type, plane, destination_id, fallback_policy_id,
+    const current = await adapter.queryOne<LoggingDestinationOverrideRow>(
+      `SELECT id, tenant_id, log_type, plane, destination_id, fallback_policy_id,
 	              enabled, managed_by, change_protection, approval_policy_id, policy_hash,
 	              created_by, updated_by, created_at, updated_at, version
 	       FROM logging_destination_overrides
@@ -6391,60 +6413,60 @@ async function handleLoggingDestinationOverridePatch(
 
     const authContext = getAuth(c);
     const now = Date.now();
-	    const managedBy = value.tenantId && !critical ? 'tenant' : 'platform';
-	    const nextChangeProtection = value.changeProtection ?? current.change_protection;
-	    const policyHash = await hashLoggingDestinationOverride({
-	      tenantId: value.tenantId,
-	      logType: value.logType,
-	      plane: value.plane,
-	      destinationId: value.destinationId,
-	      fallbackPolicyId: value.fallbackPolicyId,
-	      enabled: value.enabled,
-	      managedBy,
-	      changeProtection: nextChangeProtection,
-	      approvalPolicyId: value.approvalPolicyId,
-	    });
-	    await adapter.execute(
-	      `UPDATE logging_destination_overrides
+    const managedBy = value.tenantId && !critical ? 'tenant' : 'platform';
+    const nextChangeProtection = value.changeProtection ?? current.change_protection;
+    const policyHash = await hashLoggingDestinationOverride({
+      tenantId: value.tenantId,
+      logType: value.logType,
+      plane: value.plane,
+      destinationId: value.destinationId,
+      fallbackPolicyId: value.fallbackPolicyId,
+      enabled: value.enabled,
+      managedBy,
+      changeProtection: nextChangeProtection,
+      approvalPolicyId: value.approvalPolicyId,
+    });
+    await adapter.execute(
+      `UPDATE logging_destination_overrides
 	       SET tenant_id = ?, log_type = ?, plane = ?, destination_id = ?, fallback_policy_id = ?,
 	           enabled = ?, managed_by = ?, change_protection = ?, approval_policy_id = ?,
 	           policy_hash = ?, updated_by = ?, updated_at = ?, version = version + 1
 	       WHERE id = ?`,
-	      [
-	        value.tenantId,
-	        value.logType,
-	        value.plane,
-	        value.destinationId,
-	        value.fallbackPolicyId,
-	        value.enabled ? 1 : 0,
-	        managedBy,
-	        nextChangeProtection,
-	        value.approvalPolicyId,
-	        policyHash,
-	        authContext.userId,
-	        now,
-	        policyId,
-	      ]
-	    );
-	    await insertLoggingDestinationOverrideHistory(adapter, {
-	      overrideId: policyId,
-	      previous: current,
-	      next: {
-	        tenant_id: value.tenantId,
-	        log_type: value.logType,
-	        plane: value.plane,
-	        destination_id: value.destinationId,
-	        fallback_policy_id: value.fallbackPolicyId,
-	        enabled: value.enabled ? 1 : 0,
-	        change_protection: nextChangeProtection,
-	        approval_policy_id: value.approvalPolicyId,
-	        policy_hash: policyHash,
-	        version: current.version + 1,
-	      },
-	      changedBy: authContext.userId,
-	      changedAt: now,
-	      changeReason: 'update',
-	    });
+      [
+        value.tenantId,
+        value.logType,
+        value.plane,
+        value.destinationId,
+        value.fallbackPolicyId,
+        value.enabled ? 1 : 0,
+        managedBy,
+        nextChangeProtection,
+        value.approvalPolicyId,
+        policyHash,
+        authContext.userId,
+        now,
+        policyId,
+      ]
+    );
+    await insertLoggingDestinationOverrideHistory(adapter, {
+      overrideId: policyId,
+      previous: current,
+      next: {
+        tenant_id: value.tenantId,
+        log_type: value.logType,
+        plane: value.plane,
+        destination_id: value.destinationId,
+        fallback_policy_id: value.fallbackPolicyId,
+        enabled: value.enabled ? 1 : 0,
+        change_protection: nextChangeProtection,
+        approval_policy_id: value.approvalPolicyId,
+        policy_hash: policyHash,
+        version: current.version + 1,
+      },
+      changedBy: authContext.userId,
+      changedAt: now,
+      changeReason: 'update',
+    });
     const auditId = await writeAdminAuditLog(c, {
       action: 'logging_destination_override.update',
       resourceType: 'logging_destination_override',
@@ -6456,28 +6478,28 @@ async function handleLoggingDestinationOverridePatch(
         tenant_id: current.tenant_id,
         log_type: current.log_type,
         plane: current.plane,
-	        destination_id: current.destination_id,
-	        fallback_policy_id: current.fallback_policy_id,
-	        enabled: current.enabled === 1,
-	        managed_by: current.managed_by,
-	        change_protection: current.change_protection,
-	        approval_policy_id: current.approval_policy_id,
-	        policy_hash: current.policy_hash,
-	        version: current.version,
+        destination_id: current.destination_id,
+        fallback_policy_id: current.fallback_policy_id,
+        enabled: current.enabled === 1,
+        managed_by: current.managed_by,
+        change_protection: current.change_protection,
+        approval_policy_id: current.approval_policy_id,
+        policy_hash: current.policy_hash,
+        version: current.version,
       },
       after: {
         id: policyId,
         tenant_id: value.tenantId,
         log_type: value.logType,
         plane: value.plane,
-	        destination_id: value.destinationId,
-	        fallback_policy_id: value.fallbackPolicyId,
-	        enabled: value.enabled,
-	        managed_by: managedBy,
-	        change_protection: nextChangeProtection,
-	        approval_policy_id: value.approvalPolicyId,
-	        policy_hash: policyHash,
-	        version: current.version + 1,
+        destination_id: value.destinationId,
+        fallback_policy_id: value.fallbackPolicyId,
+        enabled: value.enabled,
+        managed_by: managedBy,
+        change_protection: nextChangeProtection,
+        approval_policy_id: value.approvalPolicyId,
+        policy_hash: policyHash,
+        version: current.version + 1,
       },
     });
 
@@ -6488,14 +6510,14 @@ async function handleLoggingDestinationOverridePatch(
           tenant_id: value.tenantId,
           log_type: value.logType,
           plane: value.plane,
-	          destination_id: value.destinationId,
-	          fallback_policy_id: value.fallbackPolicyId,
-	          enabled: value.enabled ? 1 : 0,
-	          managed_by: managedBy,
-	          change_protection: nextChangeProtection,
-	          approval_policy_id: value.approvalPolicyId,
-	          policy_hash: policyHash,
-	          version: current.version + 1,
+          destination_id: value.destinationId,
+          fallback_policy_id: value.fallbackPolicyId,
+          enabled: value.enabled ? 1 : 0,
+          managed_by: managedBy,
+          change_protection: nextChangeProtection,
+          approval_policy_id: value.approvalPolicyId,
+          policy_hash: policyHash,
+          version: current.version + 1,
           updated_at: now,
         },
         { auditId }
@@ -6892,9 +6914,7 @@ loggingPoliciesRouter.post('/runtime/resolve', async (c) => {
   if (!tenantId || !logType || !plane) {
     return createAdminFieldErrorResponse(c, [
       ...(!tenantId ? [fieldError('tenant_id', 'required', 'Tenant id is required.')] : []),
-      ...(!logType
-        ? [fieldError('log_type', 'invalid_value', 'Log type is not supported.')]
-        : []),
+      ...(!logType ? [fieldError('log_type', 'invalid_value', 'Log type is not supported.')] : []),
       ...(!plane ? [fieldError('plane', 'invalid_value', 'Log plane is not supported.')] : []),
     ]);
   }
@@ -7469,7 +7489,9 @@ loggingPoliciesRouter.get('/usage-aggregates', async (c) => {
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
-  const metricName = readLoggingQuotaMetric(c.req.query('filter[metric_name]') || c.req.query('metric_name'));
+  const metricName = readLoggingQuotaMetric(
+    c.req.query('filter[metric_name]') || c.req.query('metric_name')
+  );
   const windowKind =
     readLoggingUsageWindowKind(c.req.query('filter[window_kind]') || c.req.query('window_kind')) ??
     'day';
@@ -7552,7 +7574,9 @@ loggingPoliciesRouter.get('/quota-policies', async (c) => {
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   }
-  const scopeType = readQuotaScopeType(c.req.query('filter[scope_type]') || c.req.query('scope_type'));
+  const scopeType = readQuotaScopeType(
+    c.req.query('filter[scope_type]') || c.req.query('scope_type')
+  );
   const requestedScopeId = c.req.query('filter[scope_id]') || c.req.query('scope_id');
   const conditions = ["status <> 'deleted'"];
   const params: unknown[] = [];
@@ -7763,7 +7787,10 @@ loggingPoliciesRouter.patch('/quota-policies/:id', async (c) => {
       metadata: value,
     });
     return c.json(
-      adminMutationEnvelope({ id, version: toInteger(current.version) + 1, updated_at: now }, { auditId })
+      adminMutationEnvelope(
+        { id, version: toInteger(current.version) + 1, updated_at: now },
+        { auditId }
+      )
     );
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -7831,7 +7858,8 @@ loggingPoliciesRouter.post('/quota/evaluate', async (c) => {
         plane: typeof policy.plane === 'string' ? policy.plane : null,
         lane: typeof policy.lane === 'string' ? policy.lane : null,
       });
-      const enforcementMode = readLoggingQuotaEnforcementMode(policy.enforcement_mode) ?? 'warn_only';
+      const enforcementMode =
+        readLoggingQuotaEnforcementMode(policy.enforcement_mode) ?? 'warn_only';
       const enforcementAction =
         state === 'ok' || enforcementMode === 'disabled' || enforcementMode === 'observe'
           ? 'none'
@@ -7846,14 +7874,11 @@ loggingPoliciesRouter.post('/quota/evaluate', async (c) => {
           tenantId: policy.scope_type === 'tenant' ? String(policy.scope_id) : 'global',
           category: 'logging_quota_warning',
           eventType: `logging.quota.${state}`,
-          severity: state === 'hard_exceeded' ? 'high' : state === 'soft_exceeded' ? 'medium' : 'low',
-          deduplicationKey: [
-            'logging_quota',
-            policy.id,
-            windowKind,
-            windowStartAt,
-            state,
-          ].join(':'),
+          severity:
+            state === 'hard_exceeded' ? 'high' : state === 'soft_exceeded' ? 'medium' : 'low',
+          deduplicationKey: ['logging_quota', policy.id, windowKind, windowStartAt, state].join(
+            ':'
+          ),
           payload: {
             quota_policy_id: policy.id,
             scope_type: policy.scope_type,
@@ -7936,7 +7961,9 @@ loggingPoliciesRouter.post('/quota/evaluate', async (c) => {
       severity: evaluations.some((item) => item.state === 'hard_exceeded') ? 'warn' : 'info',
       metadata: { evaluated_count: evaluations.length },
     });
-    return c.json(adminActionEnvelope({ evaluated_count: evaluations.length, evaluations }, { auditId }));
+    return c.json(
+      adminActionEnvelope({ evaluated_count: evaluations.length, evaluations }, { auditId })
+    );
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -8301,9 +8328,7 @@ notificationsRouter.get('/', async (c) => {
     (category) => !NOTIFICATION_CENTER_CATEGORIES.includes(category as never)
   );
   if (invalidCategories.length > 0) {
-    fields.push(
-      fieldError('category', 'invalid_value', 'Notification category is not supported.')
-    );
+    fields.push(fieldError('category', 'invalid_value', 'Notification category is not supported.'));
   }
   if (
     status !== 'all' &&
@@ -8313,9 +8338,7 @@ notificationsRouter.get('/', async (c) => {
     fields.push(fieldError('status', 'invalid_value', 'Notification status is not supported.'));
   }
   if (severity && !NOTIFICATION_CENTER_SEVERITIES.includes(severity as never)) {
-    fields.push(
-      fieldError('severity', 'invalid_value', 'Notification severity is not supported.')
-    );
+    fields.push(fieldError('severity', 'invalid_value', 'Notification severity is not supported.'));
   }
   if (fields.length > 0) {
     return createAdminFieldErrorResponse(c, fields);
@@ -8627,7 +8650,10 @@ notificationsRouter.post('/delivery/run', async (c) => {
         continue;
       }
       for (const route of matchingRoutes) {
-        results.push({ event_id: event.id, ...(await deliverNotificationViaRoute(c, { event, route, now })) });
+        results.push({
+          event_id: event.id,
+          ...(await deliverNotificationViaRoute(c, { event, route, now })),
+        });
       }
     }
     const auditId = await writeAdminAuditLog(c, {
@@ -8689,7 +8715,12 @@ notificationsRouter.post('/:id/deliver', async (c) => {
       severity: results.some((item) => item.status === 'failed') ? 'warn' : 'info',
       metadata: { route_count: matchingRoutes.length },
     });
-    return c.json(adminActionEnvelope({ event_id: event.id, route_count: matchingRoutes.length, results }, { auditId }));
+    return c.json(
+      adminActionEnvelope(
+        { event_id: event.id, route_count: matchingRoutes.length, results },
+        { auditId }
+      )
+    );
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -10034,9 +10065,11 @@ loggingPoliciesRouter.post('/dlq/bulk-replay/apply', async (c) => {
         source_id: item.id,
         reason,
       });
-      const payload = (await response.json().catch(() => null)) as
-        | { result?: Record<string, unknown>; error?: string; message?: string }
-        | null;
+      const payload = (await response.json().catch(() => null)) as {
+        result?: Record<string, unknown>;
+        error?: string;
+        message?: string;
+      } | null;
       if (response.ok && payload?.result) {
         applied.push({
           dlq_item_id: item.id,
@@ -11772,7 +11805,11 @@ adminLoggingRouter.post('/catalog-repair-jobs/:id/cancel', async (c) => {
     }
     if (!['queued', 'running'].includes(row.status)) {
       return createAdminFieldErrorResponse(c, [
-        fieldError('status', 'invalid_state', 'Only queued or running repair jobs can be cancelled.'),
+        fieldError(
+          'status',
+          'invalid_state',
+          'Only queued or running repair jobs can be cancelled.'
+        ),
       ]);
     }
     await adapter.execute(

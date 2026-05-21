@@ -22,16 +22,16 @@ describe('human-basic login flow definition', () => {
       'complete',
       'error',
     ]);
-    expect(HUMAN_BASIC_LOGIN_FLOW.edges.map((edge) => [edge.source, edge.target, edge.type])).toEqual(
-      [
-        ['start', 'identifier', 'success'],
-        ['identifier', 'auth_method', 'success'],
-        ['identifier', 'error', 'error'],
-        ['auth_method', 'complete', 'success'],
-        ['auth_method', 'error', 'error'],
-        ['error', 'identifier', 'conditional'],
-      ]
-    );
+    expect(
+      HUMAN_BASIC_LOGIN_FLOW.edges.map((edge) => [edge.source, edge.target, edge.type])
+    ).toEqual([
+      ['start', 'identifier', 'success'],
+      ['identifier', 'auth_method', 'success'],
+      ['identifier', 'error', 'error'],
+      ['auth_method', 'complete', 'success'],
+      ['auth_method', 'error', 'error'],
+      ['error', 'identifier', 'conditional'],
+    ]);
   });
 
   it('offers passkey first with email-code fallback for human login', () => {

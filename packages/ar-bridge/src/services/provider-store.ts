@@ -45,7 +45,11 @@ export async function getProviderByIdOrSlug(
   idOrSlug: string,
   tenantId: string
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-id-or-slug', tenantId);
+  const coreAdapter = await getCoreAdapter(
+    env,
+    'bridge-provider-store:get-by-id-or-slug',
+    tenantId
+  );
 
   // First try by slug (case-insensitive)
   let result = await coreAdapter.queryOne<DbUpstreamProvider>(

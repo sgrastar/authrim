@@ -719,7 +719,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         let fetchUrl = request_uri;
         let requestObjectResponse: Response | null = null;
 
-        for (let redirectCount = 0; redirectCount <= HTTPS_REQUEST_URI_MAX_REDIRECTS; redirectCount++) {
+        for (
+          let redirectCount = 0;
+          redirectCount <= HTTPS_REQUEST_URI_MAX_REDIRECTS;
+          redirectCount++
+        ) {
           requestObjectResponse = await safeFetch(fetchUrl, {
             method: 'GET',
             headers: {
@@ -914,7 +918,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               ? `Request timed out after ${timeoutMs}ms`
               : isTooLarge
                 ? `Response too large: exceeds limit of ${maxSizeBytes} bytes`
-              : 'Failed to fetch request object from request_uri',
+                : 'Failed to fetch request object from request_uri',
           },
           400
         );

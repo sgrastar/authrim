@@ -1418,11 +1418,7 @@ async function promptTenantD1PreallocatedSlots(current?: number): Promise<number
     default: String(current ?? DEFAULT_TENANT_D1_PREALLOCATED_SLOTS),
     validate: (inputValue) => {
       const parsed = Number.parseInt(inputValue, 10);
-      if (
-        !Number.isInteger(parsed) ||
-        parsed < 1 ||
-        parsed > MAX_TENANT_D1_PREALLOCATED_SLOTS
-      ) {
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TENANT_D1_PREALLOCATED_SLOTS) {
         return `Enter a number from 1 to ${MAX_TENANT_D1_PREALLOCATED_SLOTS}`;
       }
       return true;

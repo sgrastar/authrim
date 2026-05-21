@@ -175,10 +175,7 @@ function createKeyManager() {
   } as unknown as Env['KEY_MANAGER'];
 }
 
-function createTenantRow(
-  id: string,
-  overrides: Partial<TenantRow> = {}
-): TenantRow {
+function createTenantRow(id: string, overrides: Partial<TenantRow> = {}): TenantRow {
   return {
     id,
     tenant_code: id,
@@ -310,7 +307,11 @@ describe('tenant D1 pool tenant management', () => {
       throw new Error(`unexpected default adapter SQL: ${sql}`);
     });
     adapters.adminAdapter = createAdapter((sql, _params, op) => {
-      if (op === 'queryOne' && sql.includes('FROM tenant_database_slots') && sql.includes('LIMIT 1')) {
+      if (
+        op === 'queryOne' &&
+        sql.includes('FROM tenant_database_slots') &&
+        sql.includes('LIMIT 1')
+      ) {
         return null;
       }
       if (op === 'queryOne' && sql.includes('COUNT(*) AS total')) {
@@ -535,7 +536,9 @@ describe('tenant D1 pool tenant management', () => {
 
     adapters.adminAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('WHERE state =') && sql.includes('LIMIT 1')) {
-        return slotState === 'available' ? { ...slot, state: slotState, assigned_tenant_id: null } : null;
+        return slotState === 'available'
+          ? { ...slot, state: slotState, assigned_tenant_id: null }
+          : null;
       }
       if (op === 'execute' && sql.includes("SET state = 'reserved'")) {
         slotState = 'reserved';
@@ -700,7 +703,10 @@ describe('tenant D1 pool tenant management', () => {
       ) {
         return { error_code: 'settings read failed', created_at: 1_700_000_001 };
       }
-      if (op === 'queryOne' && sql.includes('SELECT * FROM tenant_database_slots WHERE slot_id = ?')) {
+      if (
+        op === 'queryOne' &&
+        sql.includes('SELECT * FROM tenant_database_slots WHERE slot_id = ?')
+      ) {
         return slot;
       }
       if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
@@ -783,10 +789,16 @@ describe('tenant D1 pool tenant management', () => {
           result: 'failed',
         };
       }
-      if (op === 'queryOne' && sql.includes('SELECT slot_id, state, updated_at FROM tenant_database_slots')) {
+      if (
+        op === 'queryOne' &&
+        sql.includes('SELECT slot_id, state, updated_at FROM tenant_database_slots')
+      ) {
         return { slot_id: slot.slot_id, state: slotState, updated_at: 1_700_000_010 };
       }
-      if (op === 'queryOne' && sql.includes('SELECT * FROM tenant_database_slots WHERE slot_id = ?')) {
+      if (
+        op === 'queryOne' &&
+        sql.includes('SELECT * FROM tenant_database_slots WHERE slot_id = ?')
+      ) {
         return { ...slot, state: slotState, assigned_tenant_id: assignedTenantId };
       }
       if (op === 'execute' && sql.includes("SET state = 'reserved'")) {

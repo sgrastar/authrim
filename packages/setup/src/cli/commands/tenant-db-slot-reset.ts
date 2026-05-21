@@ -291,7 +291,9 @@ export async function tenantDatabaseSlotResetCommand(
   console.log(`PII DB:      ${chalk.cyan(piiLock.name)} (${piiObjects.length} object(s))`);
 
   if (options.dryRun) {
-    console.log(chalk.yellow('\nDry run only. No D1 schema, migrations, or slot state were changed.'));
+    console.log(
+      chalk.yellow('\nDry run only. No D1 schema, migrations, or slot state were changed.')
+    );
     return;
   }
 

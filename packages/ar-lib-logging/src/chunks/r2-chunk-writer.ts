@@ -43,13 +43,9 @@ export async function encryptLogChunkBody(
     throw new Error('log_chunk_encryption_key_must_be_32_bytes');
   }
 
-  const key = await crypto.subtle.importKey(
-    'raw',
-    options.keyBytes,
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt']
-  );
+  const key = await crypto.subtle.importKey('raw', options.keyBytes, { name: 'AES-GCM' }, false, [
+    'encrypt',
+  ]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aad = new TextEncoder().encode(
     JSON.stringify({

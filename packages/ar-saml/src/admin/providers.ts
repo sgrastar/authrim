@@ -413,8 +413,8 @@ export async function handleCreateAttributePreset(c: AdminSAMLContext): Promise<
       },
     };
 
-	    await coreAdapter.execute(
-	      `INSERT INTO saml_attribute_presets (
+    await coreAdapter.execute(
+      `INSERT INTO saml_attribute_presets (
          id, tenant_id, label, description, applies_to, profile, stability, application_mode,
          attribute_release_policy_json, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -430,21 +430,21 @@ export async function handleCreateAttributePreset(c: AdminSAMLContext): Promise<
         JSON.stringify(preset.attributeReleasePolicy),
         now,
         now,
-	      ]
-	    );
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.attribute_preset.created',
-	      resource: 'saml_attribute_preset',
-	      resourceId: id,
-	      metadata: {
-	        label: preset.label,
-	        profile: preset.profile,
-	        attribute_count: attributes.length,
-	      },
-	    });
+      ]
+    );
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.attribute_preset.created',
+      resource: 'saml_attribute_preset',
+      resourceId: id,
+      metadata: {
+        label: preset.label,
+        profile: preset.profile,
+        attribute_count: attributes.length,
+      },
+    });
 
-	    return c.json({ preset }, 201);
+    return c.json({ preset }, 201);
   } catch (error) {
     await recordSAMLAdminFailure(c, {
       action: 'saml.attribute_preset.created',
@@ -481,18 +481,18 @@ export async function handleDeleteAttributePreset(c: AdminSAMLContext): Promise<
       [id, tenantId]
     );
 
-	    if (result.rowsAffected === 0) {
-	      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-	    }
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.attribute_preset.deleted',
-	      resource: 'saml_attribute_preset',
-	      resourceId: id,
-	      severity: 'warning',
-	    });
+    if (result.rowsAffected === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.attribute_preset.deleted',
+      resource: 'saml_attribute_preset',
+      resourceId: id,
+      severity: 'warning',
+    });
 
-	    return c.json({ success: true });
+    return c.json({ success: true });
   } catch (error) {
     await recordSAMLAdminFailure(c, {
       action: 'saml.attribute_preset.deleted',
@@ -604,8 +604,8 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
 
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-	    await coreAdapter.execute(
-	      `INSERT INTO identity_providers (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
+    await coreAdapter.execute(
+      `INSERT INTO identity_providers (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
@@ -616,22 +616,22 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         body.enabled !== false ? 1 : 0,
         now,
         now,
-	      ]
-	    );
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.provider.created',
-	      resource: body.providerType,
-	      resourceId: id,
-	      metadata: {
-	        name: body.name,
-	        provider_type: body.providerType,
-	        enabled: body.enabled !== false,
-	        metadata_imported: hasMetadataInput,
-	      },
-	    });
+      ]
+    );
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.provider.created',
+      resource: body.providerType,
+      resourceId: id,
+      metadata: {
+        name: body.name,
+        provider_type: body.providerType,
+        enabled: body.enabled !== false,
+        metadata_imported: hasMetadataInput,
+      },
+    });
 
-	    return c.json(
+    return c.json(
       {
         id,
         name: body.name,
@@ -763,8 +763,8 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         : mergedConfig;
     const now = Date.now();
 
-	    await coreAdapter.execute(
-	      `UPDATE identity_providers
+    await coreAdapter.execute(
+      `UPDATE identity_providers
        SET name = ?, config_json = ?, enabled = ?, updated_at = ?
        WHERE id = ? AND tenant_id = ?`,
       [
@@ -774,22 +774,22 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         now,
         id,
         tenantId,
-	      ]
-	    );
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.provider.updated',
-	      resource: existing.provider_type ?? 'saml_provider',
-	      resourceId: id ?? 'unknown',
-	      metadata: {
-	        previous_name: existing.name,
-	        next_name: body.name || existing.name,
-	        enabled_changed: body.enabled !== undefined && body.enabled !== (existing.enabled === 1),
-	        config_updated: !!body.config,
-	      },
-	    });
+      ]
+    );
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.provider.updated',
+      resource: existing.provider_type ?? 'saml_provider',
+      resourceId: id ?? 'unknown',
+      metadata: {
+        previous_name: existing.name,
+        next_name: body.name || existing.name,
+        enabled_changed: body.enabled !== undefined && body.enabled !== (existing.enabled === 1),
+        config_updated: !!body.config,
+      },
+    });
 
-	    return c.json({
+    return c.json({
       id,
       name: body.name || existing.name,
       providerType: existing.provider_type,
@@ -830,18 +830,18 @@ export async function handleDeleteProvider(c: AdminSAMLContext): Promise<Respons
       [id, tenantId]
     );
 
-	    if (result.rowsAffected === 0) {
-	      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-	    }
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.provider.deleted',
-	      resource: 'saml_provider',
-	      resourceId: id ?? 'unknown',
-	      severity: 'warning',
-	    });
+    if (result.rowsAffected === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.provider.deleted',
+      resource: 'saml_provider',
+      resourceId: id ?? 'unknown',
+      severity: 'warning',
+    });
 
-	    return c.json({ success: true });
+    return c.json({ success: true });
   } catch (error) {
     await recordSAMLAdminFailure(c, {
       action: 'saml.provider.deleted',
@@ -937,23 +937,23 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
 
     const now = Date.now();
 
-	    await coreAdapter.execute(
-	      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-	      [JSON.stringify(mergedConfig), now, id, tenantId]
-	    );
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.provider.metadata_imported',
-	      resource: existing.provider_type ?? 'saml_provider',
-	      resourceId: id ?? 'unknown',
-	      metadata: {
-	        metadata_url_present: !!metadataUrl,
-	        metadata_hash: currentAnalysis.hash,
-	        changed: refreshStatus.diff.changed,
-	      },
-	    });
+    await coreAdapter.execute(
+      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [JSON.stringify(mergedConfig), now, id, tenantId]
+    );
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.provider.metadata_imported',
+      resource: existing.provider_type ?? 'saml_provider',
+      resourceId: id ?? 'unknown',
+      metadata: {
+        metadata_url_present: !!metadataUrl,
+        metadata_hash: currentAnalysis.hash,
+        changed: refreshStatus.diff.changed,
+      },
+    });
 
-	    return c.json({
+    return c.json({
       success: true,
       config: mergedConfig,
       metadataRefreshStatus: refreshStatus,
@@ -1180,24 +1180,24 @@ export async function handleCreateFederationTrustProfile(c: AdminSAMLContext): P
     const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
     if (forbidden) return forbidden;
     const tenantId = resolveSAMLTenantIdFromContext(c);
-	    const profile = await buildTrustProfileFromRequest(
-	      tenantId,
-	      (await c.req.json()) as SAMLFederationTrustProfileRequest
-	    );
-	    await upsertFederationTrustProfile(c.env, profile);
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.federation_trust_profile.created',
-	      resource: 'saml_federation_trust_profile',
-	      resourceId: profile.id,
-	      metadata: {
-	        name: profile.name,
-	        policy: profile.policy,
-	        enabled: profile.enabled,
-	        certificate_count: profile.certificates.length,
-	      },
-	    });
-	    return c.json(profile, 201);
+    const profile = await buildTrustProfileFromRequest(
+      tenantId,
+      (await c.req.json()) as SAMLFederationTrustProfileRequest
+    );
+    await upsertFederationTrustProfile(c.env, profile);
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.federation_trust_profile.created',
+      resource: 'saml_federation_trust_profile',
+      resourceId: profile.id,
+      metadata: {
+        name: profile.name,
+        policy: profile.policy,
+        enabled: profile.enabled,
+        certificate_count: profile.certificates.length,
+      },
+    });
+    return c.json(profile, 201);
   } catch (error) {
     if (error instanceof SAMLMetadataValidationError) {
       await recordSAMLAdminFailure(c, {
@@ -1230,26 +1230,26 @@ export async function handleUpdateFederationTrustProfile(c: AdminSAMLContext): P
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const existing = await getFederationTrustProfile(c.env, tenantId, id);
     if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-	    const profile = await buildTrustProfileFromRequest(
-	      tenantId,
-	      (await c.req.json()) as SAMLFederationTrustProfileRequest,
-	      existing
-	    );
-	    await upsertFederationTrustProfile(c.env, profile);
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.federation_trust_profile.updated',
-	      resource: 'saml_federation_trust_profile',
-	      resourceId: profile.id,
-	      metadata: {
-	        previous_name: existing.name,
-	        next_name: profile.name,
-	        policy: profile.policy,
-	        enabled: profile.enabled,
-	        certificate_count: profile.certificates.length,
-	      },
-	    });
-	    return c.json(profile);
+    const profile = await buildTrustProfileFromRequest(
+      tenantId,
+      (await c.req.json()) as SAMLFederationTrustProfileRequest,
+      existing
+    );
+    await upsertFederationTrustProfile(c.env, profile);
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.federation_trust_profile.updated',
+      resource: 'saml_federation_trust_profile',
+      resourceId: profile.id,
+      metadata: {
+        previous_name: existing.name,
+        next_name: profile.name,
+        policy: profile.policy,
+        enabled: profile.enabled,
+        certificate_count: profile.certificates.length,
+      },
+    });
+    return c.json(profile);
   } catch (error) {
     if (error instanceof SAMLMetadataValidationError) {
       await recordSAMLAdminFailure(c, {
@@ -1280,18 +1280,18 @@ export async function handleDeleteFederationTrustProfile(c: AdminSAMLContext): P
     if (forbidden) return forbidden;
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'saml-federation-trust');
-	    await adapter.execute(
-	      'DELETE FROM saml_federation_trust_profiles WHERE tenant_id = ? AND id = ?',
-	      [tenantId, id]
-	    );
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.federation_trust_profile.deleted',
-	      resource: 'saml_federation_trust_profile',
-	      resourceId: id ?? 'unknown',
-	      severity: 'warning',
-	    });
-	    return c.json({ success: true });
+    await adapter.execute(
+      'DELETE FROM saml_federation_trust_profiles WHERE tenant_id = ? AND id = ?',
+      [tenantId, id]
+    );
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.federation_trust_profile.deleted',
+      resource: 'saml_federation_trust_profile',
+      resourceId: id ?? 'unknown',
+      severity: 'warning',
+    });
+    return c.json({ success: true });
   } catch (error) {
     await recordSAMLAdminFailure(c, {
       action: 'saml.federation_trust_profile.deleted',
@@ -1527,25 +1527,25 @@ async function updateProviderSigningPolicy(
     };
     const now = Date.now();
 
-	    await coreAdapter.execute(
-	      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-	      [JSON.stringify(updatedConfig), now, id, tenantId]
-	    );
-	    await createSAMLAdminAudit(c, {
-	      tenantId,
-	      action: 'saml.signing_policy.updated',
-	      resource: existing.provider_type ?? 'saml_provider',
-	      resourceId: id ?? 'unknown',
-	      severity: 'warning',
-	      metadata: {
-	        role,
-	        has_active_kid: !!signingKeyPolicy.active?.kid,
-	        has_next_kid: !!signingKeyPolicy.next?.kid,
-	        backup_count: signingKeyPolicy.backup ? 1 : 0,
-	      },
-	    });
+    await coreAdapter.execute(
+      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [JSON.stringify(updatedConfig), now, id, tenantId]
+    );
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.signing_policy.updated',
+      resource: existing.provider_type ?? 'saml_provider',
+      resourceId: id ?? 'unknown',
+      severity: 'warning',
+      metadata: {
+        role,
+        has_active_kid: !!signingKeyPolicy.active?.kid,
+        has_next_kid: !!signingKeyPolicy.next?.kid,
+        backup_count: signingKeyPolicy.backup ? 1 : 0,
+      },
+    });
 
-	    return c.json({
+    return c.json({
       success: true,
       config: updatedConfig,
       signingKeyPolicy,
@@ -1730,8 +1730,8 @@ async function createSAMLMetadataRefreshAudit(
     }),
     severity:
       input.refreshStatus.diff.changed || input.refreshStatus.diff.expired ? 'warning' : 'info',
-	  });
-	}
+  });
+}
 
 async function createSAMLAdminAudit(
   c: Context<{ Bindings: Env }>,
@@ -1741,7 +1741,7 @@ async function createSAMLAdminAudit(
     resource: string;
     resourceId: string;
     result?: 'success' | 'failure';
-	    severity?: 'info' | 'warning' | 'critical';
+    severity?: 'info' | 'warning' | 'critical';
     metadata?: Record<string, unknown>;
   }
 ): Promise<void> {

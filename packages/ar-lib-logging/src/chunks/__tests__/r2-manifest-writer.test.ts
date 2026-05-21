@@ -84,10 +84,10 @@ describe('R2 log chunk manifest writer', () => {
 
   it('floors manifest buckets and derives stable shard names', () => {
     const timestamp = Date.UTC(2026, 4, 20, 1, 23, 45);
-    expect(floorLogManifestBucket(timestamp, 60 * 60 * 1000)).toBe(
-      Date.UTC(2026, 4, 20, 1, 0, 0)
+    expect(floorLogManifestBucket(timestamp, 60 * 60 * 1000)).toBe(Date.UTC(2026, 4, 20, 1, 0, 0));
+    expect(defaultLogManifestShard({ tenantKey: 'tk_abc', shardCount: 16 })).toMatch(
+      /^shard-\d\d$/
     );
-    expect(defaultLogManifestShard({ tenantKey: 'tk_abc', shardCount: 16 })).toMatch(/^shard-\d\d$/);
     expect(defaultLogManifestShard({ tenantKey: 'tk_abc', shardCount: 16 })).toBe(
       defaultLogManifestShard({ tenantKey: 'tk_abc', shardCount: 16 })
     );

@@ -10,9 +10,7 @@ import type {
   DatabaseAdapter,
   Env,
 } from '@authrim/ar-lib-core';
-import {
-  type ObjectClass,
-} from '@authrim/ar-lib-core/services/object-catalog';
+import { type ObjectClass } from '@authrim/ar-lib-core/services/object-catalog';
 import {
   loadChunkedSensitiveDetailJson,
   storeImmediateChunkedSensitiveDetailJson,

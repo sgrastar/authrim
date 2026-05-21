@@ -174,10 +174,7 @@ export const adminStorageDestinationsAPI = {
 		const body = await parseResponse<{
 			result: { status: string; message: string };
 			audit_id?: string | null;
-		}>(
-			response,
-			'Failed to test storage destination'
-		);
+		}>(response, 'Failed to test storage destination');
 		return body.result;
 	},
 

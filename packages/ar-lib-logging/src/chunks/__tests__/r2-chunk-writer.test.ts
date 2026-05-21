@@ -6,9 +6,7 @@ import type { LogChunkCatalogStore } from '../types';
 
 describe('writeLogChunkToR2', () => {
   it('sanitizes unsafe R2 prefix segments', () => {
-    expect(normalizeR2Prefix('/../logs v1//tenant/../../evil\u0000/')).toBe(
-      'logs_v1/tenant/evil_'
-    );
+    expect(normalizeR2Prefix('/../logs v1//tenant/../../evil\u0000/')).toBe('logs_v1/tenant/evil_');
     expect(normalizeR2Prefix('///')).toBe('logs');
   });
 

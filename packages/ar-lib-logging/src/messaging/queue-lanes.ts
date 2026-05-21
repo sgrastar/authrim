@@ -46,7 +46,9 @@ const MESSAGE_QUEUE_BINDINGS: Record<
 };
 
 function isQueueLike<TPayload>(value: unknown): value is LoggingMessageQueueLike<TPayload> {
-  return !!value && typeof value === 'object' && typeof (value as { send?: unknown }).send === 'function';
+  return (
+    !!value && typeof value === 'object' && typeof (value as { send?: unknown }).send === 'function'
+  );
 }
 
 function estimatePayloadBytes(payload: unknown): number {

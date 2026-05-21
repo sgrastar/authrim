@@ -145,8 +145,7 @@ function getUnifiedAuditService(env: Env): IAuditService {
     r2Bucket: env.DIAGNOSTIC_LOGS ?? createNoopAuditBucket(),
     sensitiveDetailBucket: env.SENSITIVE_DETAILS,
     objectEncryptionRootKey: env.OBJECT_ENCRYPTION_ROOT_KEY,
-    objectEncryptionKeyVersion:
-      Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
+    objectEncryptionKeyVersion: Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
     auditQueue: env.AUDIT_QUEUE,
     configKv: env.AUTHRIM_CONFIG,
     logger: log.module('UNIFIED-MIRROR'),
@@ -567,7 +566,8 @@ function auditTargetPolicyMetadata(input: {
   selectedDestinationId: string | null;
   resolved: ResolvedLoggingPolicy;
 }): AuditTargetPolicyMetadata {
-  const effectiveDestinationId = input.resolved.destinationId ?? input.resolved.fallbackDestinationId;
+  const effectiveDestinationId =
+    input.resolved.destinationId ?? input.resolved.fallbackDestinationId;
   const fallbackUsed =
     !!input.resolved.fallbackDestinationId &&
     input.resolved.fallbackDestinationId === effectiveDestinationId &&

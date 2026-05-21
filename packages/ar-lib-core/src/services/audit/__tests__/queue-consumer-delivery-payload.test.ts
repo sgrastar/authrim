@@ -771,11 +771,11 @@ describe('logging delivery queue consumer', () => {
       'https://collector.example/logs?tenant=tk_123',
       expect.objectContaining({
         headers: expect.objectContaining({
-	          'X-Authrim-Delivery': 'qpl_hmac_1',
-	          'X-Authrim-Signature-256': expect.stringMatching(/^sha256=/),
-	          'X-Authrim-Signature-Version': 'v1',
-	          'X-Authrim-Timestamp': expect.any(String),
-	        }),
+          'X-Authrim-Delivery': 'qpl_hmac_1',
+          'X-Authrim-Signature-256': expect.stringMatching(/^sha256=/),
+          'X-Authrim-Signature-Version': 'v1',
+          'X-Authrim-Timestamp': expect.any(String),
+        }),
       })
     );
     expect(JSON.stringify(adminDb.execute.mock.calls)).not.toContain('runtime-hmac-secret');

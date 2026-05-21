@@ -147,9 +147,7 @@ describe('Direct Auth session endpoint', () => {
     });
     const { directSessionHandler } = await import('../direct-auth');
 
-    const response = await directSessionHandler(
-      createContext('Bearer 0_session_123') as never
-    );
+    const response = await directSessionHandler(createContext('Bearer 0_session_123') as never);
     const body = (await response.json()) as Record<string, Record<string, unknown>>;
 
     expect(response.status).toBe(200);
@@ -166,11 +164,7 @@ describe('Direct Auth session endpoint', () => {
       name: 'Example User',
       emailVerified: true,
     });
-    expect(mocks.getSessionStoreBySessionId).toHaveBeenCalledWith(
-      {},
-      '0_session_123',
-      'default'
-    );
+    expect(mocks.getSessionStoreBySessionId).toHaveBeenCalledWith({}, '0_session_123', 'default');
   });
 
   it('returns 401 session_expired for legacy or expired session ids', async () => {

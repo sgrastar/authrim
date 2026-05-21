@@ -75,7 +75,9 @@ export function getLoggingDeliveryLaneProfile(
 }
 
 function isQueueLike<TPayload>(value: unknown): value is LoggingDeliveryQueueLike<TPayload> {
-  return !!value && typeof value === 'object' && typeof (value as { send?: unknown }).send === 'function';
+  return (
+    !!value && typeof value === 'object' && typeof (value as { send?: unknown }).send === 'function'
+  );
 }
 
 export function resolveLoggingDeliveryQueue<TPayload>(

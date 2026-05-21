@@ -163,11 +163,7 @@ describe('session status OIDC assurance metadata', () => {
       active: false,
       error: 'session_expired',
     });
-    expect(mocks.getSessionStoreBySessionId).toHaveBeenCalledWith(
-      {},
-      '0_session_123',
-      'default'
-    );
+    expect(mocks.getSessionStoreBySessionId).toHaveBeenCalledWith({}, '0_session_123', 'default');
     expect(mocks.sessionStore.getSessionRpc).toHaveBeenCalledWith('0_session_123');
   });
 

@@ -1337,10 +1337,7 @@ export async function revokeToken(
   });
 
   if (!response.ok) {
-    const error = await readResponseTextWithLimit(
-      response,
-      TOKEN_REVOCATION_ERROR_BODY_MAX_BYTES
-    );
+    const error = await readResponseTextWithLimit(response, TOKEN_REVOCATION_ERROR_BODY_MAX_BYTES);
     throw new Error(`Failed to revoke token: ${error}`);
   }
 }

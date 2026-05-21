@@ -341,9 +341,7 @@ describe('Audit Utils', () => {
 
       await expect(
         writeEventDetails(details, mockR2Bucket as unknown as R2Bucket, 'tenant-1', 'entry-123')
-      ).rejects.toThrow(
-        'sensitive_detail_chunk_context_required:event_log_detail'
-      );
+      ).rejects.toThrow('sensitive_detail_chunk_context_required:event_log_detail');
       expect(mockR2Bucket.put).not.toHaveBeenCalled();
     });
 
@@ -517,9 +515,7 @@ describe('Audit Utils', () => {
 
       await expect(
         writePIIValues(encryptedJson, mockR2Bucket as unknown as R2Bucket, 'tenant-1', 'entry-123')
-      ).rejects.toThrow(
-        'sensitive_detail_chunk_context_required:pii_log_values'
-      );
+      ).rejects.toThrow('sensitive_detail_chunk_context_required:pii_log_values');
       expect(mockR2Bucket.put).not.toHaveBeenCalled();
     });
 
@@ -566,7 +562,6 @@ describe('Audit Utils', () => {
         )
       ).toBe(true);
     });
-
   });
 
   // ==========================================================================

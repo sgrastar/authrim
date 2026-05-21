@@ -1400,7 +1400,10 @@ describe('logging/storage maintenance jobs', () => {
       if (sql.includes('FROM log_chunk_manifests')) {
         return [];
       }
-      if (sql.includes('FROM logging_message_export_builds') || sql.includes('cleanup_status = ?')) {
+      if (
+        sql.includes('FROM logging_message_export_builds') ||
+        sql.includes('cleanup_status = ?')
+      ) {
         return [];
       }
       if (sql.includes('claimed_until IS NOT NULL') || sql.includes('expires_at IS NOT NULL')) {
@@ -1511,12 +1514,21 @@ describe('logging/storage maintenance jobs', () => {
     expect(head).toHaveBeenCalledWith('logging-exports/v1/lexp_verify/parts/part-00000.jsonl');
     expect(head).toHaveBeenCalledWith('logging-exports/v1/lexp_verify/parts/part-00001.jsonl');
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('SET status = ?, checksum_sha256 = ?, record_count = ?, byte_count = ?'),
+      expect.stringContaining(
+        'SET status = ?, checksum_sha256 = ?, record_count = ?, byte_count = ?'
+      ),
       expect.arrayContaining(['completed', 'sha256:manifest', 2, 40, now, now, 'lexp_verify'])
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE logging_delivery_event_aggregates'),
-      expect.arrayContaining(['t_message', 'export_artifact', 'audit', 'archive', 'bulk', 'delivered'])
+      expect.arrayContaining([
+        't_message',
+        'export_artifact',
+        'audit',
+        'archive',
+        'bulk',
+        'delivered',
+      ])
     );
     vi.useRealTimers();
   });
@@ -1669,7 +1681,10 @@ describe('logging/storage maintenance jobs', () => {
       if (sql.includes('FROM logging_message_jobs') && sql.includes('not_before <= ?')) {
         return [];
       }
-      if (sql.includes('FROM logging_delivery_event_aggregates') && sql.includes('SUM(record_count)')) {
+      if (
+        sql.includes('FROM logging_delivery_event_aggregates') &&
+        sql.includes('SUM(record_count)')
+      ) {
         return params?.[0] === hourStart
           ? [
               {

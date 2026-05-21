@@ -105,7 +105,9 @@ describe('logging/storage admin UI smoke checks', () => {
 		expect(notificationCenter).toContain('runNotificationDelivery');
 		expect(notificationCenter).toContain('deliverNotificationCenterEvent');
 		expect(loggingControlApi).toContain('/api/admin/notifications');
-		expect(loggingControlApi).toContain('/api/admin/notifications/${encodeURIComponent(id)}/resolve');
+		expect(loggingControlApi).toContain(
+			'/api/admin/notifications/${encodeURIComponent(id)}/resolve'
+		);
 		expect(loggingControlApi).toContain('/api/admin/notifications/delivery-routes');
 		expect(loggingControlApi).toContain('/api/admin/notifications/delivery/run');
 	});

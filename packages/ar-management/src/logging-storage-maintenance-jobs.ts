@@ -727,9 +727,7 @@ function isQuotaCriticalScope(input: {
     return true;
   }
   return (
-    input.logType === 'audit' ||
-    input.logType === 'admin_audit' ||
-    input.logType === 'security'
+    input.logType === 'audit' || input.logType === 'admin_audit' || input.logType === 'security'
   );
 }
 
@@ -752,11 +750,7 @@ function quotaEnforcementAction(input: {
   ) {
     return 'block_non_critical';
   }
-  if (
-    input.state !== 'warning' &&
-    input.enforcementMode === 'soft_limit' &&
-    !input.critical
-  ) {
+  if (input.state !== 'warning' && input.enforcementMode === 'soft_limit' && !input.critical) {
     return 'throttle_non_critical';
   }
   return 'notify';
@@ -847,11 +841,7 @@ async function refreshScheduledUsageAggregatesForWindow(
     [input.windowStartAt, windowEndAt]
   );
   for (const row of deliveryRows) {
-    for (const metricName of [
-      'delivery_records',
-      'delivery_bytes',
-      'delivery_batches',
-    ] as const) {
+    for (const metricName of ['delivery_records', 'delivery_bytes', 'delivery_batches'] as const) {
       await upsertScheduledUsageAggregate(adapter, {
         tenantKey: String(row.tenant_key),
         logType: String(row.log_type),
@@ -2081,10 +2071,7 @@ async function expandRecordIndexExportRows(input: {
           row.object_byte_count === null || row.object_byte_count === undefined
             ? null
             : toInteger(row.object_byte_count);
-        if (
-          objectByteCount !== null &&
-          objectByteCount > LOGGING_EXPORT_CHUNK_OBJECT_MAX_BYTES
-        ) {
+        if (objectByteCount !== null && objectByteCount > LOGGING_EXPORT_CHUNK_OBJECT_MAX_BYTES) {
           return { ...row, record_payload_error: 'logging_export_chunk_object_too_large' };
         }
         let storedBody = objectCache.get(row.object_key);
@@ -3770,7 +3757,10 @@ async function deleteRowsById(
     return 0;
   }
   const placeholders = ids.map(() => '?').join(', ');
-  const result = await adapter.execute(`DELETE FROM ${tableName} WHERE id IN (${placeholders})`, ids);
+  const result = await adapter.execute(
+    `DELETE FROM ${tableName} WHERE id IN (${placeholders})`,
+    ids
+  );
   return result.rowsAffected ?? ids.length;
 }
 

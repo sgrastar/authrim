@@ -124,7 +124,10 @@ export async function rewrapLogChunkObject(
     throw new Error('log_chunk_rewrap_object_not_found');
   }
 
-  const storedBody = await readR2ObjectBytesWithLimit(object, resolveMaxObjectBytes(input.maxBytes));
+  const storedBody = await readR2ObjectBytesWithLimit(
+    object,
+    resolveMaxObjectBytes(input.maxBytes)
+  );
   const decoded = await decryptLogChunkBody({
     storedBody,
     keyBytes: input.from.keyBytes,

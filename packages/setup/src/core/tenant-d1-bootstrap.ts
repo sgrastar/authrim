@@ -715,7 +715,9 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
 
     const assignedSlotNumber = 1;
     const coreSchemaVersion = getLatestMigrationVersionFromDirectory(migrationsRootPath);
-    const piiSchemaVersion = getLatestMigrationVersionFromDirectory(join(migrationsRootPath, 'pii'));
+    const piiSchemaVersion = getLatestMigrationVersionFromDirectory(
+      join(migrationsRootPath, 'pii')
+    );
     const resources: TenantD1BootstrapResource[] = [
       registryResourceFromSlot({
         lock: input.lock,
@@ -826,8 +828,7 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
       tenantId,
       slotId: buildTenantDatabaseSlotPlan({ env: input.env, slotNumber: assignedSlotNumber })
         .slotId,
-      coreDatabaseName: resources.find((resource) => resource.role === 'tenant_core')!
-        .databaseName,
+      coreDatabaseName: resources.find((resource) => resource.role === 'tenant_core')!.databaseName,
     });
 
     input.onProgress?.(`  ✅ Initial tenant D1 runtime snapshot published: ${tenantId}`);

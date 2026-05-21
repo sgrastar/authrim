@@ -609,7 +609,7 @@ describe('Upgrade Handlers', () => {
           upgrade_nonce: undefined,
         });
         expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
-          expect.stringContaining("UPDATE users_core SET"),
+          expect.stringContaining('UPDATE users_core SET'),
           expect.arrayContaining(['email', 'Verified@Example.com', 'anon-user-123', 'default'])
         );
         expect(mockUserPIIRepository.createPII).toHaveBeenCalledWith(

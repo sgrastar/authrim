@@ -81,6 +81,6 @@ export function buildLogChunkManifestObjectKey(input: BuildLogChunkManifestObjec
     partition.month,
     partition.day,
     partition.hour,
-    `${cleanSegment(input.shard)}.manifest.json`
+    `${cleanSegment(input.shard)}.manifest.json`,
   ].join('/');
 }

@@ -82,7 +82,8 @@ async function resolveDiagnosticTenantKey(options: {
   tenantKeySalt?: string;
 }): Promise<string> {
   return (
-    options.tenantKey ?? (await deriveTenantKeyFromTenantId(options.tenantId, options.tenantKeySalt))
+    options.tenantKey ??
+    (await deriveTenantKeyFromTenantId(options.tenantId, options.tenantKeySalt))
   );
 }
 

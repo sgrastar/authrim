@@ -50,7 +50,9 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
   }
 
   if (options.dryRun) {
-    console.log(chalk.yellow('\nDry run only. No bucket, lock, config, or deployment changes made.'));
+    console.log(
+      chalk.yellow('\nDry run only. No bucket, lock, config, or deployment changes made.')
+    );
     return;
   }
 

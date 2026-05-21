@@ -3423,22 +3423,22 @@ describe('logging control routers', () => {
   });
 
   it('verifies runtime snapshot pointer, object, and database metadata', async () => {
-    const objectRef =
-      'logging-policy-snapshots/v1/snapshots/tenant/tenant-a/v1-snap_runtime.json';
-    vi.mocked(env.AUTHRIM_CONFIG!.get as unknown as (key: string) => Promise<string | null>)
-      .mockResolvedValueOnce(
-        JSON.stringify({
-          schemaVersion: 1,
-          scopeType: 'tenant',
-          scopeId: 'tenant-a',
-          version: 1,
-          policyHash: 'hash_1',
-          snapshotId: 'snap_runtime',
-          objectRef,
-          publishedAt: 1000,
-          expiresAt: null,
-        })
-      );
+    const objectRef = 'logging-policy-snapshots/v1/snapshots/tenant/tenant-a/v1-snap_runtime.json';
+    vi.mocked(
+      env.AUTHRIM_CONFIG!.get as unknown as (key: string) => Promise<string | null>
+    ).mockResolvedValueOnce(
+      JSON.stringify({
+        schemaVersion: 1,
+        scopeType: 'tenant',
+        scopeId: 'tenant-a',
+        version: 1,
+        policyHash: 'hash_1',
+        snapshotId: 'snap_runtime',
+        objectRef,
+        publishedAt: 1000,
+        expiresAt: null,
+      })
+    );
     vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockResolvedValueOnce(
       createTextR2Object(
         JSON.stringify({
@@ -5031,9 +5031,7 @@ describe('logging control routers', () => {
       completed_at: null,
       metadata: JSON.stringify({ object_catalog_id: 'loc_3' }),
     });
-    const cancelled = await createPlatformApp([
-      ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN,
-    ]).request(
+    const cancelled = await createPlatformApp([ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN]).request(
       '/api/admin/admin-logging/rewrap-jobs/lrw_running/cancel',
       {
         method: 'POST',
@@ -5673,7 +5671,9 @@ describe('logging control routers', () => {
       });
     mockAdapter.query.mockResolvedValueOnce([{ capability: 'archive_write' }]);
 
-    const response = await createPlatformApp([ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE]).request(
+    const response = await createPlatformApp([
+      ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE,
+    ]).request(
       '/api/admin/destinations/dest_1/diff-preview',
       {
         method: 'POST',

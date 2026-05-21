@@ -144,10 +144,7 @@ function hasPayloadSpecificFields(value: Record<string, unknown>): boolean {
       (value.records_object_ref === undefined || typeof value.records_object_ref === 'string')
     );
   }
-  if (
-    value.payload_type === 'delivery_fanout' ||
-    value.payload_type === 'log_chunk_delivery'
-  ) {
+  if (value.payload_type === 'delivery_fanout' || value.payload_type === 'log_chunk_delivery') {
     return (
       typeof value.catalog_id === 'string' &&
       typeof value.object_key === 'string' &&

@@ -244,10 +244,7 @@ function formatTenant(row: TenantRow) {
   };
 }
 
-function formatTenantWithProvisioning(
-  row: TenantRow,
-  metadata: TenantProvisioningMetadata | null
-) {
+function formatTenantWithProvisioning(row: TenantRow, metadata: TenantProvisioningMetadata | null) {
   return {
     ...formatTenant(row),
     ...(metadata ?? {
@@ -339,10 +336,7 @@ async function getTenantProvisioningMetadata(
       };
     }
 
-    if (
-      !provisioningSlot ||
-      !['reset_required', 'unavailable'].includes(provisioningSlot.state)
-    ) {
+    if (!provisioningSlot || !['reset_required', 'unavailable'].includes(provisioningSlot.state)) {
       return {
         provisioning_status: row.is_active === 1 ? 'active' : 'inactive',
         provisioning_error: null,
@@ -915,8 +909,7 @@ async function cleanupTenantD1ProvisioningArtifacts(
   tenantId: string
 ): Promise<void> {
   const deploymentTarget =
-    (c.env as Env & { AUTHRIM_DEPLOYMENT_TARGET?: string }).AUTHRIM_DEPLOYMENT_TARGET ??
-    'default';
+    (c.env as Env & { AUTHRIM_DEPLOYMENT_TARGET?: string }).AUTHRIM_DEPLOYMENT_TARGET ?? 'default';
   await Promise.allSettled([
     adapter.execute('DELETE FROM tenant_database_active_pointers WHERE tenant_id = ?', [tenantId]),
     adapter.execute('DELETE FROM tenant_database_registry WHERE tenant_id = ?', [tenantId]),
@@ -1037,7 +1030,9 @@ async function runTenantCreateSmokeTest(
     } catch (error) {
       lastError = error;
       const waitMs =
-        TENANT_CREATE_SMOKE_BACKOFF_MS[Math.min(attempt, TENANT_CREATE_SMOKE_BACKOFF_MS.length - 1)];
+        TENANT_CREATE_SMOKE_BACKOFF_MS[
+          Math.min(attempt, TENANT_CREATE_SMOKE_BACKOFF_MS.length - 1)
+        ];
       attempt += 1;
       if (Date.now() + waitMs > deadline) {
         break;
@@ -1523,7 +1518,9 @@ export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    return c.json(formatTenantWithProvisioning(tenant, await getTenantProvisioningMetadata(c.env, tenant)));
+    return c.json(
+      formatTenantWithProvisioning(tenant, await getTenantProvisioningMetadata(c.env, tenant))
+    );
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
     log.error('Failed to get tenant', { id }, error as Error);

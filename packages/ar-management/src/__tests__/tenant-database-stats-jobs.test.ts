@@ -132,11 +132,7 @@ describe('tenant database stats jobs', () => {
     );
 
     expect(summary).toEqual({ scanned: 1, refreshed: 1, skipped: 0, failed: 0 });
-    expect(mockRepository.listActiveRegistryRowsForRole).toHaveBeenCalledWith(
-      'tenant_core',
-      25,
-      0
-    );
+    expect(mockRepository.listActiveRegistryRowsForRole).toHaveBeenCalledWith('tenant_core', 25, 0);
     expect(mockCollectTenantCoreDatabaseStats).toHaveBeenCalledWith('tenant-source', 'tenant-a', {
       checkedAt: '2026-05-16T00:00:00.000Z',
     });

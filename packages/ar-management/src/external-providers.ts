@@ -36,14 +36,14 @@ async function readExternalIdpAdminBody(
       ok: true,
       body: await readRequestTextWithLimit(c.req.raw, EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES),
     };
-	} catch {
-		return {
-			ok: false,
-			response: await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST, {
-				extensions: {
-					field: 'body',
-					reason: 'request_body_too_large',
-				},
+  } catch {
+    return {
+      ok: false,
+      response: await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST, {
+        extensions: {
+          field: 'body',
+          reason: 'request_body_too_large',
+        },
       }),
     };
   }

@@ -486,7 +486,8 @@ const ru: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Настроить шардинг? (для высоконагруженных окружений)',
   'sharding.title': 'Настройки шардинга',
-  'sharding.note': 'Примечание: рекомендуется степень 2 для количества шардов (4, 8, 16, 32, 64, 128)',
+  'sharding.note':
+    'Примечание: рекомендуется степень 2 для количества шардов (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Количество шардов кода авторизации',
   'sharding.refreshTokenShards': 'Количество шардов токена обновления',
 

@@ -235,7 +235,10 @@ app.delete('/api/admin/saml-attribute-presets/:id', handleDeleteAttributePreset)
  */
 app.post('/api/admin/saml-metadata/preview', handlePreviewMetadata);
 
-app.get('/api/admin/saml-metadata/previews/:previewId/entities', handleListAggregatePreviewEntities);
+app.get(
+  '/api/admin/saml-metadata/previews/:previewId/entities',
+  handleListAggregatePreviewEntities
+);
 app.post(
   '/api/admin/saml-metadata/previews/:previewId/batch-create',
   handleStartAggregateBatchCreate

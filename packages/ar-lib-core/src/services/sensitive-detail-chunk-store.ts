@@ -1,7 +1,4 @@
-import {
-  createLoggingId,
-  type LogType,
-} from '@authrim/ar-lib-logging';
+import { createLoggingId, type LogType } from '@authrim/ar-lib-logging';
 import { buildLogChunkObjectKey } from '@authrim/ar-lib-logging/chunks';
 import {
   enqueueLoggingDeliveryPayload,
@@ -126,9 +123,7 @@ async function readStreamBytesWithLimit(
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
         void reader.cancel().catch(() => {});
-        throw new Error(
-          `Sensitive detail chunk exceeds maximum size: ${totalBytes} > ${maxBytes}`
-        );
+        throw new Error(`Sensitive detail chunk exceeds maximum size: ${totalBytes} > ${maxBytes}`);
       }
       chunks.push(value);
     }
@@ -197,7 +192,9 @@ async function readSensitiveDetailJsonLineFromRange(
     return null;
   }
 
-  const line = new TextDecoder().decode(await readR2ObjectBytesDecoded(rangedObject, 'none')).trim();
+  const line = new TextDecoder()
+    .decode(await readR2ObjectBytesDecoded(rangedObject, 'none'))
+    .trim();
   return line || null;
 }
 
@@ -322,13 +319,7 @@ async function upsertSensitiveDetailPhysicalObject(
          AND representation = 'canonical_json'
          AND object_index = 0
          AND deleted_at IS NULL`,
-      [
-        input.objectKey,
-        input.keyVersion,
-        input.checksumSha256,
-        input.totalBytes,
-        input.catalogId,
-      ]
+      [input.objectKey, input.keyVersion, input.checksumSha256, input.totalBytes, input.catalogId]
     );
     return;
   }

@@ -26,9 +26,7 @@ describe('Cloudflare R2 helpers', () => {
       stderr: 'Authentication error: missing permission',
     });
 
-    await expect(createR2Bucket('prod-authrim-avatars')).rejects.toThrow(
-      /missing permission/
-    );
+    await expect(createR2Bucket('prod-authrim-avatars')).rejects.toThrow(/missing permission/);
   });
 
   it('accepts an already-existing R2 bucket conflict as idempotent success', async () => {

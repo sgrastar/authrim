@@ -29,7 +29,9 @@ describe('tenant D1 bootstrap slot inventory SQL', () => {
     expect(sql).toContain("'pending_binding'");
     expect(sql).toContain("'worker_deploy'");
     expect(sql).toContain("'ar-auth deploy failed'");
-    expect(sql).toContain("WHEN tenant_database_slots.state IN ('assigned', 'reserved', 'reset_required', 'retired')");
+    expect(sql).toContain(
+      "WHEN tenant_database_slots.state IN ('assigned', 'reserved', 'reset_required', 'retired')"
+    );
     expect(sql).toContain('ELSE excluded.state');
   });
 

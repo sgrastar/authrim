@@ -23,9 +23,7 @@ function createRecordingD1(firstResults: unknown[] = [null]): D1Database & {
           calls.push({ sql, params });
           return statement;
         }),
-        first: vi.fn(async () =>
-          firstQueue.length > 0 ? (firstQueue.shift() ?? null) : null
-        ),
+        first: vi.fn(async () => (firstQueue.length > 0 ? (firstQueue.shift() ?? null) : null)),
         run: vi.fn(async () => ({ success: true, meta: { changes: 1 } })),
       };
       return statement;
@@ -165,9 +163,7 @@ describe('logging/storage conformance', () => {
     const piiInsert = findInsert(piiDb.calls, 'pii_log');
     expect(piiInsert.params[6]).toMatch(/^sensitive-detail-catalog:/);
     expect(piiInsert.params[7]).toBeNull();
-    expect(coreDb.calls.some((call) => call.sql.includes('INSERT INTO pii_log'))).toBe(
-      false
-    );
+    expect(coreDb.calls.some((call) => call.sql.includes('INSERT INTO pii_log'))).toBe(false);
     expect(
       coreDb.calls.some((call) => call.sql.includes('INSERT INTO sensitive_detail_chunk_index'))
     ).toBe(true);

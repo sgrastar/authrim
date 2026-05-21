@@ -288,74 +288,70 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     mocks.persistRegistrationFieldValuesFromEnv.mockResolvedValue(undefined);
   });
 
-  it(
-    'starts passkey login with an existing active user and credential allow-list',
-    async () => {
-      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
-        id: 'user_existing',
-        email: 'user@example.com',
-        name: 'Example User',
-      });
-      mocks.passkey.findByUserId.mockResolvedValue([
+  it('starts passkey login with an existing active user and credential allow-list', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+      name: 'Example User',
+    });
+    mocks.passkey.findByUserId.mockResolvedValue([
+      {
+        credential_id: 'credential-id',
+        transports: ['internal'],
+      },
+    ]);
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginStartHandler(
+      createContext(
         {
-          credential_id: 'credential-id',
-          transports: ['internal'],
+          client_id: 'web-client',
+          code_challenge: 'pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          scope: 'openid profile',
+          email: 'user@example.com',
         },
-      ]);
-      const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+        webHeaders()
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
 
-      const response = await directPasskeyLoginStartHandler(
-        createContext(
-          {
-            client_id: 'web-client',
-            code_challenge: 'pkce-challenge',
-            code_challenge_method: 'S256',
-            channel: 'browser',
-            scope: 'openid profile',
-            email: 'user@example.com',
-          },
-          webHeaders()
-        ) as never
-      );
-      const body = (await response.json()) as Record<string, unknown>;
-
-      expect(response.status).toBe(200);
-      expect(body).toMatchObject({
-        challenge_id: expect.any(String),
-        options: expect.objectContaining({
-          challenge: 'passkey-login-challenge',
-          rpId: 'app.example.com',
-        }),
-      });
-      expect(mocks.generateAuthenticationOptions).toHaveBeenCalledWith(
-        expect.objectContaining({
-          rpID: 'app.example.com',
-          userVerification: 'required',
-          allowCredentials: [
-            expect.objectContaining({
-              type: 'public-key',
-              transports: ['internal'],
-            }),
-          ],
-        })
-      );
-      expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'direct_passkey_login',
-          userId: 'unknown',
-          metadata: expect.objectContaining({
-            client_id: 'web-client',
-            channel: 'browser',
-            code_challenge: 'pkce-challenge',
-            email: 'user@example.com',
-            origin: 'https://app.example.com',
-            rpID: 'app.example.com',
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      challenge_id: expect.any(String),
+      options: expect.objectContaining({
+        challenge: 'passkey-login-challenge',
+        rpId: 'app.example.com',
+      }),
+    });
+    expect(mocks.generateAuthenticationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpID: 'app.example.com',
+        userVerification: 'required',
+        allowCredentials: [
+          expect.objectContaining({
+            type: 'public-key',
+            transports: ['internal'],
           }),
-        })
-      );
-    },
-    10_000
-  );
+        ],
+      })
+    );
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_passkey_login',
+        userId: 'unknown',
+        metadata: expect.objectContaining({
+          client_id: 'web-client',
+          channel: 'browser',
+          code_challenge: 'pkce-challenge',
+          email: 'user@example.com',
+          origin: 'https://app.example.com',
+          rpID: 'app.example.com',
+        }),
+      })
+    );
+  }, 10_000);
 
   it('finishes passkey login and stores a direct-auth authorization code artifact', async () => {
     const codeVerifier = 'passkey-login-code-verifier';

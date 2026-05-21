@@ -94,7 +94,10 @@ class InMemoryMessageExecutor implements LoggingMessageSqlExecutor {
     if (sql.includes('FROM logging_message_jobs') && sql.includes('claimed_until IS NOT NULL')) {
       const now = Number(params[2] ?? 0);
       const rows = [...this.jobs.values()]
-        .filter((row) => (row.status === 'claimed' || row.status === 'running') && row.claimed_until !== null)
+        .filter(
+          (row) =>
+            (row.status === 'claimed' || row.status === 'running') && row.claimed_until !== null
+        )
         .filter((row) => Number(row.claimed_until) <= now)
         .sort((left, right) => Number(left.claimed_until) - Number(right.claimed_until))
         .slice(0, Number(params.at(-1) ?? 50));
@@ -103,7 +106,9 @@ class InMemoryMessageExecutor implements LoggingMessageSqlExecutor {
     if (sql.includes('FROM logging_message_jobs') && sql.includes('expires_at IS NOT NULL')) {
       const now = Number(params[2] ?? 0);
       const rows = [...this.jobs.values()]
-        .filter((row) => (row.status === 'queued' || row.status === 'retrying') && row.expires_at !== null)
+        .filter(
+          (row) => (row.status === 'queued' || row.status === 'retrying') && row.expires_at !== null
+        )
         .filter((row) => Number(row.expires_at) <= now)
         .sort((left, right) => Number(left.expires_at) - Number(right.expires_at))
         .slice(0, Number(params.at(-1) ?? 50));
@@ -112,7 +117,9 @@ class InMemoryMessageExecutor implements LoggingMessageSqlExecutor {
     if (sql.includes('FROM logging_message_jobs')) {
       const now = Number(params[2] ?? 0);
       const rows = [...this.jobs.values()]
-        .filter((row) => (row.status === 'queued' || row.status === 'retrying') && row.not_before <= now)
+        .filter(
+          (row) => (row.status === 'queued' || row.status === 'retrying') && row.not_before <= now
+        )
         .filter((row) => row.expires_at === null || row.expires_at > now)
         .sort((left, right) => right.priority - left.priority || left.not_before - right.not_before)
         .slice(0, Number(params.at(-1) ?? 50));
@@ -157,7 +164,10 @@ class InMemoryMessageExecutor implements LoggingMessageSqlExecutor {
     return null;
   }
 
-  async execute(sql: string, params: unknown[] = []): Promise<{ rowsAffected: number; success: true }> {
+  async execute(
+    sql: string,
+    params: unknown[] = []
+  ): Promise<{ rowsAffected: number; success: true }> {
     if (sql.includes('INSERT INTO logging_message_jobs')) {
       const row: JobRow = {
         id: String(params[0]),

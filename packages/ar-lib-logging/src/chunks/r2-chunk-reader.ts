@@ -58,9 +58,9 @@ function fromBase64Url(value: string): Uint8Array {
 }
 
 function readEncryptedLogChunkEnvelope(value: Uint8Array | string): EncryptedLogChunkEnvelope {
-  const parsed = JSON.parse(new TextDecoder().decode(asBytes(value))) as Partial<
-    EncryptedLogChunkEnvelope
-  >;
+  const parsed = JSON.parse(
+    new TextDecoder().decode(asBytes(value))
+  ) as Partial<EncryptedLogChunkEnvelope>;
   if (
     parsed.version !== 1 ||
     parsed.algorithm !== 'AES-256-GCM' ||
@@ -84,23 +84,16 @@ export async function decryptLogChunkBody(
   }
 
   const envelope = readEncryptedLogChunkEnvelope(input.storedBody);
-  if (
-    input.expectedEncryptionScope &&
-    input.expectedEncryptionScope !== envelope.encryptionScope
-  ) {
+  if (input.expectedEncryptionScope && input.expectedEncryptionScope !== envelope.encryptionScope) {
     throw new Error('log_chunk_encryption_scope_mismatch');
   }
   if (input.expectedKeyVersion !== undefined && input.expectedKeyVersion !== envelope.keyVersion) {
     throw new Error('log_chunk_key_version_mismatch');
   }
 
-  const key = await crypto.subtle.importKey(
-    'raw',
-    input.keyBytes,
-    { name: 'AES-GCM' },
-    false,
-    ['decrypt']
-  );
+  const key = await crypto.subtle.importKey('raw', input.keyBytes, { name: 'AES-GCM' }, false, [
+    'decrypt',
+  ]);
   const aad = new TextEncoder().encode(
     JSON.stringify({
       tenant_key: input.tenantKey,

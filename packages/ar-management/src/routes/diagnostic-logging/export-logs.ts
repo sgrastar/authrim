@@ -354,8 +354,7 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     // Build R2 prefixes for immutable diagnostic chunks.
     const logTypes = categories || ['token-validation', 'auth-decision'];
     const allLogs: DiagnosticLogEntry[] = [];
-    const pathPrefix =
-      diagnosticSettings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
+    const pathPrefix = diagnosticSettings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
 
     const prefixes: string[] = [];
 

@@ -153,10 +153,7 @@ async function readLoggingKeyMaterialObjectText(
 
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length !== 64 || !/^[0-9a-fA-F]+$/.test(hex)) {
-    throw new LoggingKeyMaterialBackendError(
-      'logging_key_root_key_invalid',
-      'encryption_failed'
-    );
+    throw new LoggingKeyMaterialBackendError('logging_key_root_key_invalid', 'encryption_failed');
   }
   const bytes = new Uint8Array(hex.length / 2);
   for (let index = 0; index < hex.length; index += 2) {
@@ -525,15 +522,12 @@ export class R2WrappedLoggingKeyMaterialBackend implements LoggingKeyMaterialBac
     if (!object) {
       return null;
     }
-    return unwrapLoggingKeyMaterial(
-      JSON.parse(await readLoggingKeyMaterialObjectText(object)),
-      {
-        rootKeyHex: this.rootKeyHex,
-        backendRef: ref,
-        scopeId: parsed.scopeId,
-        version: parsed.version,
-      }
-    );
+    return unwrapLoggingKeyMaterial(JSON.parse(await readLoggingKeyMaterialObjectText(object)), {
+      rootKeyHex: this.rootKeyHex,
+      backendRef: ref,
+      scopeId: parsed.scopeId,
+      version: parsed.version,
+    });
   }
 
   async delete(ref: string): Promise<void> {

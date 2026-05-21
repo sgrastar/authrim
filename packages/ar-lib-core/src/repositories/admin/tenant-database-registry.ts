@@ -263,7 +263,9 @@ export class TenantDatabaseRegistryRepository {
           input.shard_count ?? existing.shard_count,
           input.shard_key_strategy ?? existing.shard_key_strategy,
           input.worker_shard === undefined ? existing.worker_shard : input.worker_shard,
-          input.deployment_target === undefined ? existing.deployment_target : input.deployment_target,
+          input.deployment_target === undefined
+            ? existing.deployment_target
+            : input.deployment_target,
           input.region_hint === undefined ? existing.region_hint : input.region_hint,
           input.jurisdiction === undefined ? existing.jurisdiction : input.jurisdiction,
           input.signature === undefined ? existing.signature : input.signature,

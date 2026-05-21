@@ -621,10 +621,7 @@ export class RuntimeLoggingPolicySnapshotMemoryCache<TPolicy = unknown> {
     if (input.minVersion !== undefined && entry.snapshot.version < input.minVersion) {
       return false;
     }
-    if (
-      input.expectedPolicyHash &&
-      entry.snapshot.policyHash !== input.expectedPolicyHash
-    ) {
+    if (input.expectedPolicyHash && entry.snapshot.policyHash !== input.expectedPolicyHash) {
       return false;
     }
     return true;

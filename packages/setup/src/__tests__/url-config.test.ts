@@ -160,10 +160,7 @@ describe('url-config helpers', () => {
     // X-Tenant-Id can help, so tenant-aware issuer URL must be tried first.
     expect(
       resolveApiBaseUrlCandidates(config, { env: 'mt', purpose: 'tenant-scoped-admin' })
-    ).toEqual([
-      'https://first.multi-tenant.authrim.com',
-      'https://multi-tenant.authrim.com',
-    ]);
+    ).toEqual(['https://first.multi-tenant.authrim.com', 'https://multi-tenant.authrim.com']);
   });
 
   it('keeps workers.dev candidates only when workers.dev is expected to be enabled', () => {

@@ -1,9 +1,6 @@
 import { createLoggingId } from '../ids';
 import type { LogChunkCompression, LogPlane, LogType } from '../registry';
-import {
-  enqueueLoggingDeliveryPayloadBatch,
-  type LoggingDeliveryEnqueueResult,
-} from '../delivery';
+import { enqueueLoggingDeliveryPayloadBatch, type LoggingDeliveryEnqueueResult } from '../delivery';
 import type { LoggingDeliveryLane } from '../delivery/types';
 import {
   resolveLogChunkFlushProfile,
@@ -11,11 +8,7 @@ import {
   type LogChunkFlushProfile,
 } from './flush-profiles';
 import { writeLogChunkToR2 } from './r2-chunk-writer';
-import type {
-  LogChunkCatalogStore,
-  LogChunkRecord,
-  WriteLogChunkResult,
-} from './types';
+import type { LogChunkCatalogStore, LogChunkRecord, WriteLogChunkResult } from './types';
 
 export interface FlushLogChunkDestination {
   destinationId: string;

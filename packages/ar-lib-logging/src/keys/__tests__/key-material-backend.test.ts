@@ -95,12 +95,10 @@ describe('logging key material backend refs', () => {
   });
 
   it('rejects malformed refs', () => {
-    expect(() => parseLoggingKeyMaterialRef('r2://secret')).toThrow(
-      LoggingKeyMaterialBackendError
+    expect(() => parseLoggingKeyMaterialRef('r2://secret')).toThrow(LoggingKeyMaterialBackendError);
+    expect(() => parseLoggingKeyMaterialRef('logkey:unknown:scope:v1:key')).toThrow(
+      'unknown_logging_key_material_backend'
     );
-    expect(() =>
-      parseLoggingKeyMaterialRef('logkey:unknown:scope:v1:key')
-    ).toThrow('unknown_logging_key_material_backend');
   });
 
   it('keeps external KMS unavailable until a real provider is configured', async () => {
@@ -132,8 +130,12 @@ describe('logging key material backend refs', () => {
       material: { keyBytes, algorithm: 'AES-GCM' },
     });
 
-    expect(ref).toBe('logkey:d1_wrapped_key:tk_abc%3Aaudit%3Aarchive:v1:tk_abc%3Aaudit%3Aarchive%2Fv1');
-    expect(JSON.stringify(store.rows.get(ref))).not.toContain('BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc');
+    expect(ref).toBe(
+      'logkey:d1_wrapped_key:tk_abc%3Aaudit%3Aarchive:v1:tk_abc%3Aaudit%3Aarchive%2Fv1'
+    );
+    expect(JSON.stringify(store.rows.get(ref))).not.toContain(
+      'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc'
+    );
     await expect(backend.get(ref)).resolves.toEqual({
       algorithm: 'AES-GCM',
       keyBytes,
@@ -163,7 +165,9 @@ describe('logging key material backend refs', () => {
     expect(parsed.keyId).toContain('logging-key-material/');
 
     const objectKey = parsed.keyId.replace('logging-keys/', '');
-    expect(bucket.objects.get(objectKey)).not.toContain('CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk');
+    expect(bucket.objects.get(objectKey)).not.toContain(
+      'CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk'
+    );
     expect(bucket.metadata.get(objectKey)).toMatchObject({
       tenantKey: 'tk_abc',
       logType: 'webhook',

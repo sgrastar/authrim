@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	getTenantD1CreateUiState,
-	getTenantProvisioningDraftUiState
-} from '../tenant-d1-ui-state';
+import { getTenantD1CreateUiState, getTenantProvisioningDraftUiState } from '../tenant-d1-ui-state';
 
 describe('tenant D1 UI state', () => {
 	it('describes the new tenant screen when preallocated slots are available', () => {

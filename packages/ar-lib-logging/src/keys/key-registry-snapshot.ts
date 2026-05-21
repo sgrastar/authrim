@@ -4,12 +4,7 @@ import {
   type LoggingKeyMaterialBackendKind,
 } from './key-material-backend';
 
-export type LoggingKeyRegistryStatus =
-  | 'active'
-  | 'rotating'
-  | 'stale'
-  | 'compromised'
-  | 'disabled';
+export type LoggingKeyRegistryStatus = 'active' | 'rotating' | 'stale' | 'compromised' | 'disabled';
 
 export type LoggingKeyVersionStatus = 'active' | 'retired' | 'rewrap_required' | 'compromised';
 

@@ -64,10 +64,7 @@ export interface LogCatalogRepairFinding {
 export interface LogCatalogSafeRepairExecutor {
   markObjectOrphanCandidate(objectCatalogId: string, repairedAt: number): Promise<void>;
   deleteRecordIndexesForObject(objectCatalogId: string, repairedAt: number): Promise<void>;
-  enqueueManifestRegeneration(
-    finding: LogCatalogRepairFinding,
-    repairedAt: number
-  ): Promise<void>;
+  enqueueManifestRegeneration(finding: LogCatalogRepairFinding, repairedAt: number): Promise<void>;
 }
 
 export interface ExecuteSafeLogCatalogRepairsInput {

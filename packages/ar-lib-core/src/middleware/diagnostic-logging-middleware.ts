@@ -174,25 +174,25 @@ async function resolveClientIdFromRequest(c: Context): Promise<string | undefine
   const contentType = c.req.header('Content-Type') || '';
   if (c.req.method !== 'POST') return undefined;
 
-	try {
-		if (contentType.includes('application/x-www-form-urlencoded')) {
-			const bodyText = await readRequestTextWithLimit(
-				c.req.raw.clone(),
-				DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES
-			);
-			const params = new URLSearchParams(bodyText);
-			return params.get('client_id') ?? params.get('clientId') ?? undefined;
-		}
+  try {
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      const bodyText = await readRequestTextWithLimit(
+        c.req.raw.clone(),
+        DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES
+      );
+      const params = new URLSearchParams(bodyText);
+      return params.get('client_id') ?? params.get('clientId') ?? undefined;
+    }
 
-		if (contentType.includes('application/json')) {
-			const bodyText = await readRequestTextWithLimit(
-				c.req.raw.clone(),
-				DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES
-			);
-			const body = JSON.parse(bodyText) as unknown;
-			if (body && typeof body === 'object') {
-				const maybeClientId =
-					(body as Record<string, unknown>).client_id ?? (body as Record<string, unknown>).clientId;
+    if (contentType.includes('application/json')) {
+      const bodyText = await readRequestTextWithLimit(
+        c.req.raw.clone(),
+        DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES
+      );
+      const body = JSON.parse(bodyText) as unknown;
+      if (body && typeof body === 'object') {
+        const maybeClientId =
+          (body as Record<string, unknown>).client_id ?? (body as Record<string, unknown>).clientId;
         return typeof maybeClientId === 'string' ? maybeClientId : undefined;
       }
     }

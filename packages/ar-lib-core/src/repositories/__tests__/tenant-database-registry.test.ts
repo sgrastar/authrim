@@ -293,10 +293,11 @@ describe('TenantDatabaseRegistryRepository', () => {
     const repo = new TenantDatabaseRegistryRepository(createAdapter({ query }));
 
     await expect(repo.listActiveRegistryRowsForRole('tenant_core', 25)).resolves.toBe(rows);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining('JOIN tenant_database_registry'),
-      ['tenant_core', 25, 0]
-    );
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN tenant_database_registry'), [
+      'tenant_core',
+      25,
+      0,
+    ]);
   });
 
   it('lists active pointers for runtime snapshot publishing', async () => {

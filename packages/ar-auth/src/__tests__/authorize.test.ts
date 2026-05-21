@@ -125,12 +125,7 @@ function createMockSessionStore() {
       createSessionRpc: vi
         .fn()
         .mockImplementation(
-          async (
-            sessionId: string,
-            userId: string,
-            ttl: number,
-            data: Record<string, unknown>
-          ) => {
+          async (sessionId: string, userId: string, ttl: number, data: Record<string, unknown>) => {
             sessions.set(sessionId, {
               id: sessionId,
               userId,

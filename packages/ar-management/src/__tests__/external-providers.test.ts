@@ -17,18 +17,19 @@ describe('external provider discovery', () => {
   it('rejects discovered OIDC endpoints that are not HTTPS and external-safe', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            issuer: 'https://issuer.example/',
-            authorization_endpoint: 'https://127.0.0.1/authorize',
-            token_endpoint: 'https://issuer.example/token',
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        )
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              issuer: 'https://issuer.example/',
+              authorization_endpoint: 'https://127.0.0.1/authorize',
+              token_endpoint: 'https://issuer.example/token',
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          )
       )
     );
 
@@ -50,20 +51,21 @@ describe('external provider discovery', () => {
   it('returns only sanitized safe OIDC metadata fields', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            issuer: 'https://issuer.example/',
-            authorization_endpoint: 'https://issuer.example/authorize',
-            token_endpoint: 'https://issuer.example/token',
-            jwks_uri: 'https://issuer.example/jwks.json',
-            malicious_html: '<script>alert(1)</script>',
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        )
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              issuer: 'https://issuer.example/',
+              authorization_endpoint: 'https://issuer.example/authorize',
+              token_endpoint: 'https://issuer.example/token',
+              jwks_uri: 'https://issuer.example/jwks.json',
+              malicious_html: '<script>alert(1)</script>',
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          )
       )
     );
 

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildSlotCleanupSql,
-  buildSlotRetiredSql,
-} from '../cli/commands/tenant-db-slot-reset.js';
+import { buildSlotCleanupSql, buildSlotRetiredSql } from '../cli/commands/tenant-db-slot-reset.js';
 
 const slot = {
   slot_id: 'tdb-slot-0004',

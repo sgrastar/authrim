@@ -89,11 +89,7 @@ describe('tenant runtime registry snapshot jobs', () => {
     );
 
     expect(summary).toEqual({ scanned: 2, published: 2, skipped: 0, failed: 0 });
-    expect(mockRepository.listActiveRegistryRowsForRole).toHaveBeenCalledWith(
-      'tenant_core',
-      25,
-      0
-    );
+    expect(mockRepository.listActiveRegistryRowsForRole).toHaveBeenCalledWith('tenant_core', 25, 0);
     expect(mockPublishTenantRuntimeRegistrySnapshot).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({

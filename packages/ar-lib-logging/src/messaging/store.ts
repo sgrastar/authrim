@@ -95,7 +95,9 @@ interface LoggingMessageRepairFindingRow {
   job_status: LoggingMessageJobStatus | null;
 }
 
-function jsonOrNull(value: Record<string, unknown> | LoggingMessageAttemptPolicy | null): string | null {
+function jsonOrNull(
+  value: Record<string, unknown> | LoggingMessageAttemptPolicy | null
+): string | null {
   if (!value || Object.keys(value).length === 0) {
     return null;
   }
@@ -255,7 +257,8 @@ export class SqlLoggingMessageJobStore {
       throw new Error('logging_message_job_depth_exceeded');
     }
 
-    const maxAttempts = input.maxAttempts ?? input.attemptPolicy?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    const maxAttempts =
+      input.maxAttempts ?? input.attemptPolicy?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     const rootJobId = input.rootJobId ?? input.parentJobId ?? null;
 
     if (input.idempotencyKey) {
@@ -501,7 +504,11 @@ export class SqlLoggingMessageJobStore {
   async listStuckClaimJobs(
     input: LoggingMessageJobRepairListInput
   ): Promise<LoggingMessageJobRecord[]> {
-    const clauses = ['(status = ? OR status = ?)', 'claimed_until IS NOT NULL', 'claimed_until <= ?'];
+    const clauses = [
+      '(status = ? OR status = ?)',
+      'claimed_until IS NOT NULL',
+      'claimed_until <= ?',
+    ];
     const params: unknown[] = ['claimed', 'running', input.now];
     appendOptionalJobFilters(clauses, params, input);
     const rows = await this.executor.query<LoggingMessageJobRow>(
@@ -517,11 +524,7 @@ export class SqlLoggingMessageJobStore {
   async listExpiredQueuedJobs(
     input: LoggingMessageJobRepairListInput
   ): Promise<LoggingMessageJobRecord[]> {
-    const clauses = [
-      '(status = ? OR status = ?)',
-      'expires_at IS NOT NULL',
-      'expires_at <= ?',
-    ];
+    const clauses = ['(status = ? OR status = ?)', 'expires_at IS NOT NULL', 'expires_at <= ?'];
     const params: unknown[] = ['queued', 'retrying', input.now];
     appendOptionalJobFilters(clauses, params, input);
     const rows = await this.executor.query<LoggingMessageJobRow>(
@@ -669,7 +672,11 @@ export class SqlLoggingMessageJobStore {
     return (readRowsAffected(update) ?? 0) > 0;
   }
 
-  async markExpired(input: { id: string; now: number; lastError?: string | null }): Promise<boolean> {
+  async markExpired(input: {
+    id: string;
+    now: number;
+    lastError?: string | null;
+  }): Promise<boolean> {
     const update = await this.executor.execute(
       `UPDATE logging_message_jobs
        SET status = ?, last_error = ?, completed_at = ?, updated_at = ?,

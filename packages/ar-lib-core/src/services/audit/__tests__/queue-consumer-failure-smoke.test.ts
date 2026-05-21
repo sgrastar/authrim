@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  processAuditQueue,
-  processDLQQueue,
-  processLoggingDeliveryQueue,
-} from '../queue-consumer';
+import { processAuditQueue, processDLQQueue, processLoggingDeliveryQueue } from '../queue-consumer';
 import type { AuditQueueMessage } from '../types';
 
 function createMessage<T>(body: T, attempts = 1) {
@@ -151,9 +147,10 @@ describe('logging failure smoke', () => {
     const failedAuditMessage = createMessage(auditBody);
 
     await processAuditQueue(
-      { messages: [failedAuditMessage], queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<
-        AuditQueueMessage
-      >,
+      {
+        messages: [failedAuditMessage],
+        queue: 'AUDIT_QUEUE',
+      } as unknown as MessageBatch<AuditQueueMessage>,
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
@@ -213,9 +210,10 @@ describe('logging failure smoke', () => {
     });
 
     await processLoggingDeliveryQueue(
-      { messages: [replayMessage], queue: 'LOGGING_DELIVERY_QUEUE' } as unknown as MessageBatch<
-        unknown
-      >,
+      {
+        messages: [replayMessage],
+        queue: 'LOGGING_DELIVERY_QUEUE',
+      } as unknown as MessageBatch<unknown>,
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,

@@ -65,7 +65,9 @@ export async function tenantDatabasePoolExpandCommand(
   console.log(`Next slots:    ${chalk.cyan(nextSlots)}`);
 
   if (options.dryRun) {
-    console.log(chalk.yellow('\nDry run only. No config, D1, binding, or deployment changes made.'));
+    console.log(
+      chalk.yellow('\nDry run only. No config, D1, binding, or deployment changes made.')
+    );
     return;
   }
 

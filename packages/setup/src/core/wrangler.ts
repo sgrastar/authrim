@@ -581,8 +581,7 @@ export function generateWranglerConfig(
     if (LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component)) {
       for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
         producers.push({
-          queue:
-            resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
+          queue: resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
           binding: definition.binding,
         });
       }
@@ -594,8 +593,7 @@ export function generateWranglerConfig(
       });
       for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
         consumers.push({
-          queue:
-            resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
+          queue: resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
         });
       }
     }

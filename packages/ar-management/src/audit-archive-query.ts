@@ -165,7 +165,10 @@ function matchesArchiveResourceFilter(
   return true;
 }
 
-function matchesArchiveListFilters(entry: EventLogEntry, options: AuditArchiveListOptions): boolean {
+function matchesArchiveListFilters(
+  entry: EventLogEntry,
+  options: AuditArchiveListOptions
+): boolean {
   if (options.startTime !== undefined && entry.createdAt < options.startTime) {
     return false;
   }
@@ -263,8 +266,9 @@ export async function listArchiveAuditEvents(
     byId.set(entry.id, entry);
   }
 
-  const filtered = Array.from(byId.values())
-    .sort((left, right) => right.createdAt - left.createdAt);
+  const filtered = Array.from(byId.values()).sort(
+    (left, right) => right.createdAt - left.createdAt
+  );
 
   const offset = (options.page - 1) * options.limit;
   const paged = filtered.slice(offset, offset + options.limit);

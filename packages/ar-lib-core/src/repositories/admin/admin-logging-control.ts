@@ -706,13 +706,7 @@ export class AdminLoggingControlRepository {
                  AND plane = ?
                  AND bucket_start_at = ?
                  AND shard = ?`,
-              [
-                finding.tenantKey,
-                finding.logType,
-                finding.plane,
-                bucketStartAt,
-                shard,
-              ]
+              [finding.tenantKey, finding.logType, finding.plane, bucketStartAt, shard]
             );
             if (existing) {
               await tx.execute(

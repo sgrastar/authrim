@@ -6,9 +6,7 @@ describe('logging ids', () => {
   it('creates prefixed UUIDv7 ids', () => {
     const id = createLoggingId('lmj', 1_700_000_000_000);
 
-    expect(id).toMatch(
-      /^lmj_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-    );
+    expect(id).toMatch(/^lmj_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
   it('encodes the timestamp into UUIDv7 ordering bytes', () => {

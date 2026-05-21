@@ -195,7 +195,9 @@ function canonicalRecord(input: {
   target: RuntimeLoggingDestinationTarget;
 }) {
   const severity = normalizeRuntimeLogSeverity(
-    input.record.severity ?? stringField(input.record.indexedFields, 'severity') ?? input.record.payload.severity
+    input.record.severity ??
+      stringField(input.record.indexedFields, 'severity') ??
+      input.record.payload.severity
   );
   return {
     id: input.record.id,

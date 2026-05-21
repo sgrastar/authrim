@@ -85,9 +85,7 @@ describe('r2-provision command', () => {
 
     await r2ProvisionCommand({ env: 'prod', yes: true });
 
-    const config = JSON.parse(
-      await readFile(join(tempDir!, '.authrim/prod/config.json'), 'utf-8')
-    );
+    const config = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/config.json'), 'utf-8'));
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
 
     expect(config.features.r2.enabled).toBe(true);

@@ -76,7 +76,9 @@ function hasBaseEnvelope(value: Record<string, unknown>): boolean {
     Number.isInteger(value.schema_version) &&
     typeof value.payload_id === 'string' &&
     typeof value.message_job_id === 'string' &&
-    (value.tenant_key === undefined || value.tenant_key === null || typeof value.tenant_key === 'string') &&
+    (value.tenant_key === undefined ||
+      value.tenant_key === null ||
+      typeof value.tenant_key === 'string') &&
     (value.lane === 'critical' || value.lane === 'default' || value.lane === 'bulk') &&
     typeof value.created_at === 'number' &&
     Number.isFinite(value.created_at)
@@ -93,7 +95,10 @@ function payloadSchemaIsSupported(payloadType: string, schemaVersion: number): b
 }
 
 function isOptionalIntegerAtLeast(value: unknown, minimum: number): boolean {
-  return value === undefined || (typeof value === 'number' && Number.isInteger(value) && value >= minimum);
+  return (
+    value === undefined ||
+    (typeof value === 'number' && Number.isInteger(value) && value >= minimum)
+  );
 }
 
 function isOptionalCleanupReason(value: unknown): boolean {
@@ -108,7 +113,9 @@ function isOptionalCleanupReason(value: unknown): boolean {
 }
 
 function isOptionalStringArray(value: unknown): boolean {
-  return value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string'));
+  return (
+    value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string'))
+  );
 }
 
 function hasPayloadSpecificFields(value: Record<string, unknown>): boolean {

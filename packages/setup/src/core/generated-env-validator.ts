@@ -76,11 +76,7 @@ const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
 
 const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
 
-const LOGGING_R2_BINDINGS = [
-  'DIAGNOSTIC_LOGS',
-  'EXPORT_ARTIFACTS',
-  'SENSITIVE_DETAILS',
-] as const;
+const LOGGING_R2_BINDINGS = ['DIAGNOSTIC_LOGS', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS'] as const;
 
 const MANAGEMENT_R2_BINDINGS = [
   'IMPORT_ARTIFACTS',
@@ -237,9 +233,7 @@ function resolveKeysDirectory(
 ): string {
   const configuredPath = config.keys?.secretsPath?.trim();
   if (configuredPath) {
-    return isAbsolute(configuredPath)
-      ? configuredPath
-      : resolve(envPaths.root, configuredPath);
+    return isAbsolute(configuredPath) ? configuredPath : resolve(envPaths.root, configuredPath);
   }
 
   const found = findKeysDirectory({ env, sourceDir: baseDir, keysBaseDir });
@@ -678,7 +672,10 @@ function validateLoggingQueueBindings(config: AuthrimConfig, lock: AuthrimLock):
   return finishCheck(check, 'All logging queue bindings are present in lock.json');
 }
 
-function expectedLockQueueName(lock: AuthrimLock, binding: (typeof LOGGING_QUEUE_BINDINGS)[number]) {
+function expectedLockQueueName(
+  lock: AuthrimLock,
+  binding: (typeof LOGGING_QUEUE_BINDINGS)[number]
+) {
   return lock.queues?.[binding]?.name ?? null;
 }
 

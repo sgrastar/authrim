@@ -1541,10 +1541,9 @@ export const adminLoggingControlAPI = {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/logging-policies/quota/evaluate`, {
 			method: 'POST'
 		});
-		return parseResponse<{ result: { evaluated_count: number; evaluations: LoggingQuotaEvaluation[] } }>(
-			response,
-			'Failed to evaluate logging quota policies'
-		);
+		return parseResponse<{
+			result: { evaluated_count: number; evaluations: LoggingQuotaEvaluation[] };
+		}>(response, 'Failed to evaluate logging quota policies');
 	},
 
 	async listQuotaEvaluations(filters?: { tenantId?: string; state?: string; limit?: number }) {
@@ -1659,10 +1658,9 @@ export const adminLoggingControlAPI = {
 			includeJsonContentType: true,
 			body: JSON.stringify({ limit })
 		});
-		return parseResponse<{ result: { processed: number; results: Array<Record<string, unknown>> } }>(
-			response,
-			'Failed to run notification delivery'
-		);
+		return parseResponse<{
+			result: { processed: number; results: Array<Record<string, unknown>> };
+		}>(response, 'Failed to run notification delivery');
 	},
 
 	async deliverNotificationCenterEvent(id: string) {
