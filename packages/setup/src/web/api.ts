@@ -516,6 +516,7 @@ export function createApiRoutes(): Hono {
   api.use('/config', validateSession);
   api.use('/config/*', validateSession);
   api.use('/keys/*', validateSession);
+  api.use('/email/*', validateSession);
   api.use('/provision', validateSession);
   api.use('/wrangler/*', validateSession);
   api.use('/deploy', validateSession);
@@ -924,6 +925,40 @@ export function createApiRoutes(): Hono {
           fromName,
           apiKey,
         });
+
+        const emailConfig = {
+          provider,
+          fromAddress: fromAddress.trim(),
+          fromName: fromName?.trim() || undefined,
+          configured: true,
+        };
+
+        if (existsSync(envPaths.config)) {
+          const currentConfig = AuthrimConfigSchema.parse(
+            JSON.parse(await readFile(envPaths.config, 'utf-8'))
+          );
+          const updatedConfig = AuthrimConfigSchema.parse({
+            ...currentConfig,
+            updatedAt: new Date().toISOString(),
+            features: {
+              ...currentConfig.features,
+              email: emailConfig,
+            },
+          });
+          await saveEnvironmentConfig(envPaths, updatedConfig);
+          state.config = updatedConfig;
+          addProgress(`Updated config: ${envPaths.config}`);
+        } else if (state.config) {
+          const defaultFeatures = createDefaultConfig(env).features;
+          state.config = {
+            ...state.config,
+            features: {
+              queue: state.config.features?.queue ?? defaultFeatures.queue,
+              r2: state.config.features?.r2 ?? defaultFeatures.r2,
+              email: emailConfig,
+            },
+          };
+        }
 
         if (provider === 'resend' && apiKey) {
           addProgress(`Saved ${provider} API key to ${envPaths.keyFiles.resendApiKey}`);

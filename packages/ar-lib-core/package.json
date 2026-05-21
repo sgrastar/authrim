@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-core",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -60,7 +60,7 @@
   },
   "dependencies": {
     "@authrim/ar-lib-logging": "workspace:*",
-    "hono": "4.12.12",
+    "hono": "4.12.21",
     "jose": "^6.1.2",
     "mysql2": "^3.15.3",
     "pg": "^8.16.3"

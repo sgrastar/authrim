@@ -12,7 +12,7 @@ overrides:
   cookie: '>=0.7.0'
   basic-ftp: '>=5.2.0'
   rollup: '>=4.59.0'
-  hono: 4.12.18
+  hono: 4.12.21
   '@hono/node-server': ^1.19.13
   tar: ^7.5.14
   devalue: ^5.8.0
@@ -23,8 +23,8 @@ importers:
   .:
     dependencies:
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -197,8 +197,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -224,9 +224,6 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
-      '@authrim/ar-lib-logging':
-        specifier: workspace:*
-        version: link:../ar-lib-logging
       '@authrim/ar-lib-plugin':
         specifier: workspace:*
         version: link:../ar-lib-plugin
@@ -234,8 +231,8 @@ importers:
         specifier: ^13.2.2
         version: 13.2.2
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -265,8 +262,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -296,8 +293,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -318,8 +315,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-logging
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -359,7 +356,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.0.13
-        version: 4.0.15(@types/debug@4.1.12)(@types/node@20.19.30)(@vitest/ui@4.0.15)(happy-dom@20.0.10)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.94.0)(terser@5.44.1)(tsx@4.20.6)(yaml@2.8.1)
+        version: 4.0.17(@types/node@20.19.30)(@vitest/ui@4.0.17)(jiti@2.6.1)(jsdom@27.4.0)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/ar-lib-plugin:
     dependencies:
@@ -367,8 +364,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       zod:
         specifier: ^3.24.4
         version: 3.25.76
@@ -411,8 +408,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251121.0
@@ -535,6 +532,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
+      '@authrim/ar-lib-logging':
+        specifier: workspace:*
+        version: link:../ar-lib-logging
       '@authrim/ar-lib-plugin':
         specifier: workspace:*
         version: link:../ar-lib-plugin
@@ -545,8 +545,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-scim
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -573,8 +573,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-policy
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251121.0
@@ -595,8 +595,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251121.0
@@ -620,8 +620,8 @@ importers:
         specifier: ^0.8.13
         version: 0.8.13
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -660,8 +660,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -682,8 +682,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -707,8 +707,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -748,7 +748,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^1.19.13
-        version: 1.19.14(hono@4.12.18)
+        version: 1.19.14(hono@4.12.21)
       '@inquirer/prompts':
         specifier: ^7.2.1
         version: 7.10.1(@types/node@22.19.7)
@@ -765,8 +765,8 @@ importers:
         specifier: ^9.5.2
         version: 9.6.1
       hono:
-        specifier: 4.12.18
-        version: 4.12.18
+        specifier: 4.12.21
+        version: 4.12.21
       ora:
         specifier: ^8.1.1
         version: 8.2.0
@@ -1511,7 +1511,7 @@ packages:
     resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: 4.12.18
+      hono: 4.12.21
 
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
@@ -3481,8 +3481,8 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.18:
-    resolution: {integrity: sha512-RWzP96k/yv0PQfyXnWjs6zot20TqfpfsNXhOnev8d1InAxubW93L11/oNUc3tQqn2G0bSdAOBpX+2uDFHV7kdQ==}
+  hono@4.12.21:
+    resolution: {integrity: sha512-uV63apnb0kyPtAUwoWgaGh9HyIFcv8lgmzPZSiTBQAFOFGIzka5EZ1dZocmGnn0XdX0+XTqJ6Tqv7selMuGLRQ==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@6.0.0:
@@ -4606,8 +4606,8 @@ packages:
   third-party-web@0.26.7:
     resolution: {integrity: sha512-buUzX4sXC4efFX6xg2bw6/eZsCUh8qQwSavC4D9HpONMFlRbcHhD8Je5qwYdCpViR6q0qla2wPP+t91a2vgolg==}
 
-  third-party-web@0.29.0:
-    resolution: {integrity: sha512-nBDSJw5B7Sl1YfsATG2XkW5qgUPODbJhXw++BKygi9w6O/NKS98/uY/nR/DxDq2axEjL6halHW1v+jhm/j1DBQ==}
+  third-party-web@0.29.2:
+    resolution: {integrity: sha512-fegtha91tq2DHphyoiBXVHjVi2YG9zFaRnboT9C28tO1en9Y3wJsfspuy40F+u5wl3hHVbw7cnd1b67kEGHb8g==}
 
   through@2.3.8:
     resolution: {integrity: sha512-w89qg7PI8wAdvX60bMDP+bFoD5Dvhm9oLheFp5O4a2QF0cSBGsBX4qZmadPMvVqlLJBBci+WqGGOAPvcDeNSVg==}
@@ -5630,9 +5630,9 @@ snapshots:
 
   '@hexagon/base64@1.1.28': {}
 
-  '@hono/node-server@1.19.14(hono@4.12.18)':
+  '@hono/node-server@1.19.14(hono@4.12.21)':
     dependencies:
-      hono: 4.12.18
+      hono: 4.12.21
 
   '@humanfs/core@0.19.1': {}
 
@@ -5978,7 +5978,7 @@ snapshots:
   '@paulirish/trace_engine@0.0.53':
     dependencies:
       legacy-javascript: 0.0.1
-      third-party-web: 0.29.0
+      third-party-web: 0.29.2
 
   '@peculiar/asn1-android@2.6.0':
     dependencies:
@@ -7895,7 +7895,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.18: {}
+  hono@4.12.21: {}
 
   html-encoding-sniffer@6.0.0:
     dependencies:
@@ -9092,7 +9092,7 @@ snapshots:
 
   third-party-web@0.26.7: {}
 
-  third-party-web@0.29.0: {}
+  third-party-web@0.29.2: {}
 
   through@2.3.8: {}
 

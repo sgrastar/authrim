@@ -135,6 +135,27 @@ describe('listD1MigrationSqlFiles', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('can exclude top-level database-specific migration directories for core runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'authrim-migrations-'));
+    try {
+      mkdirSync(join(dir, 'admin'), { recursive: true });
+      mkdirSync(join(dir, 'pii'), { recursive: true });
+      mkdirSync(join(dir, 'logging-storage', 'phase1'), { recursive: true });
+      writeFileSync(join(dir, '000_fresh_schema.sql'), '-- fresh');
+      writeFileSync(join(dir, 'admin', '001_admin.sql'), '-- admin');
+      writeFileSync(join(dir, 'pii', '001_pii.sql'), '-- pii');
+      writeFileSync(join(dir, 'logging-storage', 'phase1', '001_destination.sql'), '-- phase1');
+
+      expect(
+        listD1MigrationSqlFiles(dir, {
+          excludeTopLevelDirectories: new Set(['admin', 'pii']),
+        })
+      ).toEqual(['000_fresh_schema.sql', 'logging-storage/phase1/001_destination.sql']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('migration seed SQL portability', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-saml",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -16,7 +16,7 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@xmldom/xmldom": "^0.8.13",
-    "hono": "4.12.18",
+    "hono": "4.12.21",
     "jose": "^6.1.2",
     "pako": "^2.1.0",
     "xml-crypto": "^6.0.0"

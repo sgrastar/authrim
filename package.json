@@ -1,6 +1,6 @@
 {
   "name": "authrim",
-  "version": "0.1.17",
+  "version": "0.2.0",
   "description": "A scalable Edge Identity Provider built on Cloudflare Workers - OIDC, OAuth 2.0, SAML",
   "private": true,
   "type": "module",
@@ -74,7 +74,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "hono": "4.12.18",
+    "hono": "4.12.21",
     "jose": "^6.1.2"
   },
   "devDependencies": {
@@ -113,7 +113,7 @@
       "cookie": ">=0.7.0",
       "basic-ftp": ">=5.2.0",
       "rollup": ">=4.59.0",
-      "hono": "4.12.18",
+      "hono": "4.12.21",
       "@hono/node-server": "^1.19.13",
       "tar": "^7.5.14",
       "devalue": "^5.8.0",

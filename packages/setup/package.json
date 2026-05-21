@@ -1,6 +1,6 @@
 {
   "name": "@authrim/setup",
-  "version": "0.1.142",
+  "version": "0.2.0",
   "description": "CLI tool for setting up Authrim OIDC Provider on Cloudflare Workers",
   "type": "module",
   "bin": {
@@ -32,7 +32,7 @@
     "degit": "^2.8.4",
     "execa": "^9.5.2",
     "@hono/node-server": "^1.19.13",
-    "hono": "4.12.18",
+    "hono": "4.12.21",
     "tar": "^7.5.14",
     "tldts": "^7.0.18"
   },

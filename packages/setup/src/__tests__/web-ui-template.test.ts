@@ -4,6 +4,39 @@ import en from '../i18n/locales/en.js';
 import { SUPPORTED_LOCALES } from '../i18n/types.js';
 import { getHtmlTemplate } from '../web/ui.js';
 
+function extractInlineScripts(html: string): string[] {
+  const scripts: string[] = [];
+  const lower = html.toLowerCase();
+  let offset = 0;
+
+  while (offset < html.length) {
+    const openStart = lower.indexOf('<script', offset);
+    if (openStart < 0) {
+      break;
+    }
+
+    const openEnd = html.indexOf('>', openStart);
+    if (openEnd < 0) {
+      break;
+    }
+
+    const closeStart = lower.indexOf('</script', openEnd + 1);
+    if (closeStart < 0) {
+      break;
+    }
+
+    const closeEnd = html.indexOf('>', closeStart);
+    if (closeEnd < 0) {
+      break;
+    }
+
+    scripts.push(html.slice(openEnd + 1, closeStart));
+    offset = closeEnd + 1;
+  }
+
+  return scripts;
+}
+
 describe('getHtmlTemplate', () => {
   it('embeds multilingual API domain copy for dynamic tenant URL hints', () => {
     const html = getHtmlTemplate(
@@ -72,14 +105,20 @@ describe('getHtmlTemplate', () => {
       en as Record<string, string>,
       SUPPORTED_LOCALES
     );
-    const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map(
-      (match) => match[1]
-    );
+    const scripts = extractInlineScripts(html);
 
     expect(scripts.length).toBeGreaterThan(0);
     scripts.forEach((script, index) => {
       expect(() => new vm.Script(script, { filename: `setup-inline-${index}.js` })).not.toThrow();
     });
+  });
+
+  it('extracts inline browser scripts with case and closing tag whitespace variants', () => {
+    const scripts = extractInlineScripts(
+      '<SCRIPT type="module">const first = 1;</script ><script>const second = 2;</SCRIPT>'
+    );
+
+    expect(scripts).toEqual(['const first = 1;', 'const second = 2;']);
   });
 
   it('renders multi-tenant preview labels and access paths consistently', () => {
@@ -96,7 +135,7 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('grid-template-columns: var(--preview-label-width) minmax(0, 1fr)');
     expect(html).toContain('data-i18n="web.preview.conflictWarningTitle"');
     expect(html).toContain('⚠️ Configuration issue');
-    expect(html).toContain("setPreviewValue(");
+    expect(html).toContain('setPreviewValue(');
     expect(html).toContain("'https://' + loginUiBase,");
     expect(html).toContain("'https://' + (loginDomain || baseDomain) + '/discover'");
     expect(html).toContain("'/admin/info");

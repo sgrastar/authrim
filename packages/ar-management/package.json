@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-management",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -19,7 +19,7 @@
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
     "@authrim/ar-lib-scim": "workspace:*",
-    "hono": "4.12.12",
+    "hono": "4.12.21",
     "jose": "^6.1.2"
   },
   "devDependencies": {

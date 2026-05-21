@@ -170,28 +170,27 @@ export function buildR2BucketProvisioningStatus(
   buckets: R2BucketProvisioningStatus[];
 } {
   const existingNames = new Set(cloudflareBucketNames);
-  const buckets = getRequiredR2Buckets(env)
-    .map((bucket) => {
-      const recordedName = recordedBuckets?.[bucket.binding]?.name;
-      const name = recordedName ?? bucket.name;
-      const recorded = Boolean(recordedName);
-      const exists = existingNames.has(name);
-      const configured = recorded && exists;
-      const state: R2BucketProvisioningState = recorded
-        ? exists
-          ? 'configured'
-          : 'recorded_but_missing'
-        : 'missing';
+  const buckets = getRequiredR2Buckets(env).map((bucket) => {
+    const recordedName = recordedBuckets?.[bucket.binding]?.name;
+    const name = recordedName ?? bucket.name;
+    const recorded = Boolean(recordedName);
+    const exists = existingNames.has(name);
+    const configured = recorded && exists;
+    const state: R2BucketProvisioningState = recorded
+      ? exists
+        ? 'configured'
+        : 'recorded_but_missing'
+      : 'missing';
 
-      return {
-        ...bucket,
-        name,
-        recorded,
-        exists,
-        configured,
-        state,
-      };
-    });
+    return {
+      ...bucket,
+      name,
+      recorded,
+      exists,
+      configured,
+      state,
+    };
+  });
 
   return {
     env,
@@ -1642,9 +1641,12 @@ export async function putKVKeyByNamespaceId(
 }
 
 export async function getKVKeyByNamespaceId(namespaceId: string, key: string): Promise<string> {
-  const { stdout } = await wrangler(['kv', 'key', 'get', key, '--namespace-id', namespaceId, '--remote'], {
-    timeout: 60000,
-  });
+  const { stdout } = await wrangler(
+    ['kv', 'key', 'get', key, '--namespace-id', namespaceId, '--remote'],
+    {
+      timeout: 60000,
+    }
+  );
   return stdout;
 }
 
@@ -1816,7 +1818,9 @@ export async function executeD1Command(
   );
 }
 
-export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(stdout: string): T[] {
+export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
+  stdout: string
+): T[] {
   const payload = JSON.parse(stdout) as Array<{ results?: T[] }> | { results?: T[] };
   if (Array.isArray(payload)) {
     return payload.flatMap((entry) => entry.results ?? []);
@@ -1935,8 +1939,20 @@ WHERE NOT EXISTS (
 }
 
 const FRESH_SCHEMA_MIGRATION_FILE = '000_fresh_schema.sql';
+const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
 
-export function listD1MigrationSqlFiles(migrationsDir: string): string[] {
+interface ListD1MigrationOptions {
+  excludeTopLevelDirectories?: ReadonlySet<string>;
+}
+
+interface RunD1MigrationOptions extends ListD1MigrationOptions {
+  logSummaryLimit?: number;
+}
+
+export function listD1MigrationSqlFiles(
+  migrationsDir: string,
+  options: ListD1MigrationOptions = {}
+): string[] {
   const files: string[] = [];
 
   function walk(relativeDir: string): void {
@@ -1949,6 +1965,9 @@ export function listD1MigrationSqlFiles(migrationsDir: string): string[] {
       const absolutePath = pathJoin(migrationsDir, relativePath);
       const stat = statSync(absolutePath);
       if (stat.isDirectory()) {
+        if (!relativeDir && options.excludeTopLevelDirectories?.has(entry)) {
+          continue;
+        }
         walk(relativePath);
         continue;
       }
@@ -1962,12 +1981,37 @@ export function listD1MigrationSqlFiles(migrationsDir: string): string[] {
   return files.sort();
 }
 
+function formatMigrationFileSummary(files: string[], limit = 8): string {
+  if (files.length === 0) {
+    return '';
+  }
+
+  const visible = files.slice(0, limit).join(', ');
+  const remaining = files.length - limit;
+  return remaining > 0 ? `${visible}, +${remaining} more` : visible;
+}
+
 async function recordMigration(dbName: string, filename: string): Promise<void> {
   const sql = buildRecordMigrationSql(filename);
   try {
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
   } catch {
     // Non-fatal: tracking failure should not abort the migration run
+  }
+}
+
+async function recordMigrations(dbName: string, filenames: string[]): Promise<void> {
+  if (filenames.length === 0) {
+    return;
+  }
+
+  const sql = filenames.map((filename) => buildRecordMigrationSql(filename)).join('\n');
+  try {
+    await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
+  } catch {
+    for (const filename of filenames) {
+      await recordMigration(dbName, filename);
+    }
   }
 }
 
@@ -1980,7 +2024,8 @@ async function recordMigration(dbName: string, filename: string): Promise<void> 
 export async function runD1Migrations(
   dbName: string,
   migrationsDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: RunD1MigrationOptions = {}
 ): Promise<{ success: boolean; appliedCount: number; skippedCount: number; error?: string }> {
   const { existsSync } = await import('node:fs');
   const { join } = await import('node:path');
@@ -1994,7 +2039,7 @@ export async function runD1Migrations(
     };
   }
 
-  const sqlFiles = listD1MigrationSqlFiles(migrationsDir);
+  const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
 
   if (sqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
@@ -2012,17 +2057,19 @@ export async function runD1Migrations(
   let skippedCount = 0;
   const hasFreshSchema = sqlFiles.includes(FRESH_SCHEMA_MIGRATION_FILE);
   let freshSchemaApplied = hasFreshSchema && applied.has(FRESH_SCHEMA_MIGRATION_FILE);
+  const alreadyAppliedFiles: string[] = [];
+  const freshCoveredFiles: string[] = [];
+  const summaryLimit = options.logSummaryLimit ?? 8;
 
   for (const sqlFile of sqlFiles) {
     if (applied.has(sqlFile)) {
-      onProgress?.(`  ⏭  Skipping (already applied): ${sqlFile}`);
+      alreadyAppliedFiles.push(sqlFile);
       skippedCount++;
       continue;
     }
 
     if (hasFreshSchema && freshSchemaApplied && sqlFile !== FRESH_SCHEMA_MIGRATION_FILE) {
-      onProgress?.(`  ⏭  Skipping (covered by fresh schema): ${sqlFile}`);
-      await recordMigration(dbName, sqlFile);
+      freshCoveredFiles.push(sqlFile);
       skippedCount++;
       continue;
     }
@@ -2042,6 +2089,25 @@ export async function runD1Migrations(
     if (sqlFile === FRESH_SCHEMA_MIGRATION_FILE) {
       freshSchemaApplied = true;
     }
+  }
+
+  if (freshCoveredFiles.length > 0) {
+    await recordMigrations(dbName, freshCoveredFiles);
+    onProgress?.(
+      `  ⏭  Skipping ${freshCoveredFiles.length} migration(s) covered by fresh schema: ${formatMigrationFileSummary(
+        freshCoveredFiles,
+        summaryLimit
+      )}`
+    );
+  }
+
+  if (alreadyAppliedFiles.length > 0) {
+    onProgress?.(
+      `  ⏭  Skipping ${alreadyAppliedFiles.length} already-applied migration(s): ${formatMigrationFileSummary(
+        alreadyAppliedFiles,
+        summaryLimit
+      )}`
+    );
   }
 
   return { success: true, appliedCount, skippedCount };
@@ -2607,7 +2673,9 @@ export async function runMigrationsForEnvironment(
 
   // Run core database migrations
   onProgress?.(`📜 Running migrations for ${coreDbName}...`);
-  const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress);
+  const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress, {
+    excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+  });
   if (!coreResult.success) {
     onProgress?.(`  ❌ Core migration failed: ${coreResult.error}`);
   } else {
@@ -3353,7 +3421,9 @@ export interface DeleteOptions {
 export function filterKnownD1NamesForEnvironment(env: string, names: string[]): string[] {
   return Array.from(
     new Set(
-      names.filter((name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`))
+      names.filter(
+        (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
+      )
     )
   );
 }
@@ -3693,13 +3763,11 @@ function parseLatestWorkerDeployment(stdout: string): {
     stdout.matchAll(/^Created:\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s*$/gm)
   );
 
-  let latest:
-    | {
-        createdAt: string;
-        index: number;
-        nextIndex: number;
-      }
-    | null = null;
+  let latest: {
+    createdAt: string;
+    index: number;
+    nextIndex: number;
+  } | null = null;
 
   for (let index = 0; index < deploymentStarts.length; index++) {
     const match = deploymentStarts[index];
@@ -3894,8 +3962,8 @@ async function removeKnownR2Objects(
           }
         }
       }
-    }
-  ));
+    })
+  );
   onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
 }
 
