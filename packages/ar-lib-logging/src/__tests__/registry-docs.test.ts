@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +7,14 @@ import { describe, expect, it } from 'vitest';
 import { LOG_PLANES, LOG_TYPES } from '../registry';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../');
+const privateApiSpecPath = resolve(
+  repoRoot,
+  'private/docs/operations/logging-storage-api-spec-2026-05-19.md'
+);
+const publicApiSpecFixturePath = resolve(
+  repoRoot,
+  'packages/ar-lib-logging/src/__tests__/fixtures/logging-storage-api-spec.md'
+);
 
 function extractUnionValues(doc: string, typeName: string): string[] {
   const match = doc.match(new RegExp(`export type ${typeName} =([\\s\\S]*?);`));
@@ -19,7 +27,7 @@ function extractUnionValues(doc: string, typeName: string): string[] {
 
 describe('logging registry documentation', () => {
   const apiSpec = readFileSync(
-    resolve(repoRoot, 'private/docs/operations/logging-storage-api-spec-2026-05-19.md'),
+    existsSync(privateApiSpecPath) ? privateApiSpecPath : publicApiSpecFixturePath,
     'utf8'
   );
 
