@@ -40,11 +40,12 @@ async function writeGeneratedEnvironment(
     withHyperdriveReferences?: boolean;
     queueEnabled?: boolean;
     withLoggingQueues?: boolean;
+    externalKeys?: boolean;
   }
 ) {
   const env = 'portable';
   const config = createDefaultConfig(env);
-  config.keys.storageType = 'internal';
+  config.keys.storageType = options?.externalKeys ? 'external' : 'internal';
   config.keys.secretsPath = './keys/';
   config.features.queue = { enabled: options?.queueEnabled === true };
   config.urls = {
@@ -153,7 +154,11 @@ async function writeGeneratedEnvironment(
     ],
   });
 
-  await saveKeysToDirectory(generateAllSecrets(`${env}-test-key`), { baseDir: root, env });
+  await saveKeysToDirectory(generateAllSecrets(`${env}-test-key`), {
+    baseDir: root,
+    env,
+    keysBaseDir: options?.externalKeys ? root : undefined,
+  });
   await writeFile(envPaths.config, JSON.stringify(config, null, 2), 'utf-8');
   await writeFile(envPaths.lock, JSON.stringify(lock, null, 2), 'utf-8');
 
@@ -243,6 +248,21 @@ describe('validateGeneratedEnvironment', () => {
 
     expect(result.ok).toBe(false);
     expect(secretCheck?.status).toBe('fail');
+    expect(secretCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('LOGGING_CURSOR_HMAC_SECRET')])
+    );
+  });
+
+  it('uses the external keys directory for external key storage', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
+      externalKeys: true,
+    });
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, keysBaseDir: root });
+    const secretCheck = result.checks.find((check) => check.id === 'logging-secret-material');
+
+    expect(result.ok).toBe(true);
+    expect(secretCheck?.status).toBe('pass');
     expect(secretCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('LOGGING_CURSOR_HMAC_SECRET')])
     );

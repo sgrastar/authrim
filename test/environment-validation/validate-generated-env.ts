@@ -11,6 +11,7 @@ interface CliOptions {
   baseDir?: string;
   env?: string;
   configPath?: string;
+  keysBaseDir?: string;
   json: boolean;
   liveCloudflare: boolean;
 }
@@ -35,6 +36,11 @@ function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === '--config') {
       options.configPath = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === '--keys-base-dir') {
+      options.keysBaseDir = argv[index + 1];
       index += 1;
       continue;
     }
@@ -67,6 +73,8 @@ Options:
   --env <env>         Validate .authrim/{env}/config.json and related files
   --config <path>     Validate a generated config.json directly
   --base-dir <path>   Override repository base directory
+  --keys-base-dir <path>
+                       Base directory for external .authrim-keys/{env}/ secrets
   --live-cloudflare   Also verify lock.json D1/R2 resources against Cloudflare with read-only wrangler calls
   --json              Emit JSON instead of checklist text
 `);
@@ -111,6 +119,7 @@ async function main(): Promise<void> {
     baseDir: target.baseDir,
     env: target.env,
     configPath: target.configPath,
+    keysBaseDir: options.keysBaseDir,
     liveCloudflare: options.liveCloudflare,
   });
 

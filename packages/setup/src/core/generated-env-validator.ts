@@ -6,6 +6,7 @@ import {
   findAuthrimBaseDir,
   findKeysDirectory,
   getEnvironmentPaths,
+  getExternalKeysDir,
   type EnvironmentPaths,
 } from './paths.js';
 import { loadLockFileAuto, type AuthrimLock } from './lock.js';
@@ -232,6 +233,22 @@ function resolveKeysDirectory(
   keysBaseDir?: string
 ): string {
   const configuredPath = config.keys?.secretsPath?.trim();
+  if (config.keys?.storageType === 'external') {
+    const externalBaseDir = keysBaseDir ?? baseDir;
+    const found = findKeysDirectory({
+      env,
+      sourceDir: baseDir,
+      keysBaseDir: externalBaseDir,
+    });
+    if (found?.location === 'external') {
+      return found.path;
+    }
+    if (configuredPath && isAbsolute(configuredPath) && existsSync(configuredPath)) {
+      return configuredPath;
+    }
+    return getExternalKeysDir(env, externalBaseDir);
+  }
+
   if (configuredPath) {
     return isAbsolute(configuredPath) ? configuredPath : resolve(envPaths.root, configuredPath);
   }

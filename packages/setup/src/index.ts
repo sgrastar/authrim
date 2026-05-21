@@ -657,4 +657,18 @@ program
   .description('Show current directory structure status and migration recommendation')
   .action(migrateStatusCommand);
 
-program.parse();
+function normalizePnpmScriptArgv(argv: string[]): string[] {
+  const [, , commandName, firstCommandArg] = argv;
+  if (!commandName || firstCommandArg !== '--') {
+    return argv;
+  }
+
+  const commandExists = program.commands.some((command) => command.name() === commandName);
+  if (!commandExists) {
+    return argv;
+  }
+
+  return [...argv.slice(0, 3), ...argv.slice(4)];
+}
+
+program.parse(normalizePnpmScriptArgv(process.argv));
