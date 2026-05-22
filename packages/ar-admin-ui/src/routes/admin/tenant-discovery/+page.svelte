@@ -588,8 +588,8 @@
 	<title>Tenant Discovery - Admin</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
+<div class="page-shell">
+	<header class="page-header">
 		<div>
 			<h1 class="page-title">Tenant Discovery</h1>
 			<p class="page-description">
@@ -600,7 +600,7 @@
 				{/if}
 			</p>
 		</div>
-	</div>
+	</header>
 
 	{#if loading}
 		<div class="loading-state">
@@ -1232,6 +1232,37 @@
 </div>
 
 <style>
+	.page-shell {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	.page-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.page-title {
+		margin: 0 0 0.25rem;
+		font-size: 1.5rem;
+	}
+
+	.page-description {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+	}
+
+	.panel {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+		padding: 1.25rem;
+	}
+
 	.section-header {
 		display: flex;
 		align-items: flex-start;

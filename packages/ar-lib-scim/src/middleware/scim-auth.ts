@@ -15,7 +15,7 @@
 
 import type { Context, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { getLogger, createLogger, type Logger } from '@authrim/ar-lib-core';
+import { getLogger, createLogger, DEFAULT_TENANT_ID, type Logger } from '@authrim/ar-lib-core';
 import { SCIM_SCHEMAS } from '../types/scim';
 import type { ScimError, ScimErrorType } from '../types/scim';
 
@@ -36,6 +36,45 @@ const DEFAULT_SCIM_AUTH_RATE_LIMIT = {
   lockoutSeconds: 900, // 15 minutes lockout after exceeding limit
   failureDelayMs: 200, // Base delay on failed attempt (ms)
 };
+
+interface StoredScimToken {
+  description?: string;
+  createdAt?: string;
+  expiresAt?: string | null;
+  enabled?: boolean;
+  type?: string;
+  tenantId?: string;
+}
+
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
+  const tenantId = (c as any).get?.('tenantId');
+  if (typeof tenantId === 'string' && tenantId.trim()) {
+    return tenantId.trim();
+  }
+
+  if (!c.env.BASE_DOMAIN) {
+    return c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+  }
+
+  return null;
+}
+
+function resolveTokenTenantId(env: Env, tenantId?: string): string | null {
+  const normalized = tenantId?.trim();
+  if (normalized) {
+    return normalized;
+  }
+
+  if (!env.BASE_DOMAIN) {
+    return env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+  }
+
+  return null;
+}
+
+function scimTokenKey(tenantId: string, tokenHash: string): string {
+  return `scim:${tenantId}:${tokenHash}`;
+}
 
 /**
  * Get rate limit configuration from environment variables
@@ -263,6 +302,12 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
   const log = getLogger(c).module('SCIM-AUTH');
   const clientIP = getClientIP(c);
   const authHeader = c.req.header('Authorization');
+  const tenantId = getContextTenantId(c);
+
+  if (!tenantId) {
+    logAuthAttempt(log, clientIP, false, 'missing_tenant_context');
+    return scimErrorResponse(c, 403, 'Tenant context is required');
+  }
 
   // Get rate limit configuration from environment
   const rateLimitConfig = getScimAuthRateLimitConfig(c.env);
@@ -311,7 +356,7 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
 
   try {
     // Validate token against stored SCIM tokens
-    const isValid = await validateScimToken(c.env, token, log);
+    const isValid = await validateScimToken(c.env, token, tenantId, log);
 
     if (!isValid) {
       await recordFailedAttempt(c.env, clientIP, rateLimitConfig, log);
@@ -342,21 +387,35 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
  * This implementation checks against KV storage where SCIM tokens are stored.
  * You can customize this to use database or other storage.
  */
-async function validateScimToken(env: Env, token: string, log: Logger): Promise<boolean> {
+async function validateScimToken(
+  env: Env,
+  token: string,
+  tenantId: string,
+  log: Logger
+): Promise<boolean> {
   try {
     // Hash the token to match stored format
     const tokenHash = await hashToken(token);
 
-    // Check in INITIAL_ACCESS_TOKENS KV namespace (reusing existing infrastructure)
-    // or create a dedicated SCIM_TOKENS namespace
-    const storedToken = await env.INITIAL_ACCESS_TOKENS?.get(`scim:${tokenHash}`);
+    // SCIM tokens are tenant-owned. Do not fall back to global token keys in
+    // multi-tenant mode; otherwise one tenant's provisioning token could be
+    // replayed against another tenant.
+    const storedToken = await env.INITIAL_ACCESS_TOKENS?.get(scimTokenKey(tenantId, tokenHash));
 
     if (!storedToken) {
       return false;
     }
 
     // Parse token metadata
-    const tokenData = JSON.parse(storedToken);
+    const tokenData = JSON.parse(storedToken) as StoredScimToken;
+
+    if (tokenData.tenantId !== tenantId) {
+      log.warn('SCIM token tenant mismatch', {
+        tokenTenantId: tokenData.tenantId,
+        requestTenantId: tenantId,
+      });
+      return false;
+    }
 
     // Check if token is expired
     if (tokenData.expiresAt && new Date(tokenData.expiresAt) < new Date()) {
@@ -414,11 +473,17 @@ function scimErrorResponse(
 export async function generateScimToken(
   env: Env,
   options: {
+    tenantId?: string;
     description?: string;
     expiresInDays?: number;
     enabled?: boolean;
   } = {}
 ): Promise<{ token: string; tokenHash: string }> {
+  const tenantId = resolveTokenTenantId(env, options.tenantId);
+  if (!tenantId) {
+    throw new Error('SCIM token generation requires tenantId in multi-tenant mode');
+  }
+
   // Generate a cryptographically secure random token
   const tokenBytes = new Uint8Array(32);
   crypto.getRandomValues(tokenBytes);
@@ -438,12 +503,17 @@ export async function generateScimToken(
     expiresAt,
     enabled: options.enabled !== false,
     type: 'scim',
+    tenantId,
   };
 
   // Store in KV
-  await env.INITIAL_ACCESS_TOKENS?.put(`scim:${tokenHash}`, JSON.stringify(tokenData), {
-    expirationTtl: options.expiresInDays ? options.expiresInDays * 24 * 60 * 60 : undefined,
-  });
+  await env.INITIAL_ACCESS_TOKENS?.put(
+    scimTokenKey(tenantId, tokenHash),
+    JSON.stringify(tokenData),
+    {
+      expirationTtl: options.expiresInDays ? options.expiresInDays * 24 * 60 * 60 : undefined,
+    }
+  );
 
   return { token, tokenHash };
 }
@@ -451,10 +521,19 @@ export async function generateScimToken(
 /**
  * Revoke a SCIM token
  */
-export async function revokeScimToken(env: Env, tokenHash: string, log?: Logger): Promise<boolean> {
+export async function revokeScimToken(
+  env: Env,
+  tokenHash: string,
+  options: { tenantId?: string } = {},
+  log?: Logger
+): Promise<boolean> {
   const logger = log ?? createLogger().module('SCIM-AUTH');
   try {
-    await env.INITIAL_ACCESS_TOKENS?.delete(`scim:${tokenHash}`);
+    const tenantId = resolveTokenTenantId(env, options.tenantId);
+    if (!tenantId) {
+      return false;
+    }
+    await env.INITIAL_ACCESS_TOKENS?.delete(scimTokenKey(tenantId, tokenHash));
     return true;
   } catch (error) {
     logger.error('Token revocation error', {}, error as Error);
@@ -467,6 +546,7 @@ export async function revokeScimToken(env: Env, tokenHash: string, log?: Logger)
  */
 export async function listScimTokens(
   env: Env,
+  options: { tenantId?: string } = {},
   log?: Logger
 ): Promise<
   Array<{
@@ -481,7 +561,12 @@ export async function listScimTokens(
   const tokens: Array<any> = [];
 
   try {
-    const list = await env.INITIAL_ACCESS_TOKENS?.list({ prefix: 'scim:' });
+    const tenantId = resolveTokenTenantId(env, options.tenantId);
+    if (!tenantId) {
+      return [];
+    }
+    const prefix = `scim:${tenantId}:`;
+    const list = await env.INITIAL_ACCESS_TOKENS?.list({ prefix });
 
     if (!list) {
       return [];
@@ -492,11 +577,12 @@ export async function listScimTokens(
       if (value) {
         const tokenData = JSON.parse(value);
         tokens.push({
-          tokenHash: key.name.replace('scim:', ''),
+          tokenHash: key.name.replace(prefix, ''),
           description: tokenData.description,
           createdAt: tokenData.createdAt,
           expiresAt: tokenData.expiresAt,
           enabled: tokenData.enabled,
+          tenantId: tokenData.tenantId,
         });
       }
     }

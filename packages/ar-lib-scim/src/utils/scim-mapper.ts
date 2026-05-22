@@ -56,6 +56,218 @@ interface ResourceWithTimestamp {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PatchableRecord = { [key: string]: any };
 
+interface PatchPathSegment {
+  key: string;
+  filter?: {
+    attr: string;
+    value: string;
+  };
+}
+
+const DANGEROUS_PATCH_PROPS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isDangerousPatchKey(key: string): boolean {
+  return DANGEROUS_PATCH_PROPS.has(key);
+}
+
+function splitPatchPath(path: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let bracketDepth = 0;
+
+  for (const char of path) {
+    if (char === '[') bracketDepth++;
+    if (char === ']') bracketDepth = Math.max(0, bracketDepth - 1);
+
+    if (char === '.' && bracketDepth === 0) {
+      if (current) parts.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current) parts.push(current);
+  return parts;
+}
+
+function parsePatchPath(path: string): PatchPathSegment[] {
+  return splitPatchPath(path).map((part) => {
+    const filterMatch = part.match(/^([^\[]+)\[([A-Za-z0-9_$.-]+)\s+eq\s+["']([^"']*)["']\]$/);
+    if (!filterMatch) {
+      return { key: part };
+    }
+
+    return {
+      key: filterMatch[1],
+      filter: {
+        attr: filterMatch[2],
+        value: filterMatch[3],
+      },
+    };
+  });
+}
+
+function pathHasDangerousSegment(segments: PatchPathSegment[]): boolean {
+  return segments.some(
+    (segment) =>
+      isDangerousPatchKey(segment.key) ||
+      (segment.filter ? isDangerousPatchKey(segment.filter.attr) : false)
+  );
+}
+
+function findFilteredArrayItem(
+  target: PatchableRecord,
+  segment: PatchPathSegment,
+  createIfMissing: boolean
+): PatchableRecord | null {
+  const filter = segment.filter;
+  if (!filter) {
+    return null;
+  }
+
+  const currentValue = target[segment.key];
+  const items = Array.isArray(currentValue) ? currentValue : [];
+  if (!Array.isArray(currentValue) && createIfMissing) {
+    Object.defineProperty(target, segment.key, {
+      value: items,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  const existing = items.find(
+    (item) =>
+      typeof item === 'object' &&
+      item !== null &&
+      String((item as PatchableRecord)[filter.attr]) === filter.value
+  ) as PatchableRecord | undefined;
+
+  if (existing) {
+    return existing;
+  }
+
+  if (!createIfMissing) {
+    return null;
+  }
+
+  const created: PatchableRecord = { [filter.attr]: filter.value };
+  items.push(created);
+  return created;
+}
+
+function getPatchParent(
+  root: PatchableRecord,
+  segments: PatchPathSegment[],
+  createIfMissing: boolean
+): PatchableRecord | null {
+  let current = root;
+
+  for (let i = 0; i < segments.length - 1; i++) {
+    const segment = segments[i];
+
+    if (segment.filter) {
+      const filtered = findFilteredArrayItem(current, segment, createIfMissing);
+      if (!filtered) return null;
+      current = filtered;
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(current, segment.key)) {
+      if (!createIfMissing) return null;
+      Object.defineProperty(current, segment.key, {
+        value: {},
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    const nextValue = current[segment.key];
+    if (typeof nextValue !== 'object' || nextValue === null) {
+      if (!createIfMissing) return null;
+      Object.defineProperty(current, segment.key, {
+        value: {},
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    current = current[segment.key] as PatchableRecord;
+  }
+
+  return current;
+}
+
+function setPatchPath(
+  root: PatchableRecord,
+  segments: PatchPathSegment[],
+  value: ScimPatchValue | undefined
+): void {
+  const parent = getPatchParent(root, segments, true);
+  if (!parent) return;
+
+  const target = segments[segments.length - 1];
+  if (target.filter) {
+    const items = Array.isArray(parent[target.key])
+      ? (parent[target.key] as PatchableRecord[])
+      : [];
+    if (!Array.isArray(parent[target.key])) {
+      Object.defineProperty(parent, target.key, {
+        value: items,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    const matchIndex = items.findIndex(
+      (item) => String(item[target.filter!.attr]) === target.filter!.value
+    );
+    const normalizedValue =
+      typeof value === 'object' && value !== null
+        ? (value as PatchableRecord)
+        : { [target.filter.attr]: target.filter.value, value };
+
+    if (matchIndex >= 0) {
+      items[matchIndex] = normalizedValue;
+    } else {
+      items.push(normalizedValue);
+    }
+    return;
+  }
+
+  Object.defineProperty(parent, target.key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+function removePatchPath(root: PatchableRecord, segments: PatchPathSegment[]): void {
+  const parent = getPatchParent(root, segments, false);
+  if (!parent) return;
+
+  const target = segments[segments.length - 1];
+  if (target.filter) {
+    const items = parent[target.key];
+    if (!Array.isArray(items)) return;
+    parent[target.key] = items.filter(
+      (item) =>
+        typeof item !== 'object' ||
+        item === null ||
+        String((item as PatchableRecord)[target.filter!.attr]) !== target.filter!.value
+    );
+    return;
+  }
+
+  delete parent[target.key];
+}
+
 /**
  * Internal User model (from database)
  */
@@ -403,64 +615,22 @@ export function applyPatchOperations<T extends object>(
       continue;
     }
 
-    // Parse path (simple implementation, doesn't handle complex paths)
-    const pathParts = path.split('.');
+    const pathSegments = parsePatchPath(path);
 
     // SECURITY: Prevent prototype pollution by rejecting dangerous property names
-    const dangerousProps = ['__proto__', 'constructor', 'prototype'];
-    if (pathParts.some((part) => dangerousProps.includes(part))) {
+    if (pathHasDangerousSegment(pathSegments)) {
       continue; // Skip operations that could cause prototype pollution
     }
 
     switch (op) {
       case 'add':
-      case 'replace': {
-        let current: PatchableRecord = result;
-        for (let i = 0; i < pathParts.length - 1; i++) {
-          const part = pathParts[i];
-          // SECURITY: Skip dangerous property names (additional inline check for static analysis)
-          if (dangerousProps.includes(part)) continue;
-          if (!Object.prototype.hasOwnProperty.call(current, part)) {
-            Object.defineProperty(current, part, {
-              value: {},
-              writable: true,
-              enumerable: true,
-              configurable: true,
-            });
-          }
-          current = current[part] as PatchableRecord;
-        }
-        const targetKey = pathParts[pathParts.length - 1];
-        // SECURITY: Skip dangerous property names
-        if (!dangerousProps.includes(targetKey)) {
-          Object.defineProperty(current, targetKey, {
-            value: value,
-            writable: true,
-            enumerable: true,
-            configurable: true,
-          });
-        }
+      case 'replace':
+        setPatchPath(result, pathSegments, value);
         break;
-      }
 
-      case 'remove': {
-        let current: PatchableRecord = result;
-        for (let i = 0; i < pathParts.length - 1; i++) {
-          const part = pathParts[i];
-          // SECURITY: Skip dangerous property names
-          if (dangerousProps.includes(part)) break;
-          if (!Object.prototype.hasOwnProperty.call(current, part)) {
-            break;
-          }
-          current = current[part] as PatchableRecord;
-        }
-        const targetKey = pathParts[pathParts.length - 1];
-        // SECURITY: Skip dangerous property names
-        if (!dangerousProps.includes(targetKey)) {
-          delete current[targetKey];
-        }
+      case 'remove':
+        removePatchPath(result, pathSegments);
         break;
-      }
     }
   }
 

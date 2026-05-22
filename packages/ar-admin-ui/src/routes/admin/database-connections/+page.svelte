@@ -146,62 +146,64 @@
 	<title>Database Connections - Authrim</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
+<div class="page-shell">
+	<header class="page-header">
+		<div class="page-title-group">
 			<h1 class="page-title">Database Connections</h1>
 			<p class="page-description">Manage platform database connection profiles</p>
 		</div>
 		<button class="btn btn-secondary" onclick={load} disabled={loading}>Refresh</button>
-	</div>
+	</header>
 
-	{#if error}<div class="alert error">{error}</div>{/if}
-	{#if success}<div class="alert success">{success}</div>{/if}
+	{#if error}<div class="alert alert-error">{error}</div>{/if}
+	{#if success}<div class="alert alert-success">{success}</div>{/if}
 
-	<div class="resource-grid">
-		<section>
-			<div class="section-header">
-				<h2>Connections</h2>
-				<span>{items.length}</span>
+	<div class="split-panel">
+		<div class="panel">
+			<div class="panel-header">
+				<h2 class="panel-title">Connections</h2>
+				<span class="badge badge-neutral">{items.length}</span>
 			</div>
 			{#if loading}
-				<p class="muted">Loading...</p>
+				<p class="text-muted">Loading...</p>
 			{:else if items.length === 0}
-				<p class="muted">No database connections.</p>
+				<p class="text-muted">No database connections.</p>
 			{:else}
-				<div class="table">
+				<div class="item-list">
 					{#each items as item (item.id)}
 						<button
+							class="item-row"
 							class:selected={selected?.id === item.id}
-							class="row"
 							onclick={() => (selected = item)}
 						>
-							<span>
+							<div class="item-name">
 								<strong>{item.display_name}</strong>
 								<small>{item.name}</small>
-							</span>
-							<span>{item.provider}</span>
-							<span>{item.status}</span>
-							<span>{item.has_credential ? 'credential set' : 'no credential'}</span>
+							</div>
+							<span class="badge badge-neutral">{item.provider}</span>
+							<span class="badge {item.status === 'active' ? 'badge-success' : 'badge-neutral'}">{item.status}</span>
+							<span class="text-muted text-sm">{item.has_credential ? 'credential set' : 'no credential'}</span>
 						</button>
 					{/each}
 				</div>
 			{/if}
-		</section>
+		</div>
 
-		<section>
-			<h2>Create</h2>
+		<div class="panel create-panel">
+			<div class="panel-header">
+				<h2 class="panel-title">Create Connection</h2>
+			</div>
 			<div class="form-grid">
-				<label>
-					Name
+				<label class="form-label-group">
+					<span>Name</span>
 					<input bind:value={newName} placeholder="primary-pg" />
 				</label>
-				<label>
-					Display name
+				<label class="form-label-group">
+					<span>Display name</span>
 					<input bind:value={newDisplayName} placeholder="Primary PostgreSQL" />
 				</label>
-				<label>
-					Provider
+				<label class="form-label-group">
+					<span>Provider</span>
 					<select bind:value={newProvider}>
 						<option value="d1">D1</option>
 						<option value="hyperdrive">Hyperdrive</option>
@@ -210,207 +212,359 @@
 						<option value="custom">Custom</option>
 					</select>
 				</label>
-				<label>
-					Description
+				<label class="form-label-group">
+					<span>Description</span>
 					<input bind:value={newDescription} />
 				</label>
-				<label class="wide">
-					Config JSON
+				<label class="form-label-group wide">
+					<span>Config JSON</span>
 					<textarea rows="7" bind:value={newConfig}></textarea>
 				</label>
-				<label class="wide">
-					Credential JSON
-					<textarea rows="5" bind:value={newCredential} placeholder="JSON credential object"
-					></textarea>
+				<label class="form-label-group wide">
+					<span>Credential JSON</span>
+					<textarea rows="5" bind:value={newCredential} placeholder="JSON credential object"></textarea>
 				</label>
-				<button class="btn btn-primary" onclick={createConnection} disabled={saving || !newName}>
-					Create Connection
-				</button>
+				<div class="form-actions">
+					<button class="btn btn-primary" onclick={createConnection} disabled={saving || !newName}>
+						Create Connection
+					</button>
+				</div>
 			</div>
-		</section>
+		</div>
 	</div>
 
 	{#if selected}
-		<section class="detail">
-			<div class="section-header">
-				<h2>{selected.display_name}</h2>
-				<span>{selected.provider}</span>
-			</div>
-			<div class="detail-grid">
-				<div><span>Status</span><strong>{selected.status}</strong></div>
+		<div class="panel">
+			<div class="panel-header">
 				<div>
-					<span>Credential</span><strong>{selected.has_credential ? 'Set' : 'Not set'}</strong>
+					<h2 class="panel-title">{selected.display_name}</h2>
+					<p class="text-muted text-sm">{selected.provider}</p>
 				</div>
-				<div>
-					<span>Credential Updated</span><strong
-						>{formatDate(selected.credential_updated_at)}</strong
-					>
+				<div class="header-actions">
+					<button class="btn btn-secondary btn-sm" onclick={testSelected} disabled={saving}>Test connection</button>
+					<button class="btn btn-danger btn-sm" onclick={deleteSelected} disabled={saving}>Delete</button>
 				</div>
-				<div><span>Updated By</span><strong>{selected.credential_updated_by || '-'}</strong></div>
 			</div>
-			<pre>{JSON.stringify(selected.config, null, 2)}</pre>
-			<div class="credential-panel">
-				<label>
-					Elevation grant ID
-					<input
-						bind:value={elevationGrantId}
-						placeholder="Required unless caller has wildcard access"
-					/>
-				</label>
-				<label>
-					New credential JSON
-					<textarea rows="4" bind:value={credentialPayload} placeholder="JSON credential object"
-					></textarea>
-				</label>
-				<div class="actions">
-					<button class="btn btn-secondary" onclick={testSelected} disabled={saving}>Test</button>
-					<button
-						class="btn btn-secondary"
-						onclick={rotateCredential}
-						disabled={saving || !credentialPayload}
-					>
+			<div class="stat-grid">
+				<div class="stat-card"><span>Status</span><strong>{selected.status}</strong></div>
+				<div class="stat-card"><span>Credential</span><strong>{selected.has_credential ? 'Set' : 'Not set'}</strong></div>
+				<div class="stat-card"><span>Credential Updated</span><strong>{formatDate(selected.credential_updated_at)}</strong></div>
+				<div class="stat-card"><span>Updated By</span><strong>{selected.credential_updated_by || '-'}</strong></div>
+			</div>
+			<pre class="code-block">{JSON.stringify(selected.config, null, 2)}</pre>
+			<div class="credential-section">
+				<h3 class="subsection-title">Update Credential</h3>
+				<div class="form-grid">
+					<label class="form-label-group wide">
+						<span>Elevation grant ID</span>
+						<input bind:value={elevationGrantId} placeholder="Required unless caller has wildcard access" />
+					</label>
+					<label class="form-label-group wide">
+						<span>New credential JSON</span>
+						<textarea rows="4" bind:value={credentialPayload} placeholder="JSON credential object"></textarea>
+					</label>
+				</div>
+				<div class="form-actions" style="margin-top: 0.75rem;">
+					<button class="btn btn-secondary" onclick={rotateCredential} disabled={saving || !credentialPayload}>
 						Update Credential
 					</button>
-					<button class="btn btn-danger" onclick={deleteSelected} disabled={saving}>Delete</button>
 				</div>
 			</div>
-		</section>
+		</div>
 	{/if}
 </div>
 
 <style>
-	.admin-page {
-		padding: 24px;
+	.page-shell {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
 	}
-	.page-header,
-	.section-header,
-	.actions {
+
+	.page-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 12px;
+		gap: 1rem;
 	}
+
 	.page-title {
-		margin: 0 0 6px;
+		margin: 0 0 0.25rem;
+		font-size: 1.5rem;
 	}
-	.page-description,
-	.muted,
-	small {
-		color: #666;
+
+	.page-description {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
 	}
+
 	.alert {
-		margin: 16px 0;
-		padding: 12px;
-		border-radius: 6px;
+		padding: 0.75rem 1rem;
+		border-radius: var(--radius-sm);
+		font-size: 0.875rem;
 	}
-	.error {
-		background: #fee2e2;
+
+	.alert-error {
+		background: rgba(239, 68, 68, 0.08);
 		color: #991b1b;
+		border: 1px solid rgba(239, 68, 68, 0.2);
 	}
-	.success {
-		background: #dcfce7;
-		color: #166534;
+
+	.alert-success {
+		background: rgba(16, 185, 129, 0.08);
+		color: #065f46;
+		border: 1px solid rgba(16, 185, 129, 0.2);
 	}
-	.resource-grid {
+
+	.split-panel {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(360px, 0.7fr);
-		gap: 20px;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr);
+		gap: 1.25rem;
+		align-items: start;
 	}
-	section {
-		margin-top: 20px;
+
+	.panel {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+		padding: 1.25rem;
 	}
-	.table {
-		border: 1px solid #ddd;
-		border-radius: 6px;
+
+	.panel-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 1rem;
+	}
+
+	.panel-title {
+		margin: 0;
+		font-size: 0.9375rem;
+		font-weight: 600;
+	}
+
+	.header-actions {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.item-list {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
 		overflow: hidden;
 	}
-	.row {
-		width: 100%;
+
+	.item-row {
 		display: grid;
-		grid-template-columns: 1.4fr 0.7fr 0.6fr 0.8fr;
-		gap: 12px;
-		padding: 12px;
-		border: 0;
-		border-bottom: 1px solid #eee;
-		background: #fff;
+		grid-template-columns: 1fr auto auto auto;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.75rem 1rem;
+		border: none;
+		border-bottom: 1px solid var(--border);
+		background: var(--bg-card);
 		text-align: left;
+		cursor: pointer;
+		transition: background var(--transition-fast);
 	}
-	.row.selected,
-	.row:hover {
-		background: #f7f7f7;
+
+	.item-row:last-child {
+		border-bottom: none;
 	}
+
+	.item-row:hover,
+	.item-row.selected {
+		background: var(--bg-subtle);
+	}
+
+	.item-name strong {
+		display: block;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.item-name small {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+	}
+
+	.badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		border-radius: var(--radius-full);
+		font-size: 0.75rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.badge-neutral {
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
+	}
+
+	.badge-success {
+		background: rgba(16, 185, 129, 0.1);
+		color: #065f46;
+	}
+
 	.form-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 12px;
+		gap: 0.75rem;
 	}
-	label {
-		display: grid;
-		gap: 6px;
-		font-size: 0.9rem;
+
+	.form-label-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--text-secondary);
 	}
+
 	.wide {
 		grid-column: 1 / -1;
 	}
+
+	.form-actions {
+		grid-column: 1 / -1;
+		display: flex;
+		justify-content: flex-start;
+	}
+
 	input,
 	select,
 	textarea {
-		border: 1px solid #d4d4d4;
-		border-radius: 6px;
-		padding: 8px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.5rem 0.75rem;
+		background: var(--bg-input);
+		color: var(--text-primary);
 		font: inherit;
+		min-height: 2.25rem;
 	}
+
 	textarea,
-	pre {
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	.code-block {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
 	}
-	pre {
-		padding: 12px;
-		background: #f7f7f7;
-		border-radius: 6px;
+
+	.code-block {
+		padding: 0.75rem;
+		background: var(--bg-subtle);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
 		overflow: auto;
+		max-height: 220px;
+		margin: 0.75rem 0 0;
 	}
-	.detail-grid {
+
+	.stat-grid {
 		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 12px;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.75rem;
 	}
-	.detail-grid div {
-		border: 1px solid #e5e5e5;
-		border-radius: 6px;
-		padding: 12px;
+
+	.stat-card {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.75rem;
 	}
-	.detail-grid span {
+
+	.stat-card span {
 		display: block;
-		color: #666;
-		font-size: 0.8rem;
-		margin-bottom: 6px;
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		margin-bottom: 0.25rem;
 	}
-	.credential-panel {
-		display: grid;
-		gap: 12px;
-		max-width: 720px;
+
+	.stat-card strong {
+		font-weight: 600;
+		font-size: 0.875rem;
 	}
+
+	.credential-section {
+		margin-top: 1.25rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.subsection-title {
+		margin: 0 0 0.75rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.text-muted {
+		color: var(--text-secondary);
+	}
+
+	.text-sm {
+		font-size: 0.8125rem;
+	}
+
 	.btn {
-		border: 0;
-		border-radius: 6px;
-		padding: 9px 14px;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.5rem 0.875rem;
+		font: inherit;
+		font-size: 0.875rem;
 		cursor: pointer;
+		transition: background var(--transition-fast);
 	}
+
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.btn-primary {
-		background: #111;
+		background: var(--primary);
 		color: #fff;
+		border-color: var(--primary);
 	}
+
+	.btn-primary:hover:not(:disabled) {
+		background: var(--primary-hover);
+	}
+
 	.btn-secondary {
-		background: #eee;
+		background: var(--bg-subtle);
+		color: var(--text-primary);
 	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: var(--border);
+	}
+
 	.btn-danger {
-		background: #b91c1c;
-		color: #fff;
+		background: rgba(239, 68, 68, 0.1);
+		color: #991b1b;
+		border-color: rgba(239, 68, 68, 0.3);
 	}
+
+	.btn-danger:hover:not(:disabled) {
+		background: rgba(239, 68, 68, 0.18);
+	}
+
+	.btn-sm {
+		padding: 0.3rem 0.625rem;
+		font-size: 0.8125rem;
+	}
+
 	@media (max-width: 900px) {
-		.resource-grid,
-		.detail-grid {
+		.split-panel,
+		.stat-grid {
 			grid-template-columns: 1fr;
 		}
 	}

@@ -507,78 +507,86 @@
 	<title>Storage Destinations - Authrim</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
+<div class="page-shell">
+	<header class="page-header">
+		<div class="page-title-group">
 			<h1 class="page-title">Storage Destinations</h1>
 			<p class="page-description">Manage approved R2, S3, SFTP, and custom storage endpoints</p>
 		</div>
 		<div class="page-actions">
-			<select bind:value={scopeType} onchange={load}>
-				<option value="tenant">Tenant</option>
-				{#if canManagePlatformStorage}
-					<option value="platform">Platform</option>
-				{/if}
-			</select>
-			<select bind:value={controlPlaneScope} onchange={load}>
-				{#if isPlatformAdmin}
-					<option value="platform">Platform Destinations</option>
-				{/if}
-				<option value="tenant">Tenant Destinations</option>
-				<option value="shared">Shared Destinations</option>
-			</select>
+			<label class="scope-label">
+				<span>Registry</span>
+				<select bind:value={scopeType} onchange={load}>
+					<option value="tenant">Tenant</option>
+					{#if canManagePlatformStorage}
+						<option value="platform">Platform</option>
+					{/if}
+				</select>
+			</label>
+			<label class="scope-label">
+				<span>Control plane</span>
+				<select bind:value={controlPlaneScope} onchange={load}>
+					{#if isPlatformAdmin}
+						<option value="platform">Platform</option>
+					{/if}
+					<option value="tenant">Tenant</option>
+					<option value="shared">Shared</option>
+				</select>
+			</label>
 			<button class="btn btn-secondary" onclick={load} disabled={loading}>Refresh</button>
 		</div>
-	</div>
+	</header>
 
-	{#if error}<div class="alert error">{error}</div>{/if}
-	{#if success}<div class="alert success">{success}</div>{/if}
+	{#if error}<div class="alert alert-error">{error}</div>{/if}
+	{#if success}<div class="alert alert-success">{success}</div>{/if}
 
-	<div class="resource-grid">
-		<section>
-			<div class="section-header">
-				<h2>Destinations</h2>
-				<span>{items.length}</span>
+	<div class="split-panel">
+		<div class="panel">
+			<div class="panel-header">
+				<h2 class="panel-title">Destinations</h2>
+				<span class="badge badge-neutral">{items.length}</span>
 			</div>
 			{#if loading}
-				<p class="muted">Loading...</p>
+				<p class="text-muted">Loading...</p>
 			{:else if items.length === 0}
-				<p class="muted">No storage destinations.</p>
+				<p class="text-muted">No storage destinations.</p>
 			{:else}
-				<div class="table">
+				<div class="item-list">
 					{#each items as item (item.id)}
 						<button
+							class="item-row"
 							class:selected={selected?.id === item.id}
-							class="row"
 							onclick={() => (selected = item)}
 						>
-							<span>
+							<div class="item-name">
 								<strong>{item.display_name}</strong>
 								<small>{item.name}</small>
-							</span>
-							<span>{item.provider}</span>
-							<span>{item.status}</span>
-							<span>{item.has_credential ? 'credential set' : 'no credential'}</span>
+							</div>
+							<span class="badge badge-neutral">{item.provider}</span>
+							<span class="badge {item.status === 'active' ? 'badge-success' : 'badge-neutral'}">{item.status}</span>
+							<span class="text-muted text-sm">{item.has_credential ? 'credential set' : 'no credential'}</span>
 						</button>
 					{/each}
 				</div>
 			{/if}
-		</section>
+		</div>
 
 		{#if canManagePlatformStorage}
-			<section>
-				<h2>Create Platform Destination</h2>
+			<div class="panel create-panel">
+				<div class="panel-header">
+					<h2 class="panel-title">Create Platform Destination</h2>
+				</div>
 				<div class="form-grid">
-					<label>
-						Name
+					<label class="form-label-group">
+						<span>Name</span>
 						<input bind:value={newName} placeholder="tenant-logs" />
 					</label>
-					<label>
-						Display name
+					<label class="form-label-group">
+						<span>Display name</span>
 						<input bind:value={newDisplayName} placeholder="Tenant Logs" />
 					</label>
-					<label>
-						Provider
+					<label class="form-label-group">
+						<span>Provider</span>
 						<select bind:value={newProvider}>
 							<option value="r2">R2</option>
 							<option value="aws_s3">AWS S3</option>
@@ -586,86 +594,80 @@
 							<option value="custom">Custom</option>
 						</select>
 					</label>
-					<label>
-						Description
+					<label class="form-label-group">
+						<span>Description</span>
 						<input bind:value={newDescription} />
 					</label>
-					<label class="wide">
-						Config JSON
+					<label class="form-label-group wide">
+						<span>Config JSON</span>
 						<textarea rows="7" bind:value={newConfig}></textarea>
 					</label>
-					<label class="wide">
-						Credential JSON
-						<textarea rows="5" bind:value={newCredential} placeholder="JSON credential object"
-						></textarea>
+					<label class="form-label-group wide">
+						<span>Credential JSON</span>
+						<textarea rows="5" bind:value={newCredential} placeholder="JSON credential object"></textarea>
 					</label>
-					<button class="btn btn-primary" onclick={createDestination} disabled={saving || !newName}>
-						Create Destination
-					</button>
+					<div class="form-actions">
+						<button class="btn btn-primary" onclick={createDestination} disabled={saving || !newName}>
+							Create Destination
+						</button>
+					</div>
 				</div>
-			</section>
+			</div>
 		{/if}
 	</div>
 
 	{#if selected}
-		<section class="detail">
-			<div class="section-header">
-				<h2>{selected.display_name}</h2>
-				<span>{selected.scope_type}:{selected.scope_id}</span>
-			</div>
-			<div class="detail-grid">
-				<div><span>Provider</span><strong>{selected.provider}</strong></div>
-				<div><span>Status</span><strong>{selected.status}</strong></div>
+		<div class="panel">
+			<div class="panel-header">
 				<div>
-					<span>Credential</span><strong>{selected.has_credential ? 'Set' : 'Not set'}</strong>
+					<h2 class="panel-title">{selected.display_name}</h2>
+					<p class="text-muted text-sm">{selected.scope_type}:{selected.scope_id}</p>
 				</div>
-				<div>
-					<span>Credential Updated</span><strong
-						>{formatDate(selected.credential_updated_at)}</strong
-					>
-				</div>
+				{#if canManagePlatformStorage}
+					<button class="btn btn-danger btn-sm" onclick={deleteSelected} disabled={saving}>Delete</button>
+				{/if}
 			</div>
-			<pre>{jsonDisplayText(selected.config)}</pre>
+			<div class="stat-grid">
+				<div class="stat-card"><span>Provider</span><strong>{selected.provider}</strong></div>
+				<div class="stat-card"><span>Status</span><strong>{selected.status}</strong></div>
+				<div class="stat-card"><span>Credential</span><strong>{selected.has_credential ? 'Set' : 'Not set'}</strong></div>
+				<div class="stat-card"><span>Credential Updated</span><strong>{formatDate(selected.credential_updated_at)}</strong></div>
+			</div>
+			<pre class="code-block">{jsonDisplayText(selected.config)}</pre>
 			{#if canManagePlatformStorage}
-				<div class="credential-panel">
-					<label>
-						Elevation grant ID
-						<input
-							bind:value={elevationGrantId}
-							placeholder="Required unless caller has wildcard access"
-						/>
-					</label>
-					<label>
-						New credential JSON
-						<textarea rows="4" bind:value={credentialPayload} placeholder="JSON credential object"
-						></textarea>
-					</label>
-					<div class="actions">
-						<button
-							class="btn btn-secondary"
-							onclick={rotateCredential}
-							disabled={saving || !credentialPayload}
-						>
+				<div class="credential-section">
+					<h3 class="subsection-title">Update Credential</h3>
+					<div class="form-grid">
+						<label class="form-label-group wide">
+							<span>Elevation grant ID</span>
+							<input bind:value={elevationGrantId} placeholder="Required unless caller has wildcard access" />
+						</label>
+						<label class="form-label-group wide">
+							<span>New credential JSON</span>
+							<textarea rows="4" bind:value={credentialPayload} placeholder="JSON credential object"></textarea>
+						</label>
+					</div>
+					<div class="form-actions">
+						<button class="btn btn-secondary" onclick={rotateCredential} disabled={saving || !credentialPayload}>
 							Update Credential
 						</button>
-						<button class="btn btn-danger" onclick={deleteSelected} disabled={saving}>Delete</button>
 					</div>
 				</div>
 			{/if}
-		</section>
+		</div>
 	{/if}
 
-	<section class="detail">
-		<div class="section-header">
-			<h2>Control Plane Destinations</h2>
-			<span>{controlPlaneItems.length}</span>
+	<div class="panel">
+		<div class="panel-header">
+			<h2 class="panel-title">Control Plane Destinations</h2>
+			<span class="badge badge-neutral">{controlPlaneItems.length}</span>
 		</div>
 		{#if loading}
-			<p class="muted">Loading...</p>
+			<p class="text-muted">Loading...</p>
 		{:else if controlPlaneItems.length === 0}
-			<p class="muted">No control plane destinations.</p>
+			<p class="text-muted">No control plane destinations.</p>
 		{:else}
-			<div class="control-table">
+			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
@@ -684,124 +686,66 @@
 						{#each controlPlaneItems as item (item.id)}
 							<tr>
 								<td>
-									<strong>{item.display_name}</strong>
-									<small>{item.name}</small>
+									<div class="cell-name">{item.display_name}</div>
+									<div class="cell-sub">{item.name}</div>
 								</td>
-								<td>{item.provider}</td>
+								<td><span class="badge badge-neutral">{item.provider}</span></td>
 								<td>
-									{item.runtime_status ?? 'unknown'}
+									<span class="badge {item.runtime_status === 'supported' ? 'badge-success' : 'badge-neutral'}">{item.runtime_status ?? 'unknown'}</span>
 									{#if item.runtime_unsupported_reason}
-										<small>{item.runtime_unsupported_reason}</small>
+										<div class="cell-sub">{item.runtime_unsupported_reason}</div>
 									{/if}
 								</td>
-								<td>{item.lifecycle_status}</td>
-								<td>{item.health_status}</td>
+								<td><span class="badge {item.lifecycle_status === 'active' ? 'badge-success' : item.lifecycle_status === 'disabled' ? 'badge-neutral' : 'badge-warning'}">{item.lifecycle_status}</span></td>
+								<td><span class="badge {item.health_status === 'healthy' ? 'badge-success' : item.health_status === 'unhealthy' ? 'badge-error' : 'badge-neutral'}">{item.health_status}</span></td>
 								<td>
-									<strong>v{item.credential_version}</strong>
-									<small>{item.rotation_status}</small>
+									<div class="cell-name">v{item.credential_version}</div>
+									<div class="cell-sub">{item.rotation_status}</div>
 								</td>
-								<td>{item.retention_days ? `${item.retention_days} days` : 'Default'}</td>
-								<td>{formatDate(item.last_health_check_at)}</td>
+								<td>{item.retention_days ? `${item.retention_days}d` : 'Default'}</td>
+								<td class="text-sm">{formatDate(item.last_health_check_at)}</td>
 								<td>
 									<div class="row-actions">
-										<button
-											class="btn btn-secondary"
-											onclick={() => loadControlPlaneDestinationDetail(item)}
-										>
-											Details
-										</button>
-										<button
-											class="btn btn-secondary"
-											onclick={() => runHealthCheck(item, 'quick')}
-											disabled={Boolean(healthActionId)}
-										>
-											Quick Check
-										</button>
-										<button
-											class="btn btn-secondary"
-											onclick={() => runHealthCheck(item, 'deep')}
-											disabled={Boolean(healthActionId)}
-										>
-											Deep Check
-										</button>
+										<button class="btn btn-secondary btn-sm" onclick={() => loadControlPlaneDestinationDetail(item)}>Details</button>
+										<button class="btn btn-secondary btn-sm" onclick={() => runHealthCheck(item, 'quick')} disabled={Boolean(healthActionId)}>Quick</button>
+										<button class="btn btn-secondary btn-sm" onclick={() => runHealthCheck(item, 'deep')} disabled={Boolean(healthActionId)}>Deep</button>
 										{#if canManageControlPlaneDestination}
 											{#if item.lifecycle_status === 'disabled'}
-												<button
-													class="btn btn-secondary"
-													onclick={() => enableControlPlaneDestination(item)}
-													disabled={Boolean(lifecycleActionId)}
-												>
-													Enable
-												</button>
+												<button class="btn btn-secondary btn-sm" onclick={() => enableControlPlaneDestination(item)} disabled={Boolean(lifecycleActionId)}>Enable</button>
 											{:else}
-												<button
-													class="btn btn-secondary"
-													onclick={() => disableControlPlaneDestination(item)}
-													disabled={Boolean(lifecycleActionId)}
-												>
-													Disable
-												</button>
+												<button class="btn btn-secondary btn-sm" onclick={() => disableControlPlaneDestination(item)} disabled={Boolean(lifecycleActionId)}>Disable</button>
 											{/if}
-											<button
-												class="btn btn-secondary"
-												onclick={() => prepareControlPlaneCredential(item)}
-												disabled={Boolean(credentialActionId)}
-											>
-												Prepare
-											</button>
-											<button
-												class="btn btn-secondary"
-												onclick={() => markControlPlaneCredentialReady(item)}
-												disabled={Boolean(credentialActionId) || !item.next_credential_ref}
-											>
-												Ready
-											</button>
-											<button
-												class="btn btn-secondary"
-												onclick={() => activateControlPlaneCredential(item)}
-												disabled={Boolean(credentialActionId) || !item.next_credential_ref}
-											>
-												Activate
-											</button>
-											<button
-												class="btn btn-secondary"
-												onclick={() => retirePreviousControlPlaneCredential(item)}
-												disabled={Boolean(credentialActionId) || !item.previous_credential_ref}
-											>
-												Retire
-											</button>
+											<button class="btn btn-secondary btn-sm" onclick={() => prepareControlPlaneCredential(item)} disabled={Boolean(credentialActionId)}>Prepare</button>
+											<button class="btn btn-secondary btn-sm" onclick={() => markControlPlaneCredentialReady(item)} disabled={Boolean(credentialActionId) || !item.next_credential_ref}>Ready</button>
+											<button class="btn btn-secondary btn-sm" onclick={() => activateControlPlaneCredential(item)} disabled={Boolean(credentialActionId) || !item.next_credential_ref}>Activate</button>
+											<button class="btn btn-secondary btn-sm" onclick={() => retirePreviousControlPlaneCredential(item)} disabled={Boolean(credentialActionId) || !item.previous_credential_ref}>Retire</button>
 										{/if}
 									</div>
+									<details class="config-details">
+										<summary>Config</summary>
+										<pre class="code-block">{providerConfigText(item)}</pre>
+									</details>
 								</td>
-							</tr>
-							<tr class="config-row">
-								<td colspan="9"><pre>{providerConfigText(item)}</pre></td>
 							</tr>
 						{/each}
 					</tbody>
 				</table>
 			</div>
 		{/if}
-	</section>
+	</div>
 
 	{#if selectedControlPlane}
 		<aside class="detail-drawer" aria-label="Storage destination details">
 			<div class="drawer-header">
 				<div>
-					<h2>{selectedControlPlane.display_name}</h2>
-					<span>{selectedControlPlane.scope_type}:{selectedControlPlane.scope_id}</span>
+					<h2 class="drawer-title">{selectedControlPlane.display_name}</h2>
+					<p class="text-muted text-sm">{selectedControlPlane.scope_type}:{selectedControlPlane.scope_id}</p>
 				</div>
-				<button
-					class="btn btn-secondary"
-					type="button"
-					onclick={closeControlPlaneDestinationDetail}
-				>
-					Close
-				</button>
+				<button class="btn btn-secondary btn-sm" type="button" onclick={closeControlPlaneDestinationDetail}>Close</button>
 			</div>
 			<div class="drawer-actions">
 				<button
-					class="btn btn-secondary"
+					class="btn btn-secondary btn-sm"
 					type="button"
 					onclick={previewSelectedControlPlaneDiff}
 					disabled={diffPreviewActionId === selectedControlPlane.id}
@@ -809,84 +753,34 @@
 					{diffPreviewActionId === selectedControlPlane.id ? 'Previewing...' : 'Preview diff'}
 				</button>
 			</div>
-			<div class="detail-grid">
-				<div><span>Provider</span><strong>{selectedControlPlane.provider}</strong></div>
-				<div>
-					<span>Runtime</span><strong>{selectedControlPlane.runtime_status ?? 'unknown'}</strong>
-				</div>
-				<div><span>Lifecycle</span><strong>{selectedControlPlane.lifecycle_status}</strong></div>
-				<div><span>Health</span><strong>{selectedControlPlane.health_status}</strong></div>
-				<div>
-					<span>Retention</span><strong
-						>{selectedControlPlane.retention_days
-							? `${selectedControlPlane.retention_days} days`
-							: 'Platform default'}</strong
-					>
-				</div>
-				<div><span>Region</span><strong>{selectedControlPlane.region ?? 'Any'}</strong></div>
-				<div>
-					<span>Critical</span><strong
-						>{selectedControlPlane.critical_allowed ? 'Allowed' : 'Not allowed'}</strong
-					>
-				</div>
-				<div>
-					<span>Fallback</span><strong
-						>{selectedControlPlane.default_fallback_eligible ? 'Eligible' : 'Not eligible'}</strong
-					>
-				</div>
-				<div>
-					<span>Encryption</span><strong>{selectedControlPlane.encryption_mode}</strong>
-				</div>
+			<div class="stat-grid compact">
+				<div class="stat-card"><span>Provider</span><strong>{selectedControlPlane.provider}</strong></div>
+				<div class="stat-card"><span>Runtime</span><strong>{selectedControlPlane.runtime_status ?? 'unknown'}</strong></div>
+				<div class="stat-card"><span>Lifecycle</span><strong>{selectedControlPlane.lifecycle_status}</strong></div>
+				<div class="stat-card"><span>Health</span><strong>{selectedControlPlane.health_status}</strong></div>
+				<div class="stat-card"><span>Retention</span><strong>{selectedControlPlane.retention_days ? `${selectedControlPlane.retention_days}d` : 'Default'}</strong></div>
+				<div class="stat-card"><span>Region</span><strong>{selectedControlPlane.region ?? 'Any'}</strong></div>
+				<div class="stat-card"><span>Critical</span><strong>{selectedControlPlane.critical_allowed ? 'Allowed' : 'Not allowed'}</strong></div>
+				<div class="stat-card"><span>Fallback</span><strong>{selectedControlPlane.default_fallback_eligible ? 'Eligible' : 'Not eligible'}</strong></div>
+				<div class="stat-card"><span>Encryption</span><strong>{selectedControlPlane.encryption_mode}</strong></div>
 				{#if selectedControlPlane.runtime_unsupported_reason}
-					<div>
-						<span>Runtime reason</span><strong>{selectedControlPlane.runtime_unsupported_reason}</strong>
-					</div>
+					<div class="stat-card wide"><span>Runtime reason</span><strong>{selectedControlPlane.runtime_unsupported_reason}</strong></div>
 				{/if}
 			</div>
 			<div class="usage-grid">
-				<div>
-					<span>Allowed tenants</span>
-					<strong>{listText(selectedControlPlane.allowed_tenant_ids)}</strong>
-				</div>
-				<div>
-					<span>Allowed log types</span>
-					<strong>{listText(selectedControlPlane.allowed_log_types)}</strong>
-				</div>
-				<div>
-					<span>Allowed planes</span>
-					<strong>{listText(selectedControlPlane.allowed_planes)}</strong>
-				</div>
-				<div>
-					<span>Capabilities</span>
-					<strong
-						>{selectedControlPlane.capabilities
-							?.filter((capability) => capability.enabled)
-							.map((capability) => capability.capability)
-							.join(', ') || 'None'}</strong
-					>
-				</div>
+				<div class="stat-card"><span>Allowed tenants</span><strong>{listText(selectedControlPlane.allowed_tenant_ids)}</strong></div>
+				<div class="stat-card"><span>Allowed log types</span><strong>{listText(selectedControlPlane.allowed_log_types)}</strong></div>
+				<div class="stat-card"><span>Allowed planes</span><strong>{listText(selectedControlPlane.allowed_planes)}</strong></div>
+				<div class="stat-card"><span>Capabilities</span><strong>{selectedControlPlane.capabilities?.filter((c) => c.enabled).map((c) => c.capability).join(', ') || 'None'}</strong></div>
 			</div>
-			<pre>{providerConfigText(selectedControlPlane)}</pre>
+			<pre class="code-block">{providerConfigText(selectedControlPlane)}</pre>
 			{#if destinationDiffPreview}
 				<div class="usage-grid">
-					<div>
-						<span>Diff state</span>
-						<strong>{destinationDiffPreview.dangerous_classification}</strong>
-					</div>
-					<div>
-						<span>Changed fields</span>
-						<strong>{destinationDiffPreview.diff.length}</strong>
-					</div>
-					<div>
-						<span>Confirmation</span>
-						<strong>{destinationDiffPreview.confirmation ?? '-'}</strong>
-					</div>
+					<div class="stat-card"><span>Diff state</span><strong>{destinationDiffPreview.dangerous_classification}</strong></div>
+					<div class="stat-card"><span>Changed fields</span><strong>{destinationDiffPreview.diff.length}</strong></div>
+					<div class="stat-card"><span>Confirmation</span><strong>{destinationDiffPreview.confirmation ?? '-'}</strong></div>
 				</div>
-				<pre>{jsonDisplayText({
-						diff: destinationDiffPreview.diff,
-						affected_assignments: destinationDiffPreview.affected_assignments,
-						dangerous_reasons: destinationDiffPreview.dangerous_reasons
-					})}</pre>
+				<pre class="code-block">{jsonDisplayText({ diff: destinationDiffPreview.diff, affected_assignments: destinationDiffPreview.affected_assignments, dangerous_reasons: destinationDiffPreview.dangerous_reasons })}</pre>
 			{/if}
 		</aside>
 	{/if}
@@ -903,47 +797,337 @@
 />
 
 <style>
-	.admin-page {
-		padding: 24px;
+	.page-shell {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
 	}
-	.page-header,
-	.section-header,
-	.page-actions,
-	.actions {
+
+	.page-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.page-title {
+		margin: 0 0 0.25rem;
+		font-size: 1.5rem;
+	}
+
+	.page-description {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+	}
+
+	.page-actions {
+		display: flex;
+		align-items: flex-end;
+		gap: 0.75rem;
+		flex-shrink: 0;
+	}
+
+	.scope-label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.scope-label select {
+		min-height: 2rem;
+	}
+
+	.alert {
+		padding: 0.75rem 1rem;
+		border-radius: var(--radius-sm);
+		font-size: 0.875rem;
+	}
+
+	.alert-error {
+		background: rgba(239, 68, 68, 0.08);
+		color: #991b1b;
+		border: 1px solid rgba(239, 68, 68, 0.2);
+	}
+
+	.alert-success {
+		background: rgba(16, 185, 129, 0.08);
+		color: #065f46;
+		border: 1px solid rgba(16, 185, 129, 0.2);
+	}
+
+	.split-panel {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr);
+		gap: 1.25rem;
+		align-items: start;
+	}
+
+	.panel {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+		padding: 1.25rem;
+	}
+
+	.panel-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 12px;
+		gap: 0.75rem;
+		margin-bottom: 1rem;
 	}
-	.page-title {
-		margin: 0 0 6px;
+
+	.panel-title {
+		margin: 0;
+		font-size: 0.9375rem;
+		font-weight: 600;
 	}
-	.page-description,
-	.muted,
-	small {
-		color: #666;
+
+	.item-list {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		overflow: hidden;
 	}
-	.alert {
-		margin: 16px 0;
-		padding: 12px;
-		border-radius: 6px;
+
+	.item-row {
+		display: grid;
+		grid-template-columns: 1fr auto auto auto;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.75rem 1rem;
+		border: none;
+		border-bottom: 1px solid var(--border);
+		background: var(--bg-card);
+		text-align: left;
+		cursor: pointer;
+		transition: background var(--transition-fast);
 	}
-	.error {
-		background: #fee2e2;
+
+	.item-row:last-child {
+		border-bottom: none;
+	}
+
+	.item-row:hover,
+	.item-row.selected {
+		background: var(--bg-subtle);
+	}
+
+	.item-name strong {
+		display: block;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.item-name small {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+	}
+
+	.badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		border-radius: var(--radius-full);
+		font-size: 0.75rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.badge-neutral {
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
+	}
+
+	.badge-success {
+		background: rgba(16, 185, 129, 0.1);
+		color: #065f46;
+	}
+
+	.badge-error {
+		background: rgba(239, 68, 68, 0.1);
 		color: #991b1b;
 	}
-	.success {
-		background: #dcfce7;
-		color: #166534;
+
+	.badge-warning {
+		background: rgba(245, 158, 11, 0.12);
+		color: #92400e;
 	}
-	.resource-grid {
+
+	.form-grid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(360px, 0.7fr);
-		gap: 20px;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.75rem;
 	}
-	section {
-		margin-top: 20px;
+
+	.form-label-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--text-secondary);
 	}
+
+	.wide {
+		grid-column: 1 / -1;
+	}
+
+	.form-actions {
+		grid-column: 1 / -1;
+		display: flex;
+		justify-content: flex-start;
+	}
+
+	input,
+	select,
+	textarea {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.5rem 0.75rem;
+		background: var(--bg-input);
+		color: var(--text-primary);
+		font: inherit;
+		min-height: 2.25rem;
+	}
+
+	textarea,
+	pre {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+	}
+
+	.code-block {
+		padding: 0.75rem;
+		background: var(--bg-subtle);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		overflow: auto;
+		max-height: 220px;
+		margin: 0.75rem 0 0;
+	}
+
+	.stat-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.75rem;
+		margin-bottom: 0;
+	}
+
+	.stat-grid.compact {
+		grid-template-columns: repeat(3, 1fr);
+	}
+
+	.stat-card {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.75rem;
+	}
+
+	.stat-card span {
+		display: block;
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		margin-bottom: 0.25rem;
+	}
+
+	.stat-card strong {
+		font-weight: 600;
+		font-size: 0.875rem;
+	}
+
+	.stat-card.wide {
+		grid-column: 1 / -1;
+	}
+
+	.usage-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 0.75rem;
+		margin: 0.75rem 0 0;
+	}
+
+	.credential-section {
+		margin-top: 1.25rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.subsection-title {
+		margin: 0 0 0.75rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.table-wrap {
+		overflow-x: auto;
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+
+	th,
+	td {
+		padding: 0.75rem;
+		border-bottom: 1px solid var(--border);
+		text-align: left;
+		vertical-align: top;
+	}
+
+	th {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		text-transform: uppercase;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.cell-name {
+		font-weight: 600;
+		font-size: 0.875rem;
+	}
+
+	.cell-sub {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		margin-top: 2px;
+	}
+
+	.row-actions {
+		display: flex;
+		gap: 0.375rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.5rem;
+	}
+
+	.config-details summary {
+		cursor: pointer;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		margin-top: 0.5rem;
+	}
+
+	.config-details .code-block {
+		margin-top: 0.5rem;
+		max-height: 140px;
+	}
+
+	.text-muted {
+		color: var(--text-secondary);
+	}
+
+	.text-sm {
+		font-size: 0.8125rem;
+	}
+
 	.detail-drawer {
 		position: fixed;
 		top: 0;
@@ -951,154 +1135,87 @@
 		z-index: 30;
 		width: min(560px, calc(100vw - 24px));
 		height: 100vh;
-		overflow: auto;
-		background: #fff;
-		border-left: 1px solid #d4d4d4;
-		box-shadow: -12px 0 28px rgb(0 0 0 / 0.14);
-		padding: 20px;
+		overflow-y: auto;
+		background: var(--bg-card);
+		border-left: 1px solid var(--border);
+		box-shadow: var(--shadow-lg);
+		padding: 1.25rem;
 	}
+
 	.drawer-header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 12px;
-		margin-bottom: 16px;
+		gap: 1rem;
+		margin-bottom: 1rem;
 	}
-	.drawer-header h2 {
-		margin: 0 0 4px;
+
+	.drawer-title {
+		margin: 0 0 0.25rem;
+		font-size: 1.125rem;
 	}
-	.drawer-header span {
-		color: #666;
-		font-size: 0.9rem;
+
+	.drawer-actions {
+		margin-bottom: 1rem;
 	}
-	.table {
-		border: 1px solid #ddd;
-		border-radius: 6px;
-		overflow: hidden;
-	}
-	.row {
-		width: 100%;
-		display: grid;
-		grid-template-columns: 1.4fr 0.7fr 0.6fr 0.8fr;
-		gap: 12px;
-		padding: 12px;
-		border: 0;
-		border-bottom: 1px solid #eee;
-		background: #fff;
-		text-align: left;
-	}
-	.row.selected,
-	.row:hover {
-		background: #f7f7f7;
-	}
-	.form-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 12px;
-	}
-	label {
-		display: grid;
-		gap: 6px;
-		font-size: 0.9rem;
-	}
-	.wide {
-		grid-column: 1 / -1;
-	}
-	input,
-	select,
-	textarea {
-		border: 1px solid #d4d4d4;
-		border-radius: 6px;
-		padding: 8px;
-		font: inherit;
-	}
-	textarea,
-	pre {
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	}
-	pre {
-		padding: 12px;
-		background: #f7f7f7;
-		border-radius: 6px;
-		overflow: auto;
-	}
-	.detail-grid {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 12px;
-	}
-	.usage-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 12px;
-		margin: 12px 0;
-	}
-	.detail-grid div,
-	.usage-grid div {
-		border: 1px solid #e5e5e5;
-		border-radius: 6px;
-		padding: 12px;
-	}
-	.detail-grid span,
-	.usage-grid span {
-		display: block;
-		color: #666;
-		font-size: 0.8rem;
-		margin-bottom: 6px;
-	}
-	.credential-panel {
-		display: grid;
-		gap: 12px;
-		max-width: 720px;
-	}
-	.control-table {
-		overflow-x: auto;
-	}
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-	th,
-	td {
-		border-bottom: 1px solid #e5e5e5;
-		padding: 10px;
-		text-align: left;
-		vertical-align: top;
-	}
-	td strong,
-	td small {
-		display: block;
-	}
-	.config-row pre {
-		margin: 0 0 12px;
-		max-height: 180px;
-	}
-	.row-actions {
-		display: flex;
-		gap: 8px;
-		flex-wrap: wrap;
-	}
+
 	.btn {
-		border: 0;
-		border-radius: 6px;
-		padding: 9px 14px;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.5rem 0.875rem;
+		font: inherit;
+		font-size: 0.875rem;
 		cursor: pointer;
+		transition: background var(--transition-fast);
+		white-space: nowrap;
 	}
+
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.btn-primary {
-		background: #111;
+		background: var(--primary);
 		color: #fff;
+		border-color: var(--primary);
 	}
+
+	.btn-primary:hover:not(:disabled) {
+		background: var(--primary-hover);
+	}
+
 	.btn-secondary {
-		background: #eee;
+		background: var(--bg-subtle);
+		color: var(--text-primary);
 	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: var(--border);
+	}
+
 	.btn-danger {
-		background: #b91c1c;
-		color: #fff;
+		background: rgba(239, 68, 68, 0.1);
+		color: #991b1b;
+		border-color: rgba(239, 68, 68, 0.3);
 	}
+
+	.btn-danger:hover:not(:disabled) {
+		background: rgba(239, 68, 68, 0.18);
+	}
+
+	.btn-sm {
+		padding: 0.3rem 0.625rem;
+		font-size: 0.8125rem;
+	}
+
 	@media (max-width: 900px) {
-		.resource-grid,
-		.detail-grid,
-		.usage-grid {
+		.split-panel,
+		.stat-grid,
+		.stat-grid.compact {
 			grid-template-columns: 1fr;
 		}
 	}

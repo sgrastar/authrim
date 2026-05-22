@@ -364,9 +364,9 @@
 	.filter-panel,
 	.summary-strip,
 	.table-panel {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
 	}
 
 	.filter-panel {
@@ -388,10 +388,10 @@
 	input,
 	select {
 		min-height: 36px;
-		border: 1px solid var(--border-color);
-		border-radius: 6px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
 		padding: 0 10px;
-		background: var(--surface);
+		background: var(--bg-input);
 		color: var(--text-primary);
 	}
 
@@ -404,7 +404,7 @@
 
 	.summary-strip > div {
 		padding: 14px 16px;
-		background: var(--surface-elevated);
+		background: var(--bg-subtle);
 	}
 
 	.metric-label {
@@ -429,10 +429,10 @@
 		display: flex;
 		gap: 12px;
 		align-items: center;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
 		padding: 12px;
-		background: var(--surface);
+		background: var(--bg-card);
 	}
 
 	.summary-count {
@@ -463,7 +463,7 @@
 	th,
 	td {
 		padding: 12px;
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: 1px solid var(--border);
 		text-align: left;
 		vertical-align: top;
 	}
@@ -546,20 +546,36 @@
 		justify-content: center;
 		gap: 6px;
 		min-height: 36px;
-		border: 1px solid var(--border-color);
-		border-radius: 6px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
 		padding: 0 12px;
 		cursor: pointer;
+		font: inherit;
+		transition: background var(--transition-fast);
+	}
+
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.btn-primary {
 		background: var(--primary);
 		color: white;
+		border-color: var(--primary);
+	}
+
+	.btn-primary:hover:not(:disabled) {
+		background: var(--primary-hover);
 	}
 
 	.btn-secondary {
-		background: var(--surface-elevated);
+		background: var(--bg-subtle);
 		color: var(--text-primary);
+	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: var(--border);
 	}
 
 	.btn-small {
