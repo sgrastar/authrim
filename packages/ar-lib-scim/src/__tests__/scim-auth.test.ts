@@ -54,11 +54,7 @@ describe('SCIM tenant-bound authentication', () => {
     const { token } = await generateScimToken(env, { tenantId: 'tenant-a' });
     const app = createProtectedApp('tenant-a');
 
-    const res = await app.request(
-      '/Users',
-      { headers: { Authorization: `Bearer ${token}` } },
-      env
-    );
+    const res = await app.request('/Users', { headers: { Authorization: `Bearer ${token}` } }, env);
 
     expect(res.status).toBe(200);
   });
@@ -68,11 +64,7 @@ describe('SCIM tenant-bound authentication', () => {
     const { token } = await generateScimToken(env, { tenantId: 'tenant-a' });
     const app = createProtectedApp('tenant-b');
 
-    const res = await app.request(
-      '/Users',
-      { headers: { Authorization: `Bearer ${token}` } },
-      env
-    );
+    const res = await app.request('/Users', { headers: { Authorization: `Bearer ${token}` } }, env);
 
     expect(res.status).toBe(401);
     const body = (await res.json()) as { detail: string };
@@ -84,11 +76,7 @@ describe('SCIM tenant-bound authentication', () => {
     const { token } = await generateScimToken(env, { tenantId: 'tenant-a' });
     const app = createProtectedApp();
 
-    const res = await app.request(
-      '/Users',
-      { headers: { Authorization: `Bearer ${token}` } },
-      env
-    );
+    const res = await app.request('/Users', { headers: { Authorization: `Bearer ${token}` } }, env);
 
     expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: string };

@@ -94,9 +94,7 @@ function splitPatchPath(path: string): string[] {
 
 function parsePatchPath(path: string): PatchPathSegment[] {
   return splitPatchPath(path).map((part) => {
-    const filterMatch = part.match(
-      /^([^\[]+)\[([A-Za-z0-9_$.-]+)\s+eq\s+["']([^"']*)["']\]$/
-    );
+    const filterMatch = part.match(/^([^\[]+)\[([A-Za-z0-9_$.-]+)\s+eq\s+["']([^"']*)["']\]$/);
     if (!filterMatch) {
       return { key: part };
     }
