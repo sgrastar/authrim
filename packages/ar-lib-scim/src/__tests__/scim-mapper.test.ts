@@ -380,6 +380,46 @@ describe('SCIM Mapper', () => {
       expect(result.name.last).toBe('Doe');
     });
 
+    it('should replace a filtered multi-valued attribute sub-attribute', () => {
+      const resource = {
+        emails: [
+          { value: 'home@example.com', type: 'home' },
+          { value: 'work@example.com', type: 'work' },
+        ],
+      };
+
+      const result = applyPatchOperations(resource, [
+        {
+          op: 'replace' as const,
+          path: 'emails[type eq "work"].value',
+          value: 'new-work@example.com',
+        },
+      ]);
+
+      expect(result.emails).toEqual([
+        { value: 'home@example.com', type: 'home' },
+        { value: 'new-work@example.com', type: 'work' },
+      ]);
+    });
+
+    it('should remove a filtered multi-valued attribute item', () => {
+      const resource = {
+        emails: [
+          { value: 'home@example.com', type: 'home' },
+          { value: 'work@example.com', type: 'work' },
+        ],
+      };
+
+      const result = applyPatchOperations(resource, [
+        {
+          op: 'remove' as const,
+          path: 'emails[type eq "home"]',
+        },
+      ]);
+
+      expect(result.emails).toEqual([{ value: 'work@example.com', type: 'work' }]);
+    });
+
     it('should handle operations without path (replace entire resource)', () => {
       const resource = { name: 'John', email: 'john@example.com' };
       const operations = [

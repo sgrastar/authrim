@@ -624,6 +624,15 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(res.status).not.toBe(401);
       expect(res.status).not.toBe(403);
     });
+
+    it('should fail closed without tenant context in multi-tenant mode', async () => {
+      const req = createRequest('/scim/v2/Users');
+      const res = await app.fetch(req, { ...mockEnv, BASE_DOMAIN: 'example.com' } as Env);
+
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as any;
+      expect(body.detail).toBe('Tenant context is required');
+    });
   });
 
   describe('GET /scim/v2/Users - List Users', () => {

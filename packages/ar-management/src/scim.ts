@@ -30,6 +30,7 @@ import {
   createPIIContextFromHono,
   hasPIIDatabase,
   getLogger,
+  DEFAULT_TENANT_ID,
 } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
@@ -566,6 +567,21 @@ const app = new Hono<{ Bindings: Env }>();
 // SCIM Discovery endpoints that should be accessible without authentication (RFC 7644 Section 4)
 const SCIM_DISCOVERY_PATHS = ['/ServiceProviderConfig', '/ResourceTypes', '/Schemas'];
 
+function resolveScimTenantId(c: ScimContext): string | null {
+  const contextTenantId = (c as any).get?.('tenantId');
+  if (typeof contextTenantId === 'string' && contextTenantId.trim()) {
+    return contextTenantId.trim();
+  }
+
+  // Single-tenant deployments have an explicit deployment default. Multi-tenant
+  // SCIM must be host/context resolved by the outer request context middleware.
+  if (!c.env.BASE_DOMAIN) {
+    return c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+  }
+
+  return null;
+}
+
 // Set SCIM Content-Type for all responses (RFC 7644 Section 3.1)
 app.use('*', async (c, next) => {
   await next();
@@ -574,6 +590,18 @@ app.use('*', async (c, next) => {
   if (contentType?.includes('application/json')) {
     c.res.headers.set('Content-Type', 'application/scim+json; charset=utf-8');
   }
+});
+
+// Fail closed if a multi-tenant SCIM request reaches this router without a
+// tenant context. In single-tenant mode we materialize the deployment default
+// tenant instead of relying on an implicit string fallback in route handlers.
+app.use('*', async (c, next) => {
+  const tenantId = resolveScimTenantId(c);
+  if (!tenantId) {
+    return scimError(c, 403, 'Tenant context is required', 'invalidValue');
+  }
+  (c as any).set('tenantId', tenantId);
+  return next();
 });
 
 // Apply SCIM authentication to all routes EXCEPT discovery endpoints

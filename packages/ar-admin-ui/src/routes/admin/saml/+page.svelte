@@ -332,93 +332,6 @@
 		<div class="alert alert-success">{actionMessage}</div>
 	{/if}
 
-	{#if !loading}
-		<div class="panel trust-profiles-panel">
-			<div class="panel-header">
-				<div>
-					<h2 class="panel-title">Federation Trust Profiles</h2>
-					<p class="form-hint">
-						Trust anchors for signed aggregate metadata imports, scoped by metadata URL pattern.
-					</p>
-				</div>
-				<span class="badge badge-neutral">{trustProfiles.length}</span>
-			</div>
-
-			<div class="trust-profile-layout">
-				<div class="trust-profile-form">
-					<div class="form-group">
-						<label for="trustProfileName" class="form-label">Name *</label>
-						<input
-							id="trustProfileName"
-							bind:value={trustProfileName}
-							class="form-input"
-							placeholder="GakuNin Test Federation"
-						/>
-					</div>
-					<div class="form-group">
-						<label for="trustProfilePatterns" class="form-label">Metadata URL Patterns *</label>
-						<textarea
-							id="trustProfilePatterns"
-							bind:value={trustProfilePatterns}
-							class="form-input form-textarea monospace"
-							rows="3"
-						></textarea>
-					</div>
-					<div class="form-group">
-						<label for="trustProfileCertificate" class="form-label">Signing Certificate PEM *</label
-						>
-						<textarea
-							id="trustProfileCertificate"
-							bind:value={trustProfileCertificate}
-							class="form-input form-textarea monospace"
-							rows="6"
-							placeholder="-----BEGIN CERTIFICATE-----"
-						></textarea>
-					</div>
-					<div class="form-actions compact-actions">
-						<button
-							class="btn btn-primary btn-sm"
-							onclick={createTrustProfile}
-							disabled={creatingTrustProfile}
-						>
-							<i class="i-ph-shield-check"></i>
-							{creatingTrustProfile ? 'Creating...' : 'Add Trust Profile'}
-						</button>
-					</div>
-				</div>
-
-				{#if trustProfiles.length === 0}
-					<div class="empty-state compact-empty">No federation trust profiles configured.</div>
-				{:else}
-					<div class="trust-profile-list">
-						{#each trustProfiles as profile (profile.id)}
-							<div class="trust-profile-item">
-								<div class="trust-profile-main">
-									<div class="cell-primary">{profile.name}</div>
-									<div class="cell-secondary">{profile.metadataUrlPatterns.join(', ')}</div>
-									<div class="trust-profile-meta">
-										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
-											{profile.enabled ? 'Enabled' : 'Disabled'}
-										</span>
-										<span class="badge badge-info">{profile.policy || 'environment policy'}</span>
-										{#if profile.certificates[0]?.fingerprintSha256}
-											<span class="mono fingerprint">
-												{profile.certificates[0].fingerprintSha256}
-											</span>
-										{/if}
-									</div>
-								</div>
-								<button class="btn btn-danger btn-sm" onclick={() => deleteTrustProfile(profile)}>
-									Delete
-								</button>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		</div>
-	{/if}
-
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
@@ -595,6 +508,90 @@
 					</table>
 				</div>
 			{/if}
+		</div>
+
+		<div class="panel trust-profiles-panel">
+			<div class="panel-header">
+				<div>
+					<h2 class="panel-title">Federation Trust Profiles</h2>
+					<p class="form-hint">
+						Trust anchors for signed aggregate metadata imports, scoped by metadata URL pattern.
+					</p>
+				</div>
+				<span class="badge badge-neutral">{trustProfiles.length}</span>
+			</div>
+
+			<div class="trust-profile-layout">
+				<div class="trust-profile-form">
+					<div class="form-group">
+						<label for="trustProfileName" class="form-label">Name *</label>
+						<input
+							id="trustProfileName"
+							bind:value={trustProfileName}
+							class="form-input"
+							placeholder="GakuNin Test Federation"
+						/>
+					</div>
+					<div class="form-group">
+						<label for="trustProfilePatterns" class="form-label">Metadata URL Patterns *</label>
+						<textarea
+							id="trustProfilePatterns"
+							bind:value={trustProfilePatterns}
+							class="form-input form-textarea monospace"
+							rows="3"
+						></textarea>
+					</div>
+					<div class="form-group">
+						<label for="trustProfileCertificate" class="form-label">Signing Certificate PEM *</label>
+						<textarea
+							id="trustProfileCertificate"
+							bind:value={trustProfileCertificate}
+							class="form-input form-textarea monospace"
+							rows="6"
+							placeholder="-----BEGIN CERTIFICATE-----"
+						></textarea>
+					</div>
+					<div class="form-actions compact-actions">
+						<button
+							class="btn btn-primary btn-sm"
+							onclick={createTrustProfile}
+							disabled={creatingTrustProfile}
+						>
+							<i class="i-ph-shield-check"></i>
+							{creatingTrustProfile ? 'Creating...' : 'Add Trust Profile'}
+						</button>
+					</div>
+				</div>
+
+				{#if trustProfiles.length === 0}
+					<div class="empty-state compact-empty">No federation trust profiles configured.</div>
+				{:else}
+					<div class="trust-profile-list">
+						{#each trustProfiles as profile (profile.id)}
+							<div class="trust-profile-item">
+								<div class="trust-profile-main">
+									<div class="cell-primary">{profile.name}</div>
+									<div class="cell-secondary">{profile.metadataUrlPatterns.join(', ')}</div>
+									<div class="trust-profile-meta">
+										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
+											{profile.enabled ? 'Enabled' : 'Disabled'}
+										</span>
+										<span class="badge badge-info">{profile.policy || 'environment policy'}</span>
+										{#if profile.certificates[0]?.fingerprintSha256}
+											<span class="mono fingerprint">
+												{profile.certificates[0].fingerprintSha256}
+											</span>
+										{/if}
+									</div>
+								</div>
+								<button class="btn btn-danger btn-sm" onclick={() => deleteTrustProfile(profile)}>
+									Delete
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </div>
