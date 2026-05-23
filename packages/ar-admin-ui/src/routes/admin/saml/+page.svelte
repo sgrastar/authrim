@@ -2,22 +2,30 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { Modal } from '$lib/components';
+	import { getTenantInfo, type TenantInfo } from '$lib/api/admin-info';
 	import {
 		adminSAMLAPI,
-		type SAMLFederationTrustProfile,
 		type SAMLAttributeReleaseRule,
 		type SAMLAttributePreset,
+		type SAMLEntityIdStyle,
+		type SAMLFederationTrustProfile,
 		type SAMLProvider,
-		type SAMLProviderConfig
+		type SAMLSettings
 	} from '$lib/api/admin-saml';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let providers = $state<SAMLProvider[]>([]);
 	let presets = $state<SAMLAttributePreset[]>([]);
-	let trustProfiles = $state<SAMLFederationTrustProfile[]>([]);
+	let federationTrustProfiles = $state<SAMLFederationTrustProfile[]>([]);
+	let samlSettings = $state<SAMLSettings | null>(null);
+	let tenantInfo = $state<TenantInfo | null>(null);
+	let tenantInfoError = $state('');
+	let draftEntityIdStyle = $state<SAMLEntityIdStyle>('metadata_url');
 	let loading = $state(true);
 	let error = $state('');
 	let actionMessage = $state('');
-	let busyProviderId = $state<string | null>(null);
+	let copiedKey = $state('');
+	let savingSettings = $state(false);
 	let selectedPreset = $state<SAMLAttributePreset | null>(null);
 	let showCreatePreset = $state(false);
 	let creatingPreset = $state(false);
@@ -41,30 +49,39 @@
 			2
 		)
 	);
-	let trustProfileName = $state('');
-	let trustProfilePatterns = $state('https://metadata.gakunin.nii.ac.jp/*');
-	let trustProfileCertificate = $state('');
-	let creatingTrustProfile = $state(false);
 
 	onMount(() => {
-		void loadSAML();
+		void initializeAndLoadSAML();
 	});
+
+	async function initializeAndLoadSAML() {
+		await settingsContext.initialize();
+		await loadSAML();
+	}
 
 	async function loadSAML() {
 		loading = true;
 		error = '';
+		tenantInfoError = '';
 		try {
-			const [providerResult, presetResult] = await Promise.all([
-				adminSAMLAPI.listProviders(),
-				adminSAMLAPI.listAttributePresets()
-			]);
+			const [settingsResult, providerResult, presetResult, trustProfileResult, tenantInfoResult] =
+				await Promise.all([
+					adminSAMLAPI.getSettings(),
+					adminSAMLAPI.listProviders(),
+					adminSAMLAPI.listAttributePresets(),
+					adminSAMLAPI.listFederationTrustProfiles(),
+					getTenantInfo().catch((err) => {
+						tenantInfoError =
+							err instanceof Error ? err.message : 'Failed to load SAML endpoint references';
+						return null;
+					})
+				]);
+			samlSettings = settingsResult;
+			tenantInfo = tenantInfoResult;
+			draftEntityIdStyle = settingsResult.entityIdStyle;
 			providers = providerResult.providers;
 			presets = presetResult.presets;
-			try {
-				trustProfiles = (await adminSAMLAPI.listFederationTrustProfiles()).profiles;
-			} catch {
-				trustProfiles = [];
-			}
+			federationTrustProfiles = trustProfileResult.profiles;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load SAML data';
 		} finally {
@@ -72,60 +89,32 @@
 		}
 	}
 
-	async function refreshMetadata(provider: SAMLProvider, event?: Event) {
-		event?.stopPropagation();
-		busyProviderId = provider.id;
-		actionMessage = '';
-		error = '';
+	async function copy(text: string, key: string) {
 		try {
-			const result = await adminSAMLAPI.refreshMetadata(provider.id);
-			updateProviderConfig(provider.id, result.config);
-			actionMessage = result.expired
-				? `${provider.name}: metadata is expired`
-				: `${provider.name}: metadata ${result.changed ? 'changed' : 'unchanged'}`;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to refresh metadata';
-		} finally {
-			busyProviderId = null;
+			await navigator.clipboard.writeText(text);
+			copiedKey = key;
+			setTimeout(() => {
+				copiedKey = '';
+			}, 2000);
+		} catch {
+			// Clipboard access is not always available in embedded previews.
 		}
 	}
 
-	async function promoteNext(provider: SAMLProvider, event?: Event) {
-		event?.stopPropagation();
-		busyProviderId = provider.id;
+	async function saveEntityIdStyle() {
+		if (!samlSettings || samlSettings.entityIdStyle === draftEntityIdStyle || savingSettings) return;
+		savingSettings = true;
 		actionMessage = '';
 		error = '';
 		try {
-			const result = await adminSAMLAPI.promoteSigningNext(provider.id);
-			updateProviderConfig(provider.id, result.config);
-			actionMessage = `${provider.name}: next certificate promoted`;
+			samlSettings = await adminSAMLAPI.updateSettings({ entityIdStyle: draftEntityIdStyle });
+			draftEntityIdStyle = samlSettings.entityIdStyle;
+			actionMessage = 'SAML entityID style updated';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to promote next certificate';
+			error = err instanceof Error ? err.message : 'Failed to update SAML settings';
 		} finally {
-			busyProviderId = null;
+			savingSettings = false;
 		}
-	}
-
-	async function retireBackup(provider: SAMLProvider, event?: Event) {
-		event?.stopPropagation();
-		busyProviderId = provider.id;
-		actionMessage = '';
-		error = '';
-		try {
-			const result = await adminSAMLAPI.retireSigningBackup(provider.id);
-			updateProviderConfig(provider.id, result.config);
-			actionMessage = `${provider.name}: backup certificate retired`;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to retire backup certificate';
-		} finally {
-			busyProviderId = null;
-		}
-	}
-
-	function updateProviderConfig(providerId: string, config: SAMLProviderConfig) {
-		providers = providers.map((provider) =>
-			provider.id === providerId ? { ...provider, config } : provider
-		);
 	}
 
 	function navigateToProvider(id: string) {
@@ -134,6 +123,10 @@
 
 	function navigateToNew() {
 		goto('/admin/saml/new');
+	}
+
+	function navigateToTrustProfileEdit(id: string) {
+		goto(`/admin/saml/new?trustProfileId=${encodeURIComponent(id)}`);
 	}
 
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
@@ -146,6 +139,7 @@
 
 	function metadataStatus(provider: SAMLProvider) {
 		const diff = provider.config.metadataRefreshStatus?.diff;
+		if (provider.config.certificateValidation?.allExpired) return 'Expired';
 		if (!provider.config.metadataUrl) return provider.config.metadataXml ? 'Uploaded' : 'Manual';
 		if (!diff) return 'Not checked';
 		if (diff.expired) return 'Expired';
@@ -161,14 +155,90 @@
 		return 'badge badge-neutral';
 	}
 
-	function signingSummary(provider: SAMLProvider) {
-		const policy = provider.config.signingKeyPolicy;
-		if (!policy?.active && !policy?.next && !policy?.backup) return 'None';
-		const states = [];
-		if (policy.active) states.push('active');
-		if (policy.next) states.push('next');
-		if (policy.backup) states.push('backup');
-		return states.join(' / ');
+	function providerValidUntil(provider: SAMLProvider) {
+		return (
+			provider.config.metadataRefreshStatus?.diff.validUntil ||
+			provider.config.certificateValidation?.validUntil
+		);
+	}
+
+	function providerValidUntilBadge(provider: SAMLProvider) {
+		if (
+			provider.config.metadataRefreshStatus?.diff.expired ||
+			provider.config.certificateValidation?.allExpired
+		) {
+			return 'badge badge-danger';
+		}
+		return 'badge badge-neutral';
+	}
+
+	function buildEntityIdPreview(role: 'idp' | 'sp', style: SAMLEntityIdStyle) {
+		if (!samlSettings) return '-';
+		const roleUrl = `${samlSettings.generated.issuerUrl}/saml/${role}`;
+		return style === 'metadata_url' ? `${roleUrl}/metadata` : roleUrl;
+	}
+
+	function entityIdStyleLabel(style: SAMLEntityIdStyle) {
+		return style === 'metadata_url' ? 'Metadata URL' : 'Role URL';
+	}
+
+	function metadataSigningLabel(settings: SAMLSettings) {
+		return settings.metadata.signingEnabled ? 'Signed metadata' : 'Unsigned metadata';
+	}
+
+	function metadataSigningBadge(settings: SAMLSettings) {
+		return settings.metadata.signingEnabled ? 'badge badge-success' : 'badge badge-neutral';
+	}
+
+	function attributeSourceLabel(source: string | undefined) {
+		switch (source) {
+			case 'claim':
+				return 'Authrim claim';
+			case 'attribute':
+				return 'Authrim attribute';
+			case 'custom_claim':
+				return 'Custom claim';
+			case 'custom_field':
+				return 'Custom field';
+			case 'constant':
+				return 'Constant';
+			case 'computed':
+				return 'Computed resolver';
+			default:
+				return source || 'Unspecified';
+		}
+	}
+
+	function attributeSourcePath(rule: SAMLAttributeReleaseRule) {
+		switch (rule.source) {
+			case 'claim':
+				return rule.claim ? `subject.${rule.claim}` : '-';
+			case 'attribute':
+				return rule.claim ? `subject.attributes.${rule.claim}` : '-';
+			case 'custom_claim':
+				return rule.claim ? `subject.customClaims.${rule.claim}` : '-';
+			case 'custom_field':
+				return rule.claim ? `subject.customFields.${rule.claim}` : '-';
+			case 'constant':
+				return Array.isArray(rule.value) ? rule.value.join(', ') : rule.value || '-';
+			case 'computed':
+				return rule.computed ? `computed.${rule.computed}` : '-';
+			default:
+				return rule.claim || rule.computed || '-';
+		}
+	}
+
+	function attributeSourceHint(rule: SAMLAttributeReleaseRule) {
+		if (rule.source === 'computed' && rule.computed === 'eduPersonScopedAffiliation') {
+			return 'Uses direct eduPersonScopedAffiliation when present; otherwise combines affiliation and scope claims.';
+		}
+		if (rule.source === 'claim' && (rule.claim === 'sub' || rule.claim === 'user_id')) {
+			return 'Alias of subject.id.';
+		}
+		if (rule.source === 'constant') {
+			return 'Static value released to the SP.';
+		}
+		return '';
 	}
 
 	function formatDate(value: string | number | undefined) {
@@ -176,6 +246,17 @@
 		const date = typeof value === 'number' ? new Date(value) : new Date(value);
 		if (Number.isNaN(date.getTime())) return '-';
 		return date.toLocaleDateString();
+	}
+
+	function formatDateTime(value: string | number | undefined) {
+		if (!value) return '-';
+		const date = typeof value === 'number' ? new Date(value) : new Date(value);
+		if (Number.isNaN(date.getTime())) return '-';
+		return date.toLocaleString();
+	}
+
+	function trustProfilePolicy(profile: SAMLFederationTrustProfile) {
+		return profile.policy ?? 'strict';
 	}
 
 	function viewPreset(preset: SAMLAttributePreset) {
@@ -260,49 +341,39 @@
 		}
 	}
 
-	async function createTrustProfile() {
-		if (!trustProfileName.trim() || !trustProfileCertificate.trim()) {
-			error = 'Trust profile name and certificate are required';
-			return;
-		}
-		creatingTrustProfile = true;
-		error = '';
-		try {
-			const profile = await adminSAMLAPI.createFederationTrustProfile({
-				name: trustProfileName.trim(),
-				metadataUrlPatterns: trustProfilePatterns
-					.split('\n')
-					.map((item) => item.trim())
-					.filter(Boolean),
-				certificates: [{ certificate: trustProfileCertificate.trim() }],
-				enabled: true
-			});
-			trustProfiles = [...trustProfiles, profile];
-			trustProfileName = '';
-			trustProfileCertificate = '';
-			actionMessage = 'Federation trust profile created';
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create federation trust profile';
-		} finally {
-			creatingTrustProfile = false;
-		}
-	}
-
-	async function deleteTrustProfile(profile: SAMLFederationTrustProfile) {
-		if (!window.confirm(`Delete federation trust profile ${profile.name}?`)) return;
-		try {
-			await adminSAMLAPI.deleteFederationTrustProfile(profile.id);
-			trustProfiles = trustProfiles.filter((item) => item.id !== profile.id);
-			actionMessage = 'Federation trust profile deleted';
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete federation trust profile';
-		}
-	}
 </script>
 
 <svelte:head>
 	<title>SAML - Admin Dashboard - Authrim</title>
 </svelte:head>
+
+{#snippet samlEndpointRow(label: string, value: string, key: string, href?: string)}
+	<div class="saml-endpoint-row">
+		<span class="saml-endpoint-label">{label}</span>
+		<div class="saml-endpoint-value-row">
+			{#if href}
+				<a href={href} target="_blank" rel="noopener noreferrer" class="saml-endpoint-value">
+					{value}
+					<i class="i-ph-arrow-square-out"></i>
+				</a>
+			{:else}
+				<span class="saml-endpoint-value">{value}</span>
+			{/if}
+			<button
+				class="copy-btn"
+				class:copied={copiedKey === key}
+				onclick={() => copy(value, key)}
+				title="Copy to clipboard"
+			>
+				{#if copiedKey === key}
+					<i class="i-ph-check"></i>
+				{:else}
+					<i class="i-ph-copy"></i>
+				{/if}
+			</button>
+		</div>
+	</div>
+{/snippet}
 
 <div class="admin-page">
 	<div class="page-header">
@@ -315,7 +386,7 @@
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={navigateToNew}>
 				<i class="i-ph-plus"></i>
-				Add Provider
+				Add Provider/Federation
 			</button>
 			<button class="btn btn-secondary" onclick={loadSAML} disabled={loading}>
 				<i class="i-ph-arrow-clockwise"></i>
@@ -337,7 +408,8 @@
 			<i class="i-ph-circle-notch loading-spinner"></i>
 			<p>Loading...</p>
 		</div>
-	{:else if providers.length === 0}
+	{:else}
+		{#if providers.length === 0}
 		<div class="panel">
 			<div class="empty-state">
 				<p class="empty-state-description">No SAML providers configured.</p>
@@ -345,7 +417,7 @@
 					Add an IdP for external SAML sign-in, or add an SP that trusts Authrim as its IdP.
 				</p>
 				<div class="empty-actions">
-					<button class="btn btn-primary" onclick={navigateToNew}>Add Provider</button>
+					<button class="btn btn-primary" onclick={navigateToNew}>Add Provider/Federation</button>
 				</div>
 			</div>
 		</div>
@@ -360,8 +432,6 @@
 						<th>Metadata</th>
 						<th>Entity ID</th>
 						<th>Valid Until</th>
-						<th>Signing</th>
-						<th class="text-right">Actions</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -401,40 +471,21 @@
 							<td class="mono truncate" style="max-width: 280px;">
 								{provider.config.entityId || '-'}
 							</td>
-							<td>{formatDate(provider.config.metadataRefreshStatus?.diff.validUntil)}</td>
-							<td class="muted">{signingSummary(provider)}</td>
-							<td class="text-right" onclick={(event) => event.stopPropagation()}>
-								<div class="row-actions">
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={(event) => refreshMetadata(provider, event)}
-										disabled={!provider.config.metadataUrl || busyProviderId === provider.id}
-									>
-										Metadata
-									</button>
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={(event) => promoteNext(provider, event)}
-										disabled={!provider.config.signingKeyPolicy?.next ||
-											busyProviderId === provider.id}
-									>
-										Promote
-									</button>
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={(event) => retireBackup(provider, event)}
-										disabled={!provider.config.signingKeyPolicy?.backup ||
-											busyProviderId === provider.id}
-									>
-										Retire
-									</button>
-								</div>
+							<td>
+								{#if providerValidUntil(provider)}
+									<span class={providerValidUntilBadge(provider)}>
+										{formatDate(providerValidUntil(provider))}
+									</span>
+								{:else}
+									-
+								{/if}
 							</td>
 						</tr>
 					{/each}
 				</tbody>
 			</table>
 		</div>
+		{/if}
 
 		<div class="panel presets-panel">
 			<div class="panel-header">
@@ -510,89 +561,250 @@
 			{/if}
 		</div>
 
-		<div class="panel trust-profiles-panel">
-			<div class="panel-header">
+		<div class="panel federation-trust-panel">
+			<div class="panel-header compact-panel-header">
 				<div>
 					<h2 class="panel-title">Federation Trust Profiles</h2>
 					<p class="form-hint">
-						Trust anchors for signed aggregate metadata imports, scoped by metadata URL pattern.
+						Trust anchors used to verify signed aggregate metadata before importing federation
+						entities.
 					</p>
 				</div>
-				<span class="badge badge-neutral">{trustProfiles.length}</span>
+				<div class="preset-header-actions">
+					<span class="badge badge-neutral">{federationTrustProfiles.length}</span>
+				</div>
 			</div>
 
-			<div class="trust-profile-layout">
-				<div class="trust-profile-form">
-					<div class="form-group">
-						<label for="trustProfileName" class="form-label">Name *</label>
-						<input
-							id="trustProfileName"
-							bind:value={trustProfileName}
-							class="form-input"
-							placeholder="GakuNin Test Federation"
-						/>
-					</div>
-					<div class="form-group">
-						<label for="trustProfilePatterns" class="form-label">Metadata URL Patterns *</label>
-						<textarea
-							id="trustProfilePatterns"
-							bind:value={trustProfilePatterns}
-							class="form-input form-textarea monospace"
-							rows="3"
-						></textarea>
-					</div>
-					<div class="form-group">
-						<label for="trustProfileCertificate" class="form-label">Signing Certificate PEM *</label>
-						<textarea
-							id="trustProfileCertificate"
-							bind:value={trustProfileCertificate}
-							class="form-input form-textarea monospace"
-							rows="6"
-							placeholder="-----BEGIN CERTIFICATE-----"
-						></textarea>
-					</div>
-					<div class="form-actions compact-actions">
-						<button
-							class="btn btn-primary btn-sm"
-							onclick={createTrustProfile}
-							disabled={creatingTrustProfile}
-						>
-							<i class="i-ph-shield-check"></i>
-							{creatingTrustProfile ? 'Creating...' : 'Add Trust Profile'}
-						</button>
-					</div>
+			{#if federationTrustProfiles.length === 0}
+				<div class="empty-state compact-empty">
+					No federation trust profiles configured.
 				</div>
-
-				{#if trustProfiles.length === 0}
-					<div class="empty-state compact-empty">No federation trust profiles configured.</div>
-				{:else}
-					<div class="trust-profile-list">
-						{#each trustProfiles as profile (profile.id)}
-							<div class="trust-profile-item">
-								<div class="trust-profile-main">
-									<div class="cell-primary">{profile.name}</div>
-									<div class="cell-secondary">{profile.metadataUrlPatterns.join(', ')}</div>
-									<div class="trust-profile-meta">
+			{:else}
+				<div class="data-table-container compact-table trust-profile-table">
+					<table class="data-table">
+						<thead>
+							<tr>
+								<th>Profile</th>
+								<th>Status</th>
+								<th>Policy</th>
+								<th>Metadata URL Pattern</th>
+								<th>Updated</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each federationTrustProfiles as profile (profile.id)}
+								<tr
+									onclick={() => navigateToTrustProfileEdit(profile.id)}
+									onkeydown={(event) =>
+										event.key === 'Enter' && navigateToTrustProfileEdit(profile.id)}
+									tabindex="0"
+									role="button"
+								>
+									<td>
+										<div class="cell-primary">{profile.name}</div>
+										{#if profile.description}
+											<div class="cell-secondary">{profile.description}</div>
+										{/if}
+									</td>
+									<td>
 										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
 											{profile.enabled ? 'Enabled' : 'Disabled'}
 										</span>
-										<span class="badge badge-info">{profile.policy || 'environment policy'}</span>
-										{#if profile.certificates[0]?.fingerprintSha256}
-											<span class="mono fingerprint">
-												{profile.certificates[0].fingerprintSha256}
-											</span>
-										{/if}
-									</div>
-								</div>
-								<button class="btn btn-danger btn-sm" onclick={() => deleteTrustProfile(profile)}>
-									Delete
-								</button>
-							</div>
-						{/each}
-					</div>
+									</td>
+									<td>
+										<span class="badge badge-info">{trustProfilePolicy(profile)}</span>
+									</td>
+									<td class="mono truncate" style="max-width: 300px;">
+										{profile.metadataUrlPatterns.join(', ')}
+									</td>
+									<td>{formatDateTime(profile.updatedAt)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</div>
+
+		<div class="panel saml-endpoints-panel">
+			<div class="panel-header compact-panel-header">
+				<div>
+					<h2 class="panel-title">SAML 2.0 Endpoint References</h2>
+					<p class="form-hint">
+						Tenant SAML endpoint URLs shown in Admin Info, repeated here for SAML setup work.
+					</p>
+				</div>
+				{#if tenantInfo?.components.saml}
+					<span class="badge badge-success">Deployed</span>
+				{:else}
+					<span class="badge badge-neutral">Not deployed</span>
 				{/if}
 			</div>
+
+			{#if tenantInfoError}
+				<div class="alert alert-error">{tenantInfoError}</div>
+			{:else if tenantInfo?.components.saml}
+				<div class="saml-endpoint-grid">
+					{@render samlEndpointRow('SSO (Single Sign-On)', tenantInfo.saml.sso, 'saml_sso')}
+					{@render samlEndpointRow(
+						'IdP Metadata',
+						tenantInfo.saml.idp_metadata,
+						'saml_idp_metadata',
+						tenantInfo.saml.idp_metadata
+					)}
+					{@render samlEndpointRow(
+						'SP Metadata',
+						tenantInfo.saml.sp_metadata ?? tenantInfo.saml.metadata,
+						'saml_sp_metadata',
+						tenantInfo.saml.sp_metadata ?? tenantInfo.saml.metadata
+					)}
+					{@render samlEndpointRow(
+						'ACS (Assertion Consumer Service)',
+						tenantInfo.saml.acs,
+						'saml_acs'
+					)}
+					{@render samlEndpointRow('SLO (Single Logout)', tenantInfo.saml.slo, 'saml_slo')}
+				</div>
+			{:else}
+				<div class="empty-state compact-empty">SAML worker is not deployed for this tenant.</div>
+			{/if}
 		</div>
+
+		{#if samlSettings}
+			<div class="panel saml-settings-panel">
+				<div class="panel-header compact-panel-header">
+					<div>
+						<h2 class="panel-title">SAML Published Entity IDs</h2>
+						<p class="form-hint">
+							Tenant-wide Authrim IdP/SP entityID style used in generated metadata and SAML
+							messages.
+						</p>
+					</div>
+					<span class="badge badge-info">{entityIdStyleLabel(samlSettings.entityIdStyle)}</span>
+				</div>
+
+				<div class="entity-id-settings-layout">
+					<div class="entity-id-style-options" role="radiogroup" aria-label="SAML entityID style">
+						<label class="entity-id-style-option">
+							<input
+								type="radio"
+								name="entityIdStyle"
+								checked={draftEntityIdStyle === 'metadata_url'}
+								onchange={() => (draftEntityIdStyle = 'metadata_url')}
+								disabled={savingSettings}
+							/>
+							<span>
+								<strong>Metadata URL</strong>
+								<small>/saml/idp/metadata and /saml/sp/metadata</small>
+							</span>
+						</label>
+						<label class="entity-id-style-option">
+							<input
+								type="radio"
+								name="entityIdStyle"
+								checked={draftEntityIdStyle === 'role_url'}
+								onchange={() => (draftEntityIdStyle = 'role_url')}
+								disabled={savingSettings}
+							/>
+							<span>
+								<strong>Role URL</strong>
+								<small>/saml/idp and /saml/sp</small>
+							</span>
+						</label>
+					</div>
+
+					<div class="entity-id-current">
+						<div class="entity-id-preview-group">
+							<div class="preview-heading">Current entityIDs</div>
+							<div class="entity-id-row">
+								<span class="preview-label">IdP</span>
+								<span class="mono truncate">{samlSettings.generated.idpEntityId}</span>
+							</div>
+							<div class="entity-id-row">
+								<span class="preview-label">SP</span>
+								<span class="mono truncate">{samlSettings.generated.spEntityId}</span>
+							</div>
+						</div>
+
+						{#if draftEntityIdStyle !== samlSettings.entityIdStyle}
+							<div class="entity-id-preview-group pending-preview">
+								<div class="preview-heading">After save</div>
+								<div class="entity-id-row">
+									<span class="preview-label">IdP</span>
+									<span class="mono truncate">{buildEntityIdPreview('idp', draftEntityIdStyle)}</span>
+								</div>
+								<div class="entity-id-row">
+									<span class="preview-label">SP</span>
+									<span class="mono truncate">{buildEntityIdPreview('sp', draftEntityIdStyle)}</span>
+								</div>
+							</div>
+						{/if}
+					</div>
+				</div>
+
+				<div class="entity-id-warning">
+					<i class="i-ph-warning-circle"></i>
+					<span>
+						Changing published entityIDs can affect SAML trust. Existing SP/IdP configurations may
+						need updated metadata, audience settings, issuer settings, and certificate validation
+						review before the change is used in production.
+					</span>
+				</div>
+
+				<div class="metadata-publication-summary">
+					<div class="metadata-publication-header">
+						<div>
+							<div class="preview-heading">SAML Metadata Publication</div>
+							<p class="form-hint">
+								Generated IdP/SP metadata currently publishes validity dates. XML signature is
+								opt-in for strict environments.
+							</p>
+						</div>
+						<div class="metadata-publication-badges">
+							<span class={metadataSigningBadge(samlSettings)}>
+								{metadataSigningLabel(samlSettings)}
+							</span>
+							<span
+								class={samlSettings.metadata.validUntilEnabled
+									? 'badge badge-success'
+									: 'badge badge-neutral'}
+							>
+								validUntil {samlSettings.metadata.validUntilEnabled ? 'Enabled' : 'Disabled'}
+							</span>
+						</div>
+					</div>
+
+					<div class="metadata-publication-grid">
+						<div>
+							<span class="preview-label">IdP validUntil</span>
+							<strong>{formatDateTime(samlSettings.metadata.idpValidUntil)}</strong>
+						</div>
+						<div>
+							<span class="preview-label">SP validUntil</span>
+							<strong>{formatDateTime(samlSettings.metadata.spValidUntil)}</strong>
+						</div>
+						<div>
+							<span class="preview-label">Validity window</span>
+							<strong>{samlSettings.metadata.validityDays} days</strong>
+						</div>
+						<div>
+							<span class="preview-label">cacheDuration</span>
+							<strong>{samlSettings.metadata.cacheDuration}</strong>
+						</div>
+					</div>
+				</div>
+
+				<div class="form-actions compact-actions">
+					<button
+						class="btn btn-primary btn-sm"
+						onclick={saveEntityIdStyle}
+						disabled={savingSettings || draftEntityIdStyle === samlSettings.entityIdStyle}
+					>
+						{savingSettings ? 'Saving...' : 'Save Entity IDs'}
+					</button>
+				</div>
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -611,25 +823,44 @@
 			</span>
 		</div>
 		<p class="modal-description">{selectedPreset.description}</p>
+		<div class="mapping-context">
+			<div>
+				<span class="mapping-label">Direction</span>
+				<strong>Authrim user data -> SAML AttributeStatement</strong>
+			</div>
+			<p>
+				This preset controls outbound attribute release to SAML SPs. User import mapping for
+				SAML, SCIM, or CSV will be handled by a separate mapping workflow.
+			</p>
+		</div>
 
 		<div class="data-table-container preset-rules-table">
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Attribute Name</th>
-						<th>Friendly Name</th>
-						<th>Source</th>
-						<th>Claim / Resolver</th>
+						<th>SAML Attribute</th>
+						<th>Authrim Mapping</th>
+						<th>Name Format</th>
 						<th>Required</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each selectedPreset.attributeReleasePolicy.attributes as rule, index (`${rule.name}-${rule.source || ''}-${index}`)}
 						<tr>
-							<td class="mono truncate" style="max-width: 320px;">{rule.name}</td>
-							<td>{rule.friendlyName || '-'}</td>
-							<td><span class="badge badge-neutral">{rule.source}</span></td>
-							<td>{rule.claim || rule.computed || '-'}</td>
+							<td>
+								<div class="cell-primary">{rule.friendlyName || rule.name}</div>
+								<div class="cell-secondary mono">{rule.name}</div>
+							</td>
+							<td>
+								<div class="mapping-cell">
+									<span class="badge badge-neutral">{attributeSourceLabel(rule.source)}</span>
+									<span class="mono mapping-path">{attributeSourcePath(rule)}</span>
+								</div>
+								{#if attributeSourceHint(rule)}
+									<div class="cell-secondary">{attributeSourceHint(rule)}</div>
+								{/if}
+							</td>
+							<td class="mono truncate" style="max-width: 280px;">{rule.nameFormat || '-'}</td>
 							<td>{rule.required ? 'Yes' : 'No'}</td>
 						</tr>
 					{/each}
@@ -739,62 +970,245 @@
 		flex-wrap: wrap;
 	}
 
-	.trust-profiles-panel,
-	.presets-panel {
+	.presets-panel,
+	.saml-settings-panel,
+	.saml-endpoints-panel,
+	.federation-trust-panel {
 		margin-top: 16px;
 	}
 
-	.trust-profile-layout {
+	.compact-panel-header {
+		align-items: flex-start;
+	}
+
+	.entity-id-settings-layout {
 		display: grid;
-		grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-		gap: 16px;
+		grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+		gap: 20px;
+		margin-top: 16px;
 		align-items: start;
 	}
 
-	.trust-profile-form {
+	.entity-id-style-options {
 		display: grid;
-		gap: 12px;
+		gap: 8px;
 	}
 
-	.trust-profile-list {
+	.entity-id-style-option {
+		display: grid;
+		grid-template-columns: 18px minmax(0, 1fr);
+		gap: 10px;
+		align-items: flex-start;
+		padding: 10px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+		cursor: pointer;
+	}
+
+	.entity-id-style-option input {
+		margin-top: 2px;
+	}
+
+	.entity-id-style-option strong,
+	.entity-id-style-option small {
+		display: block;
+	}
+
+	.entity-id-style-option strong {
+		color: var(--text-primary);
+		font-size: 0.875rem;
+	}
+
+	.entity-id-style-option small {
+		margin-top: 2px;
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		line-height: 1.35;
+	}
+
+	.entity-id-current {
 		display: grid;
 		gap: 10px;
+		min-width: 0;
 	}
 
-	.trust-profile-item {
+	.entity-id-preview-group {
+		display: grid;
+		gap: 6px;
+		padding: 10px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+		min-width: 0;
+	}
+
+	.pending-preview {
+		border-color: rgba(245, 158, 11, 0.45);
+		background: rgba(245, 158, 11, 0.08);
+	}
+
+	.preview-heading {
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		font-weight: 700;
+	}
+
+	.entity-id-row {
+		display: grid;
+		grid-template-columns: 120px minmax(0, 1fr);
+		gap: 10px;
+		align-items: center;
+	}
+
+	.preview-label {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+
+	.entity-id-warning {
 		display: flex;
+		gap: 8px;
 		align-items: flex-start;
-		justify-content: space-between;
+		margin-top: 12px;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+
+	.entity-id-warning i {
+		margin-top: 2px;
+		color: var(--warning);
+		flex: 0 0 auto;
+	}
+
+	.metadata-publication-summary {
+		display: grid;
 		gap: 12px;
+		margin-top: 14px;
 		padding: 12px;
 		border: 1px solid var(--border-color);
 		border-radius: var(--radius-md);
 		background: var(--surface);
 	}
 
-	.trust-profile-main {
+	.metadata-publication-header {
+		display: flex;
+		justify-content: space-between;
+		gap: 16px;
+		align-items: flex-start;
+	}
+
+	.metadata-publication-badges {
+		display: inline-flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 8px;
+		flex: 0 0 auto;
+	}
+
+	.metadata-publication-grid {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 10px;
+	}
+
+	.metadata-publication-grid > div {
+		display: grid;
+		gap: 3px;
 		min-width: 0;
 	}
 
-	.trust-profile-meta {
+	.metadata-publication-grid strong {
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+
+	.saml-endpoint-grid {
+		display: grid;
+		gap: 2px;
+		margin-top: 16px;
+	}
+
+	.saml-endpoint-row {
+		display: grid;
+		grid-template-columns: 240px minmax(0, 1fr);
+		gap: 12px;
+		align-items: center;
+		padding: 7px 0;
+		border-bottom: 1px solid var(--border-color);
+	}
+
+	.saml-endpoint-row:last-child {
+		border-bottom: 0;
+	}
+
+	.saml-endpoint-label {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.saml-endpoint-value-row {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		flex-wrap: wrap;
-		margin-top: 8px;
+		min-width: 0;
 	}
 
-	.fingerprint {
-		max-width: 280px;
+	.saml-endpoint-value {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		min-width: 0;
+		flex: 1;
+		color: var(--text-primary);
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		text-decoration: none;
+	}
+
+	a.saml-endpoint-value {
+		color: var(--primary);
+	}
+
+	a.saml-endpoint-value:hover {
+		text-decoration: underline;
+	}
+
+	.copy-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-sm);
+		background: transparent;
 		color: var(--text-secondary);
-		font-size: 0.75rem;
+		cursor: pointer;
+		flex: 0 0 auto;
+	}
+
+	.copy-btn:hover {
+		background: var(--bg-subtle);
+		color: var(--text-primary);
+	}
+
+	.copy-btn.copied {
+		border-color: var(--success);
+		color: var(--success);
 	}
 
 	.compact-actions {
-		justify-content: flex-start;
+		justify-content: flex-end;
 	}
 
 	.compact-table {
@@ -809,6 +1223,51 @@
 		margin-top: 16px;
 	}
 
+	.mapping-context {
+		display: grid;
+		gap: 6px;
+		margin-top: 12px;
+		padding: 12px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+	}
+
+	.mapping-context > div {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.mapping-context p {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+
+	.mapping-label {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.mapping-cell {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		flex-wrap: wrap;
+	}
+
+	.mapping-path {
+		color: var(--text-primary);
+		overflow-wrap: anywhere;
+	}
+
 	.form-textarea {
 		min-height: auto;
 		resize: vertical;
@@ -821,16 +1280,27 @@
 	}
 
 	@media (max-width: 900px) {
-		.trust-profile-layout {
-			grid-template-columns: 1fr;
-		}
-
 		.data-table-container {
 			overflow-x: auto;
 		}
 
 		.data-table {
 			min-width: 920px;
+		}
+
+		.entity-id-settings-layout,
+		.entity-id-row,
+		.saml-endpoint-row,
+		.metadata-publication-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.metadata-publication-header {
+			display: grid;
+		}
+
+		.metadata-publication-badges {
+			justify-content: flex-start;
 		}
 	}
 </style>

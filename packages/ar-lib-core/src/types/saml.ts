@@ -378,6 +378,29 @@ export interface SAMLSigningKeyPolicy {
   backup?: SAMLSigningKeyReference;
 }
 
+export interface SAMLCertificateValidationStatus {
+  validFrom?: string;
+  validTo?: string;
+  expired: boolean;
+  notYetValid: boolean;
+  signatureAlgorithm?: string;
+  publicKeyAlgorithm?: string;
+  publicKeySizeBits?: number;
+  fingerprintSha1?: string;
+  fingerprintSha256?: string;
+  warnings: string[];
+}
+
+export interface SAMLCertificateValidationSummary {
+  checkedAt: number;
+  certificates: SAMLCertificateValidationStatus[];
+  validUntil?: string;
+  allExpired: boolean;
+  hasExpired: boolean;
+  hasWeakSignature: boolean;
+  warnings: string[];
+}
+
 /**
  * SAML Response data
  */
@@ -455,6 +478,8 @@ export interface SAMLSPConfig {
   certificate?: string;
   /** SP signing certificates for rollover-aware signature verification (PEM format) */
   certificates?: string[];
+  /** Parsed certificate expiry/security summary for Admin UI and safe defaults */
+  certificateValidation?: SAMLCertificateValidationSummary;
   /** SP certificate used for XML Encryption when Authrim encrypts assertions (PEM format) */
   encryptionCertificate?: string;
   /** SP encryption certificates imported from metadata (PEM format) */
@@ -561,6 +586,10 @@ export interface SAMLIdPConfig {
   sloUrl?: string;
   /** IdP certificate for signature verification (PEM format) */
   certificate: string;
+  /** IdP signing certificates for rollover-aware validation when imported from metadata */
+  certificates?: string[];
+  /** Parsed certificate expiry/security summary for Admin UI and safe defaults */
+  certificateValidation?: SAMLCertificateValidationSummary;
   /** NameID format */
   nameIdFormat: NameIDFormat;
   /** Authrim signing key policy when acting as SP for this IdP */

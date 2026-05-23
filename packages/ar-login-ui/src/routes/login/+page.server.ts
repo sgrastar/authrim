@@ -89,6 +89,20 @@ export const load: PageServerLoad = async (event) => {
 		).catch(() => null);
 
 		if (verification?.valid) {
+			if (verification.target_url) {
+				const verifiedReturnUrl = new URL(verification.target_url);
+				verifiedReturnUrl.searchParams.delete('discovery_grant');
+				const verifiedReturnTo = verifiedReturnUrl.toString();
+				event.cookies.set(DISCOVERY_GRANT_VERIFIED_COOKIE, verifiedReturnTo, {
+					path: '/login',
+					httpOnly: true,
+					secure: true,
+					sameSite: 'lax',
+					maxAge: 300
+				});
+				throw redirect(303, verifiedReturnTo);
+			}
+
 			if (event.url.toString() !== currentUrlWithoutGrant) {
 				event.cookies.set(DISCOVERY_GRANT_VERIFIED_COOKIE, currentUrlWithoutGrant, {
 					path: '/login',

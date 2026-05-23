@@ -214,6 +214,57 @@ function isLocalHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
 
+function originForHost(host: string): string[] {
+  const normalizedHost = host.trim().toLowerCase();
+  if (!normalizedHost) {
+    return [];
+  }
+
+  const origins = [`https://${normalizedHost}`];
+  const hostnameOnly = normalizedHost.split(':')[0];
+  if (isLocalHost(hostnameOnly)) {
+    origins.push(`http://${normalizedHost}`);
+  }
+  return origins;
+}
+
+/**
+ * Allow Direct Auth browser calls made through the Login UI's same-origin proxy.
+ *
+ * In custom-domain deployments the browser origin is the tenant login host while
+ * the upstream Worker URL may be the API host. The proxy forwards the original
+ * host explicitly so the auth worker can still validate the browser origin.
+ */
+function isSameOriginBrowserRequest(
+  c: Context<{ Bindings: Env }>,
+  originHeader: string | undefined
+): boolean {
+  if (!originHeader) {
+    return false;
+  }
+
+  const normalizedOrigin = normalizeOrigin(originHeader);
+  const candidateOrigins = new Set<string>();
+
+  try {
+    candidateOrigins.add(normalizeOrigin(new URL(c.req.url).origin));
+  } catch {
+    // Ignore malformed or unavailable request URL and fall back to headers.
+  }
+
+  for (const headerName of ['x-authrim-forwarded-host', 'x-forwarded-host', 'host']) {
+    const headerValue = c.req.header(headerName)?.split(',')[0]?.trim();
+    if (!headerValue) {
+      continue;
+    }
+    for (const origin of originForHost(headerValue)) {
+      candidateOrigins.add(origin);
+    }
+  }
+
+  return candidateOrigins.has(normalizedOrigin);
+}
+
 /**
  * Allow explicitly configured origins and the current request origin.
  *
@@ -234,28 +285,7 @@ function isAllowedPasskeyRequestOrigin(
     return true;
   }
 
-  try {
-    if (normalizeOrigin(new URL(c.req.url).origin) === normalizedOrigin) {
-      return true;
-    }
-  } catch {
-    // Ignore malformed or unavailable request URL and fall back to Host header.
-  }
-
-  const host = c.req.header('host');
-  if (!host) {
-    return false;
-  }
-
-  const normalizedHost = host.trim().toLowerCase();
-  const candidates = new Set<string>([`https://${normalizedHost}`]);
-
-  const hostnameOnly = normalizedHost.split(':')[0];
-  if (isLocalHost(hostnameOnly)) {
-    candidates.add(`http://${normalizedHost}`);
-  }
-
-  return candidates.has(normalizedOrigin);
+  return isSameOriginBrowserRequest(c, originHeader);
 }
 
 /**
@@ -467,7 +497,11 @@ async function validateDirectAuthClient(
       registry.origins.length > 0
         ? registry.origins.filter((entry) => entry.handoff_allowed).map((entry) => entry.origin)
         : (client.allowed_redirect_origins ?? []);
-    if (allowedOrigins.length > 0 && !isAllowedOrigin(origin, allowedOrigins)) {
+    if (
+      allowedOrigins.length > 0 &&
+      !isAllowedOrigin(origin, allowedOrigins) &&
+      !(channel === 'browser' && isSameOriginBrowserRequest(c, origin))
+    ) {
       return {
         valid: false,
         errorResponse: await createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS),

@@ -47,6 +47,7 @@ import { getIdPConfigByEntityId } from '../admin/providers';
 import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user-store';
 import { requireSAMLTenantId, resolveSAMLTenantIdFromContext } from '../common/tenant';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
 
 /**
  * Handle SP Single Logout (both POST and GET)
@@ -55,7 +56,7 @@ export async function handleSPSLO(c: Context<{ Bindings: Env }>): Promise<Respon
   const env = c.env;
   const method = c.req.method;
   const log = getLogger(c).module('SAML-SP');
-  const issuerUrl = buildIssuerUrl(env, resolveSAMLTenantIdFromContext(c));
+  const { issuerUrl } = await getSAMLLocalEntityIds(env, resolveSAMLTenantIdFromContext(c));
 
   try {
     if (method === 'GET') {
@@ -363,7 +364,8 @@ async function sendLogoutResponse(
 
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const responseId = generateSAMLId();
-  const issuer = `${issuerUrl}/saml/sp`;
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const issuer = (await getSAMLLocalEntityIds(env, tenantId)).spEntityId;
 
   // Build LogoutResponse
   let responseXml = buildLogoutResponse({
@@ -380,7 +382,6 @@ async function sendLogoutResponse(
 
   // Sign the response
   try {
-    const tenantId = resolveSAMLTenantIdFromContext(c);
     const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
       tenantId,
       role: 'sp',
@@ -448,7 +449,7 @@ export async function initiateSPLogout(
   if (!nameId) {
     throw new Error('Logout request could not be processed');
   }
-  const issuer = `${buildIssuerUrl(env, resolvedTenantId)}/saml/sp`;
+  const issuer = (await getSAMLLocalEntityIds(env, resolvedTenantId)).spEntityId;
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const requestId = generateSAMLId();
 

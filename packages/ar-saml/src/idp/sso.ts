@@ -85,6 +85,7 @@ import {
 import { scheduleSAMLPolicyFailureAudit } from './audit';
 import { buildSAMLAssertionTiming } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -110,7 +111,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
   const method = c.req.method;
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
-  const issuerUrl = buildIssuerUrl(env, tenantId);
+  const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
   try {
     // Parse AuthnRequest based on binding
@@ -165,6 +166,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         const responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -220,6 +222,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         const responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -261,6 +264,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
       const responseXml = await generateSAMLProtocolErrorResponse(
         issuerUrl,
+        idpEntityId,
         env,
         authnRequest,
         spConfig,
@@ -331,6 +335,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     try {
       responseXml = await generateSAMLResponse(
         issuerUrl,
+        idpEntityId,
         env,
         authnRequest,
         spConfig,
@@ -357,6 +362,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -391,6 +397,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -417,6 +424,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -795,6 +803,7 @@ async function getUserInfo(
  */
 async function generateSAMLResponse(
   issuerUrl: string,
+  idpEntityId: string,
   env: Env,
   authnRequest: SAMLAuthnRequest,
   spConfig: SAMLSPConfig,
@@ -851,7 +860,7 @@ async function generateSAMLResponse(
     responseId: generateSAMLId(),
     assertionId: generateSAMLId(),
     issueInstant: timing.issueInstant,
-    issuer: `${issuerUrl}/saml/idp`,
+    issuer: idpEntityId,
     destination: acsUrl,
     inResponseTo: authnRequest.id,
     recipientUrl: acsUrl,
@@ -903,6 +912,7 @@ async function generateSAMLResponse(
 
 async function generateSAMLProtocolErrorResponse(
   issuerUrl: string,
+  idpEntityId: string,
   env: Env,
   authnRequest: SAMLAuthnRequest,
   spConfig: SAMLSPConfig,
@@ -930,7 +940,7 @@ async function generateSAMLProtocolErrorResponse(
   });
 
   return buildSAMLIdPErrorResponse({
-    issuer: `${issuerUrl}/saml/idp`,
+    issuer: idpEntityId,
     destination: resolveSAMLResponseDestination(authnRequest, spConfig),
     inResponseTo: authnRequest.id,
     statusCode: resolvedStatus.statusCode,

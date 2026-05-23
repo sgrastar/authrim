@@ -10,6 +10,10 @@ export interface SAMLSigningMaterial {
 
 type XmlSigner = (xml: string, options: SignOptions) => string;
 
+function issuerInsertionXPath(id: string): string {
+  return `//*[@ID='${id}']/*[local-name()='Issuer' and namespace-uri()='${SAML_NAMESPACES.SAML2}'][1]`;
+}
+
 /**
  * Apply SP-specific IdP signing policy.
  *
@@ -38,7 +42,8 @@ export function applySAMLResponseSigningPolicy(
       privateKey: signingMaterial.privateKeyPem,
       certificate: signingMaterial.certificate,
       referenceUri: `#${ids.assertionId}`,
-      signatureLocation: 'prepend',
+      signatureLocation: 'after',
+      signatureInsertionXPath: issuerInsertionXPath(ids.assertionId),
       includeKeyInfo: true,
     });
   }
@@ -48,7 +53,8 @@ export function applySAMLResponseSigningPolicy(
       privateKey: signingMaterial.privateKeyPem,
       certificate: signingMaterial.certificate,
       referenceUri: `#${ids.responseId}`,
-      signatureLocation: 'prepend',
+      signatureLocation: 'after',
+      signatureInsertionXPath: issuerInsertionXPath(ids.responseId),
       includeKeyInfo: true,
     });
   }
@@ -71,7 +77,8 @@ export function applySAMLErrorResponseSigningPolicy(
     privateKey: signingMaterial.privateKeyPem,
     certificate: signingMaterial.certificate,
     referenceUri: `#${ids.responseId}`,
-    signatureLocation: 'prepend',
+    signatureLocation: 'after',
+    signatureInsertionXPath: issuerInsertionXPath(ids.responseId),
     includeKeyInfo: true,
   });
 }

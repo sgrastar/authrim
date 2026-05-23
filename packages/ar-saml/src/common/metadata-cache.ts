@@ -4,6 +4,9 @@ export type SAMLMetadataRole = 'idp' | 'sp';
 
 export const SAML_METADATA_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60;
 export const SAML_METADATA_CACHE_DURATION = 'PT24H';
+export const SAML_METADATA_VALIDITY_DAYS = 30;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function buildStableSAMLMetadataDescriptorId(
   role: SAMLMetadataRole,
@@ -11,6 +14,13 @@ export function buildStableSAMLMetadataDescriptorId(
 ): string {
   const hash = fnv1a32(`${role}:${entityId}`).toString(36);
   return `_authrim_saml_${role}_${hash}`;
+}
+
+export function buildSAMLMetadataValidUntil(nowMs = Date.now()): string {
+  const utcDayStartMs = Math.floor(nowMs / DAY_MS) * DAY_MS;
+  return new Date(utcDayStartMs + SAML_METADATA_VALIDITY_DAYS * DAY_MS)
+    .toISOString()
+    .replace('.000Z', 'Z');
 }
 
 export function buildSAMLMetadataResponseHeaders(

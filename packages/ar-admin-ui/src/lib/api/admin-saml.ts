@@ -40,6 +40,29 @@ export interface SAMLSigningKeyPolicy {
 	backup?: SAMLSigningKeyReference;
 }
 
+export interface SAMLCertificateValidationStatus {
+	validFrom?: string;
+	validTo?: string;
+	expired: boolean;
+	notYetValid: boolean;
+	signatureAlgorithm?: string;
+	publicKeyAlgorithm?: string;
+	publicKeySizeBits?: number;
+	fingerprintSha1?: string;
+	fingerprintSha256?: string;
+	warnings: string[];
+}
+
+export interface SAMLCertificateValidationSummary {
+	checkedAt: number;
+	certificates: SAMLCertificateValidationStatus[];
+	validUntil?: string;
+	allExpired: boolean;
+	hasExpired: boolean;
+	hasWeakSignature: boolean;
+	warnings: string[];
+}
+
 export interface SAMLRequestedAttribute {
 	name: string;
 	nameFormat?: string;
@@ -53,9 +76,11 @@ export interface SAMLAttributeReleaseRule {
 	name: string;
 	friendlyName?: string;
 	nameFormat?: string;
+	valueType?: string;
 	source?: string;
 	claim?: string;
 	computed?: string;
+	value?: string | string[];
 	required?: boolean;
 }
 
@@ -87,6 +112,7 @@ export interface SAMLProviderConfig {
 	sloUrl?: string;
 	certificate?: string;
 	certificates?: string[];
+	certificateValidation?: SAMLCertificateValidationSummary;
 	nameIdFormat?: string;
 	attributeMapping?: Record<string, string>;
 	attributeReleasePolicy?: {
@@ -114,6 +140,29 @@ export interface SAMLProvider {
 	enabled: boolean;
 	createdAt: string;
 	updatedAt: string;
+}
+
+export type SAMLEntityIdStyle = 'metadata_url' | 'role_url';
+
+export interface SAMLSettings {
+	tenantId: string;
+	entityIdStyle: SAMLEntityIdStyle;
+	metadata: {
+		signingMode: 'disabled' | 'enabled';
+		signingEnabled: boolean;
+		validUntilEnabled: boolean;
+		idpValidUntil: string;
+		spValidUntil: string;
+		validityDays: number;
+		cacheDuration: string;
+	};
+	generated: {
+		issuerUrl: string;
+		idpEntityId: string;
+		spEntityId: string;
+		idpMetadataUrl: string;
+		spMetadataUrl: string;
+	};
 }
 
 export interface SAMLAttributePreset {
@@ -249,6 +298,23 @@ export interface SAMLFederationTrustProfileRequest {
 	enabled?: boolean;
 }
 
+export interface SAMLTrustCertificatePreview {
+	certificate: string;
+	source: 'url' | 'pem' | 'der';
+	subject: string;
+	issuer: string;
+	serialNumber: string;
+	version: string;
+	validFrom: string;
+	validTo: string;
+	signatureAlgorithm: string;
+	publicKeyAlgorithm: string;
+	publicKeySizeBits?: number;
+	fingerprintSha1: string;
+	fingerprintSha256: string;
+	warnings: string[];
+}
+
 export interface SAMLMetadataBatchStatus {
 	batchId: string;
 	tenantId: string;
@@ -280,6 +346,32 @@ async function handleAPIError(response: Response, fallbackMessage: string): Prom
 }
 
 export const adminSAMLAPI = {
+	async getSettings(): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to load SAML settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async updateSettings(request: { entityIdStyle: SAMLEntityIdStyle }): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update SAML settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
 	async listProviders(): Promise<{ providers: SAMLProvider[] }> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers`, {
 			method: 'GET'
@@ -471,6 +563,23 @@ export const adminSAMLAPI = {
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to get aggregate import status');
+		}
+
+		return await response.json();
+	},
+
+	async previewTrustCertificate(request: {
+		certificateUrl?: string;
+		certificate?: string;
+	}): Promise<SAMLTrustCertificatePreview> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-metadata/certificate-preview`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to preview federation trust certificate');
 		}
 
 		return await response.json();

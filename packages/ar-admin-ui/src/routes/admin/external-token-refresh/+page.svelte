@@ -89,7 +89,7 @@
 	function statusClass(status: ExternalTokenRefreshRunSummary['status']): string {
 		if (status === 'completed') return 'badge badge-success';
 		if (status === 'partial_failure') return 'badge badge-warning';
-		if (status === 'failed') return 'badge badge-error';
+		if (status === 'failed') return 'badge badge-danger';
 		return 'badge badge-neutral';
 	}
 </script>
@@ -153,7 +153,13 @@
 
 				<label class="form-field">
 					<span>Token batch size</span>
-					<input type="number" min="1" max="1000" bind:value={config.batchSize} class="form-input" />
+					<input
+						type="number"
+						min="1"
+						max="1000"
+						bind:value={config.batchSize}
+						class="form-input"
+					/>
 				</label>
 
 				<label class="form-field">

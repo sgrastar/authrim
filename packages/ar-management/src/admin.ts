@@ -67,6 +67,41 @@ import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
+function isAuditLogStoreNotInitializedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return (
+    /no such table:\s*(event_log|audit_log)/i.test(message) ||
+    /relation\s+"?(event_log|audit_log)"?\s+does not exist/i.test(message) ||
+    /table\s+'?(event_log|audit_log)'?\s+doesn't exist/i.test(message)
+  );
+}
+
+function emptyAuditLogListResponse(page: number, limit: number) {
+  return {
+    entries: [],
+    pagination: {
+      page,
+      limit,
+      total: 0,
+      totalPages: 0,
+    },
+  };
+}
+
+async function auditHotTableExists(
+  context: AuditHotQueryContext,
+  tableName: 'audit_log' | 'event_log'
+): Promise<boolean> {
+  if (context.dialect !== 'sqlite') {
+    return true;
+  }
+  const table = await context.adapter.queryOne<{ name: string }>(
+    'SELECT name FROM sqlite_master WHERE type = ? AND name = ?',
+    ['table', tableName]
+  );
+  return Boolean(table?.name);
+}
+
 export {
   adminStatsHandler,
   adminUsersListHandler,
@@ -1245,15 +1280,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
         : null;
 
       if (userId && !anonymizedUserId) {
-        return c.json({
-          entries: [],
-          pagination: {
-            page,
-            limit,
-            total: 0,
-            totalPages: 0,
-          },
-        });
+        return c.json(emptyAuditLogListResponse(page, limit));
       }
 
       const archiveResult = await listArchiveAuditEvents(archiveQuery.context, {
@@ -1283,6 +1310,9 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
 
     const context = hotQuery.context;
     const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
+    if (!(await auditHotTableExists(context, tableName))) {
+      return c.json(emptyAuditLogListResponse(page, limit));
+    }
 
     // Build WHERE clause - tenant_id is always first for index usage
     const conditions: string[] = ['tenant_id = ?'];
@@ -1295,15 +1325,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
       } else {
         const anonymizedUserId = await resolveAuditUserAnonymizedId(c, tenantId, userId);
         if (!anonymizedUserId) {
-          return c.json({
-            entries: [],
-            pagination: {
-              page,
-              limit,
-              total: 0,
-              totalPages: 0,
-            },
-          });
+          return c.json(emptyAuditLogListResponse(page, limit));
         }
         conditions.push('anonymized_user_id = ?');
         params.push(anonymizedUserId);
@@ -1506,6 +1528,11 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
+    if (isAuditLogStoreNotInitializedError(error)) {
+      const page = parseInt(c.req.query('page') || '1', 10);
+      const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
+      return c.json(emptyAuditLogListResponse(page, limit));
+    }
     logSanitizedError('Admin audit log list error', error);
     return c.json(
       {

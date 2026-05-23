@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSAMLMetadataResponse,
   buildSAMLMetadataResponseHeaders,
+  buildSAMLMetadataValidUntil,
   buildStableSAMLMetadataDescriptorId,
   SAML_METADATA_CACHE_DURATION,
   SAML_METADATA_CACHE_MAX_AGE_SECONDS,
+  SAML_METADATA_VALIDITY_DAYS,
 } from '../metadata-cache';
 
 describe('SAML metadata cache helpers', () => {
@@ -34,6 +36,16 @@ describe('SAML metadata cache helpers', () => {
     });
     expect(headers.ETag).toBe(headersAgain.ETag);
     expect(SAML_METADATA_CACHE_DURATION).toBe('PT24H');
+  });
+
+  it('builds day-stable validUntil timestamps for generated metadata', () => {
+    expect(SAML_METADATA_VALIDITY_DAYS).toBe(30);
+    expect(buildSAMLMetadataValidUntil(Date.parse('2026-05-22T14:06:08Z'))).toBe(
+      '2026-06-21T00:00:00Z'
+    );
+    expect(buildSAMLMetadataValidUntil(Date.parse('2026-05-22T23:59:59Z'))).toBe(
+      '2026-06-21T00:00:00Z'
+    );
   });
 
   it('allows metadata endpoints to provide role-specific download filenames', () => {

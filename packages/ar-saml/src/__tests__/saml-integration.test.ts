@@ -155,7 +155,7 @@ function createMockSAMLResponse(
     nameId = 'user@example.com',
     notBefore = new Date(Date.now() - 60000).toISOString(),
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
-    audience = 'https://auth.example.com/saml/sp',
+    audience = 'https://auth.example.com/saml/sp/metadata',
     inResponseTo = undefined,
     authnContextClassRef = 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
     attributes = [],

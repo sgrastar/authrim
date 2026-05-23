@@ -404,6 +404,16 @@
 
 	<!-- Filters -->
 	<div class="panel">
+		<div class="schema-note">
+			<div>
+				<strong>System schema fields</strong>
+				<p>
+					Standard OIDC fields such as email, name, phone, and address are system schemas. If an
+					older tenant has not been seeded yet, the unfiltered list request repairs those system
+					schemas automatically.
+				</p>
+			</div>
+		</div>
 		<div class="filter-row">
 			<div class="form-group">
 				<input
@@ -692,7 +702,8 @@
 					<input type="checkbox" bind:checked={createForm.include_in_introspection} />
 					Introspection
 					<small style="color: var(--color-warning, #b08800); display: block; font-size: 0.75rem;"
-						>Custom claim embedding in Introspection responses is currently disabled. Please use the UserInfo endpoint instead.</small
+						>Custom claim embedding in Introspection responses is currently disabled. Please use the
+						UserInfo endpoint instead.</small
 					>
 				</label>
 			</div>
@@ -868,6 +879,28 @@
 </Modal>
 
 <style>
+	.schema-note {
+		margin-bottom: 1rem;
+		padding: 0.875rem 1rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+	}
+
+	.schema-note strong {
+		display: block;
+		color: var(--text-primary);
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+
+	.schema-note p {
+		margin: 0.25rem 0 0;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+
 	.form-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;

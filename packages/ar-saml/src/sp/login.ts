@@ -36,6 +36,7 @@ import { signRedirectBinding } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
 
 type SAMLIdPConfigWithSPInitiationPolicy = SAMLIdPConfig & {
   providerName?: string;
@@ -52,7 +53,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // Get IdP ID from query parameter
     const idpId = c.req.query('idp');
     const tenantId = resolveSAMLTenantIdFromContext(c);
-    const issuerUrl = buildIssuerUrl(env, tenantId);
+    const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
     // Determine return URL with UI config fallback. Only local Authrim/Login UI origins are accepted.
     const requestedReturnUrl = c.req.query('return_url');
@@ -75,7 +76,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     const outboundIdpConfig = withSPInitiatedSsoEndpoint(idpConfig);
 
     // Generate AuthnRequest
-    const authnRequestXml = buildAuthnRequest(issuerUrl, outboundIdpConfig);
+    const authnRequestXml = buildAuthnRequest(issuerUrl, spEntityId, outboundIdpConfig);
 
     // Store request in SAMLRequestStore for later validation
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
@@ -86,7 +87,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       env,
       tenantId,
       requestId,
-      issuerUrl,
+      spEntityId,
       outboundIdpConfig.entityId,
       returnUrl
     );
@@ -138,8 +139,11 @@ function withSPInitiatedSsoEndpoint(idpConfig: SAMLIdPConfig): SAMLIdPConfig {
 /**
  * Build SAML AuthnRequest
  */
-function buildAuthnRequest(issuerUrl: string, idpConfig: SAMLIdPConfig): string {
-  const spEntityId = `${issuerUrl}/saml/sp`;
+function buildAuthnRequest(
+  issuerUrl: string,
+  spEntityId: string,
+  idpConfig: SAMLIdPConfig
+): string {
   const acsUrl = `${issuerUrl}/saml/sp/acs`;
   const providerName =
     (idpConfig as SAMLIdPConfigWithSPInitiationPolicy).providerName?.trim() || 'Authrim';
@@ -187,7 +191,7 @@ async function storeAuthnRequest(
   env: Env,
   tenantId: string,
   requestId: string,
-  issuerUrl: string,
+  spEntityId: string,
   idpEntityId: string,
   returnUrl: string
 ): Promise<void> {
@@ -201,8 +205,8 @@ async function storeAuthnRequest(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       requestId,
-      issuer: `${issuerUrl}/saml/sp`,
-      destination: issuerUrl,
+      issuer: spEntityId,
+      destination: idpEntityId,
       binding: 'post',
       type: 'authn_request',
       relayState: returnUrl,

@@ -246,6 +246,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
       }),
       // Default tenant: all discovery methods enabled
       'settings:tenant:default:login-entry': JSON.stringify({
+        'login-entry.override_enabled': true,
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
       }),
       // Acme tenant branding (login-ui.brand_name takes precedence over tenant name)
@@ -253,10 +254,12 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
         'login-ui.brand_name': 'Acme Brand',
       }),
       'settings:tenant:acme:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.override_enabled': true,
         'tenant-discovery-ui.title_text': 'Find Acme',
       }),
       // Acme tenant login-entry: app_hint excluded (used by tenant-subdomain context tests)
       'settings:tenant:acme:login-entry': JSON.stringify({
+        'login-entry.override_enabled': true,
         'login-entry.mode': 'discovery_optional',
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
       }),
@@ -571,6 +574,7 @@ describe('Discovery API: tenant_slug resolution', () => {
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
+          'login-entry.override_enabled': true,
           'login-entry.discovery_methods': '["email_domain","tenant_code"]',
         }),
       }),
@@ -690,6 +694,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp({
         SETTINGS: createMockKV({
           'settings:tenant:default:login-entry': JSON.stringify({
+            'login-entry.override_enabled': true,
             'login-entry.discovery_methods': '["tenant_code","tenant_slug"]',
           }),
         }),
@@ -748,6 +753,7 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp({
         SETTINGS: createMockKV({
           'settings:tenant:default:login-entry': JSON.stringify({
+            'login-entry.override_enabled': true,
             'login-entry.discovery_methods': '["email_domain","tenant_slug"]',
           }),
         }),
@@ -888,6 +894,7 @@ describe('Discovery API: settings-driven behaviour', () => {
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
+          'login-entry.override_enabled': true,
           'login-entry.discovery_methods':
             '["email_domain","tenant_code","tenant_slug","app_hint"]',
           'login-entry.allow_manual_tenant_entry': false,

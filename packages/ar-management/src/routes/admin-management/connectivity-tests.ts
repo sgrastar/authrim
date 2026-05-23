@@ -106,12 +106,6 @@ export async function testStorageDestinationConnectivity(
         return await testR2Destination(env, destination, start);
       case 'aws_s3':
         return await testS3Destination(env, destination, start);
-      case 'sftp':
-        return finish(start, {
-          status: 'unsupported',
-          provider: destination.provider,
-          message: 'SFTP connectivity tests are not available in the Cloudflare Workers runtime.',
-        });
       case 'custom':
         return await testCustomHttpDestination(destination, start);
       default:
@@ -136,6 +130,7 @@ async function testR2Destination(
   start: number
 ): Promise<ConnectivityTestResult> {
   const bindingName = getConfigString(destination.config, [
+    'bindingRef',
     'binding',
     'bindingName',
     'bucket_binding',
@@ -463,6 +458,7 @@ async function testD1Connection(
   start: number
 ): Promise<ConnectivityTestResult> {
   const bindingName = getConfigString(connection.config, [
+    'bindingRef',
     'binding',
     'bindingName',
     'database_binding',
@@ -503,6 +499,7 @@ async function testSqlConnection(
     getCredentialEncryptionKey(env)
   );
   const bindingName = getConfigString(connection.config, [
+    'bindingRef',
     'binding',
     'bindingName',
     'hyperdrive_binding',

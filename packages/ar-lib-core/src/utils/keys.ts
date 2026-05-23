@@ -8,6 +8,8 @@
 import { generateKeyPair, exportJWK, exportPKCS8 } from 'jose';
 import type { JWK, CryptoKey } from 'jose';
 
+export const DEFAULT_RSA_SIGNING_KEY_BITS = 3072;
+
 /**
  * RSA key pair interface
  */
@@ -19,10 +21,12 @@ export interface RSAKeyPair {
 /**
  * Generate RSA key pair for RS256 signing algorithm
  *
- * @param modulusLength - RSA key size in bits (default: 2048)
+ * @param modulusLength - RSA key size in bits (default: 3072)
  * @returns Promise<RSAKeyPair>
  */
-export async function generateRSAKeyPair(modulusLength: number = 2048): Promise<RSAKeyPair> {
+export async function generateRSAKeyPair(
+  modulusLength: number = DEFAULT_RSA_SIGNING_KEY_BITS
+): Promise<RSAKeyPair> {
   const { publicKey, privateKey } = await generateKeyPair('RS256', {
     modulusLength,
     extractable: true,
@@ -65,12 +69,12 @@ export async function exportPrivateKey(privateKey: CryptoKey): Promise<string> {
  * Generate a complete key set with public JWK and private PEM
  *
  * @param kid - Key ID
- * @param modulusLength - RSA key size in bits (default: 2048)
+ * @param modulusLength - RSA key size in bits (default: 3072)
  * @returns Promise containing publicJWK and privatePEM
  */
 export async function generateKeySet(
   kid: string,
-  modulusLength: number = 2048
+  modulusLength: number = DEFAULT_RSA_SIGNING_KEY_BITS
 ): Promise<{
   publicJWK: JWK;
   privatePEM: string;

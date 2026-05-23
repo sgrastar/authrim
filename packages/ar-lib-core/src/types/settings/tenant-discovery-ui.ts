@@ -10,6 +10,7 @@
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 
 export interface TenantDiscoveryUISettings {
+  'tenant-discovery-ui.override_enabled': boolean;
   'tenant-discovery-ui.inherit_from_login_ui': boolean;
   'tenant-discovery-ui.theme': string;
   'tenant-discovery-ui.variant': string;
@@ -25,6 +26,15 @@ export const TENANT_DISCOVERY_UI_SETTINGS_META: Record<
   keyof TenantDiscoveryUISettings,
   SettingMeta
 > = {
+  'tenant-discovery-ui.override_enabled': {
+    key: 'tenant-discovery-ui.override_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Tenant Override Enabled',
+    description:
+      'Enables tenant-scoped discovery screen content overrides. When disabled, common discovery UI settings apply.',
+    visibility: 'admin',
+  },
   'tenant-discovery-ui.inherit_from_login_ui': {
     key: 'tenant-discovery-ui.inherit_from_login_ui',
     type: 'boolean',
@@ -110,6 +120,7 @@ export const TENANT_DISCOVERY_UI_CATEGORY_META: CategoryMeta = {
 };
 
 export const TENANT_DISCOVERY_UI_DEFAULTS: TenantDiscoveryUISettings = {
+  'tenant-discovery-ui.override_enabled': false,
   'tenant-discovery-ui.inherit_from_login_ui': true,
   'tenant-discovery-ui.theme': '',
   'tenant-discovery-ui.variant': '',

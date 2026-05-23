@@ -290,8 +290,8 @@
 			</div>
 
 			<p class="filter-hint">
-				Tip: Archive-only search supports user, action, resource, and date filters. Use date
-				ranges to narrow large result sets.
+				Tip: Archive-only search supports user, action, resource, and date filters. Use date ranges
+				to narrow large result sets.
 			</p>
 		</div>
 	{/if}

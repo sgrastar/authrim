@@ -172,11 +172,18 @@ async function getDiscoverySettings(
   env: Env,
   scope: { type: 'platform' } | { type: 'tenant'; id: string }
 ): Promise<DiscoveryConfigResponse['config']> {
-  const kvKey =
-    scope.type === 'platform'
-      ? 'settings:platform:login-entry'
-      : `settings:tenant:${scope.id}:login-entry`;
-  const stored = await readSettingsRecord(env.SETTINGS, kvKey);
+  const platformKey = 'settings:platform:login-entry';
+  const tenantKey = scope.type === 'tenant' ? `settings:tenant:${scope.id}:login-entry` : null;
+  const [platformStored, tenantStored] = await Promise.all([
+    readSettingsRecord(env.SETTINGS, platformKey),
+    tenantKey ? readSettingsRecord(env.SETTINGS, tenantKey) : Promise.resolve(null),
+  ]);
+  const tenantOverrideEnabled =
+    scope.type === 'tenant' &&
+    (isSingleTenantMode(env) ||
+      readSettingBoolean(tenantStored, 'login-entry.override_enabled') === true);
+  const stored =
+    scope.type === 'platform' ? platformStored : tenantOverrideEnabled ? tenantStored : platformStored;
   const emailResolutionPolicy =
     (stored?.['login-entry.email_resolution_policy'] as
       | LoginEntrySettings['login-entry.email_resolution_policy']
@@ -473,51 +480,62 @@ async function getDiscoveryUiConfig(
       ? getLoginUiSettingsRecord(env, tenantId)
       : Promise.resolve(null),
   ]);
+  const effectiveTenantSettings =
+    tenantSettings &&
+    (isSingleTenantMode(env) ||
+      readSettingBoolean(tenantSettings, 'tenant-discovery-ui.override_enabled') === true)
+      ? tenantSettings
+      : null;
 
   return {
     theme:
-      resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
+      resolveDiscoveryVisualSetting(effectiveTenantSettings, platformSettings, loginUiSettings, {
         tenantKey: 'tenant-discovery-ui.theme',
         loginUiKey: 'login-ui.theme',
         defaultValue: LOGIN_UI_DEFAULTS['login-ui.theme'],
         normalize: normalizeThemeValue,
       }) ?? LOGIN_UI_DEFAULTS['login-ui.theme'],
     variant:
-      resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
+      resolveDiscoveryVisualSetting(effectiveTenantSettings, platformSettings, loginUiSettings, {
         tenantKey: 'tenant-discovery-ui.variant',
         loginUiKey: 'login-ui.variant',
         defaultValue: LOGIN_UI_DEFAULTS['login-ui.variant'],
         normalize: normalizeVariantValue,
       }) ?? LOGIN_UI_DEFAULTS['login-ui.variant'],
     brand_name:
-      resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
+      resolveDiscoveryVisualSetting(effectiveTenantSettings, platformSettings, loginUiSettings, {
         tenantKey: 'tenant-discovery-ui.brand_name',
         loginUiKey: 'login-ui.brand_name',
         defaultValue: LOGIN_UI_DEFAULTS['login-ui.brand_name'],
       }) ?? LOGIN_UI_DEFAULTS['login-ui.brand_name'],
-    logo_url: resolveDiscoveryVisualSetting(tenantSettings, platformSettings, loginUiSettings, {
-      tenantKey: 'tenant-discovery-ui.logo_url',
-      loginUiKey: 'login-ui.logo_url',
-      defaultValue: '',
-      allowNull: true,
-    }),
+    logo_url: resolveDiscoveryVisualSetting(
+      effectiveTenantSettings,
+      platformSettings,
+      loginUiSettings,
+      {
+        tenantKey: 'tenant-discovery-ui.logo_url',
+        loginUiKey: 'login-ui.logo_url',
+        defaultValue: '',
+        allowNull: true,
+      }
+    ),
     page_title: resolveDiscoveryText(
-      tenantSettings,
+      effectiveTenantSettings,
       platformSettings,
       'tenant-discovery-ui.page_title'
     ),
     kicker_text: resolveDiscoveryText(
-      tenantSettings,
+      effectiveTenantSettings,
       platformSettings,
       'tenant-discovery-ui.kicker_text'
     ),
     title_text: resolveDiscoveryText(
-      tenantSettings,
+      effectiveTenantSettings,
       platformSettings,
       'tenant-discovery-ui.title_text'
     ),
     subtitle_text: resolveDiscoveryText(
-      tenantSettings,
+      effectiveTenantSettings,
       platformSettings,
       'tenant-discovery-ui.subtitle_text'
     ),

@@ -6,7 +6,6 @@ export type AdminDestinationScope = 'platform' | 'tenant' | 'shared';
 export type AdminDestinationProvider =
 	| 'r2'
 	| 'aws_s3'
-	| 'sftp'
 	| 'http'
 	| 'logpush'
 	| 'analytics_engine'

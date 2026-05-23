@@ -839,7 +839,9 @@ app.all('/api/admin/*', async (c) => {
   // Route SAML admin endpoints to OP_SAML.
   if (
     matchesPathGroup(path, '/api/admin/saml-providers') ||
+    matchesPathGroup(path, '/api/admin/saml-settings') ||
     matchesPathGroup(path, '/api/admin/saml-attribute-presets') ||
+    matchesPathGroup(path, '/api/admin/saml-federation-trust-profiles') ||
     matchesPathGroup(path, '/api/admin/saml-metadata')
   ) {
     if (!c.env.OP_SAML) {

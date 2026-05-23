@@ -12,10 +12,10 @@
 
 /* Default (Beige / warm dark nav) */
 :root {
-	--level-enduser-color: #7aadcc;   /* dusty blue */
-	--level-client-color: #68b89a;    /* sage teal */
-	--level-tenant-color: #c9a05a;    /* warm gold */
-	--level-platform-color: #9b84c4;  /* soft violet */
+	--level-enduser-color: #7aadcc; /* dusty blue */
+	--level-client-color: #68b89a; /* sage teal */
+	--level-tenant-color: #c9a05a; /* warm gold */
+	--level-platform-color: #9b84c4; /* soft violet */
 }
 
 /* === Light Theme - Beige Variant (Default) === */
@@ -60,6 +60,29 @@
 	/* Accent */
 	--accent: #666666;
 	--accent-light: rgba(102, 102, 102, 0.1);
+}
+
+/* Compatibility aliases for older Admin UI pages. */
+:root,
+[data-theme] {
+	--color-surface: var(--bg-card);
+	--color-surface-muted: var(--bg-subtle);
+	--color-surface-subtle: var(--bg-subtle);
+	--color-surface-default: var(--bg-card);
+	--color-surface-elevated: var(--bg-card);
+	--color-border: var(--border);
+	--color-primary: var(--primary);
+	--color-primary-hover: var(--primary-hover);
+	--color-text: var(--text-primary);
+	--color-text-muted: var(--text-secondary);
+	--color-text-secondary: var(--text-secondary);
+	--surface: var(--bg-card);
+	--surface-primary: var(--bg-card);
+	--surface-secondary: var(--bg-subtle);
+	--surface-elevated: var(--bg-card);
+	--border-color: var(--border);
+	--border-subtle: var(--border);
+	--danger-bg: var(--danger-light);
 }
 
 /* === Light Theme - Blue-Gray Variant === */

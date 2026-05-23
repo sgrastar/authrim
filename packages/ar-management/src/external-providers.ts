@@ -25,8 +25,15 @@ import {
  * Must match the routes in ar-bridge/src/index.ts
  */
 const EXTERNAL_IDP_ADMIN_PATH = '/api/admin/external-providers';
+const EXTERNAL_TOKEN_REFRESH_ADMIN_PATH = '/api/admin/external-token-refresh';
 const EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES = 256 * 1024;
 const EXTERNAL_IDP_ADMIN_RESPONSE_MAX_BYTES = 1024 * 1024;
+const DEFAULT_TOKEN_REFRESH_CONFIG = {
+  enabled: true,
+  refreshThresholdSeconds: 3600,
+  batchSize: 100,
+  scheduledTenantBatchSize: 100,
+};
 
 async function readExternalIdpAdminBody(
   c: Context<{ Bindings: Env }>
@@ -213,6 +220,68 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
     });
   }
   return proxyToExternalIdp(c, `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+/**
+ * GET /api/admin/external-token-refresh/config - Read bridge token refresh configuration.
+ */
+export async function adminExternalTokenRefreshConfigGetHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json({
+      config: DEFAULT_TOKEN_REFRESH_CONFIG,
+      runtime_status: 'bridge_not_configured',
+    });
+  }
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/config`, 'GET');
+}
+
+/**
+ * PUT /api/admin/external-token-refresh/config - Update bridge token refresh configuration.
+ */
+export async function adminExternalTokenRefreshConfigUpdateHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json(
+      {
+        error: 'service_unavailable',
+        message:
+          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+      },
+      503
+    );
+  }
+  const body = await readExternalIdpAdminBody(c);
+  if (!body.ok) {
+    return body.response;
+  }
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/config`, 'PUT', body.body);
+}
+
+/**
+ * GET /api/admin/external-token-refresh/runs - List recent bridge token refresh runs.
+ */
+export async function adminExternalTokenRefreshRunsListHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json({ runs: [], runtime_status: 'bridge_not_configured' });
+  }
+  const query = new URL(c.req.url).search;
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/runs${query}`, 'GET');
+}
+
+/**
+ * POST /api/admin/external-token-refresh/run - Run refresh for the current tenant.
+ */
+export async function adminExternalTokenRefreshRunHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json(
+      {
+        error: 'service_unavailable',
+        message:
+          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+      },
+      503
+    );
+  }
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/run`, 'POST');
 }
 
 /**

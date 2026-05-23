@@ -1,6 +1,6 @@
 import { adminFetch } from '$lib/api/admin-request';
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+const API_BASE_URL = '';
 
 export interface ExternalTokenRefreshConfig {
 	enabled: boolean;

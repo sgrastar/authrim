@@ -10,7 +10,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
-  buildIssuerUrl,
   getLogger,
 } from '@authrim/ar-lib-core';
 import {
@@ -37,6 +36,7 @@ import {
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLMetadataResponse,
+  buildSAMLMetadataValidUntil,
   buildStableSAMLMetadataDescriptorId,
   SAML_METADATA_CACHE_DURATION,
 } from '../common/metadata-cache';
@@ -45,6 +45,7 @@ import {
   shouldSignSAMLMetadata,
   signSAMLMetadata,
 } from '../common/metadata-signing';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
 
 /**
  * Handle IdP metadata request
@@ -54,8 +55,7 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  const issuerUrl = buildIssuerUrl(env, tenantId);
-  const entityId = `${issuerUrl}/saml/idp`;
+  const { issuerUrl, idpEntityId: entityId } = await getSAMLLocalEntityIds(env, tenantId);
 
   // Get signing certificates from KeyManager / SAML rollover policy.
   let signingCertificates: SAMLMetadataSigningCertificate[];
@@ -102,6 +102,7 @@ export interface IdPMetadataOptions {
   entityId: string;
   issuerUrl: string;
   signingCertificates: SAMLMetadataSigningCertificate[];
+  validUntil?: string;
 }
 
 /**
@@ -117,6 +118,7 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
   setAttribute(entityDescriptor, 'entityID', entityId);
   setAttribute(entityDescriptor, 'ID', buildStableSAMLMetadataDescriptorId('idp', entityId));
   setAttribute(entityDescriptor, 'cacheDuration', SAML_METADATA_CACHE_DURATION);
+  setAttribute(entityDescriptor, 'validUntil', options.validUntil ?? buildSAMLMetadataValidUntil());
 
   // Add namespace declarations
   addNamespaceDeclarations(entityDescriptor, {

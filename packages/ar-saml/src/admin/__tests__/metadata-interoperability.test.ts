@@ -224,7 +224,9 @@ describe('SAML metadata interoperability fixtures', () => {
     expect(firstXml).toBe(secondXml);
     expect(getAttribute(entityDescriptor!, 'ID')).toMatch(/^_authrim_saml_sp_[a-z0-9]+$/);
     expect(getAttribute(entityDescriptor!, 'cacheDuration')).toBe('PT24H');
-    expect(getAttribute(entityDescriptor!, 'validUntil')).toBe('');
+    expect(getAttribute(entityDescriptor!, 'validUntil')).toMatch(
+      /^\d{4}-\d{2}-\d{2}T00:00:00Z$/
+    );
   });
 
   it('prefers Redirect SLO for non-legacy SP metadata imports and POST for legacy imports', () => {

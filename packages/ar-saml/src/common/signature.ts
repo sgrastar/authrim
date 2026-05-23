@@ -65,8 +65,10 @@ export interface SignOptions {
   certificate: string;
   /** XPath to the element to be signed (reference URI) */
   referenceUri: string;
-  /** Signature location - 'prepend' or 'append' relative to signed element */
-  signatureLocation?: 'prepend' | 'append';
+  /** Signature location relative to the insertion XPath */
+  signatureLocation?: 'prepend' | 'append' | 'before' | 'after';
+  /** Optional XPath used only for placing the Signature element. */
+  signatureInsertionXPath?: string;
   /** Include KeyInfo with certificate */
   includeKeyInfo?: boolean;
 }
@@ -129,6 +131,7 @@ export function signXml(xml: string, options: SignOptions): string {
     certificate,
     referenceUri,
     signatureLocation = 'prepend',
+    signatureInsertionXPath,
     includeKeyInfo = true,
   } = options;
   const referenceXPath = resolveSignatureReferenceXPath(referenceUri);
@@ -158,8 +161,8 @@ export function signXml(xml: string, options: SignOptions): string {
   // Compute signature
   sig.computeSignature(xml, {
     location: {
-      reference: referenceXPath,
-      action: signatureLocation === 'prepend' ? 'prepend' : 'append',
+      reference: signatureInsertionXPath ?? referenceXPath,
+      action: signatureLocation,
     },
   });
 

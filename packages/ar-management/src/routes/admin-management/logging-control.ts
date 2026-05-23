@@ -2044,7 +2044,7 @@ function buildDestinationProviderPayloadPreview(input: {
     security: {
       inline_secret_detected: Boolean(forbidden),
       inline_secret_path: forbidden ? `provider_config.${forbidden}` : null,
-      credential_ref_required: ['aws_s3', 'sftp', 'http', 'firehose'].includes(input.provider),
+      credential_ref_required: ['aws_s3', 'http', 'firehose'].includes(input.provider),
     },
   };
 }

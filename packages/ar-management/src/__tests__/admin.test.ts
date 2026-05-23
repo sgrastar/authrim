@@ -576,6 +576,26 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('returns an empty audit log list when the hot audit table is not initialized', async () => {
+      const mockDB = createSqlAwareMockDB((sql) => {
+        if (sql.includes('FROM event_log')) {
+          throw new Error('no such table: event_log');
+        }
+        return null;
+      });
+      const c = createMockContext({ db: mockDB });
+
+      const response = await adminAuditLogListHandler(c);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        entries: unknown[];
+        pagination: { total: number; totalPages: number };
+      };
+      expect(body.entries).toEqual([]);
+      expect(body.pagination.total).toBe(0);
+      expect(body.pagination.totalPages).toBe(0);
+    });
+
     it('returns pending_runtime_support for non-D1 primary audit profiles', async () => {
       const c = createMockContext({
         envOverrides: {

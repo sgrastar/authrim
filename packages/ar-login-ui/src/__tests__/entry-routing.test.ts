@@ -339,6 +339,58 @@ describe('common-entry routing', () => {
 		);
 	});
 
+	it('restores SAML login context from a verified discovery grant target URL', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					config: {
+						tenant_id: 'first',
+						mode: 'tenant_only',
+						discovery_methods: ['tenant_code', 'tenant_slug'],
+						selection_policy: 'select_if_multiple',
+						allow_manual_tenant_entry: true,
+						remember_last_tenant: true,
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true,
+						redirect_tenant_discover_to_common_entry: true
+					},
+					single_tenant_mode: false,
+					is_common_entry_host: false,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					valid: true,
+					tenant_id: 'first',
+					target_url:
+						'https://first.multi-tenant.authrim.com/login?saml_request_id=ONELOGIN_123&saml_sp_entity_id=https%3A%2F%2Fsamlsp.com&return_to=saml_sso'
+				})
+			);
+
+		const cookies = createCookies();
+		await expect(
+			loginLoad({
+				cookies,
+				fetch,
+				request: new Request(
+					'https://first.multi-tenant.authrim.com/login?discovery_grant=test-grant'
+				),
+				url: new URL('https://first.multi-tenant.authrim.com/login?discovery_grant=test-grant')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location:
+				'https://first.multi-tenant.authrim.com/login?saml_request_id=ONELOGIN_123&saml_sp_entity_id=https%3A%2F%2Fsamlsp.com&return_to=saml_sso'
+		});
+		expect(cookies.set).toHaveBeenCalledWith(
+			'authrim_discovery_grant_verified',
+			'https://first.multi-tenant.authrim.com/login?saml_request_id=ONELOGIN_123&saml_sp_entity_id=https%3A%2F%2Fsamlsp.com&return_to=saml_sso',
+			expect.objectContaining({ path: '/login', httpOnly: true, maxAge: 300 })
+		);
+	});
+
 	it('verifies a discovery grant against the original proxied tenant login URL', async () => {
 		const fetch = vi
 			.fn()

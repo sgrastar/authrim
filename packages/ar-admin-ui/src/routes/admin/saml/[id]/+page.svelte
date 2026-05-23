@@ -7,7 +7,8 @@
 		adminSAMLAPI,
 		type SAMLAttributePreset,
 		type SAMLProvider,
-		type SAMLProviderConfig
+		type SAMLProviderConfig,
+		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
 
 	const providerId = $derived($page.params.id);
@@ -71,9 +72,9 @@
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
 	let attributePresetId = $state('');
 	let attributeMappingJson = $state('{}');
-	let importMode = $state<'url' | 'xml'>('url');
-	let importMetadataUrl = $state('');
-	let importMetadataXml = $state('');
+	let certificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
+	let certificatePreviewError = $state('');
+	let loadingCertificatePreview = $state(false);
 
 	onMount(() => {
 		void loadPage();
@@ -103,7 +104,6 @@
 		description = data.config.description || '';
 		enabled = data.enabled;
 		metadataUrl = data.config.metadataUrl || '';
-		importMetadataUrl = data.config.metadataUrl || '';
 		providerName = data.config.providerName || 'Authrim';
 		logoUrl = data.config.logoUrl || '';
 		entityId = data.config.entityId || '';
@@ -133,10 +133,74 @@
 			data.config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
 		attributePresetId = data.config.attributePresetId || '';
 		attributeMappingJson = JSON.stringify(data.config.attributeMapping || {}, null, 2);
+		certificatePreview = null;
+		certificatePreviewError = '';
 	}
 
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
 		return type === 'saml_sp' ? 'Service Provider' : 'Identity Provider';
+	}
+
+	function selectedNameIdFormatInfo() {
+		switch (nameIdFormat) {
+			case 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress':
+				return {
+					description: 'Uses the user email address as the NameID value.',
+					sample: 'alice@example.edu'
+				};
+			case 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent':
+				return {
+					description: 'Uses a stable opaque identifier for the subject and SP relationship.',
+					sample: 'a7f62c2b-2f5f-4df8-9d1d-8c7e7b1c6c2a'
+				};
+			case 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient':
+				return {
+					description: 'Uses a short-lived opaque identifier for this SAML transaction/session.',
+					sample: '_9f23b7f2d3d0476a8b98'
+				};
+			case 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified':
+				return {
+					description: 'Leaves the semantic meaning to the bilateral SP/IdP agreement.',
+					sample: 'alice'
+				};
+			case 'urn:mace:shibboleth:1.0:nameIdentifier':
+				return {
+					description:
+						'Legacy Shibboleth 1.x NameIdentifier format, kept only for older Shibboleth-era systems.',
+					sample: 'alice@example.edu'
+				};
+			default:
+				return {
+					description: 'Custom or externally supplied NameID format.',
+					sample: nameIdFormat || '-'
+				};
+		}
+	}
+
+	function formatCertificateDate(value: string) {
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return value || '-';
+		return date.toLocaleString();
+	}
+
+	function providerCertificateMessage() {
+		const validation = provider?.config.certificateValidation;
+		if (!validation) return '';
+		if (validation.allExpired) {
+			return 'All configured signing certificates are expired. This provider is disabled until a valid certificate is configured.';
+		}
+		if (validation.hasExpired) {
+			return 'One or more configured signing certificates are expired. Check rollover state and remove retired certificates when safe.';
+		}
+		if (validation.hasWeakSignature) {
+			return 'One or more configured signing certificates use a weak signature algorithm. Keep SHA-1 only for an explicit legacy compatibility exception.';
+		}
+		return '';
+	}
+
+	function providerCertificateMessageClass() {
+		const validation = provider?.config.certificateValidation;
+		return validation?.allExpired || validation?.hasExpired ? 'alert alert-error' : 'alert alert-warning';
 	}
 
 	function parseMapping(): Record<string, string> {
@@ -258,56 +322,24 @@
 		}
 	}
 
-	async function importMetadata() {
-		if (!providerId) return;
-		if (importMode === 'url' && !importMetadataUrl.trim()) {
-			error = 'Metadata URL is required';
+	async function previewCertificate() {
+		if (!certificate.trim()) {
+			certificatePreviewError = 'Certificate is required';
 			return;
 		}
-		if (importMode === 'xml' && !importMetadataXml.trim()) {
-			error = 'Metadata XML is required';
-			return;
-		}
-
-		busyAction = 'import';
-		error = '';
-		message = '';
+		loadingCertificatePreview = true;
+		certificatePreviewError = '';
+		certificatePreview = null;
 		try {
-			const result = await adminSAMLAPI.importMetadata(providerId, {
-				metadataUrl: importMode === 'url' ? importMetadataUrl.trim() : undefined,
-				metadataXml: importMode === 'xml' ? importMetadataXml.trim() : undefined,
-				samlProfile: provider?.providerType === 'saml_sp' ? samlProfile : undefined,
-				attributePresetId:
-					provider?.providerType === 'saml_sp' ? attributePresetId || undefined : undefined
+			certificatePreview = await adminSAMLAPI.previewTrustCertificate({
+				certificate: certificate.trim()
 			});
-			if (provider) {
-				provider = { ...provider, config: result.config };
-				populateForm(provider);
-			}
-			message = 'Metadata imported';
+			certificate = certificatePreview.certificate;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to import metadata';
+			certificatePreviewError =
+				err instanceof Error ? err.message : 'Failed to validate certificate';
 		} finally {
-			busyAction = '';
-		}
-	}
-
-	async function refreshMetadata() {
-		if (!providerId || !provider) return;
-		busyAction = 'refresh';
-		error = '';
-		message = '';
-		try {
-			const result = await adminSAMLAPI.refreshMetadata(providerId);
-			provider = { ...provider, config: result.config };
-			populateForm(provider);
-			message = result.expired
-				? 'Metadata refreshed; current metadata is expired'
-				: `Metadata refreshed; ${result.changed ? 'changes detected' : 'no changes'}`;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to refresh metadata';
-		} finally {
-			busyAction = '';
+			loadingCertificatePreview = false;
 		}
 	}
 
@@ -365,6 +397,42 @@
 	<title>{provider ? provider.name : 'SAML Provider'} - Admin Dashboard - Authrim</title>
 </svelte:head>
 
+{#snippet certificatePreviewCard(preview: SAMLTrustCertificatePreview)}
+	<div class="certificate-preview">
+		<div class="certificate-preview-header">
+			<strong>Valid X.509 certificate</strong>
+			<span class="badge badge-info">{preview.publicKeyAlgorithm}</span>
+		</div>
+		<div class="certificate-preview-grid">
+			<span>Subject</span>
+			<code>{preview.subject}</code>
+			<span>Issuer</span>
+			<code>{preview.issuer}</code>
+			<span>Valid From</span>
+			<code>{formatCertificateDate(preview.validFrom)}</code>
+			<span>Valid To</span>
+			<code>{formatCertificateDate(preview.validTo)}</code>
+			<span>Signature</span>
+			<code>{preview.signatureAlgorithm}</code>
+			{#if preview.publicKeySizeBits}
+				<span>Key Size</span>
+				<code>{preview.publicKeySizeBits} bits</code>
+			{/if}
+			<span>SHA-1</span>
+			<code>{preview.fingerprintSha1}</code>
+			<span>SHA-256</span>
+			<code>{preview.fingerprintSha256}</code>
+		</div>
+		{#if preview.warnings.length > 0}
+			<div class="certificate-warnings">
+				{#each preview.warnings as warning}
+					<div><i class="i-ph-warning-circle"></i>{warning}</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
 <div class="admin-page">
 	<a href="/admin/saml" class="back-link">← Back to SAML</a>
 
@@ -397,6 +465,18 @@
 				<div class="alert alert-success">{message}</div>
 			{/if}
 
+			{#if providerCertificateMessage()}
+				<div class={providerCertificateMessageClass()}>{providerCertificateMessage()}</div>
+			{/if}
+
+			<div class="panel">
+				<ToggleSwitch
+					bind:checked={enabled}
+					label="Provider Status"
+					description="Enable or disable this SAML provider."
+				/>
+			</div>
+
 			<div class="panel">
 				<h2 class="panel-title">Basic Information</h2>
 
@@ -413,6 +493,10 @@
 								<option value={format.value}>{format.label}</option>
 							{/each}
 						</select>
+						<div class="inline-help">
+							<p>{selectedNameIdFormatInfo().description}</p>
+							<code>Example: {selectedNameIdFormatInfo().sample}</code>
+						</div>
 					</div>
 
 					<div class="form-group form-group-full">
@@ -450,14 +534,6 @@
 			</div>
 
 			<div class="panel">
-				<ToggleSwitch
-					bind:checked={enabled}
-					label="Provider Status"
-					description="Enable or disable this SAML provider."
-				/>
-			</div>
-
-			<div class="panel">
 				<h2 class="panel-title">SAML Configuration</h2>
 
 				<div class="form-grid">
@@ -486,7 +562,10 @@
 					<div class="form-group form-group-full">
 						<label for="metadataUrl" class="form-label">Metadata URL</label>
 						<input id="metadataUrl" type="url" bind:value={metadataUrl} class="form-input" />
-						<p class="form-hint">Used by Refresh URL when metadata is published remotely.</p>
+						<p class="form-hint">
+							Stored metadata source URL. Aggregate or multi-entity metadata should be handled from
+							Add Provider/Federation.
+						</p>
 					</div>
 
 					<div class="form-group form-group-full">
@@ -496,9 +575,33 @@
 						<textarea
 							id="certificate"
 							bind:value={certificate}
+							oninput={() => {
+								certificatePreview = null;
+								certificatePreviewError = '';
+							}}
 							class="form-input form-textarea monospace"
 							rows="8"
 						></textarea>
+						<p class="form-hint">
+							Accepts X.509 certificates in PEM or base64 DER form. Metadata import usually fills
+							this automatically.
+						</p>
+						<div class="certificate-actions">
+							<button
+								type="button"
+								class="btn btn-secondary btn-sm"
+								onclick={previewCertificate}
+								disabled={loadingCertificatePreview || !certificate.trim()}
+							>
+								{loadingCertificatePreview ? 'Checking...' : 'Validate Certificate'}
+							</button>
+						</div>
+						{#if certificatePreviewError}
+							<p class="form-error">{certificatePreviewError}</p>
+						{/if}
+						{#if certificatePreview}
+							{@render certificatePreviewCard(certificatePreview)}
+						{/if}
 					</div>
 
 					<div class="form-group form-group-full">
@@ -512,6 +615,12 @@
 					</div>
 				</div>
 
+				<div class="binding-section">
+					<h3 class="section-subtitle">Allowed SAML Bindings</h3>
+					<p class="form-hint">
+						Controls which SAML protocol bindings this provider may use for SSO/SLO messages.
+					</p>
+				</div>
 				<div class="form-checkbox-group compact-checkboxes">
 					<label class="form-checkbox-label">
 						<input type="checkbox" bind:checked={allowPost} class="checkbox" />
@@ -653,86 +762,17 @@
 				</div>
 			{/if}
 
-			<div class="form-actions">
-				<button class="btn btn-primary" type="submit" disabled={saving}>
-					{saving ? 'Saving...' : 'Save Changes'}
-				</button>
-			</div>
 		</form>
 
 		<div class="panel">
-			<h2 class="panel-title">Metadata Import</h2>
-			<p class="form-hint panel-hint">
-				Import updated metadata from the counterparty. This overwrites endpoint and certificate
-				fields discovered from metadata.
-			</p>
-
-			<div class="template-grid metadata-choice-grid">
-				<button
-					type="button"
-					class="template-card"
-					class:template-card-selected={importMode === 'url'}
-					onclick={() => (importMode = 'url')}
-				>
-					<div class="i-ph-link h-5 w-5 template-icon"></div>
-					<div class="template-name">URL</div>
-					<div class="template-desc">Fetch metadata</div>
-				</button>
-				<button
-					type="button"
-					class="template-card"
-					class:template-card-selected={importMode === 'xml'}
-					onclick={() => (importMode = 'xml')}
-				>
-					<div class="i-ph-file-code h-5 w-5 template-icon"></div>
-					<div class="template-name">XML</div>
-					<div class="template-desc">Paste metadata</div>
-				</button>
-			</div>
-
-			{#if importMode === 'url'}
-				<div class="form-group metadata-input">
-					<label for="importMetadataUrl" class="form-label">Metadata URL</label>
-					<input
-						id="importMetadataUrl"
-						type="url"
-						bind:value={importMetadataUrl}
-						class="form-input"
-					/>
-				</div>
-			{:else}
-				<div class="form-group metadata-input">
-					<label for="importMetadataXml" class="form-label">Metadata XML</label>
-					<textarea
-						id="importMetadataXml"
-						bind:value={importMetadataXml}
-						class="form-input form-textarea monospace"
-						rows="10"
-					></textarea>
-				</div>
-			{/if}
-
-			<div class="panel-actions">
-				<button
-					class="btn btn-secondary"
-					onclick={importMetadata}
-					disabled={busyAction === 'import'}
-				>
-					{busyAction === 'import' ? 'Importing...' : 'Import Metadata'}
-				</button>
-				<button
-					class="btn btn-secondary"
-					onclick={refreshMetadata}
-					disabled={!provider.config.metadataUrl || busyAction === 'refresh'}
-				>
-					{busyAction === 'refresh' ? 'Refreshing...' : 'Refresh URL'}
-				</button>
-			</div>
-		</div>
-
-		<div class="panel">
 			<div class="panel-header">
-				<h2 class="panel-title">Signing Rollover</h2>
+				<div>
+					<h2 class="panel-title">Signing Rollover</h2>
+					<p class="form-hint">
+						Manage staged signing certificates. Publish next/backup certificates in metadata, then
+						promote next after counterparties have refreshed trust.
+					</p>
+				</div>
 				<div class="key-state">
 					<span class:enabled={Boolean(provider.config.signingKeyPolicy?.active)}>active</span>
 					<span class:enabled={Boolean(provider.config.signingKeyPolicy?.next)}>next</span>
@@ -757,16 +797,18 @@
 				</button>
 			</div>
 		</div>
+
+		<div class="form-actions page-bottom-actions">
+			<button class="btn btn-primary" type="button" onclick={handleSave} disabled={saving}>
+				{saving ? 'Saving...' : 'Save Changes'}
+			</button>
+		</div>
 	{:else}
 		<div class="alert alert-error">{error || 'SAML provider not found'}</div>
 	{/if}
 </div>
 
 <style>
-	.panel-hint {
-		margin-bottom: 16px;
-	}
-
 	.form-textarea {
 		min-height: auto;
 		resize: vertical;
@@ -805,17 +847,95 @@
 		font-size: 0.8125rem;
 	}
 
-	.compact-checkboxes {
-		padding-top: 4px;
+	.inline-help {
+		display: grid;
+		gap: 4px;
+		margin-top: 8px;
+		padding: 10px 12px;
+		border: 1px solid var(--color-border, #d8dde6);
+		border-radius: 8px;
+		background: var(--color-surface-subtle, #f8fafc);
 	}
 
-	.metadata-choice-grid {
-		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-		margin-bottom: 16px;
+	.inline-help p {
+		margin: 0;
+		color: var(--color-text-muted, #657083);
+		font-size: 0.8125rem;
+		line-height: 1.45;
 	}
 
-	.metadata-input {
+	.inline-help code {
+		color: var(--color-text, #111827);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		overflow-wrap: anywhere;
+	}
+
+	.binding-section {
 		margin-top: 16px;
+	}
+
+	.section-subtitle {
+		margin: 0 0 4px;
+		color: var(--color-text, #111827);
+		font-size: 0.875rem;
+		font-weight: 700;
+	}
+
+	.compact-checkboxes {
+		padding-top: 10px;
+	}
+
+	.certificate-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 8px;
+	}
+
+	.certificate-preview {
+		display: grid;
+		gap: 10px;
+		margin-top: 12px;
+		padding: 12px;
+		border: 1px solid var(--color-border, #d8dde6);
+		border-radius: 8px;
+		background: var(--color-surface-subtle, #f8fafc);
+	}
+
+	.certificate-preview-header {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.certificate-preview-grid {
+		display: grid;
+		grid-template-columns: 140px minmax(0, 1fr);
+		gap: 6px 12px;
+	}
+
+	.certificate-preview-grid span {
+		color: var(--color-text-muted, #657083);
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+
+	.certificate-preview-grid code {
+		color: var(--color-text, #111827);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
+	}
+
+	.certificate-warnings {
+		display: grid;
+		gap: 6px;
+		color: var(--color-danger, #dc2626);
+		font-size: 0.8125rem;
 	}
 
 	.panel-actions {
@@ -823,6 +943,13 @@
 		justify-content: flex-end;
 		gap: 12px;
 		flex-wrap: wrap;
+	}
+
+	.page-bottom-actions {
+		margin-top: 16px;
+		padding-top: 16px;
+		border-top: 1px solid var(--color-border, #d8dde6);
+		justify-content: flex-end;
 	}
 
 	.key-state {

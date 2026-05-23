@@ -185,6 +185,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     DB_PII: createMockAdapter(),
     SETTINGS: createMockKV({
       'settings:tenant:default:login-entry': JSON.stringify({
+        'login-entry.override_enabled': true,
         'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
       }),
       'settings:platform:tenant-discovery-ui': JSON.stringify({
@@ -198,6 +199,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
         'login-ui.logo_url': 'https://cdn.example.com/acme-login.png',
       }),
       'settings:tenant:acme:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.override_enabled': true,
         'tenant-discovery-ui.title_text': 'Find Acme',
         'tenant-discovery-ui.logo_url': 'https://cdn.example.com/acme-discovery.png',
       }),
@@ -327,6 +329,69 @@ describe('discovery API', () => {
     expect(body.config.discovery_methods).toEqual(['tenant_code']);
     expect(body.config.email_resolution_policy).toBe('disabled');
     expect(body.config.selection_policy).toBe('manual_only');
+  });
+
+  it('uses common login-entry settings on tenant hosts when tenant override is disabled', async () => {
+    const kv = createMockKV({
+      'settings:platform:login-entry': JSON.stringify({
+        'login-entry.discovery_methods': '["tenant_code"]',
+        'login-entry.email_resolution_policy': 'disabled',
+      }),
+      'settings:tenant:default:login-entry': JSON.stringify({
+        'login-entry.override_enabled': false,
+        'login-entry.discovery_methods': '["email_domain","tenant_slug"]',
+        'login-entry.email_resolution_policy': 'exact_email_then_domain',
+      }),
+    });
+    const { app, env } = createDiscoveryApp({ SETTINGS: kv });
+
+    const response = await app.request(
+      'https://default.auth.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'default.auth.example.com' },
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      config: { tenant_id: string; discovery_methods: string[]; email_resolution_policy: string };
+    };
+    expect(body.config.tenant_id).toBe('default');
+    expect(body.config.discovery_methods).toEqual(['tenant_code']);
+    expect(body.config.email_resolution_policy).toBe('disabled');
+  });
+
+  it('uses common discovery UI settings when tenant screen override is disabled', async () => {
+    const kv = createMockKV({
+      'settings:platform:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.title_text': 'Shared Discovery',
+        'tenant-discovery-ui.brand_name': 'Shared Brand',
+      }),
+      'settings:tenant:acme:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.override_enabled': false,
+        'tenant-discovery-ui.title_text': 'Acme Discovery',
+        'tenant-discovery-ui.brand_name': 'Acme Discovery',
+      }),
+    });
+    const { app, env } = createDiscoveryApp({ SETTINGS: kv });
+
+    const response = await app.request(
+      'https://acme.auth.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'acme.auth.example.com' },
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ui: { title_text: string; brand_name: string };
+    };
+    expect(body.ui.title_text).toBe('Shared Discovery');
+    expect(body.ui.brand_name).toBe('Shared Brand');
   });
 
   it('resolves a tenant by tenant_code with branding precedence', async () => {
@@ -502,6 +567,7 @@ describe('discovery API', () => {
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
+          'login-entry.override_enabled': true,
           'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
           'login-entry.email_resolution_policy': 'exact_email_only',
         }),
@@ -532,6 +598,7 @@ describe('discovery API', () => {
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
+          'login-entry.override_enabled': true,
           'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
           'login-entry.email_resolution_policy': 'disabled',
         }),
@@ -635,6 +702,7 @@ describe('discovery API', () => {
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
+          'login-entry.override_enabled': true,
           'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
         }),
       }),

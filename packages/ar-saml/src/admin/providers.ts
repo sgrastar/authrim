@@ -31,10 +31,12 @@ import type {
   SAMLMetadataBatchStatusResponse,
   SAMLMetadataEntityListResponse,
   SAMLMetadataVerificationSummary,
+  SAMLCertificateValidationSummary,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
   validateExternalUrl,
+  safeFetch,
   safeFetchText,
   createAuthContextFromHono,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -82,12 +84,52 @@ import {
   publishSAMLNextSigningCertificate,
   retireSAMLBackupSigningCertificate,
 } from './signing-rollover';
+import { previewTrustCertificate } from './certificate-preview';
+import {
+  getSAMLLocalEntityIds,
+  getSAMLPublicSettings,
+  normalizeSAMLEntityIdStyle,
+  putSAMLPublicSettings,
+} from '../common/entity-id';
+import {
+  buildSAMLMetadataValidUntil,
+  SAML_METADATA_CACHE_DURATION,
+  SAML_METADATA_VALIDITY_DAYS,
+} from '../common/metadata-cache';
+import {
+  resolveSAMLMetadataSigningMode,
+  shouldSignSAMLMetadata,
+} from '../common/metadata-signing';
 
 type AdminSAMLContext = Context<{ Bindings: Env }>;
 type AdminSAMLAuthContext = Context<{
   Bindings: Env;
   Variables: { adminAuth?: AdminAuthContext };
 }>;
+
+function buildSAMLMetadataPublicationSettings(env: Env): {
+  signingMode: 'disabled' | 'enabled';
+  signingEnabled: boolean;
+  validUntilEnabled: boolean;
+  idpValidUntil: string;
+  spValidUntil: string;
+  validityDays: number;
+  cacheDuration: string;
+} {
+  const validUntil = buildSAMLMetadataValidUntil();
+  const signingMode = resolveSAMLMetadataSigningMode(env);
+
+  return {
+    signingMode,
+    signingEnabled: shouldSignSAMLMetadata(env),
+    validUntilEnabled: true,
+    idpValidUntil: validUntil,
+    spValidUntil: validUntil,
+    validityDays: SAML_METADATA_VALIDITY_DAYS,
+    cacheDuration: SAML_METADATA_CACHE_DURATION,
+  };
+}
+
 interface SAMLMetadataConfigFields {
   metadataXml?: string;
   metadataUrl?: string;
@@ -95,6 +137,113 @@ interface SAMLMetadataConfigFields {
   metadataCriticalFields?: SAMLMetadataAnalysis['criticalFields'];
   metadataRefreshStatus?: SAMLMetadataRefreshStatus;
   metadataLastFetched?: number;
+}
+
+function collectProviderCertificates(config: SAMLIdPConfig | SAMLSPConfig): string[] {
+  const certificates = new Set<string>();
+  const primary = config.certificate?.trim();
+  if (primary) {
+    certificates.add(primary);
+  }
+  for (const certificate of config.certificates ?? []) {
+    const trimmed = certificate.trim();
+    if (trimmed) {
+      certificates.add(trimmed);
+    }
+  }
+  return [...certificates];
+}
+
+async function buildProviderCertificateValidation(
+  config: SAMLIdPConfig | SAMLSPConfig
+): Promise<SAMLCertificateValidationSummary | undefined> {
+  const certificates = collectProviderCertificates(config);
+  if (certificates.length === 0) {
+    return undefined;
+  }
+
+  const now = Date.now();
+  const statuses = await Promise.all(
+    certificates.map(async (certificate) => {
+      try {
+        const preview = await previewTrustCertificate(certificate, 'pem');
+        const validFromMs = Date.parse(preview.validFrom);
+        const validToMs = Date.parse(preview.validTo);
+        const expired = Number.isFinite(validToMs) && now > validToMs;
+        const notYetValid = Number.isFinite(validFromMs) && now < validFromMs;
+        return {
+          validFrom: preview.validFrom,
+          validTo: preview.validTo,
+          expired,
+          notYetValid,
+          signatureAlgorithm: preview.signatureAlgorithm,
+          publicKeyAlgorithm: preview.publicKeyAlgorithm,
+          publicKeySizeBits: preview.publicKeySizeBits,
+          fingerprintSha1: preview.fingerprintSha1,
+          fingerprintSha256: preview.fingerprintSha256,
+          warnings: preview.warnings,
+        };
+      } catch (error) {
+        return {
+          expired: false,
+          notYetValid: false,
+          warnings: [
+            `Certificate could not be parsed: ${
+              error instanceof Error ? error.message : 'invalid certificate'
+            }`,
+          ],
+        };
+      }
+    })
+  );
+
+  const validToDates = statuses
+    .map((status) => ({ status, value: status.validTo ? Date.parse(status.validTo) : NaN }))
+    .filter((item) => Number.isFinite(item.value));
+  const nonExpiredValidToDates = validToDates.filter((item) => !item.status.expired);
+  const selectedValidTo =
+    nonExpiredValidToDates.length > 0
+      ? nonExpiredValidToDates.reduce((earliest, item) =>
+          item.value < earliest.value ? item : earliest
+        ).status.validTo
+      : validToDates.length > 0
+        ? validToDates.reduce((latest, item) => (item.value > latest.value ? item : latest)).status
+            .validTo
+        : undefined;
+  const hasWeakSignature = statuses.some((status) => {
+    const signatureAlgorithm = status.signatureAlgorithm?.toLowerCase() ?? '';
+    return (
+      signatureAlgorithm.includes('sha1') ||
+      signatureAlgorithm.includes('md5') ||
+      status.warnings.some((warning) => /sha-?1|md5/i.test(warning))
+    );
+  });
+  const warnings = [...new Set(statuses.flatMap((status) => status.warnings))];
+
+  return {
+    checkedAt: now,
+    certificates: statuses,
+    validUntil: selectedValidTo,
+    allExpired: statuses.length > 0 && statuses.every((status) => status.expired),
+    hasExpired: statuses.some((status) => status.expired),
+    hasWeakSignature,
+    warnings,
+  };
+}
+
+async function withProviderCertificateValidation<T extends SAMLIdPConfig | SAMLSPConfig>(
+  config: T
+): Promise<T> {
+  const certificateValidation = await buildProviderCertificateValidation(config);
+  if (!certificateValidation) {
+    const nextConfig = { ...config };
+    delete nextConfig.certificateValidation;
+    return nextConfig;
+  }
+  return {
+    ...config,
+    certificateValidation,
+  };
 }
 
 async function requireSAMLAdminPermission(
@@ -144,15 +293,17 @@ export async function handleListProviders(c: AdminSAMLContext): Promise<Response
       [tenantId]
     );
 
-    const response = providers.map((row) => ({
-      id: row.id,
-      name: row.name,
-      providerType: row.provider_type,
-      config: JSON.parse(row.config_json),
-      enabled: row.enabled === 1,
-      createdAt: new Date(row.created_at).toISOString(),
-      updatedAt: new Date(row.updated_at).toISOString(),
-    }));
+    const response = await Promise.all(
+      providers.map(async (row) => ({
+        id: row.id,
+        name: row.name,
+        providerType: row.provider_type,
+        config: await withProviderCertificateValidation(JSON.parse(row.config_json)),
+        enabled: row.enabled === 1,
+        createdAt: new Date(row.created_at).toISOString(),
+        updatedAt: new Date(row.updated_at).toISOString(),
+      }))
+    );
 
     return c.json({ providers: response });
   } catch (error) {
@@ -216,6 +367,88 @@ export async function handleListAttributePresets(c: AdminSAMLContext): Promise<R
   return c.json({
     presets: [...serializeBuiltinAttributePresets(), ...customPresets],
   });
+}
+
+export async function handleGetSAMLSettings(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_READ);
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const settings = await getSAMLPublicSettings(c.env, tenantId);
+    const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
+
+    return c.json({
+      tenantId,
+      ...settings,
+      metadata: buildSAMLMetadataPublicationSettings(c.env),
+      generated: {
+        issuerUrl: entityIds.issuerUrl,
+        idpEntityId: entityIds.idpEntityId,
+        spEntityId: entityIds.spEntityId,
+        idpMetadataUrl: entityIds.idpMetadataUrl,
+        spMetadataUrl: entityIds.spMetadataUrl,
+      },
+    });
+  } catch (error) {
+    log.error('Get SAML settings error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as { entityIdStyle?: unknown };
+    const entityIdStyle = normalizeSAMLEntityIdStyle(body.entityIdStyle);
+    if (!entityIdStyle) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'entityIdStyle' },
+      });
+    }
+
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const before = await getSAMLPublicSettings(c.env, tenantId);
+    await putSAMLPublicSettings(c.env, tenantId, { entityIdStyle });
+
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.settings.updated',
+      resource: 'saml_settings',
+      resourceId: tenantId,
+      metadata: {
+        before_entity_id_style: before.entityIdStyle,
+        entity_id_style: entityIdStyle,
+      },
+    });
+
+    const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
+    return c.json({
+      tenantId,
+      entityIdStyle,
+      metadata: buildSAMLMetadataPublicationSettings(c.env),
+      generated: {
+        issuerUrl: entityIds.issuerUrl,
+        idpEntityId: entityIds.idpEntityId,
+        spEntityId: entityIds.spEntityId,
+        idpMetadataUrl: entityIds.idpMetadataUrl,
+        spMetadataUrl: entityIds.spMetadataUrl,
+      },
+    });
+  } catch (error) {
+    log.error('Update SAML settings error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
 }
 
 interface SAMLMetadataPreviewRequest extends MetadataImportRequest {
@@ -599,6 +832,10 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       body.providerType === 'saml_sp'
         ? normalizeSAMLSPAttributePresetConfig(config as SAMLSPConfig)
         : config;
+    const normalizedConfigWithValidation =
+      await withProviderCertificateValidation(normalizedConfig);
+    const providerEnabled =
+      body.enabled !== false && normalizedConfigWithValidation.certificateValidation?.allExpired !== true;
     const id = crypto.randomUUID();
     const now = Date.now();
 
@@ -612,8 +849,8 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         tenantId,
         body.name,
         body.providerType,
-        JSON.stringify(normalizedConfig),
-        body.enabled !== false ? 1 : 0,
+        JSON.stringify(normalizedConfigWithValidation),
+        providerEnabled ? 1 : 0,
         now,
         now,
       ]
@@ -626,8 +863,10 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       metadata: {
         name: body.name,
         provider_type: body.providerType,
-        enabled: body.enabled !== false,
+        enabled: providerEnabled,
         metadata_imported: hasMetadataInput,
+        disabled_due_to_expired_certificate:
+          body.enabled !== false && !providerEnabled ? true : undefined,
       },
     });
 
@@ -636,8 +875,8 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         id,
         name: body.name,
         providerType: body.providerType,
-        config: normalizedConfig,
-        enabled: body.enabled !== false,
+        config: normalizedConfigWithValidation,
+        enabled: providerEnabled,
         createdAt: new Date(now).toISOString(),
         updatedAt: new Date(now).toISOString(),
       },
@@ -707,7 +946,7 @@ export async function handleGetProvider(c: AdminSAMLContext): Promise<Response> 
       id: provider.id,
       name: provider.name,
       providerType: provider.provider_type,
-      config: JSON.parse(provider.config_json),
+      config: await withProviderCertificateValidation(JSON.parse(provider.config_json)),
       enabled: provider.enabled === 1,
       createdAt: new Date(provider.created_at).toISOString(),
       updatedAt: new Date(provider.updated_at).toISOString(),
@@ -761,6 +1000,10 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       existing.provider_type === 'saml_sp'
         ? normalizeSAMLSPAttributePresetConfig(mergedConfig as SAMLSPConfig)
         : mergedConfig;
+    const newConfigWithValidation = await withProviderCertificateValidation(newConfig);
+    const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
+    const nextEnabled =
+      requestedEnabled && newConfigWithValidation.certificateValidation?.allExpired !== true;
     const now = Date.now();
 
     await coreAdapter.execute(
@@ -769,8 +1012,8 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
        WHERE id = ? AND tenant_id = ?`,
       [
         body.name || existing.name,
-        JSON.stringify(newConfig),
-        body.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled,
+        JSON.stringify(newConfigWithValidation),
+        nextEnabled ? 1 : 0,
         now,
         id,
         tenantId,
@@ -784,8 +1027,10 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       metadata: {
         previous_name: existing.name,
         next_name: body.name || existing.name,
-        enabled_changed: body.enabled !== undefined && body.enabled !== (existing.enabled === 1),
+        enabled_changed: nextEnabled !== (existing.enabled === 1),
         config_updated: !!body.config,
+        disabled_due_to_expired_certificate:
+          requestedEnabled && !nextEnabled ? true : undefined,
       },
     });
 
@@ -793,8 +1038,8 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       id,
       name: body.name || existing.name,
       providerType: existing.provider_type,
-      config: newConfig,
-      enabled: body.enabled !== undefined ? body.enabled : existing.enabled === 1,
+      config: newConfigWithValidation,
+      enabled: nextEnabled,
       updatedAt: new Date(now).toISOString(),
     });
   } catch (error) {
@@ -878,8 +1123,9 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
       id: string;
       provider_type: string;
       config_json: string;
+      enabled: number;
     }>(
-      `SELECT id, provider_type, config_json
+      `SELECT id, provider_type, config_json, enabled
        FROM identity_providers
        WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
       [id, tenantId]
@@ -924,7 +1170,7 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     }
 
     // Merge with existing config (preserve custom settings)
-    const mergedConfig = {
+    const mergedConfig = await withProviderCertificateValidation({
       ...existingConfig,
       ...newConfig,
       metadataXml: resolvedMetadata.metadataXml,
@@ -933,13 +1179,15 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
       metadataCriticalFields: currentAnalysis.criticalFields,
       metadataRefreshStatus: refreshStatus,
       metadataLastFetched: Date.now(),
-    };
+    });
+    const nextEnabled =
+      existing.enabled === 1 && mergedConfig.certificateValidation?.allExpired !== true;
 
     const now = Date.now();
 
     await coreAdapter.execute(
-      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [JSON.stringify(mergedConfig), now, id, tenantId]
+      'UPDATE identity_providers SET config_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [JSON.stringify(mergedConfig), nextEnabled ? 1 : 0, now, id, tenantId]
     );
     await createSAMLAdminAudit(c, {
       tenantId,
@@ -950,12 +1198,15 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
         metadata_url_present: !!metadataUrl,
         metadata_hash: currentAnalysis.hash,
         changed: refreshStatus.diff.changed,
+        disabled_due_to_expired_certificate:
+          existing.enabled === 1 && !nextEnabled ? true : undefined,
       },
     });
 
     return c.json({
       success: true,
       config: mergedConfig,
+      enabled: nextEnabled,
       metadataRefreshStatus: refreshStatus,
     });
   } catch (error) {
@@ -1006,8 +1257,9 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       id: string;
       provider_type: string;
       config_json: string;
+      enabled: number;
     }>(
-      `SELECT id, provider_type, config_json
+      `SELECT id, provider_type, config_json, enabled
        FROM identity_providers
        WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
       [id, tenantId]
@@ -1083,7 +1335,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     const now = Date.now();
 
     if (refreshStatus.diff.expired) {
-      const expiredConfig = {
+      const expiredConfig = await withProviderCertificateValidation({
         ...existingConfig,
         metadataXml,
         metadataUrl,
@@ -1092,11 +1344,13 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
         metadataRefreshStatus: refreshStatus,
         metadataLastFetched: now,
         ...(aggregateImport ? { aggregateImport } : {}),
-      };
+      });
+      const nextEnabled =
+        existing.enabled === 1 && expiredConfig.certificateValidation?.allExpired !== true;
 
       await coreAdapter.execute(
-        'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-        [JSON.stringify(expiredConfig), now, id, tenantId]
+        'UPDATE identity_providers SET config_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+        [JSON.stringify(expiredConfig), nextEnabled ? 1 : 0, now, id, tenantId]
       );
 
       await createSAMLMetadataRefreshAudit(c, {
@@ -1111,6 +1365,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
         changed: refreshStatus.diff.changed,
         expired: true,
         config: expiredConfig,
+        enabled: nextEnabled,
         metadataRefreshStatus: refreshStatus,
       });
     }
@@ -1120,7 +1375,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
         ? (existingConfig as SAMLSPConfig).samlProfile
         : undefined;
     const refreshedConfig = buildConfigFromMetadata(existing.provider_type, metadataXml, profile);
-    const mergedConfig = {
+    const mergedConfig = await withProviderCertificateValidation({
       ...existingConfig,
       ...refreshedConfig,
       metadataXml,
@@ -1130,11 +1385,13 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       metadataRefreshStatus: refreshStatus,
       metadataLastFetched: now,
       ...(aggregateImport ? { aggregateImport } : {}),
-    };
+    });
+    const nextEnabled =
+      existing.enabled === 1 && mergedConfig.certificateValidation?.allExpired !== true;
 
     await coreAdapter.execute(
-      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [JSON.stringify(mergedConfig), now, id, tenantId]
+      'UPDATE identity_providers SET config_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [JSON.stringify(mergedConfig), nextEnabled ? 1 : 0, now, id, tenantId]
     );
 
     await createSAMLMetadataRefreshAudit(c, {
@@ -1148,6 +1405,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       success: true,
       changed: refreshStatus.diff.changed,
       config: mergedConfig,
+      enabled: nextEnabled,
       metadataRefreshStatus: refreshStatus,
     });
   } catch (error) {
@@ -1303,6 +1561,62 @@ export async function handleDeleteFederationTrustProfile(c: AdminSAMLContext): P
       .module('SAML')
       .error('Delete federation trust profile error', { id }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handlePreviewFederationTrustCertificate(
+  c: AdminSAMLContext
+): Promise<Response> {
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
+    if (forbidden) return forbidden;
+
+    const body = (await c.req.json()) as { certificate?: string; certificateUrl?: string };
+    const certificateUrl = body.certificateUrl?.trim();
+    const certificate = body.certificate?.trim();
+
+    if (!certificateUrl && !certificate) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'certificateUrl or certificate' },
+      });
+    }
+
+    if (certificateUrl) {
+      const ssrfError = validateExternalUrl(certificateUrl, {
+        requireHttps: true,
+        allowLocalhost: false,
+        errorType: 'invalid_request',
+        fieldName: 'certificateUrl',
+      });
+      if (ssrfError) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+
+      const response = await safeFetch(certificateUrl, {
+        timeoutMs: 10000,
+        maxResponseSize: 64 * 1024,
+        headers: { Accept: 'application/pkix-cert, application/x-x509-ca-cert, text/plain, */*' },
+      });
+      if (!response.ok) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      const bytes = await readResponseBytesWithLimit(response, 64 * 1024);
+      return c.json(await previewTrustCertificate(bytes, 'url'));
+    }
+
+    return c.json(await previewTrustCertificate(certificate!, 'pem'));
+  } catch (error) {
+    const message =
+      error instanceof SAMLMetadataValidationError
+        ? error.message
+        : 'Failed to preview federation trust certificate';
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: message,
+      },
+      400
+    );
   }
 }
 
@@ -1695,6 +2009,43 @@ async function readOptionalJson(c: Context<{ Bindings: Env }>): Promise<{ metada
   return ((await c.req.json()) as { metadataUrl?: string }) ?? {};
 }
 
+async function readResponseBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > maxBytes) {
+      throw new SAMLMetadataValidationError('Certificate response exceeds size limit');
+    }
+    return new Uint8Array(buffer);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        void reader.cancel().catch(() => {});
+        throw new SAMLMetadataValidationError('Certificate response exceeds size limit');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 async function createSAMLMetadataRefreshAudit(
   c: Context<{ Bindings: Env }>,
   input: {
@@ -2074,7 +2425,7 @@ async function processAggregateBatchCreate(
         const metadataAnalysis = analyzeSAMLMetadata(metadataXml);
         const now = Date.now();
         const providerId = crypto.randomUUID();
-        const normalizedConfig = {
+        const normalizedConfig = await withProviderCertificateValidation({
           ...config,
           metadataXml,
           metadataUrl: preview.metadataUrl,
@@ -2089,7 +2440,9 @@ async function processAggregateBatchCreate(
             verification: preview.verification,
             importedAt: now,
           },
-        } as SAMLIdPConfig | SAMLSPConfig;
+        } as SAMLIdPConfig | SAMLSPConfig);
+        const providerEnabled =
+          input.enabled && normalizedConfig.certificateValidation?.allExpired !== true;
         const name = buildProviderNameFromEntity(entityId, providerType);
         await coreAdapter.execute(
           `INSERT INTO identity_providers
@@ -2101,7 +2454,7 @@ async function processAggregateBatchCreate(
             name,
             providerType,
             JSON.stringify(normalizedConfig),
-            input.enabled ? 1 : 0,
+            providerEnabled ? 1 : 0,
             now,
             now,
           ]
@@ -2235,7 +2588,7 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 
   // Get certificate
   const keyDescriptors = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'KeyDescriptor');
-  let certificate = '';
+  const certificates: string[] = [];
 
   for (const kd of keyDescriptors) {
     const use = getAttribute(kd, 'use');
@@ -2243,11 +2596,13 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
       const x509Cert = findElement(kd, SAML_NAMESPACES.DS, 'X509Certificate');
       if (x509Cert) {
         const certText = getTextContent(x509Cert)?.replace(/\s+/g, '') || '';
-        certificate = `-----BEGIN CERTIFICATE-----\n${certText}\n-----END CERTIFICATE-----`;
-        break;
+        certificates.push(`-----BEGIN CERTIFICATE-----\n${certText}\n-----END CERTIFICATE-----`);
       }
     }
   }
+
+  const deduplicatedCertificates = [...new Set(certificates)];
+  const certificate = deduplicatedCertificates[0] || '';
 
   if (!certificate) {
     throw new Error('Invalid metadata: no signing certificate found');
@@ -2266,6 +2621,7 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
     ssoUrl,
     sloUrl,
     certificate,
+    certificates: deduplicatedCertificates,
     nameIdFormat,
     attributeMapping: {},
     allowedBindings,

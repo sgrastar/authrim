@@ -22,6 +22,8 @@ import {
   type LegacyPaths,
 } from './paths.js';
 
+export const DEFAULT_RSA_SIGNING_KEY_BITS = 3072;
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -137,9 +139,12 @@ export function generateKeyId(prefix: string = 'dev'): string {
  * Generate an RSA key pair for JWT signing
  *
  * @param keyId - Custom key ID or auto-generated
- * @param keySize - RSA key size in bits (default: 2048)
+ * @param keySize - RSA key size in bits (default: 3072)
  */
-export function generateRsaKeyPair(keyId?: string, keySize: number = 2048): KeyPair {
+export function generateRsaKeyPair(
+  keyId?: string,
+  keySize: number = DEFAULT_RSA_SIGNING_KEY_BITS
+): KeyPair {
   const kid = keyId || generateKeyId();
 
   // Generate RSA key pair
@@ -603,7 +608,7 @@ export async function saveKeysToDirectory(
   const metadata: KeyMetadata = {
     kid: secrets.keyPair.keyId,
     algorithm: 'RS256',
-    keySize: 2048,
+    keySize: DEFAULT_RSA_SIGNING_KEY_BITS,
     createdAt: secrets.keyPair.createdAt,
     files: {
       privateKey: paths.privateKey,

@@ -6,16 +6,20 @@
 		adminSAMLAPI,
 		type CreateSAMLProviderRequest,
 		type SAMLAttributePreset,
+		type SAMLFederationTrustProfile,
 		type SAMLMetadataAggregatePreviewResponse,
 		type SAMLMetadataBatchStatus,
 		type SAMLMetadataEntitySummary,
 		type SAMLMetadataKeywordFacet,
 		type SAMLProvider,
-		type SAMLProviderConfig
+		type SAMLProviderConfig,
+		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
 	import { onMount } from 'svelte';
 
 	type SetupMode = 'metadata_url' | 'metadata_xml' | 'manual';
+	type AggregateImportMode = 'selected_entities' | 'trust_profile';
+	type SetupTarget = SAMLProvider['providerType'] | 'federation';
 
 	const nameIdFormats = [
 		{
@@ -41,6 +45,7 @@
 	];
 
 	let presets = $state<SAMLAttributePreset[]>([]);
+	let setupTarget = $state<SetupTarget>('saml_idp');
 	let providerType = $state<SAMLProvider['providerType']>('saml_idp');
 	let setupMode = $state<SetupMode>('manual');
 	let name = $state('');
@@ -94,16 +99,44 @@
 	let selectedAggregateEntityIds = $state<string[]>([]);
 	let aggregateBatch = $state<SAMLMetadataBatchStatus | null>(null);
 	let aggregateBatchPolling: ReturnType<typeof setInterval> | undefined;
+	let aggregateImportMode = $state<AggregateImportMode>('selected_entities');
+	let federationProfileName = $state('');
+	let federationProfileUrlPattern = $state('');
+	let federationProfileCertificateUrl = $state('');
+	let federationProfileCertificate = $state('');
+	let federationProfilePolicy = $state<'strict' | 'warn' | 'disabled'>('strict');
+	let federationProfileCreated = $state<SAMLFederationTrustProfile | null>(null);
+	let federationProfileSavedMessage = $state('');
+	let providerSavedMessage = $state('');
+	let providerCertificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
+	let providerCertificateError = $state('');
+	let loadingProviderCertificate = $state(false);
+	let federationCertificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
+	let federationCertificateError = $state('');
+	let loadingFederationCertificate = $state(false);
+	let editingFederationProfileId = $state('');
+	let loadingFederationProfile = $state(false);
 	let activeAggregateKeywordFacet = $derived(
 		aggregateKeywordFacets.find((facet) => facet.category === aggregateKeywordCategory) ?? null
 	);
+	let isEditingFederationProfile = $derived(Boolean(editingFederationProfileId));
 	let saving = $state(false);
 	let error = $state('');
 	let metadataImportTimer: ReturnType<typeof setTimeout> | undefined;
+	let providerCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
+	let federationCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
 
 	onMount(() => {
+		const trustProfileId = $page.url.searchParams.get('trustProfileId');
 		const requestedType = $page.url.searchParams.get('type');
-		providerType = requestedType === 'sp' ? 'saml_sp' : 'saml_idp';
+		if (trustProfileId) {
+			editingFederationProfileId = trustProfileId;
+			setupTarget = 'federation';
+			void loadFederationTrustProfileForEdit(trustProfileId);
+		} else {
+			providerType = requestedType === 'sp' ? 'saml_sp' : 'saml_idp';
+			setupTarget = providerType;
+		}
 		void loadPresets();
 	});
 
@@ -116,6 +149,32 @@
 			presets = [];
 		} finally {
 			loadingPresets = false;
+		}
+	}
+
+	async function loadFederationTrustProfileForEdit(id: string) {
+		loadingFederationProfile = true;
+		error = '';
+		try {
+			const result = await adminSAMLAPI.listFederationTrustProfiles();
+			const profile = result.profiles.find((item) => item.id === id);
+			if (!profile) {
+				error = 'Federation trust profile was not found';
+				return;
+			}
+			federationProfileName = profile.name;
+			description = profile.description ?? '';
+			enabled = profile.enabled;
+			federationProfilePolicy = profile.policy ?? 'strict';
+			federationProfileUrlPattern = profile.metadataUrlPatterns.join('\n');
+			federationProfileCertificate = profile.certificates
+				.map((certificate) => certificate.certificate.trim())
+				.filter(Boolean)
+				.join('\n\n');
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to load federation trust profile';
+		} finally {
+			loadingFederationProfile = false;
 		}
 	}
 
@@ -288,6 +347,21 @@
 		}
 
 		providerType = nextProviderType;
+		setupTarget = nextProviderType;
+	}
+
+	function chooseFederation() {
+		setupTarget = 'federation';
+		if (metadataUrl.trim() && !federationProfileUrlPattern.trim()) {
+			federationProfileUrlPattern = metadataUrl.trim();
+		}
+		if (metadataUrl.trim() && !federationProfileName.trim()) {
+			federationProfileName = buildFederationProfileName(metadataUrl.trim());
+		}
+		metadataImportError = '';
+		metadataImportTone = 'warning';
+		metadataImportMessage =
+			'Federation mode creates a trust profile for signed aggregate metadata, not a single IdP/SP provider.';
 	}
 
 	function scheduleMetadataImport() {
@@ -328,27 +402,11 @@
 				samlProfile,
 				attributePresetId: attributePresetId || undefined
 			});
-			if (preview.kind === 'aggregate') {
-				aggregatePreview = preview;
-				metadataImported = false;
-				metadataImportedProviderType = '';
-				lastImportedMetadataUrl = metadataUrl.trim();
-				metadataImportTone = preview.verification.status === 'verified' ? 'success' : 'warning';
-				metadataImportMessage = `Aggregate metadata loaded: ${preview.entityCount} entities, signature ${preview.verification.status}.`;
-				await loadAggregateEntities(0);
-				return;
-			}
-			providerType = preview.providerType;
-			setupMode = 'manual';
-			applyPreviewConfig(preview.config);
-			metadataImported = true;
-			metadataImportedProviderType = preview.providerType;
+			await applyMetadataPreview(preview, {
+				source: 'url',
+				sourceUrl: metadataUrl.trim()
+			});
 			lastImportedMetadataUrl = metadataUrl.trim();
-			metadataImportTone = 'success';
-			metadataImportMessage =
-				preview.providerType === 'saml_sp'
-					? 'SP metadata imported. Authrim will act as IdP for this provider.'
-					: 'IdP metadata imported. Authrim will act as SP for this provider.';
 		} catch (err) {
 			metadataImported = false;
 			metadataImportedProviderType = '';
@@ -358,7 +416,70 @@
 		}
 	}
 
-	function handleMetadataUrlInput() {
+	async function importMetadataFromXml() {
+		if (!metadataXml.trim()) {
+			metadataImportError = 'Metadata XML is required';
+			return;
+		}
+
+		importingMetadata = true;
+		metadataImportError = '';
+		metadataImportMessage = '';
+		metadataImportTone = 'success';
+		error = '';
+
+		try {
+			const preview = await adminSAMLAPI.previewMetadata({
+				metadataXml: metadataXml.trim(),
+				samlProfile,
+				attributePresetId: attributePresetId || undefined
+			});
+			await applyMetadataPreview(preview, { source: 'xml' });
+		} catch (err) {
+			metadataImported = false;
+			metadataImportedProviderType = '';
+			metadataImportError = err instanceof Error ? err.message : 'Failed to import SAML metadata XML';
+		} finally {
+			importingMetadata = false;
+		}
+	}
+
+	async function applyMetadataPreview(
+		preview: Awaited<ReturnType<typeof adminSAMLAPI.previewMetadata>>,
+		options: { source: 'url' | 'xml'; sourceUrl?: string }
+	) {
+		if (preview.kind === 'aggregate') {
+			aggregatePreview = preview;
+			aggregateImportMode = 'selected_entities';
+			metadataImported = false;
+			metadataImportedProviderType = '';
+			if (options.sourceUrl) {
+				federationProfileName = federationProfileName || buildFederationProfileName(options.sourceUrl);
+				federationProfileUrlPattern = federationProfileUrlPattern || options.sourceUrl;
+			} else {
+				federationProfileName = federationProfileName || 'SAML federation';
+			}
+			metadataImportTone = preview.verification.status === 'verified' ? 'success' : 'warning';
+			metadataImportMessage = `Aggregate metadata loaded from ${options.source.toUpperCase()}: ${preview.entityCount} entities, signature ${preview.verification.status}.`;
+			await loadAggregateEntities(0);
+			return;
+		}
+
+		providerType = preview.providerType;
+		setupTarget = preview.providerType;
+		setupMode = 'manual';
+		applyPreviewConfig(preview.config);
+		await previewProviderCertificate({ quiet: true });
+		metadataImported = true;
+		metadataImportedProviderType = preview.providerType;
+		metadataImportTone = 'success';
+		metadataImportMessage =
+			preview.providerType === 'saml_sp'
+				? 'SP metadata imported. Authrim will act as IdP for this provider.'
+				: 'IdP metadata imported. Authrim will act as SP for this provider.';
+	}
+
+	function resetMetadataImportState() {
 		metadataImported = false;
 		metadataImportedProviderType = '';
 		aggregatePreview = null;
@@ -372,10 +493,34 @@
 		aggregateHasMoreEntities = false;
 		selectedAggregateEntityIds = [];
 		aggregateBatch = null;
+		aggregateImportMode = 'selected_entities';
+		federationProfileName = '';
+		federationProfileUrlPattern = '';
+		federationProfileCertificateUrl = '';
+		federationProfileCertificate = '';
+		federationProfilePolicy = 'strict';
+		federationProfileCreated = null;
+		federationProfileSavedMessage = '';
+		providerSavedMessage = '';
+		providerCertificatePreview = null;
+		providerCertificateError = '';
+		loadingProviderCertificate = false;
+		if (providerCertificatePreviewTimer) clearTimeout(providerCertificatePreviewTimer);
+		federationCertificatePreview = null;
+		federationCertificateError = '';
+		if (federationCertificatePreviewTimer) clearTimeout(federationCertificatePreviewTimer);
 		lastImportedMetadataUrl = '';
 		metadataImportMessage = '';
 		metadataImportTone = 'success';
 		metadataImportError = '';
+	}
+
+	function handleMetadataUrlInput() {
+		resetMetadataImportState();
+	}
+
+	function handleMetadataXmlInput() {
+		resetMetadataImportState();
 	}
 
 	async function loadAggregateEntities(offset = 0) {
@@ -400,6 +545,179 @@
 		} finally {
 			loadingAggregateEntities = false;
 		}
+	}
+
+	function buildFederationProfileName(url: string) {
+		try {
+			const parsed = new URL(url);
+			return `${parsed.hostname} federation`;
+		} catch {
+			return 'SAML federation';
+		}
+	}
+
+	function parseFederationProfileUrlPatterns() {
+		return federationProfileUrlPattern
+			.split(/\r?\n/)
+			.map((value) => value.trim())
+			.filter(Boolean);
+	}
+
+	function parseFederationProfileCertificates() {
+		const certificateInput = federationProfileCertificate.trim();
+		if (!certificateInput) return [];
+		const pemBlocks = Array.from(
+			certificateInput.matchAll(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g)
+		).map((match) => match[0].trim());
+		const certificates =
+			pemBlocks.length > 0
+				? pemBlocks
+				: certificateInput
+						.split(/\n{2,}/)
+						.map((value) => value.trim())
+						.filter(Boolean);
+		return certificates.map((certificate, index) => ({
+			name: certificates.length > 1 ? `Certificate ${index + 1}` : undefined,
+			certificate
+		}));
+	}
+
+	async function createFederationTrustProfile() {
+		if (!federationProfileName.trim()) {
+			error = 'Federation profile name is required';
+			return;
+		}
+		const metadataUrlPatterns = parseFederationProfileUrlPatterns();
+		if (metadataUrlPatterns.length === 0) {
+			error = 'Metadata URL pattern is required';
+			return;
+		}
+		const certificates = parseFederationProfileCertificates();
+		if (certificates.length === 0) {
+			error = 'Signing certificate PEM is required for a federation trust profile';
+			return;
+		}
+
+		saving = true;
+		error = '';
+		federationProfileSavedMessage = '';
+		try {
+			const request = {
+				name: federationProfileName.trim(),
+				description: aggregatePreview
+					? `Created from aggregate metadata preview ${aggregatePreview.previewId}`
+					: description.trim() || undefined,
+				metadataUrlPatterns,
+				certificates,
+				policy: federationProfilePolicy,
+				enabled
+			};
+			federationProfileCreated =
+				isEditingFederationProfile && !aggregatePreview
+					? await adminSAMLAPI.updateFederationTrustProfile(editingFederationProfileId, request)
+					: await adminSAMLAPI.createFederationTrustProfile(request);
+			saving = false;
+			federationProfileSavedMessage = isEditingFederationProfile
+				? 'Federation trust profile updated. Returning to SAML settings...'
+				: 'Federation trust profile saved. Returning to SAML settings...';
+			setTimeout(() => {
+				void goto('/admin/saml');
+			}, 1000);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to create federation trust profile';
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function previewFederationCertificate(source: 'url' | 'pem', options: { quiet?: boolean } = {}) {
+		const certificateUrl = federationProfileCertificateUrl.trim();
+		const certificate = federationProfileCertificate.trim();
+		if (source === 'url' && !certificateUrl) {
+			if (!options.quiet) {
+				federationCertificateError = 'Certificate URL is required';
+			}
+			return;
+		}
+		if (source === 'pem' && !certificate) {
+			if (!options.quiet) {
+				federationCertificateError = 'Certificate PEM is required';
+			}
+			return;
+		}
+
+		loadingFederationCertificate = true;
+		federationCertificateError = '';
+		try {
+			const preview = await adminSAMLAPI.previewTrustCertificate(
+				source === 'url' ? { certificateUrl } : { certificate }
+			);
+			federationCertificatePreview = preview;
+			federationProfileCertificate = preview.certificate;
+		} catch (err) {
+			federationCertificatePreview = null;
+			if (!options.quiet) {
+				federationCertificateError =
+					err instanceof Error ? err.message : 'Failed to preview federation trust certificate';
+			}
+		} finally {
+			loadingFederationCertificate = false;
+		}
+	}
+
+	function handleFederationCertificateInput() {
+		federationCertificatePreview = null;
+		federationCertificateError = '';
+		const value = federationProfileCertificate.trim();
+		if (value.startsWith('https://')) {
+			federationProfileCertificateUrl = value;
+		}
+		if (federationCertificatePreviewTimer) clearTimeout(federationCertificatePreviewTimer);
+		federationCertificatePreviewTimer = setTimeout(() => {
+			if (federationProfileCertificate.trim() && !federationProfileCertificate.trim().startsWith('https://')) {
+				void previewFederationCertificate('pem', { quiet: true });
+			}
+		}, 350);
+	}
+
+	async function previewProviderCertificate(options: { quiet?: boolean } = {}) {
+		if (!certificate.trim()) {
+			if (!options.quiet) {
+				providerCertificateError = 'Certificate PEM is required';
+			}
+			return;
+		}
+
+		loadingProviderCertificate = true;
+		providerCertificateError = '';
+		try {
+			const preview = await adminSAMLAPI.previewTrustCertificate({ certificate: certificate.trim() });
+			providerCertificatePreview = preview;
+			certificate = preview.certificate;
+		} catch (err) {
+			providerCertificatePreview = null;
+			if (!options.quiet) {
+				providerCertificateError =
+					err instanceof Error ? err.message : 'Failed to preview SAML certificate';
+			}
+		} finally {
+			loadingProviderCertificate = false;
+		}
+	}
+
+	function handleProviderCertificateInput() {
+		providerCertificatePreview = null;
+		providerCertificateError = '';
+		if (providerCertificatePreviewTimer) clearTimeout(providerCertificatePreviewTimer);
+		providerCertificatePreviewTimer = setTimeout(() => {
+			void previewProviderCertificate({ quiet: true });
+		}, 350);
+	}
+
+	function formatCertificateDate(value: string) {
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return value || '-';
+		return date.toLocaleString();
 	}
 
 	function handleAggregateSearch() {
@@ -467,6 +785,14 @@
 
 	function validate() {
 		if (aggregatePreview) return '';
+		if (setupTarget === 'federation') {
+			if (!federationProfileName.trim()) return 'Federation profile name is required';
+			if (!federationProfileUrlPattern.trim()) return 'Metadata URL pattern is required';
+			if (!federationProfileCertificate.trim()) {
+				return 'Signing certificate PEM is required for a federation trust profile';
+			}
+			return '';
+		}
 		if (!name.trim()) return 'Name is required';
 		if (!isValidLoginLogoUrl(logoUrl)) return 'Login UI logo URL must be a valid HTTPS URL';
 		if (setupMode === 'metadata_url' && !metadataUrl.trim()) return 'Metadata URL is required';
@@ -487,7 +813,11 @@
 
 	async function handleSubmit() {
 		if (aggregatePreview) {
-			await startAggregateBatchCreate();
+			if (aggregateImportMode === 'trust_profile') {
+				await createFederationTrustProfile();
+			} else {
+				await startAggregateBatchCreate();
+			}
 			return;
 		}
 		const validationError = validate();
@@ -496,8 +826,14 @@
 			return;
 		}
 
+		if (setupTarget === 'federation') {
+			await createFederationTrustProfile();
+			return;
+		}
+
 		saving = true;
 		error = '';
+		providerSavedMessage = '';
 
 		try {
 			const request: CreateSAMLProviderRequest = {
@@ -522,7 +858,11 @@
 			}
 
 			const provider = await adminSAMLAPI.createProvider(request);
-			await goto(`/admin/saml/${provider.id}`);
+			saving = false;
+			providerSavedMessage = `${provider.name} created. Returning to SAML settings...`;
+			setTimeout(() => {
+				void goto('/admin/saml');
+			}, 1000);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to create SAML provider';
 		} finally {
@@ -536,13 +876,54 @@
 </script>
 
 <svelte:head>
-	<title>New SAML Provider - Admin Dashboard - Authrim</title>
+	<title>
+		{isEditingFederationProfile ? 'Edit Federation Trust Profile' : 'New SAML Provider/Federation'}
+		- Admin Dashboard - Authrim
+	</title>
 </svelte:head>
+
+{#snippet certificatePreviewCard(preview: SAMLTrustCertificatePreview)}
+	<div class="certificate-preview">
+		<div class="certificate-preview-header">
+			<strong>Valid X.509 certificate</strong>
+			<span class="badge badge-info">{preview.publicKeyAlgorithm}</span>
+		</div>
+		<div class="certificate-preview-grid">
+			<span>Subject</span>
+			<code>{preview.subject}</code>
+			<span>Issuer</span>
+			<code>{preview.issuer}</code>
+			<span>Valid From</span>
+			<code>{formatCertificateDate(preview.validFrom)}</code>
+			<span>Valid To</span>
+			<code>{formatCertificateDate(preview.validTo)}</code>
+			<span>Signature</span>
+			<code>{preview.signatureAlgorithm}</code>
+			{#if preview.publicKeySizeBits}
+				<span>Key Size</span>
+				<code>{preview.publicKeySizeBits} bits</code>
+			{/if}
+			<span>SHA-1</span>
+			<code>{preview.fingerprintSha1}</code>
+			<span>SHA-256</span>
+			<code>{preview.fingerprintSha256}</code>
+		</div>
+		{#if preview.warnings.length > 0}
+			<div class="certificate-warnings">
+				{#each preview.warnings as warning}
+					<div><i class="i-ph-warning-circle"></i>{warning}</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+{/snippet}
 
 <div class="admin-page">
 	<a href="/admin/saml" class="back-link">← Back to SAML</a>
 
-	<h1 class="page-title">Add SAML Provider</h1>
+	<h1 class="page-title">
+		{isEditingFederationProfile ? 'Edit Federation Trust Profile' : 'Add SAML Provider/Federation'}
+	</h1>
 
 	<form
 		onsubmit={(event) => {
@@ -553,11 +934,44 @@
 		{#if error}
 			<div class="alert alert-error">{error}</div>
 		{/if}
+		{#if federationProfileSavedMessage}
+			<div class="alert alert-success">{federationProfileSavedMessage}</div>
+		{/if}
+		{#if providerSavedMessage}
+			<div class="alert alert-success">{providerSavedMessage}</div>
+		{/if}
 
+		{#if loadingFederationProfile}
+			<div class="loading-state">
+				<i class="i-ph-circle-notch loading-spinner"></i>
+				<p>Loading federation trust profile...</p>
+			</div>
+		{/if}
+
+		{#if !aggregatePreview}
+			<div class="panel">
+				{#if setupTarget === 'federation'}
+					<ToggleSwitch
+						bind:checked={enabled}
+						label="Trust Profile Status"
+						description="Enable or disable this trust profile for aggregate metadata verification."
+					/>
+				{:else}
+					<ToggleSwitch
+						bind:checked={enabled}
+						label="Provider Status"
+						description="Enable or disable this SAML provider."
+					/>
+				{/if}
+			</div>
+		{/if}
+
+		{#if !isEditingFederationProfile}
 		<div class="panel">
 			<h2 class="panel-title">SAML Configuration</h2>
 			<p class="form-hint panel-hint">
-				Import metadata first to detect whether the counterparty is an IdP or SP and fill the form.
+				Enter a metadata URL to automatically detect a single IdP/SP provider or a federation
+				aggregate containing multiple entities.
 			</p>
 
 			<div class="metadata-import-row">
@@ -580,11 +994,22 @@
 					onclick={() => importMetadataFromUrl()}
 					disabled={importingMetadata}
 				>
-					{importingMetadata ? 'Importing...' : 'Import Metadata'}
+					{#if importingMetadata}
+						<i class="i-ph-circle-notch loading-spinner"></i>
+						Importing Metadata...
+					{:else}
+						Import Metadata
+					{/if}
 				</button>
 			</div>
 
-			{#if metadataImportError}
+			{#if importingMetadata}
+				<p class="form-hint loading-hint">
+					<i class="i-ph-circle-notch loading-spinner"></i>
+					Reading metadata, detecting single entity or federation aggregate, and preparing import
+					options.
+				</p>
+			{:else if metadataImportError}
 				<p class="form-error">{metadataImportError}</p>
 			{:else if metadataImportMessage}
 				<p
@@ -595,14 +1020,16 @@
 				</p>
 			{:else}
 				<p class="form-hint">
-					SP metadata will select Service Provider. IdP metadata will select Identity Provider.
+					Single SP metadata selects Service Provider. Single IdP metadata selects Identity
+					Provider. Aggregate metadata opens federation import options.
 				</p>
 			{/if}
 		</div>
+		{/if}
 
 		{#if aggregatePreview}
 			<div class="panel">
-				<h2 class="panel-title">Aggregate Entities</h2>
+				<h2 class="panel-title">Federation Aggregate Detected</h2>
 				<p
 					class:form-success={aggregatePreview.verification.status === 'verified'}
 					class:form-warning={aggregatePreview.verification.status !== 'verified'}
@@ -612,6 +1039,132 @@
 						via {aggregatePreview.verification.trustProfileName}
 					{/if}
 				</p>
+
+				<div class="template-grid aggregate-mode-grid">
+					<button
+						type="button"
+						class="template-card"
+						class:template-card-selected={aggregateImportMode === 'selected_entities'}
+						onclick={() => (aggregateImportMode = 'selected_entities')}
+					>
+						<div class="i-ph-list-checks h-5 w-5 template-icon"></div>
+						<div class="template-name">Create Providers</div>
+						<div class="template-desc">Select entities from this aggregate</div>
+					</button>
+					<button
+						type="button"
+						class="template-card"
+						class:template-card-selected={aggregateImportMode === 'trust_profile'}
+						onclick={() => (aggregateImportMode = 'trust_profile')}
+					>
+						<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
+						<div class="template-name">Federation Trust Profile</div>
+						<div class="template-desc">Register trust anchor for this aggregate</div>
+					</button>
+				</div>
+
+				{#if aggregateImportMode === 'trust_profile'}
+					<div class="federation-profile-form">
+						<div class="form-grid">
+							<div class="form-group">
+								<label for="federationProfileName" class="form-label">Profile Name *</label>
+								<input
+									id="federationProfileName"
+									bind:value={federationProfileName}
+									class="form-input"
+									placeholder="Example Research Federation"
+								/>
+							</div>
+							<div class="form-group">
+								<label for="federationProfilePolicy" class="form-label">Policy</label>
+								<select
+									id="federationProfilePolicy"
+									bind:value={federationProfilePolicy}
+									class="form-select"
+								>
+									<option value="strict">Strict</option>
+									<option value="warn">Warn</option>
+									<option value="disabled">Disabled</option>
+								</select>
+							</div>
+							<div class="form-group form-group-full">
+								<label for="federationProfileUrlPattern" class="form-label">
+									Metadata URL Pattern *
+								</label>
+								<input
+									id="federationProfileUrlPattern"
+									bind:value={federationProfileUrlPattern}
+									class="form-input"
+								/>
+								<p class="form-hint">
+									Use the exact aggregate URL for a narrow trust profile, or a controlled wildcard
+									such as https://metadata.example.org/*.
+								</p>
+							</div>
+							<div class="form-group form-group-full">
+								<label for="federationProfileCertificate" class="form-label">
+									Federation Signing Certificate *
+								</label>
+								<div class="metadata-import-row certificate-url-row">
+									<div class="form-group metadata-import-input">
+										<label for="federationProfileCertificateUrl" class="form-label">
+											Certificate URL
+										</label>
+										<input
+											id="federationProfileCertificateUrl"
+											type="url"
+											bind:value={federationProfileCertificateUrl}
+											class="form-input"
+											placeholder="https://metadata.example.edu/federation-signer-2026.cer"
+										/>
+									</div>
+									<button
+										type="button"
+										class="btn btn-secondary metadata-import-button"
+										onclick={() => previewFederationCertificate('url')}
+										disabled={loadingFederationCertificate}
+									>
+										{loadingFederationCertificate ? 'Checking...' : 'Load Certificate'}
+									</button>
+								</div>
+								<textarea
+									id="federationProfileCertificate"
+									bind:value={federationProfileCertificate}
+									oninput={handleFederationCertificateInput}
+									class="form-input form-textarea monospace"
+									rows="8"
+									placeholder="Paste PEM, base64 DER, or enter a certificate URL above"
+								></textarea>
+								<p class="form-hint">
+									Accepts X.509 certificates in DER or PEM form. Common URL/file extensions are
+									.cer, .crt, and .pem, but Authrim validates the certificate content rather than
+									the extension.
+								</p>
+								<div class="certificate-actions">
+									<button
+										type="button"
+										class="btn btn-secondary btn-sm"
+										onclick={() => previewFederationCertificate('pem')}
+										disabled={loadingFederationCertificate || !federationProfileCertificate.trim()}
+									>
+										Validate Certificate
+									</button>
+								</div>
+								{#if federationCertificateError}
+									<p class="form-error">{federationCertificateError}</p>
+								{/if}
+								{#if federationCertificatePreview}
+									{@render certificatePreviewCard(federationCertificatePreview)}
+								{/if}
+							</div>
+						</div>
+						{#if federationProfileCreated}
+							<p class="form-success">
+								Federation trust profile created: {federationProfileCreated.name}
+							</p>
+						{/if}
+					</div>
+				{:else}
 
 				<div class="metadata-import-row">
 					<div class="form-group metadata-import-input">
@@ -735,21 +1288,24 @@
 						<progress value={aggregateBatch.processed} max={aggregateBatch.total}></progress>
 					</div>
 				{/if}
+				{/if}
 			</div>
 		{/if}
 
 		{#if !aggregatePreview}
-			<div class="panel">
+			{#if !isEditingFederationProfile}
+				<div class="panel">
 				<h2 class="panel-title">Choose Provider Type</h2>
 				<p class="form-hint panel-hint">
-					Choose IdP when Authrim accepts SAML login, or SP when Authrim issues SAML assertions.
+					Choose IdP or SP for a single SAML counterparty, or Federation for aggregate metadata
+					trust anchors.
 				</p>
 
 				<div class="template-grid saml-choice-grid">
 					<button
 						type="button"
 						class="template-card"
-						class:template-card-selected={providerType === 'saml_idp'}
+						class:template-card-selected={setupTarget === 'saml_idp'}
 						onclick={() => chooseProviderType('saml_idp')}
 					>
 						<div class="i-ph-identification-card h-5 w-5 template-icon"></div>
@@ -760,12 +1316,23 @@
 					<button
 						type="button"
 						class="template-card"
-						class:template-card-selected={providerType === 'saml_sp'}
+						class:template-card-selected={setupTarget === 'saml_sp'}
 						onclick={() => chooseProviderType('saml_sp')}
 					>
 						<div class="i-ph-app-window h-5 w-5 template-icon"></div>
 						<div class="template-name">Service Provider</div>
 						<div class="template-desc">Authrim as IdP</div>
+					</button>
+
+					<button
+						type="button"
+						class="template-card"
+						class:template-card-selected={setupTarget === 'federation'}
+						onclick={chooseFederation}
+					>
+						<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
+						<div class="template-name">Federation</div>
+						<div class="template-desc">Aggregate metadata trust</div>
 					</button>
 				</div>
 
@@ -775,7 +1342,123 @@
 					</p>
 				{/if}
 			</div>
+			{/if}
 
+			{#if setupTarget === 'federation'}
+				<div class="panel">
+					<h2 class="panel-title">Federation Trust Profile</h2>
+					<p class="form-hint panel-hint">
+						Register a trust anchor for signed aggregate metadata. This does not create a single
+						SAML IdP/SP provider by itself.
+					</p>
+
+					<div class="form-grid">
+						<div class="form-group">
+							<label for="manualFederationProfileName" class="form-label">Profile Name *</label>
+							<input
+								id="manualFederationProfileName"
+								bind:value={federationProfileName}
+								class="form-input"
+								placeholder="Example Research Federation"
+							/>
+						</div>
+						<div class="form-group">
+							<label for="manualFederationProfilePolicy" class="form-label">Policy</label>
+							<select
+								id="manualFederationProfilePolicy"
+								bind:value={federationProfilePolicy}
+								class="form-select"
+							>
+								<option value="strict">Strict</option>
+								<option value="warn">Warn</option>
+								<option value="disabled">Disabled</option>
+							</select>
+						</div>
+						<div class="form-group form-group-full">
+							<label for="manualFederationDescription" class="form-label">Description</label>
+							<textarea
+								id="manualFederationDescription"
+								bind:value={description}
+								class="form-input form-textarea"
+								rows="3"
+								placeholder="Operational note, owner, federation source, or rollout status"
+							></textarea>
+						</div>
+						<div class="form-group form-group-full">
+							<label for="manualFederationProfileUrlPattern" class="form-label">
+								Metadata URL Pattern *
+							</label>
+							<textarea
+								id="manualFederationProfileUrlPattern"
+								bind:value={federationProfileUrlPattern}
+								class="form-input form-textarea monospace"
+								rows="3"
+								placeholder="https://metadata.example.org/*"
+							></textarea>
+							<p class="form-hint">
+								Use one pattern per line. Prefer the exact aggregate URL for narrow trust, or a
+								controlled wildcard for a known metadata host.
+							</p>
+						</div>
+						<div class="form-group form-group-full">
+							<label for="manualFederationProfileCertificate" class="form-label">
+								Federation Signing Certificate *
+							</label>
+							<div class="metadata-import-row certificate-url-row">
+								<div class="form-group metadata-import-input">
+									<label for="manualFederationProfileCertificateUrl" class="form-label">
+										Certificate URL
+									</label>
+									<input
+										id="manualFederationProfileCertificateUrl"
+										type="url"
+										bind:value={federationProfileCertificateUrl}
+										class="form-input"
+										placeholder="https://metadata.example.edu/federation-signer-2026.cer"
+									/>
+								</div>
+								<button
+									type="button"
+									class="btn btn-secondary metadata-import-button"
+									onclick={() => previewFederationCertificate('url')}
+									disabled={loadingFederationCertificate}
+								>
+									{loadingFederationCertificate ? 'Checking...' : 'Load Certificate'}
+								</button>
+							</div>
+							<textarea
+								id="manualFederationProfileCertificate"
+								bind:value={federationProfileCertificate}
+								oninput={handleFederationCertificateInput}
+								class="form-input form-textarea monospace"
+								rows="10"
+								placeholder="Paste PEM, base64 DER, or enter a certificate URL above"
+							></textarea>
+							<p class="form-hint">
+								Accepts X.509 certificates in DER or PEM form. Common URL/file extensions are
+								.cer, .crt, and .pem. This is similar to Shibboleth metadata signature validation
+								configuration.
+							</p>
+							<div class="certificate-actions">
+								<button
+									type="button"
+									class="btn btn-secondary btn-sm"
+									onclick={() => previewFederationCertificate('pem')}
+									disabled={loadingFederationCertificate || !federationProfileCertificate.trim()}
+								>
+									Validate Certificate
+								</button>
+							</div>
+							{#if federationCertificateError}
+								<p class="form-error">{federationCertificateError}</p>
+							{/if}
+							{#if federationCertificatePreview}
+								{@render certificatePreviewCard(federationCertificatePreview)}
+							{/if}
+						</div>
+					</div>
+				</div>
+			{:else}
 			<div class="panel">
 				<h2 class="panel-title">Basic Information</h2>
 
@@ -834,14 +1517,6 @@
 						</p>
 					</div>
 				</div>
-			</div>
-
-			<div class="panel">
-				<ToggleSwitch
-					bind:checked={enabled}
-					label="Provider Status"
-					description="Enable or disable this SAML provider."
-				/>
 			</div>
 
 			<div class="panel">
@@ -910,9 +1585,39 @@
 						<textarea
 							id="metadataXml"
 							bind:value={metadataXml}
+							oninput={handleMetadataXmlInput}
 							class="form-input form-textarea monospace"
 							rows="12"
 						></textarea>
+						<p class="form-hint">
+							Paste SAML metadata XML, then import it to detect the role and populate the provider
+							fields.
+						</p>
+						<div class="form-actions compact-actions">
+							<button
+								type="button"
+								class="btn btn-secondary btn-sm"
+								onclick={importMetadataFromXml}
+								disabled={importingMetadata || !metadataXml.trim()}
+							>
+								{#if importingMetadata}
+									<i class="i-ph-circle-notch loading-spinner"></i>
+									Importing Metadata...
+								{:else}
+									Import Metadata
+								{/if}
+							</button>
+						</div>
+						{#if metadataImportError}
+							<p class="form-error">{metadataImportError}</p>
+						{:else if metadataImportMessage}
+							<p
+								class:form-success={metadataImportTone === 'success'}
+								class:form-warning={metadataImportTone === 'warning'}
+							>
+								{metadataImportMessage}
+							</p>
+						{/if}
 					</div>
 				{:else}
 					<div class="form-grid">
@@ -945,10 +1650,30 @@
 							<textarea
 								id="certificate"
 								bind:value={certificate}
+								oninput={handleProviderCertificateInput}
 								class="form-input form-textarea monospace"
 								rows="8"
 								placeholder="-----BEGIN CERTIFICATE-----"
 							></textarea>
+							<p class="form-hint">
+								Validate the X.509 certificate before saving when entering metadata manually.
+							</p>
+							<div class="certificate-actions">
+								<button
+									type="button"
+									class="btn btn-secondary btn-sm"
+									onclick={() => previewProviderCertificate()}
+									disabled={loadingProviderCertificate || !certificate.trim()}
+								>
+									{loadingProviderCertificate ? 'Checking...' : 'Validate Certificate'}
+								</button>
+							</div>
+							{#if providerCertificateError}
+								<p class="form-error">{providerCertificateError}</p>
+							{/if}
+							{#if providerCertificatePreview}
+								{@render certificatePreviewCard(providerCertificatePreview)}
+							{/if}
 						</div>
 
 						<div class="form-group form-group-full">
@@ -1114,6 +1839,25 @@
 					</div>
 				</div>
 			{/if}
+			{/if}
+		{/if}
+
+		{#if (providerCertificatePreview?.warnings.length ?? 0) > 0 ||
+			(federationCertificatePreview?.warnings.length ?? 0) > 0}
+			<div class="save-warning-panel">
+				<div class="save-warning-title">
+					<i class="i-ph-warning-circle"></i>
+					<span>Certificate security warnings</span>
+				</div>
+				<ul>
+					{#each providerCertificatePreview?.warnings ?? [] as warning}
+						<li>{warning}</li>
+					{/each}
+					{#each federationCertificatePreview?.warnings ?? [] as warning}
+						<li>{warning}</li>
+					{/each}
+				</ul>
+			</div>
 		{/if}
 
 		<div class="form-actions">
@@ -1121,10 +1865,25 @@
 			<button
 				type="submit"
 				class="btn btn-primary"
-				disabled={saving || (Boolean(aggregatePreview) && selectedAggregateEntityIds.length === 0)}
+				disabled={saving ||
+					Boolean(federationProfileSavedMessage) ||
+					Boolean(providerSavedMessage) ||
+					(Boolean(aggregatePreview) &&
+						aggregateImportMode === 'selected_entities' &&
+						selectedAggregateEntityIds.length === 0)}
 			>
 				{#if aggregatePreview}
-					{saving ? 'Starting...' : 'Create Selected Providers'}
+					{#if aggregateImportMode === 'trust_profile'}
+						{saving ? 'Saving...' : 'Save Trust Profile'}
+					{:else}
+						{saving ? 'Starting...' : 'Create Selected Providers'}
+					{/if}
+				{:else if setupTarget === 'federation'}
+					{saving
+						? 'Saving...'
+						: isEditingFederationProfile
+							? 'Update Trust Profile'
+							: 'Create Trust Profile'}
 				{:else}
 					{saving ? 'Creating...' : 'Create Provider'}
 				{/if}
@@ -1150,8 +1909,99 @@
 	}
 
 	.metadata-import-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
 		min-height: 44px;
 		white-space: nowrap;
+	}
+
+	.loading-hint {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 10px;
+	}
+
+	.certificate-url-row {
+		margin-bottom: 10px;
+	}
+
+	.certificate-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 8px;
+	}
+
+	.certificate-preview {
+		display: grid;
+		gap: 10px;
+		margin-top: 12px;
+		padding: 12px;
+		border: 1px solid var(--color-border, #d8dde6);
+		border-radius: 8px;
+		background: var(--color-surface-subtle, #f8fafc);
+	}
+
+	.certificate-preview-header {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.certificate-preview-grid {
+		display: grid;
+		grid-template-columns: 140px minmax(0, 1fr);
+		gap: 6px 12px;
+	}
+
+	.certificate-preview-grid span {
+		color: var(--color-text-muted, #657083);
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+
+	.certificate-preview-grid code {
+		color: var(--color-text, #111827);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
+	}
+
+	.certificate-warnings {
+		display: grid;
+		gap: 6px;
+		color: var(--color-danger, #dc2626);
+		font-size: 0.8125rem;
+	}
+
+	.save-warning-panel {
+		display: grid;
+		gap: 8px;
+		margin-top: 16px;
+		padding: 12px;
+		border: 1px solid rgba(220, 38, 38, 0.35);
+		border-radius: 8px;
+		background: rgba(220, 38, 38, 0.08);
+		color: var(--color-danger, #dc2626);
+		font-size: 0.875rem;
+	}
+
+	.save-warning-title {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-weight: 700;
+	}
+
+	.save-warning-panel ul {
+		margin: 0;
+		padding-left: 20px;
 	}
 
 	.form-success {
@@ -1172,6 +2022,18 @@
 
 	.saml-choice-grid {
 		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+	}
+
+	.aggregate-mode-grid {
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		margin-top: 16px;
+		margin-bottom: 16px;
+	}
+
+	.federation-profile-form {
+		margin-top: 16px;
+		padding-top: 16px;
+		border-top: 1px solid var(--border-color);
 	}
 
 	.form-textarea {
@@ -1336,6 +2198,10 @@
 
 		.metadata-import-button {
 			width: 100%;
+		}
+
+		.certificate-preview-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

@@ -3,7 +3,7 @@ import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from
 import { requireTenantId } from '../tenant';
 
 export type AdminResourceScopeType = 'tenant' | 'platform';
-export type StorageDestinationProvider = 'r2' | 'aws_s3' | 'sftp' | 'custom';
+export type StorageDestinationProvider = 'r2' | 'aws_s3' | 'custom';
 export type AdminResourceStatus = 'active' | 'disabled';
 
 interface AdminStorageDestinationEntity extends BaseEntity {

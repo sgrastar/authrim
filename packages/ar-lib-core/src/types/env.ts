@@ -108,6 +108,7 @@ export interface Env {
   // Environment Variables - Token/Auth Expiry (unit: seconds)
   // ============================================================
   ISSUER_URL: string;
+  SAML_ENTITY_ID_STYLE?: string; // metadata_url (default) or role_url for generated local SAML entityID values
   SAML_METADATA_SIGNING?: string; // "enabled"/"true"/"1" to sign generated IdP/SP metadata XML
   SAML_AGGREGATE_METADATA_SIGNATURE_POLICY?: string; // strict, warn, or disabled (default: strict in production, warn otherwise)
   ALLOWED_ORIGINS?: string; // Comma-separated list of allowed origins (CORS + WebAuthn RP ID)

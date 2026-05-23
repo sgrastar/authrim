@@ -43,6 +43,7 @@ import {
 import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { verifyXmlSignature, hasSignature } from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
 
 const SESSION_COOKIE_NAME = 'authrim_session';
 const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
@@ -69,7 +70,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
-  const issuerUrl = buildIssuerUrl(env, tenantId);
+  const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
   try {
     // Parse POST data
@@ -89,7 +90,8 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Parse and validate Response
     const { responseId, issuer, assertion, inResponseTo } = parseAndValidateResponse(
       responseXml,
-      issuerUrl
+      issuerUrl,
+      spEntityId
     );
 
     // Get IdP configuration
@@ -422,7 +424,11 @@ interface ParsedSAMLAssertion extends SAMLAssertion {
 /**
  * Parse and validate SAML Response
  */
-function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedResponse {
+function parseAndValidateResponse(
+  xml: string,
+  issuerUrl: string,
+  spEntityId: string
+): ParsedResponse {
   const doc = parseXml(xml);
 
   const responseElement = doc.documentElement;
@@ -494,7 +500,7 @@ function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedRespons
   }
 
   // Parse Assertion (pass inResponseTo for SubjectConfirmationData validation)
-  const assertion = parseAssertion(assertionElements[0], issuerUrl, inResponseTo);
+  const assertion = parseAssertion(assertionElements[0], issuerUrl, spEntityId, inResponseTo);
 
   return { responseId, issuer, inResponseTo, assertion };
 }
@@ -509,6 +515,7 @@ function parseAndValidateResponse(xml: string, issuerUrl: string): ParsedRespons
 function parseAssertion(
   assertionElement: Element,
   issuerUrl: string,
+  spEntityId: string,
   inResponseTo?: string
 ): ParsedSAMLAssertion {
   const id = getAttribute(assertionElement, 'ID') || '';
@@ -589,7 +596,7 @@ function parseAssertion(
     const audiences = audienceElements.map((el) => getTextContent(el) || '').filter(Boolean);
 
     // Validate audience
-    const expectedAudience = `${issuerUrl}/saml/sp`;
+    const expectedAudience = spEntityId;
     if (audiences.length === 0 || !audiences.includes(expectedAudience)) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Audience in SAML Assertion');

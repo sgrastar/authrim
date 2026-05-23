@@ -151,6 +151,10 @@ import {
   adminExternalProvidersUpdateHandler,
   adminExternalProvidersDeleteHandler,
   adminExternalProvidersDiscoverOidcHandler,
+  adminExternalTokenRefreshConfigGetHandler,
+  adminExternalTokenRefreshConfigUpdateHandler,
+  adminExternalTokenRefreshRunsListHandler,
+  adminExternalTokenRefreshRunHandler,
 } from './external-providers';
 import { adminSessionStatusHandler, adminLogoutHandler } from './admin-session';
 import {
@@ -1644,6 +1648,12 @@ app.post('/api/admin/external-providers/discover-oidc', adminExternalProvidersDi
 app.get('/api/admin/external-providers/:id', adminExternalProvidersGetHandler);
 app.put('/api/admin/external-providers/:id', adminExternalProvidersUpdateHandler);
 app.delete('/api/admin/external-providers/:id', adminExternalProvidersDeleteHandler);
+
+// Admin External IdP token refresh endpoints (proxy to ar-bridge)
+app.get('/api/admin/external-token-refresh/config', adminExternalTokenRefreshConfigGetHandler);
+app.put('/api/admin/external-token-refresh/config', adminExternalTokenRefreshConfigUpdateHandler);
+app.get('/api/admin/external-token-refresh/runs', adminExternalTokenRefreshRunsListHandler);
+app.post('/api/admin/external-token-refresh/run', adminExternalTokenRefreshRunHandler);
 
 // Admin RBAC endpoints - Phase 1
 

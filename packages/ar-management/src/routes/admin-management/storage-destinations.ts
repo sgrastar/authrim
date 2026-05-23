@@ -39,7 +39,6 @@ type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthC
 const STORAGE_DESTINATION_PROVIDERS = new Set<StorageDestinationProvider>([
   'r2',
   'aws_s3',
-  'sftp',
   'custom',
 ]);
 const STORAGE_DESTINATION_STATUSES = new Set<AdminResourceStatus>(['active', 'disabled']);

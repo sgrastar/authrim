@@ -21,6 +21,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   generateId,
+  getLogger,
   createAuditLogFromContext,
   SchemaLoader,
   CustomClaimSchemaHistoryManager,
@@ -39,6 +40,7 @@ import {
   renameStoredCustomClaimData,
   resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
+import { seedDefaultClaimsForTenant } from './admin-tenants';
 
 /**
  * Hono context type with admin auth variable
@@ -338,8 +340,11 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
     const isActive = c.req.query('is_active');
     const isSystem = c.req.query('is_system');
     const operationStatus = c.req.query('operation_status');
+    const hasFilters = Boolean(
+      search || fieldType || isPii || isActive || isSystem || operationStatus
+    );
 
-    const { schemas, total } = await listCustomClaimSchemas(adapter, {
+    let { schemas, total } = await listCustomClaimSchemas(adapter, {
       tenantId,
       search,
       fieldType: fieldType && VALID_FIELD_TYPES.includes(fieldType as FieldType) ? fieldType : null,
@@ -351,6 +356,19 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
       limit,
       offset,
     });
+
+    if (!hasFilters && total === 0) {
+      await seedDefaultClaimsForTenant(tenantId, adapter, getLogger(asBaseContext(c)), {
+        throwOnError: true,
+      });
+      const seededResult = await listCustomClaimSchemas(adapter, {
+        tenantId,
+        limit,
+        offset,
+      });
+      schemas = seededResult.schemas;
+      total = seededResult.total;
+    }
 
     return c.json({
       schemas,

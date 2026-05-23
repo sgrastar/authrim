@@ -17,7 +17,6 @@ import {
   buildUIUrl,
   shouldUseBuiltinForms,
   createConfigurationError,
-  buildIssuerUrl,
   usesNakedDomainIssuer,
   getLogger,
 } from '@authrim/ar-lib-core';
@@ -41,6 +40,7 @@ import { buildSAMLAssertionTiming } from './assertion-timing';
 import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { resolveSAMLAuthnContextClassRef } from './authn-context';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -60,7 +60,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     // Get SP entity ID from query parameter
     const spEntityId = c.req.query('sp');
     const tenantId = resolveSAMLTenantIdFromContext(c);
-    const issuerUrl = buildIssuerUrl(env, tenantId);
+    const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
     if (!spEntityId) {
       // Return list of available SPs if no SP specified
@@ -112,6 +112,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     // Generate SAML Response (no InResponseTo since this is IdP-initiated)
     const responseXml = await generateIdPInitiatedResponse(
       issuerUrl,
+      idpEntityId,
       env,
       spConfig,
       userInfo,
@@ -194,6 +195,7 @@ async function getUserInfo(
  */
 async function generateIdPInitiatedResponse(
   issuerUrl: string,
+  idpEntityId: string,
   env: Env,
   spConfig: SAMLSPConfig,
   userInfo: { id: string; email: string; name?: string },
@@ -232,7 +234,7 @@ async function generateIdPInitiatedResponse(
     responseId,
     assertionId: generateSAMLId(),
     issueInstant: timing.issueInstant,
-    issuer: `${issuerUrl}/saml/idp`,
+    issuer: idpEntityId,
     destination: spConfig.acsUrl,
     // No inResponseTo for IdP-initiated
     recipientUrl: spConfig.acsUrl,
