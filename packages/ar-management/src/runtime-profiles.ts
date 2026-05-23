@@ -39,6 +39,7 @@ import {
   type RuntimeProfileReferenceCatalog,
 } from './runtime-profile-reference-status';
 import { ensureSupportedTenantId } from './single-tenant-guard';
+import { requireTenantResourceAccess } from './admin-tenant-access';
 import { writeAdminAuditLog } from './admin-shared';
 
 const VALID_KINDS = [
@@ -1057,6 +1058,10 @@ export async function adminTenantRuntimeProfilesHandler(c: Context<{ Bindings: E
   const blocked = await ensureSupportedTenantId(c, tenantId);
   if (blocked) {
     return blocked;
+  }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
   }
 
   try {

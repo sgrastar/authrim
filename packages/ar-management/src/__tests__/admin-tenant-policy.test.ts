@@ -55,7 +55,19 @@ function buildApp(env: Partial<Env>) {
   app.get('/api/admin/tenants/:id/runtime-profiles', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('id') })
   );
+  app.get('/api/admin/tenants/:id/info', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('id') })
+  );
+  app.get('/api/admin/tenants/:id/invitations', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('id') })
+  );
   app.get('/api/admin/tenants/:tenantId/settings/oauth', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('tenantId') })
+  );
+  app.get('/api/admin/tenants/:tenantId/email-settings', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('tenantId') })
+  );
+  app.get('/api/admin/settings/logging/tenant/:tenantId', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('tenantId') })
   );
   return { app, env: env as Env };
@@ -194,6 +206,29 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(res.status).toBe(200);
   });
 
+  it('allows tenant info and invitation inventory endpoints without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const infoRes = await app.request(
+      makeRequest('/api/admin/tenants/default/info'),
+      undefined,
+      env
+    );
+    const invitationsRes = await app.request(
+      makeRequest('/api/admin/tenants/default/invitations'),
+      undefined,
+      env
+    );
+
+    expect(infoRes.status).toBe(200);
+    expect(invitationsRes.status).toBe(200);
+  });
+
   it('allows admin login endpoints without X-Tenant-Id', async () => {
     const { app, env } = buildApp({
       BASE_DOMAIN: 'auth.example.com',
@@ -295,6 +330,40 @@ describe('adminTenantPolicyMiddleware', () => {
 
     const res = await app.request(
       makeRequest('/api/admin/tenants/acme/settings/oauth', { 'X-Tenant-Id': 'beta' }),
+      undefined,
+      env
+    );
+
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when X-Tenant-Id does not match tenant email-settings path', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB({ tenantRow: { id: 'acme' } }),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const res = await app.request(
+      makeRequest('/api/admin/tenants/acme/email-settings', { 'X-Tenant-Id': 'beta' }),
+      undefined,
+      env
+    );
+
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when X-Tenant-Id does not match tenant logging override path', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB({ tenantRow: { id: 'acme' } }),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const res = await app.request(
+      makeRequest('/api/admin/settings/logging/tenant/acme', { 'X-Tenant-Id': 'beta' }),
       undefined,
       env
     );

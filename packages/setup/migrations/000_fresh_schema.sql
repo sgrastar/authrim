@@ -1539,6 +1539,7 @@ CREATE TABLE upstream_providers (
 
   -- UI customization
   icon_url TEXT,                         -- Provider icon for login button
+  icon_name TEXT,                        -- Built-in icon name for login button
   button_color TEXT,                     -- Brand color for login button (hex, light theme)
   button_color_dark TEXT,                -- Brand color for login button (hex, dark theme)
   button_text TEXT,                      -- Custom button text (optional)

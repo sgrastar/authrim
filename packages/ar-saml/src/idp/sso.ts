@@ -65,6 +65,7 @@ import {
   UnsupportedSAMLResponseBindingError,
   validateSAMLResponseProtocolBinding,
 } from './response-destination';
+import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { applySAMLResponseSigningPolicy } from './signing';
 import { applySAMLAssertionEncryptionPolicy } from './encryption';
 import {
@@ -307,14 +308,17 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
       if (uiConfig?.baseUrl) {
         const loginPath = uiConfig.paths?.login || '/login';
-        const loginUrl = new URL(loginPath, uiConfig.baseUrl);
+        const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
+        const loginBaseUrl =
+          loginUrlPolicy === 'tenant_host' ? buildIssuerUrl(env, tenantId) : uiConfig.baseUrl;
+        const loginUrl = new URL(loginPath, loginBaseUrl);
         loginUrl.searchParams.set('saml_request_id', authnRequest.id);
         loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
         loginUrl.searchParams.set('return_to', 'saml_sso');
         if (authnInteraction.forceReauthentication) {
           loginUrl.searchParams.set('force_authn', 'true');
         }
-        if (tenantId) {
+        if (loginUrlPolicy === 'ui_base_url' && tenantId) {
           loginUrl.searchParams.set('tenant_hint', tenantId);
         }
         return c.redirect(loginUrl.toString());

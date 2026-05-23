@@ -10,6 +10,7 @@
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 
 	const providerId = $derived($page.params.id);
 	const nameIdFormats = [
@@ -49,6 +50,7 @@
 	let metadataUrl = $state('');
 	let providerName = $state('Authrim');
 	let logoUrl = $state('');
+	let iconName = $state('');
 	let entityId = $state('');
 	let ssoUrl = $state('');
 	let acsUrl = $state('');
@@ -106,6 +108,7 @@
 		metadataUrl = data.config.metadataUrl || '';
 		providerName = data.config.providerName || 'Authrim';
 		logoUrl = data.config.logoUrl || '';
+		iconName = data.config.iconName || '';
 		entityId = data.config.entityId || '';
 		ssoUrl = data.config.ssoUrl || '';
 		acsUrl = data.config.acsUrl || '';
@@ -200,7 +203,9 @@
 
 	function providerCertificateMessageClass() {
 		const validation = provider?.config.certificateValidation;
-		return validation?.allExpired || validation?.hasExpired ? 'alert alert-error' : 'alert alert-warning';
+		return validation?.allExpired || validation?.hasExpired
+			? 'alert alert-error'
+			: 'alert alert-warning';
 	}
 
 	function parseMapping(): Record<string, string> {
@@ -233,6 +238,7 @@
 		const config: SAMLProviderConfig = {
 			description: description.trim(),
 			logoUrl: logoUrl.trim() || undefined,
+			iconName: iconName || undefined,
 			entityId: entityId.trim(),
 			metadataUrl: metadataUrl.trim(),
 			sloUrl: sloUrl.trim(),
@@ -530,6 +536,15 @@
 							fitted into a square.
 						</p>
 					</div>
+
+					<div class="form-group form-group-full">
+						<LoginProviderIconPicker
+							bind:value={iconName}
+							defaultIcon="buildings"
+							defaultLabel="Default SAML icon"
+							description="Used when Login UI Logo URL is empty."
+						/>
+					</div>
 				</div>
 			</div>
 
@@ -761,7 +776,6 @@
 					</div>
 				</div>
 			{/if}
-
 		</form>
 
 		<div class="panel">

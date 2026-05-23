@@ -460,6 +460,10 @@ export interface SAMLLogoutResponse {
 export interface SAMLSPConfig {
   /** Operator note shown in Admin UI */
   description?: string;
+  /** Logo URL shown on Login UI provider buttons */
+  logoUrl?: string;
+  /** Built-in Login UI icon name used when logoUrl is not configured */
+  iconName?: string;
   /** SP Entity ID */
   entityId: string;
   /** Assertion Consumer Service URL */
@@ -578,6 +582,8 @@ export interface SAMLIdPConfig {
   providerName?: string;
   /** Logo URL from IdP metadata UIInfo, shown on Login UI provider buttons */
   logoUrl?: string;
+  /** Built-in Login UI icon name used when logoUrl is not configured */
+  iconName?: string;
   /** IdP Entity ID */
   entityId: string;
   /** SSO URL */

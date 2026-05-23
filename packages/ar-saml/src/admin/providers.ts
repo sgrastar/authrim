@@ -88,6 +88,7 @@ import { previewTrustCertificate } from './certificate-preview';
 import {
   getSAMLLocalEntityIds,
   getSAMLPublicSettings,
+  normalizeSAMLInteractiveLoginUrlPolicy,
   normalizeSAMLEntityIdStyle,
   putSAMLPublicSettings,
 } from '../common/entity-id';
@@ -409,17 +410,32 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       return forbidden;
     }
 
-    const body = (await c.req.json()) as { entityIdStyle?: unknown };
-    const entityIdStyle = normalizeSAMLEntityIdStyle(body.entityIdStyle);
+    const body = (await c.req.json()) as {
+      entityIdStyle?: unknown;
+      interactiveLoginUrlPolicy?: unknown;
+    };
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const before = await getSAMLPublicSettings(c.env, tenantId);
+    const entityIdStyle =
+      body.entityIdStyle === undefined
+        ? before.entityIdStyle
+        : normalizeSAMLEntityIdStyle(body.entityIdStyle);
+    const interactiveLoginUrlPolicy =
+      body.interactiveLoginUrlPolicy === undefined
+        ? before.interactiveLoginUrlPolicy
+        : normalizeSAMLInteractiveLoginUrlPolicy(body.interactiveLoginUrlPolicy);
     if (!entityIdStyle) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'entityIdStyle' },
       });
     }
+    if (!interactiveLoginUrlPolicy) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'interactiveLoginUrlPolicy' },
+      });
+    }
 
-    const tenantId = resolveSAMLTenantIdFromContext(c);
-    const before = await getSAMLPublicSettings(c.env, tenantId);
-    await putSAMLPublicSettings(c.env, tenantId, { entityIdStyle });
+    await putSAMLPublicSettings(c.env, tenantId, { entityIdStyle, interactiveLoginUrlPolicy });
 
     await createSAMLAdminAudit(c, {
       tenantId,
@@ -429,6 +445,8 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       metadata: {
         before_entity_id_style: before.entityIdStyle,
         entity_id_style: entityIdStyle,
+        before_interactive_login_url_policy: before.interactiveLoginUrlPolicy,
+        interactive_login_url_policy: interactiveLoginUrlPolicy,
       },
     });
 
@@ -436,6 +454,7 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
     return c.json({
       tenantId,
       entityIdStyle,
+      interactiveLoginUrlPolicy,
       metadata: buildSAMLMetadataPublicationSettings(c.env),
       generated: {
         issuerUrl: entityIds.issuerUrl,

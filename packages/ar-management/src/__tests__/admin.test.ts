@@ -143,6 +143,7 @@ import {
   adminClientUpdateHandler,
   adminClientDeleteHandler,
   adminClientRegenerateSecretHandler,
+  adminSessionGetHandler,
 } from '../admin';
 
 // Helper to create mock D1Database
@@ -223,6 +224,7 @@ function createMockContext(options: {
   headers?: Record<string, string>;
   jsonError?: Error;
   envOverrides?: Partial<Env>;
+  tenantId?: string;
 }) {
   const mockDB =
     options.db ??
@@ -241,7 +243,7 @@ function createMockContext(options: {
 
   // Store context values (simulating Hono's context store)
   const contextStore = new Map<string, unknown>([
-    ['tenantId', 'default'],
+    ['tenantId', options.tenantId ?? 'default'],
     [
       'adminAuth',
       {
@@ -372,6 +374,87 @@ describe('Admin API Handlers', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('tenant isolation for UID-scoped endpoints', () => {
+    it('returns 404 for a user ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('FROM users_core WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['user-from-tenant-a', 'tenant-b']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'user-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminUserGetHandler(c);
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 404 for a client ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('FROM oauth_clients WHERE tenant_id = ? AND client_id = ?')) {
+          expect(params).toEqual(['tenant-b', 'client-from-tenant-a']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'client-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminClientGetHandler(c);
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 404 for a session ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('FROM sessions WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['session-from-tenant-a', 'tenant-b']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'session-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminSessionGetHandler(c);
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 404 for an audit log ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('sqlite_master')) {
+          return { name: 'event_log' };
+        }
+        if (sql.includes('FROM event_log') && sql.includes('WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['audit-from-tenant-a', 'tenant-b']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'audit-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminAuditLogGetHandler(c);
+      expect(response.status).toBe(404);
+    });
   });
 
   describe('adminStatsHandler', () => {

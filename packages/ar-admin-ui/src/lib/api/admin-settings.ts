@@ -272,7 +272,7 @@ export const adminSettingsAPI = {
 		const resolvedTenantId = resolveTenantId(tenantId);
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${resolvedTenantId}/settings/${category}`,
-			{}
+			{ tenantId: resolvedTenantId }
 		);
 
 		if (!response.ok) {
@@ -363,6 +363,7 @@ export const adminSettingsAPI = {
 			{
 				method: 'PATCH',
 				includeJsonContentType: true,
+				tenantId: resolvedTenantId,
 				body: JSON.stringify(request)
 			}
 		);
@@ -623,12 +624,14 @@ export const scopedSettingsAPI = {
 		params.set('includeInheritance', 'true');
 
 		let url: string;
+		let tenantHeaderId: string | undefined;
 		switch (scope.level) {
 			case 'platform':
 				url = `${API_BASE_URL}/api/admin/platform/settings/${category}`;
 				break;
 			case 'tenant':
-				url = `${API_BASE_URL}/api/admin/tenants/${resolveTenantId(scope.tenantId)}/settings/${category}`;
+				tenantHeaderId = resolveTenantId(scope.tenantId);
+				url = `${API_BASE_URL}/api/admin/tenants/${tenantHeaderId}/settings/${category}`;
 				break;
 			case 'client':
 				if (!scope.clientId) {
@@ -639,7 +642,8 @@ export const scopedSettingsAPI = {
 		}
 
 		const response = await adminFetch(`${url}?${params}`, {
-			skipTenantHeader: scope.level === 'platform'
+			skipTenantHeader: scope.level === 'platform',
+			tenantId: tenantHeaderId
 		});
 
 		if (!response.ok) {

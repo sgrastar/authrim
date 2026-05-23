@@ -8,6 +8,7 @@
 		type SAMLAttributeReleaseRule,
 		type SAMLAttributePreset,
 		type SAMLEntityIdStyle,
+		type SAMLInteractiveLoginUrlPolicy,
 		type SAMLFederationTrustProfile,
 		type SAMLProvider,
 		type SAMLSettings
@@ -26,6 +27,7 @@
 	let actionMessage = $state('');
 	let copiedKey = $state('');
 	let savingSettings = $state(false);
+	let draftInteractiveLoginUrlPolicy = $state<SAMLInteractiveLoginUrlPolicy>('tenant_host');
 	let selectedPreset = $state<SAMLAttributePreset | null>(null);
 	let showCreatePreset = $state(false);
 	let creatingPreset = $state(false);
@@ -79,6 +81,7 @@
 			samlSettings = settingsResult;
 			tenantInfo = tenantInfoResult;
 			draftEntityIdStyle = settingsResult.entityIdStyle;
+			draftInteractiveLoginUrlPolicy = settingsResult.interactiveLoginUrlPolicy;
 			providers = providerResult.providers;
 			presets = presetResult.presets;
 			federationTrustProfiles = trustProfileResult.profiles;
@@ -101,15 +104,25 @@
 		}
 	}
 
-	async function saveEntityIdStyle() {
-		if (!samlSettings || samlSettings.entityIdStyle === draftEntityIdStyle || savingSettings) return;
+	const hasSAMLSettingsChanges = $derived(
+		!!samlSettings &&
+			(samlSettings.entityIdStyle !== draftEntityIdStyle ||
+				samlSettings.interactiveLoginUrlPolicy !== draftInteractiveLoginUrlPolicy)
+	);
+
+	async function saveSAMLSettings() {
+		if (!samlSettings || !hasSAMLSettingsChanges || savingSettings) return;
 		savingSettings = true;
 		actionMessage = '';
 		error = '';
 		try {
-			samlSettings = await adminSAMLAPI.updateSettings({ entityIdStyle: draftEntityIdStyle });
+			samlSettings = await adminSAMLAPI.updateSettings({
+				entityIdStyle: draftEntityIdStyle,
+				interactiveLoginUrlPolicy: draftInteractiveLoginUrlPolicy
+			});
 			draftEntityIdStyle = samlSettings.entityIdStyle;
-			actionMessage = 'SAML entityID style updated';
+			draftInteractiveLoginUrlPolicy = samlSettings.interactiveLoginUrlPolicy;
+			actionMessage = 'SAML settings updated';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to update SAML settings';
 		} finally {
@@ -180,6 +193,10 @@
 
 	function entityIdStyleLabel(style: SAMLEntityIdStyle) {
 		return style === 'metadata_url' ? 'Metadata URL' : 'Role URL';
+	}
+
+	function interactiveLoginPolicyLabel(policy: SAMLInteractiveLoginUrlPolicy) {
+		return policy === 'tenant_host' ? 'Tenant Host' : 'UI Base URL';
 	}
 
 	function metadataSigningLabel(settings: SAMLSettings) {
@@ -676,11 +693,54 @@
 					<div>
 						<h2 class="panel-title">SAML Published Entity IDs</h2>
 						<p class="form-hint">
-							Tenant-wide Authrim IdP/SP entityID style used in generated metadata and SAML
-							messages.
+							Tenant-wide SAML defaults used in generated metadata and interactive login redirects.
 						</p>
 					</div>
-					<span class="badge badge-info">{entityIdStyleLabel(samlSettings.entityIdStyle)}</span>
+					<div class="metadata-publication-badges">
+						<span class="badge badge-info">{entityIdStyleLabel(samlSettings.entityIdStyle)}</span>
+						<span class="badge badge-info">
+							Login {interactiveLoginPolicyLabel(samlSettings.interactiveLoginUrlPolicy)}
+						</span>
+					</div>
+				</div>
+
+				<div class="saml-login-policy">
+					<div>
+						<div class="preview-heading">Interactive Login Redirect</div>
+						<p class="form-hint">
+							Controls where SAML sends users when an SP-initiated or IdP-initiated flow needs
+							interactive login. SAML defaults to tenant host so the login UI can resolve the
+							tenant from the request host.
+						</p>
+					</div>
+					<div class="entity-id-style-options" role="radiogroup" aria-label="SAML login redirect policy">
+						<label class="entity-id-style-option">
+							<input
+								type="radio"
+								name="interactiveLoginUrlPolicy"
+								checked={draftInteractiveLoginUrlPolicy === 'tenant_host'}
+								onchange={() => (draftInteractiveLoginUrlPolicy = 'tenant_host')}
+								disabled={savingSettings}
+							/>
+							<span>
+								<strong>Tenant Host</strong>
+								<small>Use this tenant's /login URL. Default for SAML.</small>
+							</span>
+						</label>
+						<label class="entity-id-style-option">
+							<input
+								type="radio"
+								name="interactiveLoginUrlPolicy"
+								checked={draftInteractiveLoginUrlPolicy === 'ui_base_url'}
+								onchange={() => (draftInteractiveLoginUrlPolicy = 'ui_base_url')}
+								disabled={savingSettings}
+							/>
+							<span>
+								<strong>UI Base URL</strong>
+								<small>Use global UI_URL /login with tenant_hint.</small>
+							</span>
+						</label>
+					</div>
 				</div>
 
 				<div class="entity-id-settings-layout">
@@ -797,10 +857,10 @@
 				<div class="form-actions compact-actions">
 					<button
 						class="btn btn-primary btn-sm"
-						onclick={saveEntityIdStyle}
-						disabled={savingSettings || draftEntityIdStyle === samlSettings.entityIdStyle}
+						onclick={saveSAMLSettings}
+						disabled={savingSettings || !hasSAMLSettingsChanges}
 					>
-						{savingSettings ? 'Saving...' : 'Save Entity IDs'}
+						{savingSettings ? 'Saving...' : 'Save SAML Settings'}
 					</button>
 				</div>
 			</div>
@@ -979,6 +1039,15 @@
 
 	.compact-panel-header {
 		align-items: flex-start;
+	}
+
+	.saml-login-policy {
+		display: grid;
+		grid-template-columns: minmax(240px, 1fr) minmax(240px, 360px);
+		gap: 20px;
+		margin-top: 16px;
+		padding-bottom: 16px;
+		border-bottom: 1px solid var(--border-color);
 	}
 
 	.entity-id-settings-layout {
@@ -1289,6 +1358,7 @@
 		}
 
 		.entity-id-settings-layout,
+		.saml-login-policy,
 		.entity-id-row,
 		.saml-endpoint-row,
 		.metadata-publication-grid {

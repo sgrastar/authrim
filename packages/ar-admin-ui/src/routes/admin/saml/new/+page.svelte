@@ -15,6 +15,7 @@
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { onMount } from 'svelte';
 
 	type SetupMode = 'metadata_url' | 'metadata_xml' | 'manual';
@@ -55,6 +56,7 @@
 	let metadataXml = $state('');
 	let providerName = $state('Authrim');
 	let logoUrl = $state('');
+	let iconName = $state('');
 	let entityId = $state('');
 	let ssoUrl = $state('');
 	let acsUrl = $state('');
@@ -208,6 +210,7 @@
 		const config: SAMLProviderConfig = {
 			description: description.trim() || undefined,
 			logoUrl: logoUrl.trim() || undefined,
+			iconName: iconName || undefined,
 			entityId: entityId.trim(),
 			sloUrl: sloUrl.trim() || undefined,
 			nameIdFormat,
@@ -250,6 +253,7 @@
 		const config: SAMLProviderConfig = {
 			description: description.trim() || undefined,
 			logoUrl: logoUrl.trim() || undefined,
+			iconName: iconName || undefined,
 			...selectedPresetConfig()
 		};
 		if (providerType !== 'saml_sp') {
@@ -277,6 +281,7 @@
 	function applyPreviewConfig(config: SAMLProviderConfig) {
 		providerName = config.providerName || providerName;
 		logoUrl = config.logoUrl || '';
+		iconName = config.iconName || iconName;
 		entityId = config.entityId || '';
 		ssoUrl = config.ssoUrl || '';
 		acsUrl = config.acsUrl || '';
@@ -438,7 +443,8 @@
 		} catch (err) {
 			metadataImported = false;
 			metadataImportedProviderType = '';
-			metadataImportError = err instanceof Error ? err.message : 'Failed to import SAML metadata XML';
+			metadataImportError =
+				err instanceof Error ? err.message : 'Failed to import SAML metadata XML';
 		} finally {
 			importingMetadata = false;
 		}
@@ -454,7 +460,8 @@
 			metadataImported = false;
 			metadataImportedProviderType = '';
 			if (options.sourceUrl) {
-				federationProfileName = federationProfileName || buildFederationProfileName(options.sourceUrl);
+				federationProfileName =
+					federationProfileName || buildFederationProfileName(options.sourceUrl);
 				federationProfileUrlPattern = federationProfileUrlPattern || options.sourceUrl;
 			} else {
 				federationProfileName = federationProfileName || 'SAML federation';
@@ -630,7 +637,10 @@
 		}
 	}
 
-	async function previewFederationCertificate(source: 'url' | 'pem', options: { quiet?: boolean } = {}) {
+	async function previewFederationCertificate(
+		source: 'url' | 'pem',
+		options: { quiet?: boolean } = {}
+	) {
 		const certificateUrl = federationProfileCertificateUrl.trim();
 		const certificate = federationProfileCertificate.trim();
 		if (source === 'url' && !certificateUrl) {
@@ -674,7 +684,10 @@
 		}
 		if (federationCertificatePreviewTimer) clearTimeout(federationCertificatePreviewTimer);
 		federationCertificatePreviewTimer = setTimeout(() => {
-			if (federationProfileCertificate.trim() && !federationProfileCertificate.trim().startsWith('https://')) {
+			if (
+				federationProfileCertificate.trim() &&
+				!federationProfileCertificate.trim().startsWith('https://')
+			) {
 				void previewFederationCertificate('pem', { quiet: true });
 			}
 		}, 350);
@@ -691,7 +704,9 @@
 		loadingProviderCertificate = true;
 		providerCertificateError = '';
 		try {
-			const preview = await adminSAMLAPI.previewTrustCertificate({ certificate: certificate.trim() });
+			const preview = await adminSAMLAPI.previewTrustCertificate({
+				certificate: certificate.trim()
+			});
 			providerCertificatePreview = preview;
 			certificate = preview.certificate;
 		} catch (err) {
@@ -967,64 +982,63 @@
 		{/if}
 
 		{#if !isEditingFederationProfile}
-		<div class="panel">
-			<h2 class="panel-title">SAML Configuration</h2>
-			<p class="form-hint panel-hint">
-				Enter a metadata URL to automatically detect a single IdP/SP provider or a federation
-				aggregate containing multiple entities.
-			</p>
+			<div class="panel">
+				<h2 class="panel-title">SAML Configuration</h2>
+				<p class="form-hint panel-hint">
+					Enter a metadata URL to automatically detect a single IdP/SP provider or a federation
+					aggregate containing multiple entities.
+				</p>
 
-			<div class="metadata-import-row">
-				<div class="form-group metadata-import-input">
-					<label for="metadataUrl" class="form-label">Metadata URL</label>
-					<input
-						id="metadataUrl"
-						type="url"
-						bind:value={metadataUrl}
-						oninput={handleMetadataUrlInput}
-						onchange={scheduleMetadataImport}
-						onpaste={scheduleMetadataImport}
-						class="form-input"
-						placeholder="https://example.com/saml/metadata"
-					/>
+				<div class="metadata-import-row">
+					<div class="form-group metadata-import-input">
+						<label for="metadataUrl" class="form-label">Metadata URL</label>
+						<input
+							id="metadataUrl"
+							type="url"
+							bind:value={metadataUrl}
+							oninput={handleMetadataUrlInput}
+							onchange={scheduleMetadataImport}
+							onpaste={scheduleMetadataImport}
+							class="form-input"
+							placeholder="https://example.com/saml/metadata"
+						/>
+					</div>
+					<button
+						type="button"
+						class="btn btn-secondary metadata-import-button"
+						onclick={() => importMetadataFromUrl()}
+						disabled={importingMetadata}
+					>
+						{#if importingMetadata}
+							<i class="i-ph-circle-notch loading-spinner"></i>
+							Importing Metadata...
+						{:else}
+							Import Metadata
+						{/if}
+					</button>
 				</div>
-				<button
-					type="button"
-					class="btn btn-secondary metadata-import-button"
-					onclick={() => importMetadataFromUrl()}
-					disabled={importingMetadata}
-				>
-					{#if importingMetadata}
-						<i class="i-ph-circle-notch loading-spinner"></i>
-						Importing Metadata...
-					{:else}
-						Import Metadata
-					{/if}
-				</button>
-			</div>
 
-			{#if importingMetadata}
-				<p class="form-hint loading-hint">
-					<i class="i-ph-circle-notch loading-spinner"></i>
-					Reading metadata, detecting single entity or federation aggregate, and preparing import
-					options.
-				</p>
-			{:else if metadataImportError}
-				<p class="form-error">{metadataImportError}</p>
-			{:else if metadataImportMessage}
-				<p
-					class:form-success={metadataImportTone === 'success'}
-					class:form-warning={metadataImportTone === 'warning'}
-				>
-					{metadataImportMessage}
-				</p>
-			{:else}
-				<p class="form-hint">
-					Single SP metadata selects Service Provider. Single IdP metadata selects Identity
-					Provider. Aggregate metadata opens federation import options.
-				</p>
-			{/if}
-		</div>
+				{#if importingMetadata}
+					<p class="form-hint loading-hint">
+						<i class="i-ph-circle-notch loading-spinner"></i>
+						Reading metadata, detecting single entity or federation aggregate, and preparing import options.
+					</p>
+				{:else if metadataImportError}
+					<p class="form-error">{metadataImportError}</p>
+				{:else if metadataImportMessage}
+					<p
+						class:form-success={metadataImportTone === 'success'}
+						class:form-warning={metadataImportTone === 'warning'}
+					>
+						{metadataImportMessage}
+					</p>
+				{:else}
+					<p class="form-hint">
+						Single SP metadata selects Service Provider. Single IdP metadata selects Identity
+						Provider. Aggregate metadata opens federation import options.
+					</p>
+				{/if}
+			</div>
 		{/if}
 
 		{#if aggregatePreview}
@@ -1165,129 +1179,128 @@
 						{/if}
 					</div>
 				{:else}
-
-				<div class="metadata-import-row">
-					<div class="form-group metadata-import-input">
-						<label for="aggregateSearch" class="form-label">Search entities</label>
-						<input
-							id="aggregateSearch"
-							type="search"
-							bind:value={aggregateEntityQuery}
-							class="form-input"
-							placeholder="entityID, display name, endpoint"
-							onkeydown={(event) => {
-								if (event.key === 'Enter') {
-									event.preventDefault();
-									handleAggregateSearch();
-								}
-							}}
-						/>
-					</div>
-					<button
-						type="button"
-						class="btn btn-secondary metadata-import-button"
-						onclick={handleAggregateSearch}
-					>
-						Search
-					</button>
-				</div>
-
-				{#if aggregateKeywordFacets.length > 0}
-					<div class="aggregate-filter-row">
-						<div class="form-group aggregate-filter-category">
-							<label for="aggregateKeywordCategory" class="form-label">Keyword category</label>
-							<select
-								id="aggregateKeywordCategory"
-								class="form-select"
-								value={aggregateKeywordCategory}
-								onchange={handleAggregateCategoryChange}
-							>
-								{#each aggregateKeywordFacets as facet (facet.category)}
-									<option value={facet.category}>{facet.label}</option>
-								{/each}
-							</select>
+					<div class="metadata-import-row">
+						<div class="form-group metadata-import-input">
+							<label for="aggregateSearch" class="form-label">Search entities</label>
+							<input
+								id="aggregateSearch"
+								type="search"
+								bind:value={aggregateEntityQuery}
+								class="form-input"
+								placeholder="entityID, display name, endpoint"
+								onkeydown={(event) => {
+									if (event.key === 'Enter') {
+										event.preventDefault();
+										handleAggregateSearch();
+									}
+								}}
+							/>
 						</div>
-						{#if activeAggregateKeywordFacet}
-							<div
-								class="aggregate-keyword-options"
-								aria-label={`${activeAggregateKeywordFacet.label} filters`}
-							>
-								{#each activeAggregateKeywordFacet.values as value (value.keyword)}
-									<label class="aggregate-keyword-option">
-										<input
-											type="checkbox"
-											checked={selectedAggregateKeywords.includes(value.keyword)}
-											onchange={() => toggleAggregateKeyword(value.keyword)}
-										/>
-										<span>{value.label}</span>
-										<small>{value.count}</small>
-									</label>
-								{/each}
+						<button
+							type="button"
+							class="btn btn-secondary metadata-import-button"
+							onclick={handleAggregateSearch}
+						>
+							Search
+						</button>
+					</div>
+
+					{#if aggregateKeywordFacets.length > 0}
+						<div class="aggregate-filter-row">
+							<div class="form-group aggregate-filter-category">
+								<label for="aggregateKeywordCategory" class="form-label">Keyword category</label>
+								<select
+									id="aggregateKeywordCategory"
+									class="form-select"
+									value={aggregateKeywordCategory}
+									onchange={handleAggregateCategoryChange}
+								>
+									{#each aggregateKeywordFacets as facet (facet.category)}
+										<option value={facet.category}>{facet.label}</option>
+									{/each}
+								</select>
+							</div>
+							{#if activeAggregateKeywordFacet}
+								<div
+									class="aggregate-keyword-options"
+									aria-label={`${activeAggregateKeywordFacet.label} filters`}
+								>
+									{#each activeAggregateKeywordFacet.values as value (value.keyword)}
+										<label class="aggregate-keyword-option">
+											<input
+												type="checkbox"
+												checked={selectedAggregateKeywords.includes(value.keyword)}
+												onchange={() => toggleAggregateKeyword(value.keyword)}
+											/>
+											<span>{value.label}</span>
+											<small>{value.count}</small>
+										</label>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
+
+					<p class="form-hint">
+						Showing {aggregateEntities.length} of {aggregateEntityTotal}. Selected {selectedAggregateEntityIds.length}.
+						{#if loadingAggregateEntities}
+							Loading more...
+						{/if}
+					</p>
+
+					<div class="aggregate-entity-list" onscroll={handleAggregateEntityScroll}>
+						{#each aggregateEntities as entity (entity.entityId)}
+							<label class="aggregate-entity-row">
+								<input
+									type="checkbox"
+									checked={selectedAggregateEntityIds.includes(entity.entityId)}
+									onchange={() => toggleAggregateEntity(entity.entityId)}
+									class="checkbox"
+								/>
+								{#if entity.logoUrl}
+									<img class="aggregate-entity-logo" src={entity.logoUrl} alt="" loading="lazy" />
+								{:else}
+									<div
+										class="aggregate-entity-logo aggregate-entity-logo--empty"
+										aria-hidden="true"
+									></div>
+								{/if}
+								<span>
+									<strong>{entity.displayName || entity.entityId}</strong>
+									<small>{entity.role} · {entity.entityId}</small>
+									{#if entity.acsUrl || entity.ssoUrl}
+										<small>{entity.acsUrl || entity.ssoUrl}</small>
+									{/if}
+									{#if entity.keywords?.length}
+										<small class="aggregate-entity-keywords">{entity.keywords.join(', ')}</small>
+									{/if}
+								</span>
+							</label>
+						{/each}
+						{#if aggregateHasMoreEntities}
+							<div class="aggregate-load-more">
+								<button
+									type="button"
+									class="btn btn-secondary"
+									disabled={loadingAggregateEntities}
+									onclick={() => loadAggregateEntities(aggregateEntitiesOffset)}
+								>
+									{loadingAggregateEntities ? 'Loading...' : 'Load more'}
+								</button>
 							</div>
 						{/if}
 					</div>
-				{/if}
 
-				<p class="form-hint">
-					Showing {aggregateEntities.length} of {aggregateEntityTotal}. Selected {selectedAggregateEntityIds.length}.
-					{#if loadingAggregateEntities}
-						Loading more...
-					{/if}
-				</p>
-
-				<div class="aggregate-entity-list" onscroll={handleAggregateEntityScroll}>
-					{#each aggregateEntities as entity (entity.entityId)}
-						<label class="aggregate-entity-row">
-							<input
-								type="checkbox"
-								checked={selectedAggregateEntityIds.includes(entity.entityId)}
-								onchange={() => toggleAggregateEntity(entity.entityId)}
-								class="checkbox"
-							/>
-							{#if entity.logoUrl}
-								<img class="aggregate-entity-logo" src={entity.logoUrl} alt="" loading="lazy" />
-							{:else}
-								<div
-									class="aggregate-entity-logo aggregate-entity-logo--empty"
-									aria-hidden="true"
-								></div>
-							{/if}
-							<span>
-								<strong>{entity.displayName || entity.entityId}</strong>
-								<small>{entity.role} · {entity.entityId}</small>
-								{#if entity.acsUrl || entity.ssoUrl}
-									<small>{entity.acsUrl || entity.ssoUrl}</small>
-								{/if}
-								{#if entity.keywords?.length}
-									<small class="aggregate-entity-keywords">{entity.keywords.join(', ')}</small>
-								{/if}
-							</span>
-						</label>
-					{/each}
-					{#if aggregateHasMoreEntities}
-						<div class="aggregate-load-more">
-							<button
-								type="button"
-								class="btn btn-secondary"
-								disabled={loadingAggregateEntities}
-								onclick={() => loadAggregateEntities(aggregateEntitiesOffset)}
-							>
-								{loadingAggregateEntities ? 'Loading...' : 'Load more'}
-							</button>
+					{#if aggregateBatch}
+						<div class="batch-progress">
+							<div>
+								Processed {aggregateBatch.processed} / {aggregateBatch.total}
+								· Succeeded {aggregateBatch.succeeded}
+								· Failed {aggregateBatch.failed}
+							</div>
+							<progress value={aggregateBatch.processed} max={aggregateBatch.total}></progress>
 						</div>
 					{/if}
-				</div>
-
-				{#if aggregateBatch}
-					<div class="batch-progress">
-						<div>
-							Processed {aggregateBatch.processed} / {aggregateBatch.total}
-							· Succeeded {aggregateBatch.succeeded}
-							· Failed {aggregateBatch.failed}
-						</div>
-						<progress value={aggregateBatch.processed} max={aggregateBatch.total}></progress>
-					</div>
-				{/if}
 				{/if}
 			</div>
 		{/if}
@@ -1295,53 +1308,53 @@
 		{#if !aggregatePreview}
 			{#if !isEditingFederationProfile}
 				<div class="panel">
-				<h2 class="panel-title">Choose Provider Type</h2>
-				<p class="form-hint panel-hint">
-					Choose IdP or SP for a single SAML counterparty, or Federation for aggregate metadata
-					trust anchors.
-				</p>
-
-				<div class="template-grid saml-choice-grid">
-					<button
-						type="button"
-						class="template-card"
-						class:template-card-selected={setupTarget === 'saml_idp'}
-						onclick={() => chooseProviderType('saml_idp')}
-					>
-						<div class="i-ph-identification-card h-5 w-5 template-icon"></div>
-						<div class="template-name">Identity Provider</div>
-						<div class="template-desc">External login</div>
-					</button>
-
-					<button
-						type="button"
-						class="template-card"
-						class:template-card-selected={setupTarget === 'saml_sp'}
-						onclick={() => chooseProviderType('saml_sp')}
-					>
-						<div class="i-ph-app-window h-5 w-5 template-icon"></div>
-						<div class="template-name">Service Provider</div>
-						<div class="template-desc">Authrim as IdP</div>
-					</button>
-
-					<button
-						type="button"
-						class="template-card"
-						class:template-card-selected={setupTarget === 'federation'}
-						onclick={chooseFederation}
-					>
-						<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
-						<div class="template-name">Federation</div>
-						<div class="template-desc">Aggregate metadata trust</div>
-					</button>
-				</div>
-
-				{#if metadataImported && metadataImportedProviderType}
-					<p class="form-hint selected-metadata-role">
-						Imported metadata role: {providerTypeLabel(metadataImportedProviderType)}.
+					<h2 class="panel-title">Choose Provider Type</h2>
+					<p class="form-hint panel-hint">
+						Choose IdP or SP for a single SAML counterparty, or Federation for aggregate metadata
+						trust anchors.
 					</p>
-				{/if}
-			</div>
+
+					<div class="template-grid saml-choice-grid">
+						<button
+							type="button"
+							class="template-card"
+							class:template-card-selected={setupTarget === 'saml_idp'}
+							onclick={() => chooseProviderType('saml_idp')}
+						>
+							<div class="i-ph-identification-card h-5 w-5 template-icon"></div>
+							<div class="template-name">Identity Provider</div>
+							<div class="template-desc">External login</div>
+						</button>
+
+						<button
+							type="button"
+							class="template-card"
+							class:template-card-selected={setupTarget === 'saml_sp'}
+							onclick={() => chooseProviderType('saml_sp')}
+						>
+							<div class="i-ph-app-window h-5 w-5 template-icon"></div>
+							<div class="template-name">Service Provider</div>
+							<div class="template-desc">Authrim as IdP</div>
+						</button>
+
+						<button
+							type="button"
+							class="template-card"
+							class:template-card-selected={setupTarget === 'federation'}
+							onclick={chooseFederation}
+						>
+							<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
+							<div class="template-name">Federation</div>
+							<div class="template-desc">Aggregate metadata trust</div>
+						</button>
+					</div>
+
+					{#if metadataImported && metadataImportedProviderType}
+						<p class="form-hint selected-metadata-role">
+							Imported metadata role: {providerTypeLabel(metadataImportedProviderType)}.
+						</p>
+					{/if}
+				</div>
 			{/if}
 
 			{#if setupTarget === 'federation'}
@@ -1435,8 +1448,8 @@
 								placeholder="Paste PEM, base64 DER, or enter a certificate URL above"
 							></textarea>
 							<p class="form-hint">
-								Accepts X.509 certificates in DER or PEM form. Common URL/file extensions are
-								.cer, .crt, and .pem. This is similar to Shibboleth metadata signature validation
+								Accepts X.509 certificates in DER or PEM form. Common URL/file extensions are .cer,
+								.crt, and .pem. This is similar to Shibboleth metadata signature validation
 								configuration.
 							</p>
 							<div class="certificate-actions">
@@ -1459,391 +1472,399 @@
 					</div>
 				</div>
 			{:else}
-			<div class="panel">
-				<h2 class="panel-title">Basic Information</h2>
-
-				<div class="form-grid">
-					<div class="form-group">
-						<label for="name" class="form-label">Name *</label>
-						<input
-							id="name"
-							type="text"
-							bind:value={name}
-							required
-							placeholder={providerType === 'saml_idp' ? 'e.g., MockSAML' : 'e.g., Salesforce SP'}
-							class="form-input"
-						/>
-					</div>
-
-					<div class="form-group">
-						<label for="nameIdFormat" class="form-label">NameID Format</label>
-						<select id="nameIdFormat" bind:value={nameIdFormat} class="form-select">
-							{#each nameIdFormats as format (format.value)}
-								<option value={format.value}>{format.label}</option>
-							{/each}
-						</select>
-					</div>
-
-					<div class="form-group form-group-full">
-						<label for="description" class="form-label">Description</label>
-						<textarea
-							id="description"
-							bind:value={description}
-							class="form-input form-textarea"
-							rows="3"
-							placeholder="Operational note, owner, rollout status, or test purpose"
-						></textarea>
-					</div>
-
-					<div class="form-group form-group-full">
-						<label for="logoUrl" class="form-label">Login UI Logo URL</label>
-						<div class="logo-url-field">
-							<input
-								id="logoUrl"
-								type="url"
-								bind:value={logoUrl}
-								class="form-input"
-								placeholder="https://example.com/logo.png"
-							/>
-							{#if logoUrl}
-								<div class="logo-url-preview" aria-label="Logo preview">
-									<img src={logoUrl} alt="" loading="lazy" />
-								</div>
-							{/if}
-						</div>
-						<p class="form-hint">
-							Optional. Used as the provider logo on Login UI buttons. HTTPS only; the image is
-							fitted into a square.
-						</p>
-					</div>
-				</div>
-			</div>
-
-			<div class="panel">
-				<h2 class="panel-title">Configuration Method</h2>
-				<p class="form-hint panel-hint">
-					Metadata import is preferred. Use manual fields only when the counterparty cannot publish
-					metadata.
-				</p>
-
-				<div class="template-grid saml-choice-grid">
-					<button
-						type="button"
-						class="template-card"
-						class:template-card-selected={setupMode === 'metadata_url'}
-						onclick={() => (setupMode = 'metadata_url')}
-					>
-						<div class="i-ph-link h-5 w-5 template-icon"></div>
-						<div class="template-name">Metadata URL</div>
-						<div class="template-desc">Auto fetch</div>
-					</button>
-
-					<button
-						type="button"
-						class="template-card"
-						class:template-card-selected={setupMode === 'metadata_xml'}
-						onclick={() => (setupMode = 'metadata_xml')}
-					>
-						<div class="i-ph-file-code h-5 w-5 template-icon"></div>
-						<div class="template-name">Metadata XML</div>
-						<div class="template-desc">Paste XML</div>
-					</button>
-
-					<button
-						type="button"
-						class="template-card"
-						class:template-card-selected={setupMode === 'manual'}
-						onclick={() => (setupMode = 'manual')}
-					>
-						<div class="i-ph-sliders h-5 w-5 template-icon"></div>
-						<div class="template-name">Manual</div>
-						<div class="template-desc">Direct input</div>
-					</button>
-				</div>
-			</div>
-
-			<div class="panel">
-				<h2 class="panel-title">SAML Configuration</h2>
-
-				{#if setupMode === 'metadata_url'}
-					<div class="form-group">
-						<label for="metadataUrlMode" class="form-label">Metadata URL *</label>
-						<input
-							id="metadataUrlMode"
-							type="url"
-							bind:value={metadataUrl}
-							class="form-input"
-							placeholder="https://example.com/saml/metadata"
-						/>
-						<p class="form-hint">
-							HTTPS URLs are fetched by the backend and stored with metadata change tracking.
-						</p>
-					</div>
-				{:else if setupMode === 'metadata_xml'}
-					<div class="form-group">
-						<label for="metadataXml" class="form-label">Metadata XML *</label>
-						<textarea
-							id="metadataXml"
-							bind:value={metadataXml}
-							oninput={handleMetadataXmlInput}
-							class="form-input form-textarea monospace"
-							rows="12"
-						></textarea>
-						<p class="form-hint">
-							Paste SAML metadata XML, then import it to detect the role and populate the provider
-							fields.
-						</p>
-						<div class="form-actions compact-actions">
-							<button
-								type="button"
-								class="btn btn-secondary btn-sm"
-								onclick={importMetadataFromXml}
-								disabled={importingMetadata || !metadataXml.trim()}
-							>
-								{#if importingMetadata}
-									<i class="i-ph-circle-notch loading-spinner"></i>
-									Importing Metadata...
-								{:else}
-									Import Metadata
-								{/if}
-							</button>
-						</div>
-						{#if metadataImportError}
-							<p class="form-error">{metadataImportError}</p>
-						{:else if metadataImportMessage}
-							<p
-								class:form-success={metadataImportTone === 'success'}
-								class:form-warning={metadataImportTone === 'warning'}
-							>
-								{metadataImportMessage}
-							</p>
-						{/if}
-					</div>
-				{:else}
-					<div class="form-grid">
-						<div class="form-group form-group-full">
-							<label for="entityId" class="form-label">Entity ID *</label>
-							<input id="entityId" type="text" bind:value={entityId} class="form-input" />
-						</div>
-
-						{#if providerType === 'saml_idp'}
-							<div class="form-group">
-								<label for="ssoUrl" class="form-label">SSO URL *</label>
-								<input id="ssoUrl" type="url" bind:value={ssoUrl} class="form-input" />
-							</div>
-						{:else}
-							<div class="form-group">
-								<label for="acsUrl" class="form-label">ACS URL *</label>
-								<input id="acsUrl" type="url" bind:value={acsUrl} class="form-input" />
-							</div>
-						{/if}
-
-						<div class="form-group">
-							<label for="sloUrl" class="form-label">SLO URL</label>
-							<input id="sloUrl" type="url" bind:value={sloUrl} class="form-input" />
-						</div>
-
-						<div class="form-group form-group-full">
-							<label for="certificate" class="form-label">
-								{providerType === 'saml_idp' ? 'Signing Certificate *' : 'SP Certificate'}
-							</label>
-							<textarea
-								id="certificate"
-								bind:value={certificate}
-								oninput={handleProviderCertificateInput}
-								class="form-input form-textarea monospace"
-								rows="8"
-								placeholder="-----BEGIN CERTIFICATE-----"
-							></textarea>
-							<p class="form-hint">
-								Validate the X.509 certificate before saving when entering metadata manually.
-							</p>
-							<div class="certificate-actions">
-								<button
-									type="button"
-									class="btn btn-secondary btn-sm"
-									onclick={() => previewProviderCertificate()}
-									disabled={loadingProviderCertificate || !certificate.trim()}
-								>
-									{loadingProviderCertificate ? 'Checking...' : 'Validate Certificate'}
-								</button>
-							</div>
-							{#if providerCertificateError}
-								<p class="form-error">{providerCertificateError}</p>
-							{/if}
-							{#if providerCertificatePreview}
-								{@render certificatePreviewCard(providerCertificatePreview)}
-							{/if}
-						</div>
-
-						<div class="form-group form-group-full">
-							<label for="attributeMapping" class="form-label">Attribute Mapping JSON</label>
-							<textarea
-								id="attributeMapping"
-								bind:value={attributeMappingJson}
-								class="form-input form-textarea monospace"
-								rows="6"
-							></textarea>
-						</div>
-					</div>
-
-					<div class="form-checkbox-group compact-checkboxes">
-						<label class="form-checkbox-label">
-							<input type="checkbox" bind:checked={allowPost} class="checkbox" />
-							HTTP-POST
-						</label>
-						<label class="form-checkbox-label">
-							<input type="checkbox" bind:checked={allowRedirect} class="checkbox" />
-							HTTP-Redirect
-						</label>
-					</div>
-				{/if}
-			</div>
-
-			{#if providerType === 'saml_idp'}
 				<div class="panel">
-					<h2 class="panel-title">SP Login Policy</h2>
+					<h2 class="panel-title">Basic Information</h2>
 
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="providerName" class="form-label">SP Display Name</label>
+							<label for="name" class="form-label">Name *</label>
 							<input
-								id="providerName"
+								id="name"
 								type="text"
-								bind:value={providerName}
+								bind:value={name}
+								required
+								placeholder={providerType === 'saml_idp' ? 'e.g., MockSAML' : 'e.g., Salesforce SP'}
 								class="form-input"
-								placeholder="Authrim"
 							/>
 						</div>
 
 						<div class="form-group">
-							<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
-							<select
-								id="authnContextPolicyMode"
-								bind:value={authnContextPolicyMode}
-								class="form-select"
-							>
-								<option value="observe">Observe</option>
-								<option value="require_any">Require allowed value</option>
-							</select>
-						</div>
-
-						<div class="form-group form-group-full">
-							<label for="allowedAuthnContextClassRefs" class="form-label">
-								Allowed AuthnContextClassRef
-							</label>
-							<textarea
-								id="allowedAuthnContextClassRefs"
-								bind:value={allowedAuthnContextClassRefs}
-								class="form-input form-textarea monospace"
-								rows="3"
-							></textarea>
-						</div>
-					</div>
-				</div>
-			{/if}
-
-			{#if providerType === 'saml_sp'}
-				<div class="panel">
-					<h2 class="panel-title">SP Policy</h2>
-
-					<div class="form-grid">
-						<div class="form-group">
-							<label for="samlProfile" class="form-label">Profile</label>
-							<select id="samlProfile" bind:value={samlProfile} class="form-select">
-								<option value="baseline">Baseline</option>
-								<option value="strict">Strict</option>
-								<option value="academic_publisher">Academic Publisher</option>
-								<option value="legacy">Legacy</option>
-							</select>
-						</div>
-
-						<div class="form-group">
-							<label for="attributePreset" class="form-label">Attribute Preset</label>
-							<select
-								id="attributePreset"
-								bind:value={attributePresetId}
-								class="form-select"
-								disabled={loadingPresets}
-							>
-								<option value="">None</option>
-								{#each presets as preset (preset.id)}
-									<option value={preset.id}>{preset.label}</option>
+							<label for="nameIdFormat" class="form-label">NameID Format</label>
+							<select id="nameIdFormat" bind:value={nameIdFormat} class="form-select">
+								{#each nameIdFormats as format (format.value)}
+									<option value={format.value}>{format.label}</option>
 								{/each}
 							</select>
 						</div>
 
-						<div class="form-group">
-							<label for="authnRequestSignaturePolicy" class="form-label">
-								AuthnRequest Signature
-							</label>
-							<select
-								id="authnRequestSignaturePolicy"
-								bind:value={authnRequestSignaturePolicy}
-								class="form-select"
-							>
-								<option value="optional">Optional</option>
-								<option value="required">Required</option>
-								<option value="disabled">Disabled</option>
-							</select>
+						<div class="form-group form-group-full">
+							<label for="description" class="form-label">Description</label>
+							<textarea
+								id="description"
+								bind:value={description}
+								class="form-input form-textarea"
+								rows="3"
+								placeholder="Operational note, owner, rollout status, or test purpose"
+							></textarea>
 						</div>
 
-						<div class="form-group">
-							<label for="authnContextClassRefMode" class="form-label">AuthnContext Mode</label>
-							<select
-								id="authnContextClassRefMode"
-								bind:value={authnContextClassRefMode}
-								class="form-select"
-							>
-								<option value="session">Session aware</option>
-								<option value="legacy_static">Legacy static</option>
-							</select>
+						<div class="form-group form-group-full">
+							<label for="logoUrl" class="form-label">Login UI Logo URL</label>
+							<div class="logo-url-field">
+								<input
+									id="logoUrl"
+									type="url"
+									bind:value={logoUrl}
+									class="form-input"
+									placeholder="https://example.com/logo.png"
+								/>
+								{#if logoUrl}
+									<div class="logo-url-preview" aria-label="Logo preview">
+										<img src={logoUrl} alt="" loading="lazy" />
+									</div>
+								{/if}
+							</div>
+							<p class="form-hint">
+								Optional. Used as the provider logo on Login UI buttons. HTTPS only; the image is
+								fitted into a square.
+							</p>
 						</div>
 
-						<div class="form-group">
-							<label for="defaultAuthnContextClassRef" class="form-label"
-								>Default AuthnContext</label
-							>
-							<input
-								id="defaultAuthnContextClassRef"
-								type="text"
-								bind:value={defaultAuthnContextClassRef}
-								class="form-input"
+						<div class="form-group form-group-full">
+							<LoginProviderIconPicker
+								bind:value={iconName}
+								defaultIcon="buildings"
+								defaultLabel="Default SAML icon"
+								description="Used when Login UI Logo URL is empty."
 							/>
 						</div>
-
-						<div class="form-group">
-							<label for="passkeyAuthnContextClassRef" class="form-label"
-								>Passkey AuthnContext</label
-							>
-							<input
-								id="passkeyAuthnContextClassRef"
-								type="text"
-								bind:value={passkeyAuthnContextClassRef}
-								class="form-input"
-							/>
-						</div>
-					</div>
-
-					<div class="behavior-settings-list">
-						<ToggleSwitch
-							bind:checked={signAssertions}
-							label="Sign Assertions"
-							description="Sign SAML Assertions sent to this service provider."
-						/>
-						<ToggleSwitch
-							bind:checked={signResponses}
-							label="Sign Responses"
-							description="Sign SAML Responses sent to this service provider."
-						/>
 					</div>
 				</div>
-			{/if}
+
+				<div class="panel">
+					<h2 class="panel-title">Configuration Method</h2>
+					<p class="form-hint panel-hint">
+						Metadata import is preferred. Use manual fields only when the counterparty cannot
+						publish metadata.
+					</p>
+
+					<div class="template-grid saml-choice-grid">
+						<button
+							type="button"
+							class="template-card"
+							class:template-card-selected={setupMode === 'metadata_url'}
+							onclick={() => (setupMode = 'metadata_url')}
+						>
+							<div class="i-ph-link h-5 w-5 template-icon"></div>
+							<div class="template-name">Metadata URL</div>
+							<div class="template-desc">Auto fetch</div>
+						</button>
+
+						<button
+							type="button"
+							class="template-card"
+							class:template-card-selected={setupMode === 'metadata_xml'}
+							onclick={() => (setupMode = 'metadata_xml')}
+						>
+							<div class="i-ph-file-code h-5 w-5 template-icon"></div>
+							<div class="template-name">Metadata XML</div>
+							<div class="template-desc">Paste XML</div>
+						</button>
+
+						<button
+							type="button"
+							class="template-card"
+							class:template-card-selected={setupMode === 'manual'}
+							onclick={() => (setupMode = 'manual')}
+						>
+							<div class="i-ph-sliders h-5 w-5 template-icon"></div>
+							<div class="template-name">Manual</div>
+							<div class="template-desc">Direct input</div>
+						</button>
+					</div>
+				</div>
+
+				<div class="panel">
+					<h2 class="panel-title">SAML Configuration</h2>
+
+					{#if setupMode === 'metadata_url'}
+						<div class="form-group">
+							<label for="metadataUrlMode" class="form-label">Metadata URL *</label>
+							<input
+								id="metadataUrlMode"
+								type="url"
+								bind:value={metadataUrl}
+								class="form-input"
+								placeholder="https://example.com/saml/metadata"
+							/>
+							<p class="form-hint">
+								HTTPS URLs are fetched by the backend and stored with metadata change tracking.
+							</p>
+						</div>
+					{:else if setupMode === 'metadata_xml'}
+						<div class="form-group">
+							<label for="metadataXml" class="form-label">Metadata XML *</label>
+							<textarea
+								id="metadataXml"
+								bind:value={metadataXml}
+								oninput={handleMetadataXmlInput}
+								class="form-input form-textarea monospace"
+								rows="12"
+							></textarea>
+							<p class="form-hint">
+								Paste SAML metadata XML, then import it to detect the role and populate the provider
+								fields.
+							</p>
+							<div class="form-actions compact-actions">
+								<button
+									type="button"
+									class="btn btn-secondary btn-sm"
+									onclick={importMetadataFromXml}
+									disabled={importingMetadata || !metadataXml.trim()}
+								>
+									{#if importingMetadata}
+										<i class="i-ph-circle-notch loading-spinner"></i>
+										Importing Metadata...
+									{:else}
+										Import Metadata
+									{/if}
+								</button>
+							</div>
+							{#if metadataImportError}
+								<p class="form-error">{metadataImportError}</p>
+							{:else if metadataImportMessage}
+								<p
+									class:form-success={metadataImportTone === 'success'}
+									class:form-warning={metadataImportTone === 'warning'}
+								>
+									{metadataImportMessage}
+								</p>
+							{/if}
+						</div>
+					{:else}
+						<div class="form-grid">
+							<div class="form-group form-group-full">
+								<label for="entityId" class="form-label">Entity ID *</label>
+								<input id="entityId" type="text" bind:value={entityId} class="form-input" />
+							</div>
+
+							{#if providerType === 'saml_idp'}
+								<div class="form-group">
+									<label for="ssoUrl" class="form-label">SSO URL *</label>
+									<input id="ssoUrl" type="url" bind:value={ssoUrl} class="form-input" />
+								</div>
+							{:else}
+								<div class="form-group">
+									<label for="acsUrl" class="form-label">ACS URL *</label>
+									<input id="acsUrl" type="url" bind:value={acsUrl} class="form-input" />
+								</div>
+							{/if}
+
+							<div class="form-group">
+								<label for="sloUrl" class="form-label">SLO URL</label>
+								<input id="sloUrl" type="url" bind:value={sloUrl} class="form-input" />
+							</div>
+
+							<div class="form-group form-group-full">
+								<label for="certificate" class="form-label">
+									{providerType === 'saml_idp' ? 'Signing Certificate *' : 'SP Certificate'}
+								</label>
+								<textarea
+									id="certificate"
+									bind:value={certificate}
+									oninput={handleProviderCertificateInput}
+									class="form-input form-textarea monospace"
+									rows="8"
+									placeholder="-----BEGIN CERTIFICATE-----"
+								></textarea>
+								<p class="form-hint">
+									Validate the X.509 certificate before saving when entering metadata manually.
+								</p>
+								<div class="certificate-actions">
+									<button
+										type="button"
+										class="btn btn-secondary btn-sm"
+										onclick={() => previewProviderCertificate()}
+										disabled={loadingProviderCertificate || !certificate.trim()}
+									>
+										{loadingProviderCertificate ? 'Checking...' : 'Validate Certificate'}
+									</button>
+								</div>
+								{#if providerCertificateError}
+									<p class="form-error">{providerCertificateError}</p>
+								{/if}
+								{#if providerCertificatePreview}
+									{@render certificatePreviewCard(providerCertificatePreview)}
+								{/if}
+							</div>
+
+							<div class="form-group form-group-full">
+								<label for="attributeMapping" class="form-label">Attribute Mapping JSON</label>
+								<textarea
+									id="attributeMapping"
+									bind:value={attributeMappingJson}
+									class="form-input form-textarea monospace"
+									rows="6"
+								></textarea>
+							</div>
+						</div>
+
+						<div class="form-checkbox-group compact-checkboxes">
+							<label class="form-checkbox-label">
+								<input type="checkbox" bind:checked={allowPost} class="checkbox" />
+								HTTP-POST
+							</label>
+							<label class="form-checkbox-label">
+								<input type="checkbox" bind:checked={allowRedirect} class="checkbox" />
+								HTTP-Redirect
+							</label>
+						</div>
+					{/if}
+				</div>
+
+				{#if providerType === 'saml_idp'}
+					<div class="panel">
+						<h2 class="panel-title">SP Login Policy</h2>
+
+						<div class="form-grid">
+							<div class="form-group">
+								<label for="providerName" class="form-label">SP Display Name</label>
+								<input
+									id="providerName"
+									type="text"
+									bind:value={providerName}
+									class="form-input"
+									placeholder="Authrim"
+								/>
+							</div>
+
+							<div class="form-group">
+								<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
+								<select
+									id="authnContextPolicyMode"
+									bind:value={authnContextPolicyMode}
+									class="form-select"
+								>
+									<option value="observe">Observe</option>
+									<option value="require_any">Require allowed value</option>
+								</select>
+							</div>
+
+							<div class="form-group form-group-full">
+								<label for="allowedAuthnContextClassRefs" class="form-label">
+									Allowed AuthnContextClassRef
+								</label>
+								<textarea
+									id="allowedAuthnContextClassRefs"
+									bind:value={allowedAuthnContextClassRefs}
+									class="form-input form-textarea monospace"
+									rows="3"
+								></textarea>
+							</div>
+						</div>
+					</div>
+				{/if}
+
+				{#if providerType === 'saml_sp'}
+					<div class="panel">
+						<h2 class="panel-title">SP Policy</h2>
+
+						<div class="form-grid">
+							<div class="form-group">
+								<label for="samlProfile" class="form-label">Profile</label>
+								<select id="samlProfile" bind:value={samlProfile} class="form-select">
+									<option value="baseline">Baseline</option>
+									<option value="strict">Strict</option>
+									<option value="academic_publisher">Academic Publisher</option>
+									<option value="legacy">Legacy</option>
+								</select>
+							</div>
+
+							<div class="form-group">
+								<label for="attributePreset" class="form-label">Attribute Preset</label>
+								<select
+									id="attributePreset"
+									bind:value={attributePresetId}
+									class="form-select"
+									disabled={loadingPresets}
+								>
+									<option value="">None</option>
+									{#each presets as preset (preset.id)}
+										<option value={preset.id}>{preset.label}</option>
+									{/each}
+								</select>
+							</div>
+
+							<div class="form-group">
+								<label for="authnRequestSignaturePolicy" class="form-label">
+									AuthnRequest Signature
+								</label>
+								<select
+									id="authnRequestSignaturePolicy"
+									bind:value={authnRequestSignaturePolicy}
+									class="form-select"
+								>
+									<option value="optional">Optional</option>
+									<option value="required">Required</option>
+									<option value="disabled">Disabled</option>
+								</select>
+							</div>
+
+							<div class="form-group">
+								<label for="authnContextClassRefMode" class="form-label">AuthnContext Mode</label>
+								<select
+									id="authnContextClassRefMode"
+									bind:value={authnContextClassRefMode}
+									class="form-select"
+								>
+									<option value="session">Session aware</option>
+									<option value="legacy_static">Legacy static</option>
+								</select>
+							</div>
+
+							<div class="form-group">
+								<label for="defaultAuthnContextClassRef" class="form-label"
+									>Default AuthnContext</label
+								>
+								<input
+									id="defaultAuthnContextClassRef"
+									type="text"
+									bind:value={defaultAuthnContextClassRef}
+									class="form-input"
+								/>
+							</div>
+
+							<div class="form-group">
+								<label for="passkeyAuthnContextClassRef" class="form-label"
+									>Passkey AuthnContext</label
+								>
+								<input
+									id="passkeyAuthnContextClassRef"
+									type="text"
+									bind:value={passkeyAuthnContextClassRef}
+									class="form-input"
+								/>
+							</div>
+						</div>
+
+						<div class="behavior-settings-list">
+							<ToggleSwitch
+								bind:checked={signAssertions}
+								label="Sign Assertions"
+								description="Sign SAML Assertions sent to this service provider."
+							/>
+							<ToggleSwitch
+								bind:checked={signResponses}
+								label="Sign Responses"
+								description="Sign SAML Responses sent to this service provider."
+							/>
+						</div>
+					</div>
+				{/if}
 			{/if}
 		{/if}
 
-		{#if (providerCertificatePreview?.warnings.length ?? 0) > 0 ||
-			(federationCertificatePreview?.warnings.length ?? 0) > 0}
+		{#if (providerCertificatePreview?.warnings.length ?? 0) > 0 || (federationCertificatePreview?.warnings.length ?? 0) > 0}
 			<div class="save-warning-panel">
 				<div class="save-warning-title">
 					<i class="i-ph-warning-circle"></i>

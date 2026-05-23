@@ -57,6 +57,12 @@ import {
   getSingleTenantId,
   isSingleTenantMode,
 } from './single-tenant-guard';
+import {
+  getAdminAuth,
+  getTenantInventoryScope,
+  hasPlatformTenantManagementAuthority,
+  requirePlatformTenantManagementAuthority,
+} from './admin-tenant-access';
 
 // =============================================================================
 // Constants
@@ -1259,15 +1265,39 @@ async function runTenantD1PoolProvisioning(
  */
 export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const adminAuth = getAdminAuth(c);
+    const hasPlatformAuthority = hasPlatformTenantManagementAuthority(adminAuth);
+    const scopedTenantIds = hasPlatformAuthority ? [] : getTenantInventoryScope(adminAuth);
+
+    if (!hasPlatformAuthority && scopedTenantIds.length === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
+        variables: {
+          required_scope: 'tenant',
+          reason: 'No tenant inventory scope is available for this administrator',
+        },
+      });
+    }
+
     const adapter = createAdapter(c);
     const singleTenantMode = isSingleTenantMode(c.env);
-    const query = singleTenantMode
-      ? 'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ? ORDER BY is_default DESC, name ASC'
-      : 'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants ORDER BY is_default DESC, name ASC';
-    const rows = await adapter.query<TenantRow>(
-      query,
-      singleTenantMode ? [getSingleTenantId(c.env)] : []
-    );
+    const tenantFilters: string[] = [];
+    const tenantParams: string[] = [];
+    if (singleTenantMode) {
+      tenantFilters.push('id = ?');
+      tenantParams.push(getSingleTenantId(c.env));
+    } else if (!hasPlatformAuthority) {
+      tenantFilters.push(`id IN (${scopedTenantIds.map(() => '?').join(', ')})`);
+      tenantParams.push(...scopedTenantIds);
+    }
+
+    const query = [
+      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants',
+      tenantFilters.length > 0 ? `WHERE ${tenantFilters.join(' AND ')}` : '',
+      'ORDER BY is_default DESC, name ASC',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const rows = await adapter.query<TenantRow>(query, tenantParams);
     const tenantD1Pool = isTenantD1PoolMode(c.env)
       ? await requireAdminDatabaseAdapter(c.env, 'tenant-d1-slot-list')
           .query<{
@@ -1317,6 +1347,11 @@ export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
  * Create a new tenant
  */
 export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) {
+    return platformError;
+  }
+
   if (isSingleTenantMode(c.env)) {
     return createSingleTenantMutationError(c, 'tenant');
   }
@@ -1499,6 +1534,11 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
  * Get a single tenant
  */
 export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) {
+    return platformError;
+  }
+
   const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
@@ -1534,6 +1574,11 @@ export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
  * Note: id and is_default cannot be changed via this endpoint
  */
 export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) {
+    return platformError;
+  }
+
   const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
@@ -1651,6 +1696,11 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
  * Retry a failed tenant D1 provisioning draft after the slot has been reset.
  */
 export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) {
+    return platformError;
+  }
+
   const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
@@ -1785,6 +1835,11 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
  * Remove a failed tenant draft while keeping the contaminated slot in reset_required.
  */
 export async function adminTenantProvisioningCleanupHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) {
+    return platformError;
+  }
+
   const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
@@ -1865,6 +1920,11 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
  * The primary tenant cannot be deleted.
  */
 export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) {
+    return platformError;
+  }
+
   const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
@@ -1962,6 +2022,11 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
  * Set a tenant as the default tenant (atomically, using D1 batch)
  */
 export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) {
+    return platformError;
+  }
+
   const id = c.req.param('id')!;
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {

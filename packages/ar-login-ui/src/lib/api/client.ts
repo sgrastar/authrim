@@ -1521,6 +1521,7 @@ interface ExternalIdPProvider {
 	providerType: 'oidc' | 'oauth2';
 	enabled: boolean;
 	iconUrl?: string;
+	iconName?: string;
 	buttonColor?: string;
 	buttonText?: string;
 }
@@ -1627,6 +1628,7 @@ export interface ExternalIdPProviderAdmin {
 	jitProvisioning: boolean;
 	requireEmailVerified: boolean;
 	iconUrl?: string;
+	iconName?: string;
 	buttonColor?: string;
 	buttonText?: string;
 	createdAt: number;
@@ -1649,7 +1651,8 @@ export interface CreateProviderRequest {
 	auto_link_email?: boolean;
 	jit_provisioning?: boolean;
 	require_email_verified?: boolean;
-	icon_url?: string;
+	icon_url?: string | null;
+	icon_name?: string | null;
 	button_color?: string;
 	button_text?: string;
 	authorization_endpoint?: string;
@@ -1676,7 +1679,8 @@ export interface UpdateProviderRequest {
 	auto_link_email?: boolean;
 	jit_provisioning?: boolean;
 	require_email_verified?: boolean;
-	icon_url?: string;
+	icon_url?: string | null;
+	icon_name?: string | null;
 	button_color?: string;
 	button_text?: string;
 	authorization_endpoint?: string;

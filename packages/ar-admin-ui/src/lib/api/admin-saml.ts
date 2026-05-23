@@ -88,6 +88,7 @@ export interface SAMLProviderConfig {
 	description?: string;
 	providerName?: string;
 	logoUrl?: string;
+	iconName?: string;
 	entityId?: string;
 	metadataUrl?: string;
 	metadataXml?: string;
@@ -143,10 +144,12 @@ export interface SAMLProvider {
 }
 
 export type SAMLEntityIdStyle = 'metadata_url' | 'role_url';
+export type SAMLInteractiveLoginUrlPolicy = 'tenant_host' | 'ui_base_url';
 
 export interface SAMLSettings {
 	tenantId: string;
 	entityIdStyle: SAMLEntityIdStyle;
+	interactiveLoginUrlPolicy: SAMLInteractiveLoginUrlPolicy;
 	metadata: {
 		signingMode: 'disabled' | 'enabled';
 		signingEnabled: boolean;
@@ -358,7 +361,10 @@ export const adminSAMLAPI = {
 		return (await response.json()) as SAMLSettings;
 	},
 
-	async updateSettings(request: { entityIdStyle: SAMLEntityIdStyle }): Promise<SAMLSettings> {
+	async updateSettings(request: {
+		entityIdStyle?: SAMLEntityIdStyle;
+		interactiveLoginUrlPolicy?: SAMLInteractiveLoginUrlPolicy;
+	}): Promise<SAMLSettings> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
@@ -572,11 +578,14 @@ export const adminSAMLAPI = {
 		certificateUrl?: string;
 		certificate?: string;
 	}): Promise<SAMLTrustCertificatePreview> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-metadata/certificate-preview`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(request)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/certificate-preview`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to preview federation trust certificate');

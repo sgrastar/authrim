@@ -22,6 +22,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
+import { requireTenantResourceAccess } from './admin-tenant-access';
 
 type AdminInfoEnv = Env & {
   LOGIN_UI_ENABLED?: string;
@@ -59,6 +60,10 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
   const blocked = await ensureSupportedTenantId(c, tenantId);
   if (blocked) {
     return blocked;
+  }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
   }
 
   try {

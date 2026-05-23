@@ -20,6 +20,7 @@ import {
   usesNakedDomainIssuer,
   getLogger,
 } from '@authrim/ar-lib-core';
+import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
 import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
@@ -94,12 +95,21 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         return c.json(createConfigurationError(), 500);
       }
 
-      const loginUrl = buildUIUrl(
-        uiConfig,
-        'login',
-        { return_to: returnTo },
-        usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
-      );
+      const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
+      const loginUrl =
+        loginUrlPolicy === 'tenant_host'
+          ? new URL(uiConfig.paths?.login || '/login', issuerUrl).toString()
+          : buildUIUrl(
+              uiConfig,
+              'login',
+              { return_to: returnTo },
+              usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
+            );
+      if (loginUrlPolicy === 'tenant_host') {
+        const tenantLoginUrl = new URL(loginUrl);
+        tenantLoginUrl.searchParams.set('return_to', returnTo);
+        return c.redirect(tenantLoginUrl.toString());
+      }
       return c.redirect(loginUrl);
     }
 

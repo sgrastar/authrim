@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   adminTenantCreateHandler,
+  adminTenantGetHandler,
   adminTenantProvisioningCleanupHandler,
   adminTenantProvisioningRetryHandler,
   adminTenantsListHandler,
@@ -54,6 +55,7 @@ const adapters = vi.hoisted(() => ({
 vi.mock('@authrim/ar-lib-core', () => ({
   AR_ERROR_CODES: {
     ADMIN_RESOURCE_NOT_FOUND: 'admin_resource_not_found',
+    ADMIN_INSUFFICIENT_PERMISSIONS: 'admin_insufficient_permissions',
     INTERNAL_ERROR: 'internal_error',
     VALIDATION_INVALID_VALUE: 'validation_invalid_value',
   },
@@ -63,7 +65,13 @@ vi.mock('@authrim/ar-lib-core', () => ({
   createAuditLogFromContext: vi.fn(async () => {}),
   createErrorResponse: vi.fn((_c: unknown, code: string, details?: unknown) => {
     const status =
-      code === 'validation_invalid_value' ? 400 : code === 'admin_resource_not_found' ? 404 : 500;
+      code === 'validation_invalid_value'
+        ? 400
+        : code === 'admin_resource_not_found'
+          ? 404
+          : code === 'admin_insufficient_permissions'
+            ? 403
+            : 500;
     return new Response(JSON.stringify({ error: code, details }), { status });
   }),
   getDefaultTenantId: vi.fn(() => 'default'),
@@ -203,7 +211,8 @@ function createTenantRowFromInsertParams(params: unknown[]): TenantRow {
 function createContext(
   body: Record<string, unknown>,
   envOverrides: Partial<Env> = {},
-  routeParams: Record<string, string> = {}
+  routeParams: Record<string, string> = {},
+  adminAuth: Record<string, unknown> = { adminId: 'platform-admin', roles: ['system_admin'] }
 ) {
   const responseHeaders = new Headers();
   return {
@@ -225,7 +234,7 @@ function createContext(
     }),
     get: vi.fn((key: string) => {
       if (key === 'adminAuth') {
-        return { adminId: 'platform-admin', roles: ['system_admin'] };
+        return adminAuth;
       }
       return undefined;
     }),
@@ -294,6 +303,56 @@ describe('tenant D1 pool tenant management', () => {
       assigned_slots: 1,
       reset_required_slots: 1,
     });
+  });
+
+  it('limits tenant inventory list to the authenticated tenant scope for non-platform admins', async () => {
+    adapters.defaultAdapter = createAdapter((sql, params) => {
+      if (sql.includes('FROM tenants')) {
+        expect(sql).toContain('WHERE id IN (?)');
+        expect(params).toEqual(['first']);
+        return [createTenantRow('first', { name: 'First' })];
+      }
+      return null;
+    });
+    adapters.adminAdapter = createAdapter(() => []);
+
+    const response = await adminTenantsListHandler(
+      createContext(
+        {},
+        {},
+        {},
+        {
+          adminId: 'tenant-admin',
+          roles: ['admin'],
+          tenantId: 'first',
+          tenantScope: ['first'],
+        }
+      )
+    );
+    const body = (await response.json()) as { tenants: Array<{ id: string }> };
+
+    expect(response.status).toBe(200);
+    expect(body.tenants.map((tenant) => tenant.id)).toEqual(['first']);
+  });
+
+  it('denies tenant detail access for non-platform admins even when the URL is known', async () => {
+    const response = await adminTenantGetHandler(
+      createContext(
+        {},
+        {},
+        { id: 'second' },
+        {
+          adminId: 'tenant-admin',
+          roles: ['admin'],
+          tenantId: 'first',
+          tenantScope: ['first'],
+        }
+      )
+    );
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(403);
+    expect(body.error).toBe('admin_insufficient_permissions');
   });
 
   it('returns 409 when no preallocated tenant D1 slot is available', async () => {
