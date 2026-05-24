@@ -16,6 +16,7 @@ interface GeneratedConfig {
   features?: {
     queue?: { enabled?: boolean };
     r2?: { enabled?: boolean };
+    email?: { provider?: string };
   };
   profiles?: {
     defaults?: {
@@ -101,6 +102,7 @@ describeGenerated('generated test environment logging/storage contract', () => {
   });
 
   it('maps each generated worker to the bindings needed by its log write paths', () => {
+    const config = readJson<GeneratedConfig>(resolve(generatedEnvDir, 'config.json'));
     const management = readWrangler('ar-management');
     expect(bindingNames(management, '[[env.test.d1_databases]]')).toEqual(
       expect.arrayContaining(['DB', 'DB_ADMIN', 'DB_PII'])
@@ -114,7 +116,11 @@ describeGenerated('generated test environment logging/storage contract', () => {
         'SENSITIVE_DETAILS',
       ])
     );
-    expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toContain('EMAIL');
+    if (config.features?.email?.provider === 'cloudflare') {
+      expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toContain('EMAIL');
+    } else {
+      expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toEqual([]);
+    }
     expect(vars(management)).toMatchObject({
       DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
       DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
