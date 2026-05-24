@@ -59,6 +59,7 @@ export interface Env {
   // R2 Buckets
   AVATARS: R2Bucket;
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
+  AUDIT_ARCHIVE?: R2Bucket; // Canonical R2 archive for audit/admin audit/runtime log chunks and DLQ backup
   IMPORT_ARTIFACTS?: R2Bucket; // Dedicated import input artifacts
   EXPORT_ARTIFACTS?: R2Bucket; // Generated export/output artifacts
   SENSITIVE_DETAILS?: R2Bucket; // Encrypted sensitive detail payloads (admin audit, webhook payloads, etc.)
@@ -376,5 +377,4 @@ export interface Env {
   LOGGING_DELIVERY_QUEUE?: Queue; // Default logging delivery queue
   LOGGING_DELIVERY_BULK_QUEUE?: Queue; // Bulk logging delivery queue
   LOGGING_DELIVERY_QUEUE_NAMES?: string; // Comma-separated generated queue names for routing
-  AUDIT_ARCHIVE?: R2Bucket; // R2 bucket for audit log archive and DLQ backup
 }

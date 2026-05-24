@@ -66,6 +66,7 @@ describe('r2-provision command', () => {
     provisionR2BucketsMock.mockResolvedValue([
       { binding: 'AVATARS', name: 'prod-authrim-avatars' },
       { binding: 'DIAGNOSTIC_LOGS', name: 'prod-diagnostic-logs' },
+      { binding: 'AUDIT_ARCHIVE', name: 'prod-audit-archive' },
       { binding: 'IMPORT_ARTIFACTS', name: 'prod-import-artifacts' },
       { binding: 'EXPORT_ARTIFACTS', name: 'prod-export-artifacts' },
       { binding: 'SENSITIVE_DETAILS', name: 'prod-sensitive-details' },
@@ -92,6 +93,7 @@ describe('r2-provision command', () => {
     expect(lock.r2).toEqual({
       AVATARS: { name: 'prod-authrim-avatars' },
       DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
+      AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
       IMPORT_ARTIFACTS: { name: 'prod-import-artifacts' },
       EXPORT_ARTIFACTS: { name: 'prod-export-artifacts' },
       SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
@@ -115,7 +117,7 @@ describe('r2-provision command', () => {
 
     expect(deployCommandMock).not.toHaveBeenCalled();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
-    expect(Object.keys(lock.r2)).toHaveLength(5);
+    expect(Object.keys(lock.r2)).toHaveLength(6);
   });
 
   it('does not update local state or deploy when bucket provisioning fails', async () => {

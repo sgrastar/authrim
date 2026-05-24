@@ -93,6 +93,7 @@ describe('Cloudflare R2 helpers', () => {
       {
         AVATARS: { name: 'prod-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
+        AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
         IMPORT_ARTIFACTS: { name: 'prod-import-artifacts' },
         EXPORT_ARTIFACTS: { name: 'prod-export-artifacts' },
         SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
@@ -100,6 +101,7 @@ describe('Cloudflare R2 helpers', () => {
       [
         'prod-authrim-avatars',
         'prod-diagnostic-logs',
+        'prod-audit-archive',
         'prod-import-artifacts',
         'prod-export-artifacts',
         'prod-sensitive-details',
@@ -107,8 +109,8 @@ describe('Cloudflare R2 helpers', () => {
     );
 
     expect(status.enabled).toBe(true);
-    expect(status.required).toBe(5);
-    expect(status.configured).toBe(5);
+    expect(status.required).toBe(6);
+    expect(status.configured).toBe(6);
     expect(status.missing).toEqual([]);
     expect(status.buckets.every((bucket) => bucket.state === 'configured')).toBe(true);
   });

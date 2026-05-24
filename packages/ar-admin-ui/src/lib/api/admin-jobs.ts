@@ -198,7 +198,7 @@ export interface TenantDatabaseProvisionRequest {
 	tenant_slug?: string;
 	generation?: number;
 	activate?: boolean;
-	execution_mode?: 'plan_only' | 'operator_cli' | 'cloudflare_api';
+	execution_mode?: 'plan_only' | 'operator_cli';
 	reason?: string;
 }
 

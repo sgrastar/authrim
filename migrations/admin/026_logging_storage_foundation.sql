@@ -546,7 +546,7 @@ CREATE TABLE IF NOT EXISTS logging_export_jobs (
   tenant_key TEXT,
   log_type TEXT,
   plane TEXT,
-  format TEXT NOT NULL CHECK (format IN ('jsonl', 'csv')),
+  format TEXT NOT NULL CHECK (format IN ('jsonl', 'csv', 'zip')),
   status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'expired')),
   artifact_object_ref TEXT,
   manifest_object_ref TEXT,

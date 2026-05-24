@@ -50,7 +50,7 @@ describe('writeLogChunkToR2', () => {
     );
   });
 
-  it('includes surface in the object key when provided', async () => {
+  it('keeps archive surface in metadata while using the canonical shard key layout', async () => {
     const bucket = {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
@@ -66,9 +66,10 @@ describe('writeLogChunkToR2', () => {
       records: [{ id: 'evt-1', eventAt: 1, payload: { id: 'evt-1' } }],
     });
 
-    expect(result.objectKey).toContain(
-      '/t_safeopaque/archive/admin_audit/storage_destinations/2026/05/20/10/'
+    expect(result.objectKey).toMatch(
+      /^logs\/v1\/t_safeopaque\/archive\/admin_audit\/2026\/05\/20\/10\/shard-\d\d\/chk_[^/]+\.jsonl\.gz$/u
     );
+    expect(result.objectKey).not.toContain('/storage_destinations/');
   });
 
   it('uses the catalog pending/commit protocol around R2 writes', async () => {

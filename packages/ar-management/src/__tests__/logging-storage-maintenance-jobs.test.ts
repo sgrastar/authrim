@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { buildArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
+import { encodeLogRecordBlocks } from '@authrim/ar-lib-logging/chunks';
 
 const mockAdapter = vi.hoisted(() => {
   const adapter = {
@@ -328,7 +330,7 @@ describe('logging/storage maintenance jobs', () => {
 
     expect(result.manifests).toEqual({ published: 1, skipped: 0 });
     expect(put).toHaveBeenCalledWith(
-      expect.stringContaining('logs/t_manifest/archive/audit/manifests/'),
+      expect.stringContaining('logs/t_manifest/manifests/audit/'),
       expect.any(Uint8Array),
       expect.objectContaining({
         httpMetadata: { contentType: 'application/json' },
@@ -466,7 +468,7 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        DIAGNOSTIC_LOGS: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet },
         LOGGING_DELIVERY_QUEUE: { send: deliverySend },
       } as unknown as Env,
       log
@@ -668,7 +670,7 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        DIAGNOSTIC_LOGS: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet },
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -696,6 +698,142 @@ describe('logging/storage maintenance jobs', () => {
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE logging_message_export_builds'),
       expect.arrayContaining(['verify_manifest', 1])
+    );
+    vi.useRealTimers();
+  });
+
+  it('builds zip export artifacts as on-demand B-format projections', async () => {
+    const now = 1_779_321_600_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const exportJobRow = messageJobRow({
+      id: 'lmj_export_zip',
+      kind: 'export_build',
+      lane: 'default',
+      source_type: 'payload_object',
+      source_id: 'lexp_zip',
+      payload_object_ref: 'message-jobs/export_build/zip-job.json',
+      payload_type: 'export_build',
+      payload_schema_version: 1,
+      idempotency_key: 'export:lexp_zip',
+    });
+    let dueReturned = false;
+    let claimToken = '';
+    mockAdapter.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('claimed_until IS NOT NULL') || sql.includes('expires_at IS NOT NULL')) {
+        return [];
+      }
+      if (sql.includes('FROM logging_message_jobs') && sql.includes('not_before <= ?')) {
+        if (dueReturned) {
+          return [];
+        }
+        dueReturned = true;
+        return [exportJobRow];
+      }
+      if (sql.includes('FROM log_object_catalog')) {
+        return [
+          {
+            id: 'obj_zip_1',
+            tenant_key: 't_message',
+            log_type: 'audit',
+            plane: 'archive',
+            surface: null,
+            object_key: 'logs/chunk.jsonl',
+            object_kind: 'chunk',
+            status: 'committed',
+            record_count: 1,
+            byte_count: 100,
+            checksum_sha256: 'sha256:chunk',
+            created_at: now - 5000,
+            committed_at: now - 4000,
+          },
+        ];
+      }
+      return [];
+    });
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM logging_message_jobs')) {
+        return {
+          ...exportJobRow,
+          status: 'claimed',
+          attempt_count: 1,
+          claim_token: claimToken,
+          claimed_at: now,
+          claimed_until: now + 5 * 60 * 1000,
+          started_at: now,
+        };
+      }
+      if (sql.includes('FROM logging_export_jobs')) {
+        return {
+          id: 'lexp_zip',
+          format: 'zip',
+          status: 'queued',
+          expires_at: now + 7 * 24 * 60 * 60 * 1000,
+        };
+      }
+      return null;
+    });
+    mockAdapter.execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('claim_token = ?') && sql.includes('claimed_at = ?')) {
+        claimToken = String(params[1]);
+      }
+      return { rowsAffected: 1 };
+    });
+    const payloadGet = vi.fn().mockResolvedValue({
+      text: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          payload_type: 'export_build',
+          schema_version: 1,
+          payload_id: 'qpl_export_zip',
+          message_job_id: 'lmj_export_zip',
+          tenant_key: 't_message',
+          lane: 'default',
+          created_at: now,
+          export_job_id: 'lexp_zip',
+          phase: 'plan',
+          partition_strategy: 'time_bucket_shard',
+          snapshot_cutoff_at: now,
+          requested_by: 'admin-1',
+          filters: {
+            tenant_key: 't_message',
+            log_type: 'audit',
+            plane: 'archive',
+            source: 'catalog',
+            time_start: null,
+            time_end: null,
+            limit: 100,
+            include_payload: false,
+          },
+        })
+      ),
+    });
+    const artifactPut = vi.fn().mockResolvedValue(undefined);
+
+    const result = await processLoggingStorageMaintenanceJobs(
+      {
+        AUDIT_ARCHIVE: { get: payloadGet },
+        EXPORT_ARTIFACTS: { put: artifactPut },
+      } as unknown as Env,
+      log
+    );
+
+    expect(result.messageJobs).toMatchObject({ claimed: 1, completed: 1 });
+    const partCall = artifactPut.mock.calls.find(([key]) =>
+      String(key).endsWith('/parts/part-00000.zip')
+    );
+    expect(partCall).toBeTruthy();
+    expect(partCall?.[1]).toBeInstanceOf(Uint8Array);
+    expect(Array.from((partCall?.[1] as Uint8Array).slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+    expect(partCall?.[2]).toMatchObject({
+      httpMetadata: { contentType: 'application/zip' },
+    });
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE logging_export_jobs'),
+      expect.arrayContaining([
+        'completed',
+        'logging-exports/v1/lexp_zip/parts/part-00000.zip',
+        'logging-exports/v1/lexp_zip/manifest.json',
+      ])
     );
     vi.useRealTimers();
   });
@@ -791,7 +929,7 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        DIAGNOSTIC_LOGS: { get: payloadGet, put: payloadPut },
+        AUDIT_ARCHIVE: { get: payloadGet, put: payloadPut },
         EXPORT_ARTIFACTS: { put: vi.fn() },
         LOGGING_MESSAGE_BULK_QUEUE: { send },
       } as unknown as Env,
@@ -948,8 +1086,9 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        DIAGNOSTIC_LOGS: { get: payloadGet },
-        AUDIT_ARCHIVE: { get: chunkGet },
+        AUDIT_ARCHIVE: {
+          get: (key: string) => (key.startsWith('message-jobs/') ? payloadGet(key) : chunkGet(key)),
+        },
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -960,6 +1099,176 @@ describe('logging/storage maintenance jobs', () => {
     expect(artifactPut).toHaveBeenCalledWith(
       'logging-exports/v1/lexp_record/parts/part-00000.jsonl',
       expect.stringContaining('"record_payload_error":"object_not_found"'),
+      expect.any(Object)
+    );
+    vi.useRealTimers();
+  });
+
+  it('projects D-format archive records into compliance export records', async () => {
+    const now = 1_779_321_600_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const exportJobRow = messageJobRow({
+      id: 'lmj_export_projection',
+      kind: 'export_build',
+      lane: 'bulk',
+      source_type: 'payload_object',
+      source_id: 'lexp_projection',
+      payload_object_ref: 'message-jobs/export_build/projection.json',
+      payload_type: 'export_build',
+      payload_schema_version: 1,
+      idempotency_key: 'export:lexp_projection',
+    });
+    const archiveRecord = buildArchiveLogRecordV1({
+      id: 'evt_projection',
+      tenantKey: 't_message',
+      logType: 'audit',
+      plane: 'archive',
+      surface: 'admin',
+      eventAt: now - 1000,
+      severity: 'info',
+      type: 'client.created',
+      source: 'authrim/audit',
+      actor: { type: 'admin_user', id_hash: 'adm_hash' },
+      resource: { type: 'client', id: 'client-1' },
+      result: 'success',
+      summary: { action: 'client.created', resource_type: 'client' },
+      delivery: { targetType: 'r2', destinationId: 'dest_audit' },
+    });
+    const encoded = await encodeLogRecordBlocks(
+      [{ id: 'evt_projection', eventAt: now - 1000, payload: archiveRecord }],
+      { compression: 'none' }
+    );
+    const recordLocation = encoded.records[0];
+    const block = encoded.blocks[0];
+    let dueReturned = false;
+    let claimToken = '';
+    mockAdapter.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('claimed_until IS NOT NULL') || sql.includes('expires_at IS NOT NULL')) {
+        return [];
+      }
+      if (sql.includes('FROM logging_message_jobs') && sql.includes('not_before <= ?')) {
+        if (dueReturned) {
+          return [];
+        }
+        dueReturned = true;
+        return [exportJobRow];
+      }
+      if (sql.includes('FROM log_chunk_record_index')) {
+        return [
+          {
+            record_id: 'evt_projection',
+            tenant_key: 't_message',
+            log_type: 'audit',
+            plane: 'archive',
+            surface: 'admin',
+            object_catalog_id: 'obj_projection',
+            chunk_id: 'chk_projection',
+            object_key: 'logs/v1/t_message/archive/audit/admin/chk_projection.jsonl',
+            object_kind: 'chunk',
+            compression: 'none',
+            encryption_scope: null,
+            key_version: null,
+            line_number: recordLocation.lineNumber,
+            block_offset: block.compressedOffset,
+            block_length: block.compressedLength,
+            record_offset: recordLocation.recordOffset,
+            record_length: recordLocation.recordLength,
+            event_at: now - 1000,
+            index_profile: 'audit_default',
+            indexed_fields: JSON.stringify({ type: 'client.created' }),
+            status: 'committed',
+            created_at: now - 900,
+          },
+        ];
+      }
+      return [];
+    });
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM logging_message_jobs')) {
+        return {
+          ...exportJobRow,
+          status: 'claimed',
+          attempt_count: 1,
+          claim_token: claimToken,
+          claimed_at: now,
+          claimed_until: now + 5 * 60 * 1000,
+          started_at: now,
+        };
+      }
+      if (sql.includes('FROM logging_export_jobs')) {
+        return {
+          id: 'lexp_projection',
+          format: 'jsonl',
+          status: 'queued',
+          expires_at: now + 7 * 24 * 60 * 60 * 1000,
+        };
+      }
+      return null;
+    });
+    mockAdapter.execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('claim_token = ?') && sql.includes('claimed_at = ?')) {
+        claimToken = String(params[1]);
+      }
+      return { rowsAffected: 1 };
+    });
+    const payloadGet = vi.fn().mockResolvedValue({
+      text: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          payload_type: 'export_build',
+          schema_version: 1,
+          payload_id: 'qpl_export_projection',
+          message_job_id: 'lmj_export_projection',
+          tenant_key: 't_message',
+          lane: 'bulk',
+          created_at: now,
+          export_job_id: 'lexp_projection',
+          phase: 'plan',
+          partition_strategy: 'query_page',
+          snapshot_cutoff_at: now,
+          requested_by: 'admin-1',
+          filters: {
+            tenant_key: 't_message',
+            log_type: 'audit',
+            plane: 'archive',
+            source: 'record_index',
+            time_start: null,
+            time_end: null,
+            limit: 100,
+            include_payload: true,
+          },
+        })
+      ),
+    });
+    const artifactPut = vi.fn().mockResolvedValue(undefined);
+    const chunkGet = vi.fn().mockResolvedValue({
+      arrayBuffer: vi.fn().mockResolvedValue(encoded.body.buffer),
+    });
+
+    const result = await processLoggingStorageMaintenanceJobs(
+      {
+        AUDIT_ARCHIVE: {
+          get: (key: string) => (key.startsWith('message-jobs/') ? payloadGet(key) : chunkGet(key)),
+        },
+        EXPORT_ARTIFACTS: { put: artifactPut },
+      } as unknown as Env,
+      log
+    );
+
+    expect(result.messageJobs).toMatchObject({ claimed: 1, completed: 1 });
+    expect(artifactPut).toHaveBeenCalledWith(
+      'logging-exports/v1/lexp_projection/parts/part-00000.jsonl',
+      expect.stringContaining('"schema_version":"authrim.log.export.projection.v1"'),
+      expect.any(Object)
+    );
+    expect(artifactPut).toHaveBeenCalledWith(
+      'logging-exports/v1/lexp_projection/parts/part-00000.jsonl',
+      expect.stringContaining('"source_schema_version":"authrim.log.archive.v1"'),
+      expect.any(Object)
+    );
+    expect(artifactPut).toHaveBeenCalledWith(
+      'logging-exports/v1/lexp_projection/parts/part-00000.jsonl',
+      expect.stringContaining('"object_catalog_id":"obj_projection"'),
       expect.any(Object)
     );
     vi.useRealTimers();
@@ -1095,8 +1404,9 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        DIAGNOSTIC_LOGS: { get: payloadGet },
-        AUDIT_ARCHIVE: { get: chunkGet },
+        AUDIT_ARCHIVE: {
+          get: (key: string) => (key.startsWith('message-jobs/') ? payloadGet(key) : chunkGet(key)),
+        },
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -1348,7 +1658,7 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        DIAGNOSTIC_LOGS: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet },
         EXPORT_ARTIFACTS: { delete: deleteObject },
       } as unknown as Env,
       log
@@ -1504,7 +1814,7 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        DIAGNOSTIC_LOGS: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet },
         EXPORT_ARTIFACTS: { get: exportGet, head },
       } as unknown as Env,
       log

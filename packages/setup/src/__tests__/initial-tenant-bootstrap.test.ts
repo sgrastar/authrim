@@ -57,17 +57,18 @@ describe('buildInitialTenantBootstrapSql', () => {
 });
 
 describe('buildInitialAdminRolesBootstrapSql', () => {
-  it('copies default system roles to the configured initial tenant', () => {
+  it('canonicalizes legacy tenant-scoped system role copies for the configured initial tenant', () => {
     const config = createDefaultConfig('mt');
     config.tenant.name = 'first';
 
     const sql = buildInitialAdminRolesBootstrapSql(config);
 
-    expect(sql).toContain("id || '__' || 'first'");
-    expect(sql).toContain("'first',");
-    expect(sql).toContain("WHERE tenant_id = 'default'");
+    expect(sql).toContain('UPDATE admin_role_assignments');
+    expect(sql).toContain('DELETE FROM admin_roles');
+    expect(sql).toContain("canonical.tenant_id = 'default'");
+    expect(sql).toContain("copy.tenant_id = 'first'");
+    expect(sql).toContain("WHERE tenant_id = 'first'");
     expect(sql).toContain("AND 'first' <> 'default'");
-    expect(sql).toContain('AND existing.name = admin_roles.name');
   });
 
   it('becomes a no-op when the initial tenant is default', () => {
@@ -76,6 +77,7 @@ describe('buildInitialAdminRolesBootstrapSql', () => {
 
     const sql = buildInitialAdminRolesBootstrapSql(config);
 
+    expect(sql).not.toContain("id || '__' || 'default'");
     expect(sql).toContain("AND 'default' <> 'default'");
   });
 });

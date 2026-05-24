@@ -6,6 +6,7 @@ import {
   type LogPlane,
   type LogType,
 } from '@authrim/ar-lib-logging';
+import { buildArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
 import type { WriteLogChunkResult } from '@authrim/ar-lib-logging/chunks';
 import {
   SqlLoggingDeliveryEventStore,
@@ -137,7 +138,7 @@ function getBucketBinding(env: RuntimeLogEmitterEnv, bindingRef: string): R2Buck
 }
 
 function getDefaultDeliveryPayloadBucket(env: RuntimeLogEmitterEnv): R2Bucket | null {
-  return env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS ?? null;
+  return env.AUDIT_ARCHIVE ?? null;
 }
 
 function cleanR2ObjectKeySegment(value: string): string {
@@ -199,28 +200,29 @@ function canonicalRecord(input: {
       stringField(input.record.indexedFields, 'severity') ??
       input.record.payload.severity
   );
-  return {
+  return buildArchiveLogRecordV1({
     id: input.record.id,
     type: input.record.type ?? inferRuntimeLogType(input.logType, input.surface, input.record),
     source: input.record.source ?? `authrim/${input.surface}`,
-    tenantId: input.tenantId,
-    time: new Date(input.record.eventAt).toISOString(),
+    tenantKey: input.tenantKey,
+    logType: input.logType,
+    plane: input.plane === 'external_sink' || input.plane === 'archive' ? input.plane : 'archive',
+    surface: input.surface,
+    eventAt: input.record.eventAt,
     severity,
-    schemaVersion: input.record.schemaVersion ?? '2026-05-19',
     subject: input.record.subject ?? inferRuntimeLogSubject(input.record),
     correlationId: input.record.correlationId ?? inferRuntimeLogCorrelationId(input.record),
-    data: input.record.payload,
-    authrim: {
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-      surface: input.surface,
-      delivery: {
-        targetType: input.target.type,
-        destinationId: input.target.destinationId,
-      },
+    summary: {
+      ...input.record.payload,
+      ...(input.record.schemaVersion
+        ? { producer_schema_version: input.record.schemaVersion }
+        : {}),
     },
-  };
+    delivery: {
+      targetType: input.target.type,
+      destinationId: input.target.destinationId,
+    },
+  });
 }
 
 function canonicalBatch(input: {

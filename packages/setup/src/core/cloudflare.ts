@@ -135,6 +135,7 @@ export interface MigrationProfileConfig {
 export const R2_BUCKETS = [
   { binding: 'AVATARS', suffix: 'authrim-avatars' },
   { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
+  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive' },
   { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts' },
   { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts' },
   { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details' },
@@ -2226,54 +2227,78 @@ WHERE id = ${tenantIdSql};
 }
 
 /**
- * Build idempotent SQL that guarantees built-in admin roles exist for the
- * configured initial tenant in DB_ADMIN.
+ * Build idempotent SQL that canonicalizes built-in admin roles in DB_ADMIN.
  *
- * Admin migrations currently seed system roles only for tenant `default`.
- * Multi-tenant deployments need tenant-scoped copies so initial admin setup can
- * assign `super_admin` without failing.
+ * System roles are global templates and must exist only under tenant `default`.
+ * Older setup versions copied them into the initial tenant; this rewrites any
+ * assignments to the canonical default roles and deletes those stale copies.
  */
 export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
-  const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantIdSql = sqlString(tenantId);
 
   return `
-INSERT INTO admin_roles (
-  id,
-  tenant_id,
-  name,
-  display_name,
-  description,
-  permissions_json,
-  hierarchy_level,
-  role_type,
-  is_system,
-  created_at,
-  updated_at,
-  inherits_from
+DELETE FROM admin_role_assignments
+WHERE admin_role_id IN (
+  SELECT copy.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.tenant_id = ${tenantIdSql}
+    AND copy.tenant_id <> 'default'
+    AND copy.is_system = 1
 )
-SELECT
-  id || '__' || ${tenantIdSql},
-  ${tenantIdSql},
-  name,
-  display_name,
-  description,
-  permissions_json,
-  hierarchy_level,
-  role_type,
-  is_system,
-  ${sqlExpr.nowEpochMilliseconds},
-  ${sqlExpr.nowEpochMilliseconds},
-  inherits_from
-FROM admin_roles
-WHERE tenant_id = 'default'
+AND EXISTS (
+  SELECT 1
+  FROM admin_role_assignments existing
+  JOIN admin_roles copy
+    ON copy.id = admin_role_assignments.admin_role_id
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE existing.tenant_id = admin_role_assignments.tenant_id
+    AND existing.admin_user_id = admin_role_assignments.admin_user_id
+    AND existing.admin_role_id = canonical.id
+    AND existing.scope_type = admin_role_assignments.scope_type
+    AND COALESCE(existing.scope_id, '') = COALESCE(admin_role_assignments.scope_id, '')
+);
+
+UPDATE admin_role_assignments
+SET admin_role_id = (
+  SELECT canonical.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.id = admin_role_assignments.admin_role_id
+  LIMIT 1
+)
+WHERE admin_role_id IN (
+  SELECT copy.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.tenant_id = ${tenantIdSql}
+    AND copy.tenant_id <> 'default'
+    AND copy.is_system = 1
+);
+
+DELETE FROM admin_roles
+WHERE tenant_id = ${tenantIdSql}
   AND ${tenantIdSql} <> 'default'
-  AND NOT EXISTS (
+  AND is_system = 1
+  AND EXISTS (
     SELECT 1
-    FROM admin_roles existing
-    WHERE existing.tenant_id = ${tenantIdSql}
-      AND existing.name = admin_roles.name
+    FROM admin_roles canonical
+    WHERE canonical.tenant_id = 'default'
+      AND canonical.is_system = 1
+      AND canonical.name = admin_roles.name
   );
 `.trim();
 }
@@ -3445,7 +3470,7 @@ const AUTHRIM_PATTERNS = {
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts|export-artifacts|sensitive-details)$/,
+  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };

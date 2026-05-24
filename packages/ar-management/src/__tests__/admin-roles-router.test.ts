@@ -114,6 +114,17 @@ type ErrorResponseBody = {
   total?: number;
 };
 
+type RoleListResponseBody = {
+  items: Array<{
+    id: string;
+    tenant_id: string;
+    name: string;
+    hierarchy_level: number;
+    is_system: boolean;
+  }>;
+  total: number;
+};
+
 function createTestApp() {
   const app = new Hono<{ Bindings: Env }>();
   app.route('/api/admin/admin-roles', adminRolesRouter);
@@ -128,6 +139,80 @@ function createTestApp() {
 describe('adminRolesRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('should hide tenant-scoped system role copies when listing roles', async () => {
+    repoMocks.getRolesByTenant.mockResolvedValue([
+      {
+        id: 'role_super_admin__first',
+        tenant_id: 'first',
+        name: 'super_admin',
+        hierarchy_level: 100,
+        is_system: true,
+      },
+      {
+        id: 'role_security_admin__first',
+        tenant_id: 'first',
+        name: 'security_admin',
+        hierarchy_level: 90,
+        is_system: true,
+      },
+      {
+        id: 'role_custom_billing',
+        tenant_id: 'first',
+        name: 'billing_admin',
+        hierarchy_level: 30,
+        is_system: false,
+      },
+    ]);
+    repoMocks.getSystemRoles.mockResolvedValue([
+      {
+        id: 'role_super_admin',
+        tenant_id: 'default',
+        name: 'super_admin',
+        hierarchy_level: 100,
+        is_system: true,
+      },
+      {
+        id: 'role_security_admin',
+        tenant_id: 'default',
+        name: 'security_admin',
+        hierarchy_level: 90,
+        is_system: true,
+      },
+      {
+        id: 'role_viewer',
+        tenant_id: 'default',
+        name: 'viewer',
+        hierarchy_level: 20,
+        is_system: true,
+      },
+    ]);
+
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-roles',
+      {
+        headers: {
+          'x-test-tenant-id': 'first',
+        },
+      },
+      env
+    );
+    const body = (await response.json()) as RoleListResponseBody;
+
+    expect(response.status).toBe(200);
+    expect(body.total).toBe(4);
+    expect(body.items.map((role) => role.name)).toEqual([
+      'super_admin',
+      'security_admin',
+      'billing_admin',
+      'viewer',
+    ]);
+    expect(body.items.find((role) => role.name === 'super_admin')?.id).toBe('role_super_admin');
+    expect(body.items.find((role) => role.name === 'security_admin')?.id).toBe(
+      'role_security_admin'
+    );
   });
 
   it('should return 404 for a custom role from another tenant', async () => {

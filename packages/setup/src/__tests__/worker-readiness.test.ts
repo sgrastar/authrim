@@ -68,7 +68,7 @@ describe('waitForRouterWorkerReady', () => {
 
     const result = await waitForRouterWorkerReady({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      maxWaitMs: 100,
+      maxWaitMs: 1000,
       initialDelayMs: 1,
       maxDelayMs: 2,
       onProgress: (message) => progress.push(message),

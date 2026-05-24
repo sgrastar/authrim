@@ -1384,7 +1384,7 @@ describe('Webhook Admin API - Get Delivery', () => {
     it('loads externalized request and response payloads from SENSITIVE_DETAILS', async () => {
       const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       const objectKey =
-        'sensitive-details/tk_test/control/webhook/2026/05/01/00/chk_delivery-123.jsonl.gz';
+        'sensitive-details/v1/tk_test/sensitive_detail/control/webhook/2026/05/01/00/shard-01/chk_delivery-123.jsonl.gz';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
@@ -1502,7 +1502,7 @@ describe('Webhook Admin API - Get Delivery', () => {
     it('allows delivery detail reads with a matching elevation grant', async () => {
       const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       const objectKey =
-        'sensitive-details/tk_test/control/webhook/2026/05/01/00/chk_delivery-123.jsonl.gz';
+        'sensitive-details/v1/tk_test/sensitive_detail/control/webhook/2026/05/01/00/shard-01/chk_delivery-123.jsonl.gz';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { 'Content-Type': 'application/json' },
@@ -1830,7 +1830,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
     it('replays from externalized delivery payloads and stores pointer-backed previews', async () => {
       const rootKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       const objectKey =
-        'sensitive-details/tk_test/control/webhook/2026/05/01/00/chk_delivery-123.jsonl.gz';
+        'sensitive-details/v1/tk_test/sensitive_detail/control/webhook/2026/05/01/00/shard-01/chk_delivery-123.jsonl.gz';
       const encryptedPayload = await encryptObjectArtifact(
         JSON.stringify({
           requestHeaders: { 'Content-Type': 'application/json' },

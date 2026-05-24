@@ -48,7 +48,7 @@ describe('R2 log chunk manifest writer', () => {
 
     expect(result.manifestId).toMatch(/^man_/);
     expect(result.manifestObjectKey).toBe(
-      'audit/tk_abc/archive/audit/manifests/2026/05/20/00/shard-01.manifest.json'
+      'audit/tk_abc/manifests/audit/2026/05/20/00/shard-01.json'
     );
     expect(result).toMatchObject({
       chunkCount: 1,

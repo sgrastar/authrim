@@ -431,7 +431,7 @@
 		</div>
 		{#if preview.warnings.length > 0}
 			<div class="certificate-warnings">
-				{#each preview.warnings as warning}
+					{#each preview.warnings as warning (warning)}
 					<div><i class="i-ph-warning-circle"></i>{warning}</div>
 				{/each}
 			</div>

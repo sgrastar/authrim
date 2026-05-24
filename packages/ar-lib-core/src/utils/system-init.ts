@@ -147,8 +147,8 @@ export async function assignSystemAdminRole(
 
     // Get the super_admin role ID
     const role = await adminAdapter.queryOne<{ id: string }>(
-      "SELECT id FROM admin_roles WHERE name = 'super_admin' AND tenant_id = ? LIMIT 1",
-      [tenantId]
+      "SELECT id FROM admin_roles WHERE name = 'super_admin' AND tenant_id = 'default' AND is_system = 1 LIMIT 1",
+      []
     );
 
     if (!role) {

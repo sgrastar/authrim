@@ -1,7 +1,7 @@
 import { createLoggingId } from '../ids';
 import { assertLogPlane, assertLogType, type LogChunkCompression } from '../registry';
 import { filterLogChunkIndexedFields, getLogChunkIndexProfile } from './index-profiles';
-import { buildLogChunkObjectKey } from './r2-keys';
+import { buildLogChunkObjectKey, defaultLogStorageShard } from './r2-keys';
 import { encodeLogRecordBlocks } from './record-blocks';
 import type {
   LogChunkRecordIndexRow,
@@ -95,6 +95,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
   const chunkId = createLoggingId('chk', createdAt);
   const objectCatalogId = createLoggingId('obj', createdAt);
   const compression: LogChunkCompression = input.compression ?? 'gzip_block';
+  const shard = input.shard ?? defaultLogStorageShard({ tenantKey: input.tenantKey });
   const indexProfile = getLogChunkIndexProfile(input.indexProfile ?? input.logType).name;
   const encoded = await encodeLogRecordBlocks(input.records, { compression });
   const objectKey = buildLogChunkObjectKey({
@@ -105,6 +106,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     surface: input.surface,
     createdAt,
     chunkId,
+    shard,
     compression,
   });
   const storedBody = input.encryption
@@ -183,6 +185,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
         recordCount: String(input.records.length),
         checksumSha256,
         compression,
+        shard,
         ...(input.encryption && {
           encryptionScope: input.encryption.encryptionScope,
           keyVersion: String(input.encryption.keyVersion),
@@ -207,6 +210,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     chunkId,
     objectCatalogId,
     objectKey,
+    shard,
     recordCount: input.records.length,
     byteCount: storedBody.byteLength,
     checksumSha256,

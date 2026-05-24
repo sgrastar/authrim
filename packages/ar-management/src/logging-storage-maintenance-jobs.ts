@@ -19,6 +19,10 @@ import {
   type LogType,
 } from '@authrim/ar-lib-logging';
 import {
+  isArchiveLogRecordV1,
+  projectArchiveLogRecordForExportV1,
+} from '@authrim/ar-lib-logging/archive';
+import {
   decodeStoredLogChunkRecord,
   defaultLogManifestShard,
   floorLogManifestBucket,
@@ -166,6 +170,7 @@ interface LoggingExportBuildFilters {
   time_end: number | null;
   limit: number;
   include_payload: boolean;
+  detail_scope: 'none' | 'full';
 }
 
 interface LoggingExportBuildPartRow {
@@ -178,7 +183,7 @@ interface LoggingExportBuildPartRow {
 
 interface LoggingExportBuildJobRow {
   id: string;
-  format: 'jsonl' | 'csv';
+  format: 'jsonl' | 'csv' | 'zip';
   status: string;
   artifact_object_ref: string | null;
   manifest_object_ref: string | null;
@@ -617,6 +622,18 @@ async function runScheduledDestinationHealthChecks(
 function toInteger(value: number | string | null | undefined, fallback = 0): number {
   const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function integerOrNull(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    return null;
+  }
+  const parsed = typeof value === 'number' ? value : Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null;
 }
 
 function unknownToInteger(value: unknown, fallback = 0): number {
@@ -1139,9 +1156,12 @@ async function runScheduledUsageAndQuotaMaintenance(
 
 function getManifestBucket(env: Env, plane: LogPlane): R2Bucket | null {
   if (plane === 'sensitive_detail') {
-    return env.SENSITIVE_DETAILS ?? env.DIAGNOSTIC_LOGS ?? null;
+    return env.SENSITIVE_DETAILS ?? null;
   }
-  return env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS ?? null;
+  if (plane === 'diagnostic_detail') {
+    return env.DIAGNOSTIC_LOGS ?? null;
+  }
+  return env.AUDIT_ARCHIVE ?? null;
 }
 
 function manifestGroupKey(input: {
@@ -1701,7 +1721,7 @@ async function runScheduledRewrapDispatch(
 }
 
 function getLoggingMessagePayloadBucket(env: Env): R2Bucket | null {
-  return env.DIAGNOSTIC_LOGS ?? env.AUDIT_ARCHIVE ?? null;
+  return env.AUDIT_ARCHIVE ?? null;
 }
 
 type LoggingMessagePayloadReadResult =
@@ -1753,7 +1773,7 @@ function computeMessageJobRetryBackoffMs(job: LoggingMessageJobRecord): number {
 }
 
 function getLoggingExportBucket(env: Env): R2Bucket | null {
-  return env.EXPORT_ARTIFACTS ?? env.DIAGNOSTIC_LOGS ?? null;
+  return env.EXPORT_ARTIFACTS ?? null;
 }
 
 function getCatalogObjectBucketForExport(
@@ -1767,9 +1787,12 @@ function getCatalogObjectBucketForExport(
     return getLoggingExportBucket(env);
   }
   if (row.plane === 'sensitive_detail') {
-    return env.SENSITIVE_DETAILS ?? env.DIAGNOSTIC_LOGS ?? null;
+    return env.SENSITIVE_DETAILS ?? null;
   }
-  return env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS ?? null;
+  if (row.plane === 'diagnostic_detail') {
+    return env.DIAGNOSTIC_LOGS ?? null;
+  }
+  return env.AUDIT_ARCHIVE ?? null;
 }
 
 function isLogType(value: unknown): value is LogType {
@@ -1811,6 +1834,7 @@ function readExportBuildFilters(value: unknown): LoggingExportBuildFilters | nul
         ? Math.min(Math.trunc(record.limit), 5000)
         : 1000,
     include_payload: record.include_payload === true,
+    detail_scope: record.detail_scope === 'full' ? 'full' : 'none',
   };
 }
 
@@ -1936,8 +1960,192 @@ function rowsToExportArtifact(rows: Record<string, unknown>[], format: 'jsonl' |
   ].join('\n');
 }
 
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.byteLength;
+  }
+  return output;
+}
+
+function uint16(value: number): Uint8Array {
+  const bytes = new Uint8Array(2);
+  new DataView(bytes.buffer).setUint16(0, value, true);
+  return bytes;
+}
+
+function uint32(value: number): Uint8Array {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value >>> 0, true);
+  return bytes;
+}
+
+function dosTimestamp(timestamp: number): { time: number; date: number } {
+  const date = new Date(timestamp);
+  const year = Math.max(1980, date.getUTCFullYear());
+  return {
+    time:
+      (date.getUTCHours() << 11) |
+      (date.getUTCMinutes() << 5) |
+      Math.floor(date.getUTCSeconds() / 2),
+    date: ((year - 1980) << 9) | ((date.getUTCMonth() + 1) << 5) | date.getUTCDate(),
+  };
+}
+
+function buildStoredZip(files: Array<{ name: string; body: Uint8Array }>, now: number): Uint8Array {
+  const encoder = new TextEncoder();
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+  const { time, date } = dosTimestamp(now);
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const checksum = crc32(file.body);
+    const local = concatBytes([
+      uint32(0x04034b50),
+      uint16(20),
+      uint16(0),
+      uint16(0),
+      uint16(time),
+      uint16(date),
+      uint32(checksum),
+      uint32(file.body.byteLength),
+      uint32(file.body.byteLength),
+      uint16(nameBytes.byteLength),
+      uint16(0),
+      nameBytes,
+      file.body,
+    ]);
+    localParts.push(local);
+    centralParts.push(
+      concatBytes([
+        uint32(0x02014b50),
+        uint16(20),
+        uint16(20),
+        uint16(0),
+        uint16(0),
+        uint16(time),
+        uint16(date),
+        uint32(checksum),
+        uint32(file.body.byteLength),
+        uint32(file.body.byteLength),
+        uint16(nameBytes.byteLength),
+        uint16(0),
+        uint16(0),
+        uint16(0),
+        uint16(0),
+        uint32(0),
+        uint32(offset),
+        nameBytes,
+      ])
+    );
+    offset += local.byteLength;
+  }
+  const centralDirectory = concatBytes(centralParts);
+  return concatBytes([
+    ...localParts,
+    centralDirectory,
+    uint32(0x06054b50),
+    uint16(0),
+    uint16(0),
+    uint16(files.length),
+    uint16(files.length),
+    uint32(centralDirectory.byteLength),
+    uint32(offset),
+    uint16(0),
+  ]);
+}
+
+async function projectRowsForExportArtifact(
+  adapter: DatabaseAdapter,
+  env: Env,
+  rows: Record<string, unknown>[],
+  filters: LoggingExportBuildFilters
+): Promise<Record<string, unknown>[]> {
+  if (
+    filters.source !== 'record_index' ||
+    !filters.include_payload ||
+    filters.plane === 'sensitive_detail'
+  ) {
+    return rows;
+  }
+  const tenantIdByKey = new Map<string, string | null>();
+  const resolveTenantId = async (tenantKey: string): Promise<string | null> => {
+    if (tenantIdByKey.has(tenantKey)) {
+      return tenantIdByKey.get(tenantKey) ?? null;
+    }
+    const row = await adapter.queryOne<{ id: string }>(
+      `SELECT id FROM tenants WHERE tenant_key = ? LIMIT 1`,
+      [tenantKey]
+    );
+    tenantIdByKey.set(tenantKey, row?.id ?? null);
+    return row?.id ?? null;
+  };
+  return Promise.all(
+    rows.map(async (row) => {
+      const payload = row.record_payload;
+      if (!isArchiveLogRecordV1(payload)) {
+        return row;
+      }
+      const projection = projectArchiveLogRecordForExportV1(payload, {
+        object_catalog_id: stringOrNull(row.object_catalog_id),
+        chunk_id: stringOrNull(row.chunk_id),
+        object_key: stringOrNull(row.object_key),
+        line_number: integerOrNull(row.line_number),
+        record_offset: integerOrNull(row.record_offset),
+        record_length: integerOrNull(row.record_length),
+        index_profile: stringOrNull(row.index_profile),
+      }) as unknown as Record<string, unknown>;
+      if (filters.detail_scope !== 'full' || !payload.detail_ref?.object_catalog_id) {
+        return projection;
+      }
+      const objectClass = payload.detail_ref.class;
+      if (!isObjectClass(objectClass)) {
+        return { ...projection, detail_payload_error: 'unsupported_detail_class' };
+      }
+      const tenantId = await resolveTenantId(payload.tenant_key);
+      if (!tenantId) {
+        return { ...projection, detail_payload_error: 'tenant_key_not_resolved' };
+      }
+      try {
+        const detailPayload = await loadChunkedSensitiveDetailJson(adapter, env, {
+          tenantId,
+          objectCatalogId: payload.detail_ref.object_catalog_id,
+          expectedClass: objectClass,
+        });
+        return detailPayload === null
+          ? { ...projection, detail_payload_error: 'detail_payload_unavailable' }
+          : { ...projection, detail_payload: detailPayload };
+      } catch {
+        return { ...projection, detail_payload_error: 'detail_payload_unavailable' };
+      }
+    })
+  );
+}
+
 async function sha256HexText(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function sha256HexBytes(value: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', value);
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
@@ -2276,7 +2484,7 @@ async function recordExportBuildDeliveryEvent(
   input: {
     exportId: string;
     filters: LoggingExportBuildFilters;
-    format: 'jsonl' | 'csv';
+    format: 'jsonl' | 'csv' | 'zip';
     artifactObjectRef: string | null;
     manifestObjectRef: string;
     checksumSha256: string;
@@ -2314,9 +2522,9 @@ async function recordExportBuildDeliveryEvent(
 function exportPartObjectRef(input: {
   exportJobId: string;
   partitionIndex: number;
-  format: 'jsonl' | 'csv';
+  format: 'jsonl' | 'csv' | 'zip';
 }): string {
-  const extension = input.format === 'csv' ? 'csv' : 'jsonl';
+  const extension = input.format === 'csv' ? 'csv' : input.format === 'zip' ? 'zip' : 'jsonl';
   return `logging-exports/v1/${input.exportJobId}/parts/part-${String(
     input.partitionIndex
   ).padStart(5, '0')}.${extension}`;
@@ -2350,7 +2558,7 @@ async function writeExportBuildPartition(input: {
   adapter: DatabaseAdapter;
   bucket: R2Bucket;
   exportJobId: string;
-  format: 'jsonl' | 'csv';
+  format: 'jsonl' | 'csv' | 'zip';
   filters: LoggingExportBuildFilters;
   snapshotCutoffAt: number;
   partitionIndex: number;
@@ -2373,17 +2581,59 @@ async function writeExportBuildPartition(input: {
           offset: input.partitionIndex * input.partSize,
         })
       : [];
-  const artifact = rowsToExportArtifact(rows, input.format);
-  const checksum = await sha256HexText(artifact);
+  const artifactRows = await projectRowsForExportArtifact(
+    input.adapter,
+    input.env,
+    rows,
+    input.filters
+  );
+  const artifact =
+    input.format === 'zip'
+      ? buildStoredZip(
+          [
+            {
+              name: 'records.jsonl',
+              body: new TextEncoder().encode(rowsToExportArtifact(artifactRows, 'jsonl')),
+            },
+            {
+              name: 'manifest.json',
+              body: new TextEncoder().encode(
+                JSON.stringify(
+                  {
+                    schema_version: 'authrim.log.export.zip_part.v1',
+                    export_job_id: input.exportJobId,
+                    partition_index: input.partitionIndex,
+                    format: 'zip',
+                    record_count: rows.length,
+                    generated_at: new Date(input.snapshotCutoffAt).toISOString(),
+                    filters: input.filters,
+                  },
+                  null,
+                  2
+                )
+              ),
+            },
+          ],
+          input.snapshotCutoffAt
+        )
+      : rowsToExportArtifact(artifactRows, input.format);
+  const checksum =
+    typeof artifact === 'string' ? await sha256HexText(artifact) : await sha256HexBytes(artifact);
   const objectRef = exportPartObjectRef({
     exportJobId: input.exportJobId,
     partitionIndex: input.partitionIndex,
     format: input.format,
   });
-  const byteCount = new TextEncoder().encode(artifact).byteLength;
+  const byteCount =
+    typeof artifact === 'string' ? new TextEncoder().encode(artifact).byteLength : artifact.length;
   await input.bucket.put(objectRef, artifact, {
     httpMetadata: {
-      contentType: input.format === 'csv' ? 'text/csv' : 'application/x-ndjson',
+      contentType:
+        input.format === 'csv'
+          ? 'text/csv'
+          : input.format === 'zip'
+            ? 'application/zip'
+            : 'application/x-ndjson',
     },
   });
   return {

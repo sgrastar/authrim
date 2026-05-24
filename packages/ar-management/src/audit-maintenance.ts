@@ -206,13 +206,13 @@ export async function cleanupResolvedAuditPrimaries(
         pathPrefix: target.prefix ?? 'audit',
         format: 'json',
         ...({ tenantKeyResolver } as Record<string, unknown>),
-        eventSerializer: (entry) =>
-          buildCanonicalAuditArchiveRecordFromEntry(target, 'event_log', entry, {
+        eventSerializer: (entry, context) =>
+          buildCanonicalAuditArchiveRecordFromEntry(target, 'event_log', entry, context.tenantKey, {
             emittedAt,
             auditProfileId: profile.id,
           }),
-        piiSerializer: (entry) =>
-          buildCanonicalAuditArchiveRecordFromEntry(target, 'pii_log', entry, {
+        piiSerializer: (entry, context) =>
+          buildCanonicalAuditArchiveRecordFromEntry(target, 'pii_log', entry, context.tenantKey, {
             emittedAt,
             auditProfileId: profile.id,
           }),

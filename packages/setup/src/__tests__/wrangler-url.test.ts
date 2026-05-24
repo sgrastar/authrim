@@ -219,7 +219,7 @@ describe('generateEnvVars - ar-saml', () => {
     config.profiles = {
       defaults: {
         storage: 'builtin:storage:single-db',
-        audit: 'builtin:audit:minimal',
+        audit: 'custom:audit:external-primary',
         residency: 'builtin:residency:default',
       },
       registry: {
@@ -232,7 +232,7 @@ describe('generateEnvVars - ar-saml', () => {
 
     expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('kv');
     expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
-    expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:minimal');
+    expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('custom:audit:external-primary');
     expect(managementVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
   });
 });

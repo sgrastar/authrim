@@ -57,10 +57,49 @@
 	let dangerConfirmation = $state<DangerConfirmationRequest | null>(null);
 	let error = $state('');
 	let windowHours = $state(24);
+	const PERM_ADMIN_LOGGING_OVERVIEW_READ = 'admin:admin_logging:overview:read';
+	const PERM_ADMIN_LOGGING_COVERAGE_READ = 'admin:admin_logging:coverage:read';
+	const PERM_ADMIN_LOGGING_COVERAGE_UPDATE = 'admin:admin_logging:coverage:update';
+	const PERM_ADMIN_LOGGING_REPAIR_READ = 'admin:admin_logging:repair:read';
+	const PERM_ADMIN_LOGGING_REPAIR_RUN = 'admin:admin_logging:repair:run';
+	const PERM_ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ =
+		'admin:admin_logging:sensitive_detail_policy:read';
+	const PERM_LOGGING_DELIVERY_EVENTS_READ = 'admin:logging:delivery_events:read';
+	const PERM_LOGGING_SENSITIVE_DETAIL_EXPORT = 'admin:logging:sensitive_detail:export';
 	const isPlatformAdmin = $derived(Boolean(adminAuth.user?.isPlatformAdmin));
-	const canCheckCoverage = $derived(isPlatformAdmin);
-	const canRunCatalogRepair = $derived(isPlatformAdmin);
-	const canViewProtectedPolicyPanels = $derived(isPlatformAdmin);
+	const canViewCoverage = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_COVERAGE_READ)
+	);
+	const canCheckCoverage = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_COVERAGE_UPDATE)
+	);
+	const canReadCatalogRepair = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_READ)
+	);
+	const canViewCriticalPolicy = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_OVERVIEW_READ)
+	);
+	const canRunCatalogRepair = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_RUN)
+	);
+	const canViewSensitiveDetailPolicy = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ)
+	);
+	const canProbeSensitiveDetail = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_LOGGING_SENSITIVE_DETAIL_EXPORT)
+	);
+	const canReadMessageJobs = $derived(hasAdminPermission(PERM_LOGGING_DELIVERY_EVENTS_READ));
+	function hasAdminPermission(permission: string): boolean {
+		const permissions = adminAuth.user?.permissions ?? [];
+		if (permissions.includes('*') || permissions.includes(permission)) return true;
+		const parts = permission.split(':');
+		for (let i = parts.length - 1; i >= 0; i -= 1) {
+			if (permissions.includes([...parts.slice(0, i), '*'].join(':'))) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	function requestDangerConfirmation(input: Omit<DangerConfirmationRequest, 'resolve'>) {
 		return new Promise<string | null>((resolve) => {
@@ -94,10 +133,10 @@
 				messageJobsResponse
 			] = await Promise.all([
 				adminLoggingControlAPI.getAdminLoggingOverview(from),
-				canViewProtectedPolicyPanels
+				canViewCoverage
 					? adminLoggingControlAPI.listAdminAuditCoverage().catch(() => ({ items: [], total: 0 }))
 					: Promise.resolve({ items: [], total: 0 }),
-				canRunCatalogRepair
+				canReadCatalogRepair
 					? adminLoggingControlAPI
 							.listCatalogRepairFindings({
 								tenantKey: catalogRepairTenantKey.trim() || undefined,
@@ -106,27 +145,27 @@
 							})
 							.catch(() => ({ items: [], total: 0 }))
 					: Promise.resolve({ items: [], total: 0 }),
-				canViewProtectedPolicyPanels
+				canViewCriticalPolicy
 					? adminLoggingControlAPI.getAdminLoggingCriticalPolicy().catch(() => ({ item: null }))
 					: Promise.resolve({ item: null }),
-				canViewProtectedPolicyPanels
+				canViewSensitiveDetailPolicy
 					? adminLoggingControlAPI
 							.getAdminLoggingSensitiveDetailPolicy()
 							.catch(() => ({ item: null }))
 					: Promise.resolve({ item: null }),
-				canViewProtectedPolicyPanels
+				canViewSensitiveDetailPolicy
 					? adminLoggingControlAPI.listAdminLoggingKeyRegistry().catch(() => ({
 							items: [],
 							total: 0
 						}))
 					: Promise.resolve({ items: [], total: 0 }),
-				canRunCatalogRepair
+				canReadCatalogRepair
 					? adminLoggingControlAPI.listAdminLoggingRewrapJobs().catch(() => ({
 							items: [],
 							total: 0
 						}))
 					: Promise.resolve({ items: [], total: 0 }),
-				canRunCatalogRepair
+				canReadMessageJobs
 					? adminLoggingControlAPI
 							.listMessageJobs({
 								timeStart: from,
@@ -138,15 +177,17 @@
 			overview = overviewResponse.item;
 			coverageItems = coverageResponse.items;
 			repairFindings = repairResponse.items;
-			catalogRepairJobs = canRunCatalogRepair
-				? (await adminLoggingControlAPI
-						.listCatalogRepairJobs({
-							tenantKey: catalogRepairTenantKey.trim() || undefined,
-							logType: catalogRepairLogType || undefined,
-							plane: catalogRepairPlane || undefined,
-							limit: 10
-						})
-						.catch(() => ({ items: [], total: 0 }))).items
+			catalogRepairJobs = canReadCatalogRepair
+				? (
+						await adminLoggingControlAPI
+							.listCatalogRepairJobs({
+								tenantKey: catalogRepairTenantKey.trim() || undefined,
+								logType: catalogRepairLogType || undefined,
+								plane: catalogRepairPlane || undefined,
+								limit: 10
+							})
+							.catch(() => ({ items: [], total: 0 }))
+					).items
 				: [];
 			criticalPolicy = criticalResponse.item;
 			sensitiveDetailPolicy = sensitiveDetailResponse.item;
@@ -213,7 +254,7 @@
 	}
 
 	async function scanCatalogRepairJob() {
-		if (!canRunCatalogRepair || catalogRepairJobAction) return;
+		if (!canReadCatalogRepair || catalogRepairJobAction) return;
 		catalogRepairJobAction = true;
 		error = '';
 		try {
@@ -293,7 +334,8 @@
 	}
 
 	async function runSensitiveProbe() {
-		if (!sensitiveProbeCatalogId.trim() || sensitiveProbeLoading) return;
+		if (!canProbeSensitiveDetail || !sensitiveProbeCatalogId.trim() || sensitiveProbeLoading)
+			return;
 		sensitiveProbeLoading = true;
 		error = '';
 		try {
@@ -312,7 +354,7 @@
 	}
 
 	async function loadKeyImpact(item: AdminLoggingKeyRegistryItem) {
-		if (keyActionId) return;
+		if (keyActionId || !canViewSensitiveDetailPolicy) return;
 		keyActionId = item.id;
 		error = '';
 		try {
@@ -326,7 +368,7 @@
 	}
 
 	async function createRewrapJobs(item: AdminLoggingKeyRegistryItem) {
-		if (keyActionId) return;
+		if (keyActionId || !canRunCatalogRepair) return;
 		keyActionId = item.id;
 		error = '';
 		try {
@@ -349,6 +391,7 @@
 	}
 
 	async function refreshRewrapJobs() {
+		if (!canReadCatalogRepair) return;
 		const jobsResponse = await adminLoggingControlAPI.listAdminLoggingRewrapJobs();
 		rewrapJobs = jobsResponse.items;
 		rewrapPriorityInputs = Object.fromEntries(
@@ -361,7 +404,7 @@
 	}
 
 	async function retryRewrapJob(job: AdminLoggingRewrapJob) {
-		if (rewrapJobActionId) return;
+		if (rewrapJobActionId || !canRunCatalogRepair) return;
 		rewrapJobActionId = job.id;
 		error = '';
 		try {
@@ -375,7 +418,7 @@
 	}
 
 	async function cancelRewrapJob(job: AdminLoggingRewrapJob) {
-		if (rewrapJobActionId) return;
+		if (rewrapJobActionId || !canRunCatalogRepair) return;
 		const confirmation = await requestDangerConfirmation({
 			title: 'Cancel Rewrap Job',
 			resourceName: job.id,
@@ -399,7 +442,7 @@
 	}
 
 	async function updateRewrapJobPriority(job: AdminLoggingRewrapJob) {
-		if (rewrapJobActionId) return;
+		if (rewrapJobActionId || !canRunCatalogRepair) return;
 		rewrapJobActionId = job.id;
 		error = '';
 		try {
@@ -498,9 +541,9 @@
 			</div>
 			{#if coverageItems.length === 0}
 				<p class="muted">
-					{canViewProtectedPolicyPanels
+					{canViewCoverage
 						? 'No coverage records found.'
-						: 'Coverage details require platform admin access.'}
+						: 'Coverage details require platform admin permission.'}
 				</p>
 			{:else}
 				<div class="table-wrap">
@@ -528,7 +571,7 @@
 			{/if}
 		</section>
 
-		{#if canRunCatalogRepair}
+		{#if canReadCatalogRepair}
 			<section class="panel">
 				<div class="section-header">
 					<h2>Catalog Repairs</h2>
@@ -537,7 +580,7 @@
 						<button
 							class="btn btn-secondary"
 							onclick={applySafeRepairs}
-							disabled={applyingRepairs || repairFindings.length === 0}
+							disabled={applyingRepairs || repairFindings.length === 0 || !canRunCatalogRepair}
 						>
 							{applyingRepairs ? 'Applying...' : 'Apply safe'}
 						</button>
@@ -551,7 +594,7 @@
 						<button
 							class="btn btn-secondary"
 							onclick={applySafeRepairJob}
-							disabled={catalogRepairJobAction}
+							disabled={catalogRepairJobAction || !canRunCatalogRepair}
 						>
 							Job apply
 						</button>
@@ -607,7 +650,7 @@
 												<button
 													class="btn btn-danger"
 													onclick={() => applyDangerousDeleteObject(item)}
-													disabled={Boolean(dangerousRepairId)}
+													disabled={Boolean(dangerousRepairId) || !canRunCatalogRepair}
 												>
 													Delete object
 												</button>
@@ -654,7 +697,7 @@
 			</section>
 		{/if}
 
-		{#if canViewProtectedPolicyPanels}
+		{#if canViewCriticalPolicy}
 			<section class="panel">
 				<div class="section-header">
 					<h2>Critical Protection</h2>
@@ -689,7 +732,7 @@
 			</section>
 		{/if}
 
-		{#if canViewProtectedPolicyPanels}
+		{#if canViewSensitiveDetailPolicy}
 			<section class="panel">
 				<div class="section-header">
 					<h2>Sensitive Detail</h2>
@@ -744,7 +787,9 @@
 							<button
 								class="btn btn-secondary"
 								onclick={runSensitiveProbe}
-								disabled={sensitiveProbeLoading || !sensitiveProbeCatalogId.trim()}
+								disabled={sensitiveProbeLoading ||
+									!sensitiveProbeCatalogId.trim() ||
+									!canProbeSensitiveDetail}
 							>
 								{sensitiveProbeLoading ? 'Probing...' : 'Probe'}
 							</button>
@@ -764,7 +809,7 @@
 			</section>
 		{/if}
 
-		{#if canViewProtectedPolicyPanels}
+		{#if canViewSensitiveDetailPolicy}
 			<section class="panel">
 				<div class="section-header">
 					<h2>Key Registry</h2>
@@ -810,7 +855,9 @@
 												<button
 													class="btn btn-secondary"
 													onclick={() => createRewrapJobs(item)}
-													disabled={keyActionId === item.id || item.version === null}
+													disabled={keyActionId === item.id ||
+														item.version === null ||
+														!canRunCatalogRepair}
 												>
 													Queue rewrap
 												</button>
@@ -836,7 +883,7 @@
 			</section>
 		{/if}
 
-		{#if canRunCatalogRepair}
+		{#if canReadMessageJobs}
 			<section class="panel">
 				<div class="section-header">
 					<h2>Message Jobs</h2>
@@ -875,7 +922,7 @@
 			</section>
 		{/if}
 
-		{#if canRunCatalogRepair}
+		{#if canReadCatalogRepair}
 			<section class="panel">
 				<div class="section-header">
 					<h2>Rewrap Jobs</h2>
@@ -922,7 +969,8 @@
 													onclick={() => updateRewrapJobPriority(job)}
 													disabled={job.status !== 'queued' ||
 														rewrapJobActionId === job.id ||
-														rewrapPriorityFor(job) === job.priority}
+														rewrapPriorityFor(job) === job.priority ||
+														!canRunCatalogRepair}
 												>
 													Set
 												</button>
@@ -936,7 +984,8 @@
 													class="btn btn-secondary btn-small"
 													onclick={() => retryRewrapJob(job)}
 													disabled={!['failed', 'skipped'].includes(job.status) ||
-														rewrapJobActionId === job.id}
+														rewrapJobActionId === job.id ||
+														!canRunCatalogRepair}
 												>
 													Retry
 												</button>
@@ -944,7 +993,8 @@
 													class="btn btn-danger btn-small"
 													onclick={() => cancelRewrapJob(job)}
 													disabled={!['queued', 'running', 'failed'].includes(job.status) ||
-														rewrapJobActionId === job.id}
+														rewrapJobActionId === job.id ||
+														!canRunCatalogRepair}
 												>
 													Cancel
 												</button>

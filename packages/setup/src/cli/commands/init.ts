@@ -3697,6 +3697,12 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     default: config.profiles.defaults.audit || 'builtin:audit:standard',
     validate: (value) => {
       if (!value.trim()) return 'Profile ID is required';
+      if (value.trim() === 'builtin:audit:minimal') {
+        return [
+          'builtin:audit:minimal is not supported.',
+          'Use builtin:audit:standard or a setup-defined custom audit profile.',
+        ].join(' ');
+      }
       return true;
     },
   });

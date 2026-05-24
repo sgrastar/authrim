@@ -97,10 +97,7 @@ import {
   SAML_METADATA_CACHE_DURATION,
   SAML_METADATA_VALIDITY_DAYS,
 } from '../common/metadata-cache';
-import {
-  resolveSAMLMetadataSigningMode,
-  shouldSignSAMLMetadata,
-} from '../common/metadata-signing';
+import { resolveSAMLMetadataSigningMode, shouldSignSAMLMetadata } from '../common/metadata-signing';
 
 type AdminSAMLContext = Context<{ Bindings: Env }>;
 type AdminSAMLAuthContext = Context<{
@@ -854,7 +851,8 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     const normalizedConfigWithValidation =
       await withProviderCertificateValidation(normalizedConfig);
     const providerEnabled =
-      body.enabled !== false && normalizedConfigWithValidation.certificateValidation?.allExpired !== true;
+      body.enabled !== false &&
+      normalizedConfigWithValidation.certificateValidation?.allExpired !== true;
     const id = crypto.randomUUID();
     const now = Date.now();
 
@@ -1048,8 +1046,7 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         next_name: body.name || existing.name,
         enabled_changed: nextEnabled !== (existing.enabled === 1),
         config_updated: !!body.config,
-        disabled_due_to_expired_certificate:
-          requestedEnabled && !nextEnabled ? true : undefined,
+        disabled_due_to_expired_certificate: requestedEnabled && !nextEnabled ? true : undefined,
       },
     });
 
@@ -2028,7 +2025,10 @@ async function readOptionalJson(c: Context<{ Bindings: Env }>): Promise<{ metada
   return ((await c.req.json()) as { metadataUrl?: string }) ?? {};
 }
 
-async function readResponseBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+async function readResponseBytesWithLimit(
+  response: Response,
+  maxBytes: number
+): Promise<Uint8Array> {
   if (!response.body) {
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength > maxBytes) {

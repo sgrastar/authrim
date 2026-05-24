@@ -183,7 +183,11 @@ async function getDiscoverySettings(
     (isSingleTenantMode(env) ||
       readSettingBoolean(tenantStored, 'login-entry.override_enabled') === true);
   const stored =
-    scope.type === 'platform' ? platformStored : tenantOverrideEnabled ? tenantStored : platformStored;
+    scope.type === 'platform'
+      ? platformStored
+      : tenantOverrideEnabled
+        ? tenantStored
+        : platformStored;
   const emailResolutionPolicy =
     (stored?.['login-entry.email_resolution_policy'] as
       | LoginEntrySettings['login-entry.email_resolution_policy']

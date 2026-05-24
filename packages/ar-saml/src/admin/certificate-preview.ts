@@ -53,7 +53,8 @@ export async function previewTrustCertificate(
   input: Uint8Array | string,
   source: SAMLTrustCertificatePreview['source']
 ): Promise<SAMLTrustCertificatePreview> {
-  const der = typeof input === 'string' ? decodeCertificateText(input) : decodeCertificateBytes(input);
+  const der =
+    typeof input === 'string' ? decodeCertificateText(input) : decodeCertificateBytes(input);
   const certificate = toPem(der);
   const parsed = parseX509Certificate(der);
   const [fingerprintSha1, fingerprintSha256] = await Promise.all([
@@ -73,7 +74,9 @@ export async function previewTrustCertificate(
 }
 
 export function decodeCertificateBytes(value: Uint8Array): Uint8Array {
-  const firstContentByte = value.find((byte) => byte !== 0x09 && byte !== 0x0a && byte !== 0x0d && byte !== 0x20);
+  const firstContentByte = value.find(
+    (byte) => byte !== 0x09 && byte !== 0x0a && byte !== 0x0d && byte !== 0x20
+  );
   if (firstContentByte === 0x30) {
     return value;
   }
@@ -83,9 +86,7 @@ export function decodeCertificateBytes(value: Uint8Array): Uint8Array {
 
 export function decodeCertificateText(value: string): Uint8Array {
   const trimmed = value.trim();
-  const pemMatch = trimmed.match(
-    /-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/
-  );
+  const pemMatch = trimmed.match(/-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/);
   const base64 = pemMatch ? pemMatch[1] : trimmed;
   const normalized = base64.replace(/\s+/g, '');
   if (!normalized || !/^[A-Za-z0-9+/]+=*$/.test(normalized)) {
@@ -99,7 +100,9 @@ export function decodeCertificateText(value: string): Uint8Array {
   }
 }
 
-function parseX509Certificate(der: Uint8Array): Omit<
+function parseX509Certificate(
+  der: Uint8Array
+): Omit<
   SAMLTrustCertificatePreview,
   'certificate' | 'source' | 'fingerprintSha1' | 'fingerprintSha256' | 'warnings'
 > {
@@ -111,7 +114,12 @@ function parseX509Certificate(der: Uint8Array): Omit<
   const certChildren = childNodes(der, certificate);
   const tbs = certChildren[0];
   const outerSignatureAlgorithm = certChildren[1];
-  if (!tbs || tbs.tag !== 0x30 || !outerSignatureAlgorithm || outerSignatureAlgorithm.tag !== 0x30) {
+  if (
+    !tbs ||
+    tbs.tag !== 0x30 ||
+    !outerSignatureAlgorithm ||
+    outerSignatureAlgorithm.tag !== 0x30
+  ) {
     throw new SAMLMetadataValidationError('Input is not a valid X.509 certificate');
   }
 
@@ -169,14 +177,18 @@ function buildCertificateWarnings(
     warnings.push('Certificate signature uses MD5. Do not use this certificate in production.');
   }
   if (signatureAlgorithm.includes('sha1')) {
-    warnings.push('Certificate signature uses SHA-1. Accept only for an explicit legacy compatibility exception.');
+    warnings.push(
+      'Certificate signature uses SHA-1. Accept only for an explicit legacy compatibility exception.'
+    );
   }
   if (
     parsed.publicKeyAlgorithm.toLowerCase().includes('rsa') &&
     typeof parsed.publicKeySizeBits === 'number' &&
     parsed.publicKeySizeBits < 2048
   ) {
-    warnings.push(`RSA public key is ${parsed.publicKeySizeBits} bits. Use RSA 2048 bits or stronger.`);
+    warnings.push(
+      `RSA public key is ${parsed.publicKeySizeBits} bits. Use RSA 2048 bits or stronger.`
+    );
   }
   return warnings;
 }
@@ -304,10 +316,16 @@ function parseTime(bytes: Uint8Array, node: DerNode | undefined): string {
       : text.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?Z$/);
   if (!match) return text;
   const [, y, month, day, hour, minute, second = '00'] = match;
-  const year =
-    node.tag === 0x17 ? (Number(y) >= 50 ? `19${y}` : `20${y}`) : y;
+  const year = node.tag === 0x17 ? (Number(y) >= 50 ? `19${y}` : `20${y}`) : y;
   return new Date(
-    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second))
+    Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second)
+    )
   ).toISOString();
 }
 
@@ -369,10 +387,7 @@ async function digestHex(bytes: Uint8Array, algorithm: 'SHA-1' | 'SHA-256'): Pro
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength
   ) as ArrayBuffer;
-  const digest = await crypto.subtle.digest(
-    algorithm,
-    input
-  );
+  const digest = await crypto.subtle.digest(algorithm, input);
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, '0').toUpperCase())
     .join(':');

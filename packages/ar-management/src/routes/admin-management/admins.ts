@@ -129,7 +129,10 @@ async function userHasActivePlatformAdminRole(
      FROM admin_role_assignments ra
      JOIN admin_roles r
        ON r.id = ra.admin_role_id
-      AND r.tenant_id = ra.tenant_id
+      AND (
+        r.tenant_id = ra.tenant_id
+        OR (r.tenant_id = 'default' AND r.is_system = 1)
+      )
      WHERE ra.tenant_id = ?
        AND ra.admin_user_id = ?
        AND r.name = 'super_admin'
@@ -153,8 +156,8 @@ async function ensureNotRemovingLastPlatformAdmin(
   }
 
   const platformRole = await adapter.queryOne<{ id: string }>(
-    "SELECT id FROM admin_roles WHERE tenant_id = ? AND name = 'super_admin' LIMIT 1",
-    [tenantId]
+    "SELECT id FROM admin_roles WHERE tenant_id = 'default' AND name = 'super_admin' AND is_system = 1 LIMIT 1",
+    []
   );
   if (!platformRole) {
     return null;
@@ -680,7 +683,7 @@ adminUsersRouter.post('/:id/roles', async (c) => {
     }
 
     // Prevent cross-tenant role assignment while still allowing shared system roles.
-    if (role.tenant_id !== tenantId && !role.is_system) {
+    if (role.tenant_id !== tenantId && !(role.tenant_id === 'default' && role.is_system)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 

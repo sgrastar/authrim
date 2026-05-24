@@ -430,7 +430,10 @@ async function authenticateSession(
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.admin_user_id = ?
          AND ra.tenant_id = ?
-         AND r.tenant_id = ?
+         AND (
+           r.tenant_id = ?
+           OR (r.tenant_id = 'default' AND r.is_system = 1)
+         )
          AND (
            ra.scope_type = 'global'
            OR (
@@ -456,7 +459,8 @@ async function authenticateSession(
     const allTenantRoles = await adminAdapter.query<AdminAuthRoleRow>(
       `SELECT id, name, permissions_json, hierarchy_level, inherits_from
          FROM admin_roles
-        WHERE tenant_id = ?`,
+        WHERE tenant_id = ?
+           OR (tenant_id = 'default' AND is_system = 1)`,
       [session.tenant_id]
     );
     const rolesById = new Map<string, AdminAuthRoleRow>();

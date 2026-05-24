@@ -391,6 +391,7 @@ app.post('/', async (c) => {
 
     const effectiveSettings = diagnosticSettings ?? settingsFallback;
     const storageMode = resolveStorageMode(effectiveSettings, body.client_id);
+    const pathPrefix = effectiveSettings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
     const hashSecret = resolveHashSecret(c.env, tenantId);
     const tokenHashPrefixLength =
       effectiveSettings['diagnostic-logging.token_hash_prefix_length'] ?? 12;
@@ -426,7 +427,7 @@ app.post('/', async (c) => {
     for (const [category, logs] of logsByCategory) {
       const adapter = new DiagnosticLogR2Adapter({
         bucket: r2,
-        pathPrefix: 'diagnostic-logs',
+        pathPrefix,
         tenantId,
         tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
         clientId: body.client_id,

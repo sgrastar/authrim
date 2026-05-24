@@ -187,7 +187,15 @@ describe('DiagnosticLogger', () => {
 
     expect(bucket.store.size).toBe(2);
     const keys = Array.from(bucket.store.keys());
-    expect(keys.every((key) => key.includes('/v1/'))).toBe(true);
+    const diagnosticKeyPattern = new RegExp(
+      [
+        String.raw`^diagnostic-logs/v1/t_[A-Za-z0-9_-]{32}/diagnostic_detail/diagnostic/`,
+        String.raw`auth-decision/rp-client/\d{4}/\d{2}/\d{2}/\d{2}/`,
+        String.raw`chk_[A-Za-z0-9_-]+\.jsonl$`,
+      ].join(''),
+      'u'
+    );
+    expect(keys).toEqual(expect.arrayContaining([expect.stringMatching(diagnosticKeyPattern)]));
     expect(keys.every((key) => !key.includes('/tenant-1/'))).toBe(true);
 
     const entries = getStoredEntries(bucket);

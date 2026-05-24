@@ -925,7 +925,7 @@
 		</div>
 		{#if preview.warnings.length > 0}
 			<div class="certificate-warnings">
-				{#each preview.warnings as warning}
+					{#each preview.warnings as warning (warning)}
 					<div><i class="i-ph-warning-circle"></i>{warning}</div>
 				{/each}
 			</div>
@@ -1871,10 +1871,10 @@
 					<span>Certificate security warnings</span>
 				</div>
 				<ul>
-					{#each providerCertificatePreview?.warnings ?? [] as warning}
+						{#each providerCertificatePreview?.warnings ?? [] as warning (warning)}
 						<li>{warning}</li>
 					{/each}
-					{#each federationCertificatePreview?.warnings ?? [] as warning}
+						{#each federationCertificatePreview?.warnings ?? [] as warning (warning)}
 						<li>{warning}</li>
 					{/each}
 				</ul>

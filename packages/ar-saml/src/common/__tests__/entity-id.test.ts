@@ -18,9 +18,9 @@ describe('SAML local entityID helpers', () => {
   });
 
   it('builds metadata URL entityIDs', () => {
-    expect(buildSAMLEntityIdFromIssuerUrl('https://tenant.example.org', 'idp', 'metadata_url')).toBe(
-      'https://tenant.example.org/saml/idp/metadata'
-    );
+    expect(
+      buildSAMLEntityIdFromIssuerUrl('https://tenant.example.org', 'idp', 'metadata_url')
+    ).toBe('https://tenant.example.org/saml/idp/metadata');
     expect(buildSAMLEntityIdFromIssuerUrl('https://tenant.example.org', 'sp', 'metadata_url')).toBe(
       'https://tenant.example.org/saml/sp/metadata'
     );

@@ -123,6 +123,7 @@ export interface WriteLogChunkInput {
   surface?: string;
   indexProfile?: string;
   compression?: LogChunkCompression;
+  shard?: string;
   now?: number;
   catalogStore?: LogChunkCatalogStore;
   encryption?: LogChunkEncryptionOptions;
@@ -132,6 +133,7 @@ export interface WriteLogChunkResult {
   chunkId: string;
   objectCatalogId: string;
   objectKey: string;
+  shard: string;
   recordCount: number;
   byteCount: number;
   checksumSha256: string;

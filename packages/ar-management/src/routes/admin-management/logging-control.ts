@@ -194,7 +194,7 @@ async function requirePlatformAuthority(c: AdminContext): Promise<Response | nul
 
 async function resolveScopedTenantKey(c: AdminContext, tenantId: string): Promise<string> {
   const resolver = createLoggingTenantKeyResolverFromSource(
-    c.env.DB,
+    getAdminAdapter(c),
     'admin-logging-control-tenant-key'
   );
   const resolved = await resolver?.(tenantId);
@@ -210,6 +210,58 @@ async function resolveTenantKeyFilter(
   }
 
   const tenantId = getTenantIdFromContext(c);
+  const scopedTenantKey = await resolveScopedTenantKey(c, tenantId);
+  if (requestedTenantKey && requestedTenantKey !== scopedTenantKey) {
+    return {
+      ok: false,
+      response: await createAdminPermissionErrorResponse(c, {
+        required_scope: 'current_tenant',
+        reason: 'tenant_key_scope_mismatch',
+      }),
+    };
+  }
+  return { ok: true, tenantKey: scopedTenantKey };
+}
+
+async function resolveTenantKeyOrTenantIdFilter(
+  c: AdminContext,
+  input: { tenantKey?: string; tenantId?: string }
+): Promise<{ ok: true; tenantKey: string | null } | { ok: false; response: Response }> {
+  const requestedTenantKey = parseOptionalString(input.tenantKey) ?? undefined;
+  const requestedTenantId = parseOptionalString(input.tenantId) ?? undefined;
+
+  if (hasPlatformAuthority(getAuth(c))) {
+    if (!requestedTenantId) {
+      return { ok: true, tenantKey: requestedTenantKey ?? null };
+    }
+
+    const resolvedTenantKey = await resolveScopedTenantKey(c, requestedTenantId);
+    if (requestedTenantKey && requestedTenantKey !== resolvedTenantKey) {
+      return {
+        ok: false,
+        response: await createAdminFieldErrorResponse(c, [
+          fieldError(
+            'tenant_id',
+            'tenant_key_mismatch',
+            'tenant_id and tenant_key do not refer to the same tenant.'
+          ),
+        ]),
+      };
+    }
+    return { ok: true, tenantKey: resolvedTenantKey };
+  }
+
+  const tenantId = getTenantIdFromContext(c);
+  if (requestedTenantId && requestedTenantId !== tenantId) {
+    return {
+      ok: false,
+      response: await createAdminPermissionErrorResponse(c, {
+        required_scope: 'current_tenant',
+        reason: 'tenant_id_scope_mismatch',
+      }),
+    };
+  }
+
   const scopedTenantKey = await resolveScopedTenantKey(c, tenantId);
   if (requestedTenantKey && requestedTenantKey !== scopedTenantKey) {
     return {
@@ -790,7 +842,7 @@ interface LoggingExportJobRow {
   tenant_key: string | null;
   log_type: string | null;
   plane: string | null;
-  format: 'jsonl' | 'csv';
+  format: 'jsonl' | 'csv' | 'zip';
   status: string;
   artifact_object_ref: string | null;
   manifest_object_ref: string | null;
@@ -880,11 +932,11 @@ async function requireTenantIdAccess(
 }
 
 function getDlqPayloadBucket(c: AdminContext): R2Bucket | null {
-  return c.env.AUDIT_ARCHIVE ?? c.env.DIAGNOSTIC_LOGS ?? null;
+  return c.env.AUDIT_ARCHIVE ?? null;
 }
 
 function getLoggingExportBucket(c: AdminContext): R2Bucket | null {
-  return c.env.EXPORT_ARTIFACTS ?? c.env.DIAGNOSTIC_LOGS ?? null;
+  return c.env.EXPORT_ARTIFACTS ?? null;
 }
 
 async function writeCatalogRepairJobPreviewArtifact(
@@ -932,7 +984,7 @@ async function requireSensitiveDetailExportReadPermission(
 }
 
 function getLoggingMessagePayloadBucket(c: AdminContext): R2Bucket | null {
-  return c.env.DIAGNOSTIC_LOGS ?? c.env.AUDIT_ARCHIVE ?? null;
+  return c.env.AUDIT_ARCHIVE ?? null;
 }
 
 function getCatalogObjectBucket(c: AdminContext, row: LogObjectCatalogRow): R2Bucket | null {
@@ -943,9 +995,12 @@ function getCatalogObjectBucket(c: AdminContext, row: LogObjectCatalogRow): R2Bu
     return getLoggingExportBucket(c);
   }
   if (row.plane === 'sensitive_detail') {
-    return c.env.SENSITIVE_DETAILS ?? c.env.DIAGNOSTIC_LOGS ?? null;
+    return c.env.SENSITIVE_DETAILS ?? null;
   }
-  return c.env.AUDIT_ARCHIVE ?? c.env.DIAGNOSTIC_LOGS ?? null;
+  if (row.plane === 'diagnostic_detail' || row.log_type === 'diagnostic') {
+    return c.env.DIAGNOSTIC_LOGS ?? null;
+  }
+  return c.env.AUDIT_ARCHIVE ?? null;
 }
 
 async function readR2TextWithLimit(
@@ -959,6 +1014,63 @@ async function readR2TextWithLimit(
   } catch {
     return { ok: false, error: 'object_too_large' };
   }
+}
+
+async function readR2BytesWithLimit(
+  object: R2ObjectBody,
+  maxBytes: number
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; error: 'object_too_large' }> {
+  if (typeof object.size === 'number' && object.size > maxBytes) {
+    return { ok: false, error: 'object_too_large' };
+  }
+  if (object.body) {
+    const reader = object.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (!value) {
+          continue;
+        }
+        totalBytes += value.byteLength;
+        if (totalBytes > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          return { ok: false, error: 'object_too_large' };
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { ok: true, bytes };
+  }
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  if (bytes.byteLength > maxBytes) {
+    return { ok: false, error: 'object_too_large' };
+  }
+  return { ok: true, bytes };
+}
+
+function loggingExportContentType(format: LoggingExportJobRow['format']): string {
+  return format === 'csv'
+    ? 'text/csv'
+    : format === 'zip'
+      ? 'application/zip'
+      : 'application/x-ndjson';
+}
+
+function loggingExportFileExtension(format: LoggingExportJobRow['format']): string {
+  return format === 'csv' ? 'csv' : format === 'zip' ? 'zip' : 'jsonl';
 }
 
 interface LoggingKeyRegistryVersionRow extends Record<string, unknown> {
@@ -2298,7 +2410,7 @@ function getCredentialRootKey(c: AdminContext): string | null {
 }
 
 function getCredentialSecretBucket(c: AdminContext): R2Bucket | null {
-  return c.env.SENSITIVE_DETAILS ?? c.env.DIAGNOSTIC_LOGS ?? null;
+  return c.env.SENSITIVE_DETAILS ?? null;
 }
 
 function getCredentialSecretBackend(
@@ -6695,7 +6807,11 @@ loggingPoliciesRouter.get('/delivery-events', async (c) => {
   const conditions: string[] = [];
   const params: unknown[] = [];
   const requestedTenantKey = c.req.query('filter[tenant_key]') || c.req.query('tenant_key');
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -6831,7 +6947,11 @@ loggingPoliciesRouter.get('/delivery-summary', async (c) => {
   const conditions: string[] = [];
   const params: unknown[] = [];
   const requestedTenantKey = c.req.query('filter[tenant_key]') || c.req.query('tenant_key');
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -7485,7 +7605,11 @@ loggingPoliciesRouter.get('/usage-aggregates', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   }
   const requestedTenantKey = c.req.query('filter[tenant_key]') || c.req.query('tenant_key');
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -8021,11 +8145,14 @@ loggingPoliciesRouter.get('/usage-summary', async (c) => {
   }
 
   const requestedTenantKey = c.req.query('filter[tenant_key]') || c.req.query('tenant_key');
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
-  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
   const tenantIdFilter = await resolveTenantIdFilter(c, requestedTenantId);
   if (!tenantIdFilter.ok) {
     return tenantIdFilter.response;
@@ -8743,9 +8870,13 @@ loggingPoliciesRouter.post('/exports', async (c) => {
   }
 
   const body = await parseJsonObject(c);
-  const format = body.format === 'csv' ? 'csv' : 'jsonl';
+  const format = body.format === 'csv' ? 'csv' : body.format === 'zip' ? 'zip' : 'jsonl';
   const requestedTenantKey = parseOptionalString(body.tenant_key) ?? undefined;
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = parseOptionalString(body.tenant_id) ?? undefined;
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -8767,6 +8898,17 @@ loggingPoliciesRouter.post('/exports', async (c) => {
   const includePayload =
     (source === 'record_index' || isSensitiveDetailExport) &&
     parseOptionalBoolean(body.include_payload, false);
+  const detailScope =
+    body.detail_scope === 'full' || body.include_detail === true ? 'full' : 'none';
+  if (
+    detailScope === 'full' &&
+    !hasPermission(authContext, LOGGING_SENSITIVE_DETAIL_EXPORT_PERMISSION)
+  ) {
+    return createAdminPermissionErrorResponse(c, {
+      required_permission: LOGGING_SENSITIVE_DETAIL_EXPORT_PERMISSION,
+      reason: 'sensitive_detail_export_permission_required',
+    });
+  }
   const timeStart =
     typeof body.time_start === 'number' && body.time_start > 0 ? body.time_start : null;
   const timeEnd = typeof body.time_end === 'number' && body.time_end > 0 ? body.time_end : null;
@@ -8783,6 +8925,7 @@ loggingPoliciesRouter.post('/exports', async (c) => {
     time_end: timeEnd,
     limit,
     include_payload: includePayload,
+    detail_scope: detailScope,
   };
 
   try {
@@ -8987,7 +9130,11 @@ loggingPoliciesRouter.get('/message-jobs', async (c) => {
   }
 
   const requestedTenantKey = c.req.query('filter[tenant_key]') || c.req.query('tenant_key');
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -9055,7 +9202,11 @@ loggingPoliciesRouter.get('/message-job-repair-findings', async (c) => {
   }
 
   const requestedTenantKey = c.req.query('filter[tenant_key]') || c.req.query('tenant_key');
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -9704,6 +9855,29 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
       if (!object) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
+      if (item.format === 'zip') {
+        const artifactRead = await readR2BytesWithLimit(
+          object,
+          LOGGING_EXPORT_ARTIFACT_INLINE_DOWNLOAD_MAX_BYTES
+        );
+        if (!artifactRead.ok) {
+          return createAdminFieldErrorResponse(c, [
+            fieldError(
+              'artifact',
+              'artifact_too_large_for_inline_download',
+              'Export artifact is too large for inline API download.'
+            ),
+          ]);
+        }
+        return new Response(artifactRead.bytes, {
+          headers: {
+            'content-type': loggingExportContentType(item.format),
+            'content-disposition': `attachment; filename="${safeDownloadFilenameBase(item.id)}.${loggingExportFileExtension(item.format)}"`,
+            'x-content-type-options': 'nosniff',
+            'cache-control': 'no-store',
+          },
+        });
+      }
       const artifactRead = await readR2TextWithLimit(
         object,
         LOGGING_EXPORT_ARTIFACT_INLINE_DOWNLOAD_MAX_BYTES
@@ -9719,8 +9893,8 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
       }
       return new Response(artifactRead.text, {
         headers: {
-          'content-type': item.format === 'csv' ? 'text/csv' : 'application/x-ndjson',
-          'content-disposition': `attachment; filename="${safeDownloadFilenameBase(item.id)}.${item.format === 'csv' ? 'csv' : 'jsonl'}"`,
+          'content-type': loggingExportContentType(item.format),
+          'content-disposition': `attachment; filename="${safeDownloadFilenameBase(item.id)}.${loggingExportFileExtension(item.format)}"`,
           'x-content-type-options': 'nosniff',
           'cache-control': 'no-store',
         },
@@ -9778,6 +9952,15 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
     if (partRefs.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    if (item.format === 'zip' && partRefs.length > 1) {
+      return createAdminFieldErrorResponse(c, [
+        fieldError(
+          'manifest.parts',
+          'zip_multi_part_inline_download_unsupported',
+          'ZIP exports with multiple parts must be downloaded part-by-part.'
+        ),
+      ]);
+    }
     const invalidPartRef = partRefs.find(
       (partRef) => !isLoggingExportObjectRefAllowed(item, partRef)
     );
@@ -9807,6 +9990,26 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
           ),
         ]);
       }
+      if (item.format === 'zip') {
+        const partRead = await readR2BytesWithLimit(part, remainingBytes);
+        if (!partRead.ok) {
+          return createAdminFieldErrorResponse(c, [
+            fieldError(
+              'artifact',
+              'artifact_too_large_for_inline_download',
+              'Export artifact is too large for inline API download.'
+            ),
+          ]);
+        }
+        return new Response(partRead.bytes, {
+          headers: {
+            'content-type': loggingExportContentType(item.format),
+            'content-disposition': `attachment; filename="${safeDownloadFilenameBase(item.id)}.${loggingExportFileExtension(item.format)}"`,
+            'x-content-type-options': 'nosniff',
+            'cache-control': 'no-store',
+          },
+        });
+      }
       const partRead = await readR2TextWithLimit(part, remainingBytes);
       if (!partRead.ok) {
         return createAdminFieldErrorResponse(c, [
@@ -9827,8 +10030,8 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
     }
     return new Response(partTexts.join(item.format === 'csv' ? '\n' : ''), {
       headers: {
-        'content-type': item.format === 'csv' ? 'text/csv' : 'application/x-ndjson',
-        'content-disposition': `attachment; filename="${safeDownloadFilenameBase(item.id)}.${item.format === 'csv' ? 'csv' : 'jsonl'}"`,
+        'content-type': loggingExportContentType(item.format),
+        'content-disposition': `attachment; filename="${safeDownloadFilenameBase(item.id)}.${loggingExportFileExtension(item.format)}"`,
         'x-content-type-options': 'nosniff',
         'cache-control': 'no-store',
       },
@@ -9847,7 +10050,11 @@ async function listDlqItems(c: AdminContext) {
   const conditions: string[] = [];
   const params: unknown[] = [];
   const requestedTenantKey = c.req.query('filter[tenant_key]') || c.req.query('tenant_key');
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = c.req.query('filter[tenant_id]') || c.req.query('tenant_id');
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -9982,7 +10189,11 @@ loggingPoliciesRouter.post('/dlq/bulk-replay/preview', async (c) => {
 
   const body = await parseJsonObject(c);
   const requestedTenantKey = parseOptionalString(body.tenant_key) ?? undefined;
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = parseOptionalString(body.tenant_id) ?? undefined;
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }
@@ -10032,7 +10243,11 @@ loggingPoliciesRouter.post('/dlq/bulk-replay/apply', async (c) => {
 
   const body = await parseJsonObject(c);
   const requestedTenantKey = parseOptionalString(body.tenant_key) ?? undefined;
-  const tenantKeyFilter = await resolveTenantKeyFilter(c, requestedTenantKey);
+  const requestedTenantId = parseOptionalString(body.tenant_id) ?? undefined;
+  const tenantKeyFilter = await resolveTenantKeyOrTenantIdFilter(c, {
+    tenantKey: requestedTenantKey,
+    tenantId: requestedTenantId,
+  });
   if (!tenantKeyFilter.ok) {
     return tenantKeyFilter.response;
   }

@@ -60,11 +60,30 @@ function hasWritePermission(authContext: AdminAuthContext): boolean {
 }
 
 function canAccessRole(role: AdminRole, tenantId: string): boolean {
-  return role.tenant_id === tenantId || role.is_system;
+  return role.tenant_id === tenantId || (role.tenant_id === 'default' && role.is_system);
 }
 
 function isPlatformAdminRole(roleName: string | undefined): boolean {
   return roleName === 'super_admin';
+}
+
+function mergeAvailableRoles(tenantRoles: AdminRole[], systemRoles: AdminRole[]): AdminRole[] {
+  const rolesByName = new Map<string, AdminRole>();
+
+  for (const role of systemRoles) {
+    rolesByName.set(role.name, role);
+  }
+
+  // Hide legacy tenant-scoped system role copies when a canonical default role exists.
+  for (const role of tenantRoles) {
+    if (!role.is_system || !rolesByName.has(role.name)) {
+      rolesByName.set(role.name, role);
+    }
+  }
+
+  return Array.from(rolesByName.values()).sort(
+    (a, b) => b.hierarchy_level - a.hierarchy_level || a.name.localeCompare(b.name)
+  );
 }
 
 function normalizeAssignmentScope(
@@ -156,14 +175,12 @@ adminRolesRouter.get('/', async (c) => {
     let allRoles = tenantRoles;
     if (includeSystem) {
       const systemRoles = await roleRepo.getSystemRoles();
-      // Merge, avoiding duplicates
-      const tenantRoleIds = new Set(tenantRoles.map((r) => r.id));
-      const uniqueSystemRoles = systemRoles.filter((r) => !tenantRoleIds.has(r.id));
-      allRoles = [...tenantRoles, ...uniqueSystemRoles];
+      allRoles = mergeAvailableRoles(tenantRoles, systemRoles);
+    } else {
+      allRoles.sort(
+        (a, b) => b.hierarchy_level - a.hierarchy_level || a.name.localeCompare(b.name)
+      );
     }
-
-    // Sort by hierarchy level (highest first)
-    allRoles.sort((a, b) => b.hierarchy_level - a.hierarchy_level);
 
     return c.json({
       items: allRoles,

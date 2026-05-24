@@ -17,6 +17,7 @@ export interface AdminUser {
 	email: string;
 	name?: string;
 	roles: string[];
+	permissions: string[];
 	adminScope: 'platform' | 'tenant';
 	isPlatformAdmin: boolean;
 	lastLoginAt?: number | null;
@@ -100,6 +101,7 @@ function createAdminAuthStore() {
 						email: session.email || '',
 						name: session.name,
 						roles: session.roles,
+						permissions: session.permissions ?? [],
 						adminScope: session.admin_scope,
 						isPlatformAdmin: session.is_platform_admin,
 						lastLoginAt: session.last_login_at

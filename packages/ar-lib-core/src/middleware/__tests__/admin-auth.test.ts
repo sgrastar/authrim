@@ -829,6 +829,9 @@ describe('adminAuthMiddleware', () => {
       );
       expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('AND ra.tenant_id = ?'));
       expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("OR (r.tenant_id = 'default' AND r.is_system = 1)")
+      );
+      expect(db.prepare).toHaveBeenCalledWith(
         'UPDATE admin_sessions SET last_activity_at = ? WHERE id = ? AND tenant_id = ?'
       );
     });

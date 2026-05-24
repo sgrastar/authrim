@@ -13,6 +13,7 @@ import {
   loadChunkedSensitiveDetailJson,
   storeChunkedSensitiveDetailJson,
 } from '@authrim/ar-lib-core/services/sensitive-detail-chunk-store';
+import { emitRuntimeLogRecords } from '@authrim/ar-lib-core/services/logging-runtime-emitter';
 import {
   generatePublicArtifactId,
   getObjectCatalogObjectRecordByPublicArtifactId,
@@ -359,9 +360,26 @@ export async function writeAdminAuditLog(
       detailPayload.after ||
       detailPayload.metadata
     );
-    const detailObjectCatalogId = hasExternalizableDetail
-      ? await storeAdminAuditDetail(c, adminAdapter, tenantId, auditLogId, detailPayload, createdAt)
-      : null;
+    let detailObjectCatalogId: string | null = null;
+    if (hasExternalizableDetail) {
+      try {
+        detailObjectCatalogId = await storeAdminAuditDetail(
+          c,
+          adminAdapter,
+          tenantId,
+          auditLogId,
+          detailPayload,
+          createdAt
+        );
+      } catch (error) {
+        const log = getLogger(c).module('ADMIN');
+        log.error(
+          'Failed to externalize admin audit detail; writing inline audit detail',
+          { action: input.action },
+          error as Error
+        );
+      }
+    }
 
     await auditRepo.createAuditLog({
       id: auditLogId,
@@ -388,6 +406,67 @@ export async function writeAdminAuditLog(
       metadata: detailObjectCatalogId ? inlineAuditMetadata : (detailPayload.metadata ?? undefined),
       detail_object_catalog_id: detailObjectCatalogId ?? undefined,
     });
+    try {
+      if (!c.env.AUDIT_ARCHIVE && !c.env.AUTHRIM_CONFIG) {
+        return auditLogId;
+      }
+      await emitRuntimeLogRecords({
+        env: {
+          ...c.env,
+          DB_ADMIN: adminAdapter,
+          LOGGING_INDEX_DB: adminAdapter,
+        },
+        tenantId,
+        logType: 'admin_audit',
+        surface: 'admin_audit',
+        tenantKeyResolver: createLoggingTenantKeyResolverFromSource(
+          adminAdapter,
+          'admin-audit-archive'
+        ),
+        records: [
+          {
+            id: auditLogId,
+            eventAt: createdAt,
+            type: `admin_audit.${input.action}`,
+            source: 'authrim/admin',
+            severity: input.severity ?? (input.result === 'failure' ? 'warn' : 'info'),
+            subject: input.resourceId ?? input.resourceType,
+            correlationId: requestId,
+            payload: {
+              action: input.action,
+              resource_type: input.resourceType,
+              resource_id: input.resourceId,
+              result: input.result,
+              request_id: requestId,
+              actor: {
+                type: actorMetadata.admin_actor_type ?? null,
+                id: actorMetadata.admin_actor_id ?? null,
+                auth_method: actorMetadata.admin_auth_method ?? null,
+              },
+              detail_object_catalog_id: detailObjectCatalogId,
+              detail_storage: detailObjectCatalogId ? 'sensitive_detail' : 'inline_admin_audit_row',
+              inline_metadata_keys: Object.keys(inlineAuditMetadata).sort(),
+            },
+            indexedFields: {
+              action: input.action,
+              resourceType: input.resourceType,
+              resourceId: input.resourceId,
+              result: input.result,
+              severity: input.severity ?? (input.result === 'failure' ? 'warn' : 'info'),
+              requestId,
+            },
+          },
+        ],
+        planes: ['archive'],
+      });
+    } catch (error) {
+      const log = getLogger(c).module('ADMIN');
+      log.error(
+        'Failed to emit admin audit archive chunk',
+        { action: input.action, auditLogId },
+        error as Error
+      );
+    }
     return auditLogId;
   } catch (error) {
     const log = getLogger(c).module('ADMIN');

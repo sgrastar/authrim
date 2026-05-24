@@ -371,6 +371,8 @@ export interface NotificationCenterResponse {
 	};
 }
 
+export type LoggingExportFormat = 'jsonl' | 'csv' | 'zip';
+
 export interface LoggingExportJob {
 	id: string;
 	job_id?: string;
@@ -378,7 +380,7 @@ export interface LoggingExportJob {
 	tenant_key?: string | null;
 	log_type?: string | null;
 	plane?: string | null;
-	format: 'jsonl' | 'csv';
+	format: LoggingExportFormat;
 	status: string;
 	artifact_object_ref?: string | null;
 	manifest_object_ref?: string | null;
@@ -654,9 +656,10 @@ export interface NotificationDeliveryRoute {
 }
 
 export interface CreateLoggingExportInput {
-	format?: 'jsonl' | 'csv';
+	format?: LoggingExportFormat;
 	source?: 'catalog' | 'record_index';
 	tenant_key?: string;
+	tenant_id?: string;
 	log_type?: string;
 	plane?: string;
 	time_start?: number;
@@ -1281,6 +1284,7 @@ export const adminLoggingControlAPI = {
 	},
 
 	async listDeliveryEvents(filters: {
+		tenantId?: string;
 		tenantKey?: string;
 		lane?: string;
 		status?: string;
@@ -1291,6 +1295,7 @@ export const adminLoggingControlAPI = {
 	}) {
 		const response = await adminFetch(
 			withParams(`${API_BASE_URL}/api/admin/logging-policies/delivery-events`, {
+				'filter[tenant_id]': filters.tenantId,
 				'filter[tenant_key]': filters.tenantKey,
 				'filter[lane]': filters.lane,
 				'filter[status]': filters.status,
@@ -1304,6 +1309,7 @@ export const adminLoggingControlAPI = {
 	},
 
 	async getDeliverySummary(filters: {
+		tenantId?: string;
 		tenantKey?: string;
 		lane?: string;
 		status?: string;
@@ -1313,6 +1319,7 @@ export const adminLoggingControlAPI = {
 	}) {
 		const response = await adminFetch(
 			withParams(`${API_BASE_URL}/api/admin/logging-policies/delivery-summary`, {
+				'filter[tenant_id]': filters.tenantId,
 				'filter[tenant_key]': filters.tenantKey,
 				'filter[lane]': filters.lane,
 				'filter[status]': filters.status,
@@ -1447,6 +1454,7 @@ export const adminLoggingControlAPI = {
 	},
 
 	async listUsageAggregates(filters: {
+		tenantId?: string;
 		tenantKey?: string;
 		metricName?: string;
 		windowKind?: 'hour' | 'day';
@@ -1456,6 +1464,7 @@ export const adminLoggingControlAPI = {
 	}) {
 		const response = await adminFetch(
 			withParams(`${API_BASE_URL}/api/admin/logging-policies/usage-aggregates`, {
+				'filter[tenant_id]': filters.tenantId,
 				'filter[tenant_key]': filters.tenantKey,
 				'filter[metric_name]': filters.metricName,
 				'filter[window_kind]': filters.windowKind,
@@ -1687,6 +1696,7 @@ export const adminLoggingControlAPI = {
 
 	async listMessageJobs(
 		filters: {
+			tenantId?: string;
 			tenantKey?: string;
 			kind?: LoggingMessageJob['kind'];
 			status?: string;
@@ -1703,6 +1713,7 @@ export const adminLoggingControlAPI = {
 	) {
 		const response = await adminFetch(
 			withParams(`${API_BASE_URL}/api/admin/logging-policies/message-jobs`, {
+				'filter[tenant_id]': filters.tenantId,
 				'filter[tenant_key]': filters.tenantKey,
 				'filter[kind]': filters.kind,
 				'filter[status]': filters.status,
@@ -1744,6 +1755,7 @@ export const adminLoggingControlAPI = {
 
 	async listMessageRepairFindings(
 		filters: {
+			tenantId?: string;
 			tenantKey?: string;
 			status?: string;
 			severity?: string;
@@ -1755,6 +1767,7 @@ export const adminLoggingControlAPI = {
 	) {
 		const response = await adminFetch(
 			withParams(`${API_BASE_URL}/api/admin/logging-policies/message-job-repair-findings`, {
+				'filter[tenant_id]': filters.tenantId,
 				'filter[tenant_key]': filters.tenantKey,
 				'filter[status]': filters.status,
 				'filter[severity]': filters.severity,
@@ -1833,7 +1846,25 @@ export const adminLoggingControlAPI = {
 		return response.text();
 	},
 
+	async downloadLoggingExportArtifact(id: string) {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/logging-policies/exports/${encodeURIComponent(id)}/artifact`
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to load logging export');
+		}
+		const disposition = response.headers.get('content-disposition') ?? '';
+		const quoted = /filename="([^"]+)"/.exec(disposition);
+		const unquoted = /filename=([^;]+)/.exec(disposition);
+		return {
+			blob: await response.blob(),
+			filename: quoted?.[1] ?? unquoted?.[1]?.trim() ?? `${id}-artifact`
+		};
+	},
+
 	async listDlqItems(filters: {
+		tenantId?: string;
 		tenantKey?: string;
 		lane?: string;
 		status?: string;
@@ -1844,6 +1875,7 @@ export const adminLoggingControlAPI = {
 	}) {
 		const response = await adminFetch(
 			withParams(`${API_BASE_URL}/api/admin/logging-policies/dlq`, {
+				'filter[tenant_id]': filters.tenantId,
 				'filter[tenant_key]': filters.tenantKey,
 				'filter[lane]': filters.lane,
 				'filter[status]': filters.status,
@@ -1857,6 +1889,7 @@ export const adminLoggingControlAPI = {
 	},
 
 	async previewBulkDlqReplay(input: {
+		tenantId?: string;
 		tenantKey?: string;
 		lane?: string;
 		destinationId?: string;
@@ -1869,6 +1902,7 @@ export const adminLoggingControlAPI = {
 				method: 'POST',
 				includeJsonContentType: true,
 				body: JSON.stringify({
+					tenant_id: input.tenantId,
 					tenant_key: input.tenantKey,
 					lane: input.lane,
 					destination_id: input.destinationId,
@@ -1884,6 +1918,7 @@ export const adminLoggingControlAPI = {
 	},
 
 	async applyBulkDlqReplay(input: {
+		tenantId?: string;
 		tenantKey?: string;
 		lane?: string;
 		destinationId?: string;
@@ -1897,6 +1932,7 @@ export const adminLoggingControlAPI = {
 				method: 'POST',
 				includeJsonContentType: true,
 				body: JSON.stringify({
+					tenant_id: input.tenantId,
 					tenant_key: input.tenantKey,
 					lane: input.lane,
 					destination_id: input.destinationId,

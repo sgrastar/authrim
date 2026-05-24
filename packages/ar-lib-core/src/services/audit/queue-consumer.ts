@@ -10,7 +10,9 @@
 
 import type { MessageBatch, Message, Queue } from '@cloudflare/workers-types';
 import {
+  buildLogChunkObjectKey,
   createLoggingId,
+  defaultLogStorageShard,
   deriveTenantKeyFromTenantId,
   formatUtcPartition,
   writeLogChunkToR2,
@@ -64,7 +66,11 @@ import { createLogger, type Logger } from '../../utils/logger';
 import { readR2ObjectTextWithLimit } from '../../utils/body-limits';
 import { createAuditPrimaryStorageAdapter } from './external-primary';
 import { resolveTenantRuntimeProfilesFromEnv } from '../runtime-profile-resolver';
-import { buildCanonicalAuditBatch, buildCanonicalAuditRecord } from './canonical-format';
+import {
+  buildCanonicalAuditArchiveRecordFromEntry,
+  buildCanonicalAuditBatch,
+  buildCanonicalAuditRecord,
+} from './canonical-format';
 import { safeFetch } from '../../utils/url-security';
 import { SqlLogChunkCatalogStore } from './logging-catalog-store';
 import { decryptObjectArtifact, encryptObjectArtifact } from '../object-artifact-crypto';
@@ -84,7 +90,7 @@ function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
 }
 
 function getDefaultLoggingDeliveryPayloadBucket(env: AuditQueueConsumerEnv): R2Bucket | null {
-  return env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS ?? null;
+  return env.AUDIT_ARCHIVE ?? null;
 }
 
 const LOGGING_DELIVERY_PAYLOAD_MAX_BYTES = 5 * 1024 * 1024;
@@ -105,12 +111,12 @@ async function readLoggingDeliveryPayloadObjectText(
 
 function getChunkWriteBucket(env: AuditQueueConsumerEnv, plane: LogPlane): R2Bucket | null {
   if (plane === 'diagnostic_detail') {
-    return env.DIAGNOSTIC_LOGS ?? env.AUDIT_ARCHIVE ?? null;
+    return env.DIAGNOSTIC_LOGS ?? null;
   }
   if (plane === 'sensitive_detail') {
-    return env.SENSITIVE_DETAILS ?? env.DIAGNOSTIC_LOGS ?? null;
+    return env.SENSITIVE_DETAILS ?? null;
   }
-  return env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS ?? null;
+  return env.AUDIT_ARCHIVE ?? null;
 }
 
 function normalizeR2ObjectRef(ref: string): string {
@@ -213,7 +219,7 @@ async function resolveRuntimeCredentialSecret(input: {
     }
     const adapter = ensureDatabaseAdapter(input.env.DB_ADMIN, 'logging-runtime-credentials');
     if (backendKind === 'r2') {
-      const bucket = input.env.SENSITIVE_DETAILS ?? input.env.DIAGNOSTIC_LOGS;
+      const bucket = input.env.SENSITIVE_DETAILS;
       if (!bucket) {
         throw new Error('runtime_credential_r2_bucket_unavailable');
       }
@@ -931,7 +937,11 @@ async function writeArchiveTarget(
     records: body.entries.map((entry) => ({
       id: entry.id,
       eventAt: entry.createdAt,
-      payload: buildCanonicalAuditRecord(target, body, entry, 'archive'),
+      payload: buildCanonicalAuditArchiveRecordFromEntry(target, body.type, entry, tenantKey, {
+        emittedAt: body.timestamp,
+        auditProfileId: body.fanout?.auditProfileId,
+        matchedRuleNames: body.fanout?.matchedRuleNames,
+      }),
       indexedFields:
         body.type === 'event_log'
           ? {
@@ -1809,7 +1819,7 @@ export async function processDLQQueue(
         `/dd=${partition.day}/${dlqItemId}.json`;
 
       // Save to R2 for recovery
-      const archiveBucket = env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS;
+      const archiveBucket = env.AUDIT_ARCHIVE ?? null;
       if (archiveBucket) {
         await archiveBucket.put(
           payloadObjectRef,
@@ -1909,7 +1919,7 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
   logger: Logger;
 }): Promise<void> {
   const { message, parseResult, env, logger } = input;
-  const archiveBucket = env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS;
+  const archiveBucket = env.AUDIT_ARCHIVE ?? null;
   const now = Date.now();
   const tenantKey = parseResult.tenantKey ?? 'unknown_tenant_key';
   const lane = parseResult.lane ?? 'default';
@@ -2197,16 +2207,22 @@ function parseSensitiveDetailChunkWriteRecords(
 
 function buildSensitiveDetailChunkObjectKey(input: {
   tenantKey: string;
+  logType: LogType;
   surface: string;
   chunkId: string;
   createdAt: number;
 }): string {
-  const createdAtDate = new Date(input.createdAt);
-  const year = createdAtDate.getUTCFullYear();
-  const month = String(createdAtDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(createdAtDate.getUTCDate()).padStart(2, '0');
-  const hour = String(createdAtDate.getUTCHours()).padStart(2, '0');
-  return `sensitive-details/${cleanR2ObjectKeySegment(input.tenantKey)}/sensitive_detail/${cleanR2ObjectKeySegment(input.surface)}/${year}/${month}/${day}/${hour}/${cleanR2ObjectKeySegment(input.chunkId)}.jsonl.gz`;
+  return buildLogChunkObjectKey({
+    prefix: 'sensitive-details/v1',
+    tenantKey: input.tenantKey,
+    logType: input.logType,
+    plane: 'sensitive_detail',
+    surface: input.surface,
+    createdAt: input.createdAt,
+    chunkId: input.chunkId,
+    shard: defaultLogStorageShard({ tenantKey: input.tenantKey }),
+    compression: 'gzip_block',
+  });
 }
 
 async function gzipSensitiveDetailJsonl(
@@ -2350,6 +2366,7 @@ async function writeSensitiveDetailChunk(input: {
   const chunkId = createLoggingId('chk', input.now);
   const objectKey = buildSensitiveDetailChunkObjectKey({
     tenantKey: input.tenantKey,
+    logType: input.logType,
     surface: input.surface,
     chunkId,
     createdAt: input.chunkCreatedAt,
@@ -2392,6 +2409,7 @@ async function writeSensitiveDetailChunk(input: {
       logType: input.logType,
       plane: 'sensitive_detail',
       surface: input.surface,
+      shard: defaultLogStorageShard({ tenantKey: input.tenantKey }),
       recordCount: String(input.records.length),
       checksumSha256,
       createdAt: String(input.now),

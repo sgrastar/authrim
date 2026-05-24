@@ -76,7 +76,7 @@
 	let tenantDbSlug = $state('');
 	let tenantDbGeneration = $state('1');
 	let tenantDbActivate = $state(false);
-	let tenantDbExecutionMode = $state<'plan_only' | 'operator_cli' | 'cloudflare_api'>('plan_only');
+	let tenantDbExecutionMode = $state<'plan_only' | 'operator_cli'>('plan_only');
 	let tenantDbReason = $state('');
 
 	// Job Detail Dialog
@@ -799,7 +799,6 @@
 			<select id="tenant-db-execution" class="form-select" bind:value={tenantDbExecutionMode}>
 				<option value="plan_only">Plan only</option>
 				<option value="operator_cli">Operator CLI</option>
-				<option value="cloudflare_api">Cloudflare API</option>
 			</select>
 		</div>
 	</div>

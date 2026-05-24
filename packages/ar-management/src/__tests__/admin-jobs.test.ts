@@ -420,6 +420,26 @@ describe('admin-jobs handlers', () => {
     });
   });
 
+  it('rejects Cloudflare API execution mode for tenant database provisioning requests', async () => {
+    const { app, env } = createTestApp();
+
+    const res = await app.request(
+      '/api/admin/jobs/tenant-databases/provision',
+      {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify({
+          tenant_slug: 'example-library',
+          execution_mode: 'cloudflare_api',
+        }),
+      },
+      env
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it('rejects tenant database provisioning jobs in tenant D1 pool mode', async () => {
     const { app, env } = createTestApp({
       DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',

@@ -538,6 +538,10 @@ export function generateWranglerConfig(
         binding: 'DIAGNOSTIC_LOGS',
         bucket_name: resourceIds.r2['DIAGNOSTIC_LOGS']?.name || `${env}-diagnostic-logs`,
       });
+      r2Buckets.push({
+        binding: 'AUDIT_ARCHIVE',
+        bucket_name: resourceIds.r2['AUDIT_ARCHIVE']?.name || `${env}-audit-archive`,
+      });
     }
 
     if (component === 'ar-management') {

@@ -7,11 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  AR_ERROR_CODES,
-  getLogger,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import { SAML_NAMESPACES, BINDING_URIS, NAMEID_FORMATS } from '../common/constants';
 import {
   createDocument,

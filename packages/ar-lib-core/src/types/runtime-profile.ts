@@ -721,7 +721,7 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     builtin: true,
     version: 1,
     primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-    archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+    archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'logs/v1' },
     sinks: [],
     retention: {
       eventLogRetentionDays: 90,
@@ -738,31 +738,6 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     },
   },
   {
-    id: 'builtin:audit:minimal',
-    kind: 'audit',
-    label: 'Minimal Audit',
-    description:
-      'Keep audit logs only in the primary database without archive or forwarding sinks.',
-    builtin: true,
-    version: 1,
-    primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-    archive: null,
-    sinks: [],
-    retention: {
-      eventLogRetentionDays: 90,
-      piiLogRetentionDays: 365,
-      archiveBeforeDelete: false,
-      primaryDays: 90,
-      archiveDays: null,
-    },
-    archiveFailureMode: 'best_effort',
-    sinkFailureMode: 'best_effort',
-    backpressure: {
-      mode: 'event_class',
-      allowTenantOverride: true,
-    },
-  },
-  {
     id: 'builtin:audit:archive-only-logpush',
     kind: 'audit',
     label: 'Archive Only + Logpush',
@@ -771,7 +746,7 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     builtin: true,
     version: 1,
     primary: null,
-    archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+    archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'logs/v1' },
     sinks: [{ type: 'logpush', destinationRef: 'workers-logpush', dataset: 'authrim_audit' }],
     retention: {
       eventLogRetentionDays: 30,

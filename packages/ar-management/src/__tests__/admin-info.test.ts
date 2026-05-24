@@ -174,7 +174,9 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn(),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
     } as any);
 
     expect(response.status).toBe(200);
@@ -238,7 +240,9 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn(),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
     } as any);
 
     const body = (await response.json()) as { login_ui_url: string | null };
@@ -271,7 +275,9 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn(),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
     } as any);
 
     const body = (await response.json()) as {
@@ -310,7 +316,9 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn(),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
     } as any);
 
     const body = (await response.json()) as {

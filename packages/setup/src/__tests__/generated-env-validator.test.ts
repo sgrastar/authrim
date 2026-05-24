@@ -148,6 +148,7 @@ async function writeGeneratedEnvironment(
     r2: [
       { binding: 'AVATARS', name: `${env}-authrim-avatars` },
       { binding: 'DIAGNOSTIC_LOGS', name: `${env}-diagnostic-logs` },
+      { binding: 'AUDIT_ARCHIVE', name: `${env}-audit-archive` },
       { binding: 'IMPORT_ARTIFACTS', name: `${env}-import-artifacts` },
       { binding: 'EXPORT_ARTIFACTS', name: `${env}-export-artifacts` },
       { binding: 'SENSITIVE_DETAILS', name: `${env}-sensitive-details` },
@@ -333,6 +334,7 @@ describe('validateGeneratedEnvironment', () => {
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
+      { name: `${env}-audit-archive` },
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
@@ -384,6 +386,7 @@ describe('validateGeneratedEnvironment', () => {
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
+      { name: `${env}-audit-archive` },
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },

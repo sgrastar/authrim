@@ -119,8 +119,8 @@ describe('logging/storage conformance', () => {
     });
 
     expect(bucket.writes).toHaveLength(2);
-    expect(bucket.writes[0].key).toContain('/t_conf_a/sensitive_detail/audit/event/');
-    expect(bucket.writes[1].key).toContain('/t_conf_b/sensitive_detail/audit/event/');
+    expect(bucket.writes[0].key).toContain('/t_conf_a/sensitive_detail/event/audit/');
+    expect(bucket.writes[1].key).toContain('/t_conf_b/sensitive_detail/event/audit/');
     expect(bucket.writes.map((write) => write.key).join('\n')).not.toContain('tenant-a');
     expect(bucket.writes.map((write) => write.key).join('\n')).not.toContain('tenant-b');
 

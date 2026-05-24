@@ -77,7 +77,12 @@ const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
 
 const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
 
-const LOGGING_R2_BINDINGS = ['DIAGNOSTIC_LOGS', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS'] as const;
+const LOGGING_R2_BINDINGS = [
+  'DIAGNOSTIC_LOGS',
+  'AUDIT_ARCHIVE',
+  'EXPORT_ARTIFACTS',
+  'SENSITIVE_DETAILS',
+] as const;
 
 const MANAGEMENT_R2_BINDINGS = [
   'IMPORT_ARTIFACTS',
@@ -806,6 +811,17 @@ async function validateDeployWranglers(
           check,
           'fail',
           `${component}: DIAGNOSTIC_LOGS expected=${expectedDiagnosticLogs} actual=${parsed.r2.DIAGNOSTIC_LOGS ?? '(missing)'}`
+        );
+      }
+    }
+
+    const expectedAuditArchive = lock.r2?.AUDIT_ARCHIVE?.name;
+    if (expectedAuditArchive && DIAGNOSTIC_R2_COMPONENTS.includes(component)) {
+      if (parsed.r2.AUDIT_ARCHIVE !== expectedAuditArchive) {
+        pushDetail(
+          check,
+          'fail',
+          `${component}: AUDIT_ARCHIVE expected=${expectedAuditArchive} actual=${parsed.r2.AUDIT_ARCHIVE ?? '(missing)'}`
         );
       }
     }

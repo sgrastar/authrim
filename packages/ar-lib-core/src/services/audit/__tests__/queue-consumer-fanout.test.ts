@@ -25,6 +25,18 @@ function createAdminDbAdapter() {
   };
 }
 
+async function decodeFirstChunkRecord(bytes: Uint8Array): Promise<Record<string, unknown>> {
+  const body =
+    typeof DecompressionStream === 'undefined'
+      ? bytes
+      : new Uint8Array(
+          await new Response(
+            new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+          ).arrayBuffer()
+        );
+  return JSON.parse(new TextDecoder().decode(body).split('\n')[0]) as Record<string, unknown>;
+}
+
 describe('audit queue consumer fanout', () => {
   const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -59,12 +71,13 @@ describe('audit queue consumer fanout', () => {
           eventCategory: 'auth',
           result: 'success',
           severity: 'info',
+          detailsJson: JSON.stringify({ requestHeaders: { authorization: 'Bearer secret' } }),
           createdAt: Date.now(),
         },
       ],
       fanout: {
         auditProfileId: 'audit-profile-1',
-        archives: [{ type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' }],
+        archives: [{ type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'audit/' }],
         sinks: [{ type: 'logpush', destinationRef: 'workers-logpush', dataset: 'authrim_audit' }],
         archiveFailureMode: 'gate_cleanup',
         sinkFailureMode: 'retry_until_ttl',
@@ -76,7 +89,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: coreDb,
         DB_PII: {} as D1Database,
-        DIAGNOSTIC_LOGS: bucket,
+        AUDIT_ARCHIVE: bucket,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
 
@@ -86,6 +99,22 @@ describe('audit queue consumer fanout', () => {
     expect(archiveKey).toContain('.jsonl.gz');
     expect(archiveKey).toContain('/t_registry_archive/');
     expect(archiveKey).not.toContain('/tenant-registry-a/');
+    const archiveBody = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    const archiveRecord = await decodeFirstChunkRecord(archiveBody as Uint8Array);
+    expect(archiveRecord).toMatchObject({
+      schema_version: 'authrim.log.archive.v1',
+      record_type: 'log_record',
+      tenant_key: 't_registry_archive',
+      log_type: 'audit',
+      plane: 'archive',
+      summary: {
+        audit_record_schema: 'authrim.audit.v1',
+        audit_log_type: 'event_log',
+        has_inline_detail: true,
+      },
+    });
+    expect(JSON.stringify(archiveRecord)).not.toContain('Bearer secret');
+    expect(JSON.stringify(archiveRecord)).not.toContain('detailsJson');
     expect(consoleLogSpy).toHaveBeenCalledWith(
       expect.stringContaining('"schema":"authrim.audit.v1"')
     );
@@ -124,7 +153,7 @@ describe('audit queue consumer fanout', () => {
       ],
       fanout: {
         auditProfileId: 'audit-profile-1',
-        archives: [{ type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' }],
+        archives: [{ type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'audit/' }],
         sinks: [],
         archiveFailureMode: 'gate_cleanup',
         sinkFailureMode: 'retry_until_ttl',
@@ -136,7 +165,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: coreDb,
         DB_PII: {} as D1Database,
-        DIAGNOSTIC_LOGS: bucket,
+        AUDIT_ARCHIVE: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY:
           '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         OBJECT_ENCRYPTION_KEY_VERSION: '2',
@@ -405,7 +434,7 @@ describe('audit queue consumer fanout', () => {
           {
             type: 'r2',
             destinationId: 'dest_archive_r2',
-            bucketRef: 'DIAGNOSTIC_LOGS',
+            bucketRef: 'AUDIT_ARCHIVE',
             prefix: 'audit/',
           },
         ],
@@ -421,7 +450,7 @@ describe('audit queue consumer fanout', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        DIAGNOSTIC_LOGS: bucket,
+        AUDIT_ARCHIVE: bucket,
         LOGGING_DELIVERY_QUEUE: deliveryQueue,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
@@ -495,7 +524,7 @@ describe('audit queue consumer fanout', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        DIAGNOSTIC_LOGS: payloadBucket,
+        AUDIT_ARCHIVE: payloadBucket,
         LOGGING_DELIVERY_QUEUE: deliveryQueue,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
@@ -609,7 +638,7 @@ describe('audit queue consumer fanout', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        DIAGNOSTIC_LOGS: payloadBucket,
+        AUDIT_ARCHIVE: payloadBucket,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
 

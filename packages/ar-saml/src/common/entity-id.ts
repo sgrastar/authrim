@@ -51,10 +51,7 @@ export function buildSAMLMetadataUrlFromIssuerUrl(issuerUrl: string, role: SAMLL
   return `${issuerUrl}/saml/${role}/metadata`;
 }
 
-export async function getSAMLEntityIdStyle(
-  env: Env,
-  tenantId: string
-): Promise<SAMLEntityIdStyle> {
+export async function getSAMLEntityIdStyle(env: Env, tenantId: string): Promise<SAMLEntityIdStyle> {
   const envStyle = normalizeSAMLEntityIdStyle(env.SAML_ENTITY_ID_STYLE);
   if (envStyle) {
     return envStyle;
@@ -77,7 +74,10 @@ export async function getSAMLInteractiveLoginUrlPolicy(
   return storedSettings.interactiveLoginUrlPolicy;
 }
 
-export async function getSAMLPublicSettings(env: Env, tenantId: string): Promise<SAMLPublicSettings> {
+export async function getSAMLPublicSettings(
+  env: Env,
+  tenantId: string
+): Promise<SAMLPublicSettings> {
   const storedSettings = await readStoredSAMLSettings(env, tenantId);
   return {
     entityIdStyle:
@@ -107,7 +107,10 @@ export async function putSAMLPublicSettings(
   );
 }
 
-export async function getSAMLLocalEntityIds(env: Env, tenantId: string): Promise<SAMLLocalEntityIds> {
+export async function getSAMLLocalEntityIds(
+  env: Env,
+  tenantId: string
+): Promise<SAMLLocalEntityIds> {
   const issuerUrl = buildIssuerUrl(env, tenantId);
   const entityIdStyle = await getSAMLEntityIdStyle(env, tenantId);
   return {

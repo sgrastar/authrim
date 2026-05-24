@@ -29,7 +29,8 @@ function createR2Object(body: Uint8Array): R2ObjectBody {
 
 describe('loadChunkedSensitiveDetailJson', () => {
   it('loads and decrypts one detail record from a gzip JSONL chunk', async () => {
-    const objectKey = 'sensitive-details/t_safe/control/admin_audit/2026/05/19/chk_1.jsonl.gz';
+    const objectKey =
+      'sensitive-details/v1/t_safe/sensitive_detail/control/admin_audit/2026/05/19/00/shard-01/chk_1.jsonl.gz';
     const envelope = await encryptObjectArtifact(JSON.stringify({ metadata: { ok: true } }), {
       rootKeyHex: ROOT_KEY,
       plane: 'SENSITIVE_DETAILS',
@@ -80,7 +81,8 @@ describe('loadChunkedSensitiveDetailJson', () => {
   });
 
   it('uses byte offset lookup for uncompressed chunks without reading the full object', async () => {
-    const objectKey = 'sensitive-details/t_safe/control/admin_audit/2026/05/19/chk_2.jsonl.gz';
+    const objectKey =
+      'sensitive-details/v1/t_safe/sensitive_detail/control/admin_audit/2026/05/19/00/shard-01/chk_2.jsonl.gz';
     const envelope = await encryptObjectArtifact(JSON.stringify({ metadata: { ranged: true } }), {
       rootKeyHex: ROOT_KEY,
       plane: 'SENSITIVE_DETAILS',
