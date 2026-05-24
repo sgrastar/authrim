@@ -29,6 +29,8 @@ Authrim is functional but pre-1.0. APIs may change, and no formal security audit
 Evaluate thoroughly before production use.
 Production hardening is tracked against documented deployment, operations, recovery, auditability, and protocol/security validation criteria in the roadmap.
 
+Authrim is still under active development, and breaking changes, including database schema changes, are expected until at least 0.5.0 and possibly until 1.0.0.
+
 ## Vision
 
 **Authrim** is a unified Identity & Access Platform combining:

@@ -1003,13 +1003,9 @@ async function resolveArchiveChunkEncryption(input: {
   tenantKey: string;
   logType: LogType;
   plane: LogPlane;
-}): Promise<LogChunkEncryptionOptions | undefined> {
-  if (
-    input.plane !== 'archive' ||
-    input.logType !== 'audit' ||
-    !input.env.OBJECT_ENCRYPTION_ROOT_KEY
-  ) {
-    return undefined;
+}): Promise<LogChunkEncryptionOptions> {
+  if (!input.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    throw new Error('log_chunk_encryption_root_key_unavailable');
   }
   const keyVersion = Number.parseInt(input.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
   const normalizedKeyVersion = Number.isFinite(keyVersion) && keyVersion > 0 ? keyVersion : 1;

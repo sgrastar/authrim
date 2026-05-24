@@ -90,6 +90,9 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
 
   assertLogType(input.logType);
   assertLogPlane(input.plane);
+  if (!input.encryption && input.allowPlaintext !== true) {
+    throw new Error('log_chunk_encryption_required');
+  }
 
   const createdAt = input.now ?? Date.now();
   const chunkId = createLoggingId('chk', createdAt);

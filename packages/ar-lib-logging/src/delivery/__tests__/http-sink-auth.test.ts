@@ -93,4 +93,29 @@ describe('HTTP sink auth headers', () => {
       })
     ).rejects.toThrow('invalid_http_header_name');
   });
+
+  it('rejects CRLF in header values before constructing fetch headers', async () => {
+    await expect(
+      buildHttpSinkAuthHeaders({
+        mode: 'bearer',
+        bearerToken: 'token\r\nX-Injected: yes',
+      })
+    ).rejects.toThrow('invalid_http_header_value');
+  });
+
+  it('redacts sensitive custom header names even when secret is omitted', async () => {
+    await expect(
+      buildHttpSinkAuthHeaders({
+        mode: 'custom_headers',
+        customHeaders: [{ name: 'X-Api-Key', value: 'key-123' }],
+      })
+    ).resolves.toEqual({
+      headers: {
+        'X-Api-Key': 'key-123',
+      },
+      redactedHeaders: {
+        'X-Api-Key': '[redacted]',
+      },
+    });
+  });
 });

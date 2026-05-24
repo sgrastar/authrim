@@ -18,7 +18,7 @@ export const SAML_SP_PROFILE_DEFAULTS: Record<SAMLSPProfile, SAMLSPProfileDefaul
     signResponses: true,
     signAssertions: false,
     authnRequestSignaturePolicy: 'optional',
-    logoutRequestSignaturePolicy: 'optional',
+    logoutRequestSignaturePolicy: 'required',
     logoutResponseSignaturePolicy: 'optional',
     logoutResponseBinding: 'auto',
     acceptedAuthnRequestSignatureAlgorithms: [SIGNATURE_ALGORITHMS.RSA_SHA256],

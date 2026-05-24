@@ -127,6 +127,11 @@ export interface WriteLogChunkInput {
   now?: number;
   catalogStore?: LogChunkCatalogStore;
   encryption?: LogChunkEncryptionOptions;
+  /**
+   * Emergency/test-only escape hatch for non-sensitive chunks.
+   * Production log chunks should always provide encryption.
+   */
+  allowPlaintext?: boolean;
 }
 
 export interface WriteLogChunkResult {

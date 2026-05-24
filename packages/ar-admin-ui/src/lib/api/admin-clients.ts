@@ -23,6 +23,8 @@ export interface Client {
 	response_types: string[];
 	redirect_uris: string[];
 	token_endpoint_auth_method: string;
+	browser_public_client_mode?: 'strict' | 'cookie_fallback' | null;
+	browser_refresh_token_policy?: 'disabled' | 'dpop_bound' | null;
 	scope?: string;
 	contacts?: string[];
 	logo_uri?: string | null;
@@ -99,6 +101,8 @@ export interface CreateClientInput {
 	grant_types?: string[];
 	response_types?: string[];
 	token_endpoint_auth_method?: string;
+	browser_public_client_mode?: 'strict' | 'cookie_fallback' | null;
+	browser_refresh_token_policy?: 'disabled' | 'dpop_bound' | null;
 	scope?: string;
 	require_pkce?: boolean;
 	allow_claims_without_scope?: boolean;
@@ -128,6 +132,8 @@ export interface UpdateClientInput {
 	grant_types?: string[];
 	response_types?: string[];
 	token_endpoint_auth_method?: string;
+	browser_public_client_mode?: 'strict' | 'cookie_fallback' | null;
+	browser_refresh_token_policy?: 'disabled' | 'dpop_bound' | null;
 	scope?: string;
 	login_ui_url?: string | null;
 	require_pkce?: boolean;

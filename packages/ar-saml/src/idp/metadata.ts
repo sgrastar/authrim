@@ -136,6 +136,18 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
     appendChild(idpSsoDescriptor, buildSigningKeyDescriptor(doc, signingCertificate));
   }
 
+  // Add SingleLogoutService endpoints. In the SAML metadata schema this belongs to
+  // SSODescriptorType and must appear before NameIDFormat.
+  const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+  setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
+  setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
+  appendChild(idpSsoDescriptor, sloPost);
+
+  const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+  setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
+  setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
+  appendChild(idpSsoDescriptor, sloRedirect);
+
   // Add NameIDFormat elements
   const supportedFormats = [
     NAMEID_FORMATS.EMAIL,
@@ -163,20 +175,6 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
   setAttribute(ssoRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
   setAttribute(ssoRedirect, 'Location', `${issuerUrl}/saml/idp/sso`);
   appendChild(idpSsoDescriptor, ssoRedirect);
-
-  // Add SingleLogoutService endpoints
-
-  // HTTP-POST Binding for SLO
-  const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
-  setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloPost);
-
-  // HTTP-Redirect Binding for SLO
-  const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
-  setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloRedirect);
 
   appendChild(entityDescriptor, idpSsoDescriptor);
 

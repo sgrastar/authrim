@@ -31,7 +31,7 @@ export interface TenantSettings {
   'tenant.residency_profile_id': string;
 
   // Browser Public Client Defaults
-  'tenant.browser_public_client_mode': 'strict' | 'cookie_fallback' | 'legacy';
+  'tenant.browser_public_client_mode': 'strict' | 'cookie_fallback';
 
   // SAML Defaults
   'tenant.saml_attribute_release_failure_message_mode': SAMLAttributeReleaseFailureUserMessageMode;
@@ -158,7 +158,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     label: 'Browser Public Client Mode',
     description:
       'Default hosted/built-in browser behavior. Custom browser SDK clients default to strict unless configured otherwise.',
-    enum: ['strict', 'cookie_fallback', 'legacy'],
+    enum: ['strict', 'cookie_fallback'],
     visibility: 'admin',
   },
   'tenant.saml_attribute_release_failure_message_mode': {

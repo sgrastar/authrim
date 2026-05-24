@@ -784,6 +784,19 @@ const pt: Translations = {
   'web.db.name': 'Nome',
   'web.db.region': 'Região',
   'web.db.regionAuto': 'Automático (mais próximo)',
+  'web.db.storageProfileTitle': 'Perfil de implantação de armazenamento',
+  'web.db.storageProfileDesc':
+    'Selecione como os dados core/PII dos usuários serão posicionados nesta implantação.',
+  'web.db.sharedD1Title': 'D1 compartilhado',
+  'web.db.sharedD1Desc':
+    'Um D1 core e um D1 PII para toda a implantação. Menor custo de configuração e caminho padrão.',
+  'web.db.tenantD1Title': 'D1 por tenant',
+  'web.db.tenantD1Desc':
+    'Um par D1 core/PII por tenant. Requer provisionamento do banco de dados do tenant antes da ativação.',
+  'web.db.preallocatedSlotsTitle': 'Slots de tenant pré-alocados',
+  'web.db.preallocatedSlotsDesc': 'Cada slot de tenant cria dois bancos de dados D1: core e PII.',
+  'web.db.slotsLabel': 'Slots',
+  'web.db.slotsHelp': 'O padrão é 3. O máximo é 500 slots.',
 
   // Web UI Email
   'web.email.title': 'Provedor de Email',

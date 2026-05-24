@@ -340,7 +340,9 @@ describe('UI URL Validator', () => {
       );
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"adminId":"admin-456"'));
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"url":"https://evil.com"'));
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"error":"Origin not allowed"'));
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('"validationError":"Origin not allowed"')
+      );
     });
   });
 

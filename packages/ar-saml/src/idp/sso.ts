@@ -87,6 +87,7 @@ import { scheduleSAMLPolicyFailureAudit } from './audit';
 import { buildSAMLAssertionTiming } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { assertSAMLRelayStateSize } from '../common/relay-state';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -486,6 +487,7 @@ async function parseRedirectBinding(c: Context<{ Bindings: Env }>): Promise<{
   const url = new URL(c.req.url);
   const samlRequest = url.searchParams.get('SAMLRequest');
   const relayState = url.searchParams.get('RelayState') || undefined;
+  assertSAMLRelayStateSize(relayState);
 
   if (!samlRequest) {
     throw new Error('Missing SAMLRequest parameter');
@@ -567,6 +569,7 @@ async function parsePostBinding(c: Context<{ Bindings: Env }>): Promise<{
   const formData = await parsePostBindingFormDataWithLimit(c.req);
   const samlRequest = formData.get('SAMLRequest') as string;
   const relayState = (formData.get('RelayState') as string) || undefined;
+  assertSAMLRelayStateSize(relayState);
 
   if (!samlRequest) {
     throw new Error('Missing SAMLRequest parameter');
@@ -968,6 +971,7 @@ function sendSAMLResponse(
   const encodedResponse = base64Encode(responseXml);
   const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
   if (relayState) {
+    assertSAMLRelayStateSize(relayState);
     fields.push({ name: 'RelayState', value: relayState });
   }
 

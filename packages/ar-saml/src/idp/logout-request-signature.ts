@@ -50,7 +50,7 @@ export async function validateSAMLLogoutRequestSignature(
   input: SAMLLogoutRequestSignatureValidationInput,
   verifiers: SAMLLogoutRequestSignatureVerifiers = {}
 ): Promise<void> {
-  const policy = input.spConfig.logoutRequestSignaturePolicy ?? 'optional';
+  const policy = input.spConfig.logoutRequestSignaturePolicy ?? 'required';
 
   if (policy === 'disabled') {
     return;

@@ -76,6 +76,7 @@ import {
   type SAMLOutboundLogoutRequestRecord,
 } from './slo-state';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { assertSAMLRelayStateSize } from '../common/relay-state';
 
 interface ParsedLogoutRequestInput {
   logoutRequest: ParsedLogoutRequest;
@@ -144,6 +145,7 @@ async function handlePostBinding(
   const samlRequest = formData.get('SAMLRequest') as string | null;
   const samlResponse = formData.get('SAMLResponse') as string | null;
   const relayState = formData.get('RelayState') as string | null;
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
     const xml = decodePostBindingMessage(samlRequest, 'SAML LogoutRequest');
@@ -180,6 +182,7 @@ async function handleRedirectBinding(
   const samlRequest = url.searchParams.get('SAMLRequest');
   const samlResponse = url.searchParams.get('SAMLResponse');
   const relayState = url.searchParams.get('RelayState');
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
     const xml = inflateRedirectBindingMessage(samlRequest, 'SAML LogoutRequest');
@@ -893,6 +896,7 @@ function sendPostBindingResponse(
   const encodedResponse = encodeForPostBinding(responseXml);
   const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
   if (relayState) {
+    assertSAMLRelayStateSize(relayState);
     fields.push({ name: 'RelayState', value: relayState });
   }
 
@@ -921,6 +925,7 @@ function sendPostBindingRequest(
   const encodedRequest = encodeForPostBinding(requestXml);
   const fields = [{ name: 'SAMLRequest', value: encodedRequest }];
   if (relayState) {
+    assertSAMLRelayStateSize(relayState);
     fields.push({ name: 'RelayState', value: relayState });
   }
 
@@ -942,6 +947,7 @@ async function sendRedirectBindingResponse(
   privateKeyPem: string,
   cookieHeader?: string
 ): Promise<Response> {
+  assertSAMLRelayStateSize(relayState);
   const encodedResponse = encodeForRedirectBindingQueryValue(responseXml);
   const signed = await signRedirectBinding(
     'SAMLResponse',
@@ -971,6 +977,7 @@ async function sendRedirectBindingRequest(
   relayState: string | null,
   privateKeyPem: string
 ): Promise<Response> {
+  assertSAMLRelayStateSize(relayState);
   const encodedRequest = encodeForRedirectBindingQueryValue(requestXml);
   const signed = await signRedirectBinding(
     'SAMLRequest',

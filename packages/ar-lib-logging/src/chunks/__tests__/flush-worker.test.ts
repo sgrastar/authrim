@@ -7,6 +7,14 @@ import {
 } from '../flush-worker';
 import type { LogChunkCatalogStore } from '../types';
 
+function testEncryption(tenantKey: string, logType: string, plane = 'archive') {
+  return {
+    keyBytes: new Uint8Array(32).fill(9),
+    encryptionScope: `tenant:${tenantKey}:${logType}:${plane}`,
+    keyVersion: 1,
+  };
+}
+
 describe('flushLogChunkAndEnqueueDelivery', () => {
   it('commits the R2 chunk before enqueueing delivery payloads by lane priority', async () => {
     const calls: string[] = [];
@@ -41,6 +49,7 @@ describe('flushLogChunkAndEnqueueDelivery', () => {
       logType: 'audit',
       plane: 'archive',
       now: 1_700_000_000_000,
+      encryption: testEncryption('t_safeopaque', 'audit'),
       records: [{ id: 'evt-1', eventAt: 1_700_000_000_000, payload: { id: 'evt-1' } }],
       destinations: [
         { destinationId: 'dest_bulk', lane: 'bulk' },
@@ -88,6 +97,7 @@ describe('flushLogChunkAndEnqueueDelivery', () => {
       tenantKey: 't_safeopaque',
       logType: 'normal',
       plane: 'archive',
+      encryption: testEncryption('t_safeopaque', 'normal'),
       records: [{ id: 'evt-1', eventAt: 1, payload: { id: 'evt-1' } }],
       destinations: [{ destinationId: 'dest_1', lane: 'default' }],
       queueBindings: {},
@@ -121,6 +131,7 @@ describe('flushLogChunkAndEnqueueDelivery', () => {
       queueBindings: {
         LOGGING_DELIVERY_QUEUE: { send },
       },
+      encryption: testEncryption('t_buffered', 'normal'),
       profile: {
         name: 'default' as const,
         maxRecords: 2,
@@ -179,6 +190,7 @@ describe('flushLogChunkAndEnqueueDelivery', () => {
       queueBindings: {
         LOGGING_DELIVERY_QUEUE: { send },
       },
+      encryption: testEncryption('t_retry', 'normal'),
       profile: {
         name: 'default' as const,
         maxRecords: 10,

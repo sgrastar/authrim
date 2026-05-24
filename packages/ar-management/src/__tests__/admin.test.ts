@@ -2322,6 +2322,33 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should reject legacy browser public client mode on create', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Legacy Browser Client',
+          redirect_uris: ['https://example.com/callback'],
+          browser_public_client_mode: 'legacy',
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('browser_public_client_mode'),
+        }),
+        400
+      );
+    });
+
     it('should generate client_id and client_secret', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -2713,6 +2740,39 @@ describe('Admin API Handlers', () => {
             default_resource: 'svc://wallet-api',
           }),
         })
+      );
+    });
+
+    it('should reject legacy browser public client mode on update', async () => {
+      const clientId = 'legacy-browser-client-update';
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        },
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          browser_public_client_mode: 'legacy',
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('browser_public_client_mode'),
+        }),
+        400
       );
     });
 

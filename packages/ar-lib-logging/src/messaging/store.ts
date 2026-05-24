@@ -24,6 +24,23 @@ export interface LoggingMessageSqlExecutor {
 
 const DEFAULT_MAX_DEPTH = 16;
 const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 500;
+const MAX_LIST_OFFSET = 100_000;
+
+function normalizeListLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return DEFAULT_LIST_LIMIT;
+  }
+  return Math.max(1, Math.min(MAX_LIST_LIMIT, Math.floor(limit)));
+}
+
+function normalizeListOffset(offset: number | undefined): number {
+  if (offset === undefined || !Number.isFinite(offset)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(MAX_LIST_OFFSET, Math.floor(offset)));
+}
 
 interface LoggingMessageJobRow {
   id: string;
@@ -430,7 +447,7 @@ export class SqlLoggingMessageJobStore {
        WHERE ${where.sql}
        ORDER BY priority DESC, not_before ASC, created_at ASC
        LIMIT ?`,
-      [...where.params, input.limit ?? 50]
+      [...where.params, normalizeListLimit(input.limit)]
     );
     return rows.map(mapJobRow);
   }
@@ -496,7 +513,7 @@ export class SqlLoggingMessageJobStore {
        ${where}
        ORDER BY created_at DESC, id DESC
        LIMIT ? OFFSET ?`,
-      [...params, input.limit ?? 50, input.offset ?? 0]
+      [...params, normalizeListLimit(input.limit), normalizeListOffset(input.offset)]
     );
     return rows.map(mapJobRow);
   }
@@ -516,7 +533,7 @@ export class SqlLoggingMessageJobStore {
        WHERE ${clauses.join(' AND ')}
        ORDER BY claimed_until ASC, priority DESC, created_at ASC
        LIMIT ?`,
-      [...params, input.limit ?? 50]
+      [...params, normalizeListLimit(input.limit)]
     );
     return rows.map(mapJobRow);
   }
@@ -532,7 +549,7 @@ export class SqlLoggingMessageJobStore {
        WHERE ${clauses.join(' AND ')}
        ORDER BY expires_at ASC, priority DESC, created_at ASC
        LIMIT ?`,
-      [...params, input.limit ?? 50]
+      [...params, normalizeListLimit(input.limit)]
     );
     return rows.map(mapJobRow);
   }
@@ -845,7 +862,7 @@ export class SqlLoggingMessageJobStore {
          f.detected_at DESC,
          f.id DESC
        LIMIT ? OFFSET ?`,
-      [...params, input.limit ?? 50, input.offset ?? 0]
+      [...params, normalizeListLimit(input.limit), normalizeListOffset(input.offset)]
     );
     return rows.map(mapRepairFindingRow);
   }

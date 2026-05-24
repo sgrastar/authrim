@@ -23,6 +23,8 @@
 		requiresRedirectUri: boolean;
 		defaultGrantTypes: string[];
 		pkceRequired: boolean;
+		browserPublicClientMode?: 'strict' | 'cookie_fallback' | '';
+		browserRefreshTokenPolicy?: 'disabled' | 'dpop_bound';
 		badge?: string; // Optional badge (e.g., "WebSDK")
 	}
 
@@ -36,6 +38,8 @@
 			requiresRedirectUri: true,
 			defaultGrantTypes: ['authorization_code', 'refresh_token'],
 			pkceRequired: true,
+			browserPublicClientMode: 'strict',
+			browserRefreshTokenPolicy: 'dpop_bound',
 			badge: 'Recommended'
 		},
 		{
@@ -46,7 +50,9 @@
 			clientType: 'public',
 			requiresRedirectUri: true,
 			defaultGrantTypes: ['authorization_code', 'refresh_token'],
-			pkceRequired: true
+			pkceRequired: true,
+			browserPublicClientMode: 'strict',
+			browserRefreshTokenPolicy: 'dpop_bound'
 		},
 		{
 			id: 'mobile-native',
@@ -145,6 +151,8 @@
 	let grantTypes = $state<string[]>([]);
 	let responseTypes = $state<string[]>(['code']);
 	let tokenEndpointAuthMethod = $state('client_secret_basic');
+	let browserPublicClientMode = $state<'strict' | 'cookie_fallback' | ''>('');
+	let browserRefreshTokenPolicy = $state<'disabled' | 'dpop_bound'>('disabled');
 	let scope = $state('openid profile email');
 	let requirePkce = $state(false);
 	let allowClaimsWithoutScope = $state(false);
@@ -315,6 +323,8 @@
 		} else {
 			tokenEndpointAuthMethod = 'none';
 		}
+		browserPublicClientMode = preset.browserPublicClientMode ?? '';
+		browserRefreshTokenPolicy = preset.browserRefreshTokenPolicy ?? 'disabled';
 
 		// M2M doesn't need redirect URIs
 		if (!preset.requiresRedirectUri) {
@@ -411,6 +421,8 @@
 				grant_types: grantTypes,
 				response_types: responseTypes,
 				token_endpoint_auth_method: tokenEndpointAuthMethod,
+				browser_public_client_mode: browserPublicClientMode || null,
+				browser_refresh_token_policy: browserRefreshTokenPolicy,
 				scope: scope,
 				require_pkce: requirePkce,
 				allow_claims_without_scope: allowClaimsWithoutScope,
@@ -599,6 +611,18 @@
 							<span class="settings-summary-label">Auth Method:</span>
 							<span class="settings-summary-value">{tokenEndpointAuthMethod}</span>
 						</div>
+						{#if tokenEndpointAuthMethod === 'none'}
+							<div class="settings-summary-item">
+								<span class="settings-summary-label">Browser Mode:</span>
+								<span class="settings-summary-value"
+									>{browserPublicClientMode || 'server default'}</span
+								>
+							</div>
+							<div class="settings-summary-item">
+								<span class="settings-summary-label">Browser Refresh:</span>
+								<span class="settings-summary-value">{browserRefreshTokenPolicy}</span>
+							</div>
+						{/if}
 					</div>
 				</div>
 
@@ -674,6 +698,45 @@
 										label="Require PKCE"
 										description="Proof Key for Code Exchange - recommended for all clients"
 									/>
+								</div>
+							{/if}
+
+							{#if tokenEndpointAuthMethod === 'none'}
+								<div class="form-grid">
+									<div class="form-group">
+										<label for="browserPublicClientMode" class="form-label">
+											Browser Public Client Mode
+										</label>
+										<select
+											id="browserPublicClientMode"
+											class="form-select"
+											bind:value={browserPublicClientMode}
+										>
+											<option value="">Server default</option>
+											<option value="strict">Strict DPoP token profile</option>
+											<option value="cookie_fallback">Hosted cookie finalize only</option>
+										</select>
+										<p class="form-hint">
+											WebSDK and SPA token clients should use strict DPoP. Cookie fallback does not
+											exchange OAuth codes in browser JavaScript.
+										</p>
+									</div>
+									<div class="form-group">
+										<label for="browserRefreshTokenPolicy" class="form-label">
+											Browser Refresh Token Policy
+										</label>
+										<select
+											id="browserRefreshTokenPolicy"
+											class="form-select"
+											bind:value={browserRefreshTokenPolicy}
+										>
+											<option value="disabled">Disabled</option>
+											<option value="dpop_bound">DPoP-bound refresh tokens</option>
+										</select>
+										<p class="form-hint">
+											Public browser clients only receive refresh tokens when this is DPoP-bound.
+										</p>
+									</div>
 								</div>
 							{/if}
 

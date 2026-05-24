@@ -69,6 +69,7 @@
 	let signResponses = $state(true);
 	let samlProfile = $state('baseline');
 	let authnRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('optional');
+	let logoutRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('required');
 	let authnContextPolicyMode = $state<'observe' | 'require_any'>('observe');
 	let allowedAuthnContextClassRefs = $state(
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
@@ -221,10 +222,11 @@
 		if (providerType === 'saml_idp') {
 			return {
 				...config,
-				providerName: providerName.trim() || undefined,
-				ssoUrl: ssoUrl.trim(),
-				certificate: certificate.trim(),
-				authnContextPolicy: {
+					providerName: providerName.trim() || undefined,
+					ssoUrl: ssoUrl.trim(),
+					certificate: certificate.trim(),
+					logoutRequestSignaturePolicy,
+					authnContextPolicy: {
 					mode: authnContextPolicyMode,
 					allowedClassRefs: allowedAuthnContextClassRefs
 						.split('\n')
@@ -240,9 +242,10 @@
 			certificate: certificate.trim() || undefined,
 			signAssertions,
 			signResponses,
-			samlProfile,
-			authnRequestSignaturePolicy,
-			authnContextClassRefMode,
+				samlProfile,
+				authnRequestSignaturePolicy,
+				logoutRequestSignaturePolicy,
+				authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
 			...selectedPresetConfig()
@@ -258,9 +261,10 @@
 		};
 		if (providerType !== 'saml_sp') {
 			return {
-				...config,
-				providerName: providerName.trim() || undefined,
-				authnContextPolicy: {
+					...config,
+					providerName: providerName.trim() || undefined,
+					logoutRequestSignaturePolicy,
+					authnContextPolicy: {
 					mode: authnContextPolicyMode,
 					allowedClassRefs: allowedAuthnContextClassRefs
 						.split('\n')
@@ -270,9 +274,10 @@
 			};
 		}
 		return {
-			...config,
-			authnRequestSignaturePolicy,
-			authnContextClassRefMode,
+				...config,
+				authnRequestSignaturePolicy,
+				logoutRequestSignaturePolicy,
+				authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined
 		};
@@ -294,6 +299,7 @@
 		signResponses = config.signResponses ?? true;
 		samlProfile = config.samlProfile || samlProfile;
 		authnRequestSignaturePolicy = config.authnRequestSignaturePolicy || 'optional';
+		logoutRequestSignaturePolicy = config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = config.authnContextPolicy?.mode || 'observe';
 		allowedAuthnContextClassRefs = (
 			config.authnContextPolicy?.allowedClassRefs?.length
@@ -1738,8 +1744,27 @@
 								/>
 							</div>
 
-							<div class="form-group">
-								<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
+								<div class="form-group">
+									<label for="logoutRequestSignaturePolicy" class="form-label">
+										IdP LogoutRequest Signature
+									</label>
+									<select
+										id="logoutRequestSignaturePolicy"
+										bind:value={logoutRequestSignaturePolicy}
+										class="form-select"
+									>
+										<option value="required">Required</option>
+										<option value="optional">Optional</option>
+										<option value="disabled">Disabled</option>
+									</select>
+									<p class="field-hint">
+										Required by default. Use Optional or Disabled only for explicit legacy IdP
+										compatibility.
+									</p>
+								</div>
+
+								<div class="form-group">
+									<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
 								<select
 									id="authnContextPolicyMode"
 									bind:value={authnContextPolicyMode}
@@ -1795,9 +1820,9 @@
 								</select>
 							</div>
 
-							<div class="form-group">
-								<label for="authnRequestSignaturePolicy" class="form-label">
-									AuthnRequest Signature
+								<div class="form-group">
+									<label for="authnRequestSignaturePolicy" class="form-label">
+										AuthnRequest Signature
 								</label>
 								<select
 									id="authnRequestSignaturePolicy"
@@ -1807,8 +1832,26 @@
 									<option value="optional">Optional</option>
 									<option value="required">Required</option>
 									<option value="disabled">Disabled</option>
-								</select>
-							</div>
+									</select>
+								</div>
+
+								<div class="form-group">
+									<label for="spLogoutRequestSignaturePolicy" class="form-label">
+										LogoutRequest Signature
+									</label>
+									<select
+										id="spLogoutRequestSignaturePolicy"
+										bind:value={logoutRequestSignaturePolicy}
+										class="form-select"
+									>
+										<option value="required">Required</option>
+										<option value="optional">Optional</option>
+										<option value="disabled">Disabled</option>
+									</select>
+									<p class="field-hint">
+										Required by default. Relax only for an explicit legacy SP exception.
+									</p>
+								</div>
 
 							<div class="form-group">
 								<label for="authnContextClassRefMode" class="form-label">AuthnContext Mode</label>

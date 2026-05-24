@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging/registry';
 import { processAuditQueue } from '../queue-consumer';
 import type { AuditQueueMessage } from '../types';
+
+const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 function createMessage(body: AuditQueueMessage) {
   return {
@@ -25,13 +29,76 @@ function createAdminDbAdapter() {
   };
 }
 
-async function decodeFirstChunkRecord(bytes: Uint8Array): Promise<Record<string, unknown>> {
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < hex.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+async function deriveArchiveChunkEncryptionKey(input: {
+  tenantKey: string;
+  logType: LogType;
+  plane: LogPlane;
+  keyVersion: number;
+}): Promise<Uint8Array> {
+  const material = await crypto.subtle.importKey('raw', hexToBytes(ROOT_KEY), 'HKDF', false, [
+    'deriveBits',
+  ]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
+      info: new TextEncoder().encode(
+        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
+      ),
+    },
+    material,
+    256
+  );
+  return new Uint8Array(bits);
+}
+
+function chunkIdFromObjectKey(objectKey: string): string {
+  const match = /\/(chk_[^/]+)\.jsonl(?:\.gz)?$/u.exec(objectKey);
+  if (!match) {
+    throw new Error('test_chunk_id_not_found');
+  }
+  return match[1];
+}
+
+async function decodeFirstChunkRecord(input: {
+  bytes: Uint8Array;
+  objectKey: string;
+  tenantKey: string;
+  logType: LogType;
+  plane: LogPlane;
+}): Promise<Record<string, unknown>> {
+  const keyVersion = 1;
+  const decoded = await decryptLogChunkBody({
+    storedBody: input.bytes,
+    keyBytes: await deriveArchiveChunkEncryptionKey({
+      tenantKey: input.tenantKey,
+      logType: input.logType,
+      plane: input.plane,
+      keyVersion,
+    }),
+    tenantKey: input.tenantKey,
+    logType: input.logType,
+    plane: input.plane,
+    objectKey: input.objectKey,
+    chunkId: chunkIdFromObjectKey(input.objectKey),
+    expectedEncryptionScope: `tenant:${input.tenantKey}:${input.logType}:${input.plane}`,
+    expectedKeyVersion: keyVersion,
+  });
   const body =
     typeof DecompressionStream === 'undefined'
-      ? bytes
+      ? decoded.body
       : new Uint8Array(
           await new Response(
-            new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+            new Blob([decoded.body]).stream().pipeThrough(new DecompressionStream('gzip'))
           ).arrayBuffer()
         );
   return JSON.parse(new TextDecoder().decode(body).split('\n')[0]) as Record<string, unknown>;
@@ -90,6 +157,7 @@ describe('audit queue consumer fanout', () => {
         DB: coreDb,
         DB_PII: {} as D1Database,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
 
@@ -100,7 +168,13 @@ describe('audit queue consumer fanout', () => {
     expect(archiveKey).toContain('/t_registry_archive/');
     expect(archiveKey).not.toContain('/tenant-registry-a/');
     const archiveBody = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
-    const archiveRecord = await decodeFirstChunkRecord(archiveBody as Uint8Array);
+    const archiveRecord = await decodeFirstChunkRecord({
+      bytes: archiveBody as Uint8Array,
+      objectKey: archiveKey,
+      tenantKey: 't_registry_archive',
+      logType: 'audit',
+      plane: 'archive',
+    });
     expect(archiveRecord).toMatchObject({
       schema_version: 'authrim.log.archive.v1',
       record_type: 'log_record',
@@ -166,8 +240,7 @@ describe('audit queue consumer fanout', () => {
         DB: coreDb,
         DB_PII: {} as D1Database,
         AUDIT_ARCHIVE: bucket,
-        OBJECT_ENCRYPTION_ROOT_KEY:
-          '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
         OBJECT_ENCRYPTION_KEY_VERSION: '2',
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
@@ -451,6 +524,7 @@ describe('audit queue consumer fanout', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
         LOGGING_DELIVERY_QUEUE: deliveryQueue,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );

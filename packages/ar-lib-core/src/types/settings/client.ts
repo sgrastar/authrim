@@ -98,7 +98,7 @@ export interface ClientSettings {
   'client.native_sso_enabled': boolean;
   'client.native_channel_allowed': boolean;
   'client.allowed_channels': string;
-  'client.browser_public_client_mode': '' | 'strict' | 'cookie_fallback' | 'legacy';
+  'client.browser_public_client_mode': '' | 'strict' | 'cookie_fallback';
   'client.browser_refresh_token_policy': 'disabled' | 'dpop_bound';
 
   // Authentication Requirements
@@ -654,8 +654,8 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     envKey: 'CLIENT_BROWSER_PUBLIC_CLIENT_MODE',
     label: 'Browser Public Client Mode',
     description:
-      'Optional client override for browser public client DPoP/browser-token behavior. Empty inherits the tenant default.',
-    enum: ['', 'strict', 'cookie_fallback', 'legacy'],
+      'Optional client override for browser public client DPoP/browser-token behavior. Empty uses the server default.',
+    enum: ['', 'strict', 'cookie_fallback'],
     visibility: 'admin',
   },
   'client.browser_refresh_token_policy': {

@@ -3647,37 +3647,37 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </p>
 
       <div class="database-card" style="margin-bottom: 1rem;">
-        <h3>Storage Deployment Profile</h3>
+        <h3 data-i18n="web.db.storageProfileTitle">Storage Deployment Profile</h3>
         <div class="db-description">
-          <p>Select how user core/PII data is placed for this deployment.</p>
+          <p data-i18n="web.db.storageProfileDesc">Select how user core/PII data is placed for this deployment.</p>
         </div>
         <div class="radio-group">
           <label class="radio-item">
             <input type="radio" name="storage-profile" value="builtin:storage:shared-d1" checked>
             <span style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <strong>Shared D1</strong>
-              <small style="color: var(--text-muted);">One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.</small>
+              <strong data-i18n="web.db.sharedD1Title">Shared D1</strong>
+              <small style="color: var(--text-muted);" data-i18n="web.db.sharedD1Desc">One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.</small>
             </span>
           </label>
           <label class="radio-item">
             <input type="radio" name="storage-profile" value="builtin:storage:tenant-d1">
             <span style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <strong>Tenant D1</strong>
-              <small style="color: var(--text-muted);">One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.</small>
+              <strong data-i18n="web.db.tenantD1Title">Tenant D1</strong>
+              <small style="color: var(--text-muted);" data-i18n="web.db.tenantD1Desc">One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.</small>
             </span>
           </label>
         </div>
         <div id="tenant-d1-slot-config" class="tenant-d1-slot-config" style="margin-top: 1rem; display: none;">
-          <h3>Preallocated tenant slots</h3>
+          <h3 data-i18n="web.db.preallocatedSlotsTitle">Preallocated tenant slots</h3>
           <div class="db-description">
-            <p>Each tenant slot creates two D1 databases: core and PII.</p>
+            <p data-i18n="web.db.preallocatedSlotsDesc">Each tenant slot creates two D1 databases: core and PII.</p>
           </div>
           <label for="tenant-d1-preallocated-slots" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
-            <span>Slots</span>
+            <span data-i18n="web.db.slotsLabel">Slots</span>
             <strong id="tenant-d1-preallocated-slots-value">3</strong>
           </label>
           <input id="tenant-d1-preallocated-slots" type="range" min="1" max="500" step="1" value="3" style="width: 100%;">
-          <small style="color: var(--text-muted);">Default is 3. Maximum is 500 slots.</small>
+          <small style="color: var(--text-muted);" data-i18n="web.db.slotsHelp">Default is 3. Maximum is 500 slots.</small>
         </div>
       </div>
 

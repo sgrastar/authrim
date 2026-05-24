@@ -2470,6 +2470,7 @@ describe('logging control routers', () => {
     let storedChunkBody: Uint8Array | undefined;
     const objectRows: Array<Record<string, unknown>> = [];
     const indexRows: Array<Record<string, unknown>> = [];
+    const keyVersion = 1;
     const chunkResult = await writeLogChunkToR2({
       bucket: {
         put: vi.fn(async (_key: string, body: Uint8Array) => {
@@ -2482,6 +2483,17 @@ describe('logging control routers', () => {
       records: [{ id: 'evt_manual_smoke', eventAt: 1779148800000, payload }],
       compression: 'none',
       now: 1779148800000,
+      encryption: {
+        keyBytes: await deriveTestArchiveChunkEncryptionKey({
+          rootKeyHex: String(env.OBJECT_ENCRYPTION_ROOT_KEY),
+          tenantKey,
+          logType: 'audit',
+          plane: 'archive',
+          keyVersion,
+        }),
+        encryptionScope: `tenant:${tenantKey}:audit:archive`,
+        keyVersion,
+      },
       catalogStore: {
         createPendingObject: vi.fn(async (row) => {
           objectRows.push(row as unknown as Record<string, unknown>);
@@ -2511,8 +2523,8 @@ describe('logging control routers', () => {
         object_key: chunkResult.objectKey,
         object_kind: 'chunk',
         compression: chunkResult.compression,
-        encryption_scope: null,
-        key_version: null,
+        encryption_scope: `tenant:${tenantKey}:audit:archive`,
+        key_version: keyVersion,
         line_number: recordIndex.lineNumber,
         block_offset: recordIndex.blockOffset,
         block_length: recordIndex.blockLength,

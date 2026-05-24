@@ -194,6 +194,7 @@ describe('logging delivery queue consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
@@ -201,7 +202,9 @@ describe('logging delivery queue consumer', () => {
       expect.stringContaining('logs/v1/tk_chunk/archive/operational/'),
       expect.any(Uint8Array),
       expect.objectContaining({
-        httpMetadata: expect.objectContaining({ contentType: 'application/x-ndjson' }),
+        httpMetadata: expect.objectContaining({
+          contentType: 'application/authrim.log-chunk+encrypted',
+        }),
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
@@ -268,6 +271,7 @@ describe('logging delivery queue consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 

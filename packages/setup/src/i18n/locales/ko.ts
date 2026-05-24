@@ -773,6 +773,19 @@ const ko: Translations = {
   'web.db.name': '이름',
   'web.db.region': '지역',
   'web.db.regionAuto': '자동 (가장 가까운 지역)',
+  'web.db.storageProfileTitle': '스토리지 배포 프로필',
+  'web.db.storageProfileDesc': '이 배포에서 사용자 core/PII 데이터를 어떻게 배치할지 선택합니다.',
+  'web.db.sharedD1Title': '공유 D1',
+  'web.db.sharedD1Desc':
+    '배포 전체에서 하나의 core D1과 PII D1을 사용합니다. 설정 비용이 가장 낮은 기본 경로입니다.',
+  'web.db.tenantD1Title': '테넌트 D1',
+  'web.db.tenantD1Desc':
+    '테넌트마다 core/PII D1 쌍을 하나씩 사용합니다. 테넌트 활성화 전에 테넌트 데이터베이스 프로비저닝이 필요합니다.',
+  'web.db.preallocatedSlotsTitle': '사전 할당된 테넌트 슬롯',
+  'web.db.preallocatedSlotsDesc':
+    '각 테넌트 슬롯은 core와 PII 두 개의 D1 데이터베이스를 생성합니다.',
+  'web.db.slotsLabel': '슬롯',
+  'web.db.slotsHelp': '기본값은 3입니다. 최대 500 슬롯입니다.',
 
   // Web UI Email
   'web.email.title': '이메일 제공자',

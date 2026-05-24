@@ -778,6 +778,19 @@ const id: Translations = {
   'web.db.name': 'Nama',
   'web.db.region': 'Wilayah',
   'web.db.regionAuto': 'Otomatis (terdekat)',
+  'web.db.storageProfileTitle': 'Profil Deployment Penyimpanan',
+  'web.db.storageProfileDesc':
+    'Pilih bagaimana data core/PII pengguna ditempatkan untuk deployment ini.',
+  'web.db.sharedD1Title': 'D1 Bersama',
+  'web.db.sharedD1Desc':
+    'Satu core D1 dan PII D1 untuk seluruh deployment. Biaya setup paling rendah dan jalur default.',
+  'web.db.tenantD1Title': 'Tenant D1',
+  'web.db.tenantD1Desc':
+    'Satu pasangan core/PII D1 per tenant. Memerlukan provisioning database tenant sebelum aktivasi tenant.',
+  'web.db.preallocatedSlotsTitle': 'Slot tenant pra-alokasi',
+  'web.db.preallocatedSlotsDesc': 'Setiap slot tenant membuat dua database D1: core dan PII.',
+  'web.db.slotsLabel': 'Slot',
+  'web.db.slotsHelp': 'Default 3. Maksimum 500 slot.',
 
   // Web UI Email
   'web.email.title': 'Penyedia Email',

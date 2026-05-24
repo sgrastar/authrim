@@ -35,7 +35,13 @@ import {
   createAuditLog,
 } from '@authrim/ar-lib-core';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
-import { parseXml, getAttribute, getTextContent } from '../common/xml-utils';
+import {
+  parseXml,
+  getAttribute,
+  getTextContent,
+  findDirectChildElement,
+  findDirectChildElements,
+} from '../common/xml-utils';
 import {
   decodePostBindingMessage,
   parsePostBindingFormDataWithLimit,
@@ -44,6 +50,7 @@ import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { verifyXmlSignature, hasSignature } from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
 
 const SESSION_COOKIE_NAME = 'authrim_session';
 const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
@@ -55,13 +62,6 @@ const NO_STORE_HEADERS = {
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
 } as const;
-
-type SAMLIdPConfigWithAuthnContextPolicy = SAMLIdPConfig & {
-  authnContextPolicy?: {
-    mode: 'observe' | 'require_any';
-    allowedClassRefs?: string[];
-  };
-};
 
 /**
  * Handle ACS request (receive SAML Response from IdP)
@@ -77,6 +77,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const formData = await parsePostBindingFormDataWithLimit(c.req);
     const samlResponse = formData.get('SAMLResponse') as string;
     const relayState = formData.get('RelayState') as string | null;
+    assertSAMLRelayStateSize(relayState);
 
     if (!samlResponse) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -145,7 +146,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const userInfo = extractUserInfo(assertion, idpConfig);
 
     // Find or create user
-    const userId = await findOrCreateUser(env, userInfo, issuer, tenantId);
+    const userId = await findOrCreateUser(env, userInfo, idpConfig, tenantId);
 
     // Create session
     const sessionId = await createSession(env, userId, tenantId);
@@ -246,6 +247,12 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
               })),
             }
           : undefined,
+      });
+    }
+
+    if (error instanceof SAMLRelayStateTooLargeError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'RelayState', reason: error.message },
       });
     }
 
@@ -495,12 +502,23 @@ function parseAndValidateResponse(
     SAML_NAMESPACES.SAML2,
     'Assertion'
   );
+  const encryptedAssertionElements = findDirectChildElements(
+    responseElement,
+    SAML_NAMESPACES.SAML2,
+    'EncryptedAssertion'
+  );
+  if (encryptedAssertionElements.length > 0) {
+    throw new Error('EncryptedAssertion is not supported by this SAML SP ACS endpoint');
+  }
   if (assertionElements.length !== 1) {
     throw new Error('Invalid SAML Response: expected exactly one Assertion');
   }
 
   // Parse Assertion (pass inResponseTo for SubjectConfirmationData validation)
   const assertion = parseAssertion(assertionElements[0], issuerUrl, spEntityId, inResponseTo);
+  if (!assertion.issuer || assertion.issuer !== issuer) {
+    throw new Error('Invalid SAML Response: Assertion Issuer does not match Response Issuer');
+  }
 
   return { responseId, issuer, inResponseTo, assertion };
 }
@@ -1007,34 +1025,11 @@ function parseSAMLDateTimeMs(value: string, label: string): number {
   return time;
 }
 
-function findDirectChildElement(
-  parent: Element,
-  namespace: string,
-  localName: string
-): Element | null {
-  return findDirectChildElements(parent, namespace, localName)[0] ?? null;
-}
-
-function findDirectChildElements(parent: Element, namespace: string, localName: string): Element[] {
-  const results: Element[] = [];
-  for (let i = 0; i < parent.childNodes.length; i++) {
-    const child = parent.childNodes[i];
-    if (
-      child.nodeType === 1 &&
-      (child as Element).namespaceURI === namespace &&
-      (child as Element).localName === localName
-    ) {
-      results.push(child as Element);
-    }
-  }
-  return results;
-}
-
 function validateAuthnContextPolicy(
   idpConfig: SAMLIdPConfig,
   authnContextClassRef: string | undefined
 ): Error | null {
-  const policy = (idpConfig as SAMLIdPConfigWithAuthnContextPolicy).authnContextPolicy;
+  const policy = idpConfig.authnContextPolicy;
   if (!policy || policy.mode === 'observe') {
     return null;
   }
@@ -1130,7 +1125,7 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
 async function findOrCreateUser(
   env: Env,
   userInfo: UserInfo,
-  idpEntityId: string,
+  idpConfig: SAMLIdPConfig,
   tenantId: string
 ): Promise<string> {
   const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
@@ -1181,6 +1176,11 @@ async function findOrCreateUser(
   // Create new user (JIT provisioning - PII/Non-PII DB separation)
   const userId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
+  if (!userInfo.email && !idpConfig.allowSyntheticEmailFallback) {
+    throw new SamlProvisioningError(
+      'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled'
+    );
+  }
   const email = userInfo.email?.toLowerCase() || `${userInfo.nameId}@saml.local`;
 
   // Step 1: Insert into users_core with pii_status='pending'

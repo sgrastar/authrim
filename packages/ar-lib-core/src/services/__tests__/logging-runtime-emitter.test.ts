@@ -3,7 +3,51 @@ import {
   createRuntimeLoggingPolicySnapshot,
   publishRuntimeLoggingPolicySnapshot,
 } from '@authrim/ar-lib-logging/policies';
+import { decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging/registry';
 import { emitRuntimeLogRecords } from '../logging-runtime-emitter';
+
+const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < hex.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+async function deriveRuntimeChunkKey(input: {
+  tenantKey: string;
+  logType: LogType;
+  plane: LogPlane;
+  keyVersion: number;
+}): Promise<Uint8Array> {
+  const material = await crypto.subtle.importKey('raw', hexToBytes(ROOT_KEY), 'HKDF', false, [
+    'deriveBits',
+  ]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
+      info: new TextEncoder().encode(
+        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
+      ),
+    },
+    material,
+    256
+  );
+  return new Uint8Array(bits);
+}
+
+function chunkIdFromObjectKey(objectKey: string): string {
+  const match = /\/(chk_[^/]+)\.jsonl(?:\.gz)?$/u.exec(objectKey);
+  if (!match) {
+    throw new Error('test_chunk_id_not_found');
+  }
+  return match[1];
+}
 
 function createSnapshotStores() {
   const kvValues = new Map<string, string>();
@@ -72,13 +116,36 @@ function findDeliveryEventMetadata(adapter: ReturnType<typeof createMockAdapter>
   return params?.[13] ? JSON.parse(String(params[13])) : null;
 }
 
-async function decodeFirstChunkRecord(bytes: Uint8Array): Promise<Record<string, unknown>> {
+async function decodeFirstChunkRecord(input: {
+  bytes: Uint8Array;
+  objectKey: string;
+  tenantKey: string;
+  logType: LogType;
+  plane: LogPlane;
+}): Promise<Record<string, unknown>> {
+  const keyVersion = 1;
+  const decoded = await decryptLogChunkBody({
+    storedBody: input.bytes,
+    keyBytes: await deriveRuntimeChunkKey({
+      tenantKey: input.tenantKey,
+      logType: input.logType,
+      plane: input.plane,
+      keyVersion,
+    }),
+    tenantKey: input.tenantKey,
+    logType: input.logType,
+    plane: input.plane,
+    objectKey: input.objectKey,
+    chunkId: chunkIdFromObjectKey(input.objectKey),
+    expectedEncryptionScope: `tenant:${input.tenantKey}:${input.logType}:${input.plane}`,
+    expectedKeyVersion: keyVersion,
+  });
   const body =
     typeof DecompressionStream === 'undefined'
-      ? bytes
+      ? decoded.body
       : new Uint8Array(
           await new Response(
-            new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+            new Blob([decoded.body]).stream().pipeThrough(new DecompressionStream('gzip'))
           ).arrayBuffer()
         );
   return JSON.parse(new TextDecoder().decode(body).split('\n')[0]) as Record<string, unknown>;
@@ -158,6 +225,7 @@ describe('runtime log emitter', () => {
           AUTHRIM_CONFIG: kv,
           DIAGNOSTIC_LOGS: bucket,
           AUDIT_ARCHIVE: bucket,
+          OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
           LOGGING_DELIVERY_QUEUE: queue as never,
         },
         tenantId,
@@ -188,8 +256,7 @@ describe('runtime log emitter', () => {
       );
       expect(write?.key).toMatch(objectKeyPattern);
       expect(write?.options?.httpMetadata).toMatchObject({
-        contentType: 'application/x-ndjson',
-        contentEncoding: 'gzip',
+        contentType: 'application/authrim.log-chunk+encrypted',
       });
       expect(write?.options?.customMetadata).toMatchObject({
         tenantKey,
@@ -197,13 +264,21 @@ describe('runtime log emitter', () => {
         plane: 'archive',
         recordCount: '1',
         compression: 'gzip_block',
+        encryptionScope: `tenant:${tenantKey}:${logType}:archive`,
+        keyVersion: '1',
       });
     }
     expect(queue.send).toHaveBeenCalledTimes(logTypes.length);
 
     const normalKey = [...objectValues.keys()].find((key) => key.includes('/archive/normal/'));
     expect(normalKey).toBeTruthy();
-    const normalRecord = await decodeFirstChunkRecord(objectValues.get(normalKey!)!);
+    const normalRecord = await decodeFirstChunkRecord({
+      bytes: objectValues.get(normalKey!)!,
+      objectKey: normalKey!,
+      tenantKey,
+      logType: 'normal',
+      plane: 'archive',
+    });
     expect(normalRecord).toMatchObject({
       schema_version: 'authrim.log.archive.v1',
       record_type: 'log_record',
@@ -291,6 +366,7 @@ describe('runtime log emitter', () => {
         AUTHRIM_CONFIG: kv,
         DIAGNOSTIC_LOGS: bucket,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
         LOGGING_DELIVERY_QUEUE: queue as never,
       },
       tenantId,

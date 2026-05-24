@@ -28,17 +28,20 @@ import {
   createLogger,
 } from '@authrim/ar-lib-core';
 import {
-  parseLogoutRequestPost,
-  parseLogoutRequestRedirect,
   parseLogoutResponsePost,
   parseLogoutResponseRedirect,
+  parseLogoutRequestXml,
   buildLogoutResponse,
   buildLogoutRequest,
   encodeForPostBinding,
   type ParsedLogoutRequest,
   type ParsedLogoutResponse,
 } from '../common/slo-messages';
-import { parsePostBindingFormDataWithLimit } from '../common/message-limits';
+import {
+  decodePostBindingMessage,
+  inflateRedirectBindingMessage,
+  parsePostBindingFormDataWithLimit,
+} from '../common/message-limits';
 import { base64Decode, generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import { STATUS_CODES, DEFAULTS } from '../common/constants';
 import { signXml, verifyXmlSignature, hasSignature } from '../common/signature';
@@ -48,6 +51,17 @@ import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user
 import { requireSAMLTenantId, resolveSAMLTenantIdFromContext } from '../common/tenant';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
+import {
+  SAMLIdPLogoutRequestSignatureValidationError,
+  validateSAMLIdPLogoutRequestSignature,
+} from './logout-request-signature';
+import type { SAMLRedirectSignatureInput } from '../idp/authn-request-signature';
+import {
+  consumeSAMLOutboundLogoutRequest,
+  storeSAMLOutboundLogoutRequest,
+  SAMLLogoutResponseCorrelationError,
+} from '../idp/slo-state';
+import { assertSAMLRelayStateSize } from '../common/relay-state';
 
 /**
  * Handle SP Single Logout (both POST and GET)
@@ -82,10 +96,17 @@ async function handlePostBinding(
   const samlRequest = formData.get('SAMLRequest') as string | null;
   const samlResponse = formData.get('SAMLResponse') as string | null;
   const relayState = formData.get('RelayState') as string | null;
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
-    const logoutRequest = parseLogoutRequestPost(samlRequest);
-    return processLogoutRequest(c, env, issuerUrl, logoutRequest, relayState, 'post', samlRequest);
+    const xml = decodePostBindingMessage(samlRequest, 'SAML LogoutRequest');
+    const logoutRequest = parseLogoutRequestXml(xml);
+    return processLogoutRequest(c, env, issuerUrl, {
+      logoutRequest,
+      relayState,
+      binding: 'post',
+      xml,
+    });
   } else if (samlResponse) {
     const logoutResponse = parseLogoutResponsePost(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState, samlResponse);
@@ -108,10 +129,23 @@ async function handleRedirectBinding(
   const samlRequest = url.searchParams.get('SAMLRequest');
   const samlResponse = url.searchParams.get('SAMLResponse');
   const relayState = url.searchParams.get('RelayState');
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
-    const logoutRequest = parseLogoutRequestRedirect(samlRequest);
-    return processLogoutRequest(c, env, issuerUrl, logoutRequest, relayState, 'redirect');
+    const xml = inflateRedirectBindingMessage(samlRequest, 'SAML LogoutRequest');
+    const logoutRequest = parseLogoutRequestXml(xml);
+    return processLogoutRequest(c, env, issuerUrl, {
+      logoutRequest,
+      relayState,
+      binding: 'redirect',
+      xml,
+      redirectSignature: {
+        samlMessage: getRawQueryParam(url.search, 'SAMLRequest') ?? encodeURIComponent(samlRequest),
+        relayState: getRawQueryParam(url.search, 'RelayState'),
+        signature: url.searchParams.get('Signature') || undefined,
+        sigAlg: url.searchParams.get('SigAlg') || undefined,
+      },
+    });
   } else if (samlResponse) {
     const logoutResponse = parseLogoutResponseRedirect(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState);
@@ -125,16 +159,22 @@ async function handleRedirectBinding(
 /**
  * Process LogoutRequest from IdP
  */
+interface ParsedIdPLogoutRequestInput {
+  logoutRequest: ParsedLogoutRequest;
+  relayState: string | null;
+  binding: 'post' | 'redirect';
+  xml: string;
+  redirectSignature?: SAMLRedirectSignatureInput;
+}
+
 async function processLogoutRequest(
   c: Context<{ Bindings: Env }>,
   env: Env,
   issuerUrl: string,
-  logoutRequest: ParsedLogoutRequest,
-  relayState: string | null,
-  binding: 'post' | 'redirect',
-  samlBase64?: string
+  input: ParsedIdPLogoutRequestInput
 ): Promise<Response> {
   const log = getLogger(c).module('SAML-SP');
+  const { logoutRequest, relayState, binding } = input;
 
   // Get IdP configuration
   const idpConfig = await getIdPConfigByEntityId(
@@ -148,22 +188,25 @@ async function processLogoutRequest(
     return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
   }
 
-  // Verify signature if present (for POST binding with embedded signature)
-  if (samlBase64) {
-    const decodedXml = base64Decode(samlBase64);
-    if (hasSignature(decodedXml)) {
-      try {
-        // Use expectedId and strictXswProtection to prevent XSW attacks
-        verifyXmlSignature(decodedXml, {
-          certificateOrKey: idpConfig.certificate,
-          expectedId: logoutRequest.id,
-          strictXswProtection: true,
-        });
-      } catch (error) {
-        log.error('LogoutRequest signature verification failed', { binding }, error as Error);
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
+  try {
+    await validateSAMLIdPLogoutRequestSignature({
+      logoutRequest,
+      idpConfig,
+      binding,
+      xml: input.xml,
+      redirectSignature: input.redirectSignature,
+    });
+  } catch (error) {
+    if (error instanceof SAMLIdPLogoutRequestSignatureValidationError) {
+      log.warn('IdP LogoutRequest signature policy failed', {
+        tenantId: resolveSAMLTenantIdFromContext(c),
+        idpEntityId: idpConfig.entityId,
+        logoutRequestId: logoutRequest.id,
+        failureKind: error.failureKind,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    throw error;
   }
 
   // Validate LogoutRequest
@@ -191,6 +234,13 @@ async function processLogoutRequest(
   );
 }
 
+function getRawQueryParam(search: string, name: string): string | undefined {
+  const prefix = `${name}=`;
+  const query = search.startsWith('?') ? search.slice(1) : search;
+  const match = query.split('&').find((part) => part.startsWith(prefix));
+  return match ? match.slice(prefix.length) : undefined;
+}
+
 /**
  * Process LogoutResponse from IdP (for SP-initiated logout)
  */
@@ -203,15 +253,21 @@ async function processLogoutResponse(
 ): Promise<Response> {
   const log = getLogger(c).module('SAML-SP');
 
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+
   // Get IdP configuration
   const idpConfig = await getIdPConfigByEntityId(
     env,
-    resolveSAMLTenantIdFromContext(c),
+    tenantId,
     logoutResponse.issuer
   );
+  if (!idpConfig) {
+    log.warn('Unknown IdP LogoutResponse issuer', { issuer: logoutResponse.issuer });
+    return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
+  }
 
   // Verify signature if present
-  if (idpConfig && samlBase64) {
+  if (samlBase64) {
     const decodedXml = base64Decode(samlBase64);
     if (hasSignature(decodedXml)) {
       try {
@@ -226,6 +282,40 @@ async function processLogoutResponse(
         // Log but continue - some IdPs may not sign LogoutResponses
       }
     }
+  }
+
+  try {
+    if (!env.STATE_STORE) {
+      throw new SAMLLogoutResponseCorrelationError('STATE_STORE is required for SP LogoutResponse correlation', {
+        idp_entity_id: idpConfig.entityId,
+      });
+    }
+    const outboundLogoutRequest = await consumeSAMLOutboundLogoutRequest(env.STATE_STORE, {
+      tenantId,
+      spEntityId: idpConfig.entityId,
+      inResponseTo: logoutResponse.inResponseTo,
+    });
+    if (relayState && relayState !== outboundLogoutRequest.requestId) {
+      throw new SAMLLogoutResponseCorrelationError(
+        'LogoutResponse RelayState does not match outbound LogoutRequest',
+        {
+          idp_entity_id: idpConfig.entityId,
+          relay_state: relayState,
+          request_id: outboundLogoutRequest.requestId,
+        }
+      );
+    }
+    relayState = outboundLogoutRequest.relayState ?? relayState;
+  } catch (error) {
+    if (error instanceof SAMLLogoutResponseCorrelationError) {
+      log.warn('SP LogoutResponse correlation failed', {
+        tenantId,
+        idpEntityId: idpConfig.entityId,
+        logoutResponseId: logoutResponse.id,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+    throw error;
   }
 
   // Check status
@@ -417,6 +507,7 @@ function sendPostBindingResponse(
   const encodedResponse = encodeForPostBinding(responseXml);
   const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
   if (relayState) {
+    assertSAMLRelayStateSize(relayState);
     fields.push({ name: 'RelayState', value: relayState });
   }
 
@@ -452,6 +543,17 @@ export async function initiateSPLogout(
   const issuer = (await getSAMLLocalEntityIds(env, resolvedTenantId)).spEntityId;
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const requestId = generateSAMLId();
+
+  if (!env.STATE_STORE) {
+    throw new Error('STATE_STORE is required for SP-initiated SLO correlation');
+  }
+  await storeSAMLOutboundLogoutRequest(env.STATE_STORE, {
+    tenantId: resolvedTenantId,
+    spEntityId: idpConfig.entityId,
+    requestId,
+    relayState: returnUrl,
+    ttlSeconds: DEFAULTS.REQUEST_VALIDITY_SECONDS,
+  });
 
   // Build LogoutRequest
   let logoutRequestXml = buildLogoutRequest({
@@ -489,7 +591,7 @@ export async function initiateSPLogout(
   const encodedRequest = encodeForPostBinding(logoutRequestXml);
   const fields = [{ name: 'SAMLRequest', value: encodedRequest }];
   if (returnUrl) {
-    fields.push({ name: 'RelayState', value: returnUrl });
+    fields.push({ name: 'RelayState', value: requestId });
   }
 
   const response = buildSAMLPostBindingResponse({

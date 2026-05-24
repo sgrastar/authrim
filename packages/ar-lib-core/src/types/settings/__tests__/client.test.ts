@@ -8,7 +8,6 @@ describe('CLIENT_SETTINGS_META', () => {
       '',
       'strict',
       'cookie_fallback',
-      'legacy',
     ]);
     expect(CLIENT_SETTINGS_META['client.browser_refresh_token_policy'].enum).toEqual([
       'disabled',

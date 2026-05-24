@@ -8,7 +8,12 @@ import {
   type LogChunkFlushProfile,
 } from './flush-profiles';
 import { writeLogChunkToR2 } from './r2-chunk-writer';
-import type { LogChunkCatalogStore, LogChunkRecord, WriteLogChunkResult } from './types';
+import type {
+  LogChunkCatalogStore,
+  LogChunkEncryptionOptions,
+  LogChunkRecord,
+  WriteLogChunkResult,
+} from './types';
 
 export interface FlushLogChunkDestination {
   destinationId: string;
@@ -29,6 +34,8 @@ export interface FlushLogChunkAndEnqueueInput {
   compression?: LogChunkCompression;
   now?: number;
   catalogStore?: LogChunkCatalogStore;
+  encryption?: LogChunkEncryptionOptions;
+  allowPlaintext?: boolean;
 }
 
 export interface FlushLogChunkAndEnqueueResult {
@@ -50,6 +57,8 @@ export interface BufferedLogChunkFlushGroup {
   profile?: LogChunkFlushProfile;
   estimatedRecordsPerMinute?: number;
   catalogStore?: LogChunkCatalogStore;
+  encryption?: LogChunkEncryptionOptions;
+  allowPlaintext?: boolean;
 }
 
 export interface BufferedLogChunkRecordInput {
@@ -114,6 +123,8 @@ export async function flushLogChunkAndEnqueueDelivery(
     compression: input.compression,
     now: input.now,
     catalogStore: input.catalogStore,
+    encryption: input.encryption,
+    allowPlaintext: input.allowPlaintext,
   });
 
   const createdAt = input.now ?? Date.now();
@@ -275,6 +286,8 @@ export class BufferedLogChunkFlushWorker {
         compression: state.group.compression ?? flushProfile.compression,
         now,
         catalogStore: state.group.catalogStore,
+        encryption: state.group.encryption,
+        allowPlaintext: state.group.allowPlaintext,
       });
     } catch (error) {
       this.groups.set(key, state);

@@ -167,6 +167,7 @@ describe('Diagnostic Security Utilities', () => {
       const body = {
         grant_type: 'authorization_code',
         code: 'secret-code-12345',
+        code_verifier: 'secret-code-verifier',
         client_secret: 'super-secret',
         redirect_uri: 'https://example.com/callback',
       };
@@ -177,6 +178,8 @@ describe('Diagnostic Security Utilities', () => {
       expect(summary?.redirect_uri).toBe('https://example.com/callback');
       expect(summary?.client_secret).toBeUndefined();
       expect(summary?.code).toBeUndefined();
+      expect(summary?.code_verifier).toBeUndefined();
+      expect(summary?.code_present).toBe(true);
     });
 
     it('should extract safe fields from authorize endpoint', () => {
@@ -238,7 +241,8 @@ describe('Diagnostic Security Utilities', () => {
       expect(sanitized.client_id).toBe('client-123');
       expect(sanitized.scope).toBe('openid');
       expect(sanitized.code).toBeUndefined();
-      expect(sanitized.code_hash).toBeDefined();
+      expect(sanitized.code_hash).toBeUndefined();
+      expect(sanitized.code_present).toBe('true');
     });
 
     it('should exclude sensitive parameters', () => {
@@ -307,6 +311,14 @@ describe('Diagnostic Security Utilities', () => {
       expect(redacted).not.toContain('4111-1111-1111-1111');
     });
 
+    it('should redact Amex-style credit card numbers', () => {
+      const text = 'Card: 3782-822463-10005';
+      const redacted = redactPII(text);
+
+      expect(redacted).toBe('Card: [CC_REDACTED]');
+      expect(redacted).not.toContain('3782-822463-10005');
+    });
+
     it('should redact SSN', () => {
       const text = 'SSN: 123-45-6789';
       const redacted = redactPII(text);
@@ -320,6 +332,13 @@ describe('Diagnostic Security Utilities', () => {
       const redacted = redactPII(text);
 
       expect(redacted).toBe('Email: [EMAIL_REDACTED], Phone: [PHONE_REDACTED]');
+    });
+
+    it('should redact compact JWT-like values', () => {
+      const text = 'token eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature';
+      const redacted = redactPII(text);
+
+      expect(redacted).toBe('token [JWT_REDACTED]');
     });
 
     it('should leave non-PII text unchanged', () => {

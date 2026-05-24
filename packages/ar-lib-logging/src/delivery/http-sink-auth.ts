@@ -26,11 +26,30 @@ export interface HttpSinkAuthHeadersResult {
 }
 
 const REDACTED = '[redacted]';
+const SENSITIVE_HEADER_NAME_PARTS = [
+  'authorization',
+  'cookie',
+  'token',
+  'secret',
+  'api-key',
+  'apikey',
+];
 
 function assertHeaderName(name: string): void {
   if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) {
     throw new Error(`invalid_http_header_name:${name}`);
   }
+}
+
+function assertHeaderValue(value: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new Error('invalid_http_header_value');
+  }
+}
+
+function isSensitiveHeaderName(name: string): boolean {
+  const normalized = name.toLowerCase().replace(/_/g, '-');
+  return SENSITIVE_HEADER_NAME_PARTS.some((part) => normalized.includes(part));
 }
 
 function setHeader(
@@ -40,8 +59,9 @@ function setHeader(
   secret: boolean
 ): void {
   assertHeaderName(name);
+  assertHeaderValue(value);
   result.headers[name] = value;
-  result.redactedHeaders[name] = secret ? REDACTED : value;
+  result.redactedHeaders[name] = secret || isSensitiveHeaderName(name) ? REDACTED : value;
 }
 
 export async function buildHttpSinkAuthHeaders(

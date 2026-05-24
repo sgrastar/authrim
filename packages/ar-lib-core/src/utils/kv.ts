@@ -1108,8 +1108,10 @@ export async function getClient(
     trust_group: result.trust_group ?? undefined,
     trust_group_id: result.trust_group_id ?? undefined,
     browser_public_client_mode:
-      (result.browser_public_client_mode as 'strict' | 'cookie_fallback' | 'legacy' | null) ??
-      undefined,
+      result.browser_public_client_mode === 'strict' ||
+      result.browser_public_client_mode === 'cookie_fallback'
+        ? result.browser_public_client_mode
+        : undefined,
     browser_refresh_token_policy:
       (result.browser_refresh_token_policy as 'disabled' | 'dpop_bound' | null) ?? 'disabled',
     native_sso_enabled:

@@ -367,6 +367,7 @@ describe('operational-logs', () => {
             DB_ADMIN: adapter as never,
             AUTHRIM_CONFIG: kv,
             DIAGNOSTIC_LOGS: objectStore.bucket,
+            OBJECT_ENCRYPTION_ROOT_KEY: objectRootKey,
             LOGGING_DELIVERY_QUEUE: queue as never,
           },
           tenantKeyResolver: async () => 't_operational_runtime',

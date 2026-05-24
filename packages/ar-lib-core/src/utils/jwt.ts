@@ -383,6 +383,7 @@ export interface RefreshTokenClaims extends JWTPayload {
   jti: string; // JWT ID (unique token identifier)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
   rtv?: number; // Refresh Token Version (V2) - for theft detection
 }
 

@@ -100,6 +100,7 @@ export interface SAMLProviderConfig {
 	signingKeyPolicy?: SAMLSigningKeyPolicy;
 	samlProfile?: string;
 	authnRequestSignaturePolicy?: 'required' | 'optional' | 'disabled';
+	logoutRequestSignaturePolicy?: 'required' | 'optional' | 'disabled';
 	authnContextPolicy?: {
 		mode: 'observe' | 'require_any';
 		allowedClassRefs?: string[];

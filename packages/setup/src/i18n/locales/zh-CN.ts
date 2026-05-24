@@ -762,6 +762,16 @@ const zhCN: Translations = {
   'web.db.name': '名称',
   'web.db.region': '区域',
   'web.db.regionAuto': '自动（最近）',
+  'web.db.storageProfileTitle': '存储部署配置',
+  'web.db.storageProfileDesc': '选择本次部署中用户 core/PII 数据的放置方式。',
+  'web.db.sharedD1Title': '共享 D1',
+  'web.db.sharedD1Desc': '整个部署共享一个 core D1 和一个 PII D1。设置成本最低，也是默认路径。',
+  'web.db.tenantD1Title': '租户 D1',
+  'web.db.tenantD1Desc': '每个租户使用一组 core/PII D1。租户启用前需要先完成租户数据库预配。',
+  'web.db.preallocatedSlotsTitle': '预分配租户槽位',
+  'web.db.preallocatedSlotsDesc': '每个租户槽位会创建两个 D1 数据库：core 和 PII。',
+  'web.db.slotsLabel': '槽位',
+  'web.db.slotsHelp': '默认值为 3。最多 500 个槽位。',
 
   // Web UI Email
   'web.email.title': '邮件提供商',

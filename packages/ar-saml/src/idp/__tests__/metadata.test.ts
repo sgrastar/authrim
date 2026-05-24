@@ -90,4 +90,36 @@ describe('IdP metadata', () => {
       'https://idp.example.com/saml/idp/slo',
     ]);
   });
+
+  it('orders IDPSSODescriptor children according to SAML metadata schema', () => {
+    const xml = buildIdPMetadata({
+      entityId: 'https://idp.example.com/saml/idp',
+      issuerUrl: 'https://idp.example.com',
+      signingCertificates: [
+        {
+          slot: 'active',
+          keyRef: 'tenant:tenant-a:saml:idp:signing',
+          certificate: '-----BEGIN CERTIFICATE-----\nACTIVECERT\n-----END CERTIFICATE-----',
+        },
+      ],
+    });
+
+    const doc = parseXml(xml);
+    const descriptor = findElement(doc, SAML_NAMESPACES.MD, 'IDPSSODescriptor')!;
+    const childNames = Array.from(descriptor.childNodes as ArrayLike<{ nodeType: number; localName: string }>)
+      .filter((node) => node.nodeType === 1)
+      .map((node) => node.localName);
+
+    expect(childNames).toEqual([
+      'KeyDescriptor',
+      'SingleLogoutService',
+      'SingleLogoutService',
+      'NameIDFormat',
+      'NameIDFormat',
+      'NameIDFormat',
+      'NameIDFormat',
+      'SingleSignOnService',
+      'SingleSignOnService',
+    ]);
+  });
 });

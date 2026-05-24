@@ -64,8 +64,10 @@ class InMemoryMessageExecutor implements LoggingMessageSqlExecutor {
   readonly jobs = new Map<string, JobRow>();
   readonly idempotency = new Map<string, IdempotencyRow>();
   readonly findings: unknown[][] = [];
+  readonly queries: Array<{ sql: string; params: unknown[] }> = [];
 
   async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+    this.queries.push({ sql, params });
     if (sql.includes('FROM logging_message_repair_findings')) {
       return this.findings
         .filter((finding) => (params.includes('open') ? finding[4] === 'open' : true))
@@ -483,5 +485,16 @@ describe('SqlLoggingMessageJobStore', () => {
       notBefore: 2300,
       claimToken: null,
     });
+  });
+
+  it('caps list limits and offsets before querying storage', async () => {
+    const executor = new InMemoryMessageExecutor();
+    const store = new SqlLoggingMessageJobStore(executor);
+
+    await expect(store.listJobs({ limit: 999_999, offset: 999_999 })).resolves.toEqual([]);
+
+    const query = executor.queries.at(-1);
+    expect(query?.params.at(-2)).toBe(500);
+    expect(query?.params.at(-1)).toBe(100_000);
   });
 });

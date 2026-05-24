@@ -19,6 +19,7 @@ export interface SAMLOutboundLogoutRequestRecord {
   spEntityId: string;
   requestId: string;
   transactionId?: string;
+  relayState?: string;
   issuedAt: number;
   expiresAt: number;
 }
@@ -89,6 +90,7 @@ export async function storeSAMLOutboundLogoutRequest(
     spEntityId: string;
     requestId: string;
     transactionId?: string;
+    relayState?: string;
     ttlSeconds?: number;
   }
 ): Promise<void> {
@@ -103,6 +105,7 @@ export async function storeSAMLOutboundLogoutRequest(
       spEntityId: options.spEntityId,
       requestId: options.requestId,
       transactionId: options.transactionId,
+      relayState: options.relayState,
       issuedAt,
       expiresAt: issuedAt + ttlSeconds * 1000,
     }),
@@ -436,6 +439,7 @@ function parseOutboundLogoutRequestRecord(value: string): SAMLOutboundLogoutRequ
       spEntityId: parsed.spEntityId,
       requestId: parsed.requestId,
       transactionId: typeof parsed.transactionId === 'string' ? parsed.transactionId : undefined,
+      relayState: typeof parsed.relayState === 'string' ? parsed.relayState : undefined,
       issuedAt: parsed.issuedAt,
       expiresAt: parsed.expiresAt,
     };

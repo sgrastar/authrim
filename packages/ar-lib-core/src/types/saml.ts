@@ -321,6 +321,7 @@ export interface SAMLErrorResponseOverride {
 
 export type SAMLAuthnRequestSignaturePolicy = 'required' | 'optional' | 'disabled';
 export type SAMLAuthnRequestLegacyAlgorithmPolicy = 'disabled' | 'explicit_opt_in';
+export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
 export type SAMLAuthnContextClassRefMode = 'legacy_static' | 'session';
 export type SAMLAttributeReleaseFailureUserMessageMode = 'generic' | 'detailed';
 export type SAMLLogoutResponseBinding = 'auto' | 'post' | 'redirect';
@@ -596,6 +597,14 @@ export interface SAMLIdPConfig {
   certificates?: string[];
   /** Parsed certificate expiry/security summary for Admin UI and safe defaults */
   certificateValidation?: SAMLCertificateValidationSummary;
+  /** Inbound IdP LogoutRequest signature verification policy when Authrim acts as SP */
+  logoutRequestSignaturePolicy?: SAMLAuthnRequestSignaturePolicy;
+  /** Accepted inbound IdP LogoutRequest XML/Redirect signature algorithm URIs */
+  acceptedLogoutRequestSignatureAlgorithms?: string[];
+  /** Accepted inbound IdP LogoutRequest XML digest algorithm URIs */
+  acceptedLogoutRequestDigestAlgorithms?: string[];
+  /** Legacy algorithm escape hatch for inbound IdP LogoutRequest validation */
+  logoutRequestLegacyAlgorithmPolicy?: SAMLAuthnRequestLegacyAlgorithmPolicy;
   /** NameID format */
   nameIdFormat: NameIDFormat;
   /** Authrim signing key policy when acting as SP for this IdP */
@@ -605,6 +614,16 @@ export interface SAMLIdPConfig {
     mode: 'observe' | 'require_any';
     allowedClassRefs?: string[];
   };
+  /**
+   * Reserved JIT account-linking policy for future federated identity registry work.
+   * Current ACS behavior still performs email-based lookup when an email is present.
+   */
+  jitEmailLinkingPolicy?: SAMLJitEmailLinkingPolicy;
+  /**
+   * Legacy compatibility escape hatch. When false/omitted, ACS rejects assertions
+   * that cannot produce an email instead of synthesizing `${NameID}@saml.local`.
+   */
+  allowSyntheticEmailFallback?: boolean;
   /**
    * SAML attribute to Authrim claim mapping.
    * Standard targets are OIDC-style claims such as email or name.

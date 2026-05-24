@@ -159,7 +159,8 @@ describe('DiagnosticLogger', () => {
     expect(bodySummary.client_secret).toBeUndefined();
     expect(bodySummary.client_id).toBe('rp-client');
     expect(bodySummary.grant_type).toBe('authorization_code');
-    expect(bodySummary.code_hash).toBe('sha256:code-123...');
+    expect(bodySummary.code_hash).toBeUndefined();
+    expect(bodySummary.code_present).toBe(true);
     expect(entry.remoteAddress).toBe('203.0.113.0/24');
   });
 

@@ -427,7 +427,35 @@ function isBrowserPublicTokenRequest(
     return true;
   }
 
+  if (
+    clientMetadata.application_type === 'spa' ||
+    isValidBrowserPublicClientMode(clientMetadata.browser_public_client_mode)
+  ) {
+    return true;
+  }
+
   return Boolean(c.req.header('Origin'));
+}
+
+function isNativePublicTokenRequest(
+  formData: Record<string, string>,
+  clientMetadata: ClientMetadata
+): boolean {
+  if (!isPublicClientMetadata(clientMetadata)) {
+    return false;
+  }
+
+  return formData.channel === 'native' || clientMetadata.application_type === 'native';
+}
+
+function getDPoPJktFromCnfClaim(payload: Record<string, unknown>): string | undefined {
+  const cnf = payload.cnf;
+  if (!cnf || typeof cnf !== 'object') {
+    return undefined;
+  }
+
+  const jkt = (cnf as { jkt?: unknown }).jkt;
+  return typeof jkt === 'string' && jkt.length > 0 ? jkt : undefined;
 }
 
 async function resolveBrowserPublicClientMode(
@@ -437,6 +465,10 @@ async function resolveBrowserPublicClientMode(
 ): Promise<BrowserPublicClientMode> {
   if (isValidBrowserPublicClientMode(clientMetadata.browser_public_client_mode)) {
     return clientMetadata.browser_public_client_mode;
+  }
+
+  if (isPublicClientMetadata(clientMetadata)) {
+    return 'strict';
   }
 
   const authrimSettings = await getTenantSettings(c.env.AUTHRIM_CONFIG, tenantId, 'tenant');
@@ -1247,15 +1279,40 @@ async function handleAuthorizationCodeGrant(
   );
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   const isBrowserPublicClientRequest = isBrowserPublicTokenRequest(c, formData, clientMetadata);
+  const isNativePublicClientRequest = isNativePublicTokenRequest(formData, clientMetadata);
   const browserPublicClientMode = isBrowserPublicClientRequest
     ? await resolveBrowserPublicClientMode(c, tenantId, clientMetadata)
     : undefined;
 
-  if (isBrowserPublicClientRequest && browserPublicClientMode === 'strict' && !dpopProof) {
+  if (
+    isBrowserPublicClientRequest &&
+    (browserPublicClientMode === 'strict' || browserPublicClientMode === 'cookie_fallback') &&
+    !dpopProof
+  ) {
     return oauthError(
       c,
       'invalid_request',
-      'DPoP proof is required for strict browser clients',
+      browserPublicClientMode === 'cookie_fallback'
+        ? 'Browser public token requests require DPoP; use the hosted cookie-session finalize path for cookie fallback clients'
+        : 'DPoP proof is required for strict browser clients',
+      400
+    );
+  }
+
+  if (isBrowserPublicClientRequest && browserPublicClientMode === 'legacy') {
+    return oauthError(
+      c,
+      'invalid_request',
+      'Legacy browser public token mode is no longer supported; use DPoP strict mode or the hosted cookie-session finalize path',
+      400
+    );
+  }
+
+  if (isNativePublicClientRequest && !dpopProof) {
+    return oauthError(
+      c,
+      'invalid_request',
+      'DPoP proof is required for native public clients',
       400
     );
   }
@@ -2159,6 +2216,7 @@ async function handleAuthorizationCodeGrant(
         scope: authCodeData.scope,
         client_id: client_id,
         resource_aud: audienceResolution.audience,
+        ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
       };
 
       // V2/V3: Register with RefreshTokenRotator first to get version
@@ -2736,8 +2794,24 @@ async function handleRefreshTokenGrant(
   // DPoP support (RFC 9449)
   // Extract and validate DPoP proof if present
   const dpopProof = extractDPoPProof(c.req.raw.headers);
+  const refreshTokenDpopJkt = getDPoPJktFromCnfClaim(refreshTokenPayload);
+  const isBrowserPublicClientRequest = isBrowserPublicTokenRequest(c, formData, typedClient);
+  const isNativePublicClientRequest = isNativePublicTokenRequest(formData, typedClient);
   let dpopJkt: string | undefined;
   let tokenType: 'Bearer' | 'DPoP' = 'Bearer';
+
+  if ((isBrowserPublicClientRequest || isNativePublicClientRequest) && !refreshTokenDpopJkt) {
+    return oauthError(c, 'invalid_grant', 'Public client refresh tokens must be DPoP-bound', 400);
+  }
+
+  if (refreshTokenDpopJkt && !dpopProof) {
+    return oauthError(
+      c,
+      'invalid_request',
+      'DPoP proof is required for DPoP-bound refresh tokens',
+      400
+    );
+  }
 
   if (dpopProof) {
     // Validate DPoP proof (issue #12: DPoP JTI replay protection via DO)
@@ -2761,6 +2835,15 @@ async function handleRefreshTokenGrant(
     // DPoP proof is valid, bind access token to the public key
     dpopJkt = dpopValidation.jkt;
     tokenType = 'DPoP';
+
+    if (refreshTokenDpopJkt && dpopJkt !== refreshTokenDpopJkt) {
+      return oauthError(
+        c,
+        'invalid_dpop_proof',
+        'DPoP proof JWK does not match refresh token binding',
+        400
+      );
+    }
   }
 
   const storedRefreshAudience =
@@ -2916,6 +2999,7 @@ async function handleRefreshTokenGrant(
         scope: grantedScope,
         client_id: client_id,
         resource_aud: refreshedAccessTokenAudience,
+        ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
       };
 
       // V2: Include rtv (Refresh Token Version) for theft detection
@@ -6051,6 +6135,7 @@ async function handleNativeSSOTokenExchange(
         scope: grantedScope,
         client_id: clientId,
         resource_aud: accessTokenAudience,
+        cnf: { jkt: dpopJkt },
       };
 
       let rtv: number | undefined;
