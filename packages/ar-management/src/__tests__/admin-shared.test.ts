@@ -409,7 +409,6 @@ describe('admin-shared audit detail externalization', () => {
     const { c, loggingQueue } = createMockContext({
       AUDIT_ARCHIVE: archiveStore.bucket,
       SENSITIVE_DETAILS: undefined,
-      OBJECT_ENCRYPTION_ROOT_KEY: undefined,
     });
 
     const auditLogId = await writeAdminAuditLog(c, {
@@ -426,7 +425,7 @@ describe('admin-shared audit detail externalization', () => {
     expect(objectKey).toMatch(
       /^logs\/v1\/[^/]+\/archive\/admin_audit\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/shard-\d{2}\/chk_[^/]+\.jsonl\.gz$/
     );
-    expect(object.contentType).toBe('application/x-ndjson');
+    expect(object.contentType).toBe('application/authrim.log-chunk+encrypted');
     expect(object.body.byteLength).toBeGreaterThan(0);
     expect(loggingQueue.send).toHaveBeenCalledWith(
       expect.objectContaining({
