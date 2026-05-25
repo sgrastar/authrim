@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const MARKER = '<!-- authrim-ci-coverage-summary -->';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.svelte']);
+const EXCLUDED_PACKAGES = new Set(['@authrim/ar-admin-ui', '@authrim/ar-login-ui']);
 const IGNORED_DIRS = new Set([
   '.svelte-kit',
   '.turbo',
@@ -165,6 +166,9 @@ async function collectPackageStats(repoRoot) {
     if (!(await pathExists(manifestPath))) continue;
 
     const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    const packageName = manifest.name ?? path.basename(packageDir);
+    if (EXCLUDED_PACKAGES.has(packageName)) continue;
+
     const sourceRoot = path.join(packageDir, 'src');
     const allFiles = (await walk((await pathExists(sourceRoot)) ? sourceRoot : packageDir)).filter(
       isSourceLikeFile
@@ -188,7 +192,7 @@ async function collectPackageStats(repoRoot) {
     }
 
     const coverage = await readCoverageSummary(packageDir);
-    const status = coverage ? 'covered' : testCases > 0 ? 'not collected' : 'no tests';
+    const status = coverage ? 'covered' : testCases > 0 ? 'coverage missing' : 'no tests';
 
     totals.codeLines += codeLines;
     totals.codeFiles += codeFiles.length;
@@ -198,7 +202,7 @@ async function collectPackageStats(repoRoot) {
     totals.describeBlocks += describeBlocks;
 
     packages.push({
-      name: manifest.name ?? path.basename(packageDir),
+      name: packageName,
       status,
       testCases,
       coverage,
@@ -239,6 +243,7 @@ function buildComment({ packages, totals }) {
 ## Coverage Summary
 
 Generated after **Lint, Type Check, and Test** completed for \`${sha}\`.
+Admin UI and Login UI are intentionally excluded while UI coverage is being refined.
 
 ### Overview
 

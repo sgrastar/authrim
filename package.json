@@ -18,6 +18,7 @@
     "deploy:api": "BUILD_TARGET=api ./scripts/deploy-with-retry.sh",
     "deploy:all": "./scripts/deploy-all.sh",
     "test": "turbo run test",
+    "test:ui": "turbo run test --filter=@authrim/ar-admin-ui --filter=@authrim/ar-login-ui",
     "test:coverage": "pnpm run test:coverage:api",
     "test:coverage:api": "turbo run test --filter=!@authrim/ar-admin-ui --filter=!@authrim/ar-login-ui -- --coverage",
     "test:coverage:critical": "turbo run test --filter=@authrim/ar-auth --filter=@authrim/ar-token --filter=@authrim/ar-management --filter=@authrim/ar-lib-core --filter=@authrim/ar-lib-logging --filter=@authrim/ar-lib-policy --filter=@authrim/ar-saml -- --coverage",

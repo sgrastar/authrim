@@ -46,8 +46,11 @@ jobs:
       - name: Run type checking
         run: pnpm run typecheck
 
-      - name: Run tests
-        run: pnpm run test
+      - name: Run API tests with coverage
+        run: pnpm run test:coverage:api
+
+      - name: Run UI tests
+        run: pnpm run test:ui
 
       - name: Build project
         run: pnpm run build
@@ -56,11 +59,6 @@ jobs:
 
       - name: Check code formatting
         run: pnpm run format:check
-
-      - name: Collect coverage metrics
-        if: ${{ github.event_name == 'pull_request' && success() }}
-        continue-on-error: true
-        run: pnpm run test:coverage:api
 
       - name: Comment coverage summary
         if: ${{ github.event_name == 'pull_request' && success() }}
