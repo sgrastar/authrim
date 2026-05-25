@@ -12,14 +12,52 @@ on:
 # Restrict GITHUB_TOKEN permissions (OpenSSF Scorecard)
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  release-pr-guard:
+    name: Check release PR guard
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.guard.outputs.should_deploy }}
+
+    steps:
+      - name: Decide whether to deploy
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/heads/develop" ]]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          open_release_prs="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:develop&base=main" \
+              --jq 'length'
+          )"
+
+          if [[ "$open_release_prs" != "0" ]]; then
+            echo "Skipping test environment deployment while a develop -> main release PR is open."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+
   deploy-and-validate:
     name: Deploy and validate ${{ matrix.hostname }}
     runs-on: ubuntu-latest
+    needs: release-pr-guard
 
-    # Only run on the main repository (skip forks).
-    if: github.repository == 'sgrastar/authrim'
+    # Only run on the main repository, and skip while a release PR from develop to main is open.
+    if: github.repository == 'sgrastar/authrim' && needs.release-pr-guard.outputs.should_deploy == 'true'
 
     strategy:
       fail-fast: false
